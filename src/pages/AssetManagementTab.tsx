@@ -1,0 +1,1117 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  Package, Plus, Trash2, Search, X, RefreshCw, Download, Pencil,
+  Server, Router, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  AlertTriangle, Terminal, Globe, HardDrive, Activity,
+  MoreHorizontal, LayoutList, LayoutGrid, Network,
+  ExternalLink, Wifi, WifiOff, Building2, Play, Upload, Radar,
+  Bell, Shield, FileText, ChevronDown, ChevronUp,
+  Zap, AlertCircle, CheckCircle2, Tag, Cpu, MemoryStick,
+  Clock, Flame, Link2, MonitorSpeaker,
+} from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { AnimatePresence, motion } from 'motion/react';
+
+/* ═══════════════════════════════════════════════════════════════════
+   Types
+   ═══════════════════════════════════════════════════════════════════ */
+
+interface Asset {
+  id: string; asset_type: string; asset_tag: string; serial_number: string;
+  vendor: string; model: string; hostname: string; datacenter: string;
+  rack: string; rack_unit: string; management_ip: string; business_ip: string;
+  device_role: string; status: string; purchase_date: string;
+  warranty_expiry: string; department: string; notes: string;
+  created_at: string; updated_at: string;
+}
+
+interface AssetSummary {
+  total: number;
+  by_type: Record<string, number>;
+  by_status: Record<string, number>;
+  by_vendor: Record<string, number>;
+  by_datacenter: Record<string, number>;
+  by_department: Record<string, number>;
+  warranty_expiring_soon: number;
+}
+
+interface Props {
+  language: string;
+  t: (key: string) => string;
+  setActiveTab?: (tab: string) => void;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Constants
+   ═══════════════════════════════════════════════════════════════════ */
+
+const STATUSES = [
+  { value: 'active',         label: { zh: '在线', en: 'Online' },       dot: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-700', text: 'text-emerald-600' },
+  { value: 'inactive',       label: { zh: '离线', en: 'Offline' },      dot: 'bg-red-400',     badge: 'bg-red-50 text-red-600',         text: 'text-red-500' },
+  { value: 'maintenance',    label: { zh: '维护中', en: 'Maintenance' }, dot: 'bg-amber-500',   badge: 'bg-amber-50 text-amber-700',     text: 'text-amber-600' },
+  { value: 'decommissioned', label: { zh: '已退役', en: 'Retired' },     dot: 'bg-slate-400',   badge: 'bg-slate-100 text-slate-500',    text: 'text-slate-400' },
+] as const;
+
+const TYPES = [
+  { value: 'server',         label: { zh: '服务器', en: 'Server' },    icon: Server },
+  { value: 'network_device', label: { zh: '网络设备', en: 'Network' }, icon: Router },
+] as const;
+
+type ViewMode = 'table' | 'group' | 'topology';
+type GroupBy = 'datacenter' | 'department' | 'vendor';
+
+const EMPTY_FORM = {
+  asset_type: 'server', asset_tag: '', serial_number: '', vendor: '', model: '',
+  hostname: '', datacenter: '', rack: '', rack_unit: '', management_ip: '',
+  business_ip: '', device_role: '', status: 'active', purchase_date: '',
+  warranty_expiry: '', department: '', notes: '',
+};
+
+const PAGE_SIZE = 25;
+
+/* ═══════════════════════════════════════════════════════════════════
+   Helpers
+   ═══════════════════════════════════════════════════════════════════ */
+
+const statusMeta = (v: string) => STATUSES.find(s => s.value === v) || STATUSES[3];
+const typeMeta   = (v: string) => TYPES.find(t => t.value === v) || TYPES[0];
+
+const ago = (iso: string) => {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  return `${Math.floor(d / 30)}mo`;
+};
+
+/** Deterministic mock metric from asset id for demo purposes */
+const mockMetric = (id: string, min: number, max: number) => {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
+  return min + Math.abs(h) % (max - min + 1);
+};
+
+/** Map status to severity for P1-P4 classification */
+const severityOf = (a: Asset): 'critical' | 'major' | 'warning' | 'healthy' => {
+  if (a.status === 'inactive') return 'critical';
+  if (a.status === 'maintenance') return 'major';
+  if (a.warranty_expiry && new Date(a.warranty_expiry) <= new Date(Date.now() + 90 * 86400000)) return 'warning';
+  return 'healthy';
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   Main Component
+   ═══════════════════════════════════════════════════════════════════ */
+
+const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
+  const zh = language === 'zh';
+  const goTo = (tab: string) => setActiveTab?.(tab);
+
+  /* ─── State ─── */
+  const [assets, setAssets]             = useState<Asset[]>([]);
+  const [summary, setSummary]           = useState<AssetSummary | null>(null);
+  const [total, setTotal]               = useState(0);
+  const [page, setPage]                 = useState(1);
+  const [loading, setLoading]           = useState(true);
+
+  const [search, setSearch]             = useState('');
+  const [typeFilter, setTypeFilter]     = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [vendorFilter, setVendorFilter] = useState('all');
+  const [dcFilter, setDcFilter]         = useState('all');
+  const [deptFilter, setDeptFilter]     = useState('all');
+  const [severityFilter, setSeverityFilter] = useState<string>('all');
+
+  const [viewMode, setViewMode]         = useState<ViewMode>('table');
+  const [groupBy, setGroupBy]           = useState<GroupBy>('datacenter');
+  const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set());
+  const [drawerAsset, setDrawerAsset]   = useState<Asset | null>(null);
+
+  const [showModal, setShowModal]       = useState(false);
+  const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
+  const [form, setForm]                 = useState({ ...EMPTY_FORM });
+  const [saving, setSaving]             = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Asset | null>(null);
+  const [moreMenuId, setMoreMenuId]     = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [showBatchTag, setShowBatchTag] = useState(false);
+  const [batchTagValue, setBatchTagValue] = useState('');
+
+  /* ─── Data Fetching ─── */
+  const fetchSummary = useCallback(async () => {
+    try { const r = await fetch('/api/assets/summary'); if (r.ok) setSummary(await r.json()); } catch { /* noop */ }
+  }, []);
+
+  const fetchAssets = useCallback(async () => {
+    setLoading(true);
+    try {
+      const p = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
+      if (search.trim()) p.set('q', search.trim());
+      if (typeFilter !== 'all')   p.set('asset_type', typeFilter);
+      if (statusFilter !== 'all') p.set('status', statusFilter);
+      if (vendorFilter !== 'all') p.set('vendor', vendorFilter);
+      if (dcFilter !== 'all')     p.set('datacenter', dcFilter);
+      if (deptFilter !== 'all')   p.set('department', deptFilter);
+      const r = await fetch(`/api/assets?${p}`);
+      if (r.ok) { const d = await r.json(); setAssets(d.items); setTotal(d.total); }
+    } catch { /* noop */ }
+    setLoading(false);
+  }, [page, search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter]);
+
+  useEffect(() => { fetchSummary(); }, [fetchSummary]);
+  useEffect(() => { fetchAssets(); }, [fetchAssets]);
+  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const vendorList = useMemo(() => summary?.by_vendor ? Object.keys(summary.by_vendor).sort() : [], [summary]);
+  const dcList     = useMemo(() => summary?.by_datacenter ? Object.keys(summary.by_datacenter).sort() : [], [summary]);
+  const deptList   = useMemo(() => summary?.by_department ? Object.keys(summary.by_department).sort() : [], [summary]);
+
+  /* ─── Severity metrics ─── */
+  const severityCounts = useMemo(() => {
+    const c = { critical: 0, major: 0, warning: 0, healthy: 0 };
+    assets.forEach(a => { c[severityOf(a)]++; });
+    return c;
+  }, [assets]);
+
+  /* Filtered assets by severity card click */
+  const displayAssets = useMemo(() => {
+    if (severityFilter === 'all') return assets;
+    return assets.filter(a => severityOf(a) === severityFilter);
+  }, [assets, severityFilter]);
+
+  /* ─── CRUD ─── */
+  const openAdd = () => { setEditingAsset(null); setForm({ ...EMPTY_FORM }); setShowModal(true); };
+  const openEdit = (a: Asset) => {
+    setEditingAsset(a);
+    setForm({
+      asset_type: a.asset_type, asset_tag: a.asset_tag, serial_number: a.serial_number,
+      vendor: a.vendor, model: a.model, hostname: a.hostname, datacenter: a.datacenter,
+      rack: a.rack, rack_unit: a.rack_unit, management_ip: a.management_ip,
+      business_ip: a.business_ip, device_role: a.device_role, status: a.status,
+      purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
+      department: a.department, notes: a.notes,
+    });
+    setShowModal(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.hostname.trim() && !form.asset_tag.trim()) return;
+    setSaving(true);
+    try {
+      const url = editingAsset ? `/api/assets/${editingAsset.id}` : '/api/assets';
+      const r = await fetch(url, { method: editingAsset ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      if (r.ok) { setShowModal(false); fetchAssets(); fetchSummary(); }
+    } catch { /* noop */ }
+    setSaving(false);
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      const r = await fetch(`/api/assets/${deleteTarget.id}`, { method: 'DELETE' });
+      if (r.ok) { setDeleteTarget(null); fetchAssets(); fetchSummary(); if (drawerAsset?.id === deleteTarget.id) setDrawerAsset(null); }
+    } catch { /* noop */ }
+  };
+
+  /* ─── Selection & Batch ─── */
+  const toggle    = (id: string) => setSelectedIds(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAll = () => setSelectedIds(p => p.size === displayAssets.length ? new Set() : new Set(displayAssets.map(a => a.id)));
+  const clearSel  = () => setSelectedIds(new Set());
+
+  const batchSSH = () => {
+    const ips = assets.filter(a => selectedIds.has(a.id) && a.management_ip).map(a => a.management_ip);
+    if (ips.length) navigator.clipboard.writeText(ips.join('\n'));
+  };
+
+  const batchTag = async () => {
+    if (!batchTagValue.trim()) return;
+    const promises = Array.from(selectedIds).map(id =>
+      fetch(`/api/assets/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: batchTagValue.trim() }) })
+    );
+    await Promise.allSettled(promises);
+    setShowBatchTag(false);
+    setBatchTagValue('');
+    clearSel();
+    fetchAssets();
+  };
+
+  /* ─── Export ─── */
+  const handleExport = () => {
+    if (!assets.length) return;
+    const rows = assets.map(a => ({
+      [zh ? '主机名' : 'Hostname']: a.hostname, [zh ? '资产编号' : 'Tag']: a.asset_tag,
+      [zh ? '类型' : 'Type']: a.asset_type, [zh ? '厂商' : 'Vendor']: a.vendor,
+      [zh ? '型号' : 'Model']: a.model, [zh ? '管理IP' : 'Mgmt IP']: a.management_ip,
+      [zh ? '状态' : 'Status']: a.status, [zh ? '数据中心' : 'DC']: a.datacenter,
+      [zh ? '机柜' : 'Rack']: `${a.rack}${a.rack_unit ? ' U' + a.rack_unit : ''}`,
+      [zh ? '部门' : 'Dept']: a.department, [zh ? '角色' : 'Role']: a.device_role,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Assets');
+    XLSX.writeFile(wb, `assets_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  /* ─── Computed ─── */
+  const byStatus = summary?.by_status ?? {};
+  const criticalCount  = (byStatus['inactive'] ?? 0);
+  const majorCount     = (byStatus['maintenance'] ?? 0);
+  const warningCount   = summary?.warranty_expiring_soon ?? 0;
+  const healthyCount   = byStatus['active'] ?? 0;
+  const totalCount     = summary?.total ?? 0;
+
+  const groupedAssets = useMemo<Record<string, Asset[]>>(() => {
+    const g: Record<string, Asset[]> = {};
+    const keyFn = (a: Asset) => {
+      if (groupBy === 'datacenter') return a.datacenter || (zh ? '未分配' : 'Unassigned');
+      if (groupBy === 'department') return a.department || (zh ? '未分配' : 'Unassigned');
+      return a.vendor || (zh ? '未知厂商' : 'Unknown');
+    };
+    displayAssets.forEach(a => { const k = keyFn(a); (g[k] ||= []).push(a); });
+    return g;
+  }, [displayAssets, groupBy, zh]);
+
+  const typeDisplay = (a: Asset) => {
+    if (a.asset_type === 'network_device' && a.device_role) return a.device_role.charAt(0).toUpperCase() + a.device_role.slice(1);
+    return typeMeta(a.asset_type).label[zh ? 'zh' : 'en'];
+  };
+
+  const hasFilters = typeFilter !== 'all' || statusFilter !== 'all' || vendorFilter !== 'all' || dcFilter !== 'all' || deptFilter !== 'all';
+  const clearAllFilters = () => { setTypeFilter('all'); setStatusFilter('all'); setVendorFilter('all'); setDcFilter('all'); setDeptFilter('all'); setSeverityFilter('all'); };
+
+  /* ═══════════════════════════════════════════════════════════════════
+     RENDER
+     ═══════════════════════════════════════════════════════════════════ */
+  return (
+    <div className="space-y-2.5">
+
+      {/* ══════════════════ SEVERITY CARDS (P1–P4) ══════════════════ */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        {([
+          { key: 'critical', value: criticalCount, label: zh ? '严重故障' : 'Critical', sub: 'P1', Icon: Flame,
+            bg: 'bg-gradient-to-br from-red-500 to-red-600', ring: 'ring-red-400/30', iconCls: 'text-white/70',
+            valCls: 'text-white', labelCls: 'text-white/70', subCls: 'bg-white/15 text-white/90', barCls: 'bg-white/20',
+            filterVal: 'critical' as string, pulse: criticalCount > 0 },
+          { key: 'major', value: majorCount, label: zh ? '重要问题' : 'Major Issues', sub: 'P2', Icon: AlertTriangle,
+            bg: 'bg-gradient-to-br from-orange-400 to-orange-500', ring: 'ring-orange-400/30', iconCls: 'text-white/70',
+            valCls: 'text-white', labelCls: 'text-white/70', subCls: 'bg-white/15 text-white/90', barCls: 'bg-white/20',
+            filterVal: 'major' as string, pulse: majorCount > 0 },
+          { key: 'warning', value: warningCount, label: zh ? '需要关注' : 'Warning', sub: 'P3', Icon: AlertCircle,
+            bg: 'bg-gradient-to-br from-amber-400 to-amber-500', ring: 'ring-amber-400/30', iconCls: 'text-white/70',
+            valCls: 'text-white', labelCls: 'text-white/70', subCls: 'bg-white/15 text-white/90', barCls: 'bg-white/20',
+            filterVal: 'warning' as string, pulse: false },
+          { key: 'healthy', value: healthyCount, label: zh ? '运行正常' : 'Healthy', sub: zh ? '正常' : 'OK', Icon: CheckCircle2,
+            bg: 'bg-gradient-to-br from-emerald-500 to-emerald-600', ring: 'ring-emerald-400/30', iconCls: 'text-white/70',
+            valCls: 'text-white', labelCls: 'text-white/70', subCls: 'bg-white/15 text-white/90', barCls: 'bg-white/20',
+            filterVal: 'healthy' as string, pulse: false },
+        ]).map(c => {
+          const isActive = severityFilter === c.filterVal;
+          return (
+            <button
+              key={c.key}
+              onClick={() => setSeverityFilter(isActive ? 'all' : c.filterVal)}
+              className={`group relative rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-[1.01] active:scale-[0.99] ${c.bg} ${isActive ? `ring-2 ${c.ring} shadow-lg` : ''}`}
+            >
+              <div className="px-4 py-3 flex items-center justify-between relative z-10">
+                <div>
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${c.subCls}`}>{c.sub}</span>
+                    <span className={`text-[10px] font-medium ${c.labelCls}`}>{c.label}</span>
+                  </div>
+                  <p className={`text-3xl font-black tabular-nums leading-none mt-1 ${c.valCls}`}>{c.value}</p>
+                  {/* impact hint */}
+                  {c.value > 0 && (
+                    <p className={`text-[9px] mt-1 ${c.labelCls}`}>
+                      {totalCount > 0 ? `${Math.round((c.value / totalCount) * 100)}%` : '0%'} {zh ? '资产' : 'of fleet'}
+                    </p>
+                  )}
+                </div>
+                <div className="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center backdrop-blur-sm">
+                  <c.Icon size={20} className={`${c.iconCls} ${c.pulse ? 'animate-pulse' : ''}`} />
+                </div>
+              </div>
+              {/* decorative bar */}
+              {isActive && <div className={`absolute bottom-0 left-0 right-0 h-1 ${c.barCls}`} />}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ══════════════════ CONSOLE PANEL ══════════════════ */}
+      <div className="bg-white rounded-xl border border-black/5 shadow-sm overflow-hidden">
+
+        {/* ── Header: View tabs + batch + actions ── */}
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-black/5 bg-black/[0.008]">
+          {/* Left: views + groupBy selector */}
+          <div className="flex items-center gap-0.5">
+            {([
+              { mode: 'table' as ViewMode, Icon: LayoutList, label: zh ? '表格' : 'Table' },
+              { mode: 'group' as ViewMode, Icon: LayoutGrid, label: zh ? '分组' : 'Group' },
+              { mode: 'topology' as ViewMode, Icon: Network, label: zh ? '拓扑' : 'Topo' },
+            ]).map(v => (
+              <button
+                key={v.mode} onClick={() => setViewMode(v.mode)}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors ${
+                  viewMode === v.mode ? 'bg-[#00bceb]/10 text-[#0088b0] font-semibold' : 'text-black/30 hover:text-black/50 hover:bg-black/[0.02]'
+                }`}
+              >
+                <v.Icon size={12} />{v.label}
+              </button>
+            ))}
+            {viewMode === 'group' && (
+              <select
+                value={groupBy} onChange={e => setGroupBy(e.target.value as GroupBy)} title={zh ? '分组依据' : 'Group by'}
+                className="ml-1 text-[10px] px-1.5 py-1 rounded border border-[#00bceb]/20 bg-[#00bceb]/5 text-[#0088b0] font-medium focus:outline-none cursor-pointer"
+              >
+                <option value="datacenter">{zh ? '机房' : 'Data Center'}</option>
+                <option value="department">{zh ? '业务/部门' : 'Service'}</option>
+                <option value="vendor">{zh ? '厂商' : 'Vendor'}</option>
+              </select>
+            )}
+          </div>
+
+          {/* Right: batch bar + utility buttons */}
+          <div className="flex items-center gap-1">
+            {/* Batch operations */}
+            <AnimatePresence>
+              {selectedIds.size > 0 && (
+                <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} className="flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-black/8">
+                  <span className="text-[10px] font-bold text-[#00bceb] tabular-nums mr-1">{selectedIds.size}</span>
+                  <BatchBtn icon={Terminal}  label="SSH"                     onClick={batchSSH}               hoverCls="hover:bg-emerald-50 hover:text-emerald-600" />
+                  <BatchBtn icon={HardDrive} label={zh ? '备份' : 'Backup'}  onClick={() => goTo('automation')} hoverCls="hover:bg-amber-50 hover:text-amber-600" />
+                  <BatchBtn icon={Play}      label={zh ? '脚本' : 'Script'}  onClick={() => goTo('automation')} hoverCls="hover:bg-violet-50 hover:text-violet-600" />
+                  <BatchBtn icon={Tag}       label={zh ? '标签' : 'Tag'}     onClick={() => setShowBatchTag(true)} hoverCls="hover:bg-blue-50 hover:text-blue-600" />
+                  <button onClick={clearSel} className="p-0.5 ml-0.5 text-black/20 hover:text-black/45" title="Clear"><X size={10} /></button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <button onClick={() => { fetchAssets(); fetchSummary(); }} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '刷新' : 'Refresh'}><RefreshCw size={13} /></button>
+            <button onClick={handleExport} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '导出' : 'Export'}><Download size={13} /></button>
+            <button onClick={openAdd} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-[#00bceb] text-white text-[10px] font-bold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20">
+              <Plus size={12} />{zh ? '添加' : 'Add'}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Filter Bar ── */}
+        <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-black/[0.03]">
+          <div className="relative flex-1 max-w-[280px]">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-black/15" />
+            <input
+              value={search} onChange={e => setSearch(e.target.value)}
+              placeholder={zh ? 'IP / 主机名 / 资产编号 / 序列号...' : 'IP / hostname / tag / serial...'}
+              className="w-full pl-7 pr-6 py-1.5 rounded-md bg-black/[0.015] border border-black/5 text-[11px] text-black/75 placeholder:text-black/15 focus:outline-none focus:border-[#00bceb]/25 focus:ring-1 focus:ring-[#00bceb]/10 focus:bg-white"
+            />
+            {search && <button onClick={() => setSearch('')} title="Clear" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-black/15 hover:text-black/35"><X size={10} /></button>}
+          </div>
+
+          {([
+            { val: typeFilter,   set: setTypeFilter,   label: zh ? '类型' : 'Type',   opts: TYPES.map(t => ({ v: t.value, l: t.label[zh ? 'zh' : 'en'] })),     hide: false },
+            { val: statusFilter, set: setStatusFilter, label: zh ? '状态' : 'Status', opts: STATUSES.map(s => ({ v: s.value, l: s.label[zh ? 'zh' : 'en'] })),   hide: false },
+            { val: vendorFilter, set: setVendorFilter, label: zh ? '厂商' : 'Vendor', opts: vendorList.map(v => ({ v, l: v })),   hide: !vendorList.length },
+            { val: dcFilter,     set: setDcFilter,     label: zh ? '机房' : 'DC',     opts: dcList.map(d => ({ v: d, l: d })),     hide: !dcList.length },
+            { val: deptFilter,   set: setDeptFilter,   label: zh ? '业务' : 'Service', opts: deptList.map(d => ({ v: d, l: d })),  hide: !deptList.length },
+          ] as const).filter(f => !f.hide).map(f => (
+            <select
+              key={f.label} value={f.val} onChange={e => f.set(e.target.value)} title={f.label}
+              className={`px-1.5 py-1.5 rounded-md border text-[10px] focus:outline-none cursor-pointer transition-colors ${
+                f.val !== 'all' ? 'bg-[#00bceb]/5 border-[#00bceb]/15 text-[#0088b0] font-semibold' : 'bg-transparent border-black/5 text-black/30'
+              }`}
+            >
+              <option value="all">{f.label}</option>
+              {f.opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+            </select>
+          ))}
+
+          {(hasFilters || severityFilter !== 'all') && (
+            <button onClick={clearAllFilters} className="text-[9px] text-[#00bceb] hover:underline ml-0.5 whitespace-nowrap">{zh ? '清除全部' : 'Clear all'}</button>
+          )}
+
+          <div className="flex-1" />
+          <span className="text-[10px] text-black/20 tabular-nums whitespace-nowrap">{total} {zh ? '条记录' : 'records'}</span>
+        </div>
+
+        {/* ══════════════════ TABLE VIEW ══════════════════ */}
+        {viewMode === 'table' && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="border-b border-black/5 bg-black/[0.008]">
+                  <th className="w-7 px-1.5 py-1.5">
+                    <input type="checkbox" checked={selectedIds.size === displayAssets.length && displayAssets.length > 0} onChange={toggleAll}
+                      title="Select all" className="h-3 w-3 rounded border-black/12 accent-[#00bceb] cursor-pointer" />
+                  </th>
+                  {([
+                    { l: zh ? '主机名' : 'Hostname',        w: 'min-w-[150px]', sticky: true },
+                    { l: zh ? '类型'   : 'Type',            w: 'w-20' },
+                    { l: zh ? '厂商/型号' : 'Vendor/Model', w: 'min-w-[110px]' },
+                    { l: zh ? '管理IP' : 'Mgmt IP',         w: 'w-[110px]' },
+                    { l: zh ? '状态'   : 'Status',          w: 'w-[80px]' },
+                    { l: zh ? '告警'   : 'Alerts',          w: 'w-12', align: 'text-center' },
+                    { l: 'CPU',                              w: 'w-14', align: 'text-center' },
+                    { l: 'MEM',                              w: 'w-14', align: 'text-center' },
+                    { l: zh ? '角色'   : 'Role',            w: 'w-16' },
+                    { l: zh ? '机房'   : 'DC',              w: 'w-20' },
+                    { l: zh ? '最后在线' : 'Last Seen',      w: 'w-20' },
+                    { l: zh ? '操作'   : 'Actions',         w: 'w-[120px]', align: 'text-center' },
+                  ]).map(c => (
+                    <th key={c.l} className={`text-left px-1.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-black/20 ${c.w} ${c.align || ''}`}>{c.l}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={13} className="text-center py-16 text-black/15">
+                    <RefreshCw size={16} className="mx-auto mb-1.5 animate-spin text-[#00bceb]/25" />
+                    <p className="text-[10px]">{zh ? '加载中...' : 'Loading...'}</p>
+                  </td></tr>
+                ) : displayAssets.length === 0 ? (
+                  /* ── Empty State ── */
+                  <tr><td colSpan={13} className="py-16">
+                    <EmptyState zh={zh} openAdd={openAdd} goTo={goTo} />
+                  </td></tr>
+                ) : displayAssets.map(a => {
+                  const sm  = statusMeta(a.status);
+                  const sel = selectedIds.has(a.id);
+                  const isDrawerTarget = drawerAsset?.id === a.id;
+                  const cpu = mockMetric(a.id, 5, 95);
+                  const mem = mockMetric(a.id + 'mem', 20, 90);
+                  const alertN = a.status === 'inactive' ? mockMetric(a.id + 'alert', 1, 5) : a.status === 'maintenance' ? mockMetric(a.id + 'alert', 0, 2) : 0;
+
+                  return (
+                    <tr
+                      key={a.id} onClick={() => setDrawerAsset(a)}
+                      className={`border-b border-black/[0.02] cursor-pointer transition-colors ${
+                        sel ? 'bg-[#00bceb]/[0.025]' : isDrawerTarget ? 'bg-black/[0.015]' : 'hover:bg-black/[0.008]'
+                      }`}
+                    >
+                      {/* Checkbox */}
+                      <td className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={sel} onChange={() => toggle(a.id)}
+                          title="Select" className="h-3 w-3 rounded border-black/12 accent-[#00bceb] cursor-pointer" />
+                      </td>
+                      {/* Hostname */}
+                      <td className="px-1.5 py-1">
+                        <p className="font-semibold text-[11px] text-black/80 leading-tight truncate max-w-[180px]">{a.hostname || '—'}</p>
+                        <p className="text-[9px] text-black/20 font-mono truncate">{a.asset_tag || a.serial_number || ''}</p>
+                      </td>
+                      {/* Type */}
+                      <td className="px-1.5 py-1">
+                        <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold ${
+                          a.asset_type === 'server' ? 'bg-violet-50 text-violet-600' : 'bg-cyan-50 text-cyan-600'
+                        }`}>
+                          {a.asset_type === 'server' ? <Server size={8} /> : <Router size={8} />}
+                          {typeDisplay(a)}
+                        </span>
+                      </td>
+                      {/* Vendor/Model */}
+                      <td className="px-1.5 py-1 text-[10px]">
+                        <span className="text-black/55">{a.vendor}</span>
+                        {a.model && <span className="text-black/20 block text-[9px] truncate max-w-[100px]">{a.model}</span>}
+                      </td>
+                      {/* IP */}
+                      <td className="px-1.5 py-1 font-mono text-[10px] text-black/50">{a.management_ip || '—'}</td>
+                      {/* Status */}
+                      <td className="px-1.5 py-1">
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${sm.badge}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${sm.dot} ${a.status === 'active' ? 'animate-pulse' : ''}`} />
+                          {sm.label[zh ? 'zh' : 'en']}
+                        </span>
+                      </td>
+                      {/* Alert Count */}
+                      <td className="px-1.5 py-1 text-center" onClick={e => e.stopPropagation()}>
+                        {alertN > 0 ? (
+                          <button onClick={() => goTo('alerts')} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[9px] font-bold hover:bg-red-100 transition-colors" title={zh ? '查看告警' : 'View alerts'}>
+                            <Bell size={8} />{alertN}
+                          </button>
+                        ) : (
+                          <span className="text-[9px] text-black/12">—</span>
+                        )}
+                      </td>
+                      {/* CPU */}
+                      <td className="px-1.5 py-1">
+                        <MiniBar value={cpu} />
+                      </td>
+                      {/* MEM */}
+                      <td className="px-1.5 py-1">
+                        <MiniBar value={mem} />
+                      </td>
+                      {/* Role */}
+                      <td className="px-1.5 py-1 text-[9px] text-black/30 capitalize">{a.device_role || '—'}</td>
+                      {/* DC */}
+                      <td className="px-1.5 py-1 text-[10px] text-black/30 truncate max-w-[80px]">
+                        {a.datacenter || '—'}
+                        {a.rack && <span className="text-black/15 block text-[9px]">{a.rack}{a.rack_unit ? `U${a.rack_unit}` : ''}</span>}
+                      </td>
+                      {/* Last Seen */}
+                      <td className="px-1.5 py-1 text-[9px] text-black/20 tabular-nums">{ago(a.updated_at)}</td>
+                      {/* Actions */}
+                      <td className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-px">
+                          <ActionBtn icon={Terminal}  title="SSH"    hoverCls="hover:text-emerald-600 hover:bg-emerald-50" onClick={() => { if (a.management_ip) navigator.clipboard.writeText(`ssh ${a.management_ip}`); }} />
+                          <ActionBtn icon={Globe}     title="Web"    hoverCls="hover:text-blue-600 hover:bg-blue-50"       onClick={() => { if (a.management_ip) window.open(`https://${a.management_ip}`, '_blank', 'noopener,noreferrer'); }} />
+                          <ActionBtn icon={HardDrive} title={zh ? '备份' : 'Backup'} hoverCls="hover:text-amber-600 hover:bg-amber-50" onClick={() => goTo('automation')} />
+                          <ActionBtn icon={Activity}  title={zh ? '监控' : 'Monitor'} hoverCls="hover:text-violet-600 hover:bg-violet-50" onClick={() => goTo('monitoring')} />
+                          {/* More */}
+                          <div className="relative">
+                            <button onClick={() => setMoreMenuId(moreMenuId === a.id ? null : a.id)}
+                              className="p-1 rounded text-black/15 hover:text-black/35" title="More"><MoreHorizontal size={12} /></button>
+                            {moreMenuId === a.id && (
+                              <>
+                                <div className="fixed inset-0 z-30" onClick={() => setMoreMenuId(null)} />
+                                <div className="absolute right-0 top-7 z-40 bg-white rounded-lg border border-black/8 shadow-xl py-1 min-w-[140px]">
+                                  <MenuBtn icon={Pencil}   label={zh ? '编辑' : 'Edit'}     onClick={() => { openEdit(a); setMoreMenuId(null); }} />
+                                  <MenuBtn icon={Bell}     label={zh ? '告警' : 'Alerts'}    onClick={() => { goTo('alerts');     setMoreMenuId(null); }} />
+                                  <MenuBtn icon={Play}     label={zh ? '脚本' : 'Script'}    onClick={() => { goTo('automation'); setMoreMenuId(null); }} />
+                                  <MenuBtn icon={FileText} label={zh ? '配置' : 'Config'}    onClick={() => { goTo('configs');    setMoreMenuId(null); }} />
+                                  <MenuBtn icon={Shield}   label={zh ? '合规' : 'Compliance'} onClick={() => { goTo('compliance'); setMoreMenuId(null); }} />
+                                  <div className="border-t border-black/5 my-0.5" />
+                                  <MenuBtn icon={Trash2}   label={zh ? '删除' : 'Delete'}    onClick={() => { setDeleteTarget(a); setMoreMenuId(null); }} danger />
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ══════════════════ GROUP VIEW ══════════════════ */}
+        {viewMode === 'group' && (
+          <div className="divide-y divide-black/[0.03]">
+            {loading ? (
+              <div className="text-center py-14 text-black/15"><RefreshCw size={16} className="mx-auto mb-1.5 animate-spin text-[#00bceb]/25" /></div>
+            ) : Object.keys(groupedAssets).length === 0 ? (
+              <div className="text-center py-14"><Building2 size={24} className="mx-auto mb-1.5 text-black/8" /><p className="text-xs text-black/20">{zh ? '无分组数据' : 'No groups'}</p></div>
+            ) : (Object.entries(groupedAssets) as [string, Asset[]][]).sort((a, b) => b[1].length - a[1].length).map(([gk, items]) => {
+              const isExp = expandedGroups.has(gk);
+              const onlineIn = items.filter(a => a.status === 'active').length;
+              const offlineIn = items.filter(a => a.status === 'inactive').length;
+              const GroupIcon = groupBy === 'datacenter' ? Building2 : groupBy === 'vendor' ? MonitorSpeaker : Zap;
+              return (
+                <div key={gk}>
+                  <button
+                    onClick={() => setExpandedGroups(p => { const n = new Set(p); n.has(gk) ? n.delete(gk) : n.add(gk); return n; })}
+                    className="w-full flex items-center justify-between px-4 py-2 hover:bg-black/[0.005] transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <GroupIcon size={14} className="text-black/15" />
+                      <span className="text-[12px] font-semibold text-black/65">{gk}</span>
+                      <span className="text-[9px] text-black/20 tabular-nums">{items.length}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {/* Mini status bar */}
+                      <div className="flex h-1.5 w-16 rounded-full overflow-hidden bg-black/[0.03]">
+                        {onlineIn > 0 && <div className="bg-emerald-400" style={{ width: `${(onlineIn / items.length) * 100}%` }} />}
+                        {offlineIn > 0 && <div className="bg-red-400" style={{ width: `${(offlineIn / items.length) * 100}%` }} />}
+                      </div>
+                      <span className="text-[9px] text-black/15 tabular-nums w-8 text-right">{onlineIn}/{items.length}</span>
+                      {isExp ? <ChevronUp size={12} className="text-black/15" /> : <ChevronDown size={12} className="text-black/15" />}
+                    </div>
+                  </button>
+                  <AnimatePresence>
+                    {isExp && (
+                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <table className="w-full text-[10px]">
+                          <tbody>
+                            {items.map(a => {
+                              const sm = statusMeta(a.status);
+                              const cpu = mockMetric(a.id, 5, 95);
+                              const mem = mockMetric(a.id + 'mem', 20, 90);
+                              return (
+                                <tr key={a.id} onClick={() => setDrawerAsset(a)} className="border-b border-black/[0.015] hover:bg-black/[0.006] cursor-pointer transition-colors">
+                                  <td className="pl-10 pr-2 py-1.5 font-semibold text-black/65 text-[11px]">{a.hostname || a.asset_tag || '—'}</td>
+                                  <td className="px-2 py-1.5 text-black/25">{typeDisplay(a)}</td>
+                                  <td className="px-2 py-1.5 font-mono text-black/35">{a.management_ip || '—'}</td>
+                                  <td className="px-2 py-1.5">
+                                    <span className={`inline-flex items-center gap-1 text-[9px] font-bold ${sm.text}`}>
+                                      <span className={`h-1.5 w-1.5 rounded-full ${sm.dot}`} />{sm.label[zh ? 'zh' : 'en']}
+                                    </span>
+                                  </td>
+                                  <td className="px-2 py-1.5 w-14"><MiniBar value={cpu} /></td>
+                                  <td className="px-2 py-1.5 w-14"><MiniBar value={mem} /></td>
+                                  <td className="px-2 py-1.5 text-right">
+                                    <button onClick={e => { e.stopPropagation(); openEdit(a); }} title="Edit" className="p-1 rounded text-black/10 hover:text-[#00bceb] hover:bg-[#00bceb]/5"><Pencil size={11} /></button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ══════════════════ TOPOLOGY VIEW ══════════════════ */}
+        {viewMode === 'topology' && (
+          <div className="py-16 text-center">
+            <div className="h-14 w-14 rounded-xl bg-gradient-to-br from-black/[0.02] to-black/[0.04] flex items-center justify-center mx-auto mb-3">
+              <Network size={24} className="text-black/10" />
+            </div>
+            <p className="text-sm font-semibold text-black/35 mb-1">{zh ? '网络拓扑视图' : 'Network Topology'}</p>
+            <p className="text-[10px] text-black/15 mb-4 max-w-xs mx-auto">{zh ? '在拓扑页面中查看设备间的连接关系和位置分布' : 'View device connections and placement in the topology page'}</p>
+            <button onClick={() => goTo('topology')} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#00bceb] text-white text-[11px] font-bold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20">
+              <ExternalLink size={12} />{zh ? '打开拓扑' : 'Open Topology'}
+            </button>
+          </div>
+        )}
+
+        {/* ── Pagination ── */}
+        {totalPages > 1 && viewMode !== 'topology' && (
+          <div className="flex items-center justify-between px-3 py-1.5 border-t border-black/[0.03]">
+            <span className="text-[10px] text-black/15 tabular-nums">{zh ? `${total} 条` : `${total} total`}</span>
+            <div className="flex items-center gap-0.5">
+              <PgBtn onClick={() => setPage(1)} disabled={page === 1} icon={<ChevronsLeft size={12} />} />
+              <PgBtn onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} icon={<ChevronLeft size={12} />} />
+              <span className="px-2 text-[10px] text-black/30 tabular-nums">{page}/{totalPages}</span>
+              <PgBtn onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} icon={<ChevronRight size={12} />} />
+              <PgBtn onClick={() => setPage(totalPages)} disabled={page === totalPages} icon={<ChevronsRight size={12} />} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ═══════════════════ DETAIL DRAWER ═══════════════════ */}
+      <AnimatePresence>
+        {drawerAsset && (
+          <motion.div className="fixed inset-0 z-50 flex justify-end" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <div className="flex-1 bg-black/10 backdrop-blur-[2px]" onClick={() => setDrawerAsset(null)} />
+            <motion.div
+              className="w-full max-w-[380px] bg-white shadow-2xl shadow-black/10 overflow-y-auto flex flex-col"
+              initial={{ x: 380 }} animate={{ x: 0 }} exit={{ x: 380 }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <DrawerContent asset={drawerAsset} zh={zh} goTo={goTo} openEdit={(a) => { openEdit(a); setDrawerAsset(null); }} setDeleteTarget={(a) => { setDeleteTarget(a); setDrawerAsset(null); }} onClose={() => setDrawerAsset(null)} />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══════════════════ ADD/EDIT MODAL ═══════════════════ */}
+      <AnimatePresence>
+        {showModal && (
+          <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowModal(false)}>
+            <motion.div
+              className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5 shadow-2xl border border-black/5"
+              onClick={e => e.stopPropagation()}
+              initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-black/80">{editingAsset ? (zh ? '编辑资产' : 'Edit Asset') : (zh ? '新增资产' : 'Add Asset')}</h3>
+                <button onClick={() => setShowModal(false)} title="Close" className="p-1 text-black/15 hover:text-black/35"><X size={16} /></button>
+              </div>
+
+              <div className="flex gap-2 mb-4">
+                {TYPES.map(t => (
+                  <button key={t.value} onClick={() => setForm(f => ({ ...f, asset_type: t.value }))}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      form.asset_type === t.value ? 'bg-[#00bceb]/10 border-[#00bceb]/25 text-[#0088b0] font-semibold' : 'bg-black/[0.01] border-black/5 text-black/30 hover:bg-black/[0.02]'
+                    }`}>
+                    <t.icon size={13} />{t.label[zh ? 'zh' : 'en']}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                <Field label={zh ? '主机名 *' : 'Hostname *'}   value={form.hostname}      onChange={v => setForm(f => ({ ...f, hostname: v }))}      placeholder="core-sw-01" />
+                <Field label={zh ? '资产编号' : 'Asset Tag'}     value={form.asset_tag}     onChange={v => setForm(f => ({ ...f, asset_tag: v }))}     placeholder="SRV-BJ-001" />
+                <Field label={zh ? '序列号' : 'Serial No.'}     value={form.serial_number} onChange={v => setForm(f => ({ ...f, serial_number: v }))} />
+                <Field label={zh ? '厂商' : 'Vendor'}           value={form.vendor}        onChange={v => setForm(f => ({ ...f, vendor: v }))}        placeholder="Cisco, Huawei" />
+                <Field label={zh ? '型号' : 'Model'}            value={form.model}         onChange={v => setForm(f => ({ ...f, model: v }))}         placeholder="C9300-48P" />
+                <div>
+                  <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '状态' : 'Status'}</label>
+                  <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} title="Status"
+                    className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25">
+                    {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label[zh ? 'zh' : 'en']}</option>)}
+                  </select>
+                </div>
+                <Field label={zh ? '管理IP' : 'Mgmt IP'}        value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="10.0.0.1" />
+                <Field label={zh ? '业务IP' : 'Biz IP'}         value={form.business_ip}   onChange={v => setForm(f => ({ ...f, business_ip: v }))}   placeholder="192.168.1.10" />
+                <Field label={zh ? '数据中心' : 'DC'}            value={form.datacenter}    onChange={v => setForm(f => ({ ...f, datacenter: v }))}    placeholder="BJ-DC1" />
+                <Field label={zh ? '机柜' : 'Rack'}             value={form.rack}          onChange={v => setForm(f => ({ ...f, rack: v }))}          placeholder="A-01" />
+                <Field label={zh ? 'U位' : 'Unit'}              value={form.rack_unit}     onChange={v => setForm(f => ({ ...f, rack_unit: v }))}     placeholder="12" />
+                <Field label={zh ? '角色' : 'Role'}             value={form.device_role}   onChange={v => setForm(f => ({ ...f, device_role: v }))}   placeholder="Core, Access..." />
+                <Field label={zh ? '部门/业务' : 'Service'}      value={form.department}    onChange={v => setForm(f => ({ ...f, department: v }))} />
+                <Field label={zh ? '购买日期' : 'Purchased'}     value={form.purchase_date} onChange={v => setForm(f => ({ ...f, purchase_date: v }))} type="date" />
+                <Field label={zh ? '保修到期' : 'Warranty'}      value={form.warranty_expiry} onChange={v => setForm(f => ({ ...f, warranty_expiry: v }))} type="date" />
+                <div className="col-span-2">
+                  <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '备注' : 'Notes'}</label>
+                  <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2}
+                    placeholder={zh ? '可选备注...' : 'Optional notes...'} className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 placeholder:text-black/12 focus:outline-none focus:border-[#00bceb]/25 resize-none" />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 mt-5">
+                <button onClick={() => setShowModal(false)} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
+                <button onClick={handleSave} disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim())}
+                  className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20">
+                  {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══════════════════ DELETE CONFIRM ═══════════════════ */}
+      <AnimatePresence>
+        {deleteTarget && (
+          <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDeleteTarget(null)}>
+            <motion.div className="bg-white rounded-xl w-full max-w-sm p-5 shadow-2xl border border-black/5"
+              onClick={e => e.stopPropagation()} initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="h-9 w-9 rounded-full bg-red-50 flex items-center justify-center"><Trash2 size={16} className="text-red-500" /></div>
+                <div>
+                  <h3 className="text-sm font-bold text-black/80">{zh ? '确认删除' : 'Confirm Delete'}</h3>
+                  <p className="text-[10px] text-black/25 mt-0.5">{deleteTarget.hostname || deleteTarget.asset_tag}</p>
+                </div>
+              </div>
+              <p className="text-[11px] text-black/35 mb-4">{zh ? '删除后不可恢复，是否继续？' : 'This action cannot be undone. Continue?'}</p>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setDeleteTarget(null)} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
+                <button onClick={handleDelete} className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700">{zh ? '删除' : 'Delete'}</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══════════════════ BATCH TAG MODAL ═══════════════════ */}
+      <AnimatePresence>
+        {showBatchTag && (
+          <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowBatchTag(false)}>
+            <motion.div className="bg-white rounded-xl w-full max-w-sm p-5 shadow-2xl border border-black/5"
+              onClick={e => e.stopPropagation()} initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}>
+              <h3 className="text-sm font-bold text-black/80 mb-3">{zh ? '批量添加标签' : 'Assign Tag to Selected'}</h3>
+              <p className="text-[10px] text-black/25 mb-3">{selectedIds.size} {zh ? '个资产将被标记' : 'assets selected'}</p>
+              <input value={batchTagValue} onChange={e => setBatchTagValue(e.target.value)} placeholder={zh ? '输入标签内容...' : 'Enter tag value...'}
+                className="w-full bg-white border border-black/8 rounded-lg px-3 py-2 text-xs text-black/65 placeholder:text-black/15 focus:outline-none focus:border-[#00bceb]/25 mb-4" />
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowBatchTag(false)} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs">{zh ? '取消' : 'Cancel'}</button>
+                <button onClick={batchTag} disabled={!batchTagValue.trim()} className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50">{zh ? '应用' : 'Apply'}</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   Sub-components
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* --- Empty State --- */
+function EmptyState({ zh, openAdd, goTo }: { zh: boolean; openAdd: () => void; goTo: (t: string) => void }) {
+  return (
+    <div className="text-center max-w-lg mx-auto">
+      <div className="relative h-24 w-24 mx-auto mb-5">
+        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#00bceb]/5 to-[#00bceb]/10 flex items-center justify-center">
+          <Package size={36} className="text-[#00bceb]/20" />
+        </div>
+        <div className="absolute -right-1 -top-1 h-6 w-6 rounded-full bg-emerald-100 flex items-center justify-center">
+          <Wifi size={10} className="text-emerald-500" />
+        </div>
+      </div>
+      <p className="text-lg font-bold text-black/50 mb-1">{zh ? '开始管理你的网络' : 'Start Managing Your Network'}</p>
+      <p className="text-[11px] text-black/20 mb-6 leading-relaxed max-w-sm mx-auto">
+        {zh ? '添加网络设备和服务器，自动发现拓扑，连接监控系统——统一资产控制台从这里开始' : 'Add devices, discover topology, connect monitoring — your unified control plane starts here'}
+      </p>
+      <div className="flex items-center justify-center gap-2 flex-wrap">
+        <button onClick={openAdd} className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-[#00bceb] text-white text-[11px] font-bold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20">
+          <Plus size={13} />{zh ? '添加资产' : 'Add Asset'}
+        </button>
+        <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-black/8 text-black/35 text-[11px] font-medium hover:bg-black/[0.01]">
+          <Upload size={12} />{zh ? '导入 Excel' : 'Import Excel'}
+        </button>
+        <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-black/8 text-black/35 text-[11px] font-medium hover:bg-black/[0.01]">
+          <Radar size={12} />{zh ? '自动发现' : 'Auto Discover'}
+        </button>
+        <button onClick={() => goTo('monitoring')} className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-black/8 text-black/35 text-[11px] font-medium hover:bg-black/[0.01]">
+          <Link2 size={12} />{zh ? '连接监控' : 'Connect Monitoring'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* --- Drawer Content --- */
+function DrawerContent({ asset: a, zh, goTo, openEdit, setDeleteTarget, onClose }: {
+  asset: Asset; zh: boolean; goTo: (t: string) => void; openEdit: (a: Asset) => void; setDeleteTarget: (a: Asset) => void; onClose: () => void;
+}) {
+  const sm = statusMeta(a.status);
+  const cpu = mockMetric(a.id, 5, 95);
+  const mem = mockMetric(a.id + 'mem', 20, 90);
+  const alertN = a.status === 'inactive' ? mockMetric(a.id + 'alert', 1, 5) : a.status === 'maintenance' ? mockMetric(a.id + 'alert', 0, 2) : 0;
+  const mockAlerts = useMemo(() => {
+    if (alertN === 0) return [];
+    return Array.from({ length: Math.min(alertN, 3) }, (_, i) => ({
+      id: i,
+      severity: i === 0 ? 'critical' : i === 1 ? 'major' : 'warning',
+      msg: i === 0 ? (zh ? 'CPU 使用率超过 95%' : 'CPU usage exceeded 95%') : i === 1 ? (zh ? '接口 Gi0/1 Down' : 'Interface Gi0/1 Down') : (zh ? '内存使用率超过 80%' : 'Memory over 80%'),
+      time: `${mockMetric(a.id + 'at' + i, 5, 120)}m ago`,
+    }));
+  }, [a.id, alertN, zh]);
+
+  return (
+    <>
+      {/* Header */}
+      <div className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 px-4 pt-4 pb-2.5 border-b border-black/5">
+        <div className="flex items-start justify-between mb-1.5">
+          <div className="flex items-center gap-1">{
+            ([
+              { cls: a.asset_type === 'server' ? 'bg-violet-50 text-violet-600' : 'bg-cyan-50 text-cyan-600', icon: a.asset_type === 'server' ? Server : Router, label: a.asset_type === 'server' ? (zh ? '服务器' : 'Server') : (zh ? '网络设备' : 'Network') },
+            ]).map((b, i) => (
+              <span key={i} className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold ${b.cls}`}>
+                <b.icon size={8} />{b.label}
+              </span>
+            ))
+          }
+            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${sm.badge}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${sm.dot}`} />{sm.label[zh ? 'zh' : 'en']}
+            </span>
+            {alertN > 0 && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[9px] font-bold">
+                <Bell size={8} />{alertN}
+              </span>
+            )}
+          </div>
+          <button onClick={onClose} title="Close" className="p-1 rounded hover:bg-black/[0.02] text-black/20 hover:text-black/40"><X size={14} /></button>
+        </div>
+        <h3 className="text-base font-bold text-black/85 leading-tight">{a.hostname || a.asset_tag || '—'}</h3>
+        <p className="text-[9px] text-black/20 font-mono mt-0.5">{a.asset_tag}{a.serial_number ? ` · ${a.serial_number}` : ''}</p>
+      </div>
+
+      {/* Real-time Status */}
+      <div className="px-4 py-2.5 border-b border-black/5">
+        <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-2">{zh ? '实时状态' : 'Live Status'}</p>
+        <div className="grid grid-cols-2 gap-2">
+          <MetricCard label="CPU" value={cpu} icon={Cpu} />
+          <MetricCard label="MEM" value={mem} icon={MemoryStick} />
+        </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="px-4 py-2.5 border-b border-black/5">
+        <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-2">{zh ? '快捷操作' : 'Quick Actions'}</p>
+        <div className="grid grid-cols-4 gap-1">
+          <DrawerAction icon={Terminal} label="SSH" hoverCls="hover:bg-emerald-50 group-hover:text-emerald-500" onClick={() => { if (a.management_ip) navigator.clipboard.writeText(`ssh ${a.management_ip}`); }} />
+          <DrawerAction icon={Globe} label="Web" hoverCls="hover:bg-blue-50 group-hover:text-blue-500" onClick={() => { if (a.management_ip) window.open(`https://${a.management_ip}`, '_blank', 'noopener,noreferrer'); }} />
+          <DrawerAction icon={HardDrive} label={zh ? '备份' : 'Backup'} hoverCls="hover:bg-amber-50 group-hover:text-amber-500" onClick={() => goTo('automation')} />
+          <DrawerAction icon={Play} label={zh ? '脚本' : 'Run'} hoverCls="hover:bg-violet-50 group-hover:text-violet-500" onClick={() => goTo('automation')} />
+        </div>
+      </div>
+
+      {/* Info Sections */}
+      <div className="flex-1 px-4 py-3 space-y-4">
+        {/* Recent Alerts */}
+        {mockAlerts.length > 0 && (
+          <div>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-1.5">{zh ? '最近告警' : 'Recent Alerts'}</p>
+            <div className="space-y-1">
+              {mockAlerts.map(al => (
+                <div key={al.id} className="flex items-start gap-2 px-2 py-1.5 rounded-lg bg-red-50/50 border border-red-100/50">
+                  <span className={`mt-0.5 h-1.5 w-1.5 rounded-full flex-shrink-0 ${al.severity === 'critical' ? 'bg-red-500' : al.severity === 'major' ? 'bg-orange-400' : 'bg-amber-400'}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] text-red-700 font-medium">{al.msg}</p>
+                    <p className="text-[8px] text-red-400 mt-0.5">{al.time}</p>
+                  </div>
+                </div>
+              ))}
+              <button onClick={() => goTo('alerts')} className="text-[9px] text-[#00bceb] hover:underline mt-0.5">{zh ? '查看全部告警 →' : 'View all alerts →'}</button>
+            </div>
+          </div>
+        )}
+
+        <InfoSection title={zh ? '基本信息' : 'Basic Info'} rows={[
+          { k: zh ? '厂商/型号' : 'Vendor/Model', v: `${a.vendor} ${a.model}`.trim() || '—' },
+          { k: zh ? '管理IP' : 'Mgmt IP', v: a.management_ip || '—', mono: true },
+          { k: zh ? '业务IP' : 'Biz IP', v: a.business_ip || '—', mono: true },
+          { k: zh ? '角色' : 'Role', v: a.device_role || '—' },
+        ]} />
+        <InfoSection title={zh ? '位置' : 'Location'} rows={[
+          { k: zh ? '数据中心' : 'DC', v: a.datacenter || '—' },
+          { k: zh ? '机柜/U位' : 'Rack/Unit', v: a.rack ? `${a.rack}${a.rack_unit ? ' U' + a.rack_unit : ''}` : '—' },
+          { k: zh ? '部门' : 'Dept', v: a.department || '—' },
+        ]} />
+        <InfoSection title={zh ? '生命周期' : 'Lifecycle'} rows={[
+          { k: zh ? '购买日期' : 'Purchased', v: a.purchase_date || '—' },
+          { k: zh ? '保修到期' : 'Warranty', v: a.warranty_expiry || '—', warn: !!(a.warranty_expiry && new Date(a.warranty_expiry) <= new Date(Date.now() + 90 * 86400000)) },
+          { k: zh ? '最后更新' : 'Updated', v: ago(a.updated_at) },
+        ]} />
+
+        {a.notes && (
+          <div>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-1.5">{zh ? '备注' : 'Notes'}</p>
+            <p className="text-[10px] text-black/40 bg-black/[0.01] rounded-lg px-2.5 py-1.5 leading-relaxed">{a.notes}</p>
+          </div>
+        )}
+
+        {/* Cross-links */}
+        <div>
+          <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-1.5">{zh ? '关联系统' : 'Related Systems'}</p>
+          <div className="space-y-px">
+            {([
+              { Icon: Activity, label: zh ? '监控指标' : 'Metrics', tab: 'monitoring' },
+              { Icon: Bell, label: zh ? '历史告警' : 'Alerts', tab: 'alerts' },
+              { Icon: Shield, label: zh ? '合规检查' : 'Compliance', tab: 'compliance' },
+              { Icon: FileText, label: zh ? '配置备份' : 'Configs', tab: 'configs' },
+            ] as const).map(link => (
+              <button
+                key={link.tab} onClick={() => goTo(link.tab)}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-black/[0.01] group transition-colors"
+              >
+                <span className="flex items-center gap-2 text-[10px] text-black/30 group-hover:text-black/55">
+                  <link.Icon size={11} className="text-black/15 group-hover:text-[#00bceb]" />
+                  {link.label}
+                </span>
+                <ExternalLink size={9} className="text-black/8 group-hover:text-black/20" />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="sticky bottom-0 bg-white/95 backdrop-blur-sm px-4 py-2.5 border-t border-black/5 flex gap-1.5">
+        <button onClick={() => openEdit(a)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg border border-black/8 text-black/45 text-[10px] font-medium hover:bg-black/[0.01]">
+          <Pencil size={10} />{zh ? '编辑' : 'Edit'}
+        </button>
+        <button onClick={() => setDeleteTarget(a)} className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-[10px] font-medium hover:bg-red-50">
+          <Trash2 size={10} />{zh ? '删除' : 'Delete'}
+        </button>
+      </div>
+    </>
+  );
+}
+
+/* --- Mini metric bar in table --- */
+function MiniBar({ value }: { value: number }) {
+  const color = value > 85 ? 'bg-red-400' : value > 60 ? 'bg-amber-400' : 'bg-emerald-400';
+  const textColor = value > 85 ? 'text-red-600' : value > 60 ? 'text-amber-600' : 'text-black/25';
+  return (
+    <div className="flex items-center gap-1">
+      <div className="flex-1 h-1 rounded-full bg-black/[0.04] overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${value}%` }} />
+      </div>
+      <span className={`text-[8px] tabular-nums font-medium ${textColor} w-6 text-right`}>{value}%</span>
+    </div>
+  );
+}
+
+/* --- Drawer metric card --- */
+function MetricCard({ label, value, icon: Icon }: { label: string; value: number; icon: React.FC<{ size?: number; className?: string }> }) {
+  const color = value > 85 ? 'text-red-600' : value > 60 ? 'text-amber-600' : 'text-emerald-600';
+  const barColor = value > 85 ? 'bg-red-400' : value > 60 ? 'bg-amber-400' : 'bg-emerald-400';
+  const bg = value > 85 ? 'bg-red-50' : value > 60 ? 'bg-amber-50' : 'bg-emerald-50';
+  return (
+    <div className={`rounded-lg ${bg} px-3 py-2`}>
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1">
+          <Icon size={10} className={color} />
+          <span className="text-[9px] font-semibold text-black/40">{label}</span>
+        </div>
+        <span className={`text-sm font-bold tabular-nums ${color}`}>{value}%</span>
+      </div>
+      <div className="h-1 rounded-full bg-white/80 overflow-hidden">
+        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/* --- Drawer quick action button --- */
+function DrawerAction({ icon: Icon, label, hoverCls, onClick }: {
+  icon: React.FC<{ size?: number; className?: string }>; label: string; hoverCls: string; onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick} className={`flex flex-col items-center gap-0.5 py-2 rounded-lg border border-black/5 ${hoverCls} transition-all group`}>
+      <Icon size={13} className="text-black/15 transition-colors" />
+      <span className="text-[9px] font-medium text-black/25 group-hover:text-black/45">{label}</span>
+    </button>
+  );
+}
+
+/* --- Form field --- */
+function Field({ label, value, onChange, placeholder, type = 'text' }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-[10px] text-black/30 mb-0.5">{label}</label>
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 placeholder:text-black/12 focus:outline-none focus:border-[#00bceb]/25" />
+    </div>
+  );
+}
+
+/* --- Pagination button --- */
+function PgBtn({ onClick, disabled, icon }: { onClick: () => void; disabled: boolean; icon: React.ReactNode }) {
+  return <button onClick={onClick} disabled={disabled} className="p-0.5 rounded hover:bg-black/[0.02] disabled:opacity-15 text-black/25">{icon}</button>;
+}
+
+/* --- Table action icon button --- */
+function ActionBtn({ icon: Icon, title, hoverCls, onClick }: { icon: React.FC<{ size?: number }>; title: string; hoverCls: string; onClick: () => void }) {
+  return <button onClick={onClick} className={`p-1 rounded text-black/12 ${hoverCls} transition-colors`} title={title}><Icon size={12} /></button>;
+}
+
+/* --- Batch toolbar button --- */
+function BatchBtn({ icon: Icon, label, onClick, hoverCls }: { icon: React.FC<{ size?: number }>; label: string; onClick: () => void; hoverCls: string }) {
+  return (
+    <button onClick={onClick} className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-black/35 text-[9px] font-medium ${hoverCls} transition-colors`} title={label}>
+      <Icon size={10} />{label}
+    </button>
+  );
+}
+
+/* --- More menu button --- */
+function MenuBtn({ icon: Icon, label, onClick, danger }: { icon: React.FC<{ size?: number }>; label: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button onClick={onClick} className={`w-full flex items-center gap-2 px-3 py-1.5 text-[10px] transition-colors ${
+      danger ? 'text-red-500 hover:bg-red-50' : 'text-black/50 hover:bg-black/[0.015] hover:text-black/70'
+    }`}>
+      <Icon size={11} />{label}
+    </button>
+  );
+}
+
+/* --- Info section in drawer --- */
+function InfoSection({ title, rows }: { title: string; rows: { k: string; v: string; mono?: boolean; warn?: boolean }[] }) {
+  return (
+    <div>
+      <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-1.5">{title}</p>
+      <div className="space-y-0.5">
+        {rows.map(r => (
+          <div key={r.k} className="flex items-center justify-between py-0.5">
+            <span className="text-[10px] text-black/25">{r.k}</span>
+            <span className={`text-[10px] ${r.warn ? 'text-amber-600 font-bold' : 'text-black/55'} ${r.mono ? 'font-mono' : ''}`}>{r.v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default AssetManagementTab;

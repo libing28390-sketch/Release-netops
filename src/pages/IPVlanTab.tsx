@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Network, Plus, Trash2, AlertTriangle, RefreshCw, Download, Search, X, ChevronRight, ShieldAlert, ClipboardList, RotateCcw, Ticket, CheckCircle2, Clock3 } from 'lucide-react';
+import { Network, Plus, Trash2, AlertTriangle, RefreshCw, Download, Search, X, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ShieldAlert, ClipboardList, RotateCcw, Ticket, CheckCircle2, Clock3, Pencil, ChevronUp, Server, LayoutGrid, LayoutList } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { sectionHeaderRowClass } from '../components/shared';
 
@@ -27,6 +27,7 @@ interface IPAddress {
   device_id: string;
   interface_name: string;
   mac_address: string;
+  device_type: string;
   status: string;
   description: string;
   last_seen: string;
@@ -50,6 +51,16 @@ type TicketStatus = 'open' | 'processing' | 'resolved';
 const IPVLAN_MINIMAL_MODE_KEY = 'ipVlan.minimalMode';
 const IPVLAN_ACTION_PANEL_KEY = 'ipVlan.actionPanelOpen';
 
+const DEVICE_TYPES = [
+  { value: '', label: { zh: '未分类', en: 'Unclassified' }, icon: '—', color: 'text-black/40' },
+  { value: 'server', label: { zh: '服务器', en: 'Server' }, icon: 'S', color: 'text-violet-600 bg-violet-50' },
+  { value: 'switch', label: { zh: '交换机', en: 'Switch' }, icon: 'SW', color: 'text-blue-600 bg-blue-50' },
+  { value: 'router', label: { zh: '路由器', en: 'Router' }, icon: 'R', color: 'text-emerald-600 bg-emerald-50' },
+  { value: 'firewall', label: { zh: '防火墙', en: 'Firewall' }, icon: 'FW', color: 'text-red-600 bg-red-50' },
+  { value: 'ap', label: { zh: 'AP', en: 'AP' }, icon: 'AP', color: 'text-cyan-600 bg-cyan-50' },
+  { value: 'other', label: { zh: '其他', en: 'Other' }, icon: '?', color: 'text-gray-600 bg-gray-50' },
+] as const;
+
 const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
   const [subnets, setSubnets] = useState<Subnet[]>([]);
   const [selectedSubnet, setSelectedSubnet] = useState<Subnet | null>(null);
@@ -60,7 +71,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
   const [search, setSearch] = useState('');
   const [utilFilter, setUtilFilter] = useState<'all' | 'high' | 'critical'>('all');
   const [subnetSort, setSubnetSort] = useState<'util_desc' | 'name_asc'>('util_desc');
-  const [riskOnlyMode, setRiskOnlyMode] = useState(true);
+  const [riskOnlyMode, setRiskOnlyMode] = useState(false);
   const [minimalMode, setMinimalMode] = useState(true);
   const [actionPanelOpen, setActionPanelOpen] = useState(false);
   const [precheckStatus, setPrecheckStatus] = useState<PrecheckStatus>('idle');
@@ -70,7 +81,18 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
   const [showAddSubnet, setShowAddSubnet] = useState(false);
   const [showAddIP, setShowAddIP] = useState(false);
   const [formSubnet, setFormSubnet] = useState({ name: '', network: '', prefix_len: 24, vlan_id: '', vlan_name: '', gateway: '', description: '', site: '' });
-  const [formIP, setFormIP] = useState({ address: '', hostname: '', interface_name: '', mac_address: '', description: '' });
+  const [formIP, setFormIP] = useState({ address: '', hostname: '', interface_name: '', mac_address: '', device_type: '', description: '', status: 'active' });
+  const [editingIP, setEditingIP] = useState<IPAddress | null>(null);
+  const [addrStatusFilter, setAddrStatusFilter] = useState<'all' | 'active' | 'reserved' | 'deprecated'>('all');
+  const [confirmDelete, setConfirmDelete] = useState<{ type: 'subnet' | 'ip'; id: string; label: string } | null>(null);
+  const [editingSubnet, setEditingSubnet] = useState<Subnet | null>(null);
+  const [addrSearch, setAddrSearch] = useState('');
+  const [addrPage, setAddrPage] = useState(1);
+  const addrPageSize = 20;
+  const [subnetPage, setSubnetPage] = useState(1);
+  const subnetPageSize = 15;
+  const [addrDeviceTypeFilter, setAddrDeviceTypeFilter] = useState('');
+  const [addrViewMode, setAddrViewMode] = useState<'table' | 'card'>('table');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -134,6 +156,46 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
     } catch { /* ignore */ }
   };
 
+  const handleEditSubnet = async () => {
+    if (!editingSubnet) return;
+    try {
+      const r = await fetch(`/api/ipam/subnets/${editingSubnet.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...formSubnet,
+          vlan_id: formSubnet.vlan_id ? parseInt(formSubnet.vlan_id) : null,
+        }),
+      });
+      if (r.ok) {
+        setShowAddSubnet(false);
+        setEditingSubnet(null);
+        setFormSubnet({ name: '', network: '', prefix_len: 24, vlan_id: '', vlan_name: '', gateway: '', description: '', site: '' });
+        loadData();
+        if (selectedSubnet?.id === editingSubnet.id) {
+          const updated = await r.json().catch(() => null);
+          if (updated) setSelectedSubnet(updated);
+        }
+      }
+    } catch { /* ignore */ }
+  };
+
+  const openEditSubnet = (subnet: Subnet, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingSubnet(subnet);
+    setFormSubnet({
+      name: subnet.name,
+      network: subnet.network,
+      prefix_len: subnet.prefix_len,
+      vlan_id: subnet.vlan_id ? String(subnet.vlan_id) : '',
+      vlan_name: subnet.vlan_name || '',
+      gateway: subnet.gateway || '',
+      description: subnet.description || '',
+      site: subnet.site || '',
+    });
+    setShowAddSubnet(true);
+  };
+
   const handleAddIP = async () => {
     if (!selectedSubnet) return;
     try {
@@ -144,11 +206,51 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
       });
       if (r.ok) {
         setShowAddIP(false);
-        setFormIP({ address: '', hostname: '', interface_name: '', mac_address: '', description: '' });
+        setEditingIP(null);
+        setFormIP({ address: '', hostname: '', interface_name: '', mac_address: '', device_type: '', description: '', status: 'active' });
         loadAddresses(selectedSubnet);
         loadData();
       }
     } catch { /* ignore */ }
+  };
+
+  const handleEditIP = async () => {
+    if (!editingIP) return;
+    try {
+      const r = await fetch(`/api/ipam/addresses/${editingIP.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hostname: formIP.hostname,
+          interface_name: formIP.interface_name,
+          mac_address: formIP.mac_address,
+          device_type: formIP.device_type,
+          description: formIP.description,
+          status: formIP.status,
+        }),
+      });
+      if (r.ok) {
+        setShowAddIP(false);
+        setEditingIP(null);
+        setFormIP({ address: '', hostname: '', interface_name: '', mac_address: '', device_type: '', description: '', status: 'active' });
+        if (selectedSubnet) loadAddresses(selectedSubnet);
+        loadData();
+      }
+    } catch { /* ignore */ }
+  };
+
+  const openEditIP = (addr: IPAddress) => {
+    setEditingIP(addr);
+    setFormIP({
+      address: addr.address,
+      hostname: addr.hostname || '',
+      interface_name: addr.interface_name || '',
+      mac_address: addr.mac_address || '',
+      device_type: addr.device_type || '',
+      description: addr.description || '',
+      status: addr.status || 'active',
+    });
+    setShowAddIP(true);
   };
 
   const handleDeleteSubnet = async (id: string) => {
@@ -169,6 +271,57 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
       loadData();
     } catch { /* ignore */ }
   };
+
+  const executeConfirmedDelete = async () => {
+    if (!confirmDelete) return;
+    if (confirmDelete.type === 'subnet') await handleDeleteSubnet(confirmDelete.id);
+    else await handleDeleteIP(confirmDelete.id);
+    setConfirmDelete(null);
+  };
+
+  const filteredAddresses = useMemo(() => {
+    let result = addresses;
+    if (addrStatusFilter !== 'all') {
+      result = result.filter(a => a.status === addrStatusFilter);
+    }
+    if (addrDeviceTypeFilter) {
+      result = result.filter(a => (a.device_type || '') === addrDeviceTypeFilter);
+    }
+    if (addrSearch) {
+      const q = addrSearch.toLowerCase();
+      result = result.filter(a =>
+        a.address.toLowerCase().includes(q) ||
+        (a.hostname || '').toLowerCase().includes(q) ||
+        (a.mac_address || '').toLowerCase().includes(q) ||
+        (a.interface_name || '').toLowerCase().includes(q) ||
+        (a.device_type || '').toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [addresses, addrSearch, addrStatusFilter, addrDeviceTypeFilter]);
+
+  const addrStatusCounts = useMemo(() => {
+    const counts = { all: addresses.length, active: 0, reserved: 0, deprecated: 0 };
+    addresses.forEach(a => {
+      if (a.status === 'reserved') counts.reserved++;
+      else if (a.status === 'deprecated') counts.deprecated++;
+      else counts.active++;
+    });
+    return counts;
+  }, [addresses]);
+
+  const addrDeviceTypeCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    addresses.forEach(a => {
+      const dt = a.device_type || '';
+      counts[dt] = (counts[dt] || 0) + 1;
+    });
+    return counts;
+  }, [addresses]);
+
+  const addrTotalPages = Math.max(1, Math.ceil(filteredAddresses.length / addrPageSize));
+  const safeAddrPage = Math.min(addrPage, addrTotalPages);
+  const pagedAddresses = filteredAddresses.slice((safeAddrPage - 1) * addrPageSize, safeAddrPage * addrPageSize);
 
   const handleExport = () => {
     const wb = XLSX.utils.book_new();
@@ -236,6 +389,10 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
     }
     return [...filtered].sort((left, right) => (subnetRiskScoreMap.get(right.id) || 0) - (subnetRiskScoreMap.get(left.id) || 0) || right.utilization - left.utilization || String(left.network).localeCompare(String(right.network)));
   }, [subnets, utilFilter, subnetSort, riskOnlyMode, subnetRiskScoreMap]);
+  const subnetTotalPages = Math.max(1, Math.ceil(visibleSubnets.length / subnetPageSize));
+  const safeSubnetPage = Math.min(subnetPage, subnetTotalPages);
+  const pagedVisibleSubnets = visibleSubnets.slice((safeSubnetPage - 1) * subnetPageSize, safeSubnetPage * subnetPageSize);
+
   const validationRows = useMemo(() => visibleSubnets.slice(0, 5).map((subnet) => {
     const sviOk = Boolean(subnet.gateway);
     const dhcpScopeOk = subnet.total_ips > subnet.used_ips;
@@ -340,25 +497,41 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-[#00172D]">{language === 'zh' ? '资源总览' : 'Resource Overview'}</h3>
           {conflicts.total_conflicts > 0 && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-red-50 border border-red-200 px-2 py-0.5 text-[11px] font-semibold text-red-600">
+            <span className="inline-flex items-center gap-1 rounded-full bg-red-50 border border-red-200 px-2 py-0.5 text-[11px] font-semibold text-red-600 animate-pulse">
               <AlertTriangle size={11} />
               {language === 'zh' ? `${conflicts.total_conflicts} 个冲突待处理` : `${conflicts.total_conflicts} conflicts`}
             </span>
           )}
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-          {[
-            { label: language === 'zh' ? '子网总数' : 'Subnets', value: summary.total_subnets },
-            { label: language === 'zh' ? '总容量' : 'Total IPs', value: summary.total_capacity },
-            { label: language === 'zh' ? '已使用' : 'Used IPs', value: summary.total_used },
-            { label: language === 'zh' ? '利用率' : 'Utilization', value: `${overallUtil}%`, color: utilColor(overallUtil) },
-            { label: language === 'zh' ? '高风险网段' : 'Risky Subnets', value: riskSubnetCount, color: riskSubnetCount > 0 ? 'text-red-600' : 'text-emerald-600' },
-          ].map((card, i) => (
-            <div key={i} className="rounded-xl border border-black/8 px-4 py-3">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-black/30">{card.label}</p>
-              <p className={`text-xl font-bold monitoring-data mt-1 ${card.color || 'text-[#00172D]'}`}>{card.value}</p>
+          <div className="rounded-xl border border-black/8 px-4 py-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-black/30">{language === 'zh' ? '子网总数' : 'Subnets'}</p>
+            <p className="text-xl font-bold monitoring-data mt-1 text-[#00172D]">{summary.total_subnets}</p>
+          </div>
+          <div className="rounded-xl border border-black/8 px-4 py-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-black/30">{language === 'zh' ? '总容量' : 'Total IPs'}</p>
+            <p className="text-xl font-bold monitoring-data mt-1 text-[#00172D]">{summary.total_capacity}</p>
+          </div>
+          <div className="rounded-xl border border-black/8 px-4 py-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-black/30">{language === 'zh' ? '已使用' : 'Used IPs'}</p>
+            <p className="text-xl font-bold monitoring-data mt-1 text-[#00172D]">{summary.total_used}</p>
+          </div>
+          {/* Utilization - prominent colored card */}
+          <div className={`rounded-xl px-4 py-3 border ${overallUtil >= 90 ? 'bg-red-50 border-red-200' : overallUtil >= 80 ? 'bg-orange-50 border-orange-200' : overallUtil >= 50 ? 'bg-blue-50 border-blue-200' : 'bg-emerald-50 border-emerald-200'}`}>
+            <p className={`text-[10px] font-bold uppercase tracking-wider ${overallUtil >= 90 ? 'text-red-500' : overallUtil >= 80 ? 'text-orange-500' : overallUtil >= 50 ? 'text-blue-500' : 'text-emerald-500'}`}>{language === 'zh' ? '利用率' : 'Utilization'}</p>
+            <p className={`text-xl font-bold monitoring-data mt-1 ${utilColor(overallUtil)}`}>{overallUtil}%</p>
+            <div className="mt-1.5 h-1.5 bg-white/80 rounded-full overflow-hidden">
+              <div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.min(100, overallUtil)}%`, backgroundColor: utilBarColor(overallUtil) }} />
             </div>
-          ))}
+          </div>
+          {/* Risk - prominent colored card */}
+          <div className={`rounded-xl px-4 py-3 border ${riskSubnetCount > 0 ? 'bg-red-50 border-red-200' : 'bg-emerald-50 border-emerald-200'}`}>
+            <p className={`text-[10px] font-bold uppercase tracking-wider ${riskSubnetCount > 0 ? 'text-red-500' : 'text-emerald-500'}`}>{language === 'zh' ? '高风险网段' : 'Risky Subnets'}</p>
+            <div className="flex items-end gap-2 mt-1">
+              <p className={`text-xl font-bold monitoring-data ${riskSubnetCount > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{riskSubnetCount}</p>
+              {riskSubnetCount === 0 && <span className="text-[11px] text-emerald-500 font-medium mb-0.5">{language === 'zh' ? '无风险' : 'Clear'}</span>}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -380,7 +553,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
               </div>
               <div className="relative">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder={language === 'zh' ? '搜索子网/VLAN...' : 'Search subnets...'} className="w-full pl-9 pr-3 py-2 text-sm border border-black/10 rounded-lg outline-none focus:border-[#00bceb]/50" />
+                <input value={search} onChange={e => { setSearch(e.target.value); setSubnetPage(1); }} placeholder={language === 'zh' ? '搜索子网/VLAN...' : 'Search subnets...'} className="w-full pl-9 pr-3 py-2 text-sm border border-black/10 rounded-lg outline-none focus:border-[#00bceb]/50" />
               </div>
               <div className="flex items-center justify-between gap-2 mt-2">
                 <div className="flex items-center gap-1.5">
@@ -392,7 +565,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                     <button
                       key={item.id}
                       type="button"
-                      onClick={() => setUtilFilter(item.id)}
+                      onClick={() => { setUtilFilter(item.id); setSubnetPage(1); }}
                       className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold transition-all ${utilFilter === item.id ? 'border-[#00bceb]/45 bg-[#00bceb]/10 text-[#007b9a]' : 'border-black/10 text-black/45 hover:border-black/20 hover:text-black/65'}`}
                     >
                       <span>{item.label}</span>
@@ -402,29 +575,51 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setRiskOnlyMode((prev) => !prev)}
+                  onClick={() => { setRiskOnlyMode((prev) => !prev); setSubnetPage(1); }}
                   className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold transition-all ${riskOnlyMode ? 'border-red-300 bg-red-50 text-red-700' : 'border-black/15 text-black/55 hover:border-black/20 hover:text-black/70'}`}
                 >
                   <CheckCircle2 size={11} />
-                  {language === 'zh' ? '风险优先' : 'Risk First'}
+                  {language === 'zh' ? '仅高风险' : 'High Risk Only'}
                 </button>
               </div>
             </div>
-            <div className="max-h-[360px] overflow-y-auto divide-y divide-black/5">
+            <div className="max-h-[420px] overflow-y-auto divide-y divide-black/5">
               {visibleSubnets.length === 0 && !loading && (
-                <div className="py-16 text-center text-sm text-black/30">
-                  {subnets.length === 0
-                    ? (language === 'zh' ? '暂无子网，点击"添加子网"开始' : 'No subnets. Click "Add Subnet" to start.')
-                    : (language === 'zh' ? '当前筛选条件下没有子网' : 'No subnets under current filter.')}
-                </div>
+                subnets.length === 0 ? (
+                  <div className="py-16 flex flex-col items-center justify-center gap-4">
+                    <div className="w-16 h-16 rounded-2xl bg-[#00bceb]/10 flex items-center justify-center">
+                      <Network size={28} className="text-[#00bceb]" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-semibold text-[#00172D]">{language === 'zh' ? '还没有子网' : 'No subnets yet'}</p>
+                      <p className="text-xs text-black/40 mt-1 max-w-xs">{language === 'zh' ? '添加第一个子网来开始管理IP地址分配和VLAN规划。' : 'Add your first subnet to start managing IP allocation and VLAN planning.'}</p>
+                    </div>
+                    <button onClick={() => setShowAddSubnet(true)} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] transition-all shadow-lg shadow-[#00bceb]/20">
+                      <Plus size={14} />
+                      {language === 'zh' ? '添加第一个子网' : 'Add First Subnet'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-sm text-black/30">
+                    {language === 'zh' ? '当前筛选条件下没有子网' : 'No subnets under current filter.'}
+                  </div>
+                )
               )}
-              {visibleSubnets.map(subnet => (
-                <button key={subnet.id} onClick={() => loadAddresses(subnet)} className={`w-full text-left px-4 py-3 hover:bg-black/[0.02] transition-colors ${selectedSubnet?.id === subnet.id ? 'bg-[#00bceb]/5 border-l-[3px] border-l-[#00bceb]' : ''}`}>
+              {pagedVisibleSubnets.map(subnet => (
+                <button key={subnet.id} onClick={() => { if (selectedSubnet?.id === subnet.id) { setSelectedSubnet(null); setAddresses([]); } else { loadAddresses(subnet); } }} className={`group/subnet w-full text-left px-4 py-3 hover:bg-black/[0.02] transition-colors ${selectedSubnet?.id === subnet.id ? 'bg-[#00bceb]/5 border-l-[3px] border-l-[#00bceb]' : ''}`}>
                   <div className="flex items-center justify-between">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <Network size={14} className="text-[#00bceb] flex-shrink-0" />
                         <p className="text-sm font-semibold text-[#00172D] truncate">{subnet.name || `${subnet.network}/${subnet.prefix_len}`}</p>
+                        <span
+                          role="button"
+                          title={language === 'zh' ? '编辑子网' : 'Edit subnet'}
+                          onClick={(e) => openEditSubnet(subnet, e)}
+                          className="opacity-0 group-hover/subnet:opacity-100 p-0.5 rounded hover:bg-black/10 text-black/30 hover:text-black/60 transition-all"
+                        >
+                          <Pencil size={12} />
+                        </span>
                       </div>
                       <p className="text-[11px] text-black/40 mt-0.5">{subnet.network}/{subnet.prefix_len} {subnet.vlan_id ? `· VLAN ${subnet.vlan_id}` : ''} {subnet.site ? `· ${subnet.site}` : ''}</p>
                     </div>
@@ -440,68 +635,238 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                 </button>
               ))}
             </div>
+            {/* Subnet pagination */}
+            {visibleSubnets.length > subnetPageSize && (
+              <div className="px-4 py-2 border-t border-black/5 flex items-center justify-between">
+                <span className="text-[10px] text-black/35 tabular-nums">
+                  {language === 'zh' ? `${(safeSubnetPage-1)*subnetPageSize+1}-${Math.min(safeSubnetPage*subnetPageSize, visibleSubnets.length)} / ${visibleSubnets.length}` : `${(safeSubnetPage-1)*subnetPageSize+1}-${Math.min(safeSubnetPage*subnetPageSize, visibleSubnets.length)} of ${visibleSubnets.length}`}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button disabled={safeSubnetPage <= 1} onClick={() => setSubnetPage(1)} className="p-1 rounded border border-black/8 hover:bg-black/5 disabled:opacity-30 transition-all" title={language === 'zh' ? '首页' : 'First'}><ChevronsLeft size={12} /></button>
+                  <button disabled={safeSubnetPage <= 1} onClick={() => setSubnetPage(safeSubnetPage - 1)} className="p-1 rounded border border-black/8 hover:bg-black/5 disabled:opacity-30 transition-all"><ChevronLeft size={12} /></button>
+                  <span className="text-[10px] text-black/40 px-1 tabular-nums">{safeSubnetPage}/{subnetTotalPages}</span>
+                  <button disabled={safeSubnetPage >= subnetTotalPages} onClick={() => setSubnetPage(safeSubnetPage + 1)} className="p-1 rounded border border-black/8 hover:bg-black/5 disabled:opacity-30 transition-all"><ChevronRight size={12} /></button>
+                  <button disabled={safeSubnetPage >= subnetTotalPages} onClick={() => setSubnetPage(subnetTotalPages)} className="p-1 rounded border border-black/8 hover:bg-black/5 disabled:opacity-30 transition-all" title={language === 'zh' ? '末页' : 'Last'}><ChevronsRight size={12} /></button>
+                </div>
+              </div>
+            )}
           </div>
 
-          {!minimalMode && (
+          {selectedSubnet && (
             <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
-              {!selectedSubnet ? (
-                <div className="flex flex-col items-center justify-center h-[340px]">
-                  <Network size={40} className="text-black/10 mb-3" />
-                  <p className="text-sm text-black/30">{language === 'zh' ? '选择子网查看IP分配' : 'Select a subnet to view IP assignments'}</p>
-                </div>
-              ) : (
                 <div className="flex flex-col h-full">
-                  <div className="px-4 py-3 border-b border-black/5 bg-black/[0.02] flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-[#00172D]">{selectedSubnet.name || selectedSubnet.network}/{selectedSubnet.prefix_len}</p>
-                      <p className="text-[11px] text-black/40">
-                        {selectedSubnet.vlan_id ? `VLAN ${selectedSubnet.vlan_id} (${selectedSubnet.vlan_name})` : ''} {selectedSubnet.gateway ? `· GW: ${selectedSubnet.gateway}` : ''}
-                      </p>
+                  <div className="px-4 py-3 border-b border-black/5 bg-gradient-to-r from-[#00bceb]/5 to-transparent">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <Network size={16} className="text-[#00bceb]" />
+                          <p className="text-base font-bold text-[#00172D]">{selectedSubnet.name || `${selectedSubnet.network}/${selectedSubnet.prefix_len}`}</p>
+                        </div>
+                        <p className="text-[11px] text-black/40 mt-0.5 ml-6">
+                          {selectedSubnet.network}/{selectedSubnet.prefix_len}
+                          {selectedSubnet.vlan_id ? ` · VLAN ${selectedSubnet.vlan_id}` : ''}
+                          {selectedSubnet.vlan_name ? ` (${selectedSubnet.vlan_name})` : ''}
+                          {selectedSubnet.site ? ` · ${selectedSubnet.site}` : ''}
+                        </p>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center flex-shrink-0">
+                      <div className="relative">
+                        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/25" />
+                        <input
+                          value={addrSearch}
+                          onChange={e => { setAddrSearch(e.target.value); setAddrPage(1); }}
+                          placeholder={language === 'zh' ? '搜索IP/主机/MAC...' : 'Search IP/host/MAC...'}
+                          className="pl-7 pr-2 py-1.5 text-xs border border-black/10 rounded-lg outline-none focus:border-[#00bceb]/50 w-40"
+                        />
+                        {addrSearch && (
+                          <button onClick={() => { setAddrSearch(''); setAddrPage(1); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-black/25 hover:text-black/50">
+                            <X size={11} />
+                          </button>
+                        )}
+                      </div>
                       <button onClick={() => setShowAddIP(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#00a5d0] transition-all">
                         <Plus size={12} />
                         {language === 'zh' ? '添加IP' : 'Add IP'}
                       </button>
-                      <button onClick={() => handleDeleteSubnet(selectedSubnet.id)} className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-red-500 hover:border-red-300 transition-all" title={language === 'zh' ? '删除子网' : 'Delete Subnet'}>
+                      <button onClick={() => setConfirmDelete({ type: 'subnet', id: selectedSubnet.id, label: selectedSubnet.name || `${selectedSubnet.network}/${selectedSubnet.prefix_len}` })} className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-red-500 hover:border-red-300 transition-all" title={language === 'zh' ? '删除子网' : 'Delete Subnet'}>
                         <Trash2 size={14} />
                       </button>
+                      <button onClick={() => { setSelectedSubnet(null); setAddresses([]); }} className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all" title={language === 'zh' ? '收起' : 'Collapse'}>
+                        <ChevronUp size={14} />
+                      </button>
+                    </div>
+                    {/* Subnet summary cards */}
+                    <div className="grid grid-cols-4 gap-2 mt-1">
+                      <div className="rounded-lg bg-white/80 border border-black/6 px-2.5 py-1.5 text-center">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-black/30">{language === 'zh' ? '总容量' : 'Capacity'}</p>
+                        <p className="text-sm font-bold text-[#00172D] monitoring-data mt-0.5">{selectedSubnet.total_ips}</p>
+                      </div>
+                      <div className="rounded-lg bg-white/80 border border-black/6 px-2.5 py-1.5 text-center">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-black/30">{language === 'zh' ? '已分配' : 'Assigned'}</p>
+                        <p className="text-sm font-bold text-[#00bceb] monitoring-data mt-0.5">{addresses.length}</p>
+                      </div>
+                      <div className="rounded-lg bg-white/80 border border-black/6 px-2.5 py-1.5 text-center">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-black/30">{language === 'zh' ? '已使用' : 'Used'}</p>
+                        <p className={`text-sm font-bold monitoring-data mt-0.5 ${utilColor(selectedSubnet.utilization)}`}>{selectedSubnet.used_ips}</p>
+                      </div>
+                      <div className="rounded-lg bg-white/80 border border-black/6 px-2.5 py-1.5 text-center">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-black/30">{language === 'zh' ? '可用' : 'Available'}</p>
+                        <p className="text-sm font-bold text-emerald-600 monitoring-data mt-0.5">{Math.max(0, selectedSubnet.total_ips - selectedSubnet.used_ips)}</p>
+                      </div>
+                    </div>
+                    {selectedSubnet.gateway && (
+                      <p className="text-[10px] text-black/35 mt-2 ml-0.5">Gateway: <span className="font-mono font-semibold text-black/50">{selectedSubnet.gateway}</span></p>
+                    )}
+                    {/* Utilization bar */}
+                    <div className="mt-2 flex items-center gap-2">
+                      <div className="flex-1 h-2 bg-black/5 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.min(100, selectedSubnet.utilization)}%`, backgroundColor: utilBarColor(selectedSubnet.utilization) }} />
+                      </div>
+                      <span className={`text-[11px] font-bold monitoring-data ${utilColor(selectedSubnet.utilization)}`}>{selectedSubnet.utilization}%</span>
+                    </div>
+                    {/* Status filter tabs + device type filter + view toggle */}
+                    <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {([
+                          { id: 'all' as const, label: language === 'zh' ? '全部' : 'All', count: addrStatusCounts.all },
+                          { id: 'active' as const, label: language === 'zh' ? '在用' : 'Active', count: addrStatusCounts.active, color: 'emerald' },
+                          { id: 'reserved' as const, label: language === 'zh' ? '预留' : 'Reserved', count: addrStatusCounts.reserved, color: 'amber' },
+                          { id: 'deprecated' as const, label: language === 'zh' ? '停用' : 'Deprecated', count: addrStatusCounts.deprecated, color: 'gray' },
+                        ]).map(tab => (
+                          <button
+                            key={tab.id}
+                            onClick={() => { setAddrStatusFilter(tab.id); setAddrPage(1); }}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-all ${addrStatusFilter === tab.id ? 'border-[#00bceb]/45 bg-[#00bceb]/10 text-[#007b9a]' : 'border-black/8 text-black/40 hover:border-black/15 hover:text-black/55'}`}
+                          >
+                            {tab.label}
+                            <span className="tabular-nums">{tab.count}</span>
+                          </button>
+                        ))}
+                        <span className="w-px h-4 bg-black/10 mx-0.5" />
+                        {DEVICE_TYPES.filter(dt => dt.value && (addrDeviceTypeCounts[dt.value] || 0) > 0).map(dt => (
+                          <button
+                            key={dt.value}
+                            onClick={() => { setAddrDeviceTypeFilter(prev => prev === dt.value ? '' : dt.value); setAddrPage(1); }}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-all ${addrDeviceTypeFilter === dt.value ? 'border-[#00bceb]/45 bg-[#00bceb]/10 text-[#007b9a]' : 'border-black/8 text-black/40 hover:border-black/15 hover:text-black/55'}`}
+                            title={dt.label[language === 'zh' ? 'zh' : 'en']}
+                          >
+                            <span className={`inline-flex items-center justify-center w-4 h-4 rounded text-[8px] font-bold ${dt.color}`}>{dt.icon}</span>
+                            <span className="tabular-nums">{addrDeviceTypeCounts[dt.value] || 0}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-0.5 border border-black/8 rounded-lg p-0.5">
+                        <button onClick={() => setAddrViewMode('table')} className={`p-1 rounded ${addrViewMode === 'table' ? 'bg-[#00bceb]/10 text-[#007b9a]' : 'text-black/30 hover:text-black/50'}`} title={language === 'zh' ? '表格视图' : 'Table view'}><LayoutList size={13} /></button>
+                        <button onClick={() => setAddrViewMode('card')} className={`p-1 rounded ${addrViewMode === 'card' ? 'bg-[#00bceb]/10 text-[#007b9a]' : 'text-black/30 hover:text-black/50'}`} title={language === 'zh' ? '卡片视图' : 'Card view'}><LayoutGrid size={13} /></button>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto max-h-[360px]">
+                  <div className="flex-1 overflow-y-auto max-h-[420px]">
+                    {addrViewMode === 'table' ? (
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-black/[0.01] border-b border-black/5">
-                          <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? 'IP地址' : 'Address'}</th>
-                          <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '主机名' : 'Hostname'}</th>
-                          <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '接口' : 'Interface'}</th>
-                          <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-black/40">MAC</th>
-                          <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '操作' : 'Action'}</th>
+                          <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? 'IP地址' : 'Address'}</th>
+                          <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '主机名' : 'Hostname'}</th>
+                          <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '类型' : 'Type'}</th>
+                          <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '接口' : 'Interface'}</th>
+                          <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '状态' : 'Status'}</th>
+                          <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-black/40 w-16"></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {addresses.length === 0 && (
-                          <tr><td colSpan={5} className="px-4 py-12 text-center text-sm text-black/30">{language === 'zh' ? '暂无IP分配记录' : 'No IP assignments'}</td></tr>
+                        {pagedAddresses.length === 0 && (
+                          <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-black/30">{addrSearch || addrStatusFilter !== 'all' ? (language === 'zh' ? '无匹配结果' : 'No matches') : (language === 'zh' ? '暂无IP分配记录' : 'No IP assignments')}</td></tr>
                         )}
-                        {addresses.map(addr => (
-                          <tr key={addr.id} className="border-b border-black/5 hover:bg-black/[0.01]">
-                            <td className="px-4 py-3 text-sm font-mono font-semibold text-[#00172D]">{addr.address}</td>
-                            <td className="px-4 py-3 text-xs text-black/60">{addr.hostname || '-'}</td>
-                            <td className="px-4 py-3 text-xs text-black/60">{addr.interface_name || '-'}</td>
-                            <td className="px-4 py-3 text-xs font-mono text-black/40">{addr.mac_address || '-'}</td>
-                            <td className="px-4 py-3">
-                              <button onClick={() => handleDeleteIP(addr.id)} className="p-1 rounded text-black/30 hover:text-red-500 transition-colors" title={language === 'zh' ? '删除' : 'Delete'}>
-                                <Trash2 size={13} />
-                              </button>
+                        {pagedAddresses.map(addr => {
+                          const statusBadge = addr.status === 'reserved'
+                            ? { bg: 'bg-amber-50 border-amber-200 text-amber-700', label: language === 'zh' ? '预留' : 'Reserved' }
+                            : addr.status === 'deprecated'
+                              ? { bg: 'bg-gray-100 border-gray-300 text-gray-500', label: language === 'zh' ? '停用' : 'Deprecated' }
+                              : { bg: 'bg-emerald-50 border-emerald-200 text-emerald-700', label: language === 'zh' ? '在用' : 'Active' };
+                          const dtMeta = DEVICE_TYPES.find(d => d.value === (addr.device_type || '')) || DEVICE_TYPES[0];
+                          return (
+                          <tr key={addr.id} className={`border-b border-black/5 hover:bg-black/[0.01] group/row ${addr.status === 'deprecated' ? 'opacity-50' : ''}`}>
+                            <td className="px-3 py-2 text-sm font-mono font-semibold text-[#00172D]">{addr.address}</td>
+                            <td className="px-3 py-2 text-xs text-black/60">{addr.hostname || '-'}</td>
+                            <td className="px-3 py-2">
+                              {addr.device_type ? (
+                                <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-[8px] font-bold ${dtMeta.color}`} title={dtMeta.label[language === 'zh' ? 'zh' : 'en']}>{dtMeta.icon}</span>
+                              ) : <span className="text-xs text-black/25">-</span>}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-black/60">{addr.interface_name || '-'}</td>
+                            <td className="px-3 py-2">
+                              <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${statusBadge.bg}`}>{statusBadge.label}</span>
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity">
+                                <button onClick={() => openEditIP(addr)} className="p-1 rounded text-black/25 hover:text-[#00bceb] transition-colors" title={language === 'zh' ? '编辑' : 'Edit'}>
+                                  <Pencil size={13} />
+                                </button>
+                                <button onClick={() => setConfirmDelete({ type: 'ip', id: addr.id, label: addr.address })} className="p-1 rounded text-black/25 hover:text-red-500 transition-colors" title={language === 'zh' ? '删除' : 'Delete'}>
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
+                    ) : (
+                    /* Card view for dense display */
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 p-3">
+                      {pagedAddresses.length === 0 && (
+                        <div className="col-span-full py-12 text-center text-sm text-black/30">{addrSearch || addrStatusFilter !== 'all' || addrDeviceTypeFilter ? (language === 'zh' ? '无匹配结果' : 'No matches') : (language === 'zh' ? '暂无IP分配记录' : 'No IP assignments')}</div>
+                      )}
+                      {pagedAddresses.map(addr => {
+                        const statusBadge = addr.status === 'reserved'
+                          ? { bg: 'bg-amber-50 border-amber-200 text-amber-700', label: language === 'zh' ? '预留' : 'Reserved', dot: 'bg-amber-400' }
+                          : addr.status === 'deprecated'
+                            ? { bg: 'bg-gray-100 border-gray-300 text-gray-500', label: language === 'zh' ? '停用' : 'Deprecated', dot: 'bg-gray-400' }
+                            : { bg: 'bg-emerald-50 border-emerald-200 text-emerald-700', label: language === 'zh' ? '在用' : 'Active', dot: 'bg-emerald-400' };
+                        const dtMeta = DEVICE_TYPES.find(d => d.value === (addr.device_type || '')) || DEVICE_TYPES[0];
+                        return (
+                          <div key={addr.id} className={`group/card relative rounded-xl border border-black/8 px-3 py-2.5 hover:border-[#00bceb]/30 hover:shadow-sm transition-all cursor-default ${addr.status === 'deprecated' ? 'opacity-50' : ''}`}>
+                            <div className="flex items-center justify-between gap-1">
+                              <p className="text-xs font-mono font-bold text-[#00172D] truncate">{addr.address}</p>
+                              {addr.device_type && <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-[8px] font-bold flex-shrink-0 ${dtMeta.color}`} title={dtMeta.label[language === 'zh' ? 'zh' : 'en']}>{dtMeta.icon}</span>}
+                            </div>
+                            <p className="text-[11px] text-black/50 truncate mt-1">{addr.hostname || (language === 'zh' ? '未命名' : 'Unnamed')}</p>
+                            {addr.interface_name && <p className="text-[10px] text-black/35 truncate">{addr.interface_name}</p>}
+                            <div className="flex items-center justify-between mt-1.5">
+                              <div className="flex items-center gap-1">
+                                <span className={`w-1.5 h-1.5 rounded-full ${statusBadge.dot}`} />
+                                <span className="text-[9px] text-black/40">{statusBadge.label}</span>
+                              </div>
+                            </div>
+                            {/* Card hover actions */}
+                            <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                              <button onClick={() => openEditIP(addr)} className="p-0.5 rounded text-black/20 hover:text-[#00bceb] transition-colors"><Pencil size={11} /></button>
+                              <button onClick={() => setConfirmDelete({ type: 'ip', id: addr.id, label: addr.address })} className="p-0.5 rounded text-black/20 hover:text-red-500 transition-colors"><Trash2 size={11} /></button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    )}
                   </div>
+                  {/* IP pagination */}
+                  {filteredAddresses.length > addrPageSize && (
+                    <div className="px-4 py-2 border-t border-black/5 flex items-center justify-between">
+                      <span className="text-[10px] text-black/35">
+                        {language === 'zh' ? `${(safeAddrPage-1)*addrPageSize+1}-${Math.min(safeAddrPage*addrPageSize, filteredAddresses.length)} / ${filteredAddresses.length}` : `${(safeAddrPage-1)*addrPageSize+1}-${Math.min(safeAddrPage*addrPageSize, filteredAddresses.length)} of ${filteredAddresses.length}`}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button disabled={safeAddrPage <= 1} onClick={() => setAddrPage(safeAddrPage - 1)} className="p-1 rounded border border-black/8 hover:bg-black/5 disabled:opacity-30 transition-all"><ChevronLeft size={12} /></button>
+                        <span className="text-[10px] text-black/40 px-1 tabular-nums">{safeAddrPage}/{addrTotalPages}</span>
+                        <button disabled={safeAddrPage >= addrTotalPages} onClick={() => setAddrPage(safeAddrPage + 1)} className="p-1 rounded border border-black/8 hover:bg-black/5 disabled:opacity-30 transition-all"><ChevronRight size={12} /></button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
             </div>
           )}
         </div>
@@ -553,6 +918,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                 <RotateCcw size={12} />
                 {language === 'zh' ? '一键回滚' : 'Rollback'}
               </button>
+              <span className="ml-auto rounded-full border border-black/8 bg-black/[0.03] px-2 py-0.5 text-[9px] font-medium text-black/35 select-none">{language === 'zh' ? '模拟' : 'Simulated'}</span>
             </div>
           </div>
 
@@ -583,7 +949,10 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wider text-black/35">{language === 'zh' ? '冲突处置' : 'Conflict Handling'}</p>
-                <h3 className="text-base font-semibold text-[#00172D] mt-1">{language === 'zh' ? '定位与工单' : 'Localization & Ticketing'}</h3>
+                <div className="flex items-center gap-2 mt-1">
+                  <h3 className="text-base font-semibold text-[#00172D]">{language === 'zh' ? '定位与工单' : 'Localization & Ticketing'}</h3>
+                  <span className="rounded-full border border-black/8 bg-black/[0.03] px-2 py-0.5 text-[9px] font-medium text-black/35 select-none">{language === 'zh' ? '模拟' : 'Simulated'}</span>
+                </div>
               </div>
               <Ticket size={16} className="text-[#00bceb]" />
             </div>
@@ -622,11 +991,11 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
       </div>
 
       {showAddSubnet && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[80]" onClick={() => setShowAddSubnet(false)}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[80]" onClick={() => { setShowAddSubnet(false); setEditingSubnet(null); }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-semibold text-[#00172D]">{language === 'zh' ? '添加子网' : 'Add Subnet'}</h3>
-              <button onClick={() => setShowAddSubnet(false)} className="p-1 text-black/30 hover:text-black/60" title="Close"><X size={18} /></button>
+              <h3 className="text-lg font-semibold text-[#00172D]">{editingSubnet ? (language === 'zh' ? '编辑子网' : 'Edit Subnet') : (language === 'zh' ? '添加子网' : 'Add Subnet')}</h3>
+              <button onClick={() => { setShowAddSubnet(false); setEditingSubnet(null); }} className="p-1 text-black/30 hover:text-black/60" title="Close"><X size={18} /></button>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -663,24 +1032,42 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-5">
-              <button onClick={() => setShowAddSubnet(false)} className="px-4 py-2 text-sm text-black/50 hover:text-black/70">{language === 'zh' ? '取消' : 'Cancel'}</button>
-              <button onClick={handleAddSubnet} disabled={!formSubnet.network} className="px-5 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] disabled:opacity-40">{language === 'zh' ? '添加' : 'Add'}</button>
+              <button onClick={() => { setShowAddSubnet(false); setEditingSubnet(null); }} className="px-4 py-2 text-sm text-black/50 hover:text-black/70">{language === 'zh' ? '取消' : 'Cancel'}</button>
+              <button onClick={editingSubnet ? handleEditSubnet : handleAddSubnet} disabled={!formSubnet.network} className="px-5 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] disabled:opacity-40">{editingSubnet ? (language === 'zh' ? '保存' : 'Save') : (language === 'zh' ? '添加' : 'Add')}</button>
             </div>
           </div>
         </div>
       )}
 
       {showAddIP && selectedSubnet && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[80]" onClick={() => setShowAddIP(false)}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[80]" onClick={() => { setShowAddIP(false); setEditingIP(null); }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-semibold text-[#00172D]">{language === 'zh' ? '添加IP地址' : 'Add IP Address'}</h3>
-              <button onClick={() => setShowAddIP(false)} className="p-1 text-black/30 hover:text-black/60" title="Close"><X size={18} /></button>
+              <h3 className="text-lg font-semibold text-[#00172D]">{editingIP ? (language === 'zh' ? '编辑IP地址' : 'Edit IP Address') : (language === 'zh' ? '添加IP地址' : 'Add IP Address')}</h3>
+              <button onClick={() => { setShowAddIP(false); setEditingIP(null); }} className="p-1 text-black/30 hover:text-black/60" title="Close"><X size={18} /></button>
             </div>
             <div className="space-y-3">
               <div>
                 <label className="text-[11px] font-semibold text-black/40 uppercase">{language === 'zh' ? 'IP地址' : 'Address'}*</label>
-                <input value={formIP.address} onChange={e => setFormIP(f => ({ ...f, address: e.target.value }))} placeholder="192.168.1.10" className="w-full mt-1 px-3 py-2 border border-black/10 rounded-lg text-sm outline-none focus:border-[#00bceb]/50" />
+                <input value={formIP.address} onChange={e => setFormIP(f => ({ ...f, address: e.target.value }))} placeholder="192.168.1.10" disabled={!!editingIP} className={`w-full mt-1 px-3 py-2 border border-black/10 rounded-lg text-sm outline-none focus:border-[#00bceb]/50 ${editingIP ? 'bg-black/[0.03] text-black/40 cursor-not-allowed' : ''}`} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-black/40 uppercase">{language === 'zh' ? '状态' : 'Status'}</label>
+                  <select value={formIP.status} onChange={e => setFormIP(f => ({ ...f, status: e.target.value }))} className="w-full mt-1 px-3 py-2 border border-black/10 rounded-lg text-sm outline-none focus:border-[#00bceb]/50 bg-white">
+                    <option value="active">{language === 'zh' ? '在用 (Active)' : 'Active'}</option>
+                    <option value="reserved">{language === 'zh' ? '预留 (Reserved)' : 'Reserved'}</option>
+                    <option value="deprecated">{language === 'zh' ? '停用 (Deprecated)' : 'Deprecated'}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-black/40 uppercase">{language === 'zh' ? '设备类型' : 'Device Type'}</label>
+                  <select value={formIP.device_type} onChange={e => setFormIP(f => ({ ...f, device_type: e.target.value }))} className="w-full mt-1 px-3 py-2 border border-black/10 rounded-lg text-sm outline-none focus:border-[#00bceb]/50 bg-white">
+                    {DEVICE_TYPES.map(dt => (
+                      <option key={dt.value} value={dt.value}>{dt.label[language === 'zh' ? 'zh' : 'en']}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div>
                 <label className="text-[11px] font-semibold text-black/40 uppercase">{language === 'zh' ? '主机名' : 'Hostname'}</label>
@@ -700,8 +1087,37 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-5">
-              <button onClick={() => setShowAddIP(false)} className="px-4 py-2 text-sm text-black/50 hover:text-black/70">{language === 'zh' ? '取消' : 'Cancel'}</button>
-              <button onClick={handleAddIP} disabled={!formIP.address} className="px-5 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] disabled:opacity-40">{language === 'zh' ? '添加' : 'Add'}</button>
+              <button onClick={() => { setShowAddIP(false); setEditingIP(null); }} className="px-4 py-2 text-sm text-black/50 hover:text-black/70">{language === 'zh' ? '取消' : 'Cancel'}</button>
+              <button onClick={editingIP ? handleEditIP : handleAddIP} disabled={!formIP.address} className="px-5 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] disabled:opacity-40">{editingIP ? (language === 'zh' ? '保存' : 'Save') : (language === 'zh' ? '添加' : 'Add')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[90]" onClick={() => setConfirmDelete(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center">
+                <Trash2 size={20} className="text-red-500" />
+              </div>
+              <h3 className="text-base font-semibold text-[#00172D]">
+                {language === 'zh' ? '确认删除' : 'Confirm Delete'}
+              </h3>
+              <p className="text-sm text-black/50 text-center">
+                {confirmDelete.type === 'subnet'
+                  ? (language === 'zh' ? `确定删除子网 "${confirmDelete.label}" 及其所有IP分配记录？此操作不可撤销。` : `Delete subnet "${confirmDelete.label}" and all its IP assignments? This cannot be undone.`)
+                  : (language === 'zh' ? `确定删除IP地址 ${confirmDelete.label}？` : `Delete IP address ${confirmDelete.label}?`)}
+              </p>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setConfirmDelete(null)} className="flex-1 px-4 py-2.5 rounded-xl border border-black/10 text-sm font-semibold text-black/60 hover:bg-black/5 transition-all">
+                {language === 'zh' ? '取消' : 'Cancel'}
+              </button>
+              <button onClick={executeConfirmedDelete} className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 transition-all">
+                {language === 'zh' ? '确认删除' : 'Delete'}
+              </button>
             </div>
           </div>
         </div>

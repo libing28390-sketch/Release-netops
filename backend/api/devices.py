@@ -146,6 +146,7 @@ def _normalize_device_row(row):
 def read_devices(
     search: Optional[str] = Query(default=None),
     platform: Optional[str] = Query(default=None),
+    role: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
     mode: Optional[str] = Query(default='full'),
     sort_key: Optional[str] = Query(default=None),
@@ -166,6 +167,10 @@ def read_devices(
         if platform and platform != 'all':
             where_clauses.append('platform = ?')
             params.append(platform)
+
+        if role and role != 'all':
+            where_clauses.append('LOWER(role) LIKE ?')
+            params.append(f'%{role.lower()}%')
 
         if status and status != 'all':
             where_clauses.append('status = ?')

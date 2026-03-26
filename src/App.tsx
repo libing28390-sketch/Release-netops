@@ -15,7 +15,7 @@ import DeviceDetailModal from './components/DeviceDetailModal';
 import CustomCommandModal from './components/CustomCommandModal';
 import AddScenarioModal from './components/AddScenarioModal';
 import CommandPalette from './components/CommandPalette';
-import Sidebar from './components/sidebar';
+import AppSidebar from './components/AppSidebar';
 import TopHeader from './components/TopHeader';
 import ProfileModal from './components/ProfileModal';
 import CommandPreviewModal from './components/CommandPreviewModal';
@@ -53,6 +53,7 @@ const ConfigScheduleTab = lazy(() => import('./pages/ConfigScheduleTab'));
 const ConfigSearchTab = lazy(() => import('./pages/ConfigSearchTab'));
 const CapacityPlanningTab = lazy(() => import('./pages/CapacityPlanningTab'));
 const IPVlanTab = lazy(() => import('./pages/IPVlanTab'));
+const AssetManagementTab = lazy(() => import('./pages/AssetManagementTab'));
 const InterfaceMonitoringTab = lazy(() => import('./pages/InterfaceMonitoringTab'));
 const AutomationExecuteTab = lazy(() => import('./pages/AutomationExecuteTab'));
 const AutomationPlaybooksTab = lazy(() => import('./pages/AutomationPlaybooksTab'));
@@ -472,6 +473,7 @@ const App: React.FC = () => {
     if (path === '/inventory/devices') return t('deviceList');
     if (path === '/inventory/interfaces') return t('interfaceMonitoring');
     if (path === '/ipam') return language === 'zh' ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt';
+    if (path === '/assets') return language === 'zh' ? '资产管理' : 'Assets';
     if (path === '/automation/execute') return t('directExecution');
     if (path === '/automation/scenarios') return t('scenarioLibrary');
     if (path === '/automation/history') return t('executionHistory');
@@ -496,6 +498,10 @@ const App: React.FC = () => {
       .map((path) => ({ path, label: getSidebarRecentLabel(path) }));
   }, [getSidebarRecentLabel, recentSidebarPaths]);
 
+  const removeRecentPath = useCallback((path: string) => {
+    setRecentSidebarPaths((prev) => prev.filter((p) => p !== path));
+  }, []);
+
   // 命令面板全量导航条目
   const allNavItems = useMemo<{ path: string; label: string; group: string }[]>(() => {
     const zh = language === 'zh';
@@ -507,6 +513,7 @@ const App: React.FC = () => {
       { path: '/inventory/devices', label: t('deviceList'), group: zh ? '设备清单' : 'Inventory' },
       { path: '/inventory/interfaces', label: t('interfaceMonitoring'), group: zh ? '设备清单' : 'Inventory' },
       { path: '/ipam', label: zh ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt', group: zh ? '设备清单' : 'Inventory' },
+      { path: '/assets', label: zh ? '资产管理' : 'Assets', group: zh ? '设备清单' : 'Inventory' },
       { path: '/alerts', label: zh ? '告警信息' : 'Alert Desk', group: zh ? '告警管理' : 'Alerts' },
       { path: '/alert-rules', label: zh ? '告警规则' : 'Alert Rules', group: zh ? '告警管理' : 'Alerts' },
       { path: '/maintenance', label: zh ? '维护期' : 'Maintenance', group: zh ? '告警管理' : 'Alerts' },
@@ -584,6 +591,7 @@ const App: React.FC = () => {
     if (activeTab === 'reports') return language === 'zh' ? '报表中心' : 'Reports';
     if (activeTab === 'capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
     if (activeTab === 'ipam') return language === 'zh' ? 'IP/VLAN管理' : 'IP/VLAN Management';
+    if (activeTab === 'assets') return language === 'zh' ? '资产管理' : 'Asset Management';
     if (activeTab === 'compliance') return t('compliance');
     if (activeTab === 'monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
     if (activeTab === 'health') return language === 'zh' ? '健康检测' : 'Health Detection';
@@ -1405,6 +1413,7 @@ const App: React.FC = () => {
     if (page === 'devices') {
       setInventorySearch('');
       setInventoryPlatformFilter('all');
+      setInventoryRoleFilter('all');
       setInventoryStatusFilter('all');
       setInventorySortConfig(null);
       setSelectedDeviceIds([]);
@@ -2439,17 +2448,18 @@ const App: React.FC = () => {
   // Inventory Filters & Sorting
   const [inventorySearch, setInventorySearch] = useState('');
   const [inventoryPlatformFilter, setInventoryPlatformFilter] = useState('all');
+  const [inventoryRoleFilter, setInventoryRoleFilter] = useState('all');
   const [inventoryStatusFilter, setInventoryStatusFilter] = useState('all');
   const [inventorySortConfig, setInventorySortConfig] = useState<{ key: keyof Device, direction: 'asc' | 'desc' } | null>(null);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
 
   useEffect(() => {
     setInventoryPage(1);
-  }, [inventorySearch, inventoryPlatformFilter, inventoryStatusFilter, inventoryPageSize]);
+  }, [inventorySearch, inventoryPlatformFilter, inventoryRoleFilter, inventoryStatusFilter, inventoryPageSize]);
 
   useEffect(() => {
     setSelectedDeviceIds([]);
-  }, [inventorySearch, inventoryPlatformFilter, inventoryStatusFilter, inventorySortConfig, inventoryPage]);
+  }, [inventorySearch, inventoryPlatformFilter, inventoryRoleFilter, inventoryStatusFilter, inventorySortConfig, inventoryPage]);
 
   useEffect(() => {
     const totalInventoryPages = Math.max(1, Math.ceil(inventoryTotal / inventoryPageSize));
@@ -2468,6 +2478,7 @@ const App: React.FC = () => {
         const params = new URLSearchParams({
           search: inventorySearch,
           platform: inventoryPlatformFilter,
+          role: inventoryRoleFilter,
           status: inventoryStatusFilter,
           page: String(inventoryPage),
           page_size: String(inventoryPageSize),
@@ -2506,6 +2517,7 @@ const App: React.FC = () => {
     inventorySubPage,
     inventorySearch,
     inventoryPlatformFilter,
+    inventoryRoleFilter,
     inventoryStatusFilter,
     inventorySortConfig,
     inventoryPage,
@@ -5136,50 +5148,19 @@ const App: React.FC = () => {
   return (
     <AppRuntimeBoundary language={language}>
       <div className="app-shell flex h-screen text-[#141414] font-sans overflow-hidden">
-      <Sidebar
-        isMobile={isMobile}
-        sidebarCollapsed={sidebarCollapsed}
-        language={language}
+      <AppSidebar
+        activeRoute={activeTab}
         currentPath={location.pathname}
-        activeTab={activeTab}
-        pinnedPaths={pinnedPaths}
-        recentSidebarItems={recentSidebarItems}
-        hostResourceTone={hostResourceTone}
-        hostResourceSummary={hostResourceSummary}
-        hostResources={hostResources}
-        alertNavTone={alertNavTone}
-        unreadNotificationCount={unreadNotificationCount}
-        realtimeSectionOpen={realtimeSectionOpen}
-        alertsSectionOpen={alertsSectionOpen}
-        assetsSectionOpen={assetsSectionOpen}
-        automationSectionOpen={automationSectionOpen}
-        capacitySectionOpen={capacitySectionOpen}
-        managementSectionOpen={managementSectionOpen}
-        monitoringGroupOpen={monitoringGroupOpen}
-        alertGroupOpen={alertGroupOpen}
-        inventoryGroupOpen={inventoryGroupOpen}
-        automationGroupOpen={automationGroupOpen}
-        configGroupOpen={configGroupOpen}
-        managementGroupOpen={managementGroupOpen}
+        onNavigate={setActiveTab}
+        onNavigatePath={navTo}
+        alertCounts={{ monitoring: 0, alertCenter: unreadNotificationCount }}
+        isP1Critical={unreadNotificationCount > 20}
+        language={language}
+        isMobile={isMobile}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(v => !v)}
+        onOpenSearch={() => setCmdPaletteOpen(true)}
         t={t}
-        getSidebarRecentLabel={getSidebarRecentLabel}
-        navTo={navTo}
-        setActiveTab={setActiveTab}
-        togglePin={togglePin}
-        formatCompactResourcePercent={formatCompactResourcePercent}
-        setSidebarCollapsed={setSidebarCollapsed}
-        setRealtimeSectionOpen={setRealtimeSectionOpen}
-        setAlertsSectionOpen={setAlertsSectionOpen}
-        setAssetsSectionOpen={setAssetsSectionOpen}
-        setAutomationSectionOpen={setAutomationSectionOpen}
-        setCapacitySectionOpen={setCapacitySectionOpen}
-        setManagementSectionOpen={setManagementSectionOpen}
-        setMonitoringGroupOpen={setMonitoringGroupOpen}
-        setAlertGroupOpen={setAlertGroupOpen}
-        setInventoryGroupOpen={setInventoryGroupOpen}
-        setAutomationGroupOpen={setAutomationGroupOpen}
-        setConfigGroupOpen={setConfigGroupOpen}
-        setManagementGroupOpen={setManagementGroupOpen}
       />
 
       {/* Main Content Area */}
@@ -5252,6 +5233,7 @@ const App: React.FC = () => {
                 dashLastRefresh={dashLastRefresh}
                 hostResources={hostResources}
                 unreadNotificationCount={unreadNotificationCount}
+                notifications={notifications}
                 language={language}
                 t={t}
                 setActiveTab={setActiveTab}
@@ -5263,6 +5245,7 @@ const App: React.FC = () => {
           {activeTab === 'monitoring' && (
             <Suspense fallback={lazyPanelFallback}>
               <MonitoringCenter
+                devices={devices}
                 language={language}
                 monitorSearch={monitorSearch}
                 setMonitorSearch={setMonitorSearch}
@@ -5388,6 +5371,8 @@ const App: React.FC = () => {
                 setInventorySearch={setInventorySearch}
                 inventoryPlatformFilter={inventoryPlatformFilter}
                 setInventoryPlatformFilter={setInventoryPlatformFilter}
+                inventoryRoleFilter={inventoryRoleFilter}
+                setInventoryRoleFilter={setInventoryRoleFilter}
                 inventoryStatusFilter={inventoryStatusFilter}
                 setInventoryStatusFilter={setInventoryStatusFilter}
                 inventorySortConfig={inventorySortConfig}
@@ -5906,6 +5891,12 @@ const App: React.FC = () => {
           {activeTab === 'ipam' && (
             <Suspense fallback={lazyPanelFallback}>
               <IPVlanTab language={language} t={t} />
+            </Suspense>
+          )}
+
+          {activeTab === 'assets' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <AssetManagementTab language={language} t={t} setActiveTab={setActiveTab} />
             </Suspense>
           )}
         </main>

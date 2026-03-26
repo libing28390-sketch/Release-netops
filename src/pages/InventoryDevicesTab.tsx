@@ -229,6 +229,8 @@ interface InventoryDevicesTabProps {
   setInventorySearch: (v: string) => void;
   inventoryPlatformFilter: string;
   setInventoryPlatformFilter: (v: string) => void;
+  inventoryRoleFilter: string;
+  setInventoryRoleFilter: (v: string) => void;
   inventoryStatusFilter: string;
   setInventoryStatusFilter: (v: string) => void;
   inventorySortConfig: { key: string; direction: 'asc' | 'desc' } | null;
@@ -259,6 +261,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   inventoryPageSize, setInventoryPageSize,
   inventorySearch, setInventorySearch,
   inventoryPlatformFilter, setInventoryPlatformFilter,
+  inventoryRoleFilter, setInventoryRoleFilter,
   inventoryStatusFilter, setInventoryStatusFilter,
   inventorySortConfig, inventoryLoading,
   selectedDeviceIds, setSelectedDeviceIds,
@@ -382,6 +385,19 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             <option value="huawei_vrp">Huawei VRP</option>
             <option value="h3c_comware">H3C Comware</option>
             <option value="ruijie_rgos">Ruijie RGOS</option>
+          </select>
+          <select value={inventoryRoleFilter} onChange={e => setInventoryRoleFilter(e.target.value)}
+            title={language === 'zh' ? '按角色筛选' : 'Filter by role'}
+            className="px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
+              outline-none text-black/55 dark:text-white/55 focus:border-[#00bceb]/40">
+            <option value="all">{language === 'zh' ? '全部角色' : 'All Roles'}</option>
+            <option value="core">Core</option>
+            <option value="distribution">Distribution</option>
+            <option value="access">Access</option>
+            <option value="edge">Edge</option>
+            <option value="firewall">Firewall</option>
+            <option value="vpn">VPN</option>
+            <option value="test">Test</option>
           </select>
           <select value={inventoryStatusFilter} onChange={e => setInventoryStatusFilter(e.target.value)}
             title={language === 'zh' ? '按状态筛选' : 'Filter by status'}
@@ -547,6 +563,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
                       <td className="px-3 py-2">
                         <span className="text-[11px] font-medium text-black/65 dark:text-white/65">{vendorOf(device.platform)}</span>
                         <span className="block text-[10px] text-black/35 dark:text-white/30 mt-0.5">{device.platform || 'unknown'}</span>
+                        {device.version && <span className="block text-[10px] font-mono text-black/25 dark:text-white/20 mt-0.5 truncate max-w-[120px]" title={device.version}>{device.version}</span>}
                       </td>
                       <td className="px-3 py-2">
                         <span className="text-[11px] text-black/55 dark:text-white/55">{device.site || 'N/A'}</span>
@@ -564,12 +581,31 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
                         <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${health.bg} ${health.text}`}>
                           {language === 'zh' ? health.labelZh : health.labelEn}
                         </span>
+                        {device.uptime && (
+                          <span className="block text-[9px] text-black/25 dark:text-white/20 mt-1 font-mono" title={device.uptime}>
+                            ⏱ {device.uptime.length > 20 ? device.uptime.slice(0, 20) + '…' : device.uptime}
+                          </span>
+                        )}
+                        {deviceConnectionChecks[device.id] && (() => {
+                          const chk = deviceConnectionChecks[device.id];
+                          const badge = CHECK_BADGE[chk.status] || CHECK_BADGE.fail;
+                          return (
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-bold mt-1 ${badge.cls}`}
+                              title={chk.checked_at ? formatCheckTime(chk.checked_at, language) : ''}>
+                              {language === 'zh' ? badge.zh : badge.en}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-3 py-2">
-                        <div className="space-y-1">
-                          <MiniBar value={cpu} color="#00bceb" label="CPU" />
-                          <MiniBar value={mem} color="#10b981" label="MEM" />
-                        </div>
+                        {cpu === 0 && mem === 0 ? (
+                          <span className="text-[10px] text-black/20 dark:text-white/15 italic">{language === 'zh' ? '未采集' : 'N/A'}</span>
+                        ) : (
+                          <div className="space-y-1">
+                            <MiniBar value={cpu} color="#00bceb" label="CPU" />
+                            <MiniBar value={mem} color="#10b981" label="MEM" />
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center justify-end gap-1">

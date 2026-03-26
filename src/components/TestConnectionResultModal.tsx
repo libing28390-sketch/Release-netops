@@ -1,7 +1,6 @@
 import React from 'react';
 import { AlertCircle, RotateCcw, ShieldCheck } from 'lucide-react';
 import type { Device } from '../types';
-import { buildConnectionTestHint } from '../utils/connectionHelpers';
 import ResultStatusModal from './ResultStatusModal';
 
 interface ConnectionStage {
@@ -70,56 +69,41 @@ const TestConnectionResultModal: React.FC<TestConnectionResultModalProps> = ({
       iconClassName={isTestingConnection ? 'bg-blue-500 text-white animate-pulse' : success ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}
       headerClassName={isTestingConnection ? 'border-b border-black/5 bg-blue-50' : success ? 'border-b border-black/5 bg-emerald-50' : 'border-b border-black/5 bg-red-50'}
       panelClassName="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-black/5 overflow-hidden"
-      bodyClassName="p-8 space-y-6"
+      bodyClassName="px-6 py-5 space-y-4"
       closeDisabled={isTestingConnection}
     >
       <p className="text-xs text-black/40 -mt-3">{targetDevice?.hostname || '-'} ({targetDevice?.ip_address || '-'})</p>
       {isTestingConnection ? (
-        <div className="py-12 flex flex-col items-center justify-center gap-4">
+        <div className="py-10 flex flex-col items-center justify-center gap-3">
           <div className="relative">
-            <div className="w-16 h-16 border-4 border-blue-100 rounded-full" />
-            <div className="absolute inset-0 w-16 h-16 border-4 border-blue-500 rounded-full border-t-transparent animate-spin" />
+            <div className="w-12 h-12 border-[3px] border-blue-100 rounded-full" />
+            <div className="absolute inset-0 w-12 h-12 border-[3px] border-blue-500 rounded-full border-t-transparent animate-spin" />
           </div>
           <p className="text-sm font-medium text-blue-600 animate-pulse">
             {connectionTestMode === 'deep'
-              ? (language === 'zh' ? '正在检查 ICMP、目标端口与 SSH 登录状态...' : 'Checking ICMP, target port, and SSH login state...')
-              : (language === 'zh' ? '正在检查 ICMP 与目标端口可达性...' : 'Checking ICMP and target port reachability...')}
+              ? (language === 'zh' ? '正在校验...' : 'Validating...')
+              : (language === 'zh' ? '正在检测...' : 'Checking...')}
           </p>
         </div>
       ) : (
         <>
-          <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3">
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-blue-700">{language === 'zh' ? '检测模式' : 'Check Mode'}</p>
-            <p className="mt-2 text-sm text-blue-900">
-              {testResult?.checkMode === 'quick' || !testResult?.checkMode
-                ? (language === 'zh' ? '当前结果只检查 ICMP 和管理端口。' : 'This result only checks ICMP and the management port.')
-                : (language === 'zh' ? '当前结果已执行 SSH 登录校验。' : 'This result includes an SSH login validation.')}
-            </p>
-          </div>
-
           {Array.isArray(testResult?.stages) && testResult.stages.length > 0 && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="space-y-2">
               {testResult.stages.map((stage) => {
-                const tone = stage.ok
-                  ? 'border-emerald-100 bg-emerald-50/60 text-emerald-800'
-                  : 'border-red-100 bg-red-50/60 text-red-800';
                 const label = stage.stage === 'icmp'
                   ? 'ICMP'
                   : stage.stage === 'tcp'
                     ? (targetDevice?.connection_method === 'telnet' ? 'TCP/23' : 'TCP/22')
                     : 'SSH';
                 return (
-                  <div key={`${stage.stage}-${stage.summary}`} className={`rounded-2xl border p-4 ${tone}`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-[11px] font-bold uppercase tracking-[0.18em]">{label}</p>
-                      <span className="rounded-full bg-white/80 px-2 py-1 text-[10px] font-bold uppercase">
-                        {stage.ok ? (language === 'zh' ? '正常' : 'OK') : (language === 'zh' ? '失败' : 'Fail')}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-sm font-semibold">{stage.summary}</p>
-                    <p className="mt-1 text-xs opacity-80 leading-5">{stage.detail}</p>
+                  <div key={`${stage.stage}-${stage.summary}`} className="flex items-center gap-3 px-3 py-2 rounded-xl bg-black/[0.03]">
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${stage.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    <span className="text-xs font-bold uppercase tracking-wider text-black/50 w-12">{label}</span>
+                    <span className={`text-sm font-medium flex-1 ${stage.ok ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {stage.ok ? (language === 'zh' ? '正常' : 'OK') : (stage.detail || (language === 'zh' ? '失败' : 'Fail'))}
+                    </span>
                     {typeof stage.latency_ms === 'number' && Number.isFinite(stage.latency_ms) && (
-                      <p className="mt-2 text-[11px] font-medium opacity-80">{language === 'zh' ? '耗时' : 'Latency'} {stage.latency_ms} ms</p>
+                      <span className="text-[11px] text-black/35 tabular-nums">{stage.latency_ms} ms</span>
                     )}
                   </div>
                 );
@@ -127,51 +111,43 @@ const TestConnectionResultModal: React.FC<TestConnectionResultModalProps> = ({
             </div>
           )}
 
-          <div className={`p-4 rounded-2xl border ${success ? 'bg-emerald-50/50 border-emerald-100' : 'bg-red-50/50 border-red-100'}`}>
-            <p className={`text-sm font-medium ${success ? 'text-emerald-800' : 'text-red-800'}`}>{testResult?.message}</p>
-            {!success && buildConnectionTestHint(testResult?.errorCode, language) && (
-              <p className="mt-2 text-xs leading-5 text-red-700/90">{buildConnectionTestHint(testResult?.errorCode, language)}</p>
-            )}
-          </div>
+          {testResult?.message && (
+            <p className={`text-sm ${success ? 'text-emerald-700' : 'text-red-700'}`}>{testResult.message}</p>
+          )}
 
           {testResult?.output && (
-            <details className="rounded-2xl border border-black/10 bg-black/[0.02] px-4 py-3">
-              <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-[0.18em] text-black/45">
-                {language === 'zh' ? '展开原始日志' : 'Show raw log'}
+            <details className="rounded-xl border border-black/8 bg-black/[0.02] px-3 py-2">
+              <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-[0.15em] text-black/40">
+                {language === 'zh' ? '原始日志' : 'Raw log'}
               </summary>
-              {testResult.rawError && (
-                <p className="mt-3 text-xs leading-5 text-black/55">
-                  {language === 'zh' ? '原始错误：' : 'Raw error: '}{testResult.rawError}
-                </p>
-              )}
-              <div className="mt-3 bg-[#00172D] p-4 rounded-xl overflow-auto max-h-[200px]">
+              <div className="mt-2 bg-[#00172D] p-3 rounded-lg overflow-auto max-h-[160px]">
                 <pre className="text-xs font-mono text-emerald-400/90 whitespace-pre-wrap">{testResult.output}</pre>
               </div>
             </details>
           )}
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-2 pt-1">
             <button
               onClick={onClose}
-              className="flex-1 px-4 py-3 rounded-xl border border-black/10 font-bold uppercase tracking-widest text-[10px] hover:bg-black/5 transition-all"
+              className="flex-1 px-3 py-2.5 rounded-xl border border-black/10 font-bold uppercase tracking-widest text-[10px] hover:bg-black/5 transition-all"
             >
-              Close
+              {language === 'zh' ? '关闭' : 'Close'}
             </button>
             {!success && (
-              <div className="flex flex-1 gap-3">
+              <>
                 <button
                   onClick={() => onRetry(targetDevice, 'quick')}
-                  className="flex-1 px-4 py-3 rounded-xl bg-black text-white font-bold uppercase tracking-widest text-[10px] hover:bg-black/80 transition-all shadow-lg shadow-black/20"
+                  className="flex-1 px-3 py-2.5 rounded-xl bg-black text-white font-bold uppercase tracking-widest text-[10px] hover:bg-black/80 transition-all shadow-lg shadow-black/20"
                 >
-                  {language === 'zh' ? '重试快速检测' : 'Retry Quick Check'}
+                  {language === 'zh' ? '重试' : 'Retry'}
                 </button>
                 <button
                   onClick={() => onRetry(targetDevice, 'deep')}
-                  className="flex-1 px-4 py-3 rounded-xl border border-black/10 font-bold uppercase tracking-widest text-[10px] hover:bg-black/5 transition-all"
+                  className="flex-1 px-3 py-2.5 rounded-xl border border-black/10 font-bold uppercase tracking-widest text-[10px] hover:bg-black/5 transition-all"
                 >
-                  {language === 'zh' ? 'SSH 登录校验' : 'SSH Login Check'}
+                  {language === 'zh' ? 'SSH 校验' : 'SSH Check'}
                 </button>
-              </div>
+              </>
             )}
           </div>
         </>

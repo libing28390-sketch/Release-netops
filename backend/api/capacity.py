@@ -292,7 +292,19 @@ class IPAddressCreate(BaseModel):
     device_id: str = ''
     interface_name: str = ''
     mac_address: str = ''
+    device_type: str = ''
     description: str = ''
+    status: str = 'active'
+
+
+class IPAddressUpdate(BaseModel):
+    hostname: Optional[str] = None
+    device_id: Optional[str] = None
+    interface_name: Optional[str] = None
+    mac_address: Optional[str] = None
+    device_type: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
 
 
 @router.get('/ipam/subnets')
@@ -430,10 +442,10 @@ def create_address(subnet_id: str, body: IPAddressCreate):
         now = _utc_now()
         conn.execute('''
             INSERT INTO ip_addresses (id, subnet_id, address, hostname, device_id,
-                                       interface_name, mac_address, status, description, last_seen, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+                                       interface_name, mac_address, device_type, status, description, last_seen, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (addr_id, subnet_id, body.address, body.hostname, body.device_id,
-              body.interface_name, body.mac_address, body.description, now, now, now))
+              body.interface_name, body.mac_address, body.device_type, body.status, body.description, now, now, now))
         # Update used count
         conn.execute('UPDATE ip_subnets SET used_ips = used_ips + 1, updated_at = ? WHERE id = ?', (now, subnet_id))
         conn.commit()
@@ -453,6 +465,32 @@ def delete_address(address_id: str):
         now = _utc_now()
         conn.execute('UPDATE ip_subnets SET used_ips = MAX(0, used_ips - 1), updated_at = ? WHERE id = ?', (now, addr['subnet_id']))
         conn.commit()
+        return {'ok': True}
+    finally:
+        conn.close()
+
+
+@router.put('/ipam/addresses/{address_id}')
+def update_address(address_id: str, body: IPAddressUpdate):
+    conn = get_db_connection()
+    try:
+        row = conn.execute('SELECT * FROM ip_addresses WHERE id = ?', (address_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Address not found')
+
+        updates = []
+        params = []
+        for field in ['hostname', 'device_id', 'interface_name', 'mac_address', 'device_type', 'description', 'status']:
+            val = getattr(body, field, None)
+            if val is not None:
+                updates.append(f'{field} = ?')
+                params.append(val)
+        if updates:
+            updates.append('updated_at = ?')
+            params.append(_utc_now())
+            params.append(address_id)
+            conn.execute(f"UPDATE ip_addresses SET {', '.join(updates)} WHERE id = ?", tuple(params))
+            conn.commit()
         return {'ok': True}
     finally:
         conn.close()

@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Server, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { Search, Server, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X, Filter } from 'lucide-react';
 import type { Device } from '../types';
 import { sectionHeaderRowClass, sectionToolbarClass } from '../components/shared';
 
@@ -24,12 +24,37 @@ function InterfaceMonitoringTab({
 }: InterfaceMonitoringTabProps) {
   // ── Internal state ──
   const [intfSearch, setIntfSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [intfDevicePage, setIntfDevicePage] = useState(1);
   const [intfExpandedDevice, setIntfExpandedDevice] = useState<string | null>(null);
   const [intfPageMap, setIntfPageMap] = useState<Record<string, number>>({});
   const [intfFilterMap, setIntfFilterMap] = useState<Record<string, string>>({});
+  const [intfInnerStatusMap, setIntfInnerStatusMap] = useState<Record<string, 'all' | 'up' | 'down' | 'error'>>({});
   const [intfStatusFilter, setIntfStatusFilter] = useState<'all' | 'hasData' | 'hasDown' | 'hasErrors'>('hasData');
   const [intfSortBy, setIntfSortBy] = useState<'name' | 'downCount' | 'errors' | 'bw'>('name');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Debounce search input (150ms) ──
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(intfSearch);
+      setIntfDevicePage(1);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [intfSearch]);
+
+  // ── Ctrl+K shortcut to focus search ──
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // ── "Updated ago" timer ──
   const [intfNowTick, setIntfNowTick] = useState(0);
@@ -63,49 +88,71 @@ function InterfaceMonitoringTab({
     return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
   };
 
-  // Helper: compute device-level stats
-  const devStats = (d: Device) => {
-    const intfs = d.interface_data || [];
-    const upC = intfs.filter(i => i.status === 'up').length;
-    const downC = intfs.filter(i => i.status === 'down').length;
-    const errC = intfs.reduce((a, i) => a + (i.in_errors || 0) + (i.out_errors || 0), 0);
-    const discC = intfs.reduce((a, i) => a + (i.in_discards || 0) + (i.out_discards || 0), 0);
-    const maxBw = intfs.reduce((m, i) => Math.max(m, i.bw_in_pct || 0, i.bw_out_pct || 0), 0);
-    const flapping = intfs.some(i => i.flapping);
-    return { intfs, upC, downC, errC, discC, maxBw, flapping, hasData: intfs.length > 0 };
-  };
+  // Helper: compute device-level stats — memoized per devices change
+  const statsMap = useMemo(() => {
+    const map = new Map<string, { intfs: NonNullable<Device['interface_data']>; upC: number; downC: number; errC: number; discC: number; maxBw: number; flapping: boolean; hasData: boolean }>();
+    for (const d of devices) {
+      const intfs = d.interface_data || [];
+      const upC = intfs.filter(i => i.status === 'up').length;
+      const downC = intfs.filter(i => i.status === 'down').length;
+      const errC = intfs.reduce((a, i) => a + (i.in_errors || 0) + (i.out_errors || 0), 0);
+      const discC = intfs.reduce((a, i) => a + (i.in_discards || 0) + (i.out_discards || 0), 0);
+      const maxBw = intfs.reduce((m, i) => Math.max(m, i.bw_in_pct || 0, i.bw_out_pct || 0), 0);
+      const flapping = intfs.some(i => i.flapping);
+      map.set(d.id, { intfs, upC, downC, errC, discC, maxBw, flapping, hasData: intfs.length > 0 });
+    }
+    return map;
+  }, [devices]);
 
-  // Step 1: search filter
-  const searchFiltered = devices.filter(d => {
-    if (!intfSearch.trim()) return true;
-    const q = intfSearch.toLowerCase();
+  const devStats = useCallback((d: Device) => {
+    return statsMap.get(d.id) || { intfs: [], upC: 0, downC: 0, errC: 0, discC: 0, maxBw: 0, flapping: false, hasData: false };
+  }, [statsMap]);
+
+  // Step 1: search filter (uses debounced input)
+  const searchFiltered = useMemo(() => devices.filter(d => {
+    if (!debouncedSearch.trim()) return true;
+    const q = debouncedSearch.toLowerCase();
     return d.hostname.toLowerCase().includes(q) || d.ip_address.toLowerCase().includes(q);
-  });
+  }), [devices, debouncedSearch]);
 
   // Step 2: status filter
-  const statusFiltered = searchFiltered.filter(d => {
+  const statusFiltered = useMemo(() => searchFiltered.filter(d => {
     const s = devStats(d);
     if (intfStatusFilter === 'hasData') return s.hasData;
     if (intfStatusFilter === 'hasDown') return s.downC > 0;
     if (intfStatusFilter === 'hasErrors') return (s.errC + s.discC) > 0 || s.flapping;
     return true;
-  });
+  }), [searchFiltered, intfStatusFilter, devStats]);
   const hiddenCount = searchFiltered.length - statusFiltered.length;
 
   // Step 3: sort
-  const sortedDevices = [...statusFiltered].sort((a, b) => {
+  const sortedDevices = useMemo(() => [...statusFiltered].sort((a, b) => {
     const sa = devStats(a), sb = devStats(b);
     if (intfSortBy === 'downCount') return sb.downC - sa.downC || a.hostname.localeCompare(b.hostname);
     if (intfSortBy === 'errors') return (sb.errC + sb.discC) - (sa.errC + sa.discC) || a.hostname.localeCompare(b.hostname);
     if (intfSortBy === 'bw') return sb.maxBw - sa.maxBw || a.hostname.localeCompare(b.hostname);
     return a.hostname.localeCompare(b.hostname);
-  });
+  }), [statusFiltered, intfSortBy, devStats]);
 
-  // Global stats
-  const totalUp = searchFiltered.reduce((s, d) => s + (d.interface_data?.filter(i => i.status === 'up').length || 0), 0);
-  const totalDown = searchFiltered.reduce((s, d) => s + (d.interface_data?.filter(i => i.status === 'down').length || 0), 0);
-  const totalErrors = searchFiltered.reduce((s, d) => s + (d.interface_data?.reduce((a, i) => a + (i.in_errors || 0) + (i.out_errors || 0), 0) || 0), 0);
-  const totalDiscards = searchFiltered.reduce((s, d) => s + (d.interface_data?.reduce((a, i) => a + (i.in_discards || 0) + (i.out_discards || 0), 0) || 0), 0);
+  // Global stats & filter tab counts — single pass over searchFiltered
+  const { totalUp, totalDown, totalErrors, totalDiscards, filterCounts } = useMemo(() => {
+    let up = 0, down = 0, errs = 0, discs = 0;
+    let hasDataC = 0, hasDownC = 0, hasErrorsC = 0;
+    for (const d of searchFiltered) {
+      const s = devStats(d);
+      up += s.upC;
+      down += s.downC;
+      errs += s.errC;
+      discs += s.discC;
+      if (s.hasData) hasDataC++;
+      if (s.downC > 0) hasDownC++;
+      if ((s.errC + s.discC) > 0 || s.flapping) hasErrorsC++;
+    }
+    return {
+      totalUp: up, totalDown: down, totalErrors: errs, totalDiscards: discs,
+      filterCounts: { all: searchFiltered.length, hasData: hasDataC, hasDown: hasDownC, hasErrors: hasErrorsC },
+    };
+  }, [searchFiltered, devStats]);
 
   // Top-5 bandwidth interfaces
   const topNBw: { hostname: string; name: string; bwIn: number; bwOut: number; speedMbps: number; inBps: number; outBps: number }[] = [];
@@ -124,10 +171,10 @@ function InterfaceMonitoringTab({
   const pagedDevices = sortedDevices.slice((safePage - 1) * DEVS_PER_PAGE, safePage * DEVS_PER_PAGE);
 
   const filterTabs: { key: typeof intfStatusFilter; label: string; count: number }[] = [
-    { key: 'all', label: language === 'zh' ? '全部' : 'All', count: searchFiltered.length },
-    { key: 'hasData', label: language === 'zh' ? '有接口数据' : 'Has Data', count: searchFiltered.filter(d => (d.interface_data || []).length > 0).length },
-    { key: 'hasDown', label: language === 'zh' ? '有DOWN口' : 'Has DOWN', count: searchFiltered.filter(d => (d.interface_data || []).some(i => i.status === 'down')).length },
-    { key: 'hasErrors', label: language === 'zh' ? '有错误/丢包' : 'Errors/Drops', count: searchFiltered.filter(d => (d.interface_data || []).some(i => (i.in_errors || 0) + (i.out_errors || 0) + (i.in_discards || 0) + (i.out_discards || 0) > 0 || i.flapping)).length },
+    { key: 'all', label: language === 'zh' ? '全部' : 'All', count: filterCounts.all },
+    { key: 'hasData', label: language === 'zh' ? '有接口数据' : 'Has Data', count: filterCounts.hasData },
+    { key: 'hasDown', label: language === 'zh' ? '有DOWN口' : 'Has DOWN', count: filterCounts.hasDown },
+    { key: 'hasErrors', label: language === 'zh' ? '有错误/丢包' : 'Errors/Drops', count: filterCounts.hasErrors },
   ];
 
   return (
@@ -211,12 +258,22 @@ function InterfaceMonitoringTab({
                     <div className="relative flex-1">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-black/40" size={16} />
                       <input
+                        ref={searchInputRef}
                         type="text"
-                        placeholder={language === 'zh' ? '搜索主机名或 IP 地址...' : 'Search by hostname or IP...'}
+                        placeholder={language === 'zh' ? '搜索主机名或 IP…  (Ctrl+K 聚焦)' : 'Search hostname or IP…  (Ctrl+K to focus)'}
                         value={intfSearch}
-                        onChange={(e) => { setIntfSearch(e.target.value); setIntfDevicePage(1); }}
-                        className="w-full pl-9 pr-3 py-2 bg-black/[0.02] border border-black/5 rounded-xl text-sm focus:border-black/20 outline-none transition-all"
+                        onChange={(e) => setIntfSearch(e.target.value)}
+                        className="w-full pl-9 pr-8 py-2 bg-black/[0.02] border border-black/5 rounded-xl text-sm focus:border-black/20 outline-none transition-all"
                       />
+                      {intfSearch && (
+                        <button
+                          onClick={() => { setIntfSearch(''); searchInputRef.current?.focus(); }}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-black/25 hover:text-black/60 transition-colors"
+                          title={language === 'zh' ? '清除搜索' : 'Clear search'}
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
                     </div>
                     <select
                       value={intfSortBy}
@@ -259,11 +316,30 @@ function InterfaceMonitoringTab({
                     const ds = devStats(device);
                     // Inner interface filter & pagination
                     const innerFilter = intfFilterMap[device.id] || '';
-                    const filteredIntfs = intfs.filter(i => !innerFilter.trim() || i.name.toLowerCase().includes(innerFilter.toLowerCase()));
+                    const innerStatus = intfInnerStatusMap[device.id] || 'all';
+                    const filteredIntfs = intfs.filter(i => {
+                      // Text search: name, description, status
+                      if (innerFilter.trim()) {
+                        const q = innerFilter.toLowerCase();
+                        const matchName = i.name.toLowerCase().includes(q);
+                        const matchDesc = (i.description || '').toLowerCase().includes(q);
+                        const matchStatus = i.status.toLowerCase().includes(q);
+                        if (!matchName && !matchDesc && !matchStatus) return false;
+                      }
+                      // Status filter
+                      if (innerStatus === 'up') return i.status === 'up';
+                      if (innerStatus === 'down') return i.status === 'down';
+                      if (innerStatus === 'error') return ((i.in_errors || 0) + (i.out_errors || 0) + (i.in_discards || 0) + (i.out_discards || 0)) > 0;
+                      return true;
+                    });
+                    const innerDownCount = intfs.filter(i => i.status === 'down').length;
+                    const innerErrorCount = intfs.filter(i => ((i.in_errors || 0) + (i.out_errors || 0) + (i.in_discards || 0) + (i.out_discards || 0)) > 0).length;
                     const innerPage = intfPageMap[device.id] || 1;
                     const innerTotalPages = Math.max(1, Math.ceil(filteredIntfs.length / INTFS_PER_PAGE));
                     const safeInnerPage = Math.min(innerPage, innerTotalPages);
                     const pagedIntfs = filteredIntfs.slice((safeInnerPage - 1) * INTFS_PER_PAGE, safeInnerPage * INTFS_PER_PAGE);
+                    const innerRangeStart = filteredIntfs.length > 0 ? (safeInnerPage - 1) * INTFS_PER_PAGE + 1 : 0;
+                    const innerRangeEnd = Math.min(safeInnerPage * INTFS_PER_PAGE, filteredIntfs.length);
 
                     return (
                       <div key={device.id} className="border-b border-black/5 last:border-b-0">
@@ -322,22 +398,62 @@ function InterfaceMonitoringTab({
                               <p className="text-sm text-black/30 py-4 text-center">{language === 'zh' ? '暂无接口数据，请确认设备已开启 SNMP，并可点击"立即同步SNMP"主动拉取。' : 'No interface data. Verify SNMP is enabled, then click "SNMP Sync Now" to fetch immediately.'}</p>
                             ) : (
                               <>
-                                {/* Interface search */}
-                                <div className="flex items-center gap-3 mb-3">
-                                  <div className="relative flex-1 max-w-xs">
+                                {/* Interface search + status filter */}
+                                <div className="flex items-center gap-3 mb-3 flex-wrap">
+                                  <div className="relative flex-1 max-w-xs min-w-[160px]">
                                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30" size={14} />
                                     <input
                                       type="text"
-                                      placeholder={language === 'zh' ? '搜索接口名...' : 'Filter interface...'}
+                                      placeholder={language === 'zh' ? '搜索接口名/描述…' : 'Filter name/desc…'}
                                       value={innerFilter}
                                       onChange={(e) => {
                                         setIntfFilterMap(prev => ({ ...prev, [device.id]: e.target.value }));
                                         setIntfPageMap(prev => ({ ...prev, [device.id]: 1 }));
                                       }}
-                                      className="w-full pl-8 pr-3 py-1.5 bg-white border border-black/10 rounded-lg text-xs outline-none focus:border-black/20"
+                                      className="w-full pl-8 pr-7 py-1.5 bg-white border border-black/10 rounded-lg text-xs outline-none focus:border-black/20"
                                     />
+                                    {innerFilter && (
+                                      <button
+                                        onClick={() => {
+                                          setIntfFilterMap(prev => ({ ...prev, [device.id]: '' }));
+                                          setIntfPageMap(prev => ({ ...prev, [device.id]: 1 }));
+                                        }}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-black/25 hover:text-black/60 transition-colors"
+                                      >
+                                        <X size={12} />
+                                      </button>
+                                    )}
                                   </div>
-                                  <span className="text-[10px] text-black/30">{filteredIntfs.length} {language === 'zh' ? '条匹配' : 'matched'}</span>
+                                  <div className="flex items-center gap-1">
+                                    {(['all', 'down', 'error'] as const).map(st => {
+                                      const label = st === 'all'
+                                        ? (language === 'zh' ? `全部 (${intfs.length})` : `All (${intfs.length})`)
+                                        : st === 'down'
+                                        ? (language === 'zh' ? `DOWN (${innerDownCount})` : `DOWN (${innerDownCount})`)
+                                        : (language === 'zh' ? `异常 (${innerErrorCount})` : `Error (${innerErrorCount})`);
+                                      return (
+                                        <button
+                                          key={st}
+                                          onClick={() => {
+                                            setIntfInnerStatusMap(prev => ({ ...prev, [device.id]: st }));
+                                            setIntfPageMap(prev => ({ ...prev, [device.id]: 1 }));
+                                          }}
+                                          className={`px-2 py-1 rounded text-[10px] font-medium transition-all ${
+                                            innerStatus === st
+                                              ? st === 'down' ? 'bg-red-100 text-red-700' : st === 'error' ? 'bg-orange-100 text-orange-700' : 'bg-black/10 text-black/70'
+                                              : 'text-black/40 hover:bg-black/5'
+                                          }`}
+                                        >
+                                          {label}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <span className="text-[10px] text-black/30 ml-auto">
+                                    {filteredIntfs.length === intfs.length
+                                      ? `${intfs.length} ${language === 'zh' ? '个接口' : 'interfaces'}`
+                                      : `${filteredIntfs.length} / ${intfs.length} ${language === 'zh' ? '匹配' : 'matched'}`}
+                                  </span>
                                 </div>
                                 {/* Table */}
                                 <div className="border border-black/5 rounded-xl overflow-hidden">
@@ -357,6 +473,12 @@ function InterfaceMonitoringTab({
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-black/5">
+                                      {pagedIntfs.length === 0 && (
+                                        <tr><td colSpan={10} className="px-4 py-8 text-center text-xs text-black/30">
+                                          <Filter size={20} className="mx-auto mb-2 text-black/15" />
+                                          {language === 'zh' ? '当前筛选条件下没有匹配的接口' : 'No interfaces match the current filter'}
+                                        </td></tr>
+                                      )}
                                       {pagedIntfs.map((intf, i) => {
                                         const intfErrors = (intf.in_errors || 0) + (intf.out_errors || 0);
                                         const intfDiscards = (intf.in_discards || 0) + (intf.out_discards || 0);
@@ -406,7 +528,7 @@ function InterfaceMonitoringTab({
                                           <td className="px-4 py-2 text-center">
                                             <span className="font-mono text-[10px] text-black/40">{fmtDuration(intf.last_change_secs)}</span>
                                           </td>
-                                          <td className="px-4 py-2 text-black/40 truncate max-w-[150px]">{intf.description || '-'}</td>
+                                          <td className="px-4 py-2 text-black/40 truncate max-w-[150px]" title={intf.description || ''}>{intf.description || '-'}</td>
                                         </tr>
                                         );
                                       })}
@@ -416,23 +538,64 @@ function InterfaceMonitoringTab({
                                 {/* Interface pagination */}
                                 {innerTotalPages > 1 && (
                                   <div className="flex items-center justify-between mt-3 px-1">
-                                    <span className="text-[10px] text-black/30">{language === 'zh' ? `第 ${safeInnerPage}/${innerTotalPages} 页` : `Page ${safeInnerPage} of ${innerTotalPages}`}</span>
-                                    <div className="flex gap-1">
+                                    <span className="text-[10px] text-black/30">
+                                      {language === 'zh'
+                                        ? `显示 ${innerRangeStart}-${innerRangeEnd}，共 ${filteredIntfs.length} 个接口`
+                                        : `${innerRangeStart}-${innerRangeEnd} of ${filteredIntfs.length} interfaces`}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                      {/* First page */}
+                                      <button
+                                        disabled={safeInnerPage <= 1}
+                                        onClick={() => setIntfPageMap(prev => ({ ...prev, [device.id]: 1 }))}
+                                        title={language === 'zh' ? '第一页' : 'First page'}
+                                        className="px-1.5 py-1 text-[10px] border border-black/10 rounded-md hover:bg-black/5 disabled:opacity-30 transition-all"
+                                      >
+                                        <ChevronsLeft size={12} />
+                                      </button>
+                                      {/* Previous page */}
                                       <button
                                         disabled={safeInnerPage <= 1}
                                         onClick={() => setIntfPageMap(prev => ({ ...prev, [device.id]: safeInnerPage - 1 }))}
                                         title={language === 'zh' ? '上一页' : 'Previous page'}
-                                        className="px-2 py-1 text-[10px] border border-black/10 rounded-md hover:bg-black/5 disabled:opacity-30 transition-all"
+                                        className="px-1.5 py-1 text-[10px] border border-black/10 rounded-md hover:bg-black/5 disabled:opacity-30 transition-all"
                                       >
                                         <ChevronLeft size={12} />
                                       </button>
+                                      {/* Page number input */}
+                                      <span className="text-[10px] text-black/40 px-1">
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={innerTotalPages}
+                                          value={safeInnerPage}
+                                          onChange={(e) => {
+                                            const v = parseInt(e.target.value, 10);
+                                            if (v >= 1 && v <= innerTotalPages) {
+                                              setIntfPageMap(prev => ({ ...prev, [device.id]: v }));
+                                            }
+                                          }}
+                                          className="w-8 text-center text-[10px] border border-black/10 rounded py-0.5 outline-none focus:border-black/20"
+                                        />
+                                        <span className="mx-0.5">/</span>{innerTotalPages}
+                                      </span>
+                                      {/* Next page */}
                                       <button
                                         disabled={safeInnerPage >= innerTotalPages}
                                         onClick={() => setIntfPageMap(prev => ({ ...prev, [device.id]: safeInnerPage + 1 }))}
                                         title={language === 'zh' ? '下一页' : 'Next page'}
-                                        className="px-2 py-1 text-[10px] border border-black/10 rounded-md hover:bg-black/5 disabled:opacity-30 transition-all"
+                                        className="px-1.5 py-1 text-[10px] border border-black/10 rounded-md hover:bg-black/5 disabled:opacity-30 transition-all"
                                       >
                                         <ChevronRight size={12} />
+                                      </button>
+                                      {/* Last page */}
+                                      <button
+                                        disabled={safeInnerPage >= innerTotalPages}
+                                        onClick={() => setIntfPageMap(prev => ({ ...prev, [device.id]: innerTotalPages }))}
+                                        title={language === 'zh' ? '最后一页' : 'Last page'}
+                                        className="px-1.5 py-1 text-[10px] border border-black/10 rounded-md hover:bg-black/5 disabled:opacity-30 transition-all"
+                                      >
+                                        <ChevronsRight size={12} />
                                       </button>
                                     </div>
                                   </div>
@@ -473,10 +636,7 @@ function InterfaceMonitoringTab({
               )}
 
               {/* Hidden (no-data) devices summary */}
-              {intfStatusFilter !== 'all' && (() => {
-                const allCount = devices.filter(d => !intfSearch.trim() || d.hostname.toLowerCase().includes(intfSearch.toLowerCase()) || d.ip_address.includes(intfSearch)).length;
-                const hiddenCount = allCount - sortedDevices.length;
-                return hiddenCount > 0 ? (
+              {intfStatusFilter !== 'all' && hiddenCount > 0 && (
                   <div className="text-center py-3">
                     <span className="text-xs text-black/30">
                       {language === 'zh'
@@ -487,8 +647,7 @@ function InterfaceMonitoringTab({
                       {language === 'zh' ? '显示全部' : 'Show all'}
                     </button>
                   </div>
-                ) : null;
-              })()}
+              )}
             </div>
   );
 }

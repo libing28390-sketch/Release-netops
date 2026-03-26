@@ -78,8 +78,8 @@ git clone https://github.com/libing28390-sketch/netsops.git
 cd netsops
 
 # Windows
-py -3 -m venv .venv
-.venv\Scripts\activate
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 .venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 
 # Linux / macOS
@@ -214,8 +214,8 @@ git clone https://github.com/libing28390-sketch/netsops.git
 cd netsops
 
 # Windows
-py -3 -m venv .venv
-.venv\Scripts\activate
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 .venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 
 # Linux / macOS
@@ -321,6 +321,38 @@ git config --global --get https.proxy
 npm config get proxy
 npm config get https-proxy
 netsh winhttp show proxy
+```
+
+#### pip 安装报错：Missing dependencies for SOCKS support
+
+pip 在本机已经配置了用户级镜像源时，应优先直接使用本地 pip 配置文件，不必额外依赖代理。
+
+如果当前终端设置了以下环境变量：
+
+```powershell
+$env:HTTP_PROXY = "socks5://127.0.0.1:10808"
+$env:HTTPS_PROXY = "socks5://127.0.0.1:10808"
+$env:ALL_PROXY = "socks5://127.0.0.1:10808"
+```
+
+即使本地 pip 配置文件已经指向国内镜像，以上环境变量仍然会影响 pip 的网络访问；某些 Windows 环境中的 pip 会因为未安装 SOCKS 传输依赖而报错：`Missing dependencies for SOCKS support`。
+
+优先做法是在当前 PowerShell 会话中临时清空代理变量，让 pip 直接使用本地配置文件中的国内镜像：
+
+```powershell
+$env:HTTP_PROXY = ""
+$env:HTTPS_PROXY = ""
+$env:ALL_PROXY = ""
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+```
+
+如果你明确需要通过本地代理转发，再临时切换为 HTTP 代理后安装：
+
+```powershell
+$env:HTTP_PROXY = "http://127.0.0.1:10808"
+$env:HTTPS_PROXY = "http://127.0.0.1:10808"
+$env:ALL_PROXY = "http://127.0.0.1:10808"
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 ```
 
 #### 回滚（取消代理）

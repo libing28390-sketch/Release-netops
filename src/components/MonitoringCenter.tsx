@@ -5,9 +5,10 @@ import {
   AlertTriangle, CheckCircle2, XCircle, Shield,
   Zap, Bell, Clock, ArrowUpRight, Eye, Activity,
   Radio, Play, ChevronDown, ChevronUp, Server,
+  Terminal, Download, Wrench, Map, Globe, Layers,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Brush } from 'recharts';
-import type { HostResourceSnapshot, HostResourceHistoryPayload } from '../types';
+import type { Device, HostResourceSnapshot, HostResourceHistoryPayload } from '../types';
 
 type MonitorDevice = {
   id?: string;
@@ -65,6 +66,7 @@ interface MonitoringCenterProps {
   setMonitorDashboardSiteFilter: (value: string) => void;
   monitorDashboardAlertFilter: 'all' | 'critical' | 'major' | 'warning';
   setMonitorDashboardAlertFilter: (value: 'all' | 'critical' | 'major' | 'warning') => void;
+  devices: Device[];
   hostResources: HostResourceSnapshot | null;
   fetchMonitoringOverview: () => void | Promise<void>;
   fetchMonitoringAlerts: () => void | Promise<void>;
@@ -238,6 +240,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
   const [hostResourceHistoryLoading, setHostResourceHistoryLoading] = useState(false);
   const [nocClock, setNocClock] = useState(() => new Date());
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [impactedShowAll, setImpactedShowAll] = useState(false);
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [hostResourceAlertView, setHostResourceAlertView] = useState<'active' | 'history'>('active');
   const {
@@ -286,6 +289,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
     setMonitorDashboardSiteFilter,
     monitorDashboardAlertFilter,
     setMonitorDashboardAlertFilter,
+    devices: allDevices,
     hostResources,
     fetchMonitoringOverview,
     fetchMonitoringAlerts,
@@ -709,9 +713,10 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
   }, [fetchMonitoringOverview, fetchMonitoringAlerts, fetchHostResources, fetchHostResourceHistory, hostResourceRange, monitorSelectedDevice, fetchMonitoringRealtime, setMonitorRealtime]);
 
   /* derived data for dashboard */
-  const totalDevices = (monitorOverview?.online_devices ?? 0) + (monitorOverview?.offline_devices ?? 0);
   const onlineDevices = monitorOverview?.online_devices ?? 0;
-  const offlineDevices = monitorOverview?.offline_devices ?? totalDevices - onlineDevices;
+  const rawTotalDevices = (monitorOverview?.online_devices ?? 0) + (monitorOverview?.offline_devices ?? 0);
+  const totalDevices = rawTotalDevices > 0 ? rawTotalDevices : (deviceHealthSummary?.total_devices ?? 0);
+  const offlineDevices = totalDevices - onlineDevices;
   const openAlerts = monitorOverview?.open_alerts ?? 0;
   const healthyCount = deviceHealthSummary?.healthy ?? 0;
   const warningCount = deviceHealthSummary?.warning ?? 0;
@@ -720,6 +725,9 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
   const healthTotal = healthyCount + warningCount + criticalCount + unknownCount;
   const healthPct = healthTotal > 0 ? Math.round((healthyCount / healthTotal) * 100) : 0;
   const healthBarWidth = (count: number) => healthTotal > 0 ? `${(count / healthTotal) * 100}%` : '0%';
+  const criticalAlertCount = defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'critical').length;
+  const majorAlertCount = defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'major').length;
+  const warningAlertCount = defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'warning').length;
 
   const nocTimeStr = nocClock.toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -751,6 +759,9 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
           <button type="button" onClick={() => navigate('/automation/execute')} className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 transition-all hover:bg-emerald-100 hover:shadow-sm">
             <Play size={13} />{language === 'zh' ? '\u81ea\u52a8\u5316\u4efb\u52a1' : 'Automation'}
           </button>
+          <button type="button" onClick={() => navigate('/topology')} className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700 transition-all hover:bg-indigo-100 hover:shadow-sm">
+            <Map size={13} />{language === 'zh' ? '\u7f51\u7edc\u62d3\u6251' : 'Topology'}
+          </button>
           <div className="h-6 w-px bg-black/10" />
           <button type="button" onClick={() => setAutoRefresh(!autoRefresh)} className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all ${autoRefresh ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)]'}`}>
             <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-black/20'}`} />
@@ -764,45 +775,61 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
         </div>
       </div>
 
-      {/* SECTION 1: CORE STATUS BAR */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+      {/* CRITICAL BANNER */}
+      {(criticalCount > 0 || criticalAlertCount > 0) && (
+        <button type="button" onClick={() => navigate('/alerts')} className="w-full flex items-center gap-3 rounded-xl border border-red-300 bg-gradient-to-r from-red-600 to-red-500 px-5 py-3 text-white shadow-lg shadow-red-500/20 transition-all hover:shadow-red-500/30 hover:scale-[1.005] active:scale-[0.998]">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/20">
+            <AlertTriangle size={18} className="animate-pulse" />
+          </span>
+          <div className="flex-1 text-left">
+            <p className="text-sm font-bold">
+              {language === 'zh'
+                ? `\ud83d\udea8 ${criticalCount} \u53f0\u4e25\u91cd\u8bbe\u5907 + ${criticalAlertCount} \u6761\u4e25\u91cd\u544a\u8b66\u6b63\u5728\u5f71\u54cd\u7f51\u7edc`
+                : `\ud83d\udea8 ${criticalCount} Critical Devices + ${criticalAlertCount} Critical Alerts Impacting Network`}
+            </p>
+            <p className="text-[11px] text-white/80">
+              {language === 'zh'
+                ? `${offlineDevices} \u53f0\u79bb\u7ebf · ${openAlerts} \u6761\u6d3b\u8dc3\u544a\u8b66 · \u70b9\u51fb\u67e5\u770b\u8be6\u60c5`
+                : `${offlineDevices} offline · ${openAlerts} active alerts · Click for details`}
+            </p>
+          </div>
+          <ArrowUpRight size={16} className="shrink-0 text-white/60" />
+        </button>
+      )}
+
+      {/* SECTION 1: SEVERITY-FIRST STATUS CARDS */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatusCard
-          label={language === 'zh' ? '\u603b\u8bbe\u5907\u6570' : 'Total Devices'}
-          value={totalDevices || '-'}
-          sub={language === 'zh' ? '\u7eb3\u7ba1\u8bbe\u5907' : 'Managed'}
-          icon={<Server size={14} />}
-        />
-        <StatusCard
-          label={language === 'zh' ? '\u5728\u7ebf\u8bbe\u5907' : 'Online'}
-          value={onlineDevices || '-'}
-          sub={`${healthPct}% ${language === 'zh' ? '\u5065\u5eb7\u7387' : 'healthy'}`}
-          tone="green"
-          icon={<CheckCircle2 size={14} />}
-        />
-        <StatusCard
-          label={language === 'zh' ? '\u79bb\u7ebf\u8bbe\u5907' : 'Offline'}
-          value={offlineDevices}
-          tone={offlineDevices > 0 ? 'red' : 'default'}
-          pulse={offlineDevices > 0}
-          sub={language === 'zh' ? '\u70b9\u51fb\u67e5\u770b\u8be6\u60c5' : 'Click for details'}
-          onClick={() => navigate('/inventory')}
+          label={language === 'zh' ? 'P1 \u4e25\u91cd' : 'P1 Critical'}
+          value={`${criticalCount} / ${criticalAlertCount}`}
+          tone="red"
+          pulse={criticalCount > 0 || criticalAlertCount > 0}
+          sub={`${criticalCount} ${language === 'zh' ? '\u8bbe\u5907' : 'devices'} · ${criticalAlertCount} ${language === 'zh' ? '\u544a\u8b66' : 'alerts'}`}
+          onClick={() => navigate('/alerts')}
           icon={<XCircle size={14} />}
         />
         <StatusCard
-          label={language === 'zh' ? '\u6d3b\u8dc3\u544a\u8b66' : 'Active Alerts'}
-          value={openAlerts}
-          tone={openAlerts > 0 ? 'red' : 'green'}
-          pulse={openAlerts > 0}
-          sub={`24h: ${monitorOverview?.alerts_24h ?? 0}`}
+          label={language === 'zh' ? 'P2 \u4e3b\u8981' : 'P2 Major'}
+          value={`${offlineDevices} / ${majorAlertCount}`}
+          tone={(offlineDevices + majorAlertCount) > 0 ? 'amber' : 'default'}
+          sub={`${offlineDevices} ${language === 'zh' ? '\u79bb\u7ebf' : 'offline'} · ${majorAlertCount} ${language === 'zh' ? '\u544a\u8b66' : 'alerts'}`}
           onClick={() => navigate('/alerts')}
           icon={<AlertTriangle size={14} />}
         />
         <StatusCard
-          label={language === 'zh' ? '\u5065\u5eb7\u8bc4\u5206' : 'Health Score'}
-          value={deviceHealthSummary?.average_score ?? '-'}
-          sub={`${healthyCount} ${language === 'zh' ? '\u5065\u5eb7' : 'ok'} / ${warningCount} ${language === 'zh' ? '\u544a\u8b66' : 'warn'} / ${criticalCount} ${language === 'zh' ? '\u4e25\u91cd' : 'crit'}`}
-          tone={criticalCount > 0 ? 'red' : warningCount > 0 ? 'amber' : 'green'}
+          label={language === 'zh' ? 'P3 \u6b21\u8981' : 'P3 Warning'}
+          value={`${warningCount} / ${warningAlertCount}`}
+          tone={(warningCount + warningAlertCount) > 0 ? 'amber' : 'default'}
+          sub={`${warningCount} ${language === 'zh' ? '\u8bbe\u5907' : 'devices'} · ${warningAlertCount} ${language === 'zh' ? '\u544a\u8b66' : 'alerts'}`}
+          onClick={() => navigate('/health')}
           icon={<Shield size={14} />}
+        />
+        <StatusCard
+          label={language === 'zh' ? '\u6b63\u5e38' : 'Normal'}
+          value={healthyCount}
+          tone="green"
+          sub={`${totalDevices} ${language === 'zh' ? '\u603b\u8bbe\u5907' : 'total'} · ${onlineDevices} ${language === 'zh' ? '\u5728\u7ebf' : 'online'} · ${healthPct}%`}
+          icon={<CheckCircle2 size={14} />}
         />
       </div>
 
@@ -853,12 +880,12 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
           )}
         </div>
 
-        {/* RIGHT: HIGH RISK DEVICES TOP N */}
+        {/* RIGHT: TOP IMPACTED DEVICES */}
         <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red-600">{language === 'zh' ? '\u9ad8\u98ce\u9669\u8bbe\u5907' : 'High Risk Devices'}</p>
-              <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '\u98ce\u9669\u8bbe\u5907 Top N' : 'Top Risky Devices'}</h3>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red-600">{language === 'zh' ? '\u5f71\u54cd\u6700\u5927' : 'Most Impacted'}</p>
+              <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? 'Top \u5f71\u54cd\u8bbe\u5907' : 'Top Impacted Devices'}</h3>
               <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '\u79bb\u7ebf\u8bbe\u5907\u4f18\u5148\u6392\u5217\uff0c\u5176\u6b21\u6309\u5065\u5eb7\u5206\u5347\u5e8f\u3002' : 'Offline first, then by health score ascending.'}</p>
             </div>
             <span className="rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-bold uppercase text-red-700">
@@ -867,14 +894,35 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
           </div>
           <div className="space-y-2 max-h-[380px] overflow-auto pr-1">
             {riskyDevices.length > 0
-              ? riskyDevices.map((device: any, idx: number) => (
-                <RiskDeviceRow key={device.id} device={device} language={language} index={idx} onClick={() => openMonitorDevice(device)} />
+              ? riskyDevices.slice(0, impactedShowAll ? riskyDevices.length : 5).map((device: any, idx: number) => (
+                <div key={device.id} className="group">
+                  <RiskDeviceRow device={device} language={language} index={idx} onClick={() => openMonitorDevice(device)} />
+                  {/* Quick Action Buttons */}
+                  <div className="flex items-center gap-1.5 mt-1 ml-9 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate('/automation/execute'); }} className="inline-flex items-center gap-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--muted-text)] hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 transition-all">
+                      <Terminal size={10} />SSH
+                    </button>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate('/automation/execute'); }} className="inline-flex items-center gap-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--muted-text)] hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 transition-all">
+                      <Play size={10} />{language === 'zh' ? '\u6267\u884c' : 'Script'}
+                    </button>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate('/configs'); }} className="inline-flex items-center gap-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--muted-text)] hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 transition-all">
+                      <Download size={10} />{language === 'zh' ? '\u5907\u4efd' : 'Backup'}
+                    </button>
+                  </div>
+                </div>
               ))
               : <div className="rounded-xl border border-dashed border-[var(--card-border)] p-8 text-center text-sm text-[var(--muted-text)]">
                   <CheckCircle2 size={24} className="mx-auto mb-2 text-emerald-500" />
                   {language === 'zh' ? '\u5f53\u524d\u6ca1\u6709\u98ce\u9669\u8bbe\u5907\uff0c\u5168\u7f51\u5065\u5eb7\uff01' : 'No risky devices \u2014 fleet is healthy!'}
                 </div>
             }
+            {riskyDevices.length > 5 && (
+              <button type="button" onClick={() => setImpactedShowAll(!impactedShowAll)} className="w-full rounded-xl border border-[var(--card-border)] bg-black/[0.015] px-3 py-2 text-xs font-semibold text-[var(--muted-text)] transition-all hover:border-black/20 hover:bg-black/[0.03]">
+                {impactedShowAll
+                  ? (language === 'zh' ? '\u6536\u8d77' : 'Show less')
+                  : (language === 'zh' ? `\u67e5\u770b\u5168\u90e8 ${riskyDevices.length} \u53f0 \u2192` : `View all ${riskyDevices.length} devices \u2192`)}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -992,6 +1040,83 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
           </button>
         </div>
       </div>
+
+      {/* SECTION 3.5: BUSINESS SERVICES — driven by real device roles */}
+      {(() => {
+        const roleLower = (d: Device) => (d.role || '').toLowerCase();
+        const vpnDevices = allDevices.filter(d => { const r = roleLower(d); const p = (d.platform || '').toLowerCase(); return r.includes('vpn') || r.includes('firewall') || p.includes('fortinet'); });
+        const edgeDevices = allDevices.filter(d => { const r = roleLower(d); return r.includes('edge') || r.includes('border') || r.includes('wan'); });
+        const coreDevices = allDevices.filter(d => { const r = roleLower(d); return r.includes('core') || r.includes('distribution') || r.includes('spine') || r.includes('leaf'); });
+        const accessDevices = allDevices.filter(d => { const r = roleLower(d); return r.includes('access') || r.includes('campus'); });
+
+        const svcStatus = (devs: Device[]): 'operational' | 'degraded' | 'outage' => {
+          if (devs.length === 0) return 'operational';
+          const offCount = devs.filter(d => d.status === 'offline').length;
+          const critCount = devs.filter(d => d.health_status === 'critical').length;
+          if (offCount > devs.length / 2) return 'outage';
+          if (offCount > 0 || critCount > 0) return 'degraded';
+          return 'operational';
+        };
+        const svcDetail = (devs: Device[]): string => {
+          if (devs.length === 0) return language === 'zh' ? '未分配设备' : 'No devices assigned';
+          const on = devs.filter(d => d.status === 'online').length;
+          const off = devs.length - on;
+          if (off === 0) return language === 'zh' ? `${on}/${devs.length} 全部在线` : `${on}/${devs.length} all online`;
+          return language === 'zh' ? `${on}/${devs.length} 在线 · ${off} 离线` : `${on}/${devs.length} online · ${off} offline`;
+        };
+
+        const services = [
+          { name: language === 'zh' ? 'VPN / 安全' : 'VPN / Security', icon: <Shield size={16} />, status: svcStatus(vpnDevices), details: svcDetail(vpnDevices), count: vpnDevices.length },
+          { name: language === 'zh' ? '互联网出口' : 'Internet Edge', icon: <Globe size={16} />, status: svcStatus(edgeDevices), details: svcDetail(edgeDevices), count: edgeDevices.length },
+          { name: language === 'zh' ? '核心网络' : 'Core Network', icon: <Server size={16} />, status: svcStatus(coreDevices), details: svcDetail(coreDevices), count: coreDevices.length },
+          { name: language === 'zh' ? '接入层 / 园区' : 'Access / Campus', icon: <Layers size={16} />, status: svcStatus(accessDevices), details: svcDetail(accessDevices), count: accessDevices.length },
+        ];
+
+        const platformStatus: 'operational' | 'degraded' | 'outage' = hostResources?.database_ok === false ? 'degraded' : (hostResources?.status === 'critical') ? 'outage' : (hostResources?.status === 'degraded') ? 'degraded' : 'operational';
+        const platformDetail = `DB ${hostResources?.database_ok ? 'OK' : 'ERR'} · CPU ${hostResources?.cpu_percent != null ? Math.round(hostResources.cpu_percent) + '%' : '--'} · Up ${hostResources?.uptime_hours != null ? Math.round(hostResources.uptime_hours) + 'h' : '--'}`;
+
+        const activeServices = services.filter(s => s.count > 0);
+        const colCount = Math.min(activeServices.length + 1, 5);
+
+        const renderCard = (name: string, icon: React.ReactNode, status: string, details: string) => {
+          const cfg = status === 'outage'
+            ? { color: 'border-red-300 bg-red-50', dot: 'bg-red-500', text: 'text-red-700', label: language === 'zh' ? '故障' : 'Outage' }
+            : status === 'degraded'
+              ? { color: 'border-amber-300 bg-amber-50', dot: 'bg-amber-500', text: 'text-amber-700', label: language === 'zh' ? '降级' : 'Degraded' }
+              : { color: 'border-emerald-300 bg-emerald-50', dot: 'bg-emerald-500', text: 'text-emerald-700', label: language === 'zh' ? '正常' : 'Operational' };
+          return (
+            <div key={name} className={`rounded-xl border ${cfg.color} p-4 transition-all hover:shadow-sm`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[var(--muted-text)]">{icon}</span>
+                  <span className="text-sm font-semibold text-[var(--app-text)]">{name}</span>
+                </div>
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${cfg.text}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot} ${status !== 'operational' ? 'animate-pulse' : ''}`} />
+                  {cfg.label}
+                </span>
+              </div>
+              <p className="text-[11px] text-[var(--muted-text)]">{details}</p>
+            </div>
+          );
+        };
+
+        return (
+          <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-600">{language === 'zh' ? '业务服务' : 'Business Services'}</p>
+                <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '服务状态总览' : 'Service Status Overview'}</h3>
+              </div>
+              <span className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? `基于 ${allDevices.length} 台设备角色` : `Based on ${allDevices.length} device roles`}</span>
+            </div>
+            <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-${colCount} gap-3`}>
+              {activeServices.map(svc => renderCard(svc.name, svc.icon, svc.status, svc.details))}
+              {renderCard(language === 'zh' ? '监控平台' : 'Platform', <Activity size={16} />, platformStatus, platformDetail)}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* SECTION 4: Advanced / Collapsible */}
       <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] overflow-hidden">
@@ -1204,27 +1329,35 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
                 <table className="w-full text-xs">
                   <thead className="bg-black/[0.02]">
                     <tr>
-                      <th className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u65f6\u95f4' : 'Time'}</th>
-                      <th className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u7ea7\u522b' : 'Severity'}</th>
-                      <th className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u9636\u6bb5' : 'Phase'}</th>
-                      <th className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u6807\u9898' : 'Title'}</th>
-                      <th className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u5185\u5bb9' : 'Message'}</th>
-                      <th className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u6062\u590d' : 'Recovered'}</th>
+                      <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u65f6\u95f4' : 'Time'}</th>
+                      <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u7ea7\u522b' : 'Severity'}</th>
+                      <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u9636\u6bb5' : 'Phase'}</th>
+                      <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u6807\u9898' : 'Title'}</th>
+                      <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u5185\u5bb9' : 'Message'}</th>
+                      <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u6062\u590d' : 'Recovered'}</th>
+                      <th className="px-3 py-2 text-center text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '\u64cd\u4f5c' : 'Actions'}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-black/5">
                     {monitorAlerts.map((a: any) => (
                       <tr key={a.id} className="hover:bg-black/[0.01]">
-                        <td className="px-4 py-2 text-[var(--muted-text)]">{a.created_at ? formatTs(a.created_at, true) : '-'}</td>
-                        <td className="px-4 py-2"><span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${String(a.severity).toLowerCase() === 'critical' ? 'bg-red-100 text-red-700' : String(a.severity).toLowerCase() === 'major' ? 'bg-orange-100 text-orange-700' : 'bg-black/5 text-[var(--muted-text)]'}`}>{severityLabel(a.severity)}</span></td>
-                        <td className="px-4 py-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${a.resolved_at ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}`}>{phaseLabel(a.resolved_at)}</span></td>
-                        <td className="px-4 py-2 font-semibold text-[var(--app-text)]">{a.title}</td>
-                        <td className="px-4 py-2 text-[var(--muted-text)]">{a.message}</td>
-                        <td className="px-4 py-2 text-[var(--muted-text)]">{a.resolved_at ? formatTs(a.resolved_at, true) : '-'}</td>
+                        <td className="px-3 py-2 text-[var(--muted-text)] whitespace-nowrap">{a.created_at ? formatTs(a.created_at, true) : '-'}</td>
+                        <td className="px-3 py-2"><span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${String(a.severity).toLowerCase() === 'critical' ? 'bg-red-100 text-red-700' : String(a.severity).toLowerCase() === 'major' ? 'bg-orange-100 text-orange-700' : 'bg-black/5 text-[var(--muted-text)]'}`}>{severityLabel(a.severity)}</span></td>
+                        <td className="px-3 py-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${a.resolved_at ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}`}>{phaseLabel(a.resolved_at)}</span></td>
+                        <td className="px-3 py-2 font-semibold text-[var(--app-text)] max-w-[180px] truncate">{a.title}</td>
+                        <td className="px-3 py-2 text-[var(--muted-text)] max-w-[200px] truncate">{a.message}</td>
+                        <td className="px-3 py-2 text-[var(--muted-text)] whitespace-nowrap">{a.resolved_at ? formatTs(a.resolved_at, true) : '-'}</td>
+                        <td className="px-3 py-2 text-center">
+                          {!a.resolved_at && (
+                            <button type="button" onClick={() => showToast(language === 'zh' ? '\u5df2\u786e\u8ba4\u544a\u8b66 (ACK)' : 'Alert acknowledged (ACK)', 'info')} className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700 hover:bg-sky-100 transition-all">
+                              <Eye size={10} />ACK
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                     {monitorAlerts.length === 0 && (
-                      <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-[var(--muted-text)]">{language === 'zh' ? '\u5f53\u524d\u65e0\u544a\u8b66\u8bb0\u5f55\u3002' : 'No alert records found.'}</td></tr>
+                      <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-[var(--muted-text)]">{language === 'zh' ? '\u5f53\u524d\u65e0\u544a\u8b66\u8bb0\u5f55\u3002' : 'No alert records found.'}</td></tr>
                     )}
                   </tbody>
                 </table>

@@ -26,6 +26,7 @@ from api.audit import router as audit_router
 from api.compliance import router as compliance_router
 from api.config_drift import router as config_drift_router
 from api.capacity import router as capacity_router
+from api.assets import router as assets_router
 import logging
 import os
 import sqlite3
@@ -142,6 +143,7 @@ app.include_router(audit_router, prefix="/api")
 app.include_router(compliance_router, prefix="/api")
 app.include_router(config_drift_router, prefix="/api")
 app.include_router(capacity_router, prefix="/api")
+app.include_router(assets_router, prefix="/api")
 
 # ── APScheduler ──────────────────────────────────────────────────────
 scheduler = AsyncIOScheduler()

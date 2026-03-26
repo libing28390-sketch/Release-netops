@@ -1018,6 +1018,7 @@ def init_db():
             device_id TEXT DEFAULT '',
             interface_name TEXT DEFAULT '',
             mac_address TEXT DEFAULT '',
+            device_type TEXT DEFAULT '',
             status TEXT DEFAULT 'active',
             description TEXT DEFAULT '',
             last_seen TEXT DEFAULT '',
@@ -1027,6 +1028,11 @@ def init_db():
         )
         ''')
         cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_addr_unique ON ip_addresses(subnet_id, address)')
+
+        # Migration: add device_type column if missing
+        ip_addr_cols = [r[1] for r in cursor.execute('PRAGMA table_info(ip_addresses)').fetchall()]
+        if 'device_type' not in ip_addr_cols:
+            cursor.execute("ALTER TABLE ip_addresses ADD COLUMN device_type TEXT DEFAULT ''")
 
         # ── Capacity planning snapshots (daily link/device utilization) ──
         cursor.execute('''
@@ -1048,6 +1054,34 @@ def init_db():
         )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_capacity_snap_device_date ON capacity_snapshots(device_id, snapshot_date)')
+
+        # ── Physical Asset Management ──
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS physical_assets (
+            id TEXT PRIMARY KEY,
+            asset_type TEXT NOT NULL DEFAULT 'server',
+            asset_tag TEXT DEFAULT '',
+            serial_number TEXT DEFAULT '',
+            vendor TEXT DEFAULT '',
+            model TEXT DEFAULT '',
+            hostname TEXT DEFAULT '',
+            datacenter TEXT DEFAULT '',
+            rack TEXT DEFAULT '',
+            rack_unit TEXT DEFAULT '',
+            management_ip TEXT DEFAULT '',
+            business_ip TEXT DEFAULT '',
+            device_role TEXT DEFAULT '',
+            status TEXT DEFAULT 'active',
+            purchase_date TEXT DEFAULT '',
+            warranty_expiry TEXT DEFAULT '',
+            department TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        ''')
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_tag ON physical_assets(asset_tag) WHERE asset_tag != ''")
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_asset_type ON physical_assets(asset_type)')
 
         conn.commit()
     finally:

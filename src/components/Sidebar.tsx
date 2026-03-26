@@ -21,6 +21,7 @@ import {
   Search,
   Server,
   Settings,
+  HardDrive,
   ShieldCheck,
   TrendingUp,
   User,
@@ -65,6 +66,7 @@ interface SidebarProps {
   navTo: (path: string) => void;
   setActiveTab: (tab: string) => void;
   togglePin: (path: string) => void;
+  removeRecentPath: (path: string) => void;
   formatCompactResourcePercent: (value: number | null | undefined) => string;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setRealtimeSectionOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -111,6 +113,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   navTo,
   setActiveTab,
   togglePin,
+  removeRecentPath,
   formatCompactResourcePercent,
   setSidebarCollapsed,
   setRealtimeSectionOpen,
@@ -266,6 +269,13 @@ const Sidebar: React.FC<SidebarProps> = ({
                         title={item.label}
                       >
                         <span className={chipLabelClass}>{item.label}</span>
+                      </button>
+                      <button
+                        onClick={(event) => { event.stopPropagation(); removeRecentPath(item.path); }}
+                        title={language === 'zh' ? '移除' : 'Remove'}
+                        className="absolute -right-1 -top-1 opacity-0 group-hover/recent:opacity-100 transition-opacity p-0.5 rounded-full bg-gray-700/80 hover:bg-red-600/80 text-white/50 hover:text-white"
+                      >
+                        <X size={10} />
                       </button>
                       <button
                         onClick={(event) => { event.stopPropagation(); togglePin(item.path); }}
@@ -458,15 +468,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => {
                   const next = !inventoryGroupOpen;
                   setInventoryGroupOpen(next);
-                  if (next && !(currentPath.startsWith('/inventory') || activeTab === 'ipam')) navTo('/inventory/devices');
+                  if (next && !(currentPath.startsWith('/inventory') || activeTab === 'ipam' || activeTab === 'assets')) navTo('/inventory/devices');
                 }}
                 className={`${navButtonGroupClass} ${
-                  activeTab === 'inventory' || activeTab === 'ipam'
+                  activeTab === 'inventory' || activeTab === 'ipam' || activeTab === 'assets'
                     ? activePrimaryNavClass
                     : inactivePrimaryNavClass
                 }`}
               >
-                <Database size={17} className={activeTab === 'inventory' || activeTab === 'ipam' ? 'text-[#5fe6ff]' : 'text-white/72'} />
+                <Database size={17} className={activeTab === 'inventory' || activeTab === 'ipam' || activeTab === 'assets' ? 'text-[#5fe6ff]' : 'text-white/72'} />
                 <span className={navLabelClass}>{t('inventory')}</span>
                 <span className={`${groupChevronWrapClass} ${
                   inventoryGroupOpen
@@ -481,12 +491,13 @@ const Sidebar: React.FC<SidebarProps> = ({
                   {([
                     { path: 'inventory/devices', icon: Server, label: t('deviceList') },
                     { path: 'ipam', icon: Network, label: language === 'zh' ? 'IP/VLAN管理' : 'IP/VLAN Mgmt' },
+                    { path: 'assets', icon: HardDrive, label: language === 'zh' ? '资产管理' : 'Assets' },
                   ] as const).map((item) => {
-                    const isActive = item.path === 'ipam' ? activeTab === 'ipam' : currentPath === `/${item.path}`;
+                    const isActive = item.path === 'ipam' ? activeTab === 'ipam' : item.path === 'assets' ? activeTab === 'assets' : currentPath === `/${item.path}`;
                     return (
                       <button
                         key={item.path}
-                        onClick={() => item.path === 'ipam' ? setActiveTab('ipam') : navTo(`/${item.path}`)}
+                        onClick={() => (item.path === 'ipam' || item.path === 'assets') ? setActiveTab(item.path) : navTo(`/${item.path}`)}
                         className={`${subItemButtonClass} ${
                           isActive
                             ? `${activeSubItemClass} font-semibold`
