@@ -2,12 +2,11 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Package, Plus, Trash2, Search, X, RefreshCw, Download, Pencil,
   Server, Router, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  AlertTriangle, Terminal, Globe, HardDrive, Activity,
-  MoreHorizontal, LayoutList, LayoutGrid, Network,
-  ExternalLink, Wifi, WifiOff, Building2, Play, Upload, Radar,
-  Bell, Shield, FileText, ChevronDown, ChevronUp,
-  Zap, AlertCircle, CheckCircle2, Tag, Cpu, MemoryStick,
-  Clock, Flame, Link2, MonitorSpeaker,
+  AlertTriangle, Network,
+  ExternalLink, Wifi, Building2, Upload,
+  FileText, ChevronDown, ChevronUp,
+  Zap, AlertCircle, CheckCircle2, Tag,
+  Flame, MonitorSpeaker, LayoutList, LayoutGrid,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
@@ -20,7 +19,8 @@ interface Asset {
   id: string; asset_type: string; asset_tag: string; serial_number: string;
   vendor: string; model: string; hostname: string; datacenter: string;
   rack: string; rack_unit: string; management_ip: string; business_ip: string;
-  device_role: string; status: string; purchase_date: string;
+  device_role: string; vlan: string; uplink_switch: string; uplink_port: string;
+  status: string; purchase_date: string;
   warranty_expiry: string; department: string; notes: string;
   created_at: string; updated_at: string;
 }
@@ -63,8 +63,8 @@ type GroupBy = 'datacenter' | 'department' | 'vendor';
 const EMPTY_FORM = {
   asset_type: 'server', asset_tag: '', serial_number: '', vendor: '', model: '',
   hostname: '', datacenter: '', rack: '', rack_unit: '', management_ip: '',
-  business_ip: '', device_role: '', status: 'active', purchase_date: '',
-  warranty_expiry: '', department: '', notes: '',
+  business_ip: '', device_role: '', vlan: '', uplink_switch: '', uplink_port: '',
+  status: 'active', purchase_date: '', warranty_expiry: '', department: '', notes: '',
 };
 
 const PAGE_SIZE = 25;
@@ -87,13 +87,6 @@ const ago = (iso: string) => {
   const d = Math.floor(h / 24);
   if (d < 30) return `${d}d ago`;
   return `${Math.floor(d / 30)}mo`;
-};
-
-/** Deterministic mock metric from asset id for demo purposes */
-const mockMetric = (id: string, min: number, max: number) => {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
-  return min + Math.abs(h) % (max - min + 1);
 };
 
 /** Map status to severity for P1-P4 classification */
@@ -137,10 +130,10 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [form, setForm]                 = useState({ ...EMPTY_FORM });
   const [saving, setSaving]             = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Asset | null>(null);
-  const [moreMenuId, setMoreMenuId]     = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [showBatchTag, setShowBatchTag] = useState(false);
   const [batchTagValue, setBatchTagValue] = useState('');
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   /* ─── Data Fetching ─── */
   const fetchSummary = useCallback(async () => {
@@ -193,7 +186,9 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       asset_type: a.asset_type, asset_tag: a.asset_tag, serial_number: a.serial_number,
       vendor: a.vendor, model: a.model, hostname: a.hostname, datacenter: a.datacenter,
       rack: a.rack, rack_unit: a.rack_unit, management_ip: a.management_ip,
-      business_ip: a.business_ip, device_role: a.device_role, status: a.status,
+      business_ip: a.business_ip, device_role: a.device_role,
+      vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
+      status: a.status,
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
     });
@@ -224,11 +219,6 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const toggleAll = () => setSelectedIds(p => p.size === displayAssets.length ? new Set() : new Set(displayAssets.map(a => a.id)));
   const clearSel  = () => setSelectedIds(new Set());
 
-  const batchSSH = () => {
-    const ips = assets.filter(a => selectedIds.has(a.id) && a.management_ip).map(a => a.management_ip);
-    if (ips.length) navigator.clipboard.writeText(ips.join('\n'));
-  };
-
   const batchTag = async () => {
     if (!batchTagValue.trim()) return;
     const promises = Array.from(selectedIds).map(id =>
@@ -245,17 +235,123 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const handleExport = () => {
     if (!assets.length) return;
     const rows = assets.map(a => ({
-      [zh ? '主机名' : 'Hostname']: a.hostname, [zh ? '资产编号' : 'Tag']: a.asset_tag,
-      [zh ? '类型' : 'Type']: a.asset_type, [zh ? '厂商' : 'Vendor']: a.vendor,
-      [zh ? '型号' : 'Model']: a.model, [zh ? '管理IP' : 'Mgmt IP']: a.management_ip,
-      [zh ? '状态' : 'Status']: a.status, [zh ? '数据中心' : 'DC']: a.datacenter,
-      [zh ? '机柜' : 'Rack']: `${a.rack}${a.rack_unit ? ' U' + a.rack_unit : ''}`,
-      [zh ? '部门' : 'Dept']: a.department, [zh ? '角色' : 'Role']: a.device_role,
+      [zh ? '主机名' : 'Hostname']: a.hostname,
+      [zh ? '资产编号' : 'Asset Tag']: a.asset_tag,
+      [zh ? '序列号' : 'Serial Number']: a.serial_number,
+      [zh ? '类型' : 'Type']: a.asset_type,
+      [zh ? '厂商' : 'Vendor']: a.vendor,
+      [zh ? '型号' : 'Model']: a.model,
+      [zh ? '管理IP' : 'Mgmt IP']: a.management_ip,
+      [zh ? '业务IP' : 'Business IP']: a.business_ip,
+      [zh ? '状态' : 'Status']: a.status,
+      [zh ? '角色' : 'Role']: a.device_role,
+      [zh ? 'VLAN' : 'VLAN']: a.vlan,
+      [zh ? '上联交换机' : 'Uplink Switch']: a.uplink_switch,
+      [zh ? '上联端口' : 'Uplink Port']: a.uplink_port,
+      [zh ? '数据中心' : 'Datacenter']: a.datacenter,
+      [zh ? '机柜' : 'Rack']: a.rack,
+      [zh ? 'U位' : 'Rack Unit']: a.rack_unit,
+      [zh ? '部门' : 'Department']: a.department,
+      [zh ? '购买日期' : 'Purchase Date']: a.purchase_date,
+      [zh ? '保修到期' : 'Warranty Expiry']: a.warranty_expiry,
+      [zh ? '备注' : 'Notes']: a.notes,
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Assets');
     XLSX.writeFile(wb, `assets_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  /* ─── Import ─── */
+  const COL_MAP: Record<string, string> = {
+    '主机名': 'hostname', 'Hostname': 'hostname', 'hostname': 'hostname',
+    '资产编号': 'asset_tag', 'Asset Tag': 'asset_tag', 'asset_tag': 'asset_tag', 'Tag': 'asset_tag',
+    '序列号': 'serial_number', 'Serial Number': 'serial_number', 'serial_number': 'serial_number',
+    '类型': 'asset_type', 'Type': 'asset_type', 'asset_type': 'asset_type',
+    '厂商': 'vendor', 'Vendor': 'vendor', 'vendor': 'vendor',
+    '型号': 'model', 'Model': 'model', 'model': 'model',
+    '管理IP': 'management_ip', 'Mgmt IP': 'management_ip', 'management_ip': 'management_ip',
+    '业务IP': 'business_ip', 'Business IP': 'business_ip', 'business_ip': 'business_ip',
+    '状态': 'status', 'Status': 'status', 'status': 'status',
+    '角色': 'device_role', 'Role': 'device_role', 'device_role': 'device_role',
+    '数据中心': 'datacenter', 'Datacenter': 'datacenter', 'DC': 'datacenter', 'datacenter': 'datacenter',
+    '机柜': 'rack', 'Rack': 'rack', 'rack': 'rack',
+    'U位': 'rack_unit', 'Rack Unit': 'rack_unit', 'rack_unit': 'rack_unit',
+    '部门': 'department', 'Department': 'department', 'Dept': 'department', 'department': 'department',
+    '购买日期': 'purchase_date', 'Purchase Date': 'purchase_date', 'purchase_date': 'purchase_date',
+    '保修到期': 'warranty_expiry', 'Warranty Expiry': 'warranty_expiry', 'warranty_expiry': 'warranty_expiry',
+    '备注': 'notes', 'Notes': 'notes', 'notes': 'notes',
+    'VLAN': 'vlan', 'vlan': 'vlan',
+    '上联交换机': 'uplink_switch', 'Uplink Switch': 'uplink_switch', 'uplink_switch': 'uplink_switch',
+    '上联端口': 'uplink_port', 'Uplink Port': 'uplink_port', 'uplink_port': 'uplink_port',
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const data = new Uint8Array(ev.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: 'array' });
+        const NET_SHEET = /网络设备|network.?device/i;
+        const mapped: Record<string, string>[] = [];
+        for (const name of wb.SheetNames) {
+          const ws = wb.Sheets[name];
+          const raw = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
+          const isNet = NET_SHEET.test(name);
+          for (const row of raw) {
+            const obj: Record<string, string> = {};
+            for (const [col, val] of Object.entries(row)) {
+              const key = COL_MAP[col.trim()];
+              if (key) obj[key] = String(val).trim();
+            }
+            if (!obj.asset_type) obj.asset_type = isNet ? 'network_device' : 'server';
+            if (obj.hostname || obj.asset_tag) mapped.push(obj);
+          }
+        }
+        if (!mapped.length) { alert(zh ? '未找到有效数据行（需包含主机名或资产编号列）' : 'No valid rows found (need Hostname or Asset Tag column)'); return; }
+        const r = await fetch('/api/assets/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mapped) });
+        if (r.ok) {
+          const res = await r.json();
+          alert(zh ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条` : `Import done: ${res.created} created, ${res.skipped} skipped`);
+          fetchAssets(); fetchSummary();
+        } else {
+          alert(zh ? '导入失败，请检查文件格式' : 'Import failed, please check file format');
+        }
+      } catch { alert(zh ? '文件解析失败' : 'Failed to parse file'); }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  };
+
+  /* ─── Download Import Template ─── */
+  const handleDownloadTemplate = () => {
+    const wb = XLSX.utils.book_new();
+
+    // ── 服务器模板 ──
+    const srvHeaders = zh
+      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '管理IP', '业务IP', 'VLAN', '上联交换机', '上联端口', '状态', '角色', '数据中心', '机柜', 'U位', '部门', '购买日期', '保修到期', '备注']
+      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Mgmt IP', 'Business IP', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Status', 'Role', 'Datacenter', 'Rack', 'Rack Unit', 'Department', 'Purchase Date', 'Warranty Expiry', 'Notes'];
+    const srvExample = zh
+      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', '10.0.1.10', '192.168.1.10', 'VLAN100', 'core-sw-01', 'Gi0/1', 'active', 'web', 'BJ-DC1', 'A-01', '12', '网络部', '2024-01-15', '2027-01-15', '生产服务器']
+      : ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', '10.0.1.10', '192.168.1.10', 'VLAN100', 'core-sw-01', 'Gi0/1', 'active', 'web', 'BJ-DC1', 'A-01', '12', 'IT Dept', '2024-01-15', '2027-01-15', 'Production server'];
+    const wsSrv = XLSX.utils.aoa_to_sheet([srvHeaders, srvExample]);
+    wsSrv['!cols'] = srvHeaders.map(() => ({ wch: 16 }));
+    XLSX.utils.book_append_sheet(wb, wsSrv, zh ? '服务器模板' : 'Server Template');
+
+    // ── 网络设备模板 ──
+    const netHeaders = zh
+      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '管理IP', '状态', '角色', '数据中心', '机柜', 'U位', '部门', '购买日期', '保修到期', '备注']
+      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Mgmt IP', 'Status', 'Role', 'Datacenter', 'Rack', 'Rack Unit', 'Department', 'Purchase Date', 'Warranty Expiry', 'Notes'];
+    const netExample = zh
+      ? ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', '10.0.0.1', 'active', 'switch', 'BJ-DC1', 'A-02', '40', '网络部', '2023-06-01', '2026-06-01', '核心交换机']
+      : ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', '10.0.0.1', 'active', 'switch', 'BJ-DC1', 'A-02', '40', 'IT Dept', '2023-06-01', '2026-06-01', 'Core switch'];
+    const wsNet = XLSX.utils.aoa_to_sheet([netHeaders, netExample]);
+    wsNet['!cols'] = netHeaders.map(() => ({ wch: 16 }));
+    XLSX.utils.book_append_sheet(wb, wsNet, zh ? '网络设备模板' : 'Network Device Template');
+
+    XLSX.writeFile(wb, zh ? '资产导入模板.xlsx' : 'asset_import_template.xlsx');
   };
 
   /* ─── Computed ─── */
@@ -290,6 +386,8 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
      ═══════════════════════════════════════════════════════════════════ */
   return (
     <div className="space-y-2.5">
+      {/* Hidden file input for Excel import */}
+      <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
 
       {/* ══════════════════ SEVERITY CARDS (P1–P4) ══════════════════ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
@@ -383,20 +481,17 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
               {selectedIds.size > 0 && (
                 <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} className="flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-black/8">
                   <span className="text-[10px] font-bold text-[#00bceb] tabular-nums mr-1">{selectedIds.size}</span>
-                  <BatchBtn icon={Terminal}  label="SSH"                     onClick={batchSSH}               hoverCls="hover:bg-emerald-50 hover:text-emerald-600" />
-                  <BatchBtn icon={HardDrive} label={zh ? '备份' : 'Backup'}  onClick={() => goTo('automation')} hoverCls="hover:bg-amber-50 hover:text-amber-600" />
-                  <BatchBtn icon={Play}      label={zh ? '脚本' : 'Script'}  onClick={() => goTo('automation')} hoverCls="hover:bg-violet-50 hover:text-violet-600" />
                   <BatchBtn icon={Tag}       label={zh ? '标签' : 'Tag'}     onClick={() => setShowBatchTag(true)} hoverCls="hover:bg-blue-50 hover:text-blue-600" />
+                  <BatchBtn icon={Trash2}    label={zh ? '删除' : 'Delete'}  onClick={() => { /* batch delete handled via individual */ }} hoverCls="hover:bg-red-50 hover:text-red-600" />
                   <button onClick={clearSel} className="p-0.5 ml-0.5 text-black/20 hover:text-black/45" title="Clear"><X size={10} /></button>
                 </motion.div>
               )}
             </AnimatePresence>
 
             <button onClick={() => { fetchAssets(); fetchSummary(); }} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '刷新' : 'Refresh'}><RefreshCw size={13} /></button>
+            <button onClick={handleDownloadTemplate} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '下载模板' : 'Template'}><FileText size={13} /></button>
             <button onClick={handleExport} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '导出' : 'Export'}><Download size={13} /></button>
-            <button onClick={openAdd} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-[#00bceb] text-white text-[10px] font-bold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20">
-              <Plus size={12} />{zh ? '添加' : 'Add'}
-            </button>
+            <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '导入' : 'Import'}><Upload size={13} /></button>
           </div>
         </div>
 
@@ -454,13 +549,11 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                     { l: zh ? '厂商/型号' : 'Vendor/Model', w: 'min-w-[110px]' },
                     { l: zh ? '管理IP' : 'Mgmt IP',         w: 'w-[110px]' },
                     { l: zh ? '状态'   : 'Status',          w: 'w-[80px]' },
-                    { l: zh ? '告警'   : 'Alerts',          w: 'w-12', align: 'text-center' },
-                    { l: 'CPU',                              w: 'w-14', align: 'text-center' },
-                    { l: 'MEM',                              w: 'w-14', align: 'text-center' },
                     { l: zh ? '角色'   : 'Role',            w: 'w-16' },
                     { l: zh ? '机房'   : 'DC',              w: 'w-20' },
-                    { l: zh ? '最后在线' : 'Last Seen',      w: 'w-20' },
-                    { l: zh ? '操作'   : 'Actions',         w: 'w-[120px]', align: 'text-center' },
+                    { l: zh ? '部门'   : 'Dept',            w: 'w-20' },
+                    { l: zh ? '保修到期' : 'Warranty',       w: 'w-24' },
+                    { l: zh ? '操作'   : 'Actions',         w: 'w-16', align: 'text-center' },
                   ]).map(c => (
                     <th key={c.l} className={`text-left px-1.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-black/20 ${c.w} ${c.align || ''}`}>{c.l}</th>
                   ))}
@@ -468,22 +561,19 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={13} className="text-center py-16 text-black/15">
+                  <tr><td colSpan={11} className="text-center py-16 text-black/15">
                     <RefreshCw size={16} className="mx-auto mb-1.5 animate-spin text-[#00bceb]/25" />
                     <p className="text-[10px]">{zh ? '加载中...' : 'Loading...'}</p>
                   </td></tr>
                 ) : displayAssets.length === 0 ? (
                   /* ── Empty State ── */
-                  <tr><td colSpan={13} className="py-16">
-                    <EmptyState zh={zh} openAdd={openAdd} goTo={goTo} />
+                  <tr><td colSpan={11} className="py-16">
+                    <EmptyState zh={zh} openAdd={openAdd} onImport={() => fileInputRef.current?.click()} />
                   </td></tr>
                 ) : displayAssets.map(a => {
                   const sm  = statusMeta(a.status);
                   const sel = selectedIds.has(a.id);
                   const isDrawerTarget = drawerAsset?.id === a.id;
-                  const cpu = mockMetric(a.id, 5, 95);
-                  const mem = mockMetric(a.id + 'mem', 20, 90);
-                  const alertN = a.status === 'inactive' ? mockMetric(a.id + 'alert', 1, 5) : a.status === 'maintenance' ? mockMetric(a.id + 'alert', 0, 2) : 0;
 
                   return (
                     <tr
@@ -525,24 +615,6 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                           {sm.label[zh ? 'zh' : 'en']}
                         </span>
                       </td>
-                      {/* Alert Count */}
-                      <td className="px-1.5 py-1 text-center" onClick={e => e.stopPropagation()}>
-                        {alertN > 0 ? (
-                          <button onClick={() => goTo('alerts')} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[9px] font-bold hover:bg-red-100 transition-colors" title={zh ? '查看告警' : 'View alerts'}>
-                            <Bell size={8} />{alertN}
-                          </button>
-                        ) : (
-                          <span className="text-[9px] text-black/12">—</span>
-                        )}
-                      </td>
-                      {/* CPU */}
-                      <td className="px-1.5 py-1">
-                        <MiniBar value={cpu} />
-                      </td>
-                      {/* MEM */}
-                      <td className="px-1.5 py-1">
-                        <MiniBar value={mem} />
-                      </td>
                       {/* Role */}
                       <td className="px-1.5 py-1 text-[9px] text-black/30 capitalize">{a.device_role || '—'}</td>
                       {/* DC */}
@@ -550,34 +622,19 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                         {a.datacenter || '—'}
                         {a.rack && <span className="text-black/15 block text-[9px]">{a.rack}{a.rack_unit ? `U${a.rack_unit}` : ''}</span>}
                       </td>
-                      {/* Last Seen */}
-                      <td className="px-1.5 py-1 text-[9px] text-black/20 tabular-nums">{ago(a.updated_at)}</td>
+                      {/* Dept */}
+                      <td className="px-1.5 py-1 text-[10px] text-black/30 truncate max-w-[80px]">{a.department || '—'}</td>
+                      {/* Warranty */}
+                      <td className="px-1.5 py-1 text-[10px] tabular-nums">
+                        {a.warranty_expiry ? (
+                          <span className={new Date(a.warranty_expiry) <= new Date(Date.now() + 90 * 86400000) ? 'text-red-500 font-semibold' : 'text-black/30'}>{a.warranty_expiry}</span>
+                        ) : <span className="text-black/12">—</span>}
+                      </td>
                       {/* Actions */}
                       <td className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-px">
-                          <ActionBtn icon={Terminal}  title="SSH"    hoverCls="hover:text-emerald-600 hover:bg-emerald-50" onClick={() => { if (a.management_ip) navigator.clipboard.writeText(`ssh ${a.management_ip}`); }} />
-                          <ActionBtn icon={Globe}     title="Web"    hoverCls="hover:text-blue-600 hover:bg-blue-50"       onClick={() => { if (a.management_ip) window.open(`https://${a.management_ip}`, '_blank', 'noopener,noreferrer'); }} />
-                          <ActionBtn icon={HardDrive} title={zh ? '备份' : 'Backup'} hoverCls="hover:text-amber-600 hover:bg-amber-50" onClick={() => goTo('automation')} />
-                          <ActionBtn icon={Activity}  title={zh ? '监控' : 'Monitor'} hoverCls="hover:text-violet-600 hover:bg-violet-50" onClick={() => goTo('monitoring')} />
-                          {/* More */}
-                          <div className="relative">
-                            <button onClick={() => setMoreMenuId(moreMenuId === a.id ? null : a.id)}
-                              className="p-1 rounded text-black/15 hover:text-black/35" title="More"><MoreHorizontal size={12} /></button>
-                            {moreMenuId === a.id && (
-                              <>
-                                <div className="fixed inset-0 z-30" onClick={() => setMoreMenuId(null)} />
-                                <div className="absolute right-0 top-7 z-40 bg-white rounded-lg border border-black/8 shadow-xl py-1 min-w-[140px]">
-                                  <MenuBtn icon={Pencil}   label={zh ? '编辑' : 'Edit'}     onClick={() => { openEdit(a); setMoreMenuId(null); }} />
-                                  <MenuBtn icon={Bell}     label={zh ? '告警' : 'Alerts'}    onClick={() => { goTo('alerts');     setMoreMenuId(null); }} />
-                                  <MenuBtn icon={Play}     label={zh ? '脚本' : 'Script'}    onClick={() => { goTo('automation'); setMoreMenuId(null); }} />
-                                  <MenuBtn icon={FileText} label={zh ? '配置' : 'Config'}    onClick={() => { goTo('configs');    setMoreMenuId(null); }} />
-                                  <MenuBtn icon={Shield}   label={zh ? '合规' : 'Compliance'} onClick={() => { goTo('compliance'); setMoreMenuId(null); }} />
-                                  <div className="border-t border-black/5 my-0.5" />
-                                  <MenuBtn icon={Trash2}   label={zh ? '删除' : 'Delete'}    onClick={() => { setDeleteTarget(a); setMoreMenuId(null); }} danger />
-                                </div>
-                              </>
-                            )}
-                          </div>
+                          <ActionBtn icon={Pencil}  title={zh ? '编辑' : 'Edit'}  hoverCls="hover:text-[#00bceb] hover:bg-[#00bceb]/5" onClick={() => openEdit(a)} />
+                          <ActionBtn icon={Trash2}  title={zh ? '删除' : 'Delete'} hoverCls="hover:text-red-500 hover:bg-red-50" onClick={() => setDeleteTarget(a)} />
                         </div>
                       </td>
                     </tr>
@@ -628,8 +685,6 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                           <tbody>
                             {items.map(a => {
                               const sm = statusMeta(a.status);
-                              const cpu = mockMetric(a.id, 5, 95);
-                              const mem = mockMetric(a.id + 'mem', 20, 90);
                               return (
                                 <tr key={a.id} onClick={() => setDrawerAsset(a)} className="border-b border-black/[0.015] hover:bg-black/[0.006] cursor-pointer transition-colors">
                                   <td className="pl-10 pr-2 py-1.5 font-semibold text-black/65 text-[11px]">{a.hostname || a.asset_tag || '—'}</td>
@@ -640,8 +695,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                                       <span className={`h-1.5 w-1.5 rounded-full ${sm.dot}`} />{sm.label[zh ? 'zh' : 'en']}
                                     </span>
                                   </td>
-                                  <td className="px-2 py-1.5 w-14"><MiniBar value={cpu} /></td>
-                                  <td className="px-2 py-1.5 w-14"><MiniBar value={mem} /></td>
+                                  <td className="px-2 py-1.5 text-[9px] text-black/30 capitalize">{a.device_role || '—'}</td>
                                   <td className="px-2 py-1.5 text-right">
                                     <button onClick={e => { e.stopPropagation(); openEdit(a); }} title="Edit" className="p-1 rounded text-black/10 hover:text-[#00bceb] hover:bg-[#00bceb]/5"><Pencil size={11} /></button>
                                   </td>
@@ -699,7 +753,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
               transition={{ type: 'spring', damping: 30, stiffness: 300 }}
               onClick={e => e.stopPropagation()}
             >
-              <DrawerContent asset={drawerAsset} zh={zh} goTo={goTo} openEdit={(a) => { openEdit(a); setDrawerAsset(null); }} setDeleteTarget={(a) => { setDeleteTarget(a); setDrawerAsset(null); }} onClose={() => setDrawerAsset(null)} />
+              <DrawerContent asset={drawerAsset} zh={zh} openEdit={(a) => { openEdit(a); setDrawerAsset(null); }} setDeleteTarget={(a) => { setDeleteTarget(a); setDrawerAsset(null); }} onClose={() => setDrawerAsset(null)} />
             </motion.div>
           </motion.div>
         )}
@@ -745,7 +799,18 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                   </select>
                 </div>
                 <Field label={zh ? '管理IP' : 'Mgmt IP'}        value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="10.0.0.1" />
-                <Field label={zh ? '业务IP' : 'Biz IP'}         value={form.business_ip}   onChange={v => setForm(f => ({ ...f, business_ip: v }))}   placeholder="192.168.1.10" />
+                {form.asset_type === 'server' && (
+                  <Field label={zh ? '业务IP' : 'Biz IP'}       value={form.business_ip}   onChange={v => setForm(f => ({ ...f, business_ip: v }))}   placeholder="192.168.1.10" />
+                )}
+                {form.asset_type === 'server' && (
+                  <Field label="VLAN"                            value={form.vlan}          onChange={v => setForm(f => ({ ...f, vlan: v }))}          placeholder="VLAN 100" />
+                )}
+                {form.asset_type === 'server' && (
+                  <Field label={zh ? '上联交换机' : 'Uplink Switch'} value={form.uplink_switch} onChange={v => setForm(f => ({ ...f, uplink_switch: v }))} placeholder="core-sw-01" />
+                )}
+                {form.asset_type === 'server' && (
+                  <Field label={zh ? '上联端口' : 'Uplink Port'} value={form.uplink_port}   onChange={v => setForm(f => ({ ...f, uplink_port: v }))}   placeholder="Gi0/1" />
+                )}
                 <Field label={zh ? '数据中心' : 'DC'}            value={form.datacenter}    onChange={v => setForm(f => ({ ...f, datacenter: v }))}    placeholder="BJ-DC1" />
                 <Field label={zh ? '机柜' : 'Rack'}             value={form.rack}          onChange={v => setForm(f => ({ ...f, rack: v }))}          placeholder="A-01" />
                 <Field label={zh ? 'U位' : 'Unit'}              value={form.rack_unit}     onChange={v => setForm(f => ({ ...f, rack_unit: v }))}     placeholder="12" />
@@ -824,7 +889,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
    ═══════════════════════════════════════════════════════════════════ */
 
 /* --- Empty State --- */
-function EmptyState({ zh, openAdd, goTo }: { zh: boolean; openAdd: () => void; goTo: (t: string) => void }) {
+function EmptyState({ zh, openAdd, onImport }: { zh: boolean; openAdd: () => void; onImport: () => void }) {
   return (
     <div className="text-center max-w-lg mx-auto">
       <div className="relative h-24 w-24 mx-auto mb-5">
@@ -843,14 +908,8 @@ function EmptyState({ zh, openAdd, goTo }: { zh: boolean; openAdd: () => void; g
         <button onClick={openAdd} className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-[#00bceb] text-white text-[11px] font-bold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20">
           <Plus size={13} />{zh ? '添加资产' : 'Add Asset'}
         </button>
-        <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-black/8 text-black/35 text-[11px] font-medium hover:bg-black/[0.01]">
+        <button onClick={onImport} className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-black/8 text-black/35 text-[11px] font-medium hover:bg-black/[0.01]">
           <Upload size={12} />{zh ? '导入 Excel' : 'Import Excel'}
-        </button>
-        <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-black/8 text-black/35 text-[11px] font-medium hover:bg-black/[0.01]">
-          <Radar size={12} />{zh ? '自动发现' : 'Auto Discover'}
-        </button>
-        <button onClick={() => goTo('monitoring')} className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-black/8 text-black/35 text-[11px] font-medium hover:bg-black/[0.01]">
-          <Link2 size={12} />{zh ? '连接监控' : 'Connect Monitoring'}
         </button>
       </div>
     </div>
@@ -858,22 +917,10 @@ function EmptyState({ zh, openAdd, goTo }: { zh: boolean; openAdd: () => void; g
 }
 
 /* --- Drawer Content --- */
-function DrawerContent({ asset: a, zh, goTo, openEdit, setDeleteTarget, onClose }: {
-  asset: Asset; zh: boolean; goTo: (t: string) => void; openEdit: (a: Asset) => void; setDeleteTarget: (a: Asset) => void; onClose: () => void;
+function DrawerContent({ asset: a, zh, openEdit, setDeleteTarget, onClose }: {
+  asset: Asset; zh: boolean; openEdit: (a: Asset) => void; setDeleteTarget: (a: Asset) => void; onClose: () => void;
 }) {
   const sm = statusMeta(a.status);
-  const cpu = mockMetric(a.id, 5, 95);
-  const mem = mockMetric(a.id + 'mem', 20, 90);
-  const alertN = a.status === 'inactive' ? mockMetric(a.id + 'alert', 1, 5) : a.status === 'maintenance' ? mockMetric(a.id + 'alert', 0, 2) : 0;
-  const mockAlerts = useMemo(() => {
-    if (alertN === 0) return [];
-    return Array.from({ length: Math.min(alertN, 3) }, (_, i) => ({
-      id: i,
-      severity: i === 0 ? 'critical' : i === 1 ? 'major' : 'warning',
-      msg: i === 0 ? (zh ? 'CPU 使用率超过 95%' : 'CPU usage exceeded 95%') : i === 1 ? (zh ? '接口 Gi0/1 Down' : 'Interface Gi0/1 Down') : (zh ? '内存使用率超过 80%' : 'Memory over 80%'),
-      time: `${mockMetric(a.id + 'at' + i, 5, 120)}m ago`,
-    }));
-  }, [a.id, alertN, zh]);
 
   return (
     <>
@@ -892,11 +939,6 @@ function DrawerContent({ asset: a, zh, goTo, openEdit, setDeleteTarget, onClose 
             <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${sm.badge}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${sm.dot}`} />{sm.label[zh ? 'zh' : 'en']}
             </span>
-            {alertN > 0 && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[9px] font-bold">
-                <Bell size={8} />{alertN}
-              </span>
-            )}
           </div>
           <button onClick={onClose} title="Close" className="p-1 rounded hover:bg-black/[0.02] text-black/20 hover:text-black/40"><X size={14} /></button>
         </div>
@@ -904,51 +946,17 @@ function DrawerContent({ asset: a, zh, goTo, openEdit, setDeleteTarget, onClose 
         <p className="text-[9px] text-black/20 font-mono mt-0.5">{a.asset_tag}{a.serial_number ? ` · ${a.serial_number}` : ''}</p>
       </div>
 
-      {/* Real-time Status */}
-      <div className="px-4 py-2.5 border-b border-black/5">
-        <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-2">{zh ? '实时状态' : 'Live Status'}</p>
-        <div className="grid grid-cols-2 gap-2">
-          <MetricCard label="CPU" value={cpu} icon={Cpu} />
-          <MetricCard label="MEM" value={mem} icon={MemoryStick} />
-        </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="px-4 py-2.5 border-b border-black/5">
-        <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-2">{zh ? '快捷操作' : 'Quick Actions'}</p>
-        <div className="grid grid-cols-4 gap-1">
-          <DrawerAction icon={Terminal} label="SSH" hoverCls="hover:bg-emerald-50 group-hover:text-emerald-500" onClick={() => { if (a.management_ip) navigator.clipboard.writeText(`ssh ${a.management_ip}`); }} />
-          <DrawerAction icon={Globe} label="Web" hoverCls="hover:bg-blue-50 group-hover:text-blue-500" onClick={() => { if (a.management_ip) window.open(`https://${a.management_ip}`, '_blank', 'noopener,noreferrer'); }} />
-          <DrawerAction icon={HardDrive} label={zh ? '备份' : 'Backup'} hoverCls="hover:bg-amber-50 group-hover:text-amber-500" onClick={() => goTo('automation')} />
-          <DrawerAction icon={Play} label={zh ? '脚本' : 'Run'} hoverCls="hover:bg-violet-50 group-hover:text-violet-500" onClick={() => goTo('automation')} />
-        </div>
-      </div>
-
       {/* Info Sections */}
       <div className="flex-1 px-4 py-3 space-y-4">
-        {/* Recent Alerts */}
-        {mockAlerts.length > 0 && (
-          <div>
-            <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-1.5">{zh ? '最近告警' : 'Recent Alerts'}</p>
-            <div className="space-y-1">
-              {mockAlerts.map(al => (
-                <div key={al.id} className="flex items-start gap-2 px-2 py-1.5 rounded-lg bg-red-50/50 border border-red-100/50">
-                  <span className={`mt-0.5 h-1.5 w-1.5 rounded-full flex-shrink-0 ${al.severity === 'critical' ? 'bg-red-500' : al.severity === 'major' ? 'bg-orange-400' : 'bg-amber-400'}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] text-red-700 font-medium">{al.msg}</p>
-                    <p className="text-[8px] text-red-400 mt-0.5">{al.time}</p>
-                  </div>
-                </div>
-              ))}
-              <button onClick={() => goTo('alerts')} className="text-[9px] text-[#00bceb] hover:underline mt-0.5">{zh ? '查看全部告警 →' : 'View all alerts →'}</button>
-            </div>
-          </div>
-        )}
-
         <InfoSection title={zh ? '基本信息' : 'Basic Info'} rows={[
           { k: zh ? '厂商/型号' : 'Vendor/Model', v: `${a.vendor} ${a.model}`.trim() || '—' },
           { k: zh ? '管理IP' : 'Mgmt IP', v: a.management_ip || '—', mono: true },
-          { k: zh ? '业务IP' : 'Biz IP', v: a.business_ip || '—', mono: true },
+          ...(a.asset_type === 'server' ? [
+            { k: zh ? '业务IP' : 'Biz IP', v: a.business_ip || '—', mono: true },
+            { k: 'VLAN', v: a.vlan || '—' },
+            { k: zh ? '上联交换机' : 'Uplink Switch', v: a.uplink_switch || '—' },
+            { k: zh ? '上联端口' : 'Uplink Port', v: a.uplink_port || '—', mono: true },
+          ] : []),
           { k: zh ? '角色' : 'Role', v: a.device_role || '—' },
         ]} />
         <InfoSection title={zh ? '位置' : 'Location'} rows={[
@@ -969,29 +977,6 @@ function DrawerContent({ asset: a, zh, goTo, openEdit, setDeleteTarget, onClose 
           </div>
         )}
 
-        {/* Cross-links */}
-        <div>
-          <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-1.5">{zh ? '关联系统' : 'Related Systems'}</p>
-          <div className="space-y-px">
-            {([
-              { Icon: Activity, label: zh ? '监控指标' : 'Metrics', tab: 'monitoring' },
-              { Icon: Bell, label: zh ? '历史告警' : 'Alerts', tab: 'alerts' },
-              { Icon: Shield, label: zh ? '合规检查' : 'Compliance', tab: 'compliance' },
-              { Icon: FileText, label: zh ? '配置备份' : 'Configs', tab: 'configs' },
-            ] as const).map(link => (
-              <button
-                key={link.tab} onClick={() => goTo(link.tab)}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-black/[0.01] group transition-colors"
-              >
-                <span className="flex items-center gap-2 text-[10px] text-black/30 group-hover:text-black/55">
-                  <link.Icon size={11} className="text-black/15 group-hover:text-[#00bceb]" />
-                  {link.label}
-                </span>
-                <ExternalLink size={9} className="text-black/8 group-hover:text-black/20" />
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
 
       {/* Footer */}
@@ -1004,53 +989,6 @@ function DrawerContent({ asset: a, zh, goTo, openEdit, setDeleteTarget, onClose 
         </button>
       </div>
     </>
-  );
-}
-
-/* --- Mini metric bar in table --- */
-function MiniBar({ value }: { value: number }) {
-  const color = value > 85 ? 'bg-red-400' : value > 60 ? 'bg-amber-400' : 'bg-emerald-400';
-  const textColor = value > 85 ? 'text-red-600' : value > 60 ? 'text-amber-600' : 'text-black/25';
-  return (
-    <div className="flex items-center gap-1">
-      <div className="flex-1 h-1 rounded-full bg-black/[0.04] overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${value}%` }} />
-      </div>
-      <span className={`text-[8px] tabular-nums font-medium ${textColor} w-6 text-right`}>{value}%</span>
-    </div>
-  );
-}
-
-/* --- Drawer metric card --- */
-function MetricCard({ label, value, icon: Icon }: { label: string; value: number; icon: React.FC<{ size?: number; className?: string }> }) {
-  const color = value > 85 ? 'text-red-600' : value > 60 ? 'text-amber-600' : 'text-emerald-600';
-  const barColor = value > 85 ? 'bg-red-400' : value > 60 ? 'bg-amber-400' : 'bg-emerald-400';
-  const bg = value > 85 ? 'bg-red-50' : value > 60 ? 'bg-amber-50' : 'bg-emerald-50';
-  return (
-    <div className={`rounded-lg ${bg} px-3 py-2`}>
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-1">
-          <Icon size={10} className={color} />
-          <span className="text-[9px] font-semibold text-black/40">{label}</span>
-        </div>
-        <span className={`text-sm font-bold tabular-nums ${color}`}>{value}%</span>
-      </div>
-      <div className="h-1 rounded-full bg-white/80 overflow-hidden">
-        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${value}%` }} />
-      </div>
-    </div>
-  );
-}
-
-/* --- Drawer quick action button --- */
-function DrawerAction({ icon: Icon, label, hoverCls, onClick }: {
-  icon: React.FC<{ size?: number; className?: string }>; label: string; hoverCls: string; onClick: () => void;
-}) {
-  return (
-    <button onClick={onClick} className={`flex flex-col items-center gap-0.5 py-2 rounded-lg border border-black/5 ${hoverCls} transition-all group`}>
-      <Icon size={13} className="text-black/15 transition-colors" />
-      <span className="text-[9px] font-medium text-black/25 group-hover:text-black/45">{label}</span>
-    </button>
   );
 }
 
@@ -1082,17 +1020,6 @@ function BatchBtn({ icon: Icon, label, onClick, hoverCls }: { icon: React.FC<{ s
   return (
     <button onClick={onClick} className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-black/35 text-[9px] font-medium ${hoverCls} transition-colors`} title={label}>
       <Icon size={10} />{label}
-    </button>
-  );
-}
-
-/* --- More menu button --- */
-function MenuBtn({ icon: Icon, label, onClick, danger }: { icon: React.FC<{ size?: number }>; label: string; onClick: () => void; danger?: boolean }) {
-  return (
-    <button onClick={onClick} className={`w-full flex items-center gap-2 px-3 py-1.5 text-[10px] transition-colors ${
-      danger ? 'text-red-500 hover:bg-red-50' : 'text-black/50 hover:bg-black/[0.015] hover:text-black/70'
-    }`}>
-      <Icon size={11} />{label}
     </button>
   );
 }

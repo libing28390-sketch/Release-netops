@@ -1071,6 +1071,9 @@ def init_db():
             management_ip TEXT DEFAULT '',
             business_ip TEXT DEFAULT '',
             device_role TEXT DEFAULT '',
+            vlan TEXT DEFAULT '',
+            uplink_switch TEXT DEFAULT '',
+            uplink_port TEXT DEFAULT '',
             status TEXT DEFAULT 'active',
             purchase_date TEXT DEFAULT '',
             warranty_expiry TEXT DEFAULT '',
@@ -1082,6 +1085,11 @@ def init_db():
         ''')
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_tag ON physical_assets(asset_tag) WHERE asset_tag != ''")
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_asset_type ON physical_assets(asset_type)')
+
+        # Migration: add server-specific columns to physical_assets
+        ensure_column('physical_assets', 'vlan', "TEXT DEFAULT ''")
+        ensure_column('physical_assets', 'uplink_switch', "TEXT DEFAULT ''")
+        ensure_column('physical_assets', 'uplink_port', "TEXT DEFAULT ''")
 
         conn.commit()
     finally:

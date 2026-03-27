@@ -695,7 +695,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         .attr('text-anchor', 'middle')
         .attr('dominant-baseline', 'middle')
         .attr('fill', '#334155')
-        .attr('font-family', 'ui-sans-serif, system-ui, sans-serif')
+        .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
         .attr('font-size', '10px')
         .attr('font-weight', 700)
         .text(site.label.length > 12 ? `${site.label.slice(0, 12)}...` : site.label);
@@ -725,7 +725,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         .attr('x', 34)
         .attr('y', layer.y - bandHeight / 2 + 18)
         .attr('fill', layer.accent)
-        .attr('font-family', 'ui-sans-serif, system-ui, sans-serif')
+        .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
         .attr('font-size', '10px')
         .attr('font-weight', 700)
         .attr('letter-spacing', '0.16em')
@@ -786,7 +786,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const linkLabelText = linkLabelGroup
       .append('text')
       .attr('font-size', 10)
-      .attr('font-family', 'ui-sans-serif, system-ui, sans-serif')
+      .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
       .attr('fill', '#0f172a')
       .attr('font-weight', 700)
       .attr('text-anchor', 'middle')
@@ -910,7 +910,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('y', 10)
       .attr('text-anchor', 'middle')
       .attr('fill', '#0f172a')
-      .attr('font-family', 'ui-sans-serif, system-ui, sans-serif')
+      .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
       .attr('font-size', '12px')
       .attr('font-weight', '700')
       .text((d: any) => d.hostname);
@@ -919,7 +919,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('y', 25)
       .attr('text-anchor', 'middle')
       .attr('fill', '#64748b')
-      .attr('font-family', 'ui-sans-serif, system-ui, sans-serif')
+      .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
       .attr('font-size', '10px')
       .attr('font-weight', '600')
       .text((d: any) => d.site || d.ip_address);

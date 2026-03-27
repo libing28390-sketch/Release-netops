@@ -5149,18 +5149,13 @@ const App: React.FC = () => {
     <AppRuntimeBoundary language={language}>
       <div className="app-shell flex h-screen text-[#141414] font-sans overflow-hidden">
       <AppSidebar
-        activeRoute={activeTab}
-        currentPath={location.pathname}
-        onNavigate={setActiveTab}
-        onNavigatePath={navTo}
-        alertCounts={{ monitoring: 0, alertCenter: unreadNotificationCount }}
+        alertCounts={{ monitoring: 0, alerts: unreadNotificationCount }}
         isP1Critical={unreadNotificationCount > 20}
-        language={language}
-        isMobile={isMobile}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed(v => !v)}
+        onNavigate={navTo}
         onOpenSearch={() => setCmdPaletteOpen(true)}
-        t={t}
+        language={language}
+        mobileOpen={isMobile && !sidebarCollapsed}
+        onMobileClose={() => setSidebarCollapsed(true)}
       />
 
       {/* Main Content Area */}

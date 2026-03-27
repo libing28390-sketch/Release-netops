@@ -35,6 +35,9 @@ class AssetCreate(BaseModel):
     management_ip: str = ''
     business_ip: str = ''
     device_role: str = ''  # switch/router/firewall/ap — only for network_device
+    vlan: str = ''
+    uplink_switch: str = ''
+    uplink_port: str = ''
     status: str = 'active'
     purchase_date: str = ''
     warranty_expiry: str = ''
@@ -55,6 +58,9 @@ class AssetUpdate(BaseModel):
     management_ip: Optional[str] = None
     business_ip: Optional[str] = None
     device_role: Optional[str] = None
+    vlan: Optional[str] = None
+    uplink_switch: Optional[str] = None
+    uplink_port: Optional[str] = None
     status: Optional[str] = None
     purchase_date: Optional[str] = None
     warranty_expiry: Optional[str] = None
@@ -195,12 +201,15 @@ def create_asset(body: AssetCreate):
             INSERT INTO physical_assets (
                 id, asset_type, asset_tag, serial_number, vendor, model, hostname,
                 datacenter, rack, rack_unit, management_ip, business_ip, device_role,
+                vlan, uplink_switch, uplink_port,
                 status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
-            body.management_ip, body.business_ip, body.device_role, body.status,
+            body.management_ip, body.business_ip, body.device_role,
+            body.vlan, body.uplink_switch, body.uplink_port,
+            body.status,
             body.purchase_date, body.warranty_expiry, body.department, body.notes, now, now
         ))
         conn.commit()
@@ -230,6 +239,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
         updatable = [
             'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
             'datacenter', 'rack', 'rack_unit', 'management_ip', 'business_ip', 'device_role',
+            'vlan', 'uplink_switch', 'uplink_port',
             'status', 'purchase_date', 'warranty_expiry', 'department', 'notes'
         ]
         for field in updatable:
@@ -285,12 +295,15 @@ def import_assets(items: list[AssetCreate]):
                 INSERT INTO physical_assets (
                     id, asset_type, asset_tag, serial_number, vendor, model, hostname,
                     datacenter, rack, rack_unit, management_ip, business_ip, device_role,
+                    vlan, uplink_switch, uplink_port,
                     status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
                 body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
-                body.management_ip, body.business_ip, body.device_role, body.status,
+                body.management_ip, body.business_ip, body.device_role,
+                body.vlan, body.uplink_switch, body.uplink_port,
+                body.status,
                 body.purchase_date, body.warranty_expiry, body.department, body.notes, now, now
             ))
             created += 1

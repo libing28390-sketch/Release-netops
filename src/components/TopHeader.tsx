@@ -82,7 +82,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
         <button
           onClick={onToggleSidebar}
           title={language === 'zh' ? (sidebarCollapsed ? '展开侧栏' : '收起侧栏') : (sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar')}
-          className={`p-2 rounded-lg transition-all ${resolvedTheme === 'dark' ? 'text-white/55 hover:text-white hover:bg-white/10' : 'text-black/45 hover:text-black hover:bg-black/5'}`}
+          className={`p-2 rounded-lg transition-all md:hidden ${resolvedTheme === 'dark' ? 'text-white/55 hover:text-white hover:bg-white/10' : 'text-black/45 hover:text-black hover:bg-black/5'}`}
         >
           <Menu size={20} />
         </button>
