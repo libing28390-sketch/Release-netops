@@ -52,10 +52,10 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
   const chkBadge = connectionCheck ? (CHECK_BADGE[connectionCheck.status] || CHECK_BADGE.fail) : null;
 
   return (
-    <div className="space-y-1">
-      {/* Status dot + label */}
-      <div className="flex items-center gap-1.5">
-        <span className="relative flex h-[7px] w-[7px]">
+    <div className="space-y-0.5">
+      {/* Row 1: Status dot + label + health badge */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="relative flex h-[7px] w-[7px] shrink-0">
           {st.ping && (
             <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${st.dot} opacity-60`} />
           )}
@@ -64,29 +64,29 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
         <span className={`text-[10px] font-bold uppercase ${st.text}`}>
           {zh ? st.labelZh : st.labelEn}
         </span>
+        {healthStatus && healthStatus !== 'unknown' && (
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[8px] font-bold uppercase leading-none
+            ${health.bg} ${health.border} ${health.text}`}>
+            {zh ? health.labelZh : health.labelEn}
+          </span>
+        )}
       </div>
 
-      {/* Health severity badge */}
-      <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase
-        ${health.bg} ${health.border} ${health.text}`}>
-        {zh ? health.labelZh : health.labelEn}
-      </span>
-
-      {/* Uptime */}
-      {uptime && (
-        <span className="block text-[9px] text-black/25 dark:text-white/20 font-mono" title={uptime}>
-          ⏱ {uptime.length > 20 ? uptime.slice(0, 20) + '…' : uptime}
-        </span>
-      )}
-
-      {/* Connection check result */}
+      {/* Row 2: Connection check result (compact) */}
       {chkBadge && (
-        <span
-          className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[8px] font-bold ${chkBadge.cls}`}
-          title={connectionCheck?.checked_at ? formatCheckTime(connectionCheck.checked_at, language) : ''}
-        >
-          {zh ? chkBadge.zh : chkBadge.en}
-        </span>
+        <div className="flex items-center gap-1">
+          <span
+            className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[8px] font-bold leading-none ${chkBadge.cls}`}
+            title={connectionCheck?.checked_at ? formatCheckTime(connectionCheck.checked_at, language) : ''}
+          >
+            {zh ? chkBadge.zh : chkBadge.en}
+          </span>
+          {connectionCheck?.checked_at && (
+            <span className="text-[8px] text-black/20 dark:text-white/15">
+              {formatCheckTime(connectionCheck.checked_at, language)}
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

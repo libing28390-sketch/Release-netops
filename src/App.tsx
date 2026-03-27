@@ -2401,6 +2401,7 @@ const App: React.FC = () => {
   const [selectedFinding, setSelectedFinding] = useState<ComplianceFinding | null>(null);
   const [inventoryRows, setInventoryRows] = useState<Device[]>([]);
   const [inventoryTotal, setInventoryTotal] = useState(0);
+  const [inventoryStatusCounts, setInventoryStatusCounts] = useState<Record<string, number>>({});
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [inventoryRefreshTick, setInventoryRefreshTick] = useState(0);
   const [devicesLastUpdatedAt, setDevicesLastUpdatedAt] = useState<number | null>(null);
@@ -2494,14 +2495,17 @@ const App: React.FC = () => {
         if (Array.isArray(data)) {
           setInventoryRows(data.map((item: any) => normalizeDeviceRecord(item)));
           setInventoryTotal(data.length);
+          setInventoryStatusCounts({});
         } else {
           setInventoryRows(Array.isArray(data.items) ? data.items.map((item: any) => normalizeDeviceRecord(item)) : []);
           setInventoryTotal(typeof data.total === 'number' ? data.total : 0);
+          setInventoryStatusCounts(data.status_counts && typeof data.status_counts === 'object' ? data.status_counts : {});
         }
       } catch {
         if (cancelled) return;
         setInventoryRows([]);
         setInventoryTotal(0);
+        setInventoryStatusCounts({});
       } finally {
         if (!cancelled) setInventoryLoading(false);
       }
@@ -5325,6 +5329,14 @@ const App: React.FC = () => {
                   });
                   navigate(`/maintenance?${params.toString()}`);
                 }}
+                onNavigateToDevice={(deviceId) => {
+                  const device = devices.find(d => d.id === deviceId);
+                  if (device) handleShowDetails(device);
+                }}
+                onNavigateToTopology={(deviceId) => {
+                  setSelectedTopologyDeviceId(deviceId);
+                  setActiveTab('topology');
+                }}
               />
             </Suspense>
           )}
@@ -5358,6 +5370,7 @@ const App: React.FC = () => {
               <InventoryDevicesTab
                 inventoryRows={inventoryRows}
                 inventoryTotal={inventoryTotal}
+                inventoryStatusCounts={inventoryStatusCounts}
                 inventoryPage={inventoryPage}
                 setInventoryPage={setInventoryPage}
                 inventoryPageSize={inventoryPageSize}

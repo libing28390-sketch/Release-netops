@@ -205,6 +205,15 @@ def list_alerts(
         sites = conn.execute("SELECT DISTINCT site FROM devices WHERE site IS NOT NULL AND site != '' ORDER BY site ASC").fetchall()
         assignees = conn.execute("SELECT DISTINCT assignee FROM alert_events WHERE assignee IS NOT NULL AND assignee != '' ORDER BY assignee ASC").fetchall()
 
+        status_counts = {
+            'open': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND COALESCE(workflow_status, 'open') = 'open'").fetchone()['c'],
+            'acknowledged': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND workflow_status = 'acknowledged'").fetchone()['c'],
+            'investigating': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND workflow_status = 'investigating'").fetchone()['c'],
+            'suppressed': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND workflow_status = 'suppressed'").fetchone()['c'],
+            'resolved': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NOT NULL").fetchone()['c'],
+        }
+        status_counts['all'] = sum(status_counts.values())
+
         return {
             'items': [_row_to_alert(row) for row in rows],
             'total': int(total),
@@ -214,6 +223,7 @@ def list_alerts(
                 'sites': [row['site'] for row in sites],
                 'assignees': [row['assignee'] for row in assignees],
             },
+            'status_counts': status_counts,
         }
     finally:
         conn.close()
@@ -424,6 +434,189 @@ def delete_alert_rule(rule_id: str, actor_username: str = Query(default='system'
         target_name=existing['name'] if existing else rule_id,
     )
     return {'success': True}
+
+
+@router.post('/alerts/rules/batch-toggle')
+def batch_toggle_alert_rules(payload: dict = Body(...)):
+    rule_ids = payload.get('rule_ids') or []
+    enabled = payload.get('enabled')
+    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+    if enabled is None:
+        raise HTTPException(status_code=400, detail='enabled is required')
+    if not rule_ids or not isinstance(rule_ids, list):
+        raise HTTPException(status_code=400, detail='rule_ids is required')
+    if len(rule_ids) > 200:
+        raise HTTPException(status_code=400, detail='Too many rule IDs (max 200)')
+
+    conn = get_db_connection()
+    try:
+        now = _utc_now_iso()
+        updated = 0
+        for rid in rule_ids:
+            rid = str(rid).strip()
+            if not rid:
+                continue
+            row = conn.execute('SELECT id, name FROM alert_rules WHERE id = ?', (rid,)).fetchone()
+            if not row:
+                continue
+            conn.execute(
+                'UPDATE alert_rules SET enabled = ?, updated_by = ?, updated_at = ? WHERE id = ?',
+                (1 if enabled else 0, actor_username, now, rid),
+            )
+            updated += 1
+            log_audit_event(
+                event_type='ALERT_RULE_UPDATE',
+                category='monitoring',
+                severity='medium',
+                status='success',
+                summary=f"{'Enabled' if enabled else 'Disabled'} alert rule {row['name']}",
+                actor_username=actor_username,
+                actor_role='Operator',
+                target_type='alert_rule',
+                target_id=rid,
+                target_name=row['name'],
+                details={'enabled': bool(enabled), 'batch': True},
+            )
+        conn.commit()
+        return {'success': True, 'updated_count': updated}
+    finally:
+        conn.close()
+
+
+@router.post('/alerts/rules/batch-delete')
+def batch_delete_alert_rules(payload: dict = Body(...)):
+    rule_ids = payload.get('rule_ids') or []
+    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+    if not rule_ids or not isinstance(rule_ids, list):
+        raise HTTPException(status_code=400, detail='rule_ids is required')
+    if len(rule_ids) > 200:
+        raise HTTPException(status_code=400, detail='Too many rule IDs (max 200)')
+
+    conn = get_db_connection()
+    try:
+        deleted = 0
+        for rid in rule_ids:
+            rid = str(rid).strip()
+            if not rid:
+                continue
+            row = conn.execute('SELECT id, name FROM alert_rules WHERE id = ?', (rid,)).fetchone()
+            if not row:
+                continue
+            conn.execute('DELETE FROM alert_rules WHERE id = ?', (rid,))
+            deleted += 1
+            log_audit_event(
+                event_type='ALERT_RULE_DELETE',
+                category='monitoring',
+                severity='medium',
+                status='success',
+                summary=f"Batch deleted alert rule {row['name']}",
+                actor_username=actor_username,
+                actor_role='Operator',
+                target_type='alert_rule',
+                target_id=rid,
+                target_name=row['name'],
+                details={'batch': True},
+            )
+        conn.commit()
+        return {'success': True, 'deleted_count': deleted}
+    finally:
+        conn.close()
+
+
+@router.post('/alerts/batch-ack')
+def batch_acknowledge_alerts(payload: dict = Body(...)):
+    alert_ids = payload.get('alert_ids') or []
+    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+    next_status = (payload.get('status') or 'acknowledged').strip().lower()
+    if next_status not in {'acknowledged', 'investigating'}:
+        raise HTTPException(status_code=400, detail='Unsupported status')
+    if not alert_ids or not isinstance(alert_ids, list):
+        raise HTTPException(status_code=400, detail='alert_ids is required')
+    if len(alert_ids) > 200:
+        raise HTTPException(status_code=400, detail='Too many alert IDs (max 200)')
+
+    conn = get_db_connection()
+    try:
+        now = _utc_now_iso()
+        updated = 0
+        for aid in alert_ids:
+            aid = str(aid).strip()
+            if not aid:
+                continue
+            row = conn.execute('SELECT id, title, device_id, dedupe_key, resolved_at FROM alert_events WHERE id = ?', (aid,)).fetchone()
+            if not row or row['resolved_at']:
+                continue
+            conn.execute(
+                'UPDATE alert_events SET workflow_status = ?, ack_by = ?, ack_at = COALESCE(ack_at, ?), updated_at = ? WHERE id = ?',
+                (next_status, actor_username, now, now, aid),
+            )
+            updated += 1
+            log_audit_event(
+                event_type='ALERT_ACK',
+                category='monitoring',
+                severity='medium',
+                status='success',
+                summary=f'Batch acknowledged alert {row["title"]}',
+                actor_username=actor_username,
+                actor_role='Operator',
+                target_type='alert',
+                target_id=aid,
+                target_name=row['title'],
+                device_id=row['device_id'],
+                details={'workflow_status': next_status, 'dedupe_key': row['dedupe_key'], 'batch': True},
+            )
+        conn.commit()
+        return {'success': True, 'updated_count': updated}
+    finally:
+        conn.close()
+
+
+@router.post('/alerts/batch-assign')
+def batch_assign_alerts(payload: dict = Body(...)):
+    alert_ids = payload.get('alert_ids') or []
+    assignee = (payload.get('assignee') or '').strip()
+    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+    if not assignee:
+        raise HTTPException(status_code=400, detail='assignee is required')
+    if not alert_ids or not isinstance(alert_ids, list):
+        raise HTTPException(status_code=400, detail='alert_ids is required')
+    if len(alert_ids) > 200:
+        raise HTTPException(status_code=400, detail='Too many alert IDs (max 200)')
+
+    conn = get_db_connection()
+    try:
+        now = _utc_now_iso()
+        updated = 0
+        for aid in alert_ids:
+            aid = str(aid).strip()
+            if not aid:
+                continue
+            row = conn.execute('SELECT id, title, device_id, dedupe_key FROM alert_events WHERE id = ?', (aid,)).fetchone()
+            if not row:
+                continue
+            conn.execute(
+                'UPDATE alert_events SET assignee = ?, updated_at = ? WHERE id = ?',
+                (assignee, now, aid),
+            )
+            updated += 1
+            log_audit_event(
+                event_type='ALERT_ASSIGN',
+                category='monitoring',
+                severity='medium',
+                status='success',
+                summary=f'Batch assigned alert {row["title"]} to {assignee}',
+                actor_username=actor_username,
+                actor_role='Operator',
+                target_type='alert',
+                target_id=aid,
+                target_name=row['title'],
+                device_id=row['device_id'],
+                details={'assignee': assignee, 'dedupe_key': row['dedupe_key'], 'batch': True},
+            )
+        conn.commit()
+        return {'success': True, 'updated_count': updated}
+    finally:
+        conn.close()
 
 
 @router.get('/alerts/{alert_id}')

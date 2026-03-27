@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ChevronDown, ChevronUp, ChevronRight,
   MoreHorizontal, Eye, Pencil, Trash2,
-  Wifi, Activity, WifiOff,
+  Wifi, Activity, WifiOff, Terminal, Cable,
 } from 'lucide-react';
 import type { Device, DeviceConnectionCheckSummary } from '../../types';
 import StatusBadge from './StatusBadge';
@@ -281,6 +281,15 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                           {device.role}
                         </span>
                       )}
+                      {device.connection_method && (
+                        <span className={`inline-block mt-0.5 ml-1 text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded
+                          ${device.connection_method === 'netconf'
+                            ? 'bg-violet-500/8 text-violet-500 dark:text-violet-400'
+                            : 'bg-black/[.04] dark:bg-white/6 text-black/30 dark:text-white/30'
+                          }`}>
+                          {device.connection_method === 'netconf' ? 'NETCONF' : 'SSH'}
+                        </span>
+                      )}
                     </td>
                   )}
                   {/* Platform */}
@@ -298,7 +307,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   {/* Site */}
                   {columns.site && (
                     <td className="px-3 py-2">
-                      <span className="text-[11px] text-black/55 dark:text-white/55">{device.site || 'N/A'}</span>
+                      <span className="text-[11px] text-black/55 dark:text-white/55">{device.site || '—'}</span>
                     </td>
                   )}
                   {/* Status */}
@@ -326,18 +335,16 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                         <button
                           onClick={() => onManage(device)}
                           title={zh ? '管理 / 配置' : 'Manage / Config'}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold
+                          className="inline-flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-semibold
                             bg-[#00bceb]/10 text-[#0096bd] dark:text-[#5dd8f0] hover:bg-[#00bceb]/20 transition-all">
-                          <Wifi size={11} />
-                          {zh ? '管理' : 'Manage'}
+                          <Terminal size={13} />
                         </button>
                         <button
                           onClick={() => onTestConnection(device, 'quick')}
                           title={zh ? '连通性检测' : 'Check connectivity'}
-                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold transition-all
+                          className={`inline-flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-semibold transition-all
                             ${testing ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'bg-violet-500/10 text-violet-600 dark:text-violet-400 hover:bg-violet-500/20'}`}>
-                          <Activity size={11} className={testing ? 'animate-pulse' : ''} />
-                          {testing ? (zh ? '检测中' : 'Checking') : (zh ? '检查' : 'Check')}
+                          <Activity size={13} className={testing ? 'animate-pulse' : ''} />
                         </button>
                         <ActionDropdown
                           language={language}

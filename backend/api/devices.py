@@ -215,6 +215,13 @@ def read_devices(
         ).fetchone()
         total = int(total_row['count']) if total_row else 0
 
+        # Status counts across full filtered set (not just current page)
+        status_count_rows = conn.execute(
+            f'SELECT status, COUNT(*) AS cnt FROM devices {where_sql} GROUP BY status',
+            tuple(params)
+        ).fetchall()
+        status_counts = {r['status']: r['cnt'] for r in status_count_rows}
+
         offset = (page - 1) * page_size
         devices = conn.execute(
             f'SELECT {select_clause} FROM devices {where_sql} ORDER BY {order_col} {order_dir} LIMIT ? OFFSET ?',
@@ -228,6 +235,7 @@ def read_devices(
             'total': total,
             'page': page,
             'page_size': page_size,
+            'status_counts': status_counts,
         }
     finally:
         conn.close()

@@ -88,6 +88,7 @@ const ColumnToggle: React.FC<{
 interface InventoryDevicesTabProps {
   inventoryRows: Device[];
   inventoryTotal: number;
+  inventoryStatusCounts: Record<string, number>;
   inventoryPage: number;
   setInventoryPage: (v: number) => void;
   inventoryPageSize: number;
@@ -124,7 +125,7 @@ interface InventoryDevicesTabProps {
 }
 
 const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
-  inventoryRows, inventoryTotal, inventoryPage, setInventoryPage,
+  inventoryRows, inventoryTotal, inventoryStatusCounts, inventoryPage, setInventoryPage,
   inventoryPageSize, setInventoryPageSize,
   inventorySearch, setInventorySearch,
   inventoryPlatformFilter, setInventoryPlatformFilter,
@@ -146,9 +147,11 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
     setColumns(prev => ({ ...prev, [key]: val }));
   };
 
-  const offlineCount = inventoryRows.filter(d => d.status === 'offline').length;
+  const totalDevices = inventoryTotal || 0;
+  const offlineCount = inventoryStatusCounts['offline'] || 0;
+  const onlineCount = inventoryStatusCounts['online'] || 0;
   const warningCount = inventoryRows.filter(d => d.health_status === 'warning' || d.health_status === 'critical').length;
-  const healthyCount = inventoryRows.filter(d => d.status === 'online' && (d.health_status === 'healthy' || !d.health_status)).length;
+  const healthyCount = onlineCount - warningCount;
 
   const displayRows = quickFilter === 'all' ? inventoryRows
     : quickFilter === 'offline' ? inventoryRows.filter(d => d.status === 'offline')
@@ -251,22 +254,14 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             <option value="offline">{language === 'zh' ? '离线' : 'Offline'}</option>
             <option value="pending">{language === 'zh' ? '等待中' : 'Pending'}</option>
           </select>
-          <select value={inventoryPageSize} onChange={e => setInventoryPageSize(Number(e.target.value))}
-            title={language === 'zh' ? '每页数量' : 'Items per page'}
-            className="px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
-              outline-none text-black/55 dark:text-white/55 focus:border-[#00bceb]/40">
-            <option value={10}>10 / {language === 'zh' ? '页' : 'page'}</option>
-            <option value={20}>20 / {language === 'zh' ? '页' : 'page'}</option>
-            <option value={50}>50 / {language === 'zh' ? '页' : 'page'}</option>
-            <option value={100}>100 / {language === 'zh' ? '页' : 'page'}</option>
-          </select>
+
         </div>
       </div>
 
       {/* ════ Quick Filters + Batch Actions ════ */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <QuickTag icon={<Server size={11} />} label={language === 'zh' ? '全部' : 'All'} count={inventoryRows.length}
+          <QuickTag icon={<Server size={11} />} label={language === 'zh' ? '全部' : 'All'} count={totalDevices}
             active={quickFilter === 'all'}
             tone="bg-[#00bceb]/10 border-[#00bceb]/25 text-[#0096bd] dark:text-[#5dd8f0] dark:border-[#00bceb]/20"
             onClick={() => setQuickFilter('all')} />
@@ -278,7 +273,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             active={quickFilter === 'warning'}
             tone="bg-amber-500/10 border-amber-500/25 text-amber-600 dark:text-amber-400 dark:border-amber-500/20"
             onClick={() => setQuickFilter(quickFilter === 'warning' ? 'all' : 'warning')} />
-          <QuickTag icon={<CheckCircle2 size={11} />} label={language === 'zh' ? '健康' : 'Healthy'} count={healthyCount}
+          <QuickTag icon={<CheckCircle2 size={11} />} label={language === 'zh' ? '健康' : 'Healthy'} count={Math.max(0, healthyCount)}
             active={quickFilter === 'healthy'}
             tone="bg-emerald-500/10 border-emerald-500/25 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20"
             onClick={() => setQuickFilter(quickFilter === 'healthy' ? 'all' : 'healthy')} />
@@ -303,7 +298,10 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             <button
               onClick={() => {
                 const selected = inventoryRows.filter(d => selectedDeviceIds.includes(d.id));
-                if (selected.length > 0) { setSelectedDevice(selected[0]); setActiveTab('automation'); }
+                if (selected.length > 0) {
+                  setSelectedDevice(selected[0]);
+                  setActiveTab('automation');
+                }
               }}
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium
                 border border-[#00bceb]/25 bg-[#00bceb]/10 text-[#0096bd] dark:text-[#5dd8f0]

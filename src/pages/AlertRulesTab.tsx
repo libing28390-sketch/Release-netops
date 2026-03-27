@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Edit3, Plus, RefreshCw, Save, Trash2, X, Search } from 'lucide-react';
+import { Copy, Edit3, Plus, Power, PowerOff, RefreshCw, Save, Trash2, X, Search } from 'lucide-react';
 import type { AlertRuleListResponse, AlertRuleSettings } from '../types';
 import Pagination from '../components/Pagination';
 import { severityBadgeClass } from '../components/shared';
@@ -12,6 +12,7 @@ import {
   alertPrimaryButtonClass,
   alertSecondaryButtonClass,
   alertTableActionButtonClass,
+  alertTableActionDangerButtonClass,
   AlertPageCommonProps,
   buildEmptyRule,
   formatTs,
@@ -65,9 +66,12 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState('');
   const [enabledFilter, setEnabledFilter] = useState('all');
+  const [metricFilter, setMetricFilter] = useState('all');
   const [ruleDraft, setRuleDraft] = useState<AlertRuleSettings | null>(null);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
 
   const loadAlertRules = async () => {
     setLoading(true);
@@ -78,12 +82,20 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
         search,
         enabled: enabledFilter,
       });
+      if (metricFilter !== 'all') {
+        params.set('search', metricFilter === 'all' ? search : (search ? `${search}` : metricFilter));
+      }
       const resp = await fetch(`/api/alerts/rules?${params.toString()}`);
       if (!resp.ok) throw new Error('Failed to load alert rules');
       const data: AlertRuleListResponse = await resp.json();
-      setAlertRules(data.items || []);
-      setTotal(data.total || 0);
-      if (editingRuleId && !data.items.some((item) => item.id === editingRuleId)) {
+      let items = data.items || [];
+      if (metricFilter !== 'all') {
+        items = items.filter((r) => r.metric_type === metricFilter);
+      }
+      setAlertRules(items);
+      setTotal(metricFilter !== 'all' ? items.length : (data.total || 0));
+      setSelectedIds(new Set());
+      if (editingRuleId && !items.some((item) => item.id === editingRuleId)) {
         setEditingRuleId(null);
         setRuleDraft(null);
       }
@@ -97,7 +109,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
   useEffect(() => {
     void loadAlertRules();
-  }, [page, pageSize, search, enabledFilter]);
+  }, [page, pageSize, search, enabledFilter, metricFilter]);
 
   const openCreate = () => {
     setEditingRuleId(null);
@@ -203,6 +215,94 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
     }
   };
 
+  const handleToggleEnabled = async (rule: AlertRuleSettings) => {
+    const ruleId = rule.id;
+    if (!ruleId) return;
+    setTogglingIds((prev) => new Set(prev).add(ruleId));
+    try {
+      const resp = await fetch('/api/alerts/rules/batch-toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rule_ids: [ruleId], enabled: !rule.enabled, actor_username: currentUsername }),
+      });
+      if (!resp.ok) throw new Error('Failed to toggle rule');
+      setAlertRules((prev) => prev.map((r) => r.id === ruleId ? { ...r, enabled: !r.enabled } : r));
+    } catch {
+      showToast(language === 'zh' ? '切换规则状态失败' : 'Failed to toggle rule', 'error');
+    } finally {
+      setTogglingIds((prev) => { const next = new Set(prev); next.delete(ruleId); return next; });
+    }
+  };
+
+  const handleCloneRule = (rule: AlertRuleSettings) => {
+    const cloned: AlertRuleSettings = {
+      ...rule,
+      id: undefined,
+      name: `${rule.name} (${language === 'zh' ? '副本' : 'Copy'})`,
+      created_by: currentUsername,
+      updated_by: currentUsername,
+      created_at: undefined,
+      updated_at: undefined,
+    };
+    setEditingRuleId(null);
+    setRuleDraft(cloned);
+  };
+
+  const handleInlineDelete = async (rule: AlertRuleSettings) => {
+    if (!rule.id) return;
+    const msg = language === 'zh' ? `确定删除规则「${rule.name}」？` : `Delete rule "${rule.name}"?`;
+    if (!window.confirm(msg)) return;
+    try {
+      const resp = await fetch(`/api/alerts/rules/${rule.id}?actor_username=${encodeURIComponent(currentUsername)}`, { method: 'DELETE' });
+      if (!resp.ok) throw new Error('Failed to delete');
+      showToast(language === 'zh' ? '告警规则已删除' : 'Alert rule deleted', 'success');
+      await loadAlertRules();
+    } catch {
+      showToast(language === 'zh' ? '删除告警规则失败' : 'Failed to delete alert rule', 'error');
+    }
+  };
+
+  const handleBatchToggle = async (enabled: boolean) => {
+    if (selectedIds.size === 0) return;
+    try {
+      const resp = await fetch('/api/alerts/rules/batch-toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rule_ids: Array.from(selectedIds), enabled, actor_username: currentUsername }),
+      });
+      if (!resp.ok) throw new Error('Failed to batch toggle');
+      const data = await resp.json();
+      showToast(language === 'zh' ? `已${enabled ? '启用' : '停用'} ${data.updated_count} 条规则` : `${enabled ? 'Enabled' : 'Disabled'} ${data.updated_count} rules`, 'success');
+      setSelectedIds(new Set());
+      await loadAlertRules();
+    } catch {
+      showToast(language === 'zh' ? '批量操作失败' : 'Batch operation failed', 'error');
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    const msg = language === 'zh' ? `确定删除选中的 ${selectedIds.size} 条规则？` : `Delete ${selectedIds.size} selected rules?`;
+    if (!window.confirm(msg)) return;
+    try {
+      const resp = await fetch('/api/alerts/rules/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rule_ids: Array.from(selectedIds), actor_username: currentUsername }),
+      });
+      if (!resp.ok) throw new Error('Failed to batch delete');
+      const data = await resp.json();
+      showToast(language === 'zh' ? `已删除 ${data.deleted_count} 条规则` : `Deleted ${data.deleted_count} rules`, 'success');
+      setSelectedIds(new Set());
+      await loadAlertRules();
+    } catch {
+      showToast(language === 'zh' ? '批量删除失败' : 'Batch delete failed', 'error');
+    }
+  };
+
+  const allSelected = alertRules.length > 0 && alertRules.every((r) => r.id && selectedIds.has(r.id));
+  const someSelected = selectedIds.size > 0;
+
   return (
     <div className="space-y-4">
       <div className={alertPanelClass}>
@@ -215,7 +315,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
               {language === 'zh' ? '当前规则' : 'Current Rules'}
             </h2>
             <p className="mt-2 text-sm text-black/50">
-              {language === 'zh' ? '只保留列表、筛选、分页和规则编辑。' : 'A plain management page with list, filters, pagination, and rule editing.'}
+              {language === 'zh' ? '管理告警触发条件与通知策略' : 'Manage alert trigger conditions and notification policies'}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -244,6 +344,29 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             />
           </label>
           <select
+            title={language === 'zh' ? '按监控类型筛选' : 'Filter by metric type'}
+            value={metricFilter}
+            onChange={(e) => { setPage(1); setMetricFilter(e.target.value); }}
+            className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#0b2340] outline-none"
+          >
+            <option value="all">{language === 'zh' ? '全部类型' : 'All Metrics'}</option>
+            <option value="cpu">{metricTypeLabel('cpu', language)}</option>
+            <option value="memory">{metricTypeLabel('memory', language)}</option>
+            <option value="interface_util">{metricTypeLabel('interface_util', language)}</option>
+            <option value="interface_down">{metricTypeLabel('interface_down', language)}</option>
+            <option value="interconnect_down">{metricTypeLabel('interconnect_down', language)}</option>
+            <option value="snmp_unreachable">{metricTypeLabel('snmp_unreachable', language)}</option>
+            <option value="lldp_neighbor_lost">{metricTypeLabel('lldp_neighbor_lost', language)}</option>
+            <option value="temperature_high">{metricTypeLabel('temperature_high', language)}</option>
+            <option value="fan_failure">{metricTypeLabel('fan_failure', language)}</option>
+            <option value="power_supply_failure">{metricTypeLabel('power_supply_failure', language)}</option>
+            <option value="interface_error_rate_high">{metricTypeLabel('interface_error_rate_high', language)}</option>
+            <option value="interface_flap">{metricTypeLabel('interface_flap', language)}</option>
+            <option value="bgp_neighbor_down">{metricTypeLabel('bgp_neighbor_down', language)}</option>
+            <option value="ospf_neighbor_down">{metricTypeLabel('ospf_neighbor_down', language)}</option>
+            <option value="bfd_session_down">{metricTypeLabel('bfd_session_down', language)}</option>
+          </select>
+          <select
             title={language === 'zh' ? '按启用状态筛选规则' : 'Filter rules by enabled state'}
             value={enabledFilter}
             onChange={(e) => {
@@ -258,10 +381,47 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
           </select>
         </div>
 
+        {someSelected && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-black/5 px-5 py-3 bg-[#f7f9fc]">
+            <span className="text-xs font-semibold text-black/50">
+              {language === 'zh' ? `已选 ${selectedIds.size} 条` : `${selectedIds.size} selected`}
+            </span>
+            <button onClick={() => void handleBatchToggle(true)} className={alertSecondaryButtonClass + ' !h-9 !text-xs'}>
+              <Power size={13} />
+              {language === 'zh' ? '批量启用' : 'Enable'}
+            </button>
+            <button onClick={() => void handleBatchToggle(false)} className={alertSecondaryButtonClass + ' !h-9 !text-xs'}>
+              <PowerOff size={13} />
+              {language === 'zh' ? '批量停用' : 'Disable'}
+            </button>
+            <button onClick={() => void handleBatchDelete()} className={alertDangerButtonClass + ' !h-9 !text-xs'}>
+              <Trash2 size={13} />
+              {language === 'zh' ? '批量删除' : 'Delete'}
+            </button>
+            <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-black/40 hover:text-black/60">
+              {language === 'zh' ? '取消选择' : 'Clear'}
+            </button>
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="min-w-full border-collapse text-left">
             <thead>
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
+                <th className="w-10 px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={() => {
+                      if (allSelected) {
+                        setSelectedIds(new Set());
+                      } else {
+                        setSelectedIds(new Set(alertRules.map((r) => r.id).filter(Boolean) as string[]));
+                      }
+                    }}
+                    className="accent-[#0f2743]"
+                  />
+                </th>
                 <th className="px-5 py-3">{language === 'zh' ? '规则名称' : 'Rule'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '监控类型' : 'Metric'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '范围' : 'Scope'}</th>
@@ -275,13 +435,28 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '正在加载规则...' : 'Loading rules...'}
                   </td>
                 </tr>
               ) : alertRules.length > 0 ? (
                 alertRules.map((rule) => (
-                  <tr key={rule.id} className="border-b border-black/5 hover:bg-black/[0.02]">
+                  <tr key={rule.id} className={`border-b border-black/5 hover:bg-black/[0.02] ${rule.id && selectedIds.has(rule.id) ? 'bg-[#f0f6ff]' : ''}`}>
+                    <td className="w-10 px-3 py-4 align-top">
+                      <input
+                        type="checkbox"
+                        checked={!!rule.id && selectedIds.has(rule.id)}
+                        onChange={() => {
+                          if (!rule.id) return;
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(rule.id!)) next.delete(rule.id!); else next.add(rule.id!);
+                            return next;
+                          });
+                        }}
+                        className="accent-[#0f2743]"
+                      />
+                    </td>
                     <td className="px-5 py-4 align-top">
                       <div>
                         <p className="text-sm font-semibold text-[#0b2340]">{rule.name}</p>
@@ -293,33 +468,67 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       {scopeTypeLabel(rule.scope_type, language)}
                       {rule.scope_value ? ` / ${rule.scope_value}` : ''}
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">
-                      {rule.threshold != null ? `${rule.threshold}%` : (language === 'zh' ? '状态型' : 'State')}
+                    <td className="px-5 py-4 align-top text-sm">
+                      {rule.threshold != null ? (
+                        <span className="font-mono text-black/70">{rule.threshold}%</span>
+                      ) : (
+                        <span className="inline-flex rounded-full bg-black/[0.04] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-black/40">
+                          {language === 'zh' ? '状态型' : 'State'}
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-4 align-top">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${severityBadgeClass(rule.severity)}`}>
                         {severityLabel(rule.severity, language)}
                       </span>
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">
-                      {rule.enabled ? (language === 'zh' ? '启用' : 'Enabled') : (language === 'zh' ? '停用' : 'Disabled')}
+                    <td className="px-5 py-4 align-top">
+                      <button
+                        title={rule.enabled
+                          ? (language === 'zh' ? '点击停用' : 'Click to disable')
+                          : (language === 'zh' ? '点击启用' : 'Click to enable')}
+                        onClick={() => void handleToggleEnabled(rule)}
+                        disabled={!rule.id || togglingIds.has(rule.id)}
+                        className="group relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                        style={{ backgroundColor: rule.enabled ? '#0f2743' : '#d1d5db' }}
+                      >
+                        <span
+                          className="inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200"
+                          style={{ transform: rule.enabled ? 'translateX(22px)' : 'translateX(3px)' }}
+                        />
+                      </button>
                     </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(rule.updated_at || rule.created_at)}</td>
                     <td className="px-5 py-4 align-top">
-                      <button
-                        title={language === 'zh' ? `编辑规则 ${rule.name}` : `Edit rule ${rule.name}`}
-                        onClick={() => openEdit(rule)}
-                        className={alertTableActionButtonClass}
-                      >
-                        <Edit3 size={14} />
-                        {language === 'zh' ? '编辑' : 'Edit'}
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          title={language === 'zh' ? '编辑' : 'Edit'}
+                          onClick={() => openEdit(rule)}
+                          className={alertTableActionButtonClass}
+                        >
+                          <Edit3 size={13} />
+                        </button>
+                        <button
+                          title={language === 'zh' ? '复制规则' : 'Clone rule'}
+                          onClick={() => handleCloneRule(rule)}
+                          className={alertTableActionButtonClass}
+                        >
+                          <Copy size={13} />
+                        </button>
+                        <button
+                          title={language === 'zh' ? '删除' : 'Delete'}
+                          onClick={() => void handleInlineDelete(rule)}
+                          className={alertTableActionDangerButtonClass}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '当前没有规则。' : 'No rules found.'}
                   </td>
                 </tr>

@@ -286,6 +286,7 @@ export interface AlertListResponse {
     sites?: string[];
     assignees?: string[];
   };
+  status_counts?: Record<string, number>;
 }
 
 export interface AlertDetailResponse {

@@ -2,7 +2,7 @@ import React from 'react';
 import { Server, Activity, ShieldCheck, AlertCircle, AlertTriangle, Bell, TrendingUp, PieChart as PieChartIcon, History, Clock, ChevronRight, X, Zap, MonitorSmartphone, Cpu, HardDrive, MemoryStick, Play, CalendarPlus } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, PieChart, Pie, Cell } from 'recharts';
 import type { Device, Job, ScheduledTask, HostResourceSnapshot, NotificationItem } from '../types';
-import { sectionHeaderRowClass } from '../components/shared';
+import { sectionHeaderRowClass, primaryActionBtnClass, secondaryActionBtnClass } from '../components/shared';
 
 interface DashboardTabProps {
   devices: Device[];
@@ -92,23 +92,23 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
       </div>
 
       {!dashBannerCollapsed && (
-        <div className="rounded-2xl border border-[#00bceb]/20 bg-gradient-to-r from-[#f4fcff] via-white to-[#eef9ff] px-6 py-5 shadow-sm relative">
-          <button onClick={() => setDashBannerCollapsed(true)} className="absolute top-3 right-3 p-1 rounded-lg hover:bg-black/5 text-black/30 hover:text-black/60 transition-all"><X size={14} /></button>
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a5cd]">NetPilot Command Center</p>
-              <h3 className="mt-1 text-xl font-bold text-[#0d2c40]">{t('todaySnapshot')}</h3>
-              <p className="mt-1 text-xs text-[#21546d]/80">{t('todaySnapshotDesc')}</p>
-              {hostResources && <p className="mt-2 text-[11px] text-[#21546d]/85">{language === 'zh' ? `平台宿主机: CPU ${Math.round(hostResources.cpu_percent || 0)}% / 内存 ${Math.round(hostResources.memory_percent || 0)}% / 磁盘 ${Math.round(hostResources.disk_percent || 0)}%` : `Platform host: CPU ${Math.round(hostResources.cpu_percent || 0)}% / Memory ${Math.round(hostResources.memory_percent || 0)}% / Disk ${Math.round(hostResources.disk_percent || 0)}%`}</p>}
+        <div className="rounded-2xl border border-[#00bceb]/20 bg-gradient-to-r from-[#f4fcff] via-white to-[#eef9ff] px-5 py-3.5 shadow-sm relative">
+          <button onClick={() => setDashBannerCollapsed(true)} className="absolute top-2.5 right-3 p-1 rounded-lg hover:bg-black/5 text-black/30 hover:text-black/60 transition-all" aria-label="Close banner"><X size={14} /></button>
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a5cd]">{language === 'zh' ? 'NetPilot 运营中心' : 'NetPilot Command Center'}</p>
+              <h3 className="mt-0.5 text-lg font-bold text-[#0d2c40]">{t('todaySnapshot')}</h3>
+              <p className="mt-0.5 text-xs text-[#21546d]/80">{t('todaySnapshotDesc')}</p>
+              {hostResources && <p className="mt-1 text-[11px] text-[#21546d]/85">{language === 'zh' ? `平台宿主机: CPU ${Math.round(hostResources.cpu_percent || 0)}% / 内存 ${Math.round(hostResources.memory_percent || 0)}% / 磁盘 ${Math.round(hostResources.disk_percent || 0)}%` : `Platform host: CPU ${Math.round(hostResources.cpu_percent || 0)}% / Memory ${Math.round(hostResources.memory_percent || 0)}% / Disk ${Math.round(hostResources.disk_percent || 0)}%`}</p>}
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button onClick={() => navigate('/monitoring')} className="px-3 py-2 text-xs font-semibold rounded-lg border border-[#00bceb]/30 text-[#008db1] hover:bg-[#00bceb]/8 transition-all">
+            <div className="flex flex-wrap gap-2 shrink-0">
+              <button onClick={() => navigate('/monitoring')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs'}>
                 {language === 'zh' ? '查看平台资源' : 'View Host Resources'}
               </button>
-              <button onClick={() => navigate('/automation/execute')} className="px-3 py-2 text-xs font-semibold rounded-lg bg-[#00bceb] text-white hover:bg-[#009ac2] transition-all">
+              <button onClick={() => navigate('/automation/execute')} className={primaryActionBtnClass + ' !py-1.5 !text-xs'}>
                 {t('openAutomation')}
               </button>
-              <button onClick={() => navigate('/automation/history')} className="px-3 py-2 text-xs font-semibold rounded-lg border border-black/10 text-black/70 hover:bg-black/5 transition-all">
+              <button onClick={() => navigate('/automation/history')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs'}>
                 {t('viewExecHistory')}
               </button>
             </div>
@@ -116,9 +116,9 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4">
         {/* Total Assets */}
-        <div onClick={() => setActiveTab('inventory')} className="bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-black/10 transition-all cursor-pointer">
+        <div onClick={() => setActiveTab('inventory')} className="bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-[#005073]/20 transition-all cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('totalAssets')}</p>
             <p className="text-3xl font-bold monitoring-data text-[#005073]">{devices.length}</p>
@@ -129,7 +129,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
 
         {/* Online Nodes — with inline micro progress bar */}
-        <div onClick={() => setActiveTab('inventory')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 group hover:shadow-md hover:border-black/10 transition-all cursor-pointer ${onlinePct < 30 ? 'border-l-[3px] border-l-red-500' : onlinePct < 60 ? 'border-l-[3px] border-l-orange-400' : ''}`}>
+        <div onClick={() => setActiveTab('inventory')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 group hover:shadow-md hover:border-emerald-200 transition-all cursor-pointer ${onlinePct < 30 ? 'border-l-[3px] border-l-red-500' : onlinePct < 60 ? 'border-l-[3px] border-l-orange-400' : ''}`}>
           <div className="flex items-center justify-between">
             <div className="min-w-0">
               <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('onlineNodes')}</p>
@@ -150,7 +150,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
 
         {/* Compliance */}
-        <div onClick={() => setActiveTab('compliance')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-black/10 transition-all cursor-pointer ${compPct === 0 ? 'border-l-[3px] border-l-red-500' : compPct < 50 ? 'border-l-[3px] border-l-orange-400' : ''}`}>
+        <div onClick={() => setActiveTab('compliance')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-[#00bceb]/20 transition-all cursor-pointer ${compPct === 0 ? 'border-l-[3px] border-l-red-500' : compPct < 50 ? 'border-l-[3px] border-l-orange-400' : ''}`}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('complianceRate')}</p>
             <p className={`text-3xl font-bold monitoring-data ${compPct === 0 ? 'text-red-600' : compPct < 50 ? 'text-orange-600' : 'text-[#00bceb]'}`}>{compPct}%</p>
@@ -161,7 +161,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
 
         {/* Failed Tasks (24h) */}
-        <div onClick={() => setActiveTab('history')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-black/10 transition-all cursor-pointer ${failedCount24h > 0 ? 'border-l-[3px] border-l-red-500' : ''}`}>
+        <div onClick={() => setActiveTab('history')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-red-200 transition-all cursor-pointer ${failedCount24h > 0 ? 'border-l-[3px] border-l-red-500' : ''}`}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('failedTasks')}</p>
             <div className="flex items-baseline gap-1.5">
@@ -175,7 +175,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
 
         {/* Platform Host — expanded with CPU/MEM/DISK bars */}
-        <div onClick={() => navigate('/monitoring')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 group hover:shadow-md hover:border-black/10 transition-all cursor-pointer ${hostResources?.status === 'critical' ? 'border-l-[3px] border-l-red-500' : hostResources?.status === 'degraded' ? 'border-l-[3px] border-l-orange-400' : ''}`}>
+        <div onClick={() => navigate('/monitoring')} className={`col-span-2 md:col-span-1 bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 group hover:shadow-md hover:border-[#005073]/20 transition-all cursor-pointer ${hostResources?.status === 'critical' ? 'border-l-[3px] border-l-red-500' : hostResources?.status === 'degraded' ? 'border-l-[3px] border-l-orange-400' : ''}`}>
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '平台宿主机' : 'Platform Host'}</p>
             <div className={`p-2 rounded-lg ${hostResources?.status === 'critical' ? 'bg-red-50 text-red-600' : hostResources?.status === 'degraded' ? 'bg-orange-50 text-orange-600' : 'bg-[#005073]/5 text-[#005073]'} group-hover:scale-110 transition-transform`}>
@@ -219,22 +219,22 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           <div className="flex items-center gap-3">
             {criticalAlerts > 0 && (
               <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 text-red-700">
-                <AlertCircle size={12} /> {criticalAlerts} Critical
+                <AlertCircle size={12} /> {criticalAlerts} {language === 'zh' ? '严重' : 'Critical'}
               </span>
             )}
             {majorAlerts > 0 && (
               <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-orange-100 text-orange-700">
-                <AlertTriangle size={12} /> {majorAlerts} Major
+                <AlertTriangle size={12} /> {majorAlerts} {language === 'zh' ? '重要' : 'Major'}
               </span>
             )}
             {warningAlerts > 0 && (
               <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
-                {warningAlerts} Warning
+                {warningAlerts} {language === 'zh' ? '警告' : 'Warning'}
               </span>
             )}
             {infoAlerts > 0 && (
               <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700">
-                {infoAlerts} Info
+                {infoAlerts} {language === 'zh' ? '信息' : 'Info'}
               </span>
             )}
             <ChevronRight size={16} className="text-black/20 group-hover:text-black/40 transition-colors" />
@@ -242,15 +242,15 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-12 gap-3 md:gap-6">
-        <div className="col-span-12 lg:col-span-8 bg-white rounded-2xl border border-black/5 p-4 md:p-8 shadow-sm">
-          <div className="flex items-center justify-between mb-8">
+      <div className="grid grid-cols-12 gap-3 md:gap-4">
+        <div className="col-span-12 lg:col-span-8 bg-white rounded-2xl border border-black/5 p-4 md:p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-6">
             <div>
               <h3 className="text-sm font-bold text-[#00172D] flex items-center gap-2">
                 <TrendingUp size={18} className="text-[#00bceb]" />
                 {t('complianceTrend')}
               </h3>
-              <p className="text-xs text-black/40 mt-1">{t('complianceTrendSub')}</p>
+              <p className="text-xs text-black/40 mt-0.5">{t('complianceTrendSub')}</p>
             </div>
             <div className="flex gap-2">
               <div className="flex items-center gap-1.5 mr-3">
@@ -305,20 +305,20 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           </div>
         </div>
 
-        <div className="col-span-12 lg:col-span-4 bg-white rounded-2xl border border-black/5 p-4 md:p-8 shadow-sm">
-          <h3 className="text-sm font-bold text-[#00172D] mb-8 flex items-center gap-2">
+        <div className="col-span-12 lg:col-span-4 bg-white rounded-2xl border border-black/5 p-4 md:p-6 shadow-sm">
+          <h3 className="text-sm font-bold text-[#00172D] mb-6 flex items-center gap-2">
             <PieChartIcon size={18} className="text-emerald-500" />
             {t('platformDistribution')}
           </h3>
-          <div className="h-[200px] w-full relative">
+          <div className="h-[200px] w-full relative" role="img" aria-label={language === 'zh' ? '平台分布图' : 'Platform distribution chart'}>
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={platformData} innerRadius={65} outerRadius={85} paddingAngle={8} dataKey="value" stroke="none">
+                <Pie data={platformData} innerRadius={65} outerRadius={85} paddingAngle={platformData.length > 4 ? 4 : 8} dataKey="value" stroke="none">
                   {platformData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip />
+                <Tooltip formatter={(value: number, name: string) => [`${value}%`, name]} />
               </PieChart>
             </ResponsiveContainer>
             {/* P1: Total device count in donut center */}
@@ -327,7 +327,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               <span className="text-[10px] text-black/40 font-medium">{language === 'zh' ? '总设备' : 'Total'}</span>
             </div>
           </div>
-          <div className="mt-8 space-y-3">
+          <div className="mt-6 space-y-3">
             {platformData.map((item, i) => (
               <div key={i} className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -341,9 +341,9 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-12 gap-3 md:gap-6">
-        <div className="col-span-12 lg:col-span-7 bg-white rounded-2xl border border-black/5 p-8 shadow-sm">
-          <div className="flex items-center justify-between mb-8">
+      <div className="grid grid-cols-12 gap-3 md:gap-4">
+        <div className="col-span-12 lg:col-span-7 bg-white rounded-2xl border border-black/5 p-4 md:p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-6">
             <div>
               <h3 className="text-sm font-bold text-[#00172D] flex items-center gap-2">
                 <History size={18} className="text-black/40" />
@@ -395,8 +395,8 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           </div>
         </div>
 
-        <div className="col-span-12 lg:col-span-5 bg-white rounded-2xl border border-black/5 p-4 md:p-8 shadow-sm">
-          <h3 className="text-sm font-bold text-[#00172D] mb-8 flex items-center gap-2">
+        <div className="col-span-12 lg:col-span-5 bg-white rounded-2xl border border-black/5 p-4 md:p-6 shadow-sm">
+          <h3 className="text-sm font-bold text-[#00172D] mb-6 flex items-center gap-2">
             <Clock size={18} className="text-orange-500" />
             {t('upcomingTasks')}
           </h3>

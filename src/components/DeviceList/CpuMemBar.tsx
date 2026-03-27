@@ -23,8 +23,8 @@ const CpuMemBar: React.FC<CpuMemBarProps> = ({ cpu, mem, language }) => {
 
   if (cpu === 0 && mem === 0) {
     return (
-      <span className="text-[10px] text-black/20 dark:text-white/15 italic">
-        {zh ? '未采集' : 'N/A'}
+      <span className="text-[10px] text-black/20 dark:text-white/15">
+        —
       </span>
     );
   }

@@ -84,19 +84,30 @@ const DeviceRowExpand: React.FC<DeviceRowExpandProps> = ({
         </div>
       </div>
 
-      {/* Col 4: Trends */}
+      {/* Col 4: Trends & Uptime */}
       <div>
         <span className="text-[9px] uppercase tracking-wider font-semibold text-black/30 dark:text-white/25 block mb-1.5">
           {zh ? '趋势' : 'Trends'}
         </span>
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="text-[9px] font-semibold text-black/40 dark:text-white/40 w-8">CPU</span>
-          <Sparkline data={device.cpu_history || [20, 30, 25, 40, 35, 45, 40]} color="#00bceb" />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[9px] font-semibold text-black/40 dark:text-white/40 w-8">MEM</span>
-          <Sparkline data={device.memory_history || [60, 62, 65, 63, 68, 70, 65]} color="#10b981" />
-        </div>
+        {device.cpu_history && device.cpu_history.length > 0 ? (
+          <>
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-[9px] font-semibold text-black/40 dark:text-white/40 w-8">CPU</span>
+              <Sparkline data={device.cpu_history} color="#00bceb" />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] font-semibold text-black/40 dark:text-white/40 w-8">MEM</span>
+              <Sparkline data={device.memory_history || []} color="#10b981" />
+            </div>
+          </>
+        ) : (
+          <p className="text-[10px] text-black/20 dark:text-white/15">{zh ? '暂无趋势数据' : 'No trend data'}</p>
+        )}
+        {device.uptime && (
+          <p className="text-[9px] text-black/30 dark:text-white/25 font-mono mt-1.5" title={device.uptime}>
+            ⏱ {device.uptime.length > 28 ? device.uptime.slice(0, 28) + '…' : device.uptime}
+          </p>
+        )}
         {check && badge && (
           <div className="mt-1.5 flex items-center gap-1.5">
             <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase ${badge.cls}`}>
