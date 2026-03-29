@@ -2,6 +2,7 @@ import React from 'react';
 import { XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { Device } from '../types';
+import DateTimePicker from './DateTimePicker';
 
 type ScheduleType = 'once' | 'recurring';
 type ScheduleInterval = 'daily' | 'weekly' | 'monthly';
@@ -93,12 +94,10 @@ const ScheduleTaskModal: React.FC<ScheduleTaskModalProps> = ({
 
           <div className="space-y-2">
             <label className="text-[10px] font-bold uppercase text-black/40">{t('scheduledTime')}</label>
-            <input
-              type="datetime-local"
+            <DateTimePicker
               value={scheduleForm.time}
-              onChange={(event) => onScheduleFormChange({ ...scheduleForm, time: event.target.value })}
-              title={language === 'zh' ? '计划执行时间' : 'Scheduled execution time'}
-              className="w-full px-4 py-2 bg-black/[0.02] border border-black/10 rounded-xl text-xs outline-none focus:border-black/20"
+              onChange={(v) => onScheduleFormChange({ ...scheduleForm, time: v })}
+              language={language}
             />
           </div>
 

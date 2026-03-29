@@ -229,7 +229,7 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
           ],
         },
         {
-          id: 'config-group', icon: FolderOpen, labelZh: '配置合规', labelEn: 'Config & Compliance',
+          id: 'config-group', icon: FolderOpen, labelZh: '备份中心', labelEn: 'Backup Center',
           children: [
             { id: 'config-backup', path: '/config/backup', icon: Download, labelZh: '备份历史', labelEn: 'Backups' },
             { id: 'config-diff', path: '/config/diff', icon: FileText, labelZh: '差异对比', labelEn: 'Diff' },

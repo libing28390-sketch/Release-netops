@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Eye, EyeOff, Play, RotateCcw, ShieldCheck, User, XCircle } from 'lucide-react';
+import { Activity, Eye, EyeOff, Lock, Play, RotateCcw, User, XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface LoginScreenProps {
@@ -40,9 +40,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
       <div className="absolute bottom-[-20%] left-[-12%] h-[50vw] w-[50vw] rounded-full bg-[radial-gradient(circle,rgba(0,80,115,0.22)_0%,transparent_65%)] pointer-events-none" />
       <div className="absolute top-[40%] left-[20%] h-[30vw] w-[30vw] rounded-full bg-[radial-gradient(circle,rgba(0,40,90,0.18)_0%,transparent_70%)] pointer-events-none" />
 
-      <div className="absolute inset-0 bg-[radial-gradient(rgba(0,188,235,0.9)_1px,transparent_1px)] bg-[length:36px_36px] opacity-[0.055] pointer-events-none" />
+      <div className="absolute inset-0 bg-[radial-gradient(rgba(0,188,235,0.9)_1px,transparent_1px)] bg-[length:36px_36px] opacity-[0.08] pointer-events-none" />
 
-      <svg className="absolute inset-0 w-full h-full opacity-[0.07] pointer-events-none" xmlns="http://www.w3.org/2000/svg">
+      <svg className="absolute inset-0 w-full h-full opacity-[0.13] pointer-events-none" xmlns="http://www.w3.org/2000/svg">
         <style>{`
           @keyframes nodePulse { 0%,100%{r:4;opacity:0.6} 50%{r:6;opacity:1} }
           @keyframes ringPulse { 0%,100%{r:10;opacity:0.3} 50%{r:16;opacity:0.1} }
@@ -129,7 +129,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                     autoFocus
                     value={loginForm.username}
                     onChange={(event) => onUsernameChange(event.target.value)}
-                    className={`w-full rounded-xl border-[1.5px] py-3.5 pl-11 pr-4 text-sm outline-none transition-all ${isDark ? 'text-white placeholder-white/20' : 'text-[#0B2A3C] placeholder-[#49728A]/45'} ${loginError ? 'border-red-500/70' : isDark ? 'border-white/8 bg-white/5 focus:border-[#00bceb]/60 focus:bg-[#00bceb]/6' : 'border-[rgba(0,80,115,0.22)] bg-white/[0.74] focus:border-[rgba(0,166,212,0.88)] focus:bg-white/[0.92]'}`}
+                    className={`w-full rounded-xl border-[1.5px] py-3.5 pl-11 pr-4 text-sm outline-none transition-all focus:shadow-[0_0_0_3px_rgba(0,188,235,0.12)] ${isDark ? 'text-white placeholder-white/20' : 'text-[#0B2A3C] placeholder-[#49728A]/45'} ${loginError ? 'border-red-500/70' : isDark ? 'border-white/8 bg-white/5 focus:border-[#00bceb]/60 focus:bg-[#00bceb]/6' : 'border-[rgba(0,80,115,0.22)] bg-white/[0.74] focus:border-[rgba(0,166,212,0.88)] focus:bg-white/[0.92]'}`}
                   />
                 </div>
               </div>
@@ -138,14 +138,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                 <label className={`ml-0.5 text-[10px] font-bold uppercase tracking-[0.18em] ${isDark ? 'text-[#00bceb]/72' : 'text-[rgba(0,114,152,0.88)]'}`}>{t('password')}</label>
                 <div className="relative">
                   <div className={`absolute left-4 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/20' : 'text-[#0A4E70]/45'}`}>
-                    <ShieldCheck size={16} />
+                    <Lock size={16} />
                   </div>
                   <input
                     type={showLoginPwd ? 'text' : 'password'}
                     placeholder="••••••••"
                     value={loginForm.password}
                     onChange={(event) => onPasswordChange(event.target.value)}
-                    className={`w-full rounded-xl border-[1.5px] py-3.5 pl-11 pr-12 text-sm outline-none transition-all ${isDark ? 'text-white placeholder-white/20' : 'text-[#0B2A3C] placeholder-[#49728A]/45'} ${loginError ? 'border-red-500/70' : isDark ? 'border-white/8 bg-white/5 focus:border-[#00bceb]/60 focus:bg-[#00bceb]/6' : 'border-[rgba(0,80,115,0.22)] bg-white/[0.74] focus:border-[rgba(0,166,212,0.88)] focus:bg-white/[0.92]'}`}
+                    className={`w-full rounded-xl border-[1.5px] py-3.5 pl-11 pr-12 text-sm outline-none transition-all focus:shadow-[0_0_0_3px_rgba(0,188,235,0.12)] ${isDark ? 'text-white placeholder-white/20' : 'text-[#0B2A3C] placeholder-[#49728A]/45'} ${loginError ? 'border-red-500/70' : isDark ? 'border-white/8 bg-white/5 focus:border-[#00bceb]/60 focus:bg-[#00bceb]/6' : 'border-[rgba(0,80,115,0.22)] bg-white/[0.74] focus:border-[rgba(0,166,212,0.88)] focus:bg-white/[0.92]'}`}
                   />
                   <button type="button" onClick={onTogglePassword} className={`absolute right-4 top-1/2 -translate-y-1/2 transition-colors ${isDark ? 'text-white/25 hover:text-white/60' : 'text-[#0A4E70]/45 hover:text-[#0A4E70]'}`}>
                     {showLoginPwd ? <EyeOff size={15} /> : <Eye size={15} />}
@@ -173,7 +173,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                 <button
                   onClick={onSubmit}
                   disabled={isAuthenticating}
-                  className={`flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-white transition-all disabled:opacity-50 ${loginError ? 'bg-red-500/80 shadow-[0_0_24px_rgba(239,68,68,0.3)]' : 'bg-[linear-gradient(135deg,#00527a_0%,#00bceb_100%)] shadow-[0_0_32px_rgba(0,188,235,0.25),0_4px_16px_rgba(0,0,0,0.4)]'}`}
+                  className={`flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-xs font-bold uppercase tracking-[0.18em] text-white transition-all disabled:opacity-50 hover:scale-[1.02] hover:shadow-[0_0_40px_rgba(0,188,235,0.4),0_6px_20px_rgba(0,0,0,0.5)] active:scale-[0.98] ${loginError ? 'bg-red-500/80 shadow-[0_0_24px_rgba(239,68,68,0.3)]' : 'bg-[linear-gradient(135deg,#00527a_0%,#00bceb_100%)] shadow-[0_0_32px_rgba(0,188,235,0.25),0_4px_16px_rgba(0,0,0,0.4)]'}`}
                 >
                   {isAuthenticating ? (
                     <><RotateCcw className="animate-spin" size={15} />{t('authenticating')}</>
@@ -184,17 +184,17 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
               </div>
             </motion.div>
 
-            <div className={`mt-8 pt-6 ${isDark ? 'border-t border-white/6' : 'border-t border-[rgba(0,80,115,0.14)]'}`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
+            <div className={`mt-8 pt-5 ${isDark ? 'border-t border-white/6' : 'border-t border-[rgba(0,80,115,0.10)]'}`}>
+              <div className="flex items-center justify-center gap-2.5 flex-wrap">
+                <div className="flex items-center gap-1.5">
                   <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
-                  <span className={`text-[10px] font-semibold uppercase tracking-wider ${isDark ? 'text-white/25' : 'text-[rgba(9,47,69,0.52)]'}`}>{t('systemOnline')}</span>
+                  <span className={`text-[10px] font-semibold uppercase tracking-wider ${isDark ? 'text-white/25' : 'text-[rgba(9,47,69,0.46)]'}`}>{t('systemOnline')}</span>
                 </div>
-                <span className={`text-[10px] font-mono ${isDark ? 'text-white/15' : 'text-[rgba(9,47,69,0.4)]'}`}>NOC v2.0</span>
+                <span className={`text-[10px] ${isDark ? 'text-white/10' : 'text-[rgba(9,47,69,0.22)]'}`}>·</span>
+                <span className={`text-[10px] font-mono ${isDark ? 'text-white/15' : 'text-[rgba(9,47,69,0.36)]'}`}>NOC v2.0</span>
+                <span className={`text-[10px] ${isDark ? 'text-white/10' : 'text-[rgba(9,47,69,0.22)]'}`}>·</span>
+                <span className={`text-[10px] ${isDark ? 'text-white/15' : 'text-[rgba(9,47,69,0.36)]'}`}>© {new Date().getFullYear()} NetPilot</span>
               </div>
-              <p className={`mt-2 text-center text-[10px] ${isDark ? 'text-white/20' : 'text-[rgba(9,47,69,0.46)]'}`}>
-                {t('copyright')} {new Date().getFullYear()} {t('allRightsReserved')}
-              </p>
             </div>
           </div>
 

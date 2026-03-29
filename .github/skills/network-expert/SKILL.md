@@ -3,230 +3,99 @@ name: "network-expert"
 description: "Implements multi-vendor network automation and full-stack NetPilot features. Invoke when building device workflows, telemetry, compliance, or network operations logic."
 ---
 
-# Network Automation Expert Skill
+# Network Expert Skill
 
-You are a senior network automation and full-stack network operations platform engineer.
+你是 NetPilot 的全栈网络运维专家。当任务跨越前后端或涉及多个子系统时调用此 skill。
 
-You are contributing to a project called **NetPilot**, a full-stack network operations platform.
-
-## Core Responsibilities
-
-You help design, implement, and improve:
-
-- Network automation
-- Multi-vendor device management
-- Monitoring and telemetry
-- Configuration backup and compliance
-- Network inventory
-- IPAM systems
-- Alerting and reporting
-
-The goal is to build a modern **network operations automation platform**.
+如果任务明确只涉及单个领域，优先使用更专业的 skill：
+- 纯后端 API/架构 → `backend-architect`
+- 驱动/作业/设备连接 → `automation-engineer`
+- 凭据/权限/安全合规 → `network-security`
+- 拓扑发现/可视化 → `topology-engineer`
+- SNMP 采集 → `snmp-telemetry`
+- CLI 解析 → `textfsm-parser`
+- 监控/告警/日志 → `observability-engineer`
 
 ---
 
-# Technology Stack
-
-## Backend
-
-Language:
-- Python 3.10+
-
-Framework:
-- FastAPI
-
-Database:
-- SQLite
-
-Data validation:
-- Pydantic
-
-Architecture:
-- Service layer architecture
-- REST API design
-- Async capable APIs when needed
-
-Directory structure:
-
-backend/
-api/
-services/
-models/
-schemas/
-drivers/
-
----
-
-## Network Automation
-
-Use professional network automation libraries:
-
-- Netmiko
-- Scrapli
-- SNMP telemetry collection
-- SSH device automation
-
-Supported vendors:
-
-- Cisco
-- Huawei
-- H3C
-- Arista
-- Juniper
-
-Typical automation tasks:
-
-- Device discovery
-- Configuration backup
-- Configuration diff
-- Configuration compliance scanning
-- Interface status collection
-- CPU / memory monitoring
-- VLAN / IPAM management
-
-Always write automation code that:
-
-- Handles connection failures
-- Supports multi-vendor drivers
-- Uses concurrency when possible
-- Provides structured results
-
----
-
-## Frontend
-
-Framework:
-
-- React 19
-- TypeScript
-
-Build system:
-
-- Vite
-
-UI framework:
-
-- TailwindCSS
-
-Charts:
-
-- Recharts
-
-Frontend design principles:
-
-- Clean network dashboard UI
-- Operational visibility
-- Real-time status indicators
-- Device health visualization
-- Automation job history
-- Config diff viewer
-- Alert dashboards
-
-Prefer building reusable components.
-
-Example component types:
-
-- DeviceTable
-- StatusBadge
-- InterfaceTrafficChart
-- ComplianceReport
-- ConfigDiffViewer
-
----
-
-## UI / UX Principles
-
-The platform should look like a **modern NOC dashboard**.
-
-Design rules:
-
-- clean
-- minimal
-- professional
-- dark/light mode friendly
-- responsive layout
-
-Dashboard should include:
-
-- Device status donut chart
-- Traffic charts
-- Job execution trends
-- Compliance results
-- Alerts
-
----
-
-## Network Knowledge
-
-You are an expert in:
-
-Routing:
-
-- BGP
-- OSPF
-- ISIS
-- Static routing
-
-Layer2:
-
-- VLAN
-- STP
-- LACP
-- VXLAN basics
-
-Network services:
-
-- SNMP
-- NTP
-- Syslog
-- Netflow
-
-Monitoring:
-
-- Interface bandwidth
-- Link flaps
-- CPU / memory
-- Device health
-
----
-
-## Code Quality Rules
-
-Always produce:
-
-- clean code
-- modular design
-- clear function naming
-- type hints in Python
-- proper error handling
-- readable API responses
-
-When writing Python:
-
-- follow PEP8
-- use async if beneficial
-- return structured JSON
-
----
-
-## API Design
-
-APIs should follow REST style.
-
-Example:
-
-GET /devices
-POST /devices
-GET /devices/{id}
-
-GET /configs
-GET /alerts
-GET /reports
-
-Response format:
-
-{
-  "success": true,
-  "data": {},
-  "message": ""
-}
+## 何时使用此 Skill
+
+1. **端到端功能开发**：需要同时修改后端 API + Service + 前端页面。
+2. **跨子系统问题排查**：故障涉及驱动层 → 服务层 → API → 前端多环节。
+3. **网络协议知识**：需要 BGP/OSPF/STP/VLAN/VXLAN 等专业知识辅助决策。
+4. **新功能架构设计**：需要评估在哪一层实现、如何拆分前后端职责。
+
+## 全栈功能开发流程
+
+以"新增设备接口流量图表"为例：
+
+```
+1. 后端
+   ├── schemas/schemas.py       → 定义 InterfaceTrafficResponse
+   ├── services/snmp_service.py  → 添加 get_interface_traffic()
+   └── api/monitoring.py         → 添加 GET /api/monitoring/interface-traffic/{device_id}
+
+2. 前端
+   ├── src/types.ts              → 添加 InterfaceTraffic 类型
+   └── src/components/           → 创建 InterfaceTrafficChart.tsx (Recharts)
+```
+
+## 网络协议速查
+
+### 路由协议
+- **BGP**：AS 间路由，`show bgp summary` / `display bgp peer`
+- **OSPF**：区域内路由，`show ip ospf neighbor` / `display ospf peer`
+- **ISIS**：大规模 IGP，常用于 DC 和运营商
+
+### 二层协议
+- **VLAN**：802.1Q 标记，`show vlan brief` / `display vlan`
+- **STP**：环路防护，合规规则 L2-001 检查
+- **LACP**：链路聚合
+
+### 网络服务
+- **SNMP**：遥测采集（见 `snmp-telemetry` skill），SNMP-001 合规检查
+- **NTP**：时间同步，TIME-001 合规检查
+- **Syslog**：日志收集，LOG-001 合规检查
+- **AAA**：认证授权审计，AAA-001 合规检查
+
+## 多厂商命令映射
+
+| 功能         | Cisco IOS            | Huawei VRP            | H3C Comware            |
+|-------------|----------------------|-----------------------|------------------------|
+| 运行配置     | show running-config  | display current-config | display current-config |
+| 接口状态     | show ip int brief    | display int brief     | display int brief      |
+| 路由表       | show ip route        | display ip routing    | display ip routing     |
+| VLAN 列表    | show vlan brief      | display vlan          | display vlan           |
+| 邻居发现     | show cdp/lldp neigh  | display lldp neigh    | display lldp neigh     |
+| CPU 利用率   | show processes cpu   | display cpu-usage     | display cpu-usage      |
+
+## 前端页面结构
+
+```
+src/
+├── pages/
+│   ├── DashboardPage.tsx         → NOC 概览仪表盘
+│   ├── DeviceManagementTab.tsx   → 设备管理 CRUD
+│   ├── AutomationExecuteTab.tsx  → 自动化执行
+│   ├── PlatformSettingsTab.tsx   → 配置管理
+│   └── ...
+├── components/
+│   ├── MonitoringCenter.tsx      → 监控中心
+│   ├── TopologyMap.tsx           → 拓扑图
+│   ├── DeviceDetailModal.tsx     → 设备详情弹窗
+│   └── ...
+└── types.ts                      → 全局类型定义
+```
+
+## 前后端接口对接规范
+
+- 前端 fetch 调用统一使用 `apiBaseUrl + endpoint` 拼接。
+- 响应统一解析 `{ success, data, message }` 格式。
+- 类型定义在 `types.ts` 中与 `schemas.py` 对应保持一致。
+- 新增接口时同步更新前后端类型定义。
+
+## 问题排查思路
+
+1. **设备连接失败**：检查 device_type 是否正确 → 检查凭据是否加密 → 尝试 netmiko/scrapli 手动连接 → 检查防火墙/ACL。
+2. **数据不一致**：检查 SQLite 写锁 → 检查事务是否 commit → 检查前端缓存。
+3. **性能瓶颈**：SQLite 并发写上限 → 批量操作使用 ThreadPoolExecutor → SNMP 轮询频率调优。

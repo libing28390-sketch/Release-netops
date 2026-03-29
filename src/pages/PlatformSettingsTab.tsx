@@ -1,5 +1,5 @@
-import React from 'react';
-import { Activity, AlertCircle, AlertTriangle, Copy, Database, Eye, FileText, Filter, FolderOpen, Globe, Plus, Server, Settings, ShieldCheck, CheckCircle2, X } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import { Activity, AlertCircle, AlertTriangle, Copy, Database, FileText, Filter, FolderOpen, Globe, Plus, Search, Server, Settings, ShieldCheck, CheckCircle2, X } from 'lucide-react';
 import type { ConfigTemplate, Device } from '../types';
 
 type ConfigWorkspaceView = 'source' | 'rendered' | 'checks';
@@ -105,14 +105,50 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   onConfigScopeSiteChange,
   showToast,
 }) => {
-  const groupedTemplates = Object.entries(
-    configTemplates.reduce<Record<string, ConfigTemplate[]>>((acc, tpl) => {
+  const [tplSearch, setTplSearch] = useState('');
+  const [tplVendorFilter, setTplVendorFilter] = useState<string>('all');
+  const [devicePreviewExpanded, setDevicePreviewExpanded] = useState(false);
+  const lineNumRef = useRef<HTMLDivElement>(null);
+
+  const vendorList = useMemo(() => {
+    const vendors = new Set<string>();
+    configTemplates.forEach((tpl) => vendors.add(tpl.vendor || 'Custom'));
+    return Array.from(vendors).sort();
+  }, [configTemplates]);
+
+  const filteredTemplates = useMemo(() => {
+    let list = configTemplates;
+    if (tplVendorFilter !== 'all') {
+      list = list.filter((tpl) => (tpl.vendor || 'Custom') === tplVendorFilter);
+    }
+    if (tplSearch.trim()) {
+      const q = tplSearch.trim().toLowerCase();
+      list = list.filter(
+        (tpl) =>
+          tpl.name.toLowerCase().includes(q) ||
+          (tpl.vendor || 'Custom').toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [configTemplates, tplVendorFilter, tplSearch]);
+
+  const groupedTemplates = useMemo<[string, ConfigTemplate[]][]>(() => Object.entries(
+    filteredTemplates.reduce<Record<string, ConfigTemplate[]>>((acc, tpl) => {
       const vendor = tpl.vendor || 'Custom';
       if (!acc[vendor]) acc[vendor] = [];
       acc[vendor].push(tpl);
       return acc;
     }, {})
-  );
+  ), [filteredTemplates]);
+
+  const officialCount = useMemo(() => configTemplates.filter((tpl) => tpl.category === 'official').length, [configTemplates]);
+  const customCount = configTemplates.length - officialCount;
+
+  const templateVarsMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    filteredTemplates.forEach((tpl) => map.set(tpl.id, extractVars(tpl.content)));
+    return map;
+  }, [filteredTemplates, extractVars]);
 
   return (
     <div className="h-full flex flex-col gap-5 overflow-hidden">
@@ -128,7 +164,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
         <div className="flex flex-wrap gap-3">
           <label className="cursor-pointer px-4 py-2 border border-black/10 rounded-xl text-sm font-medium hover:bg-black/5 transition-all">
             {t('importVars')}
-            <input type="file" className="hidden" accept=".xlsx, .xls, .csv" onChange={onImportVars} />
+            <input type="file" className="hidden" accept=".xlsx, .xls, .csv" onChange={(e) => { onImportVars(e); e.target.value = ''; }} />
           </label>
           <button
             onClick={onCreateTemplate}
@@ -151,8 +187,8 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
           <p className="mt-3 text-3xl font-semibold text-black">{configTemplates.length}</p>
           <p className="mt-1 text-xs text-black/45">
             {language === 'zh'
-              ? `${configTemplates.filter((tpl) => tpl.category === 'official').length} 个官方模板，${configTemplates.filter((tpl) => tpl.category !== 'official').length} 个自定义模板`
-              : `${configTemplates.filter((tpl) => tpl.category === 'official').length} official, ${configTemplates.filter((tpl) => tpl.category !== 'official').length} custom`}
+              ? `${officialCount} 个官方模板，${customCount} 个自定义模板`
+              : `${officialCount} official, ${customCount} custom`}
           </p>
         </div>
         <div className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm">
@@ -162,7 +198,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             </span>
             <Database size={14} className="text-black/25" />
           </div>
-          <p className="mt-3 text-3xl font-semibold text-black">{configVariableKeys.length - configMissingVariables.length}/{configVariableKeys.length || 0}</p>
+          <p className={`mt-3 text-3xl font-semibold ${configMissingVariables.length === 0 ? 'text-emerald-600' : 'text-amber-600'}`}>{configVariableKeys.length - configMissingVariables.length}/{configVariableKeys.length || 0}</p>
           <p className="mt-1 text-xs text-black/45">
             {configMissingVariables.length === 0
               ? (language === 'zh' ? '当前模板变量已全部赋值' : 'All variables are populated for the selected template')
@@ -176,7 +212,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             </span>
             <Server size={14} className="text-black/25" />
           </div>
-          <p className="mt-3 text-3xl font-semibold text-black">{configScopedDevices.length}</p>
+          <p className="mt-3 text-3xl font-semibold text-[#0891b2]">{configScopedDevices.length}</p>
           <p className="mt-1 text-xs text-black/45">
             {language === 'zh'
               ? `${configScopedOnlineCount} 台在线，可用于当前发布范围`
@@ -190,7 +226,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             </span>
             <ShieldCheck size={14} className="text-black/25" />
           </div>
-          <p className="mt-3 text-3xl font-semibold text-black">{configReadinessScore}</p>
+          <p className={`mt-3 text-3xl font-semibold ${configReadinessScore >= 80 ? 'text-emerald-600' : configReadinessScore >= 50 ? 'text-amber-600' : 'text-red-500'}`}>{configReadinessScore}</p>
           <p className="mt-1 text-xs text-black/45">
             {configValidationIssues.length === 0
               ? (language === 'zh' ? '通过基础校验，可进入发布动作' : 'Base checks passed. Ready for release actions')
@@ -201,33 +237,54 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
 
       <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-4 overflow-hidden">
         <div className="xl:col-span-3 flex flex-col gap-4 min-h-0 overflow-auto pr-1">
-          <div className="bg-[#f3fbfd] rounded-2xl border border-[#b7edf7] p-5 shadow-sm">
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-xl bg-[#00bceb]/10 text-[#0096bd]">
-                <Activity size={18} />
+          <div className="bg-[#ecfeff] rounded-xl border border-[#06b6d4]/15 px-4 py-2.5 shadow-sm">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 rounded-lg bg-[#06b6d4]/10 text-[#0891b2]">
+                <Activity size={14} />
               </div>
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900">
-                  {language === 'zh' ? '配置中心工作流' : 'Configuration Workflow'}
-                </h3>
-                <p className="mt-1 text-xs leading-5 text-slate-600">
-                  {language === 'zh'
-                    ? '先选模板资产，再完成变量渲染和发布范围确认，最后做发布前检查后再下发。'
-                    : 'Select a template asset, complete variable rendering and release scope, then run preflight checks before deployment.'}
-                </p>
-              </div>
+              <p className="text-xs text-[#164e63]">
+                {language === 'zh'
+                  ? '先选模板 → 完成变量渲染和范围确认 → 发布前检查后再下发'
+                  : 'Select template → Complete variables & scope → Preflight check → Deploy'}
+              </p>
             </div>
           </div>
 
           <div className="bg-white rounded-2xl border border-black/5 p-5 shadow-sm min-h-0 flex flex-col">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-black/40">{t('templates')}</h3>
-                <p className="mt-1 text-[11px] text-black/35">
-                  {language === 'zh' ? '按厂商分组的模板资产库' : 'Template asset library grouped by vendor'}
-                </p>
-              </div>
+            <div className="mb-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-black/40">{t('templates')}</h3>
             </div>
+            <div className="flex gap-2 mb-3">
+              <div className="relative flex-1 min-w-0">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/25" />
+                <input
+                  type="text"
+                  value={tplSearch}
+                  onChange={(e) => setTplSearch(e.target.value)}
+                  placeholder={language === 'zh' ? '搜索模板...' : 'Search...'}
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-black/[0.03] border border-black/5 rounded-xl outline-none focus:border-[#06b6d4] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.08)] transition-all placeholder:text-black/25"
+                />
+              </div>
+              <select
+                value={tplVendorFilter}
+                onChange={(e) => setTplVendorFilter(e.target.value)}
+                title={language === 'zh' ? '按厂商筛选' : 'Filter by vendor'}
+                className="px-2.5 py-2 text-xs bg-black/[0.03] border border-black/5 rounded-xl outline-none focus:border-[#06b6d4] transition-all text-black/60 cursor-pointer flex-shrink-0"
+              >
+                <option value="all">{language === 'zh' ? '全部厂商' : 'All vendors'} ({configTemplates.length})</option>
+                {vendorList.map((vendor) => {
+                  const count = configTemplates.filter((tpl) => (tpl.vendor || 'Custom') === vendor).length;
+                  return (
+                    <option key={vendor} value={vendor}>{vendor} ({count})</option>
+                  );
+                })}
+              </select>
+            </div>
+            {filteredTemplates.length === 0 && (
+              <div className="py-6 text-center text-xs text-black/30">
+                {language === 'zh' ? '没有匹配的模板' : 'No matching templates'}
+              </div>
+            )}
             <div className="space-y-5 overflow-auto pr-1">
               {groupedTemplates.map(([vendor, templates]) => (
                 <div key={vendor} className="space-y-2">
@@ -237,15 +294,15 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                   </div>
                   <div className="space-y-2">
                     {templates.map((tpl) => {
-                      const templateVars = extractVars(tpl.content);
+                      const templateVars = templateVarsMap.get(tpl.id) || [];
                       const isSelected = selectedTemplateId === tpl.id;
                       return (
                         <button
                           key={tpl.id}
                           onClick={() => onSelectTemplateIdChange(tpl.id)}
                           className={`w-full rounded-xl border p-3 text-left transition-all ${isSelected
-                            ? 'border-black bg-black text-white shadow-md'
-                            : 'border-black/5 bg-white hover:border-black/15 hover:bg-black/[0.02] text-black/75'}`}
+                            ? 'border-[#06b6d4] bg-[#06b6d4] text-white shadow-md shadow-[#06b6d4]/20'
+                            : 'border-black/5 bg-white hover:border-[#06b6d4]/25 hover:bg-[#ecfeff]/50 text-black/75'}`}
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -279,163 +336,94 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
               ))}
             </div>
           </div>
-
-          <div className="bg-white rounded-2xl border border-black/5 p-5 shadow-sm min-h-0 flex flex-col">
-            <div className="flex justify-between items-center mb-4">
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-black/40">{t('globalVars')}</h3>
-                <p className="mt-1 text-[11px] text-black/35">
-                  {language === 'zh' ? '渲染模板时复用的全局参数' : 'Reusable variables for template rendering'}
-                </p>
-              </div>
-              <button
-                onClick={onAddVar}
-                className="text-[10px] text-blue-600 font-bold hover:underline uppercase"
-              >
-                {t('addVar')}
-              </button>
-            </div>
-            <div className="space-y-3 overflow-auto pr-1">
-              {globalVars.map((item, index) => (
-                <div key={item.id || index} className="group relative flex justify-between items-center py-2 border-b border-black/5">
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-mono text-black/60 truncate">{item.key}</span>
-                    <span className="text-[10px] text-black/30 font-mono">{'{{ ' + item.key + ' }}'}</span>
-                  </div>
-                  <div className="flex items-center gap-3 ml-3">
-                    <span className="text-xs font-medium max-w-[120px] truncate">{item.value}</span>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText('{{ ' + item.key + ' }}');
-                          showToast(t('copied'), 'success');
-                        }}
-                        className="bg-white shadow-sm border border-black/5 p-1 rounded text-black/40 hover:text-black"
-                        title="Copy reference"
-                      >
-                        <FileText size={12} />
-                      </button>
-                      <button
-                        onClick={() => item.id && onDeleteVar(item.id)}
-                        className="bg-white shadow-sm border border-black/5 p-1 rounded text-red-400 hover:text-red-600"
-                        title="Delete variable"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 p-3 bg-blue-50 rounded-xl border border-blue-100">
-              <p className="text-[10px] text-blue-800 leading-relaxed">
-                <strong>{t('howToRef')}:</strong> {t('varRefGuide')}
-              </p>
-            </div>
-          </div>
         </div>
 
         <div className="xl:col-span-6 min-h-0 bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden flex flex-col">
-          <div className="p-5 border-b border-black/5 bg-black/[0.015]">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div className="flex items-start gap-3 min-w-0">
-                <div className="p-2 bg-black/5 rounded-xl text-black/60">
-                  <Settings size={18} />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="text"
-                      value={selectedConfigTemplate?.name || ''}
-                      title={language === 'zh' ? '模板名称' : 'Template name'}
-                      onChange={(event) => onSelectedTemplateNameChange(event.target.value)}
-                      className="bg-black/5 px-3 py-1.5 rounded-xl font-medium border border-black/5 focus:border-black/20 outline-none transition-all min-w-[240px] max-w-full"
-                      placeholder="Template Name"
-                    />
-                    <select
-                      value={selectedConfigTemplate?.vendor || 'Custom'}
-                      title={language === 'zh' ? '模板厂商' : 'Template vendor'}
-                      onChange={(event) => onSelectedTemplateVendorChange(event.target.value)}
-                      className="bg-black/5 text-xs px-2.5 py-1.5 rounded-xl outline-none"
-                    >
-                      {['Cisco', 'Juniper', 'Huawei', 'H3C', 'Arista', 'Other', 'Custom'].map((vendor) => (
-                        <option key={vendor} value={vendor}>{vendor}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={selectedConfigTemplate?.type || 'Jinja2'}
-                      title={language === 'zh' ? '模板类型' : 'Template type'}
-                      onChange={(event) => onSelectedTemplateTypeChange(event.target.value as TemplateType)}
-                      className="bg-black/5 text-xs font-bold uppercase px-2.5 py-1.5 rounded-xl outline-none"
-                    >
-                      <option value="Jinja2">Jinja2</option>
-                      <option value="YAML">YAML</option>
-                    </select>
-                  </div>
-                  <p className="mt-2 text-[11px] text-black/40">
-                    {language === 'zh'
-                      ? '上方维护模板名称、适用厂商和格式；下方切换源码、渲染结果和发布前检查。'
-                      : 'Manage template name, vendor, and format here, then switch between source, rendered result, and release checks below.'}
-                  </p>
-                </div>
+          <div className="px-5 py-3.5 border-b border-black/5 bg-black/[0.015]">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="p-1.5 bg-black/5 rounded-lg text-black/60">
+                <Settings size={16} />
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={onDiscardChanges}
-                  className="px-3 py-2 text-xs font-medium text-black/50 hover:text-black border border-black/10 rounded-xl hover:bg-black/[0.03]"
-                >
-                  {t('discard')}
-                </button>
-                <button
-                  onClick={() => onConfigWorkspaceViewChange('rendered')}
-                  className="px-3 py-2 text-xs font-medium text-black/70 border border-black/10 rounded-xl hover:bg-black/[0.03] flex items-center gap-1.5"
-                >
-                  <Eye size={14} />
-                  {language === 'zh' ? '渲染预览' : 'Rendered Preview'}
-                </button>
+              <input
+                type="text"
+                value={selectedConfigTemplate?.name || ''}
+                title={language === 'zh' ? '模板名称' : 'Template name'}
+                onChange={(event) => onSelectedTemplateNameChange(event.target.value)}
+                className="bg-black/5 px-3 py-1.5 rounded-xl font-medium border border-black/5 focus:border-black/20 outline-none transition-all min-w-[180px] max-w-[240px]"
+                placeholder="Template Name"
+              />
+              <select
+                value={selectedConfigTemplate?.vendor || 'Custom'}
+                title={language === 'zh' ? '模板厂商' : 'Template vendor'}
+                onChange={(event) => onSelectedTemplateVendorChange(event.target.value)}
+                className="bg-black/5 text-xs px-2.5 py-1.5 rounded-xl outline-none"
+              >
+                {['Cisco', 'Juniper', 'Huawei', 'H3C', 'Arista', 'Other', 'Custom'].map((vendor) => (
+                  <option key={vendor} value={vendor}>{vendor}</option>
+                ))}
+              </select>
+              <select
+                value={selectedConfigTemplate?.type || 'Jinja2'}
+                title={language === 'zh' ? '模板类型' : 'Template type'}
+                onChange={(event) => onSelectedTemplateTypeChange(event.target.value as TemplateType)}
+                className="bg-black/5 text-xs font-bold uppercase px-2.5 py-1.5 rounded-xl outline-none"
+              >
+                <option value="Jinja2">Jinja2</option>
+                <option value="YAML">YAML</option>
+              </select>
+              <span className="text-black/15 mx-0.5">|</span>
+              <button
+                onClick={onDiscardChanges}
+                className="px-2 py-1 text-xs text-black/40 hover:text-black/70 transition-all"
+              >
+                {t('discard')}
+              </button>
+              <button
+                onClick={onSaveTemplate}
+                className="px-2 py-1 text-xs font-medium text-[#0891b2] hover:underline transition-all"
+              >
+                {t('saveChanges')}
+              </button>
+            </div>
+            <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex gap-1.5">
+                {[
+                  { key: 'source', label: language === 'zh' ? '源模板' : 'Source' },
+                  { key: 'rendered', label: language === 'zh' ? '渲染结果' : 'Rendered' },
+                  { key: 'checks', label: language === 'zh' ? '发布检查' : 'Checks' },
+                ].map((tab) => (
+                  <button
+                    key={tab.key}
+                    onClick={() => onConfigWorkspaceViewChange(tab.key as ConfigWorkspaceView)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${configWorkspaceView === tab.key
+                      ? 'bg-[#06b6d4] text-white shadow-sm shadow-[#06b6d4]/20'
+                      : 'bg-black/[0.04] text-black/55 hover:bg-[#06b6d4]/10 hover:text-[#0891b2]'}`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2">
                 <button
                   onClick={onValidate}
-                  className="px-3 py-2 bg-black text-white rounded-xl text-xs font-medium hover:bg-black/80 transition-all flex items-center gap-1.5"
+                  className="px-3 py-1.5 text-xs font-medium text-[#0891b2] border border-[#06b6d4]/25 rounded-xl hover:bg-[#ecfeff] transition-all flex items-center gap-1.5"
                 >
-                  <ShieldCheck size={14} />
-                  {language === 'zh' ? '发布前检查' : 'Preflight Check'}
-                </button>
-                <button
-                  onClick={onSaveTemplate}
-                  className="px-4 py-2 bg-[#0f172a] text-white rounded-xl text-xs font-medium hover:bg-[#020617] transition-all"
-                >
-                  {t('saveChanges')}
+                  <ShieldCheck size={13} />
+                  {language === 'zh' ? '检查' : 'Preflight'}
                 </button>
                 <button
                   onClick={onCreateScenarioDraft}
-                  className="px-4 py-2 bg-[#005b75] text-white rounded-xl text-xs font-medium hover:bg-[#00465a] transition-all"
+                  className="px-3 py-1.5 text-xs font-medium text-black/50 border border-black/10 rounded-xl hover:bg-black/[0.03] transition-all"
                 >
-                  {language === 'zh' ? '转成场景草稿' : 'Convert to Scenario Draft'}
+                  {language === 'zh' ? '转草稿' : 'To Draft'}
                 </button>
                 <button
                   onClick={onSendToAutomation}
-                  className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-medium hover:bg-emerald-700 transition-all shadow-sm"
+                  className="px-3 py-1.5 bg-[#06b6d4] text-white rounded-xl text-xs font-medium hover:bg-[#0891b2] transition-all shadow-sm shadow-[#06b6d4]/20"
                 >
-                  {language === 'zh' ? '提交到 Automation' : 'Send to Automation'}
+                  {language === 'zh' ? '提交下发' : 'Deploy'}
                 </button>
               </div>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {[
-                { key: 'source', label: language === 'zh' ? '源模板' : 'Source' },
-                { key: 'rendered', label: language === 'zh' ? '渲染结果' : 'Rendered' },
-                { key: 'checks', label: language === 'zh' ? '发布检查' : 'Checks' },
-              ].map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => onConfigWorkspaceViewChange(tab.key as ConfigWorkspaceView)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${configWorkspaceView === tab.key
-                    ? 'bg-black text-white'
-                    : 'bg-black/[0.04] text-black/55 hover:bg-black/[0.08]'}`}
-                >
-                  {tab.label}
-                </button>
-              ))}
             </div>
           </div>
 
@@ -451,12 +439,16 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
 
           {configWorkspaceView === 'source' && (
             <div className="flex-1 flex bg-[#1E1E1E] overflow-hidden min-h-0">
-              <div className="w-12 py-6 bg-black/20 text-white/20 select-none text-right pr-3 font-mono text-sm leading-6 overflow-hidden">
+              <div
+                ref={lineNumRef}
+                className="w-12 py-6 bg-black/30 text-white/35 select-none text-right pr-3 font-mono text-sm leading-6 overflow-hidden"
+              >
                 {editorContent.split('\n').map((_, index) => <div key={index}>{index + 1}</div>)}
               </div>
               <textarea
                 value={editorContent}
                 onChange={(event) => onEditorContentChange(event.target.value)}
+                onScroll={(e) => { if (lineNumRef.current) lineNumRef.current.scrollTop = e.currentTarget.scrollTop; }}
                 title={language === 'zh' ? '模板源码编辑器' : 'Template source editor'}
                 placeholder={language === 'zh' ? '在这里编辑模板源码' : 'Edit template source here'}
                 className="flex-1 p-6 bg-transparent font-mono text-sm text-[#D4D4D4] outline-none resize-none leading-6"
@@ -584,7 +576,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                   value={configScopePlatform}
                   title={language === 'zh' ? '发布范围平台' : 'Release scope platform'}
                   onChange={(event) => onConfigScopePlatformChange(event.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-black/10 bg-white text-sm outline-none"
+                  className="w-full px-3 py-2 rounded-xl border border-black/10 bg-white text-sm outline-none focus:border-[#06b6d4] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.1)] transition-all"
                 >
                   <option value="all">{language === 'zh' ? '全部平台' : 'All platforms'}</option>
                   {configPlatformOptions.map((platform) => (
@@ -600,7 +592,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                   value={configScopeRole}
                   title={language === 'zh' ? '发布范围设备角色' : 'Release scope device role'}
                   onChange={(event) => onConfigScopeRoleChange(event.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-black/10 bg-white text-sm outline-none"
+                  className="w-full px-3 py-2 rounded-xl border border-black/10 bg-white text-sm outline-none focus:border-[#06b6d4] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.1)] transition-all"
                 >
                   <option value="all">{language === 'zh' ? '全部角色' : 'All roles'}</option>
                   {configRoleOptions.map((role) => (
@@ -616,7 +608,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                   value={configScopeSite}
                   title={language === 'zh' ? '发布范围站点' : 'Release scope site'}
                   onChange={(event) => onConfigScopeSiteChange(event.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-black/10 bg-white text-sm outline-none"
+                  className="w-full px-3 py-2 rounded-xl border border-black/10 bg-white text-sm outline-none focus:border-[#06b6d4] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.1)] transition-all"
                 >
                   <option value="all">{language === 'zh' ? '全部站点' : 'All sites'}</option>
                   {configSiteOptions.map((site) => (
@@ -647,7 +639,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
               </span>
             </div>
             <div className="space-y-2 overflow-auto pr-1">
-              {configScopedDevices.slice(0, 8).map((device) => (
+              {(devicePreviewExpanded ? configScopedDevices : configScopedDevices.slice(0, 8)).map((device) => (
                 <div key={device.id} className="rounded-xl border border-black/5 px-3 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -671,10 +663,60 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                 </div>
               )}
               {configScopedDevices.length > 8 && (
-                <p className="text-[11px] text-black/35 px-1">
-                  {language === 'zh' ? `另有 ${configScopedDevices.length - 8} 台设备未展开显示` : `${configScopedDevices.length - 8} more devices not expanded here`}
-                </p>
+                <button
+                  onClick={() => setDevicePreviewExpanded(!devicePreviewExpanded)}
+                  className="text-[11px] text-[#0891b2] hover:underline px-1 py-1"
+                >
+                  {devicePreviewExpanded
+                    ? (language === 'zh' ? '收起' : 'Collapse')
+                    : (language === 'zh' ? `展开全部 ${configScopedDevices.length} 台设备` : `Show all ${configScopedDevices.length} devices`)}
+                </button>
               )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm min-h-0 flex flex-col">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-black/40">{t('globalVars')}</h3>
+              <button
+                onClick={onAddVar}
+                className="text-[10px] text-[#0891b2] font-bold hover:underline uppercase"
+              >
+                {t('addVar')}
+              </button>
+            </div>
+            <div className="space-y-2 overflow-auto pr-1">
+              {globalVars.map((item, index) => (
+                <div key={item.id || index} className="group relative flex justify-between items-center py-1.5 border-b border-black/5">
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-xs font-mono text-black/60 truncate">{item.key}</span>
+                    <span className="text-[10px] text-black/30 font-mono">{'{{ ' + item.key + ' }}'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 ml-2">
+                    <span className="text-xs font-medium max-w-[100px] truncate">{item.value}</span>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText('{{ ' + item.key + ' }}');
+                          showToast(t('copied'), 'success');
+                        }}
+                        className="bg-white shadow-sm border border-black/5 p-1 rounded text-black/40 hover:text-black"
+                        title="Copy reference"
+                      >
+                        <FileText size={11} />
+                      </button>
+                      <button
+                        onClick={() => item.id && onDeleteVar(item.id)}
+                        disabled={!item.id}
+                        className={`bg-white shadow-sm border border-black/5 p-1 rounded ${item.id ? 'text-red-400 hover:text-red-600 cursor-pointer' : 'text-black/15 cursor-not-allowed'}`}
+                        title="Delete variable"
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 

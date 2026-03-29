@@ -18,6 +18,7 @@ from services import notification_service
 router = APIRouter()
 logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address)
+ALLOWED_CHANGE_GROUPS = {'requester', 'initial_reviewer', 'final_approver', 'implementer'}
 
 # Simple in-memory session store: token -> { user_id, username, role, created_at }
 _sessions: dict[str, dict] = {}
@@ -62,6 +63,35 @@ def _validate_password_strength(password: str) -> str | None:
         if wp in lower:
             return 'Password contains a commonly used weak pattern'
     return None
+
+
+def _normalize_change_groups(raw_groups) -> list[str]:
+    if not isinstance(raw_groups, (list, tuple, set)):
+        return []
+
+    normalized: list[str] = []
+    for item in raw_groups:
+        value = str(item or '').strip()
+        if value in ALLOWED_CHANGE_GROUPS and value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _hydrate_user_row(row) -> dict:
+    result = dict(row)
+    try:
+        result['notification_channels'] = json.loads(result.get('notification_channels') or '{}')
+    except Exception:
+        result['notification_channels'] = {}
+
+    try:
+        raw_groups = json.loads(result.get('change_groups_json') or '[]')
+    except Exception:
+        raw_groups = []
+    result['change_groups'] = _normalize_change_groups(raw_groups)
+    result.pop('change_groups_json', None)
+    result['group_name'] = str(result.get('group_name') or '')
+    return result
 
 def _check_lockout(username: str) -> int | None:
     """Return remaining lockout seconds, or None if not locked. Uses DB for persistence."""
@@ -168,18 +198,9 @@ def read_users():
     conn = get_db_connection()
     try:
         users = conn.execute(
-            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, notification_channels FROM users'
+            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users'
         ).fetchall()
-        result = []
-        for u in users:
-            row = dict(u)
-            # Parse notification_channels JSON string → dict
-            try:
-                row['notification_channels'] = json.loads(row.get('notification_channels') or '{}')
-            except Exception:
-                row['notification_channels'] = {}
-            result.append(row)
-        return result
+        return [_hydrate_user_row(u) for u in users]
     finally:
         conn.close()
 
@@ -188,13 +209,28 @@ def create_user(request: Request, user: dict = Body(...)):
     conn = get_db_connection()
     user_id = user.get('id') or str(uuid.uuid4())
     raw_password = user.get('password', '')
+    group_name = str(user.get('group_name') or '').strip()
+    change_groups = _normalize_change_groups(user.get('change_groups'))
     strength_err = _validate_password_strength(raw_password)
     if strength_err:
         raise HTTPException(status_code=400, detail=strength_err)
     hashed = _hash_password(raw_password)
     try:
-        conn.execute('INSERT INTO users (id, username, password, role, status, last_login, avatar_url) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                     (user_id, user.get('username'), hashed, user.get('role'), 'active', 'Never', user.get('avatar_url')))
+        conn.execute(
+            'INSERT INTO users (id, username, password, role, status, last_login, avatar_url, group_name, change_groups_json) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                user_id,
+                user.get('username'),
+                hashed,
+                user.get('role'),
+                'active',
+                'Never',
+                user.get('avatar_url'),
+                group_name,
+                json.dumps(change_groups, ensure_ascii=False),
+            ),
+        )
         conn.commit()
         log_audit_event(
             event_type='USER_CREATE',
@@ -208,9 +244,13 @@ def create_user(request: Request, user: dict = Body(...)):
             target_type='user',
             target_id=user_id,
             target_name=user.get('username'),
-            details={'role': user.get('role')},
+            details={'role': user.get('role'), 'group_name': group_name, 'change_groups': change_groups},
         )
-        return {"id": user_id, "username": user.get('username'), "role": user.get('role'), "status": "active", "lastLogin": "Never", "avatar_url": user.get('avatar_url')}
+        row = conn.execute(
+            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
+            (user_id,),
+        ).fetchone()
+        return _hydrate_user_row(row)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -280,10 +320,16 @@ def login(request: Request, payload: dict = Body(...)):
             _clean_sessions()
             token = _create_token()
             _store_session(token, user_dict)
+            profile_row = conn.execute(
+                'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
+                (user_dict['id'],),
+            ).fetchone()
+            profile = _hydrate_user_row(profile_row)
+            profile['lastLogin'] = last_login
             return {
                 "success": True,
                 "token": token,
-                "user": {"id": user_dict['id'], "username": user_dict['username'], "role": user_dict['role'], "lastLogin": last_login, "avatar_url": user_dict.get('avatar_url')},
+                "user": profile,
             }
         else:
             _record_login_failure(safe_username)
@@ -330,11 +376,18 @@ def update_user(user_id: str, request: Request, user: dict = Body(...)):
         username = user.get('username', existing['username'])
         role = user.get('role', existing['role'])
         avatar_url = user.get('avatar_url', existing['avatar_url'])
+        group_name = str(user.get('group_name', existing['group_name'] if 'group_name' in existing.keys() else '') or '').strip()
+        try:
+            existing_change_groups = json.loads(existing['change_groups_json'] or '[]') if 'change_groups_json' in existing.keys() else []
+        except Exception:
+            existing_change_groups = []
+        change_groups = _normalize_change_groups(user.get('change_groups', existing_change_groups))
         preferred_language = user.get('preferred_language', existing['preferred_language'] if 'preferred_language' in (existing.keys() if existing else []) else 'zh')
         if preferred_language not in ('zh', 'en'):
             preferred_language = 'zh'
         notification_channels_raw = user.get('notification_channels')
         notification_channels_str = json.dumps(notification_channels_raw) if notification_channels_raw is not None else (existing['notification_channels'] or '{}')
+        change_groups_str = json.dumps(change_groups, ensure_ascii=False)
         password = user.get('password')
         if password:
             strength_err = _validate_password_strength(password)
@@ -342,17 +395,17 @@ def update_user(user_id: str, request: Request, user: dict = Body(...)):
                 raise HTTPException(status_code=400, detail=strength_err)
             hashed = _hash_password(password)
             conn.execute(
-                'UPDATE users SET username = ?, role = ?, password = ?, avatar_url = ?, notification_channels = ?, preferred_language = ? WHERE id = ?',
-                (username, role, hashed, avatar_url, notification_channels_str, preferred_language, user_id)
+                'UPDATE users SET username = ?, role = ?, password = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ? WHERE id = ?',
+                (username, role, hashed, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, user_id)
             )
         else:
             conn.execute(
-                'UPDATE users SET username = ?, role = ?, avatar_url = ?, notification_channels = ?, preferred_language = ? WHERE id = ?',
-                (username, role, avatar_url, notification_channels_str, preferred_language, user_id)
+                'UPDATE users SET username = ?, role = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ? WHERE id = ?',
+                (username, role, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, user_id)
             )
         conn.commit()
         result = conn.execute(
-            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, notification_channels, preferred_language FROM users WHERE id = ?',
+            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
             (user_id,)
         ).fetchone()
         log_audit_event(
@@ -367,14 +420,9 @@ def update_user(user_id: str, request: Request, user: dict = Body(...)):
             target_type='user',
             target_id=user_id,
             target_name=username,
-            details={'role': role},
+            details={'role': role, 'group_name': group_name, 'change_groups': change_groups},
         )
-        row = dict(result)
-        try:
-            row['notification_channels'] = json.loads(row.get('notification_channels') or '{}')
-        except Exception:
-            row['notification_channels'] = {}
-        return row
+        return _hydrate_user_row(result)
     except HTTPException:
         raise
     except Exception as e:
@@ -393,17 +441,12 @@ def check_session(request: Request):
     conn = get_db_connection()
     try:
         user = conn.execute(
-            'SELECT id, username, role, avatar_url, notification_channels, preferred_language FROM users WHERE id = ?',
+            'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
             (sess['user_id'],)
         ).fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="Session user not found")
-        row = dict(user)
-        try:
-            row['notification_channels'] = json.loads(row.get('notification_channels') or '{}')
-        except Exception:
-            row['notification_channels'] = {}
-        return {"success": True, "user": row}
+        return {"success": True, "user": _hydrate_user_row(user)}
     finally:
         conn.close()
 

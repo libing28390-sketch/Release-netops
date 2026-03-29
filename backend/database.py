@@ -821,6 +821,8 @@ def init_db():
         alert_rule_columns = [column[1] for column in cursor.fetchall()]
         if alert_rule_columns and 'scope_match_mode' not in alert_rule_columns:
             cursor.execute("ALTER TABLE alert_rules ADD COLUMN scope_match_mode TEXT NOT NULL DEFAULT 'exact'")
+        if alert_rule_columns and 'for_duration_seconds' not in alert_rule_columns:
+            cursor.execute("ALTER TABLE alert_rules ADD COLUMN for_duration_seconds INTEGER DEFAULT 0")
 
         legacy_rules = cursor.execute(
             '''
@@ -858,6 +860,7 @@ def init_db():
             ('builtin-bgp-neighbor-down', 'BGP Neighbor Down', 'bgp_neighbor_down', 'critical', None, 1),
             ('builtin-ospf-neighbor-down', 'OSPF Neighbor Down', 'ospf_neighbor_down', 'critical', None, 1),
             ('builtin-bfd-session-down', 'BFD Session Down', 'bfd_session_down', 'critical', None, 1),
+            ('builtin-ping-unreachable', 'Ping Unreachable', 'ping_unreachable', 'critical', None, 1),
         ]
 
         def _insert_seed_rule(rule_id, name, metric_type, severity, threshold, enabled, created_at):
@@ -896,19 +899,6 @@ def init_db():
             for rule in seed_rules:
                 _insert_seed_rule(*rule, legacy_updated_at)
 
-        cursor.execute(
-            '''
-            UPDATE alert_rules
-            SET severity = 'warning', updated_at = ?
-            WHERE metric_type = 'interface_down'
-              AND (
-                id = 'builtin-if-down'
-                OR (name = 'Interface Down' AND created_by = 'system' AND severity = 'major')
-              )
-            ''',
-            (_utc_now_iso(),),
-        )
-
         for rule in seed_rules:
             _insert_seed_rule(*rule, seeded_at)
         if 'temp' not in columns:
@@ -937,6 +927,10 @@ def init_db():
         user_columns = [column[1] for column in cursor.fetchall()]
         if 'avatar_url' not in user_columns:
             cursor.execute('ALTER TABLE users ADD COLUMN avatar_url TEXT')
+        if 'group_name' not in user_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN group_name TEXT DEFAULT ''")
+        if 'change_groups_json' not in user_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN change_groups_json TEXT DEFAULT '[]'")
         if 'notification_channels' not in user_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN notification_channels TEXT DEFAULT '{}'")
         if 'preferred_language' not in user_columns:
@@ -1090,6 +1084,81 @@ def init_db():
         ensure_column('physical_assets', 'vlan', "TEXT DEFAULT ''")
         ensure_column('physical_assets', 'uplink_switch', "TEXT DEFAULT ''")
         ensure_column('physical_assets', 'uplink_port', "TEXT DEFAULT ''")
+
+        # ── Change Order / Ticket Management ──
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS change_orders (
+            id TEXT PRIMARY KEY,
+            order_number TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            order_type TEXT NOT NULL DEFAULT 'config_change',
+            priority TEXT NOT NULL DEFAULT 'medium',
+            status TEXT NOT NULL DEFAULT 'draft',
+            requester_id TEXT DEFAULT '',
+            requester_username TEXT DEFAULT '',
+            approver_id TEXT DEFAULT '',
+            approver_username TEXT DEFAULT '',
+            target_devices_json TEXT DEFAULT '[]',
+            commands_json TEXT DEFAULT '[]',
+            rollback_plan TEXT DEFAULT '',
+            risk_level TEXT DEFAULT 'low',
+            scheduled_start TEXT DEFAULT '',
+            scheduled_end TEXT DEFAULT '',
+            actual_start TEXT DEFAULT '',
+            actual_end TEXT DEFAULT '',
+            result_summary TEXT DEFAULT '',
+            result_detail_json TEXT DEFAULT '{}',
+            approval_token TEXT DEFAULT '',
+            rejected_reason TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_status ON change_orders(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_created_at ON change_orders(created_at)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_requester ON change_orders(requester_username)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_order_number ON change_orders(order_number)')
+        ensure_column('change_orders', 'initial_reviewer_id', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'initial_reviewer_username', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'final_approver_id', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'final_approver_username', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'assigned_initial_reviewer_id', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'assigned_initial_reviewer_username', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'assigned_final_approver_id', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'assigned_final_approver_username', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'command_template_json', "TEXT DEFAULT '{}' ")
+
+        # ── Change Order Bookmarks ──
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS change_order_bookmarks (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            order_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(user_id, order_id)
+        )
+        ''')
+
+        # ── Change Order Templates ──
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS change_order_templates (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            order_type TEXT NOT NULL DEFAULT 'config_change',
+            priority TEXT NOT NULL DEFAULT 'medium',
+            target_devices_json TEXT DEFAULT '[]',
+            commands_json TEXT DEFAULT '[]',
+            rollback_plan TEXT DEFAULT '',
+            risk_level TEXT DEFAULT 'low',
+            creator_id TEXT NOT NULL,
+            creator_username TEXT NOT NULL,
+            source_order_id TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        ''')
 
         conn.commit()
     finally:

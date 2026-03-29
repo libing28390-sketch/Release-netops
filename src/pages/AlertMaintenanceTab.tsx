@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Check, Copy, Eye, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import DateTimePicker from '../components/DateTimePicker';
 import type {
   AlertMaintenanceCondition,
   AlertMaintenanceConditionField,
@@ -521,7 +522,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
     const activeConditions = (window.match_conditions || []).filter((item) => item.value.trim());
     return (
       <div className="space-y-1">
-        <div className="text-xs font-semibold text-[#0b2340]">{conditionLogicLabel(window.condition_logic, language)}</div>
+        <div className="text-xs font-semibold text-[#164e63]">{conditionLogicLabel(window.condition_logic, language)}</div>
         <div className="text-xs text-black/45">{activeConditions[0] ? conditionSummary(activeConditions[0], language) : '--'}</div>
         {activeConditions.length > 1 ? <div className="text-[11px] text-black/35">+{activeConditions.length - 1}</div> : null}
       </div>
@@ -536,7 +537,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
               {language === 'zh' ? '告警中心 / 维护期' : 'Alert Center / Maintenance'}
             </p>
-            <h2 className="mt-2 text-2xl font-semibold text-[#0b2340]">
+            <h2 className="mt-2 text-2xl font-semibold text-[#164e63]">
               {language === 'zh' ? '当前维护期' : 'Current Maintenance Windows'}
             </h2>
             <p className="mt-2 text-sm text-black/50">
@@ -575,7 +576,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
               setPage(1);
               setStatusFilter(e.target.value as RuntimeFilter);
             }}
-            className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#0b2340] outline-none"
+            className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
           >
             <option value="all">{language === 'zh' ? '全部状态' : 'All Status'}</option>
             <option value="active">{language === 'zh' ? '生效中' : 'Active'}</option>
@@ -610,7 +611,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                   <tr key={window.id} className="border-b border-black/5 hover:bg-black/[0.02]">
                     <td className="px-5 py-4 align-top">
                       <button title={language === 'zh' ? `查看维护窗 ${window.name}` : `View maintenance window ${window.name}`} onClick={() => setSelectedWindowId(window.id)} className="text-left">
-                        <p className="text-sm font-semibold text-[#0b2340]">{window.name}</p>
+                        <p className="text-sm font-semibold text-[#164e63]">{window.name}</p>
                         <p className="mt-1 line-clamp-1 text-xs text-black/45">{window.reason || (language === 'zh' ? '未填写原因' : 'No reason')}</p>
                       </button>
                     </td>
@@ -694,7 +695,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
               <div className="flex items-start justify-between gap-4 border-b border-black/5 px-6 py-5">
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{language === 'zh' ? '新建维护期' : 'New Maintenance Window'}</p>
-                  <h3 className="mt-2 text-xl font-semibold text-[#0b2340]">{language === 'zh' ? '按条件定义或资源对象创建维护期' : 'Create a maintenance window by conditions or resource objects'}</h3>
+                  <h3 className="mt-2 text-xl font-semibold text-[#164e63]">{language === 'zh' ? '按条件定义或资源对象创建维护期' : 'Create a maintenance window by conditions or resource objects'}</h3>
                 </div>
                 <button title={language === 'zh' ? '关闭弹层' : 'Close modal'} onClick={closeMaintenanceModal} className="rounded-xl border border-black/10 p-2 text-black/55 hover:bg-black/[0.03]">
                   <X size={16} />
@@ -713,7 +714,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                       <button
                         type="button"
                         onClick={() => updateSelectionMode('conditions')}
-                        className={`rounded-2xl border px-4 py-3 text-left transition ${maintenanceForm.selection_mode === 'conditions' ? 'border-[#0f2743] bg-[#f4f8fc] text-[#0b2340]' : 'border-black/10 bg-white text-black/55 hover:bg-black/[0.02]'}`}
+                        className={`rounded-2xl border px-4 py-3 text-left transition ${maintenanceForm.selection_mode === 'conditions' ? 'border-[#06b6d4] bg-[#ecfeff] text-[#164e63]' : 'border-black/10 bg-white text-black/55 hover:bg-black/[0.02]'}`}
                       >
                         <p className="text-sm font-semibold">{language === 'zh' ? '条件定义' : 'Condition Rules'}</p>
                         <p className="mt-1 text-xs text-black/45">{language === 'zh' ? '按多行条件定义匹配范围' : 'Build the scope with multiple condition rows'}</p>
@@ -721,7 +722,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                       <button
                         type="button"
                         onClick={() => updateSelectionMode('resources')}
-                        className={`rounded-2xl border px-4 py-3 text-left transition ${maintenanceForm.selection_mode === 'resources' ? 'border-[#0f2743] bg-[#f4f8fc] text-[#0b2340]' : 'border-black/10 bg-white text-black/55 hover:bg-black/[0.02]'}`}
+                        className={`rounded-2xl border px-4 py-3 text-left transition ${maintenanceForm.selection_mode === 'resources' ? 'border-[#06b6d4] bg-[#ecfeff] text-[#164e63]' : 'border-black/10 bg-white text-black/55 hover:bg-black/[0.02]'}`}
                       >
                         <p className="text-sm font-semibold">{language === 'zh' ? '资源对象' : 'Resource Objects'}</p>
                         <p className="mt-1 text-xs text-black/45">{language === 'zh' ? '按资源勾选多个设备' : 'Select multiple devices by checkbox'}</p>
@@ -734,7 +735,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                   <div className="rounded-[24px] border border-black/8 bg-[#fbfcfe] p-4">
                     <div className="mb-3 flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[#0b2340]">{language === 'zh' ? '条件定义' : 'Condition Rules'}</p>
+                        <p className="text-sm font-semibold text-[#164e63]">{language === 'zh' ? '条件定义' : 'Condition Rules'}</p>
                         <p className="mt-1 text-xs text-black/45">{language === 'zh' ? '每一行代表一个条件；组合逻辑会作用于整组条件。' : 'Each row is a single condition. The condition logic applies to the full set.'}</p>
                       </div>
                       <div className="flex min-w-[320px] flex-wrap items-end justify-end gap-3">
@@ -743,7 +744,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                           <select
                             value={maintenanceForm.condition_logic}
                             onChange={(e) => updateMaintenanceField('condition_logic', e.target.value as AlertMaintenanceConditionLogic)}
-                            className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-[#0b2340] outline-none"
+                            className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-[#164e63] outline-none"
                           >
                             {CONDITION_LOGIC_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>{language === 'zh' ? option.zh : option.en}</option>
@@ -765,37 +766,37 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                       </div>
                       {maintenanceForm.match_conditions.map((condition, index) => (
                         <div key={`${condition.field}-${index}`} className="grid grid-cols-1 gap-3 border-t border-black/6 px-4 py-4 first:border-t-0 lg:grid-cols-[160px_180px_minmax(0,1fr)_44px] lg:items-center">
-                          <label className="text-sm text-black/60 lg:text-[#0b2340]">
+                          <label className="text-sm text-black/60 lg:text-[#164e63]">
                             <span className="mb-2 block lg:hidden">{language === 'zh' ? '字段' : 'Field'}</span>
                             <select
                               value={condition.field}
                               onChange={(e) => updateCondition(index, { field: e.target.value as AlertMaintenanceConditionField })}
-                              className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-[#0b2340] outline-none"
+                              className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-[#164e63] outline-none"
                             >
                               <option value="alert_description">{fieldLabel('alert_description', language)}</option>
                               <option value="alert_ip">{fieldLabel('alert_ip', language)}</option>
                               <option value="alert_level">{fieldLabel('alert_level', language)}</option>
                             </select>
                           </label>
-                          <label className="text-sm text-black/60 lg:text-[#0b2340]">
+                          <label className="text-sm text-black/60 lg:text-[#164e63]">
                             <span className="mb-2 block lg:hidden">{language === 'zh' ? '运算符' : 'Operator'}</span>
                             <select
                               value={condition.operator}
                               onChange={(e) => updateCondition(index, { operator: e.target.value as AlertMaintenanceConditionOperator })}
-                              className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-[#0b2340] outline-none"
+                              className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-[#164e63] outline-none"
                             >
                               {CONDITION_OPERATOR_OPTIONS.map((option) => (
                                 <option key={option.value} value={option.value}>{language === 'zh' ? option.zh : option.en}</option>
                               ))}
                             </select>
                           </label>
-                          <label className="text-sm text-black/60 lg:text-[#0b2340]">
+                          <label className="text-sm text-black/60 lg:text-[#164e63]">
                             <span className="mb-2 block lg:hidden">{language === 'zh' ? '匹配值' : 'Value'}</span>
                             {condition.field === 'alert_level' ? (
                               <select
                                 value={condition.value}
                                 onChange={(e) => updateCondition(index, { value: e.target.value })}
-                                className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-[#0b2340] outline-none"
+                                className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-[#164e63] outline-none"
                               >
                                 <option value="">{language === 'zh' ? '选择告警等级' : 'Select Severity'}</option>
                                 {ALERT_SEVERITY_OPTIONS.map((severity) => (
@@ -829,7 +830,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                   <div className="rounded-[24px] border border-black/8 bg-[#fbfcfe] p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[#0b2340]">{language === 'zh' ? '资源对象' : 'Resource Objects'}</p>
+                        <p className="text-sm font-semibold text-[#164e63]">{language === 'zh' ? '资源对象' : 'Resource Objects'}</p>
                         <p className="mt-1 text-xs text-black/45">{language === 'zh' ? '点击“关联资源”后可按名称、SN、管理IP搜索，并勾选多个设备。' : 'Use “Link Resources” to search by name, serial number, or management IP, then check multiple devices.'}</p>
                       </div>
                       <button type="button" onClick={openAssetPicker} className={alertSecondaryButtonClass}>
@@ -844,7 +845,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                             <div key={device.id} className="rounded-2xl border border-[#d8e1eb] bg-[#fbfcfe] px-4 py-3">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-[#0b2340]">{device.hostname || (language === 'zh' ? '未命名资产' : 'Unnamed Asset')}</p>
+                                  <p className="truncate text-sm font-semibold text-[#164e63]">{device.hostname || (language === 'zh' ? '未命名资产' : 'Unnamed Asset')}</p>
                                   <p className="mt-1 font-mono text-xs text-black/45">{device.ip_address}</p>
                                 </div>
                                 <button type="button" onClick={() => removeSelectedAsset(device.ip_address)} className="rounded-xl border border-black/10 px-2.5 py-1 text-xs font-semibold text-black/45 hover:bg-black/[0.03]">
@@ -868,14 +869,14 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                 )}
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <label className="text-sm text-black/65">
-                    <span>{language === 'zh' ? '开始时间' : 'Start Time'}</span>
-                    <input type="datetime-local" value={maintenanceForm.starts_at} onChange={(e) => updateMaintenanceField('starts_at', e.target.value)} className={`${alertInputClass} mt-2 rounded-xl px-3 py-2`} />
-                  </label>
-                  <label className="text-sm text-black/65">
-                    <span>{language === 'zh' ? '结束时间' : 'End Time'}</span>
-                    <input type="datetime-local" value={maintenanceForm.ends_at} onChange={(e) => updateMaintenanceField('ends_at', e.target.value)} className={`${alertInputClass} mt-2 rounded-xl px-3 py-2`} />
-                  </label>
+                  <div>
+                    <span className="text-sm text-black/65">{language === 'zh' ? '开始时间' : 'Start Time'}</span>
+                    <DateTimePicker value={maintenanceForm.starts_at} onChange={(v) => updateMaintenanceField('starts_at', v)} language={language} className="mt-2" />
+                  </div>
+                  <div>
+                    <span className="text-sm text-black/65">{language === 'zh' ? '结束时间' : 'End Time'}</span>
+                    <DateTimePicker value={maintenanceForm.ends_at} onChange={(v) => updateMaintenanceField('ends_at', v)} language={language} className="mt-2" />
+                  </div>
                 </div>
 
                 <label className="block text-sm text-black/65">
@@ -945,7 +946,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
               <div className="flex items-start justify-between gap-4 border-b border-black/5 px-6 py-5">
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{language === 'zh' ? '关联资源' : 'Link Resources'}</p>
-                  <h3 className="mt-2 text-xl font-semibold text-[#0b2340]">{language === 'zh' ? '搜索设备并勾选多个资源对象' : 'Search devices and check multiple resource objects'}</h3>
+                  <h3 className="mt-2 text-xl font-semibold text-[#164e63]">{language === 'zh' ? '搜索设备并勾选多个资源对象' : 'Search devices and check multiple resource objects'}</h3>
                 </div>
                 <button title={language === 'zh' ? '关闭弹层' : 'Close modal'} onClick={closeAssetPicker} className="rounded-xl border border-black/10 p-2 text-black/55 hover:bg-black/[0.03]">
                   <X size={16} />
@@ -966,7 +967,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
 
                 <div className="rounded-2xl border border-black/8 bg-[#fbfcfe] p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-[#0b2340]">{language === 'zh' ? `已选资源 ${assetPickerSelection.length} 个` : `${assetPickerSelection.length} resources selected`}</p>
+                    <p className="text-sm font-semibold text-[#164e63]">{language === 'zh' ? `已选资源 ${assetPickerSelection.length} 个` : `${assetPickerSelection.length} resources selected`}</p>
                     {pickerSelectedAssets.length ? (
                       <div className="flex flex-wrap gap-2">
                         {pickerSelectedAssets.map((device) => (
@@ -1003,7 +1004,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                             <div className="min-w-0 flex-1">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-[#0b2340]">{device.hostname || (language === 'zh' ? '未命名资产' : 'Unnamed Asset')}</p>
+                                  <p className="truncate text-sm font-semibold text-[#164e63]">{device.hostname || (language === 'zh' ? '未命名资产' : 'Unnamed Asset')}</p>
                                   <p className="mt-1 font-mono text-xs text-black/45">{device.ip_address}</p>
                                 </div>
                                 {checked ? <Check size={16} className="text-[#2b6b8f]" /> : null}
@@ -1063,7 +1064,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
               <div className="flex items-start justify-between gap-4 border-b border-black/5 px-6 py-5">
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{language === 'zh' ? '维护期详情' : 'Maintenance Detail'}</p>
-                  <h3 className="mt-2 text-xl font-semibold text-[#0b2340]">{selectedWindow.name}</h3>
+                  <h3 className="mt-2 text-xl font-semibold text-[#164e63]">{selectedWindow.name}</h3>
                   <div className="mt-3">
                     <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${maintenanceBadgeClass(selectedWindow.runtime_status)}`}>
                       {maintenanceStatusLabel(selectedWindow.runtime_status, language)}

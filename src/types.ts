@@ -214,7 +214,10 @@ export interface User {
   lastLogin?: string;
   status?: string;
   avatar_url?: string;
+  group_name?: string;
+  change_groups?: string[];
   notification_channels?: NotificationChannels;
+  preferred_language?: 'zh' | 'en';
 }
 
 export type ThemeMode = 'light' | 'dark';
@@ -224,6 +227,9 @@ export interface SessionUser {
   username: string;
   role?: string;
   avatar_url?: string;
+  group_name?: string;
+  change_groups?: string[];
+  preferred_language?: 'zh' | 'en';
 }
 
 export interface NotificationItem {
@@ -364,7 +370,8 @@ export type AlertRuleMetricType =
   | 'interface_flap'
   | 'bgp_neighbor_down'
   | 'ospf_neighbor_down'
-  | 'bfd_session_down';
+  | 'bfd_session_down'
+  | 'ping_unreachable';
 
 export type AlertRuleScopeType = 'global' | 'site' | 'device' | 'interface';
 
@@ -379,6 +386,7 @@ export interface AlertRuleSettings {
   scope_value: string;
   severity: 'critical' | 'major' | 'warning';
   threshold?: number | null;
+  for_duration_seconds: number;
   enabled: boolean;
   aggregation_mode: 'dedupe_key';
   notification_repeat_window_seconds: number;

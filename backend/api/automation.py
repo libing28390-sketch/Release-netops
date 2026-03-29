@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Body, Request
+from fastapi import APIRouter, HTTPException, Body, Request, Depends
 from fastapi.responses import JSONResponse
 import os
 import uuid
@@ -30,7 +30,9 @@ import asyncio
 from services.automation_service import AutomationService
 from drivers.base import CommandResult
 from services.audit_service import log_audit_event
+from services.config_approval_service import request_approval, verify_code, consume_approval
 from core.crypto import decrypt_credential
+from core.rbac import require_role
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -57,16 +59,75 @@ def _check_command_safety(commands: list[str]) -> str | None:
 # 初始化业务服务
 automation_service = AutomationService(driver_type='netmiko') # 使用 Netmiko 驱动执行命令
 
+
+# ── 配置审批验证码 ─────────────────────────────────────
+
+
+@router.post("/config-approval/request")
+async def request_config_approval(payload: dict = Body(...), user=require_role("Operator")):
+    """请求配置变更审批验证码，发送到审批人的飞书。"""
+    approver_username = (payload.get('approver_username') or '').strip()
+    config_reason = (payload.get('config_reason') or '').strip()
+    device_hostname = (payload.get('device_hostname') or '').strip()
+    command_preview = (payload.get('command_preview') or '').strip()
+
+    if not approver_username:
+        raise HTTPException(status_code=400, detail="approver_username is required")
+    if not config_reason or len(config_reason) < 2:
+        raise HTTPException(status_code=400, detail="config_reason is required (min 2 chars)")
+
+    requester = user.get('username', 'unknown')
+    token, err = request_approval(
+        approver_username=approver_username,
+        requester_username=requester,
+        config_reason=config_reason,
+        device_hostname=device_hostname,
+        command_preview=command_preview,
+    )
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+    return {"success": True, "approval_token": token, "message": "Approval code sent to approver via Feishu"}
+
+
+@router.post("/config-approval/verify")
+async def verify_config_approval(payload: dict = Body(...), user=require_role("Operator")):
+    """验证审批码。"""
+    approval_token = (payload.get('approval_token') or '').strip()
+    code = (payload.get('code') or '').strip()
+
+    if not approval_token or not code:
+        raise HTTPException(status_code=400, detail="approval_token and code are required")
+
+    ok, err = verify_code(approval_token, code)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+
+    return {"success": True, "message": "Approval code verified"}
+
+
 @router.post("/execute")
-async def execute_task(request: Request, payload: dict = Body(...)):
+async def execute_task(request: Request, payload: dict = Body(...), user=require_role("Operator")):
     device_id = payload.get('device_id')
     script_id = payload.get('script_id')
     command = payload.get('command')
     is_config_req = payload.get('isConfig')
+    config_reason = payload.get('config_reason', '').strip()
+    approval_token = payload.get('approval_token', '').strip()
     save_history = payload.get('save_history', True)
-    actor_username = payload.get('author') or payload.get('actor_username') or 'admin'
-    actor_id = payload.get('actor_id')
-    actor_role = payload.get('actor_role') or 'Administrator'
+    actor_username = user.get('username', 'admin')
+    actor_id = user.get('id')
+    actor_role = user.get('role', 'Operator')
+
+    # 配置模式强制要求填写变更原因 + 已通过的审批令牌
+    if is_config_req and not config_reason:
+        raise HTTPException(status_code=400, detail="Config mode requires a change reason (config_reason)")
+    if is_config_req:
+        if not approval_token:
+            raise HTTPException(status_code=400, detail="Config mode requires an approved approval_token")
+        approval_record = consume_approval(approval_token)
+        if not approval_record:
+            raise HTTPException(status_code=403, detail="Invalid or expired approval token. Please request a new code.")
 
     conn = get_db_connection()
     try:
@@ -202,6 +263,7 @@ async def execute_task(request: Request, payload: dict = Body(...)):
                     'is_config': is_config,
                     'script_id': script_id,
                     'command_preview': '\n'.join(commands[:8]),
+                    'config_reason': config_reason if is_config else None,
                 },
             )
             return {"status": "success", "jobId": job_id, "output": result}

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Brush } from 'recharts';
 import type { Device, HostResourceSnapshot, HostResourceHistoryPayload } from '../types';
+import DateTimePicker from './DateTimePicker';
 
 type MonitorDevice = {
   id?: string;
@@ -1243,9 +1244,9 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <input type="datetime-local" value={monitorTrendStartInput} onChange={(e) => setMonitorTrendStartInput(e.target.value)} className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-xs outline-none text-[var(--app-text)]" />
+                <DateTimePicker value={monitorTrendStartInput} onChange={(v) => setMonitorTrendStartInput(v)} language={language} placeholder={language === 'zh' ? '开始时间' : 'Start'} />
                 <span className="text-xs text-[var(--muted-text)]">\u2192</span>
-                <input type="datetime-local" value={monitorTrendEndInput} onChange={(e) => setMonitorTrendEndInput(e.target.value)} className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-xs outline-none text-[var(--app-text)]" />
+                <DateTimePicker value={monitorTrendEndInput} onChange={(v) => setMonitorTrendEndInput(v)} language={language} placeholder={language === 'zh' ? '结束时间' : 'End'} />
                 <button type="button" onClick={() => { if (!monitorTrendStartInput || !monitorTrendEndInput) { showToast(language === 'zh' ? '\u8bf7\u5148\u9009\u62e9\u65f6\u95f4' : 'Choose time range', 'error'); return; } const s = toUtcIso(monitorTrendStartInput), e = toUtcIso(monitorTrendEndInput); if (!s || !e || new Date(s).getTime() >= new Date(e).getTime()) { showToast(language === 'zh' ? '\u65f6\u95f4\u8303\u56f4\u65e0\u6548' : 'Invalid range', 'error'); return; } setMonitorTrendZoom(null); setMonitorTrendDragStart(null); setMonitorTrendDragEnd(null); setMonitorTrendRange({ start_time: s, end_time: e }); }} className="rounded-lg bg-sky-600 px-3 py-1 text-[10px] font-bold uppercase text-white hover:bg-sky-700">{language === 'zh' ? '\u67e5\u8be2' : 'Apply'}</button>
                 <button type="button" onClick={() => { setMonitorTrendStartInput(''); setMonitorTrendEndInput(''); setMonitorTrendZoom(null); setMonitorTrendDragStart(null); setMonitorTrendDragEnd(null); setMonitorTrendRange({}); }} className="rounded-lg border border-[var(--card-border)] px-3 py-1 text-[10px] font-bold text-[var(--muted-text)] hover:bg-black/[0.03]">{language === 'zh' ? '\u6700\u8fd124h' : 'Last 24h'}</button>
               </div>

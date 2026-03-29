@@ -295,7 +295,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
           <div className="px-3 py-3 border-b border-black/5 bg-black/[0.01] space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
-                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-black text-white text-[9px] font-bold">1</span>
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#06b6d4] text-white text-[9px] font-bold">1</span>
                 <span className="text-[10px] font-bold uppercase tracking-widest text-black/50">
                   {isZh ? '目标设备' : 'Target'}
                 </span>
@@ -351,7 +351,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
                       onSelectDevice(device);
                     }}
                     className={`w-full px-2.5 py-2 rounded-xl text-left border transition-all ${isSelected
-                      ? (batchMode ? 'bg-amber-50 border-amber-200' : 'bg-black text-white border-black')
+                      ? (batchMode ? 'bg-amber-50 border-amber-200' : 'bg-[#06b6d4] text-white border-[#06b6d4]')
                       : 'border-transparent hover:border-black/8 hover:bg-black/[0.02]'}`}
                   >
                     <div className="flex items-center justify-between gap-1">
@@ -423,7 +423,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
           <div className="flex-shrink-0 bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
             {quickPlaybookScenario ? (
               <div className="px-4 py-2.5 flex items-center gap-3">
-                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-black text-white text-[9px] font-bold flex-shrink-0">2</span>
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#06b6d4] text-white text-[9px] font-bold flex-shrink-0">2</span>
                 <span className="text-base leading-none flex-shrink-0">{quickPlaybookScenario.icon}</span>
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-bold truncate">{isZh ? quickPlaybookScenario.name_zh : quickPlaybookScenario.name}</p>
@@ -449,7 +449,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
               <>
                 <div className="px-4 py-3 border-b border-black/5 bg-black/[0.01] flex items-center justify-between gap-3">
                   <div className="flex items-center gap-1.5">
-                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-black text-white text-[9px] font-bold">2</span>
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#06b6d4] text-white text-[9px] font-bold">2</span>
                     <span className="text-[10px] font-bold uppercase tracking-widest text-black/50">
                       {isZh ? '选择场景' : 'Scenario'}
                     </span>
@@ -514,7 +514,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
             {quickPlaybookScenario ? (
               <>
                 <div className="flex-shrink-0 px-4 py-3 border-b border-black/5 bg-black/[0.01] flex items-center gap-3">
-                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-black text-white text-[9px] font-bold flex-shrink-0">3</span>
+                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#06b6d4] text-white text-[9px] font-bold flex-shrink-0">3</span>
                   <span className="text-base leading-none">{quickPlaybookScenario.icon}</span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-bold truncate">{isZh ? quickPlaybookScenario.name_zh : quickPlaybookScenario.name}</p>
@@ -819,7 +819,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
           <div className="px-4 py-3 border-b border-black/5">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
-                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-black text-white text-[9px] font-bold flex-shrink-0">✓</span>
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#06b6d4] text-white text-[9px] font-bold flex-shrink-0">✓</span>
                 <span className="text-[10px] font-bold uppercase tracking-widest text-black/50">
                   {isZh ? '执行决策' : 'Execution Decision'}
                 </span>
@@ -856,7 +856,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
               )}
             </div>
             <div className="mt-2 flex items-center gap-2 flex-wrap">
-              <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full ${targetCount > 0 ? 'bg-black text-white' : 'bg-black/8 text-black/40'}`}>
+              <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full ${targetCount > 0 ? 'bg-[#06b6d4] text-white' : 'bg-black/8 text-black/40'}`}>
                 {targetCount > 0
                   ? (batchMode ? `${targetCount} ${isZh ? '台' : 'devices'}` : (selectedDevice?.hostname || ''))
                   : (isZh ? '未选设备' : 'No device')}
@@ -1056,8 +1056,8 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
                           { step: '2', text: isZh ? '在中间选择执行场景' : 'Choose a scenario in the center', done: false },
                           { step: '3', text: isZh ? '填写参数后点击执行' : 'Fill variables and execute', done: false },
                         ].map((item) => (
-                          <div key={item.step} className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 ${item.done ? 'border-emerald-200 bg-emerald-50' : 'border-black/5 bg-black/[0.01]'}`}>
-                            <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold flex-shrink-0 ${item.done ? 'bg-emerald-500 text-white' : 'bg-black/10 text-black/40'}`}>
+                          <div key={item.step} className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 ${item.done ? 'border-emerald-200 bg-emerald-50' : 'border-[#06b6d4]/10 bg-[#06b6d4]/[0.03]'}`}>
+                            <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold flex-shrink-0 ${item.done ? 'bg-emerald-500 text-white' : 'bg-[#06b6d4]/15 text-[#06b6d4]/60'}`}>
                               {item.done ? '✓' : item.step}
                             </span>
                             <span className={`text-xs ${item.done ? 'text-emerald-700' : 'text-black/50'}`}>{item.text}</span>
@@ -1175,7 +1175,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
                     className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all border ${
                       (!quickPlaybookScenario || !hasQuickTargets || isQuickPlaybookRunning || quickHasMixedPlatforms || quickPlatformMismatch || hasMissingRequired || (quickPlaybookScenario?.risk === 'high' && !quickRiskConfirmed))
                         ? 'bg-black/5 text-black/25 border-black/8 cursor-not-allowed'
-                        : 'bg-white text-black/70 border-black/15 hover:bg-black/5'
+                        : 'bg-white text-[#0891b2] border-[#06b6d4]/30 hover:bg-[#ecfeff]'
                     }`}
                   >
                     {isQuickPlaybookRunning && quickPlaybookDryRun ? (isZh ? '校验中...' : 'Validating...') : (isZh ? '运行校验' : 'Run Validation')}
@@ -1186,8 +1186,8 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
                     title={executeDisabledReason || (isZh ? '真实下发配置变更' : 'Push config changes to device')}
                     className={`px-3 py-2.5 rounded-xl text-xs font-bold text-white transition-all ${
                       (!quickPlaybookScenario || !hasQuickTargets || isQuickPlaybookRunning || quickHasMixedPlatforms || quickPlatformMismatch || hasMissingRequired || (quickPlaybookScenario?.risk === 'high' && !quickRiskConfirmed))
-                        ? 'bg-black/15 text-black/30 cursor-not-allowed'
-                        : 'bg-[#00bceb] hover:bg-[#0096bd]'
+                        ? 'bg-[#06b6d4]/20 text-black/30 cursor-not-allowed'
+                        : 'bg-[#06b6d4] hover:bg-[#0891b2] shadow-lg shadow-[#06b6d4]/20'
                     }`}
                   >
                     {isQuickPlaybookRunning && !quickPlaybookDryRun ? (isZh ? '下发中...' : 'Applying...') : (isZh ? `应用变更 (${targetCount})` : `Apply Changes (${targetCount})`)}

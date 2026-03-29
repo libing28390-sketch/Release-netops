@@ -35,9 +35,43 @@ SNMP 采集服务 — 多厂商 CPU / 内存 / 温度 / 风扇 / 电源 / 接口
 
 import asyncio
 import logging
+import sys
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _install_snmp_error_filter() -> None:
+    """Suppress puresnmp ProactorDatagramTransport errors on Windows.
+
+    Windows ProactorEventLoop + puresnmp triggers harmless
+    WinError 1234 / InvalidStateError in _loop_reading callbacks
+    when SNMP targets are unreachable. These are not actionable and
+    are purely noise in the logs.
+    """
+    if sys.platform != 'win32':
+        return
+
+    _original_handler = None
+
+    def _filter_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        msg = context.get('message', '')
+        if '_loop_reading' in msg:
+            return  # suppress
+        if _original_handler:
+            _original_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    try:
+        loop = asyncio.get_event_loop()
+        _original_handler = getattr(loop, '_exception_handler', None)
+        loop.set_exception_handler(_filter_handler)
+    except RuntimeError:
+        pass  # no event loop yet
+
+
+_install_snmp_error_filter()
 
 # ═══════════════════════════════════════════════════════════════
 # OID Definitions per vendor

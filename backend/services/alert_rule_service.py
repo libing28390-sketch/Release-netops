@@ -9,7 +9,7 @@ from database import get_db_connection
 
 METRIC_TYPES = {
     'cpu', 'memory', 'interface_util', 'interface_down', 'interconnect_down',
-    'temperature_high', 'snmp_unreachable', 'lldp_neighbor_lost', 'fan_failure', 'power_supply_failure',
+    'temperature_high', 'snmp_unreachable', 'ping_unreachable', 'lldp_neighbor_lost', 'fan_failure', 'power_supply_failure',
     'interface_error_rate_high', 'interface_flap',
     'bgp_neighbor_down', 'ospf_neighbor_down', 'bfd_session_down',
 }
@@ -21,11 +21,9 @@ ALLOWED_SEVERITIES = {'critical', 'major', 'warning'}
 
 
 def _default_severity_for_metric(metric_type: str) -> str:
-    if metric_type == 'interface_down':
-        return 'warning'
-    if metric_type in {'interconnect_down', 'snmp_unreachable', 'lldp_neighbor_lost', 'temperature_high', 'interface_error_rate_high', 'interface_flap'}:
+    if metric_type in {'interconnect_down', 'snmp_unreachable', 'lldp_neighbor_lost', 'temperature_high', 'interface_error_rate_high', 'interface_flap', 'interface_down'}:
         return 'major'
-    if metric_type in {'fan_failure', 'power_supply_failure', 'bgp_neighbor_down', 'ospf_neighbor_down', 'bfd_session_down'}:
+    if metric_type in {'fan_failure', 'power_supply_failure', 'bgp_neighbor_down', 'ospf_neighbor_down', 'bfd_session_down', 'ping_unreachable'}:
         return 'critical'
     return 'major'
 
@@ -42,6 +40,7 @@ def _normalize_rule_row(row) -> dict[str, Any]:
     item['notify_on_reopen_after_maintenance'] = bool(item.get('notify_on_reopen_after_maintenance', 1))
     item['threshold'] = None if item.get('threshold') is None else round(float(item.get('threshold')), 1)
     item['notification_repeat_window_seconds'] = int(item.get('notification_repeat_window_seconds', 120) or 120)
+    item['for_duration_seconds'] = int(item.get('for_duration_seconds', 0) or 0)
     item['aggregation_mode'] = str(item.get('aggregation_mode') or 'dedupe_key').strip() or 'dedupe_key'
     item['metric_type'] = str(item.get('metric_type') or '').strip()
     item['scope_type'] = str(item.get('scope_type') or 'global').strip() or 'global'
@@ -118,6 +117,13 @@ def _validate_rule_payload(payload: dict[str, Any], existing: dict[str, Any] | N
     if repeat_window < 0 or repeat_window > 86400:
         raise ValueError('notification_repeat_window_seconds must be between 0 and 86400')
 
+    try:
+        for_duration = int(payload.get('for_duration_seconds', base.get('for_duration_seconds', 0)))
+    except Exception as exc:
+        raise ValueError('for_duration_seconds must be an integer') from exc
+    if for_duration < 0 or for_duration > 3600:
+        raise ValueError('for_duration_seconds must be between 0 and 3600')
+
     threshold = base.get('threshold')
     if metric_type in THRESHOLD_METRICS:
         threshold = _validate_threshold(payload.get('threshold', threshold))
@@ -135,6 +141,7 @@ def _validate_rule_payload(payload: dict[str, Any], existing: dict[str, Any] | N
         'enabled': bool(payload.get('enabled', base.get('enabled', True))),
         'aggregation_mode': aggregation_mode,
         'notification_repeat_window_seconds': repeat_window,
+        'for_duration_seconds': for_duration,
         'notify_on_active': bool(payload.get('notify_on_active', base.get('notify_on_active', True))),
         'notify_on_recovery': bool(payload.get('notify_on_recovery', base.get('notify_on_recovery', True))),
         'notify_on_reopen_after_maintenance': bool(payload.get('notify_on_reopen_after_maintenance', base.get('notify_on_reopen_after_maintenance', True))),
@@ -175,17 +182,22 @@ def list_rules() -> list[dict[str, Any]]:
 def list_rules_paginated(
     search: str = '',
     enabled: str = 'all',
+    metric_type: str = 'all',
     page: int = 1,
     page_size: int = 20,
 ) -> dict[str, Any]:
     all_items = list_rules()
     enabled_filter = str(enabled or 'all').strip().lower()
+    metric_filter = str(metric_type or 'all').strip().lower()
     filtered_items = all_items
 
     if enabled_filter == 'enabled':
         filtered_items = [item for item in filtered_items if item.get('enabled')]
     elif enabled_filter == 'disabled':
         filtered_items = [item for item in filtered_items if not item.get('enabled')]
+
+    if metric_filter != 'all' and metric_filter:
+        filtered_items = [item for item in filtered_items if item.get('metric_type') == metric_filter]
 
     query = str(search or '').strip().lower()
     if query:
@@ -244,10 +256,10 @@ def create_rule(payload: dict[str, Any]) -> dict[str, Any]:
             '''
             INSERT INTO alert_rules (
                 id, name, metric_type, scope_type, scope_match_mode, scope_value, severity, threshold, enabled,
-                aggregation_mode, notification_repeat_window_seconds,
+                aggregation_mode, notification_repeat_window_seconds, for_duration_seconds,
                 notify_on_active, notify_on_recovery, notify_on_reopen_after_maintenance,
                 created_by, created_at, updated_by, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 created['id'],
@@ -261,6 +273,7 @@ def create_rule(payload: dict[str, Any]) -> dict[str, Any]:
                 1 if created['enabled'] else 0,
                 created['aggregation_mode'],
                 created['notification_repeat_window_seconds'],
+                created['for_duration_seconds'],
                 1 if created['notify_on_active'] else 0,
                 1 if created['notify_on_recovery'] else 0,
                 1 if created['notify_on_reopen_after_maintenance'] else 0,
@@ -295,7 +308,7 @@ def update_rule(rule_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             '''
             UPDATE alert_rules
             SET name = ?, metric_type = ?, scope_type = ?, scope_match_mode = ?, scope_value = ?, severity = ?, threshold = ?, enabled = ?,
-                aggregation_mode = ?, notification_repeat_window_seconds = ?,
+                aggregation_mode = ?, notification_repeat_window_seconds = ?, for_duration_seconds = ?,
                 notify_on_active = ?, notify_on_recovery = ?, notify_on_reopen_after_maintenance = ?,
                 updated_by = ?, updated_at = ?
             WHERE id = ?
@@ -311,6 +324,7 @@ def update_rule(rule_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                 1 if updated['enabled'] else 0,
                 updated['aggregation_mode'],
                 updated['notification_repeat_window_seconds'],
+                updated['for_duration_seconds'],
                 1 if updated['notify_on_active'] else 0,
                 1 if updated['notify_on_recovery'] else 0,
                 1 if updated['notify_on_reopen_after_maintenance'] else 0,

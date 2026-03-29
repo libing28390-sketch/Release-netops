@@ -17,6 +17,12 @@ interface CustomCommandModalProps {
   isTestingConnection: boolean;
   showFavorites: boolean;
   commandFavorites: string[];
+  configReason: string;
+  approverUsername: string;
+  approvalCode: string;
+  approvalStatus: 'idle' | 'sending' | 'sent' | 'verified' | 'error';
+  approvalError: string;
+  approvalCountdown: number;
   onClose: () => void;
   onSubmit: () => void;
   onCustomCommandChange: (value: string) => void;
@@ -27,6 +33,11 @@ interface CustomCommandModalProps {
   onSaveQuickQuery: () => void;
   onToggleFavorites: () => void;
   onUseFavorite: (command: string) => void;
+  onConfigReasonChange: (value: string) => void;
+  onApproverUsernameChange: (value: string) => void;
+  onApprovalCodeChange: (value: string) => void;
+  onRequestApproval: () => void;
+  onVerifyApproval: () => void;
 }
 
 const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
@@ -53,8 +64,22 @@ const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
   onSaveQuickQuery,
   onToggleFavorites,
   onUseFavorite,
+  configReason,
+  onConfigReasonChange,
+  approverUsername,
+  approvalCode,
+  approvalStatus,
+  approvalError,
+  approvalCountdown,
+  onApproverUsernameChange,
+  onApprovalCodeChange,
+  onRequestApproval,
+  onVerifyApproval,
 }) => {
   const canSubmit = (batchMode ? batchDeviceIds.length > 0 : !!selectedDevice) && customCommand.trim() && !(batchMode ? isBatchRunning : isTestingConnection);
+  const needsConfirm = customCommandMode === 'config';
+  const canConfirmSubmit = canSubmit && (!needsConfirm || approvalStatus === 'verified');
+  const canSendCode = needsConfirm && approverUsername.trim().length >= 1 && configReason.trim().length >= 2 && approvalStatus !== 'sending';
 
   return (
     <div
@@ -290,36 +315,149 @@ const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
           </div>
         </div>
 
-        <div className="px-6 py-4 border-t border-black/6 bg-white flex items-center justify-between gap-3">
-          <p className="text-xs text-black/35">
-            {language === 'zh'
-              ? (batchMode ? '将按左侧批量目标逐台执行。' : '执行结果会自动出现在历史记录中。')
-              : (batchMode ? 'Commands will execute sequentially across the selected batch.' : 'Execution results will appear in the history view automatically.')}
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl text-sm font-medium text-black/60 hover:text-black hover:bg-black/5 transition-all"
-            >
-              {t('cancel')}
-            </button>
-            <button
-              onClick={onSubmit}
-              disabled={!canSubmit}
-              className={`px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-all ${
-                canSubmit
-                  ? 'bg-[#005b75] hover:bg-[#00465a] shadow-lg shadow-[#005b75]/20'
-                  : 'bg-black/15 text-black/30 cursor-not-allowed'
-              }`}
-            >
-              {batchMode
-                ? (isBatchRunning
-                  ? (language === 'zh' ? '批量执行中...' : 'Running Batch...')
-                  : (language === 'zh' ? `批量下发 (${batchDeviceIds.length})` : `Run Batch (${batchDeviceIds.length})`))
-                : (isTestingConnection
-                  ? (language === 'zh' ? '执行中...' : 'Running...')
-                  : (language === 'zh' ? '执行命令' : 'Run Command'))}
-            </button>
+        <div className="px-6 py-4 border-t border-black/6 bg-white space-y-3">
+          {needsConfirm && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-3">
+              {/* 标题 */}
+              <div className="flex items-center gap-2">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-amber-500 flex-shrink-0"><path d="M8 1l7 13H1L8 1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M8 6v3M8 11.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                <p className="text-xs font-semibold text-amber-800">
+                  {language === 'zh' ? '配置模式需要审批人授权' : 'Config mode requires approver authorization'}
+                </p>
+                {approvalStatus === 'verified' && (
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-semibold">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5L5 9l4.5-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    {language === 'zh' ? '已授权' : 'Approved'}
+                  </span>
+                )}
+              </div>
+
+              {approvalStatus !== 'verified' && (
+                <>
+                  {/* 第一行：变更原因 */}
+                  <div>
+                    <label className="text-[11px] font-medium text-amber-700 mb-1 block">
+                      {language === 'zh' ? '变更原因' : 'Change Reason'}
+                    </label>
+                    <input
+                      value={configReason}
+                      onChange={e => onConfigReasonChange(e.target.value)}
+                      placeholder={language === 'zh' ? '例如：添加 VLAN 100 接口配置' : 'e.g. Add VLAN 100 interface config'}
+                      className="w-full rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs outline-none focus:border-amber-500 placeholder:text-amber-300"
+                      maxLength={200}
+                    />
+                  </div>
+
+                  {/* 第二行：审批人 + 发送按钮 */}
+                  <div className="flex items-end gap-2">
+                    <div className="flex-1">
+                      <label className="text-[11px] font-medium text-amber-700 mb-1 block">
+                        {language === 'zh' ? '审批人账号' : 'Approver Username'}
+                      </label>
+                      <input
+                        value={approverUsername}
+                        onChange={e => onApproverUsernameChange(e.target.value)}
+                        placeholder={language === 'zh' ? '例如：admin' : 'e.g. admin'}
+                        className="w-full rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs outline-none focus:border-amber-500 placeholder:text-amber-300"
+                        disabled={approvalStatus === 'sent' || approvalStatus === 'sending'}
+                      />
+                    </div>
+                    <button
+                      onClick={onRequestApproval}
+                      disabled={!canSendCode || (approvalStatus === 'sent' && approvalCountdown > 0)}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                        canSendCode && !(approvalStatus === 'sent' && approvalCountdown > 0)
+                          ? 'bg-amber-600 text-white hover:bg-amber-700'
+                          : 'bg-amber-200 text-amber-400 cursor-not-allowed'
+                      }`}
+                    >
+                      {approvalStatus === 'sending'
+                        ? (language === 'zh' ? '发送中...' : 'Sending...')
+                        : approvalStatus === 'sent' && approvalCountdown > 0
+                          ? (language === 'zh' ? `${approvalCountdown}s 后重发` : `Resend in ${approvalCountdown}s`)
+                          : (language === 'zh' ? '发送验证码' : 'Send Code')}
+                    </button>
+                  </div>
+
+                  {/* 第三行：验证码输入（仅在发送后显示） */}
+                  {(approvalStatus === 'sent' || approvalStatus === 'error') && (
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1">
+                        <label className="text-[11px] font-medium text-amber-700 mb-1 block">
+                          {language === 'zh' ? '输入 6 位验证码' : 'Enter 6-digit code'}
+                        </label>
+                        <input
+                          value={approvalCode}
+                          onChange={e => {
+                            const v = e.target.value.replace(/\D/g, '').slice(0, 6);
+                            onApprovalCodeChange(v);
+                          }}
+                          placeholder="000000"
+                          className="w-full rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs outline-none focus:border-amber-500 placeholder:text-amber-300 tracking-[0.3em] font-mono text-center"
+                          maxLength={6}
+                        />
+                      </div>
+                      <button
+                        onClick={onVerifyApproval}
+                        disabled={approvalCode.length !== 6}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                          approvalCode.length === 6
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            : 'bg-emerald-200 text-emerald-400 cursor-not-allowed'
+                        }`}
+                      >
+                        {language === 'zh' ? '验证' : 'Verify'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 错误提示 */}
+                  {approvalError && (
+                    <p className="text-[11px] text-red-600 font-medium">{approvalError}</p>
+                  )}
+
+                  <p className="text-[11px] text-amber-500">
+                    {language === 'zh'
+                      ? '验证码将通过飞书发送给审批人，有效期 5 分钟。'
+                      : 'A verification code will be sent to the approver via Feishu, valid for 5 minutes.'}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-black/35">
+              {language === 'zh'
+                ? (batchMode ? '将按左侧批量目标逐台执行。' : '执行结果会自动出现在历史记录中。')
+                : (batchMode ? 'Commands will execute sequentially across the selected batch.' : 'Execution results will appear in the history view automatically.')}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl text-sm font-medium text-black/60 hover:text-black hover:bg-black/5 transition-all"
+              >
+                {t('cancel')}
+              </button>
+              <button
+                onClick={onSubmit}
+                disabled={!canConfirmSubmit}
+                className={`px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-all ${
+                  canConfirmSubmit
+                    ? (needsConfirm ? 'bg-amber-600 hover:bg-amber-700 shadow-lg shadow-amber-600/20' : 'bg-[#005b75] hover:bg-[#00465a] shadow-lg shadow-[#005b75]/20')
+                    : 'bg-black/15 text-black/30 cursor-not-allowed'
+                }`}
+              >
+                {batchMode
+                  ? (isBatchRunning
+                    ? (language === 'zh' ? '批量执行中...' : 'Running Batch...')
+                    : (language === 'zh' ? `批量下发 (${batchDeviceIds.length})` : `Run Batch (${batchDeviceIds.length})`))
+                  : (isTestingConnection
+                    ? (language === 'zh' ? '执行中...' : 'Running...')
+                    : needsConfirm
+                      ? (language === 'zh' ? '确认并执行配置' : 'Confirm & Apply Config')
+                      : (language === 'zh' ? '执行命令' : 'Run Command'))}
+              </button>
+            </div>
           </div>
         </div>
       </motion.div>

@@ -54,6 +54,7 @@ const ConfigSearchTab = lazy(() => import('./pages/ConfigSearchTab'));
 const CapacityPlanningTab = lazy(() => import('./pages/CapacityPlanningTab'));
 const IPVlanTab = lazy(() => import('./pages/IPVlanTab'));
 const AssetManagementTab = lazy(() => import('./pages/AssetManagementTab'));
+const ChangeOrderTab = lazy(() => import('./pages/ChangeOrderTab'));
 const InterfaceMonitoringTab = lazy(() => import('./pages/InterfaceMonitoringTab'));
 const AutomationExecuteTab = lazy(() => import('./pages/AutomationExecuteTab'));
 const AutomationPlaybooksTab = lazy(() => import('./pages/AutomationPlaybooksTab'));
@@ -250,6 +251,14 @@ const App: React.FC = () => {
   const [editedScriptContent, setEditedScriptContent] = useState<string>('');
   const [customCommand, setCustomCommand] = useState('');
   const [customCommandMode, setCustomCommandMode] = useState<'query' | 'config'>('query');
+  const [configReason, setConfigReason] = useState('');
+  // Config approval flow
+  const [approverUsername, setApproverUsername] = useState('');
+  const [approvalCode, setApprovalCode] = useState('');
+  const [approvalToken, setApprovalToken] = useState('');
+  const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified' | 'error'>('idle');
+  const [approvalError, setApprovalError] = useState('');
+  const [approvalCountdown, setApprovalCountdown] = useState(0);
   const [scriptParams, setScriptParams] = useState<Record<string, string>>({});
   // Batch execution
   const [batchMode, setBatchMode] = useState(false);
@@ -531,6 +540,7 @@ const App: React.FC = () => {
       { path: '/history', label: t('auditLogs'), group: zh ? '平台管理' : 'Management' },
       { path: '/configuration', label: zh ? '平台设置' : 'Platform Settings', group: zh ? '平台管理' : 'Management' },
       { path: '/users', label: t('userManagement'), group: zh ? '平台管理' : 'Management' },
+      { path: '/change-orders', label: zh ? '变更工单' : 'Change Orders', group: zh ? '工单管理' : 'Tickets' },
     ];
   }, [language, t]);
 
@@ -592,6 +602,7 @@ const App: React.FC = () => {
     if (activeTab === 'capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
     if (activeTab === 'ipam') return language === 'zh' ? 'IP/VLAN管理' : 'IP/VLAN Management';
     if (activeTab === 'assets') return language === 'zh' ? '资产管理' : 'Asset Management';
+    if (activeTab === 'change-orders') return language === 'zh' ? '变更工单' : 'Change Orders';
     if (activeTab === 'compliance') return t('compliance');
     if (activeTab === 'monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
     if (activeTab === 'health') return language === 'zh' ? '健康检测' : 'Health Detection';
@@ -1537,13 +1548,14 @@ const App: React.FC = () => {
     wechat:   { webhook_url: '', enabled: false },
   });
   const [notifyTestLoading, setNotifyTestLoading] = useState<string>(''); // platform name being tested
+  const createEmptyUserForm = () => ({ username: '', password: '', role: 'Operator', group_name: '', change_groups: [] as string[] });
   const [editingUser, setEditingUser] = useState<UserType | null>(null);
-  const [editUserForm, setEditUserForm] = useState({ username: '', password: '', role: 'Operator' });
+  const [editUserForm, setEditUserForm] = useState(createEmptyUserForm);
   const [configWorkspaceView, setConfigWorkspaceView] = useState<'source' | 'rendered' | 'checks'>('source');
   const [configScopePlatform, setConfigScopePlatform] = useState<string>('all');
   const [configScopeRole, setConfigScopeRole] = useState<string>('all');
   const [configScopeSite, setConfigScopeSite] = useState<string>('all');
-  const [newUserForm, setNewUserForm] = useState({ username: '', password: '', role: 'Operator' });
+  const [newUserForm, setNewUserForm] = useState(createEmptyUserForm);
   const [isLoading, setIsLoading] = useState(true);
   const currentUserRecord = users.find(u => u.username === currentUser.username);
   const currentUserLastLogin = currentUserRecord?.lastLogin || 'Never';
@@ -1789,9 +1801,10 @@ const App: React.FC = () => {
     }
 
     try {
+      const token = localStorage.getItem('netops_token');
       const response = await fetch('/api/users', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           ...newUserForm,
           actor_username: currentUser.username || 'admin',
@@ -1805,7 +1818,7 @@ const App: React.FC = () => {
 
       setUsers((prev) => [...prev, data]);
       setShowAddUserModal(false);
-      setNewUserForm({ username: '', password: '', role: 'Operator' });
+      setNewUserForm(createEmptyUserForm());
       setShowNewUserPwd(false);
       showToast(language === 'zh' ? '用户已创建' : 'User created', 'success');
     } catch (error) {
@@ -1822,13 +1835,16 @@ const App: React.FC = () => {
     }
 
     try {
+      const token = localStorage.getItem('netops_token');
       const response = await fetch(`/api/users/${editingUser.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           username: editUserForm.username.trim(),
           password: editUserForm.password,
           role: editUserForm.role,
+          group_name: editUserForm.group_name,
+          change_groups: editUserForm.change_groups,
           actor_username: currentUser.username || 'admin',
           actor_role: currentUser.role || 'Administrator',
         }),
@@ -1844,7 +1860,7 @@ const App: React.FC = () => {
       }
       setShowEditUserModal(false);
       setEditingUser(null);
-      setEditUserForm({ username: '', password: '', role: 'Operator' });
+      setEditUserForm(createEmptyUserForm());
       setShowEditUserPwd(false);
       showToast(language === 'zh' ? '用户已更新' : 'User updated', 'success');
     } catch (error) {
@@ -4209,6 +4225,8 @@ const App: React.FC = () => {
             : taskName === 'Custom Command'
               ? customCommandMode === 'config'
               : (!!selectedScript || !!selectedAutomationTemplate),
+          config_reason: (taskName === 'Custom Command' && customCommandMode === 'config') ? configReason : undefined,
+          approval_token: (taskName === 'Custom Command' && customCommandMode === 'config') ? approvalToken : undefined,
           author: currentUser.username || 'admin',
           actor_id: currentUser.id,
           actor_role: currentUser.role || 'Administrator',
@@ -4553,6 +4571,8 @@ const App: React.FC = () => {
             isConfig: taskName === 'Custom Command'
               ? customCommandMode === 'config'
               : taskName !== 'Compliance Audit',
+            config_reason: (taskName === 'Custom Command' && customCommandMode === 'config') ? configReason : undefined,
+            approval_token: (taskName === 'Custom Command' && customCommandMode === 'config') ? approvalToken : undefined,
             author: currentUser.username || 'admin',
             actor_id: currentUser.id,
             actor_role: currentUser.role || 'Administrator',
@@ -4605,6 +4625,77 @@ const App: React.FC = () => {
   const closeCustomCommandModal = () => {
     setShowCustomCommandModal(false);
     setShowFavorites(false);
+    setConfigReason('');
+    setApproverUsername('');
+    setApprovalCode('');
+    setApprovalToken('');
+    setApprovalStatus('idle');
+    setApprovalError('');
+    setApprovalCountdown(0);
+  };
+
+  // ── Config approval: request code via Feishu ──
+  const handleRequestApproval = async () => {
+    if (!approverUsername.trim() || configReason.trim().length < 2) return;
+    setApprovalStatus('sending');
+    setApprovalError('');
+    try {
+      const deviceName = batchMode
+        ? `${batchDeviceIds.length} devices (batch)`
+        : selectedDevice?.hostname || '';
+      const resp = await fetch('/api/config-approval/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}` },
+        body: JSON.stringify({
+          approver_username: approverUsername.trim(),
+          config_reason: configReason.trim(),
+          device_hostname: deviceName,
+          command_preview: customCommand.trim(),
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        setApprovalStatus('error');
+        setApprovalError(data.detail || 'Failed to send approval code');
+        return;
+      }
+      setApprovalToken(data.approval_token);
+      setApprovalStatus('sent');
+      showToast(language === 'zh' ? '验证码已发送至审批人飞书' : 'Code sent to approver via Feishu', 'success');
+      // Countdown 60s before allowing resend
+      let sec = 60;
+      setApprovalCountdown(sec);
+      const timer = setInterval(() => {
+        sec -= 1;
+        setApprovalCountdown(sec);
+        if (sec <= 0) clearInterval(timer);
+      }, 1000);
+    } catch {
+      setApprovalStatus('error');
+      setApprovalError(language === 'zh' ? '网络错误，请重试' : 'Network error, please retry');
+    }
+  };
+
+  // ── Config approval: verify code ──
+  const handleVerifyApproval = async () => {
+    if (approvalCode.length !== 6 || !approvalToken) return;
+    try {
+      const resp = await fetch('/api/config-approval/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}` },
+        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        setApprovalError(data.detail || 'Verification failed');
+        return;
+      }
+      setApprovalStatus('verified');
+      setApprovalError('');
+      showToast(language === 'zh' ? '审批验证通过 ✓' : 'Approval verified ✓', 'success');
+    } catch {
+      setApprovalError(language === 'zh' ? '网络错误，请重试' : 'Network error, please retry');
+    }
   };
 
   const submitCustomCommand = async () => {
@@ -5907,6 +5998,12 @@ const App: React.FC = () => {
               <AssetManagementTab language={language} t={t} setActiveTab={setActiveTab} />
             </Suspense>
           )}
+
+          {activeTab === 'change-orders' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <ChangeOrderTab language={language} t={t} users={users} scenarios={scenarios} platforms={platforms} currentUser={currentUser} />
+            </Suspense>
+          )}
         </main>
         <footer className={`h-10 px-8 border-t flex items-center justify-between text-[11px] ${resolvedTheme === 'dark' ? 'border-white/10 text-white/45 bg-[#0b1320]' : 'border-black/8 text-black/45 bg-white/70'}`}>
           <span>Copyright (c) {new Date().getFullYear()} NetPilot. All rights reserved.</span>
@@ -5934,6 +6031,17 @@ const App: React.FC = () => {
           onSubmit={submitCustomCommand}
           onCustomCommandChange={setCustomCommand}
           onModeChange={setCustomCommandMode}
+          configReason={configReason}
+          onConfigReasonChange={setConfigReason}
+          approverUsername={approverUsername}
+          approvalCode={approvalCode}
+          approvalStatus={approvalStatus}
+          approvalError={approvalError}
+          approvalCountdown={approvalCountdown}
+          onApproverUsernameChange={setApproverUsername}
+          onApprovalCodeChange={setApprovalCode}
+          onRequestApproval={handleRequestApproval}
+          onVerifyApproval={handleVerifyApproval}
           onScriptVarChange={(key, value) => setScriptVars((prev) => ({ ...prev, [key]: value }))}
           onToggleFavorite={saveFavorite}
           isFavorited={isFavorited}

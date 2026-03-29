@@ -313,7 +313,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
               {language === 'zh' ? '告警中心 / 告警信息' : 'Alert Center / Alert Desk'}
             </p>
-            <h2 className="mt-2 text-2xl font-semibold text-[#0b2340]">
+            <h2 className="mt-2 text-2xl font-semibold text-[#164e63]">
               {language === 'zh' ? '当前告警' : 'Current Alerts'}
             </h2>
             <p className="mt-2 text-sm text-black/50">
@@ -361,7 +361,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               setPage(1);
               setSeverityFilter(e.target.value);
             }}
-            className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#0b2340] outline-none"
+            className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
           >
             <option value="all">{language === 'zh' ? '全部级别' : 'All Severity'}</option>
             <option value="critical">{severityLabel('critical', language)}</option>
@@ -377,7 +377,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               onClick={() => { setPage(1); setStatusFilter(tab.value); setSelectedIds(new Set()); }}
               className={`rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
                 statusFilter === tab.value
-                  ? 'bg-[#0f2743] text-white shadow-sm'
+                  ? 'bg-[#06b6d4] text-white shadow-sm'
                   : 'text-black/55 hover:bg-black/[0.04] hover:text-black/75'
               }`}
             >
@@ -395,7 +395,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
         {selectedIds.size > 0 && (
           <div className="flex items-center gap-3 border-b border-blue-100 bg-blue-50/60 px-5 py-3">
-            <span className="text-sm font-medium text-[#0b2340]">
+            <span className="text-sm font-medium text-[#164e63]">
               {language === 'zh' ? `已选 ${selectedIds.size} 条` : `${selectedIds.size} selected`}
             </span>
             <button onClick={() => void handleBatchAck('acknowledged')} className={alertTableActionButtonClass} disabled={actionLoading != null}>
@@ -456,7 +456,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         className="text-left"
                         title={language === 'zh' ? `查看告警 ${row.title}` : `View alert ${row.title}`}
                       >
-                        <p className="text-sm font-semibold text-[#0b2340]">
+                        <p className="text-sm font-semibold text-[#164e63]">
                           {row.title}
                           {(row.occurrence_count ?? 1) > 1 && (
                             <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-600" title={language === 'zh' ? `出现 ${row.occurrence_count} 次` : `${row.occurrence_count} occurrences`}>
@@ -595,7 +595,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                   <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
                     {language === 'zh' ? '告警详情' : 'Alert Detail'}
                   </p>
-                  <h3 className="mt-2 text-xl font-semibold text-[#0b2340]">
+                  <h3 className="mt-2 text-xl font-semibold text-[#164e63]">
                     {selectedItem?.title || (language === 'zh' ? '加载中...' : 'Loading...')}
                     {selectedItem && (selectedItem.occurrence_count ?? 1) > 1 && (
                       <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-600">
@@ -726,7 +726,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">
-                                <span className="truncate text-sm font-medium text-[#0b2340]">{tl.title}</span>
+                                <span className="truncate text-sm font-medium text-[#164e63]">{tl.title}</span>
                                 <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${severityBadgeClass(tl.severity)}`}>
                                   {severityLabel(tl.severity, language)}
                                 </span>

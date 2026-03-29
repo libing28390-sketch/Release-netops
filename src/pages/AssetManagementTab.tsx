@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
+import DateTimePicker from '../components/DateTimePicker';
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
@@ -816,8 +817,8 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                 <Field label={zh ? 'U位' : 'Unit'}              value={form.rack_unit}     onChange={v => setForm(f => ({ ...f, rack_unit: v }))}     placeholder="12" />
                 <Field label={zh ? '角色' : 'Role'}             value={form.device_role}   onChange={v => setForm(f => ({ ...f, device_role: v }))}   placeholder="Core, Access..." />
                 <Field label={zh ? '部门/业务' : 'Service'}      value={form.department}    onChange={v => setForm(f => ({ ...f, department: v }))} />
-                <Field label={zh ? '购买日期' : 'Purchased'}     value={form.purchase_date} onChange={v => setForm(f => ({ ...f, purchase_date: v }))} type="date" />
-                <Field label={zh ? '保修到期' : 'Warranty'}      value={form.warranty_expiry} onChange={v => setForm(f => ({ ...f, warranty_expiry: v }))} type="date" />
+                <DateTimePicker label={zh ? '购买日期' : 'Purchased'} value={form.purchase_date} onChange={v => setForm(f => ({ ...f, purchase_date: v }))} language={language} mode="date" />
+                <DateTimePicker label={zh ? '保修到期' : 'Warranty'} value={form.warranty_expiry} onChange={v => setForm(f => ({ ...f, warranty_expiry: v }))} language={language} mode="date" />
                 <div className="col-span-2">
                   <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '备注' : 'Notes'}</label>
                   <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2}

@@ -36,10 +36,13 @@ def log_audit_event(
     execution_id: str | None = None,
     snapshot_id: str | None = None,
     details: dict[str, Any] | None = None,
+    conn=None,
 ) -> str:
     event_id = str(uuid.uuid4())
     created_at = utc_now_iso()
-    conn = get_db_connection()
+    own_conn = conn is None
+    if own_conn:
+        conn = get_db_connection()
     try:
         conn.execute(
             '''
@@ -73,10 +76,12 @@ def log_audit_event(
                 created_at,
             ),
         )
-        conn.commit()
+        if own_conn:
+            conn.commit()
         return event_id
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def list_audit_events(

@@ -16,6 +16,7 @@ import {
   Activity,
   BarChart2,
   Bell,
+  ClipboardList,
   Clock,
   PanelLeftClose,
   PanelLeftOpen,
@@ -35,7 +36,7 @@ import NavSection from './NavSection';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
-  Activity, BarChart2, Bell, Clock, Server, Settings, User, Zap,
+  Activity, BarChart2, Bell, ClipboardList, Clock, Server, Settings, User, Zap,
 };
 
 const LS_KEY = 'netpilot_sidebar';
@@ -259,7 +260,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
 
       <aside
         className={cn(
-          'flex flex-col flex-shrink-0 bg-[#0d1117] transition-all duration-300 overflow-hidden',
+          'flex flex-col flex-shrink-0 bg-[#0c1929] transition-all duration-300 overflow-hidden',
           isMobile
             ? cn(
                 'fixed inset-y-0 left-0 z-30 shadow-2xl shadow-black/40 w-[260px]',

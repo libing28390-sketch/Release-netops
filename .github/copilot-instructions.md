@@ -55,6 +55,35 @@ applyTo: "**"
 - 涉及认证与权限时，优先遵循最小权限原则。
 - 日志与错误信息中不泄露凭据、IP 白名单细节或内部密钥。
 
+## 技术栈与项目约定
+
+### 后端
+- Python 3.10+ / FastAPI / Pydantic / SQLite (`data/netops.db`)
+- 混合使用 SQLAlchemy 模型 (`models/models.py`) 和原生 `sqlite3` (`get_db_connection`)
+- 配置：`pydantic-settings` + `.env`，单例 `core/config.settings`
+- 认证：Bearer Token → `core/rbac.require_role()` 三级角色（Administrator > Operator > Viewer）
+- 凭据加密：Fernet/AES + PBKDF2，`enc:v1:` 前缀标记，函数见 `core/crypto.py`
+- 日志：`core/logging.setup_logging()`，TimedRotatingFileHandler + `SanitizeFilter` 脱敏
+- 驱动：工厂模式 `drivers/factory.py`，netmiko 优先 → scrapli 自动 fallback
+- 支持厂商：Cisco IOS/NX-OS/IOS-XE, Huawei VRP, H3C Comware, Arista EOS, Juniper JunOS
+
+### 前端
+- React 19 + TypeScript + Vite + TailwindCSS
+- 图表：Recharts
+- 动画：motion（framer-motion）
+- 色彩体系：青色系 `#06b6d4`(主)、`#0891b2`(hover)、`#164e63`(深)、`#ecfeff`(浅底)
+
+### API 响应格式
+```json
+{ "success": true, "data": {}, "message": "" }
+```
+
+### 新增 API 端点的标准流程
+1. `schemas/schemas.py` — 定义请求/响应 schema
+2. `services/xxx_service.py` — 实现业务逻辑
+3. `api/xxx.py` — 创建路由，调用 service，注入 RBAC 依赖
+4. `main.py` — 注册 router
+
 ## 建议技能选择
 
 - 设备自动化与作业编排：automation-engineer

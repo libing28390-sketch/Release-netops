@@ -61,15 +61,15 @@ export const alertHeroClass = 'overflow-hidden rounded-[28px] border border-[#07
 export const alertPanelClass = 'rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)]';
 export const alertPanelHeaderClass = 'border-b border-black/5 px-5 py-5 lg:px-6';
 export const alertSubtleCardClass = 'rounded-2xl border border-white/70 bg-white/80 p-4 shadow-sm backdrop-blur';
-export const alertPrimaryButtonClass = 'inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#0f2743] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,39,67,0.16)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#163457] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0';
-export const alertSecondaryButtonClass = 'inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#d8e1eb] bg-[#f7f9fc] px-4 text-sm font-semibold text-[#34506d] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#c7d4e2] hover:bg-white hover:text-[#0f2743] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0';
+export const alertPrimaryButtonClass = 'inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#06b6d4] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(6,182,212,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0891b2] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0';
+export const alertSecondaryButtonClass = 'inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#d8e1eb] bg-[#f7f9fc] px-4 text-sm font-semibold text-[#0e7490] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#c7d4e2] hover:bg-white hover:text-[#0891b2] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0';
 export const alertAccentButtonClass = 'inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#cde6f3] bg-[#eef8fc] px-4 text-sm font-semibold text-[#2b6b8f] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#b8dcee] hover:bg-[#e6f5fb] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0';
 export const alertDangerButtonClass = 'inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#f2c8c3] bg-[#fff4f2] px-4 text-sm font-semibold text-[#c55b4d] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#e7aaa1] hover:bg-[#ffeceb] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0';
 export const alertTableActionBarClass = 'inline-flex flex-wrap items-center gap-1.5 rounded-2xl border border-[#e5ebf2] bg-[#f7f9fc] p-1';
-export const alertTableActionButtonClass = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#36506c] shadow-[0_1px_2px_rgba(11,35,64,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#edf4fb] hover:text-[#0f2743] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0';
+export const alertTableActionButtonClass = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0';
 export const alertTableActionAccentButtonClass = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-[#eef8fc] px-3 text-xs font-semibold text-[#2b6b8f] shadow-[0_1px_2px_rgba(11,35,64,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#e0f2fb] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0';
 export const alertTableActionDangerButtonClass = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-[#fff1ef] px-3 text-xs font-semibold text-[#c55b4d] shadow-[0_1px_2px_rgba(11,35,64,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#ffe4e1] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0';
-export const alertInputClass = 'w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[#0b2340] outline-none placeholder:text-black/30';
+export const alertInputClass = 'w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[#164e63] outline-none placeholder:text-black/30';
 export const alertStatTileClass = 'rounded-2xl border border-white/70 bg-white/80 p-4 shadow-sm backdrop-blur';
 export const alertMetricPillClass = 'rounded-full bg-[#00bceb]/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0b6b83]';
 
@@ -210,6 +210,7 @@ export const buildEmptyRule = (username: string): AlertRuleSettings => ({
   scope_value: '',
   severity: 'major',
   threshold: 90,
+  for_duration_seconds: 0,
   enabled: true,
   aggregation_mode: 'dedupe_key',
   notification_repeat_window_seconds: 120,
@@ -237,6 +238,7 @@ export const metricTypeLabel = (metricType: AlertRuleSettings['metric_type'], la
     case 'bgp_neighbor_down': return language === 'zh' ? 'BGP 邻居 DOWN' : 'BGP Neighbor Down';
     case 'ospf_neighbor_down': return language === 'zh' ? 'OSPF 邻居异常' : 'OSPF Neighbor Down';
     case 'bfd_session_down': return language === 'zh' ? 'BFD 会话 DOWN' : 'BFD Session Down';
+    case 'ping_unreachable': return language === 'zh' ? 'Ping 不可达' : 'Ping Unreachable';
     default: return metricType;
   }
 };

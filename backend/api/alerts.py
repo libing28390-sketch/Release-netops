@@ -346,12 +346,14 @@ def delete_maintenance_window(window_id: str, actor_username: str = Query(defaul
 def read_alert_rules(
     search: str = Query(default=''),
     enabled: str = Query(default='all'),
+    metric_type: str = Query(default='all'),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
     return alert_rule_service.list_rules_paginated(
         search=search,
         enabled=enabled,
+        metric_type=metric_type,
         page=page,
         page_size=page_size,
     )
@@ -476,6 +478,7 @@ def batch_toggle_alert_rules(payload: dict = Body(...)):
                 target_id=rid,
                 target_name=row['name'],
                 details={'enabled': bool(enabled), 'batch': True},
+                conn=conn,
             )
         conn.commit()
         return {'success': True, 'updated_count': updated}
@@ -516,6 +519,7 @@ def batch_delete_alert_rules(payload: dict = Body(...)):
                 target_id=rid,
                 target_name=row['name'],
                 details={'batch': True},
+                conn=conn,
             )
         conn.commit()
         return {'success': True, 'deleted_count': deleted}
@@ -564,6 +568,7 @@ def batch_acknowledge_alerts(payload: dict = Body(...)):
                 target_name=row['title'],
                 device_id=row['device_id'],
                 details={'workflow_status': next_status, 'dedupe_key': row['dedupe_key'], 'batch': True},
+                conn=conn,
             )
         conn.commit()
         return {'success': True, 'updated_count': updated}
@@ -612,6 +617,7 @@ def batch_assign_alerts(payload: dict = Body(...)):
                 target_name=row['title'],
                 device_id=row['device_id'],
                 details={'assignee': assignee, 'dedupe_key': row['dedupe_key'], 'batch': True},
+                conn=conn,
             )
         conn.commit()
         return {'success': True, 'updated_count': updated}

@@ -5,7 +5,7 @@
 :root {
 	--app-bg: #f0f2f5;
 	--app-text: #141414;
-	--sidebar-bg: #00172d;
+	--sidebar-bg: #0c1929;
 	--header-bg: #ffffff;
 	--header-border: rgba(0, 0, 0, 0.06);
 	--search-bg: #f0f2f5;
@@ -339,7 +339,7 @@ textarea {
 
 /* Keep old class for header compat */
 .theme-sidebar {
-	background: #0d1117;
+	background: #0c1929;
 }
 
 .theme-header {

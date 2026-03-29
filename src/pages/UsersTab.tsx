@@ -4,6 +4,21 @@ import { motion } from 'motion/react';
 import type { User } from '../types';
 import { sectionHeaderRowClass, primaryActionBtnClass } from '../components/shared';
 
+type UserFormState = {
+  username: string;
+  password: string;
+  role: string;
+  group_name: string;
+  change_groups: string[];
+};
+
+const CHANGE_GROUP_OPTIONS = [
+  { key: 'requester', zh: '申请组', en: 'Requester' },
+  { key: 'initial_reviewer', zh: '初审组', en: 'Initial Review' },
+  { key: 'final_approver', zh: '终审组', en: 'Final Approval' },
+  { key: 'implementer', zh: '实施组', en: 'Implementer' },
+] as const;
+
 interface UsersTabProps {
   users: User[];
   showAddUserModal: boolean;
@@ -12,10 +27,10 @@ interface UsersTabProps {
   setShowEditUserModal: (v: boolean) => void;
   editingUser: User | null;
   setEditingUser: (u: User | null) => void;
-  newUserForm: { username: string; password: string; role: string };
-  setNewUserForm: (v: { username: string; password: string; role: string }) => void;
-  editUserForm: { username: string; password: string; role: string };
-  setEditUserForm: (v: { username: string; password: string; role: string }) => void;
+  newUserForm: UserFormState;
+  setNewUserForm: (v: UserFormState) => void;
+  editUserForm: UserFormState;
+  setEditUserForm: (v: UserFormState) => void;
   showNewUserPwd: boolean;
   setShowNewUserPwd: (fn: (v: boolean) => boolean) => void;
   showEditUserPwd: boolean;
@@ -34,6 +49,21 @@ const UsersTab: React.FC<UsersTabProps> = ({
   showNewUserPwd, setShowNewUserPwd, showEditUserPwd, setShowEditUserPwd,
   handleAddUser, handleEditUser, language, t,
 }) => {
+  const isZh = language === 'zh';
+  const labelForGroup = (groupKey: string) => {
+    const match = CHANGE_GROUP_OPTIONS.find((item) => item.key === groupKey);
+    return match ? (isZh ? match.zh : match.en) : groupKey;
+  };
+  const toggleChangeGroup = (form: UserFormState, nextKey: string, setter: (v: UserFormState) => void) => {
+    const exists = form.change_groups.includes(nextKey);
+    setter({
+      ...form,
+      change_groups: exists
+        ? form.change_groups.filter((item) => item !== nextKey)
+        : [...form.change_groups, nextKey],
+    });
+  };
+
   return (
     <div className="space-y-8">
       <div className={sectionHeaderRowClass}>
@@ -57,6 +87,8 @@ const UsersTab: React.FC<UsersTabProps> = ({
             <tr className="bg-black/[0.01] border-b border-black/5">
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('username')}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('role')}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '所属分组' : 'Group'}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '职责组' : 'Responsibilities'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('status')}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('lastLogin')}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40 text-right">{t('actions')}</th>
@@ -74,6 +106,20 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   </div>
                 </td>
                 <td className="px-6 py-4 text-xs">{user.role}</td>
+                <td className="px-6 py-4 text-xs text-black/60">{user.group_name || (isZh ? '未分组' : 'Ungrouped')}</td>
+                <td className="px-6 py-4">
+                  <div className="flex flex-wrap gap-1.5">
+                    {(user.change_groups || []).length > 0 ? (
+                      (user.change_groups || []).map(groupKey => (
+                        <span key={groupKey} className="inline-flex items-center rounded-full bg-cyan-50 px-2 py-1 text-[10px] font-semibold text-cyan-700 ring-1 ring-cyan-200/70">
+                          {labelForGroup(groupKey)}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-black/35">{isZh ? '未配置' : 'Not set'}</span>
+                    )}
+                  </div>
+                </td>
                 <td className="px-6 py-4">
                   <span className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-emerald-100 text-emerald-700">
                     {user.status}
@@ -84,7 +130,13 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   <button
                     onClick={() => {
                       setEditingUser(user);
-                      setEditUserForm({ username: user.username, password: '', role: user.role });
+                      setEditUserForm({
+                        username: user.username,
+                        password: '',
+                        role: user.role,
+                        group_name: user.group_name || '',
+                        change_groups: [...(user.change_groups || [])],
+                      });
                       setShowEditUserModal(true);
                     }}
                     className="text-[10px] font-bold uppercase text-black/40 hover:text-black"
@@ -111,6 +163,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{t('username')}</label>
                   <input
                     type="text"
+                    title={t('username')}
                     value={newUserForm.username}
                     onChange={(e) => setNewUserForm({ ...newUserForm, username: e.target.value })}
                     className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
@@ -122,6 +175,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   <div className="relative">
                     <input
                       type={showNewUserPwd ? 'text' : 'password'}
+                      title={t('password')}
                       value={newUserForm.password}
                       onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
                       className="w-full px-4 pr-12 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
@@ -135,6 +189,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{t('role')}</label>
                   <select
+                    title={t('role')}
                     value={newUserForm.role}
                     onChange={(e) => setNewUserForm({ ...newUserForm, role: e.target.value })}
                     className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all bg-white"
@@ -143,6 +198,36 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     <option value="Operator">Operator</option>
                     <option value="Viewer">Viewer</option>
                   </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '所属分组' : 'User Group'}</label>
+                  <input
+                    type="text"
+                    title={isZh ? '所属分组' : 'User Group'}
+                    value={newUserForm.group_name}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, group_name: e.target.value })}
+                    className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                    placeholder={isZh ? '例如：核心网络组 / 变更平台主管组' : 'e.g. Core Network Team'}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '工单职责组' : 'Change Duties'}</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {CHANGE_GROUP_OPTIONS.map((option) => {
+                      const checked = newUserForm.change_groups.includes(option.key);
+                      return (
+                        <label key={option.key} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-all ${checked ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-black/10 bg-white text-black/55 hover:border-black/20'}`}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleChangeGroup(newUserForm, option.key, setNewUserForm)}
+                            className="rounded border-black/20 text-cyan-500 focus:ring-cyan-400"
+                          />
+                          <span>{isZh ? option.zh : option.en}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
               <div className="flex gap-3 mt-8">
@@ -178,6 +263,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{t('username')}</label>
                   <input
                     type="text"
+                    title={t('username')}
                     value={editUserForm.username}
                     onChange={(e) => setEditUserForm({ ...editUserForm, username: e.target.value })}
                     className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
@@ -188,6 +274,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   <div className="relative">
                     <input
                       type={showEditUserPwd ? 'text' : 'password'}
+                      title={t('password')}
                       value={editUserForm.password}
                       onChange={(e) => setEditUserForm({ ...editUserForm, password: e.target.value })}
                       className="w-full px-4 pr-12 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
@@ -201,6 +288,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{t('role')}</label>
                   <select
+                    title={t('role')}
                     value={editUserForm.role}
                     onChange={(e) => setEditUserForm({ ...editUserForm, role: e.target.value })}
                     className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all bg-white"
@@ -209,6 +297,36 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     <option value="Operator">Operator</option>
                     <option value="Viewer">Viewer</option>
                   </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '所属分组' : 'User Group'}</label>
+                  <input
+                    type="text"
+                    title={isZh ? '所属分组' : 'User Group'}
+                    value={editUserForm.group_name}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, group_name: e.target.value })}
+                    className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                    placeholder={isZh ? '例如：核心网络组 / 变更平台主管组' : 'e.g. Core Network Team'}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '工单职责组' : 'Change Duties'}</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {CHANGE_GROUP_OPTIONS.map((option) => {
+                      const checked = editUserForm.change_groups.includes(option.key);
+                      return (
+                        <label key={option.key} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-all ${checked ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-black/10 bg-white text-black/55 hover:border-black/20'}`}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleChangeGroup(editUserForm, option.key, setEditUserForm)}
+                            className="rounded border-black/20 text-cyan-500 focus:ring-cyan-400"
+                          />
+                          <span>{isZh ? option.zh : option.en}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
               <div className="flex gap-3 mt-8">

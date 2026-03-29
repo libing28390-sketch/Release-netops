@@ -44,7 +44,7 @@ export const navConfig: NavGroup[] = [
       { id: 'assets',   label: '资产管理',     labelEn: 'Assets',               path: '/assets' },
       { id: 'devices',  label: '设备列表',     labelEn: 'Device List',          path: '/inventory/devices' },
       { id: 'ipam',     label: 'IP/VLAN管理',  labelEn: 'IP/VLAN Mgmt',        path: '/ipam' },
-      { id: 'config',   label: '配置合规',     labelEn: 'Config & Compliance',  path: '/config/backup', activeMatch: '/config/' },
+      { id: 'config',   label: '备份中心',     labelEn: 'Backup Center',        path: '/config/backup', activeMatch: '/config/' },
     ],
   },
   {
@@ -55,6 +55,15 @@ export const navConfig: NavGroup[] = [
     children: [
       { id: 'auto-exec',  label: '自动化任务',  labelEn: 'Automation',        path: '/automation/execute', activeMatch: '/automation/' },
       { id: 'scheduled',  label: '定时任务',    labelEn: 'Scheduled Tasks',   path: '/config/schedule' },
+    ],
+  },
+  {
+    id: 'tickets',
+    label: '工单管理',
+    labelEn: 'TICKETS',
+    icon: 'ClipboardList',
+    children: [
+      { id: 'change-orders',  label: '变更工单',  labelEn: 'Change Orders',  path: '/change-orders' },
     ],
   },
   {
