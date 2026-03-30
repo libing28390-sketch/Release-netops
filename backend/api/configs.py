@@ -9,7 +9,8 @@ import uuid
 import json
 import logging
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 from database import get_db_connection
 from services.audit_service import log_audit_event
@@ -163,6 +164,76 @@ def list_snapshots(device_id: str = None, hostname: str = None, ip_address: str 
         conn.close()
 
 
+@router.get('/configs/latest-backups')
+def list_latest_backups(
+    search: str = Query(default='', description='Search hostname or IP'),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+):
+    """Return the latest config backup per device with pagination."""
+    conn = get_db_connection()
+    try:
+        where_clauses = []
+        params = []
+
+        if search and search.strip():
+            fuzzy = f"%{search.strip().lower()}%"
+            where_clauses.append("(LOWER(cs.hostname) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ?)")
+            params.extend([fuzzy, fuzzy])
+
+        filter_sql = ''
+        if where_clauses:
+            filter_sql = ' AND ' + ' AND '.join(where_clauses)
+
+        count_sql = f'''
+            SELECT COUNT(DISTINCT cs.device_id)
+            FROM config_snapshots cs
+            LEFT JOIN devices d ON d.id = cs.device_id
+            INNER JOIN (
+                SELECT device_id, MAX(timestamp) AS max_ts
+                FROM config_snapshots GROUP BY device_id
+            ) latest ON cs.device_id = latest.device_id AND cs.timestamp = latest.max_ts
+            WHERE 1=1 {filter_sql}
+        '''
+        total = conn.execute(count_sql, tuple(params)).fetchone()[0]
+
+        offset = (page - 1) * page_size
+        data_sql = f'''
+            SELECT cs.id, cs.device_id, cs.hostname, cs.vendor, cs.trigger,
+                   cs.timestamp, cs.size, d.ip_address, d.status AS device_status,
+                   d.platform
+            FROM config_snapshots cs
+            LEFT JOIN devices d ON d.id = cs.device_id
+            INNER JOIN (
+                SELECT device_id, MAX(timestamp) AS max_ts
+                FROM config_snapshots GROUP BY device_id
+            ) latest ON cs.device_id = latest.device_id AND cs.timestamp = latest.max_ts
+            WHERE 1=1 {filter_sql}
+            ORDER BY cs.timestamp DESC
+            LIMIT ? OFFSET ?
+        '''
+        rows = conn.execute(data_sql, tuple([*params, page_size, offset])).fetchall()
+
+        items = []
+        for r in rows:
+            items.append({
+                'id': r['id'],
+                'device_id': r['device_id'],
+                'hostname': r['hostname'],
+                'ip_address': r['ip_address'] or '',
+                'vendor': r['vendor'] or '',
+                'platform': r['platform'] or '',
+                'device_status': r['device_status'] or 'unknown',
+                'trigger': r['trigger'] or '',
+                'timestamp': r['timestamp'],
+                'size': r['size'] or 0,
+            })
+
+        return {'items': items, 'total': total, 'page': page, 'page_size': page_size}
+    finally:
+        conn.close()
+
+
 @router.post('/configs/snapshots', status_code=201)
 def create_snapshot(body: SnapshotCreate):
     """Save a config snapshot to file + DB."""
@@ -231,6 +302,30 @@ def get_snapshot_content(snap_id: str):
 
     content = _read_config_file(row['file_path'])
     return {'id': snap_id, 'content': content}
+
+
+@router.get('/configs/snapshots/{snap_id}/download')
+def download_snapshot(snap_id: str):
+    """Download config snapshot as a .cfg text file."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT * FROM config_snapshots WHERE id = ?', (snap_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail='Snapshot not found')
+
+    content = _read_config_file(row['file_path'])
+    ts_str = row['timestamp'].replace(':', '').replace('-', '').replace('T', '_').split('.')[0]
+    filename = f"{row['hostname']}_{ts_str}.cfg"
+    return Response(
+        content=content,
+        media_type='text/plain',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete('/configs/snapshots/{snap_id}')

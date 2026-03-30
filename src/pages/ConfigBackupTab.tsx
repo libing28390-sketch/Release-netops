@@ -1,306 +1,376 @@
-import React from 'react';
-import { ChevronLeft, Database, Download, FileText, RotateCcw } from 'lucide-react';
-import type { Device } from '../types';
+import React, { useEffect, useState, useCallback } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy } from 'lucide-react';
+import Pagination from '../components/Pagination';
 
-interface SnapshotItem {
+interface LatestBackup {
   id: string;
   device_id: string;
   hostname: string;
-  ip_address?: string;
-  vendor?: string;
-  trigger?: string;
+  ip_address: string;
+  vendor: string;
+  platform: string;
+  device_status: string;
+  trigger: string;
   timestamp: string;
   size: number;
-  content?: string;
 }
 
 interface ConfigBackupTabProps {
   t: (key: string) => string;
   language: string;
-  devices: Device[];
-  configSnapshots: SnapshotItem[];
-  configCenterDevice: Device | null;
-  configViewSnapshot: SnapshotItem | null;
-  configViewContent: string;
-  configSnapshotKeyword: string;
-  retentionDays: number;
-  configSnapshotsLoading: boolean;
   isTakingSnapshot: boolean;
-  getVendorFromPlatform: (platform?: string) => string;
-  onTakeSnapshotForCurrentDevice: () => Promise<void> | void;
   onBackupAllOnline: () => Promise<void> | void;
-  onClearDeviceSelection: () => void;
-  onSelectDevice: (device: Device) => void;
-  onBackToList: () => void;
-  onCopyConfigContent: () => void;
-  onFetchLiveConfig: () => Promise<void> | void;
-  onConfigSnapshotKeywordChange: (value: string) => void;
-  onSearchSnapshots: () => Promise<void> | void;
-  onClearSearch: () => Promise<void> | void;
-  onRetentionDaysChange: (value: number) => void;
-  onRefreshSnapshots: () => Promise<void> | void;
-  onOpenSnapshot: (snapshot: SnapshotItem) => Promise<void> | void;
-  onOpenDiff: (snapshot: SnapshotItem) => Promise<void> | void;
-  onCopySnapshot: (snapshot: SnapshotItem) => Promise<void> | void;
-  onDeleteSnapshot: (snapshotId: string) => Promise<void> | void;
+  showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   t,
   language,
-  devices,
-  configSnapshots,
-  configCenterDevice,
-  configViewSnapshot,
-  configViewContent,
-  configSnapshotKeyword,
-  retentionDays,
-  configSnapshotsLoading,
   isTakingSnapshot,
-  getVendorFromPlatform,
-  onTakeSnapshotForCurrentDevice,
   onBackupAllOnline,
-  onClearDeviceSelection,
-  onSelectDevice,
-  onBackToList,
-  onCopyConfigContent,
-  onFetchLiveConfig,
-  onConfigSnapshotKeywordChange,
-  onSearchSnapshots,
-  onClearSearch,
-  onRetentionDaysChange,
-  onRefreshSnapshots,
-  onOpenSnapshot,
-  onOpenDiff,
-  onCopySnapshot,
-  onDeleteSnapshot,
+  showToast,
 }) => {
-  const filteredSnapshots = configSnapshots.filter((snapshot) => !configCenterDevice || snapshot.device_id === configCenterDevice.id);
-  const devicesByVendor: Record<string, Device[]> = devices.reduce((accumulator, device) => {
-    const vendor = getVendorFromPlatform(device.platform);
-    if (!accumulator[vendor]) {
-      accumulator[vendor] = [];
+  const zh = language === 'zh';
+
+  const [rows, setRows] = useState<LatestBackup[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState('');
+
+  // View config modal
+  const [viewSnapshot, setViewSnapshot] = useState<LatestBackup | null>(null);
+  const [viewContent, setViewContent] = useState('');
+  const [viewLoading, setViewLoading] = useState(false);
+
+  const loadLatestBackups = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      if (search) params.set('search', search);
+      const resp = await fetch(`/api/configs/latest-backups?${params}`);
+      if (!resp.ok) throw new Error('Failed');
+      const data = await resp.json();
+      setRows(data.items || []);
+      setTotal(data.total || 0);
+    } catch {
+      showToast(zh ? '加载备份列表失败' : 'Failed to load backups', 'error');
+    } finally {
+      setLoading(false);
     }
-    accumulator[vendor].push(device);
-    return accumulator;
-  }, {} as Record<string, Device[]>);
+  }, [page, pageSize, search, zh, showToast]);
+
+  useEffect(() => { void loadLatestBackups(); }, [loadLatestBackups]);
+
+  const handleView = async (item: LatestBackup) => {
+    setViewSnapshot(item);
+    setViewContent('');
+    setViewLoading(true);
+    try {
+      const resp = await fetch(`/api/configs/snapshots/${item.id}/content`);
+      if (!resp.ok) throw new Error('Failed');
+      const data = await resp.json();
+      setViewContent(data.content || '');
+    } catch {
+      showToast(zh ? '加载配置内容失败' : 'Failed to load config', 'error');
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  const handleDownload = (item: LatestBackup) => {
+    const a = document.createElement('a');
+    a.href = `/api/configs/snapshots/${item.id}/download`;
+    a.download = `${item.hostname}.cfg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleCopy = async () => {
+    if (!viewContent) return;
+    try {
+      await navigator.clipboard.writeText(viewContent);
+      showToast(zh ? '已复制到剪贴板' : 'Copied', 'success');
+    } catch {
+      showToast(zh ? '复制失败' : 'Copy failed', 'error');
+    }
+  };
+
+  const closeView = () => {
+    setViewSnapshot(null);
+    setViewContent('');
+  };
+
+  const formatTime = (ts: string) => {
+    if (!ts) return '--';
+    try { return new Date(ts).toLocaleString(); } catch { return ts; }
+  };
+
+  const formatSize = (size: number) => {
+    if (!size) return '--';
+    if (size >= 1048576) return `${(size / 1048576).toFixed(1)} MB`;
+    if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${size} B`;
+  };
+
+  const timeSince = (ts: string) => {
+    if (!ts) return '';
+    try {
+      const diff = Date.now() - new Date(ts).getTime();
+      const hours = Math.floor(diff / 3600000);
+      if (hours < 1) return zh ? '刚刚' : 'Just now';
+      if (hours < 24) return zh ? `${hours} 小时前` : `${hours}h ago`;
+      const days = Math.floor(hours / 24);
+      if (days < 30) return zh ? `${days} 天前` : `${days}d ago`;
+      return zh ? `${Math.floor(days / 30)} 月前` : `${Math.floor(days / 30)}mo ago`;
+    } catch { return ''; }
+  };
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex justify-between items-end mb-5 flex-shrink-0">
-        <div>
-          <h2 className="text-2xl font-medium tracking-tight">{t('backupHistory')}</h2>
-          <p className="text-sm text-black/40">{t('backupStoragePath')}: <span className="font-mono">backup/YYYY/MM/Vendor/Hostname/</span></p>
-        </div>
-        <div className="flex gap-2">
-          {configCenterDevice && (
+    <div className="space-y-4">
+      <div className="rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)]">
+        {/* Header */}
+        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
+              {zh ? '配置管理 / 备份中心' : 'Config / Backup Center'}
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold text-[#164e63]">
+              {zh ? '备份中心' : 'Backup Center'}
+            </h2>
+            <p className="mt-2 text-sm text-black/50">
+              {zh ? '展示所有设备的最近一次配置备份。' : 'Latest config backup for each device.'}
+            </p>
+          </div>
+          <div className="flex gap-2">
             <button
-              onClick={() => void onTakeSnapshotForCurrentDevice()}
+              onClick={() => void onBackupAllOnline()}
               disabled={isTakingSnapshot}
-              className="flex items-center gap-2 px-4 py-2 bg-[#00bceb] text-white rounded-xl text-sm font-medium hover:bg-[#0096bd] transition-all shadow-lg shadow-[#00bceb]/20 disabled:opacity-50"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#06b6d4] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(6,182,212,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0891b2] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
             >
-              {isTakingSnapshot ? <RotateCcw size={14} className="animate-spin" /> : <Download size={14} />}
-              {t('takeSnapshot')}
+              {isTakingSnapshot ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
+              {zh ? '备份全部在线设备' : 'Backup All Online'}
             </button>
-          )}
-          <button
-            onClick={() => void onBackupAllOnline()}
-            disabled={isTakingSnapshot}
-            className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl text-sm font-medium hover:bg-black/80 transition-all disabled:opacity-50"
-          >
-            <Database size={14} />
-            {t('backupAllOnline')}
-          </button>
+            <button
+              onClick={() => void loadLatestBackups()}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#d8e1eb] bg-[#f7f9fc] px-4 text-sm font-semibold text-[#0e7490] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#c7d4e2] hover:bg-white hover:text-[#0891b2]"
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              {zh ? '刷新' : 'Refresh'}
+            </button>
+          </div>
         </div>
+
+        {/* Search */}
+        <div className="flex items-center gap-3 px-5 py-4">
+          <label className="relative min-w-[240px] flex-1">
+            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
+            <input
+              value={search}
+              onChange={(e) => { setPage(1); setSearch(e.target.value); }}
+              placeholder={zh ? '搜索设备名或 IP ...' : 'Search hostname or IP...'}
+              className="w-full rounded-xl border border-black/10 bg-white py-3 pl-9 pr-3 text-sm text-[#164e63] outline-none placeholder:text-black/30 focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
+            />
+            {search && (
+              <button onClick={() => { setSearch(''); setPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
+                <X size={14} />
+              </button>
+            )}
+          </label>
+          <span className="rounded-xl bg-[#f0f9ff] px-3 py-2.5 text-sm font-medium text-[#164e63]">
+            {zh ? `${total} 台设备` : `${total} devices`}
+          </span>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="min-w-full border-collapse text-left">
+            <thead>
+              <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
+                <th className="px-5 py-3">{zh ? '设备名称' : 'Device'}</th>
+                <th className="px-5 py-3">IP</th>
+                <th className="px-5 py-3">{zh ? '厂商' : 'Vendor'}</th>
+                <th className="px-5 py-3">{zh ? '最后备份时间' : 'Last Backup'}</th>
+                <th className="px-5 py-3">{zh ? '大小' : 'Size'}</th>
+                <th className="px-5 py-3 text-right">{zh ? '操作' : 'Actions'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-5 py-12 text-center text-sm text-black/40">
+                    {zh ? '正在加载...' : 'Loading...'}
+                  </td>
+                </tr>
+              ) : rows.length > 0 ? (
+                rows.map(row => (
+                  <tr key={row.id} className="border-b border-black/5 hover:bg-black/[0.02] transition-colors">
+                    <td className="px-5 py-4 align-top">
+                      <div className="flex items-center gap-2">
+                        <div className={`h-2 w-2 flex-shrink-0 rounded-full ${row.device_status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                        <span className="text-sm font-semibold text-[#164e63]">{row.hostname}</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 align-top text-sm font-mono text-black/55">{row.ip_address || '--'}</td>
+                    <td className="px-5 py-4 align-top">
+                      <span className="inline-flex rounded-full bg-black/5 px-2.5 py-1 text-[10px] font-bold uppercase text-black/50">
+                        {row.vendor || '--'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 align-top">
+                      <div className="text-sm text-black/60">{formatTime(row.timestamp)}</div>
+                      <div className="mt-0.5 text-xs text-black/35">{timeSince(row.timestamp)}</div>
+                    </td>
+                    <td className="px-5 py-4 align-top text-sm text-black/50 font-mono">{formatSize(row.size)}</td>
+                    <td className="px-5 py-4 align-top text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => void handleView(row)}
+                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2]"
+                          title={zh ? '查看配置' : 'View config'}
+                        >
+                          <Eye size={14} />
+                          {zh ? '查看' : 'View'}
+                        </button>
+                        <button
+                          onClick={() => handleDownload(row)}
+                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2]"
+                          title={zh ? '下载配置' : 'Download'}
+                        >
+                          <Download size={14} />
+                          {zh ? '下载' : 'Download'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="px-5 py-16 text-center">
+                    <div className="flex flex-col items-center gap-3 text-black/25">
+                      <FileText size={36} strokeWidth={1} />
+                      <p className="text-sm font-medium">{zh ? '暂无配置备份' : 'No config backups yet'}</p>
+                      <p className="text-xs">{zh ? '点击上方「备份全部在线设备」开始首次备份。' : 'Click "Backup All Online" above to start.'}</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <Pagination
+          currentPage={page}
+          totalItems={total}
+          itemsPerPage={pageSize}
+          onItemsPerPageChange={(v) => { setPage(1); setPageSize(v); }}
+          onPageChange={setPage}
+          language={language}
+        />
       </div>
 
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-5 overflow-hidden">
-        <div className="md:col-span-3 flex flex-col bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-black/5 bg-black/[0.01]">
-            <h3 className="text-[10px] font-bold uppercase tracking-widest text-black/40">{t('selectDevice')}</h3>
-            <button
-              onClick={onClearDeviceSelection}
-              className={`mt-2 text-[9px] font-bold uppercase tracking-wider transition-all ${!configCenterDevice ? 'text-[#00bceb]' : 'text-black/30 hover:text-black'}`}
+      {/* View Config Modal */}
+      <AnimatePresence>
+        {viewSnapshot && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            onMouseDown={(e) => { if (e.target === e.currentTarget) closeView(); }}
+          >
+            <motion.div
+              className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+              initial={{ y: 18, opacity: 0, scale: 0.98 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 18, opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
             >
-              {t('allSnapshots')}
-            </button>
-          </div>
-          <div className="flex-1 overflow-auto">
-            {(Object.entries(devicesByVendor) as [string, Device[]][]).map(([vendor, vendorDevices]) => (
-              <div key={vendor}>
-                <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-black/30 bg-black/[0.02] border-b border-black/5 sticky top-0">{vendor}</div>
-                <div className="p-2 space-y-1">
-                  {vendorDevices.map((device) => {
-                    const count = configSnapshots.filter((snapshot) => snapshot.device_id === device.id).length;
-                    return (
-                      <button
-                        key={device.id}
-                        onClick={() => onSelectDevice(device)}
-                        className={`w-full p-3 rounded-xl text-left transition-all ${configCenterDevice?.id === device.id ? 'bg-black text-white' : 'hover:bg-black/5 text-black/60 hover:text-black'}`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className={`w-1.5 h-1.5 rounded-full ${device.status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                            <span className="text-xs font-medium">{device.hostname}</span>
-                          </div>
-                          {count > 0 && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${configCenterDevice?.id === device.id ? 'bg-white/20 text-white' : 'bg-black/5 text-black/40'}`}>{count}</span>}
-                        </div>
-                        <p className={`text-[9px] font-mono mt-0.5 ${configCenterDevice?.id === device.id ? 'text-white/40' : 'text-black/30'}`}>{device.ip_address}</p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="md:col-span-9 flex flex-col bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
-          {configViewSnapshot ? (
-            <div className="flex flex-col h-full">
-              <div className="p-4 border-b border-black/5 bg-black/[0.01] flex items-center justify-between">
+              {/* Modal header */}
+              <div className="flex items-start justify-between gap-4 border-b border-black/5 px-6 py-5">
                 <div>
-                  <button onClick={onBackToList} className="text-[10px] font-bold uppercase text-black/30 hover:text-black flex items-center gap-1 mb-1">
-                    <ChevronLeft size={12} /> {t('backToList')}
-                  </button>
-                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-black/40">{t('configViewTab')}</h3>
-                  <p className="text-xs text-black/40 mt-0.5">
-                    {configViewSnapshot.hostname} · {new Date(configViewSnapshot.timestamp).toLocaleString()} · <span className="capitalize">{configViewSnapshot.trigger}</span>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
+                    {zh ? '配置查看' : 'Config View'}
+                  </p>
+                  <h3 className="mt-1 text-lg font-semibold text-[#164e63]">
+                    {viewSnapshot.hostname}
+                    <span className="ml-2 text-sm font-normal text-black/40">{viewSnapshot.ip_address}</span>
+                  </h3>
+                  <p className="mt-1 text-xs text-black/40">
+                    {formatTime(viewSnapshot.timestamp)} · {formatSize(viewSnapshot.size)}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {configViewContent && <span className="text-[10px] text-black/30 font-mono">{configViewContent.split('\n').length} {t('linesCount')}</span>}
-                  <button onClick={onCopyConfigContent} className="flex items-center gap-1.5 px-3 py-1.5 bg-black/5 hover:bg-black/10 rounded-lg text-xs font-medium transition-all">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                    {t('copy')}
+                  <button
+                    onClick={() => void handleCopy()}
+                    disabled={!viewContent}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 text-xs font-semibold text-black/55 hover:bg-black/[0.03] disabled:opacity-40"
+                  >
+                    <Copy size={13} />
+                    {zh ? '复制' : 'Copy'}
                   </button>
-                  {configCenterDevice && (
-                    <button
-                      onClick={() => void onFetchLiveConfig()}
-                      disabled={isTakingSnapshot}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#00bceb] text-white rounded-lg text-xs font-medium hover:bg-[#0096bd] transition-all disabled:opacity-50"
-                    >
-                      <Download size={12} /> {t('fetchLiveConfig')}
-                    </button>
-                  )}
+                  <button
+                    onClick={() => handleDownload(viewSnapshot)}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 text-xs font-semibold text-black/55 hover:bg-black/[0.03]"
+                  >
+                    <Download size={13} />
+                    {zh ? '下载' : 'Download'}
+                  </button>
+                  <button title={zh ? '关闭' : 'Close'} onClick={closeView} className="rounded-xl border border-black/10 p-2 text-black/55 hover:bg-black/[0.03]">
+                    <X size={16} />
+                  </button>
                 </div>
               </div>
-              <div className="flex-1 overflow-hidden flex">
-                {configViewContent ? (
+
+              {/* Config content */}
+              <div className="flex flex-1 overflow-hidden">
+                {viewLoading ? (
+                  <div className="flex flex-1 items-center justify-center bg-[#1E1E1E] text-white/30">
+                    <RefreshCw size={20} className="animate-spin" />
+                    <span className="ml-2 text-sm">{zh ? '加载中...' : 'Loading...'}</span>
+                  </div>
+                ) : viewContent ? (
                   <>
-                    <div className="w-12 bg-[#1a1a1a] text-white/20 font-mono text-xs text-right pr-3 py-4 select-none overflow-hidden leading-6">
-                      {configViewContent.split('\n').map((_, index) => <div key={index}>{index + 1}</div>)}
+                    <div className="w-12 select-none overflow-hidden bg-[#1a1a1a] py-4 pr-3 text-right font-mono text-xs leading-6 text-white/20">
+                      {viewContent.split('\n').map((_, i) => <div key={i}>{i + 1}</div>)}
                     </div>
-                    <div className="flex-1 bg-[#1E1E1E] overflow-auto p-4 font-mono text-xs text-[#d4d4d4] leading-6">
-                      {configViewContent.split('\n').map((line, index) => (
-                        <div key={index} className={`hover:bg-white/5 px-1 rounded ${line.startsWith('#') || line.startsWith('!') ? 'text-[#6a9955]' : line.match(/^(interface|vlan|ip route|ospf|bgp|acl)/) ? 'text-[#569cd6]' : line.match(/shutdown|down/) ? 'text-[#f48771]' : ''}`}>{line || ' '}</div>
+                    <div className="flex-1 overflow-auto bg-[#1E1E1E] p-4 font-mono text-xs leading-6 text-[#d4d4d4]">
+                      {viewContent.split('\n').map((line, i) => (
+                        <div
+                          key={i}
+                          className={`rounded px-1 hover:bg-white/5 ${
+                            line.startsWith('#') || line.startsWith('!')
+                              ? 'text-[#6a9955]'
+                              : /^(interface|vlan|ip route|ospf|bgp|acl)/.test(line)
+                                ? 'text-[#569cd6]'
+                                : /shutdown|down/.test(line)
+                                  ? 'text-[#f48771]'
+                                  : ''
+                          }`}
+                        >
+                          {line || ' '}
+                        </div>
                       ))}
                     </div>
                   </>
                 ) : (
-                  <div className="flex-1 bg-[#1E1E1E] flex flex-col items-center justify-center text-white/20">
+                  <div className="flex flex-1 flex-col items-center justify-center bg-[#1E1E1E] text-white/20">
                     <FileText size={32} strokeWidth={1} />
-                    <p className="mt-3 text-sm">{t('configViewHint')}</p>
+                    <p className="mt-3 text-sm">{zh ? '无配置内容' : 'No content available'}</p>
                   </div>
                 )}
               </div>
-            </div>
-          ) : (
-            <div className="flex flex-col h-full">
-              <div className="p-4 border-b border-black/5 bg-black/[0.01] flex items-center justify-between">
-                <div>
-                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-black/40">
-                    {configCenterDevice ? `${configCenterDevice.hostname} — ${t('snapshotHistory')}` : t('allSnapshots')}
-                  </h3>
-                  <p className="text-[9px] text-black/30 mt-0.5">{filteredSnapshots.length} {t('snapshotsCount')}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    value={configSnapshotKeyword}
-                    onChange={(event) => onConfigSnapshotKeywordChange(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        void onSearchSnapshots();
-                      }
-                    }}
-                    placeholder={language === 'zh' ? '模糊搜索: 设备名或IP' : 'Fuzzy search: hostname or IP'}
-                    className="w-56 text-[10px] border border-black/10 rounded-lg px-2 py-1 outline-none bg-white"
-                  />
-                  <button onClick={() => void onSearchSnapshots()} className="px-2 py-1 text-[10px] border border-black/10 rounded-lg hover:bg-black/5">{language === 'zh' ? '查找' : 'Search'}</button>
-                  <button onClick={() => void onClearSearch()} className="px-2 py-1 text-[10px] border border-black/10 rounded-lg hover:bg-black/5">{language === 'zh' ? '清空' : 'Clear'}</button>
-                  <span className="text-[9px] font-bold uppercase text-black/30">{t('retentionPeriod')}</span>
-                  <select value={retentionDays} onChange={(event) => onRetentionDaysChange(Number(event.target.value))} title={language === 'zh' ? '快照保留周期' : 'Snapshot retention period'} className="text-[10px] border border-black/10 rounded-lg px-2 py-1 outline-none bg-white">
-                    <option value={30}>30 {t('retentionDays')}</option>
-                    <option value={90}>90 {t('retentionDays')}</option>
-                    <option value={180}>180 {t('retentionDays')}</option>
-                    <option value={365}>1 {language === 'zh' ? '年' : 'yr'} (365d)</option>
-                    <option value={730}>2 {language === 'zh' ? '年' : 'yr'} (730d)</option>
-                  </select>
-                  <button onClick={() => void onRefreshSnapshots()} title={language === 'zh' ? '刷新配置快照' : 'Refresh config snapshots'} className="p-1.5 rounded-lg border border-black/10 hover:bg-black/5 transition-all">
-                    <RotateCcw size={13} className={configSnapshotsLoading ? 'animate-spin' : ''} />
-                  </button>
-                </div>
-              </div>
-              <div className="flex-1 overflow-auto">
-                {filteredSnapshots.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-black/20 p-8 text-center">
-                    <Download size={32} strokeWidth={1} />
-                    <p className="mt-3 text-sm font-medium">
-                      {!configCenterDevice && !configSnapshotKeyword.trim() ? (language === 'zh' ? '请先按设备名或IP过滤' : 'Filter by hostname or IP first') : t('noSnapshots')}
-                    </p>
-                    <p className="text-xs mt-1">
-                      {!configCenterDevice && !configSnapshotKeyword.trim() ? (language === 'zh' ? '为避免一次加载全部配置，请先输入筛选条件。' : 'To avoid loading all configs at once, enter a filter before searching.') : t('noSnapshotHint')}
-                    </p>
-                  </div>
-                ) : (
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-black/[0.01] border-b border-black/5">
-                        <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-black/30">{t('deviceInfo')}</th>
-                        <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-black/30">{t('vendorGroup')}</th>
-                        <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-black/30">{t('timestamp')}</th>
-                        <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-black/30">{t('triggerType')}</th>
-                        <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-black/30">{t('fileSize')}</th>
-                        <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-black/30 text-right">{t('actions')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredSnapshots.map((snapshot, index, array) => {
-                        const previous = array[index + 1];
-                        const changed = previous && snapshot.content !== previous.content;
-                        return (
-                          <tr key={snapshot.id} className="border-b border-black/5 hover:bg-black/[0.01] transition-colors">
-                            <td className="px-5 py-3">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium">{snapshot.hostname}</span>
-                                {changed && <span className="text-[8px] font-bold px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-full uppercase">{t('changedBadge')}</span>}
-                              </div>
-                            </td>
-                            <td className="px-5 py-3"><span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full bg-black/5 text-black/50">{snapshot.vendor || '—'}</span></td>
-                            <td className="px-5 py-3 text-xs text-black/50 font-mono">{new Date(snapshot.timestamp).toLocaleString()}</td>
-                            <td className="px-5 py-3">
-                              <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${snapshot.trigger === 'manual' ? 'bg-blue-50 text-blue-600' : snapshot.trigger === 'scheduled' ? 'bg-purple-50 text-purple-600' : snapshot.trigger === 'pre-change' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>{snapshot.trigger}</span>
-                            </td>
-                            <td className="px-5 py-3 text-xs text-black/40 font-mono">{snapshot.size > 1024 ? `${(snapshot.size / 1024).toFixed(1)}KB` : `${snapshot.size}B`}</td>
-                            <td className="px-5 py-3 text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <button onClick={() => void onOpenSnapshot(snapshot)} className="text-[10px] font-bold uppercase text-[#00bceb] hover:underline">{t('viewConfig')}</button>
-                                <button onClick={() => void onOpenDiff(snapshot)} className="text-[10px] font-bold uppercase text-black/40 hover:text-black hover:underline">{t('diffCompare')}</button>
-                                <button onClick={() => void onCopySnapshot(snapshot)} className="text-[10px] font-bold uppercase text-black/40 hover:text-black hover:underline">{t('copy')}</button>
-                                <button onClick={() => void onDeleteSnapshot(snapshot.id)} className="text-[10px] font-bold uppercase text-red-400 hover:text-red-600 hover:underline">{t('delete')}</button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

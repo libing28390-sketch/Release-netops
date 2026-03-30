@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Activity, AlertCircle, AlertTriangle, Copy, Database, FileText, Filter, FolderOpen, Globe, Plus, Search, Server, Settings, ShieldCheck, CheckCircle2, X } from 'lucide-react';
+import { Activity, AlertCircle, AlertTriangle, ChevronDown, ChevronUp, Copy, Database, FileText, Filter, FolderOpen, Globe, Plus, Search, Server, Settings, ShieldCheck, CheckCircle2, X } from 'lucide-react';
 import type { ConfigTemplate, Device } from '../types';
 
 type ConfigWorkspaceView = 'source' | 'rendered' | 'checks';
@@ -108,6 +108,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   const [tplSearch, setTplSearch] = useState('');
   const [tplVendorFilter, setTplVendorFilter] = useState<string>('all');
   const [devicePreviewExpanded, setDevicePreviewExpanded] = useState(false);
+  const [governanceExpanded, setGovernanceExpanded] = useState(false);
   const lineNumRef = useRef<HTMLDivElement>(null);
 
   const vendorList = useMemo(() => {
@@ -559,125 +560,102 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
           )}
         </div>
 
-        <div className="xl:col-span-3 flex flex-col gap-4 min-h-0 overflow-auto pl-1">
-          <div className="bg-white rounded-2xl border border-black/5 p-5 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
-              <Filter size={15} className="text-black/40" />
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-black/40">
+        <div className="xl:col-span-3 flex flex-col gap-3 min-h-0 overflow-auto pl-1">
+          {/* Release Scope + Target Preview merged */}
+          <div className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <Filter size={14} className="text-black/40" />
+              <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/35">
                 {language === 'zh' ? '发布范围' : 'Release Scope'}
               </h3>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-black/30 block mb-1.5">
-                  {language === 'zh' ? '平台' : 'Platform'}
-                </label>
-                <select
-                  value={configScopePlatform}
-                  title={language === 'zh' ? '发布范围平台' : 'Release scope platform'}
-                  onChange={(event) => onConfigScopePlatformChange(event.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-black/10 bg-white text-sm outline-none focus:border-[#06b6d4] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.1)] transition-all"
-                >
-                  <option value="all">{language === 'zh' ? '全部平台' : 'All platforms'}</option>
-                  {configPlatformOptions.map((platform) => (
-                    <option key={platform} value={platform}>{getPlatformLabel(platform)}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-black/30 block mb-1.5">
-                  {language === 'zh' ? '设备角色' : 'Device Role'}
-                </label>
-                <select
-                  value={configScopeRole}
-                  title={language === 'zh' ? '发布范围设备角色' : 'Release scope device role'}
-                  onChange={(event) => onConfigScopeRoleChange(event.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-black/10 bg-white text-sm outline-none focus:border-[#06b6d4] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.1)] transition-all"
-                >
-                  <option value="all">{language === 'zh' ? '全部角色' : 'All roles'}</option>
-                  {configRoleOptions.map((role) => (
-                    <option key={role} value={role}>{role}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-black/30 block mb-1.5">
-                  {language === 'zh' ? '站点' : 'Site'}
-                </label>
-                <select
-                  value={configScopeSite}
-                  title={language === 'zh' ? '发布范围站点' : 'Release scope site'}
-                  onChange={(event) => onConfigScopeSiteChange(event.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-black/10 bg-white text-sm outline-none focus:border-[#06b6d4] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.1)] transition-all"
-                >
-                  <option value="all">{language === 'zh' ? '全部站点' : 'All sites'}</option>
-                  {configSiteOptions.map((site) => (
-                    <option key={site} value={site}>{site}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="mt-4 rounded-xl bg-black/[0.03] px-3 py-3 text-xs text-black/55">
-              {language === 'zh'
-                ? `当前模板厂商范围：${selectedConfigTemplate?.vendor || 'Custom'}。发布范围内共 ${configScopedDevices.length} 台设备。`
-                : `Current template vendor scope: ${selectedConfigTemplate?.vendor || 'Custom'}. ${configScopedDevices.length} devices are in release scope.`}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-black/5 p-5 shadow-sm min-h-0 flex flex-col">
-            <div className="flex items-center justify-between gap-2 mb-4">
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-black/40">
-                  {language === 'zh' ? '目标设备预览' : 'Target Preview'}
-                </h3>
-                <p className="mt-1 text-[11px] text-black/35">
-                  {language === 'zh' ? '按当前过滤条件匹配到的设备' : 'Devices matched by the current release filters'}
-                </p>
-              </div>
-              <span className="text-[10px] px-2 py-1 rounded-full bg-black/[0.05] text-black/50">
+              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-[#06b6d4]/10 text-[#0891b2] font-medium">
                 {configScopedOnlineCount}/{configScopedDevices.length} {language === 'zh' ? '在线' : 'online'}
               </span>
             </div>
-            <div className="space-y-2 overflow-auto pr-1">
-              {(devicePreviewExpanded ? configScopedDevices : configScopedDevices.slice(0, 8)).map((device) => (
-                <div key={device.id} className="rounded-xl border border-black/5 px-3 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-black truncate">{device.hostname}</p>
-                      <p className="mt-1 text-[11px] text-black/40 font-mono truncate">{device.ip_address}</p>
-                    </div>
-                    <span className={`text-[10px] px-2 py-1 rounded-full ${device.status === 'online' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                      {device.status}
-                    </span>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-black/45">
-                    <span className="px-2 py-1 rounded-full bg-black/[0.04]">{getPlatformLabel(device.platform)}</span>
-                    {device.role && <span className="px-2 py-1 rounded-full bg-black/[0.04]">{device.role}</span>}
-                    {device.site && <span className="px-2 py-1 rounded-full bg-black/[0.04]">{device.site}</span>}
-                  </div>
-                </div>
-              ))}
-              {configScopedDevices.length === 0 && (
-                <div className="rounded-xl border border-dashed border-black/10 px-4 py-8 text-center text-sm text-black/35">
-                  {language === 'zh' ? '当前没有匹配设备，请调整发布范围。' : 'No devices match the current filters. Adjust the release scope.'}
-                </div>
-              )}
-              {configScopedDevices.length > 8 && (
-                <button
-                  onClick={() => setDevicePreviewExpanded(!devicePreviewExpanded)}
-                  className="text-[11px] text-[#0891b2] hover:underline px-1 py-1"
-                >
-                  {devicePreviewExpanded
-                    ? (language === 'zh' ? '收起' : 'Collapse')
-                    : (language === 'zh' ? `展开全部 ${configScopedDevices.length} 台设备` : `Show all ${configScopedDevices.length} devices`)}
-                </button>
-              )}
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <select
+                value={configScopePlatform}
+                title={language === 'zh' ? '平台' : 'Platform'}
+                onChange={(event) => onConfigScopePlatformChange(event.target.value)}
+                className="w-full px-2 py-1.5 rounded-lg border border-black/8 bg-black/[0.02] text-xs outline-none focus:border-[#06b6d4] transition-all"
+              >
+                <option value="all">{language === 'zh' ? '全平台' : 'All'}</option>
+                {configPlatformOptions.map((platform) => (
+                  <option key={platform} value={platform}>{getPlatformLabel(platform)}</option>
+                ))}
+              </select>
+              <select
+                value={configScopeRole}
+                title={language === 'zh' ? '角色' : 'Role'}
+                onChange={(event) => onConfigScopeRoleChange(event.target.value)}
+                className="w-full px-2 py-1.5 rounded-lg border border-black/8 bg-black/[0.02] text-xs outline-none focus:border-[#06b6d4] transition-all"
+              >
+                <option value="all">{language === 'zh' ? '全角色' : 'All'}</option>
+                {configRoleOptions.map((role) => (
+                  <option key={role} value={role}>{role}</option>
+                ))}
+              </select>
+              <select
+                value={configScopeSite}
+                title={language === 'zh' ? '站点' : 'Site'}
+                onChange={(event) => onConfigScopeSiteChange(event.target.value)}
+                className="w-full px-2 py-1.5 rounded-lg border border-black/8 bg-black/[0.02] text-xs outline-none focus:border-[#06b6d4] transition-all"
+              >
+                <option value="all">{language === 'zh' ? '全站点' : 'All'}</option>
+                {configSiteOptions.map((site) => (
+                  <option key={site} value={site}>{site}</option>
+                ))}
+              </select>
             </div>
+            <p className="text-[10px] text-black/40 mb-3">
+              {language === 'zh'
+                ? `厂商：${selectedConfigTemplate?.vendor || 'Custom'}｜范围内 ${configScopedDevices.length} 台设备`
+                : `Vendor: ${selectedConfigTemplate?.vendor || 'Custom'} | ${configScopedDevices.length} device(s) in scope`}
+            </p>
+            {configScopedDevices.length > 0 && (
+              <div className="border-t border-black/5 pt-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-[10px] font-bold uppercase tracking-[0.18em] text-black/30">
+                    {language === 'zh' ? '目标设备' : 'Target Devices'}
+                  </h4>
+                </div>
+                <div className="space-y-1.5">
+                  {(devicePreviewExpanded ? configScopedDevices : configScopedDevices.slice(0, 5)).map((device) => (
+                    <div key={device.id} className="flex items-center justify-between gap-2 rounded-lg border border-black/5 px-2.5 py-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-black/80 truncate">{device.hostname}</p>
+                        <p className="text-[10px] text-black/35 font-mono truncate">{device.ip_address}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-black/[0.04] text-black/40">{getPlatformLabel(device.platform)}</span>
+                        <span className={`w-1.5 h-1.5 rounded-full ${device.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {configScopedDevices.length > 5 && (
+                  <button
+                    onClick={() => setDevicePreviewExpanded(!devicePreviewExpanded)}
+                    className="mt-2 text-[10px] text-[#0891b2] hover:underline"
+                  >
+                    {devicePreviewExpanded
+                      ? (language === 'zh' ? '收起' : 'Collapse')
+                      : (language === 'zh' ? `展开全部 ${configScopedDevices.length} 台` : `Show all ${configScopedDevices.length}`)}
+                  </button>
+                )}
+              </div>
+            )}
+            {configScopedDevices.length === 0 && (
+              <div className="border-t border-black/5 pt-3 text-center text-xs text-black/30 py-4">
+                {language === 'zh' ? '无匹配设备，请调整范围' : 'No devices match. Adjust scope.'}
+              </div>
+            )}
           </div>
 
+          {/* Global Variables */}
           <div className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm min-h-0 flex flex-col">
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-black/40">{t('globalVars')}</h3>
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/35">{t('globalVars')}</h3>
               <button
                 onClick={onAddVar}
                 className="text-[10px] text-[#0891b2] font-bold hover:underline uppercase"
@@ -685,7 +663,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                 {t('addVar')}
               </button>
             </div>
-            <div className="space-y-2 overflow-auto pr-1">
+            <div className="space-y-1 overflow-auto pr-1">
               {globalVars.map((item, index) => (
                 <div key={item.id || index} className="group relative flex justify-between items-center py-1.5 border-b border-black/5">
                   <div className="flex flex-col min-w-0">
@@ -720,35 +698,44 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-black/5 p-5 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
-              <Globe size={15} className="text-black/40" />
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-black/40">
-                {language === 'zh' ? '治理提示' : 'Governance Notes'}
-              </h3>
-            </div>
-            <div className="space-y-3 text-sm text-black/65">
-              <div className="rounded-xl bg-black/[0.03] px-3 py-3">
-                <p className="font-medium text-black">
-                  {language === 'zh' ? '建议动作' : 'Recommended Action'}
-                </p>
-                <p className="mt-1 text-xs text-black/50">
-                  {configReadinessScore >= 85
-                    ? (language === 'zh' ? '先挑一台在线设备验证，再逐步扩大范围。' : 'Validate on one online device first, then expand gradually.')
-                    : (language === 'zh' ? '先补全变量或缩小发布范围，再执行下发。' : 'Complete variables or narrow the scope before deployment.')}
-                </p>
+          {/* Governance Notes — collapsible */}
+          <div className="bg-white rounded-2xl border border-black/5 shadow-sm">
+            <button
+              onClick={() => setGovernanceExpanded(!governanceExpanded)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-black/[0.02] transition-all rounded-2xl"
+            >
+              <div className="flex items-center gap-2">
+                <Globe size={14} className="text-black/40" />
+                <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/35">
+                  {language === 'zh' ? '治理提示' : 'Governance Notes'}
+                </h3>
               </div>
-              <div className="rounded-xl bg-black/[0.03] px-3 py-3">
-                <p className="font-medium text-black">
-                  {language === 'zh' ? '当前能力边界' : 'Current Capability Boundary'}
-                </p>
-                <p className="mt-1 text-xs text-black/50">
-                  {language === 'zh'
-                    ? '当前页面提供模板渲染预览、范围筛选和单设备下发入口；如要做审批、版本签发和回滚编排，建议后续单独补后台流程。'
-                    : 'This workspace currently provides rendered preview, release scoping, and single-device deployment. Approval, signed releases, and rollback orchestration should be added as separate backend workflows later.'}
-                </p>
+              {governanceExpanded ? <ChevronUp size={14} className="text-black/30" /> : <ChevronDown size={14} className="text-black/30" />}
+            </button>
+            {governanceExpanded && (
+              <div className="px-4 pb-4 space-y-2">
+                <div className="rounded-xl bg-black/[0.03] px-3 py-2.5">
+                  <p className="text-xs font-medium text-black">
+                    {language === 'zh' ? '建议动作' : 'Recommended Action'}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-black/50">
+                    {configReadinessScore >= 85
+                      ? (language === 'zh' ? '先挑一台在线设备验证，再逐步扩大范围。' : 'Validate on one online device first, then expand gradually.')
+                      : (language === 'zh' ? '先补全变量或缩小发布范围，再执行下发。' : 'Complete variables or narrow the scope before deployment.')}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-black/[0.03] px-3 py-2.5">
+                  <p className="text-xs font-medium text-black">
+                    {language === 'zh' ? '能力边界' : 'Capability Boundary'}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-black/50">
+                    {language === 'zh'
+                      ? '当前支持渲染预览、范围筛选和单设备下发；审批签发和回滚编排建议后续补充。'
+                      : 'Supports preview, scoping, and single-device deploy. Approval and rollback workflows to be added.'}
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

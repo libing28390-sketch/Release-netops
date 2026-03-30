@@ -30,6 +30,7 @@ import JobOutputModal from './components/JobOutputModal';
 import ConfigDiffModal from './components/ConfigDiffModal';
 import ToastNotification, { type ToastState } from './components/ToastNotification';
 import LoginScreen from './components/LoginScreen';
+import SetupWizard from './components/SetupWizard';
 import TestConnectionResultModal from './components/TestConnectionResultModal';
 import SnmpTestResultModal from './components/SnmpTestResultModal';
 import { buildConnectionTestMessage, buildConnectionTestHint, buildConnectionCheckStatus, connectionCheckBadgeMeta, formatConnectionCheckTime } from './utils/connectionHelpers';
@@ -45,6 +46,7 @@ const InventoryDevicesTab = lazy(() => import('./pages/InventoryDevicesTab'));
 const AlertDeskTab = lazy(() => import('./pages/AlertDeskTab'));
 const AlertRulesTab = lazy(() => import('./pages/AlertRulesTab'));
 const AlertMaintenanceTab = lazy(() => import('./pages/AlertMaintenanceTab'));
+const AlertHistoryTab = lazy(() => import('./pages/AlertHistoryTab'));
 const ReportsTab = lazy(() => import('./pages/ReportsTab'));
 const ConfigDriftTab = lazy(() => import('./pages/ConfigDriftTab'));
 const ConfigBackupTab = lazy(() => import('./pages/ConfigBackupTab'));
@@ -187,6 +189,7 @@ const App: React.FC = () => {
   const [profileAvatarPreview, setProfileAvatarPreview] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [loginForm, setLoginForm] = useState(() => {
     const saved = localStorage.getItem('netops_user');
@@ -214,6 +217,16 @@ const App: React.FC = () => {
               setLanguage(data.user.preferred_language);
             }
           }
+          // Check if setup wizard is needed
+          try {
+            const sr = await fetch('/api/setup/status', { headers: { 'Authorization': `Bearer ${token}` } });
+            if (sr.ok) {
+              const sd = await sr.json();
+              if (!sd.setup_completed && data?.user?.role === 'Administrator') {
+                setShowSetupWizard(true);
+              }
+            }
+          } catch { /* ignore */ }
         } else {
           localStorage.removeItem('netops_token');
         }
@@ -477,6 +490,7 @@ const App: React.FC = () => {
     if (path === '/topology') return language === 'zh' ? '网络拓扑' : 'Topology';
     if (path === '/health') return language === 'zh' ? '健康检测' : 'Health Detection';
     if (path === '/alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
+    if (path === '/alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
     if (path === '/alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
     if (path === '/maintenance') return language === 'zh' ? '维护期' : 'Maintenance';
     if (path === '/inventory/devices') return t('deviceList');
@@ -524,6 +538,7 @@ const App: React.FC = () => {
       { path: '/ipam', label: zh ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt', group: zh ? '设备清单' : 'Inventory' },
       { path: '/assets', label: zh ? '资产管理' : 'Assets', group: zh ? '设备清单' : 'Inventory' },
       { path: '/alerts', label: zh ? '告警信息' : 'Alert Desk', group: zh ? '告警管理' : 'Alerts' },
+      { path: '/alert-history', label: zh ? '历史告警' : 'Alert History', group: zh ? '告警管理' : 'Alerts' },
       { path: '/alert-rules', label: zh ? '告警规则' : 'Alert Rules', group: zh ? '告警管理' : 'Alerts' },
       { path: '/maintenance', label: zh ? '维护期' : 'Maintenance', group: zh ? '告警管理' : 'Alerts' },
       { path: '/automation/execute', label: t('directExecution'), group: zh ? '作业自动化' : 'Automation' },
@@ -594,6 +609,7 @@ const App: React.FC = () => {
     }
     if (activeTab === 'users') return t('userManagement');
     if (activeTab === 'alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
+    if (activeTab === 'alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
     if (activeTab === 'alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
     if (activeTab === 'maintenance') return language === 'zh' ? '维护期' : 'Maintenance';
     if (activeTab === 'history') return t('auditLogs');
@@ -1787,6 +1803,17 @@ const App: React.FC = () => {
       setIsAuthenticated(true);
       setLoginForm((prev) => ({ ...prev, password: '' }));
       showToast(language === 'zh' ? '登录成功' : 'Login successful', 'success');
+
+      // Check setup wizard after login
+      try {
+        const sr = await fetch('/api/setup/status', { headers: { 'Authorization': `Bearer ${data.token}` } });
+        if (sr.ok) {
+          const sd = await sr.json();
+          if (!sd.setup_completed && (data.user?.role === 'Administrator')) {
+            setShowSetupWizard(true);
+          }
+        }
+      } catch { /* ignore */ }
     } catch {
       setLoginError(language === 'zh' ? '连接失败，请稍后重试' : 'Connection failed, please try again later');
     } finally {
@@ -3508,10 +3535,10 @@ const App: React.FC = () => {
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
-  };
+  }, []);
 
   const copyTextWithFallback = async (text: string): Promise<boolean> => {
     try {
@@ -4176,6 +4203,16 @@ const App: React.FC = () => {
         onTogglePassword={() => setShowLoginPwd((value) => !value)}
         onRememberMeChange={setRememberMe}
         onSubmit={handleLogin}
+      />
+    );
+  }
+
+  if (showSetupWizard) {
+    return (
+      <SetupWizard
+        language={language}
+        onComplete={() => setShowSetupWizard(false)}
+        showToast={showToast}
       />
     );
   }
@@ -5305,6 +5342,16 @@ const App: React.FC = () => {
             setNotifications((prev) => prev.map((item) => item.id === id ? { ...item, read: true } : item));
             markNotificationsAsRead([id]);
           }}
+          onNotificationClick={(item) => {
+            setShowNotifications(false);
+            if (item.id.startsWith('alert-')) {
+              navigate('/alerts');
+            } else if (item.id.startsWith('job-')) {
+              navigate('/automation');
+            } else if (item.id.startsWith('playbook-')) {
+              navigate('/automation');
+            }
+          }}
         />
 
         <main className="flex-1 overflow-auto p-4 pb-8 md:p-8 md:pb-16">
@@ -5440,6 +5487,26 @@ const App: React.FC = () => {
                 showToast={showToast}
                 activeAlertSection="alert-rules"
                 onNavigateAlertSection={(section) => setActiveTab(section)}
+              />
+            </Suspense>
+          )}
+
+          {activeTab === 'alert-history' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <AlertHistoryTab
+                language={language}
+                currentUsername={currentUser.username}
+                showToast={showToast}
+                activeAlertSection="alert-history"
+                onNavigateAlertSection={(section) => setActiveTab(section)}
+                onNavigateToDevice={(deviceId) => {
+                  const device = devices.find(d => d.id === deviceId);
+                  if (device) handleShowDetails(device);
+                }}
+                onNavigateToTopology={(deviceId) => {
+                  setSelectedTopologyDeviceId(deviceId);
+                  setActiveTab('topology');
+                }}
               />
             </Suspense>
           )}
@@ -5731,53 +5798,16 @@ const App: React.FC = () => {
           )}
 
           {/* ================================================================
-               /config/backup  —  备份历史
+               /config/backup  —  备份中心
           ================================================================ */}
           {activeTab === 'config' && configPage === 'backup' && (
             <Suspense fallback={lazyPanelFallback}>
               <ConfigBackupTab
                 t={t}
                 language={language}
-                devices={devices}
-                configSnapshots={configSnapshots}
-                configCenterDevice={configCenterDevice}
-                configViewSnapshot={configViewSnapshot}
-                configViewContent={configViewContent}
-                configSnapshotKeyword={configSnapshotKeyword}
-                retentionDays={retentionDays}
-                configSnapshotsLoading={configSnapshotsLoading}
                 isTakingSnapshot={isTakingSnapshot}
-                getVendorFromPlatform={getVendorFromPlatform}
-                onTakeSnapshotForCurrentDevice={async () => {
-                  if (!configCenterDevice) return;
-                  await takeConfigSnapshot(configCenterDevice);
-                }}
                 onBackupAllOnline={handleRunBackupAllOnline}
-                onClearDeviceSelection={() => {
-                  setConfigCenterDevice(null);
-                  setConfigViewSnapshot(null);
-                  setConfigViewContent('');
-                }}
-                onSelectDevice={(device) => {
-                  setConfigCenterDevice(device);
-                  setConfigViewSnapshot(null);
-                  setConfigViewContent('');
-                }}
-                onBackToList={() => {
-                  setConfigViewSnapshot(null);
-                  setConfigViewContent('');
-                }}
-                onCopyConfigContent={() => { void handleCopyConfigContent(); }}
-                onFetchLiveConfig={handleFetchLiveConfig}
-                onConfigSnapshotKeywordChange={setConfigSnapshotKeyword}
-                onSearchSnapshots={handleSearchConfigSnapshots}
-                onClearSearch={handleClearConfigSnapshotSearch}
-                onRetentionDaysChange={setRetentionDays}
-                onRefreshSnapshots={handleSearchConfigSnapshots}
-                onOpenSnapshot={handleOpenConfigSnapshot}
-                onOpenDiff={handleOpenConfigDiff}
-                onCopySnapshot={handleCopyConfigSnapshot}
-                onDeleteSnapshot={deleteSnapshot}
+                showToast={showToast}
               />
             </Suspense>
           )}

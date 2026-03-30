@@ -8,7 +8,7 @@ import type {
   AlertRuleSettings,
 } from '../types';
 
-export type AlertSection = 'alerts' | 'alert-rules' | 'maintenance';
+export type AlertSection = 'alerts' | 'alert-history' | 'alert-rules' | 'maintenance';
 
 export interface AlertPageCommonProps {
   language: string;

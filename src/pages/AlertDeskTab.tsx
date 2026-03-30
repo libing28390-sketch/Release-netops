@@ -301,8 +301,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     { value: 'acknowledged', zh: '已确认', en: 'Acknowledged' },
     { value: 'investigating', zh: '处理中', en: 'Investigating' },
     { value: 'suppressed', zh: '维护抑制', en: 'Suppressed' },
-    { value: 'resolved', zh: '已关闭', en: 'Resolved' },
-    { value: 'all', zh: '全部', en: 'All' },
+    { value: 'all_active', zh: '全部', en: 'All' },
   ];
 
   return (

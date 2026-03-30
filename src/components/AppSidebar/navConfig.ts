@@ -27,12 +27,11 @@ export const navConfig: NavGroup[] = [
     label: '告警处置',
     labelEn: 'ALERTS',
     icon: 'Bell',
-    badge: 'alerts',
-    badgeCritical: true,
     children: [
-      { id: 'alert-desk',   label: '告警中心',  labelEn: 'Alert Center',  path: '/alerts' },
-      { id: 'alert-rules',  label: '告警规则',  labelEn: 'Alert Rules',   path: '/alert-rules' },
-      { id: 'maintenance',  label: '维护期',    labelEn: 'Maintenance',   path: '/maintenance' },
+      { id: 'alert-desk',   label: '告警中心',  labelEn: 'Alert Center',   path: '/alerts' },
+      { id: 'alert-history', label: '历史告警', labelEn: 'Alert History',  path: '/alert-history' },
+      { id: 'alert-rules',  label: '告警规则',  labelEn: 'Alert Rules',    path: '/alert-rules' },
+      { id: 'maintenance',  label: '维护期',    labelEn: 'Maintenance',    path: '/maintenance' },
     ],
   },
   {
@@ -44,7 +43,17 @@ export const navConfig: NavGroup[] = [
       { id: 'assets',   label: '资产管理',     labelEn: 'Assets',               path: '/assets' },
       { id: 'devices',  label: '设备列表',     labelEn: 'Device List',          path: '/inventory/devices' },
       { id: 'ipam',     label: 'IP/VLAN管理',  labelEn: 'IP/VLAN Mgmt',        path: '/ipam' },
-      { id: 'config',   label: '备份中心',     labelEn: 'Backup Center',        path: '/config/backup', activeMatch: '/config/' },
+    ],
+  },
+  {
+    id: 'config-mgmt',
+    label: '配置管理',
+    labelEn: 'CONFIG',
+    icon: 'FileText',
+    children: [
+      { id: 'config-backup',  label: '备份中心',   labelEn: 'Backup Center',    path: '/config/backup' },
+      { id: 'config-diff',    label: '配置对比',   labelEn: 'Config Diff',      path: '/config/diff' },
+      { id: 'config-search',  label: '配置搜索',   labelEn: 'Config Search',    path: '/config/search' },
     ],
   },
   {

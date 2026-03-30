@@ -236,8 +236,8 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
 
       {open && (
         <div
-          className={`absolute z-[100] left-0 right-0 mt-1 bg-white rounded-xl border border-black/10 shadow-lg ${dropUp ? 'bottom-full mb-1' : ''}`}
-          style={{ minWidth: 280 }}
+          className={`absolute z-[100] left-0 mt-1 bg-white rounded-xl border border-black/10 shadow-lg ${dropUp ? 'bottom-full mb-1' : ''}`}
+          style={{ width: mode === 'datetime' ? 380 : 280 }}
         >
           {/* Calendar Header */}
           <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
@@ -250,56 +250,62 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
             </button>
           </div>
 
-          {/* Weekday Headers */}
-          <div className="grid grid-cols-7 px-2.5">
-            {weekdays.map(w => (
-              <div key={w} className="text-center text-[10px] font-bold text-black/30 uppercase py-0.5">{w}</div>
-            ))}
-          </div>
-
-          {/* Day Grid */}
-          <div className="grid grid-cols-7 px-2.5 pb-1">
-            {cells.map((c, i) => {
-              const selected = c.current && isSelected(c.day);
-              const todayMark = c.current && isToday(c.day);
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => c.current && selectDay(c.day)}
-                  className={`
-                    h-[26px] text-[11px] rounded-md transition-all
-                    ${!c.current ? 'text-black/15 cursor-default' : 'hover:bg-[#00bceb]/10 cursor-pointer'}
-                    ${selected ? 'bg-[#00bceb] text-white font-bold hover:bg-[#0891b2]' : ''}
-                    ${todayMark && !selected ? 'font-bold text-[#00bceb] ring-1 ring-[#00bceb]/30' : ''}
-                    ${c.current && !selected && !todayMark ? 'text-[#00172D]' : ''}
-                  `}
-                >
-                  {c.day}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Time Selector (only for datetime mode) */}
-          {mode === 'datetime' && (
-            <div className="border-t border-black/5 px-3 py-2">
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-1">
-                  <Clock size={11} className="text-black/30" />
-                  <span className="text-[10px] font-bold text-black/35 uppercase tracking-wider">{zh ? '时间' : 'TIME'}</span>
-                </div>
-                <button type="button" onClick={setNow} className="text-[10px] font-semibold text-[#00bceb] hover:text-[#0891b2] transition-colors px-1.5 py-0.5 rounded hover:bg-[#00bceb]/10">
-                  {zh ? '现在' : 'Now'}
-                </button>
+          {/* Calendar + Time side by side */}
+          <div className="flex">
+            {/* Left: Calendar */}
+            <div className={mode === 'datetime' ? 'flex-1 min-w-0' : 'w-full'}>
+              {/* Weekday Headers */}
+              <div className="grid grid-cols-7 px-2.5">
+                {weekdays.map(w => (
+                  <div key={w} className="text-center text-[10px] font-bold text-black/30 uppercase py-0.5">{w}</div>
+                ))}
               </div>
-              <div className="flex items-center justify-center gap-1">
-                <TimeColumn count={24} value={selHour} onChange={setSelHour} />
-                <span className="text-black/20 font-bold text-sm">:</span>
-                <TimeColumn count={60} value={selMinute} onChange={setSelMinute} />
+
+              {/* Day Grid */}
+              <div className="grid grid-cols-7 px-2.5 pb-1">
+                {cells.map((c, i) => {
+                  const selected = c.current && isSelected(c.day);
+                  const todayMark = c.current && isToday(c.day);
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => c.current && selectDay(c.day)}
+                      className={`
+                        h-[26px] text-[11px] rounded-md transition-all
+                        ${!c.current ? 'text-black/15 cursor-default' : 'hover:bg-[#00bceb]/10 cursor-pointer'}
+                        ${selected ? 'bg-[#00bceb] text-white font-bold hover:bg-[#0891b2]' : ''}
+                        ${todayMark && !selected ? 'font-bold text-[#00bceb] ring-1 ring-[#00bceb]/30' : ''}
+                        ${c.current && !selected && !todayMark ? 'text-[#00172D]' : ''}
+                      `}
+                    >
+                      {c.day}
+                    </button>
+                  );
+                })}
               </div>
             </div>
-          )}
+
+            {/* Right: Time Selector (only for datetime mode) */}
+            {mode === 'datetime' && (
+              <div className="w-[100px] flex flex-col border-l border-black/5 px-2 py-1">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1">
+                    <Clock size={10} className="text-black/30" />
+                    <span className="text-[9px] font-bold text-black/35 uppercase tracking-wider">{zh ? '时间' : 'TIME'}</span>
+                  </div>
+                  <button type="button" onClick={setNow} className="text-[9px] font-semibold text-[#00bceb] hover:text-[#0891b2] transition-colors px-1 py-0.5 rounded hover:bg-[#00bceb]/10">
+                    {zh ? '现在' : 'Now'}
+                  </button>
+                </div>
+                <div className="flex items-center justify-center gap-1 flex-1">
+                  <TimeColumn count={24} value={selHour} onChange={setSelHour} />
+                  <span className="text-black/20 font-bold text-sm">:</span>
+                  <TimeColumn count={60} value={selMinute} onChange={setSelMinute} />
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Footer: Clear + Confirm */}
           <div className="border-t border-black/5 px-3 py-2 flex items-center justify-between">

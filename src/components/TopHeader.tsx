@@ -45,6 +45,7 @@ interface TopHeaderProps {
   onLogout: () => void;
   onMarkAllNotificationsRead: () => void;
   onMarkNotificationRead: (id: string) => void;
+  onNotificationClick: (item: NotificationItem) => void;
 }
 
 const TopHeader: React.FC<TopHeaderProps> = ({
@@ -75,6 +76,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
   onLogout,
   onMarkAllNotificationsRead,
   onMarkNotificationRead,
+  onNotificationClick,
 }) => {
   return (
     <header className="theme-header h-14 md:h-16 shadow-sm px-3 md:px-8 flex items-center justify-between z-10">
@@ -129,7 +131,10 @@ const TopHeader: React.FC<TopHeaderProps> = ({
                 {unreadNotifications.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => onMarkNotificationRead(item.id)}
+                    onClick={() => {
+                      onMarkNotificationRead(item.id);
+                      onNotificationClick(item);
+                    }}
                     className={`w-full text-left px-4 py-3 border-b transition-all ${resolvedTheme === 'dark' ? 'border-white/5 hover:bg-white/5' : 'border-black/5 hover:bg-black/[0.02]'}`}
                   >
                     <div className="flex items-start gap-3">

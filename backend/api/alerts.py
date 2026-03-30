@@ -116,6 +116,8 @@ def list_alerts(
     assignee: str = Query(default='all'),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    created_from: str = Query(default='', description='Filter alerts created on or after this ISO timestamp'),
+    created_to: str = Query(default='', description='Filter alerts created on or before this ISO timestamp'),
 ):
     conn = get_db_connection()
     try:
@@ -133,6 +135,8 @@ def list_alerts(
             where.append("a.resolved_at IS NULL AND a.workflow_status = 'suppressed'")
         elif status_value == 'resolved':
             where.append('a.resolved_at IS NOT NULL')
+        elif status_value == 'all_active':
+            where.append('a.resolved_at IS NULL')
 
         severity_value = (severity or 'all').lower()
         if severity_value != 'all':
@@ -160,6 +164,16 @@ def list_alerts(
                 a.interface_name LIKE ? OR COALESCE(d.hostname, '') LIKE ? OR COALESCE(d.ip_address, '') LIKE ?
             )''')
             params.extend([q, q, q, q, q, q])
+
+        created_from_value = (created_from or '').strip()
+        if created_from_value:
+            where.append('a.created_at >= ?')
+            params.append(created_from_value)
+
+        created_to_value = (created_to or '').strip()
+        if created_to_value:
+            where.append('a.created_at <= ?')
+            params.append(created_to_value)
 
         where_sql = f"WHERE {' AND '.join(where)}" if where else ''
         total = conn.execute(
@@ -212,7 +226,8 @@ def list_alerts(
             'suppressed': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND workflow_status = 'suppressed'").fetchone()['c'],
             'resolved': conn.execute("SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NOT NULL").fetchone()['c'],
         }
-        status_counts['all'] = sum(status_counts.values())
+        status_counts['all_active'] = status_counts['open'] + status_counts['acknowledged'] + status_counts['investigating'] + status_counts['suppressed']
+        status_counts['all'] = status_counts['all_active'] + status_counts['resolved']
 
         return {
             'items': [_row_to_alert(row) for row in rows],

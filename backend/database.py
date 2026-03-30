@@ -1160,6 +1160,15 @@ def init_db():
         )
         ''')
 
+        # ── System Settings (for setup wizard state etc.) ──
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT '',
+            updated_at TEXT
+        )
+        ''')
+
         conn.commit()
     finally:
         conn.close()

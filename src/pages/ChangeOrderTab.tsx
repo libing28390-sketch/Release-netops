@@ -456,7 +456,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
   const [assigneeFilter, setAssigneeFilter] = useState('');
   const [bookmarkFilter, setBookmarkFilter] = useState(false);
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
-  const [viewTab, setViewTab] = useState<'all' | 'group_todo' | 'my_todo' | 'my_focus'>('all');
+  const [viewTab, setViewTab] = useState<'all' | 'group_todo' | 'my_todo' | 'my_focus' | 'my_participated' | 'my_drafts'>('all');
 
   // ── Bookmarks ──
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
@@ -675,6 +675,10 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
         params.set('group_todo', currentUser.change_groups.join(','));
       } else if (viewTab === 'my_focus' && currentUser.id) {
         params.set('bookmarked', String(currentUser.id));
+      } else if (viewTab === 'my_participated' && currentUser.username) {
+        params.set('my_participated', currentUser.username);
+      } else if (viewTab === 'my_drafts' && currentUser.username) {
+        params.set('my_drafts', currentUser.username);
       }
       const resp = await fetch(`/api/change-orders?${params}`, { headers: authHeaders() });
       const data = await resp.json();
@@ -1152,7 +1156,9 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
           { key: 'all', label: zh ? '全部工单' : 'All Orders', icon: ClipboardList },
           { key: 'group_todo', label: zh ? '组内待办' : 'Group Todo', icon: Users },
           { key: 'my_todo', label: zh ? '个人待办' : 'My Todo', icon: UserCheck },
+          { key: 'my_participated', label: zh ? '我参与的' : 'My Participated', icon: Star },
           { key: 'my_focus', label: zh ? '我的关注' : 'My Focus', icon: Heart },
+          { key: 'my_drafts', label: zh ? '草稿箱' : 'Drafts', icon: FileText },
         ] as const).map(tab => {
           const active = viewTab === tab.key;
           return (

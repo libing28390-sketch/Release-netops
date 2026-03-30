@@ -29,6 +29,7 @@ from api.capacity import router as capacity_router
 from api.ipam import router as ipam_router
 from api.assets import router as assets_router
 from api.change_orders import router as change_orders_router
+from api.setup import router as setup_router
 import logging
 import os
 import sqlite3
@@ -148,6 +149,7 @@ app.include_router(capacity_router, prefix="/api")
 app.include_router(ipam_router, prefix="/api")
 app.include_router(assets_router, prefix="/api")
 app.include_router(change_orders_router, prefix="/api")
+app.include_router(setup_router, prefix="/api")
 
 # ── APScheduler ──────────────────────────────────────────────────────
 scheduler = AsyncIOScheduler()

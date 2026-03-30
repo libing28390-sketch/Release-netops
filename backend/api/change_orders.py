@@ -275,6 +275,8 @@ def api_list_change_orders(
     bookmarked: str = Query('', description='Filter bookmarked by user_id'),
     my_todo: str = Query('', description='Filter personal todo by username'),
     group_todo: str = Query('', description='Filter group todo by comma-separated change_groups'),
+    my_participated: str = Query('', description='Filter orders where user is involved'),
+    my_drafts: str = Query('', description='Filter draft orders by requester username'),
     user=require_role("Viewer"),
 ):
     conn = get_db_connection()
@@ -285,6 +287,7 @@ def api_list_change_orders(
             search=search, requester=requester,
             assignee=assignee, bookmarked_by=bookmarked,
             my_todo=my_todo, group_todo=group_todo,
+            my_participated=my_participated, my_drafts=my_drafts,
         )
         return {'success': True, 'data': orders, 'total': total, 'page': page, 'page_size': page_size}
     finally:

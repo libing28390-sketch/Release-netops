@@ -146,11 +146,28 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
                        assignee: str = '',
                        bookmarked_by: str = '',
                        my_todo: str = '',
-                       group_todo: str = '') -> tuple[list[dict], int]:
+                       group_todo: str = '',
+                       my_participated: str = '',
+                       my_drafts: str = '') -> tuple[list[dict], int]:
     conditions = []
     params = []
 
-    if my_todo:
+    if my_drafts:
+        conditions.append("(requester_username = ? AND status = 'draft')")
+        params.append(my_drafts)
+    elif my_participated:
+        conditions.append(
+            "("
+            "requester_username = ?"
+            " OR assigned_initial_reviewer_username = ?"
+            " OR assigned_final_approver_username = ?"
+            " OR initial_reviewer_username = ?"
+            " OR final_approver_username = ?"
+            " OR approver_username = ?"
+            ")"
+        )
+        params.extend([my_participated] * 6)
+    elif my_todo:
         conditions.append(
             "("
             "(requester_username = ? AND status IN ('draft', 'rejected', 'approved'))"

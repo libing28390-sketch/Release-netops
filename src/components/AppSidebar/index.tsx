@@ -18,6 +18,7 @@ import {
   Bell,
   ClipboardList,
   Clock,
+  FileText,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
@@ -36,7 +37,7 @@ import NavSection from './NavSection';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
-  Activity, BarChart2, Bell, ClipboardList, Clock, Server, Settings, User, Zap,
+  Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Server, Settings, User, Zap,
 };
 
 const LS_KEY = 'netpilot_sidebar';
