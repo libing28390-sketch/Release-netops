@@ -51,7 +51,8 @@ const HistoryTab: React.FC<HistoryTabProps> = ({
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Audit Logs');
-    XLSX.writeFile(wb, 'audit_logs_export.xlsx');
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    XLSX.writeFile(wb, `audit_logs_${ts}.xlsx`);
   };
 
   return (

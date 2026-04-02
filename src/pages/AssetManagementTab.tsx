@@ -161,6 +161,14 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
   useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter]);
 
+  /* ESC key to close drawer */
+  useEffect(() => {
+    if (!drawerAsset) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setDrawerAsset(null); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [drawerAsset]);
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const vendorList = useMemo(() => summary?.by_vendor ? Object.keys(summary.by_vendor).sort() : [], [summary]);
   const dcList     = useMemo(() => summary?.by_datacenter ? Object.keys(summary.by_datacenter).sort() : [], [summary]);
@@ -260,7 +268,8 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Assets');
-    XLSX.writeFile(wb, `assets_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    XLSX.writeFile(wb, `assets_${ts}.xlsx`);
   };
 
   /* ─── Import ─── */
@@ -743,18 +752,17 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
         )}
       </div>
 
-      {/* ═══════════════════ DETAIL DRAWER ═══════════════════ */}
+      {/* ═══════════════════ DETAIL MODAL (centered) ═══════════════════ */}
       <AnimatePresence>
         {drawerAsset && (
-          <motion.div className="fixed inset-0 z-50 flex justify-end" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="flex-1 bg-black/10 backdrop-blur-[2px]" onClick={() => setDrawerAsset(null)} />
+          <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[3px]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDrawerAsset(null)}>
             <motion.div
-              className="w-full max-w-[380px] bg-white shadow-2xl shadow-black/10 overflow-y-auto flex flex-col"
-              initial={{ x: 380 }} animate={{ x: 0 }} exit={{ x: 380 }}
-              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+              className="w-full max-w-2xl max-h-[85vh] bg-white rounded-2xl shadow-2xl shadow-black/10 overflow-y-auto flex flex-col ring-1 ring-black/5"
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 320 }}
               onClick={e => e.stopPropagation()}
             >
-              <DrawerContent asset={drawerAsset} zh={zh} openEdit={(a) => { openEdit(a); setDrawerAsset(null); }} setDeleteTarget={(a) => { setDeleteTarget(a); setDrawerAsset(null); }} onClose={() => setDrawerAsset(null)} />
+              <DrawerContent asset={drawerAsset} zh={zh} onClose={() => setDrawerAsset(null)} />
             </motion.div>
           </motion.div>
         )}
@@ -917,79 +925,81 @@ function EmptyState({ zh, openAdd, onImport }: { zh: boolean; openAdd: () => voi
   );
 }
 
+/* --- Readonly field (mirrors edit Field style) --- */
+function ReadonlyField({ label, value, mono, warn }: { label: string; value: string; mono?: boolean; warn?: boolean }) {
+  return (
+    <div>
+      <label className="block text-[10px] text-black/30 mb-0.5">{label}</label>
+      <div className={`w-full border border-black/8 rounded-lg px-2.5 py-1.5 text-xs bg-black/[0.01] min-h-[30px] flex items-center ${warn ? 'text-amber-600 font-bold' : 'text-black/65'} ${mono ? 'font-mono' : ''}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 /* --- Drawer Content --- */
-function DrawerContent({ asset: a, zh, openEdit, setDeleteTarget, onClose }: {
-  asset: Asset; zh: boolean; openEdit: (a: Asset) => void; setDeleteTarget: (a: Asset) => void; onClose: () => void;
+function DrawerContent({ asset: a, zh, onClose }: {
+  asset: Asset; zh: boolean; onClose: () => void;
 }) {
   const sm = statusMeta(a.status);
+  const TypeIcon = a.asset_type === 'server' ? Server : Router;
+  const typeLabel = a.asset_type === 'server' ? (zh ? '服务器' : 'Server') : (zh ? '网络设备' : 'Network');
+  const typeCls = a.asset_type === 'server' ? 'bg-violet-50 text-violet-600 border-violet-200' : 'bg-cyan-50 text-cyan-600 border-cyan-200';
 
   return (
-    <>
+    <div className="p-5">
       {/* Header */}
-      <div className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 px-4 pt-4 pb-2.5 border-b border-black/5">
-        <div className="flex items-start justify-between mb-1.5">
-          <div className="flex items-center gap-1">{
-            ([
-              { cls: a.asset_type === 'server' ? 'bg-violet-50 text-violet-600' : 'bg-cyan-50 text-cyan-600', icon: a.asset_type === 'server' ? Server : Router, label: a.asset_type === 'server' ? (zh ? '服务器' : 'Server') : (zh ? '网络设备' : 'Network') },
-            ]).map((b, i) => (
-              <span key={i} className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold ${b.cls}`}>
-                <b.icon size={8} />{b.label}
-              </span>
-            ))
-          }
-            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${sm.badge}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${sm.dot}`} />{sm.label[zh ? 'zh' : 'en']}
-            </span>
-          </div>
-          <button onClick={onClose} title="Close" className="p-1 rounded hover:bg-black/[0.02] text-black/20 hover:text-black/40"><X size={14} /></button>
-        </div>
-        <h3 className="text-base font-bold text-black/85 leading-tight">{a.hostname || a.asset_tag || '—'}</h3>
-        <p className="text-[9px] text-black/20 font-mono mt-0.5">{a.asset_tag}{a.serial_number ? ` · ${a.serial_number}` : ''}</p>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-bold text-black/80">{a.hostname || a.asset_tag || '—'}</h3>
+        <button onClick={onClose} title="Close" className="p-1 text-black/15 hover:text-black/35"><X size={16} /></button>
       </div>
 
-      {/* Info Sections */}
-      <div className="flex-1 px-4 py-3 space-y-4">
-        <InfoSection title={zh ? '基本信息' : 'Basic Info'} rows={[
-          { k: zh ? '厂商/型号' : 'Vendor/Model', v: `${a.vendor} ${a.model}`.trim() || '—' },
-          { k: zh ? '管理IP' : 'Mgmt IP', v: a.management_ip || '—', mono: true },
-          ...(a.asset_type === 'server' ? [
-            { k: zh ? '业务IP' : 'Biz IP', v: a.business_ip || '—', mono: true },
-            { k: 'VLAN', v: a.vlan || '—' },
-            { k: zh ? '上联交换机' : 'Uplink Switch', v: a.uplink_switch || '—' },
-            { k: zh ? '上联端口' : 'Uplink Port', v: a.uplink_port || '—', mono: true },
-          ] : []),
-          { k: zh ? '角色' : 'Role', v: a.device_role || '—' },
-        ]} />
-        <InfoSection title={zh ? '位置' : 'Location'} rows={[
-          { k: zh ? '数据中心' : 'DC', v: a.datacenter || '—' },
-          { k: zh ? '机柜/U位' : 'Rack/Unit', v: a.rack ? `${a.rack}${a.rack_unit ? ' U' + a.rack_unit : ''}` : '—' },
-          { k: zh ? '部门' : 'Dept', v: a.department || '—' },
-        ]} />
-        <InfoSection title={zh ? '生命周期' : 'Lifecycle'} rows={[
-          { k: zh ? '购买日期' : 'Purchased', v: a.purchase_date || '—' },
-          { k: zh ? '保修到期' : 'Warranty', v: a.warranty_expiry || '—', warn: !!(a.warranty_expiry && new Date(a.warranty_expiry) <= new Date(Date.now() + 90 * 86400000)) },
-          { k: zh ? '最后更新' : 'Updated', v: ago(a.updated_at) },
-        ]} />
+      {/* Type + Status badges */}
+      <div className="flex gap-2 mb-4">
+        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${typeCls}`}>
+          <TypeIcon size={13} />{typeLabel}
+        </span>
+        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${sm.badge}`}>
+          <span className={`h-2 w-2 rounded-full ${sm.dot}`} />{sm.label[zh ? 'zh' : 'en']}
+        </span>
+      </div>
 
+      {/* Fields grid — same 2-col layout as edit modal */}
+      <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+        <ReadonlyField label={zh ? '厂商' : 'Vendor'} value={a.vendor || '—'} />
+        <ReadonlyField label={zh ? '型号' : 'Model'} value={a.model || '—'} />
+        <ReadonlyField label={zh ? '资产编号' : 'Asset Tag'} value={a.asset_tag || '—'} />
+        <ReadonlyField label={zh ? '序列号' : 'Serial No.'} value={a.serial_number || '—'} />
+        <ReadonlyField label={zh ? '管理IP' : 'Mgmt IP'} value={a.management_ip || '—'} mono />
+        {a.asset_type === 'server' && (
+          <ReadonlyField label={zh ? '业务IP' : 'Biz IP'} value={a.business_ip || '—'} mono />
+        )}
+        {a.asset_type === 'server' && (
+          <ReadonlyField label="VLAN" value={a.vlan || '—'} />
+        )}
+        {a.asset_type === 'server' && (
+          <ReadonlyField label={zh ? '上联交换机' : 'Uplink Switch'} value={a.uplink_switch || '—'} />
+        )}
+        {a.asset_type === 'server' && (
+          <ReadonlyField label={zh ? '上联端口' : 'Uplink Port'} value={a.uplink_port || '—'} mono />
+        )}
+        <ReadonlyField label={zh ? '数据中心' : 'DC'} value={a.datacenter || '—'} />
+        <ReadonlyField label={zh ? '机柜' : 'Rack'} value={a.rack || '—'} />
+        <ReadonlyField label={zh ? 'U位' : 'Unit'} value={a.rack_unit || '—'} />
+        <ReadonlyField label={zh ? '角色' : 'Role'} value={a.device_role || '—'} />
+        <ReadonlyField label={zh ? '部门/业务' : 'Dept'} value={a.department || '—'} />
+        <ReadonlyField label={zh ? '购买日期' : 'Purchased'} value={a.purchase_date || '—'} />
+        <ReadonlyField label={zh ? '保修到期' : 'Warranty'} value={a.warranty_expiry || '—'} warn={!!(a.warranty_expiry && new Date(a.warranty_expiry) <= new Date(Date.now() + 90 * 86400000))} />
+        <ReadonlyField label={zh ? '最后更新' : 'Updated'} value={ago(a.updated_at)} />
         {a.notes && (
-          <div>
-            <p className="text-[9px] font-bold uppercase tracking-widest text-black/15 mb-1.5">{zh ? '备注' : 'Notes'}</p>
-            <p className="text-[10px] text-black/40 bg-black/[0.01] rounded-lg px-2.5 py-1.5 leading-relaxed">{a.notes}</p>
+          <div className="col-span-2">
+            <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '备注' : 'Notes'}</label>
+            <div className="w-full border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/55 bg-black/[0.01] leading-relaxed">{a.notes}</div>
           </div>
         )}
-
       </div>
 
-      {/* Footer */}
-      <div className="sticky bottom-0 bg-white/95 backdrop-blur-sm px-4 py-2.5 border-t border-black/5 flex gap-1.5">
-        <button onClick={() => openEdit(a)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg border border-black/8 text-black/45 text-[10px] font-medium hover:bg-black/[0.01]">
-          <Pencil size={10} />{zh ? '编辑' : 'Edit'}
-        </button>
-        <button onClick={() => setDeleteTarget(a)} className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-[10px] font-medium hover:bg-red-50">
-          <Trash2 size={10} />{zh ? '删除' : 'Delete'}
-        </button>
-      </div>
-    </>
+    </div>
   );
 }
 

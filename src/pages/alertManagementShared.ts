@@ -239,6 +239,9 @@ export const metricTypeLabel = (metricType: AlertRuleSettings['metric_type'], la
     case 'ospf_neighbor_down': return language === 'zh' ? 'OSPF 邻居异常' : 'OSPF Neighbor Down';
     case 'bfd_session_down': return language === 'zh' ? 'BFD 会话 DOWN' : 'BFD Session Down';
     case 'ping_unreachable': return language === 'zh' ? 'Ping 不可达' : 'Ping Unreachable';
+    case 'host_cpu': return language === 'zh' ? '宿主机 CPU' : 'Host CPU';
+    case 'host_memory': return language === 'zh' ? '宿主机内存' : 'Host Memory';
+    case 'host_disk': return language === 'zh' ? '宿主机磁盘' : 'Host Disk';
     default: return metricType;
   }
 };

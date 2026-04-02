@@ -51,7 +51,7 @@ def _get_approver_channels(approver_username: str) -> tuple[dict | None, str | N
         ).fetchone()
         if not row:
             return None, f"Approver '{approver_username}' not found"
-        channels_raw = row.get('notification_channels') or '{}'
+        channels_raw = row['notification_channels'] or '{}'
         try:
             channels = json.loads(channels_raw) if isinstance(channels_raw, str) else channels_raw
         except (json.JSONDecodeError, TypeError):

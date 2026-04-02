@@ -119,7 +119,8 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
     }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), zh ? '历史告警' : 'Alert History');
-    XLSX.writeFile(wb, `alert_history_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    XLSX.writeFile(wb, `alert_history_${ts}.xlsx`);
     showToast(zh ? '导出成功' : 'Exported', 'success');
   };
 

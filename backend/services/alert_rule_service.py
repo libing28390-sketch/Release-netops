@@ -12,8 +12,9 @@ METRIC_TYPES = {
     'temperature_high', 'snmp_unreachable', 'ping_unreachable', 'lldp_neighbor_lost', 'fan_failure', 'power_supply_failure',
     'interface_error_rate_high', 'interface_flap',
     'bgp_neighbor_down', 'ospf_neighbor_down', 'bfd_session_down',
+    'host_cpu', 'host_memory', 'host_disk',
 }
-THRESHOLD_METRICS = {'cpu', 'memory', 'interface_util', 'temperature_high', 'interface_error_rate_high'}
+THRESHOLD_METRICS = {'cpu', 'memory', 'interface_util', 'temperature_high', 'interface_error_rate_high', 'host_cpu', 'host_memory', 'host_disk'}
 SCOPE_TYPES = {'global', 'site', 'device', 'interface'}
 SCOPE_MATCH_MODES = {'exact', 'contains', 'prefix', 'glob'}
 SCOPE_PRIORITY = {'global': 0, 'site': 1, 'device': 2, 'interface': 3}
@@ -21,7 +22,8 @@ ALLOWED_SEVERITIES = {'critical', 'major', 'warning'}
 
 
 def _default_severity_for_metric(metric_type: str) -> str:
-    if metric_type in {'interconnect_down', 'snmp_unreachable', 'lldp_neighbor_lost', 'temperature_high', 'interface_error_rate_high', 'interface_flap', 'interface_down'}:
+    if metric_type in {'interconnect_down', 'snmp_unreachable', 'lldp_neighbor_lost', 'temperature_high', 'interface_error_rate_high', 'interface_flap', 'interface_down',
+                        'host_cpu', 'host_memory', 'host_disk'}:
         return 'major'
     if metric_type in {'fan_failure', 'power_supply_failure', 'bgp_neighbor_down', 'ospf_neighbor_down', 'bfd_session_down', 'ping_unreachable'}:
         return 'critical'

@@ -23,32 +23,91 @@ logger = logging.getLogger(__name__)
 HOST_RESOURCE_ALERT_SOURCE = "system_resource"
 HOST_RESOURCE_SAMPLE_RETENTION_DAYS = 30
 DEFAULT_UI_LANGUAGE = getattr(settings, 'DEFAULT_LANGUAGE', 'zh')
-HOST_RESOURCE_ALERT_RULES = {
-    "cpu_percent": {
-        "warn": 75,
-        "critical": 90,
-        "title": "Host CPU usage high",
-        "title_zh": "宿主机 CPU 使用率过高",
-    },
-    "memory_percent": {
-        "warn": 80,
-        "critical": 90,
-        "title": "Host memory usage high",
-        "title_zh": "宿主机内存使用率过高",
-    },
-    "disk_percent": {
-        "warn": 80,
-        "critical": 90,
-        "title": "Host disk usage high",
-        "title_zh": "宿主机磁盘使用率过高",
-    },
+
+# Mapping from snapshot metric key to alert_rules metric_type
+_HOST_METRIC_TO_RULE_TYPE = {
+    "cpu_percent": "host_cpu",
+    "memory_percent": "host_memory",
+    "disk_percent": "host_disk",
 }
+
+# Fallback thresholds (used if no alert_rule is found in DB)
+_HOST_RESOURCE_DEFAULTS = {
+    "cpu_percent": {"warn": 75, "critical": 90},
+    "memory_percent": {"warn": 80, "critical": 90},
+    "disk_percent": {"warn": 80, "critical": 90},
+}
+
+_HOST_METRIC_TITLES = {
+    "cpu_percent": {"title": "Host CPU usage high", "title_zh": "宿主机 CPU 使用率过高"},
+    "memory_percent": {"title": "Host memory usage high", "title_zh": "宿主机内存使用率过高"},
+    "disk_percent": {"title": "Host disk usage high", "title_zh": "宿主机磁盘使用率过高"},
+}
+
+
+def _load_host_alert_rules() -> dict[str, dict]:
+    """Load host resource alert rules from the alert_rules table.
+
+    Returns a dict keyed by snapshot metric key (cpu_percent, memory_percent, disk_percent)
+    with 'warn', 'critical', 'enabled', 'title', 'title_zh' fields.
+    """
+    result: dict[str, dict] = {}
+    conn = get_db_connection()
+    try:
+        for metric_key, rule_type in _HOST_METRIC_TO_RULE_TYPE.items():
+            rows = conn.execute(
+                "SELECT threshold, severity, enabled FROM alert_rules WHERE metric_type = ? ORDER BY enabled DESC, updated_at DESC LIMIT 2",
+                (rule_type,),
+            ).fetchall()
+            defaults = _HOST_RESOURCE_DEFAULTS[metric_key]
+            titles = _HOST_METRIC_TITLES[metric_key]
+            if not rows:
+                result[metric_key] = {**defaults, **titles, "enabled": True}
+                continue
+            # Collect warn and critical thresholds from enabled rules
+            warn_threshold = None
+            critical_threshold = None
+            any_enabled = False
+            for row in rows:
+                if not row['enabled']:
+                    continue
+                any_enabled = True
+                t = float(row['threshold']) if row['threshold'] is not None else defaults["warn"]
+                sev = str(row['severity']).lower()
+                if sev == 'critical':
+                    critical_threshold = t
+                else:
+                    # warning / major both act as the "warn" tier
+                    warn_threshold = t
+            # Fallback to defaults for tiers not covered by any rule
+            if warn_threshold is None and critical_threshold is None:
+                warn_threshold = defaults["warn"]
+                critical_threshold = defaults["critical"]
+            elif warn_threshold is not None and critical_threshold is None:
+                # Only a warn/major rule exists — no critical tier
+                critical_threshold = None
+            elif critical_threshold is not None and warn_threshold is None:
+                # Only a critical rule exists — no warn tier
+                warn_threshold = None
+            result[metric_key] = {
+                "warn": warn_threshold,
+                "critical": critical_threshold,
+                "enabled": any_enabled,
+                **titles,
+            }
+    except Exception as e:
+        logger.warning(f"Failed to load host alert rules from DB, using defaults: {e}")
+        for metric_key in _HOST_METRIC_TO_RULE_TYPE:
+            result[metric_key] = {**_HOST_RESOURCE_DEFAULTS[metric_key], **_HOST_METRIC_TITLES[metric_key], "enabled": True}
+    finally:
+        conn.close()
+    return result
 
 
 def _get_host_resource_rule(metric_key: str | None) -> dict[str, Any] | None:
     if not metric_key:
         return None
-    return HOST_RESOURCE_ALERT_RULES.get(metric_key)
+    return _HOST_METRIC_TITLES.get(metric_key)
 
 
 def _get_host_resource_alert_title(metric_key: str | None, fallback_title: str | None = None) -> str:
@@ -142,8 +201,28 @@ def _get_db_health() -> tuple[bool, str]:
 
 
 def _resource_status(cpu_percent: float | None, memory_percent: float | None, disk_percent: float | None, db_ok: bool) -> str:
-    critical = any(value is not None and value >= 90 for value in (cpu_percent, memory_percent, disk_percent))
-    degraded = any(value is not None and value >= 75 for value in (cpu_percent, memory_percent, disk_percent))
+    try:
+        host_rules = _load_host_alert_rules()
+        cpu_crit = host_rules.get('cpu_percent', {}).get('critical', 90)
+        cpu_warn = host_rules.get('cpu_percent', {}).get('warn', 75)
+        mem_crit = host_rules.get('memory_percent', {}).get('critical', 90)
+        mem_warn = host_rules.get('memory_percent', {}).get('warn', 80)
+        disk_crit = host_rules.get('disk_percent', {}).get('critical', 90)
+        disk_warn = host_rules.get('disk_percent', {}).get('warn', 80)
+    except Exception:
+        cpu_crit = mem_crit = disk_crit = 90
+        cpu_warn = 75
+        mem_warn = disk_warn = 80
+    critical = (
+        (cpu_percent is not None and cpu_crit is not None and cpu_percent >= cpu_crit)
+        or (memory_percent is not None and mem_crit is not None and memory_percent >= mem_crit)
+        or (disk_percent is not None and disk_crit is not None and disk_percent >= disk_crit)
+    )
+    degraded = (
+        (cpu_percent is not None and cpu_warn is not None and cpu_percent >= cpu_warn)
+        or (memory_percent is not None and mem_warn is not None and memory_percent >= mem_warn)
+        or (disk_percent is not None and disk_warn is not None and disk_percent >= disk_warn)
+    )
     if not db_ok or critical:
         return "critical"
     if degraded:
@@ -210,24 +289,37 @@ def _build_resource_snapshot(db_ok: bool, db_status: str) -> dict[str, Any]:
 
 def _get_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     alerts: list[dict[str, Any]] = []
-    for metric_key, rule in HOST_RESOURCE_ALERT_RULES.items():
+    host_rules = _load_host_alert_rules()
+    for metric_key, rule in host_rules.items():
+        if not rule.get('enabled', True):
+            continue
         raw_value = snapshot.get(metric_key)
         if raw_value is None:
             continue
         metric_value = float(raw_value)
-        if metric_value >= rule["critical"]:
+        warn_t = rule.get("warn")
+        crit_t = rule.get("critical")
+        if crit_t is not None and metric_value >= crit_t:
             severity = "critical"
-        elif metric_value >= rule["warn"]:
+        elif warn_t is not None and metric_value >= warn_t:
             severity = "major"
         else:
             continue
+
+        # Build human-readable threshold description
+        threshold_parts = []
+        if warn_t is not None:
+            threshold_parts.append(f"warn >= {warn_t}%")
+        if crit_t is not None:
+            threshold_parts.append(f"critical >= {crit_t}%")
+        threshold_desc = ", ".join(threshold_parts) if threshold_parts else ""
 
         display_name = metric_key.replace("_percent", "").upper()
         alerts.append({
             "dedupe_key": f"{HOST_RESOURCE_ALERT_SOURCE}:{metric_key}",
             "severity": severity,
-            "title": rule["title_zh"] if DEFAULT_UI_LANGUAGE == 'zh' else rule["title"],
-            "message": f"{display_name} is {metric_value:.1f}% (warn >= {rule['warn']}%, critical >= {rule['critical']}%)",
+            "title": rule.get("title_zh", "") if DEFAULT_UI_LANGUAGE == 'zh' else rule.get("title", ""),
+            "message": f"{display_name} is {metric_value:.1f}% ({threshold_desc})",
             "metric_key": metric_key,
         })
 

@@ -155,66 +155,35 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
-        {[
-          {
-            label: language === 'zh' ? '可视节点' : 'Visible Nodes',
-            value: topologyStats.nodeCount,
-            tone: 'bg-[#00bceb]/10 text-[#007ea0] border-[#00bceb]/20',
-          },
-          {
-            label: language === 'zh' ? '链路关系' : 'Adjacencies',
-            value: topologyStats.linkCount,
-            tone: 'bg-slate-100 text-slate-700 border-slate-200',
-          },
-          {
-            label: language === 'zh' ? '覆盖站点' : 'Sites',
-            value: topologyStats.siteCount,
-            tone: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-          },
-          {
-            label: language === 'zh' ? '风险节点' : 'At Risk',
-            value: topologyStats.atRiskCount,
-            tone: 'bg-amber-100 text-amber-700 border-amber-200',
-          },
-          {
-            label: language === 'zh' ? '孤立节点' : 'Orphans',
-            value: topologyStats.orphanCount,
-            tone: 'bg-rose-100 text-rose-700 border-rose-200',
-          },
-          {
-            label: language === 'zh' ? '健康链路' : 'Healthy Links',
-            value: topologyLinkStats.up,
-            tone: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-          },
-          {
-            label: language === 'zh' ? '退化链路' : 'Degraded Links',
-            value: topologyLinkStats.degraded,
-            tone: 'bg-amber-100 text-amber-700 border-amber-200',
-          },
-          {
-            label: language === 'zh' ? '中断链路' : 'Down Links',
-            value: topologyLinkStats.down,
-            tone: 'bg-rose-100 text-rose-700 border-rose-200',
-          },
-          {
-            label: language === 'zh' ? '陈旧链路' : 'Stale Links',
-            value: topologyLinkStats.stale,
-            tone: 'bg-sky-100 text-sky-700 border-sky-200',
-          },
-          {
-            label: language === 'zh' ? '多源证据' : 'Multi-source',
-            value: topologyLinkStats.multiSource,
-            tone: 'bg-sky-100 text-sky-700 border-sky-200',
-          },
-        ].map((item) => (
-          <div key={item.label} className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm">
-            <div className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${item.tone}`}>
-              {item.label}
+      <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          {[
+            { label: language === 'zh' ? '节点' : 'Nodes', value: topologyStats.nodeCount, color: 'text-[#007ea0]' },
+            { label: language === 'zh' ? '链路' : 'Links', value: topologyStats.linkCount, color: 'text-slate-700' },
+            { label: language === 'zh' ? '站点' : 'Sites', value: topologyStats.siteCount, color: 'text-emerald-600' },
+            { label: language === 'zh' ? '风险' : 'Risk', value: topologyStats.atRiskCount, color: topologyStats.atRiskCount > 0 ? 'text-amber-600' : 'text-slate-400' },
+            { label: language === 'zh' ? '孤立' : 'Orphans', value: topologyStats.orphanCount, color: topologyStats.orphanCount > 0 ? 'text-rose-600' : 'text-slate-400' },
+          ].map((item) => (
+            <div key={item.label} className="flex items-baseline gap-1.5">
+              <span className={`text-xl font-bold tabular-nums tracking-tight ${item.color}`}>{item.value}</span>
+              <span className="text-[11px] font-medium text-black/35">{item.label}</span>
             </div>
-            <div className="mt-3 text-3xl font-semibold tracking-tight text-[#0f172a]">{item.value}</div>
-          </div>
-        ))}
+          ))}
+          <span className="hidden sm:inline text-black/10">|</span>
+          {[
+            { label: language === 'zh' ? '健康' : 'Up', value: topologyLinkStats.up, dot: 'bg-emerald-400' },
+            { label: language === 'zh' ? '退化' : 'Degraded', value: topologyLinkStats.degraded, dot: 'bg-amber-400' },
+            { label: language === 'zh' ? '中断' : 'Down', value: topologyLinkStats.down, dot: 'bg-rose-400' },
+            { label: language === 'zh' ? '陈旧' : 'Stale', value: topologyLinkStats.stale, dot: 'bg-slate-300' },
+            { label: language === 'zh' ? '多源' : 'Multi', value: topologyLinkStats.multiSource, dot: 'bg-sky-400' },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center gap-1.5">
+              <span className={`h-2 w-2 rounded-full ${item.dot}`} />
+              <span className="text-sm font-semibold tabular-nums text-slate-700">{item.value}</span>
+              <span className="text-[11px] text-black/30">{item.label}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm">

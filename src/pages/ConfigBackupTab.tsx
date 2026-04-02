@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy, ArrowLeftRight } from 'lucide-react';
+import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy, ArrowLeftRight, Trash2 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 
 interface LatestBackup {
@@ -106,7 +106,8 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const handleDownload = (item: LatestBackup) => {
     const a = document.createElement('a');
     a.href = `/api/configs/snapshots/${item.id}/download`;
-    a.download = `${item.hostname}.cfg`;
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    a.download = `${item.hostname}_${ts}.cfg`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -125,6 +126,29 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const closeView = () => {
     setViewSnapshot(null);
     setViewContent('');
+  };
+
+  const [deleteTarget, setDeleteTarget] = useState<LatestBackup | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const token = localStorage.getItem('netops_token');
+      const resp = await fetch(`/api/configs/snapshots/${deleteTarget.id}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!resp.ok) throw new Error('Failed');
+      showToast(zh ? `已删除 ${deleteTarget.hostname} 的备份` : `Deleted backup for ${deleteTarget.hostname}`, 'success');
+      setDeleteTarget(null);
+      void loadLatestBackups();
+    } catch {
+      showToast(zh ? '删除失败' : 'Delete failed', 'error');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const formatTime = (ts: string) => {
@@ -283,6 +307,13 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                           <Download size={14} />
                           {zh ? '下载' : 'Download'}
                         </button>
+                        <button
+                          onClick={() => setDeleteTarget(row)}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent bg-white text-red-400 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-all hover:-translate-y-0.5 hover:bg-red-50 hover:text-red-600"
+                          title={zh ? '删除备份' : 'Delete backup'}
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -403,6 +434,32 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                     <p className="mt-3 text-sm">{zh ? '无配置内容' : 'No content available'}</p>
                   </div>
                 )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirmation */}
+      <AnimatePresence>
+        {deleteTarget && (
+          <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => !deleting && setDeleteTarget(null)}>
+            <motion.div className="bg-white rounded-xl w-full max-w-sm p-5 shadow-2xl border border-black/5"
+              onClick={e => e.stopPropagation()} initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="h-9 w-9 rounded-full bg-red-50 flex items-center justify-center"><Trash2 size={16} className="text-red-500" /></div>
+                <div>
+                  <h3 className="text-sm font-bold text-black/80">{zh ? '删除备份' : 'Delete Backup'}</h3>
+                  <p className="text-[10px] text-black/25 mt-0.5">{deleteTarget.hostname}</p>
+                </div>
+              </div>
+              <p className="text-[11px] text-black/35 mb-4">{zh ? '删除后配置备份文件将被永久清除，是否继续？' : 'The backup file will be permanently removed. Continue?'}</p>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setDeleteTarget(null)} disabled={deleting} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
+                <button onClick={() => void handleDelete()} disabled={deleting} className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700 disabled:opacity-50">
+                  {deleting ? (zh ? '删除中...' : 'Deleting...') : (zh ? '删除' : 'Delete')}
+                </button>
               </div>
             </motion.div>
           </motion.div>

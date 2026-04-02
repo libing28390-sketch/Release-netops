@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import { X } from 'lucide-react';
-import type { Device } from '../types';
+import type { Device, User } from '../types';
 
 interface CustomCommandModalProps {
   language: string;
@@ -23,6 +23,7 @@ interface CustomCommandModalProps {
   approvalStatus: 'idle' | 'sending' | 'sent' | 'verified' | 'error';
   approvalError: string;
   approvalCountdown: number;
+  approverUsers: User[];
   onClose: () => void;
   onSubmit: () => void;
   onCustomCommandChange: (value: string) => void;
@@ -71,6 +72,7 @@ const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
   approvalStatus,
   approvalError,
   approvalCountdown,
+  approverUsers,
   onApproverUsernameChange,
   onApprovalCodeChange,
   onRequestApproval,
@@ -80,6 +82,18 @@ const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
   const needsConfirm = customCommandMode === 'config';
   const canConfirmSubmit = canSubmit && (!needsConfirm || approvalStatus === 'verified');
   const canSendCode = needsConfirm && approverUsername.trim().length >= 1 && configReason.trim().length >= 2 && approvalStatus !== 'sending';
+
+  // Auto-verify when 6 digits entered
+  const prevCodeLen = useRef(0);
+  useEffect(() => {
+    if (approvalCode.length === 6 && prevCodeLen.current < 6 && approvalStatus === 'sent') {
+      onVerifyApproval();
+    }
+    prevCodeLen.current = approvalCode.length;
+  }, [approvalCode, approvalStatus, onVerifyApproval]);
+
+  // Filter to users with Administrator/Operator role for approver dropdown
+  const eligibleApprovers = approverUsers.filter(u => u.role === 'Administrator' || u.role === 'Operator');
 
   return (
     <div
@@ -317,111 +331,142 @@ const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
 
         <div className="px-6 py-4 border-t border-black/6 bg-white space-y-3">
           {needsConfirm && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-3">
-              {/* 标题 */}
-              <div className="flex items-center gap-2">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-amber-500 flex-shrink-0"><path d="M8 1l7 13H1L8 1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M8 6v3M8 11.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                <p className="text-xs font-semibold text-amber-800">
-                  {language === 'zh' ? '配置模式需要审批人授权' : 'Config mode requires approver authorization'}
-                </p>
+            <div className="rounded-2xl border border-black/8 overflow-hidden">
+              {/* 顶栏 */}
+              <div className={`px-4 py-2.5 flex items-center gap-2.5 ${
+                approvalStatus === 'verified'
+                  ? 'bg-gradient-to-r from-emerald-500 to-emerald-600'
+                  : 'bg-gradient-to-r from-[#005b75] to-[#00465a]'
+              }`}>
+                {approvalStatus === 'verified' ? (
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" className="text-white/90 flex-shrink-0"><path d="M3 8.5L6.5 12L13 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                ) : (
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" className="text-white/90 flex-shrink-0"><rect x="2" y="7" width="12" height="8" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M5 7V5a3 3 0 016 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="8" cy="11" r="1" fill="currentColor"/></svg>
+                )}
+                <span className="text-[12px] font-semibold text-white/95">
+                  {approvalStatus === 'verified'
+                    ? (language === 'zh' ? '审批已通过' : 'Approval Granted')
+                    : (language === 'zh' ? '配置变更审批' : 'Config Change Approval')}
+                </span>
                 {approvalStatus === 'verified' && (
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-semibold">
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5L5 9l4.5-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                    {language === 'zh' ? '已授权' : 'Approved'}
+                  <span className="ml-auto text-[11px] text-white/70 font-medium">
+                    {language === 'zh' ? '可以执行配置' : 'Ready to apply'}
                   </span>
                 )}
               </div>
 
               {approvalStatus !== 'verified' && (
-                <>
-                  {/* 第一行：变更原因 */}
-                  <div>
-                    <label className="text-[11px] font-medium text-amber-700 mb-1 block">
-                      {language === 'zh' ? '变更原因' : 'Change Reason'}
-                    </label>
-                    <input
-                      value={configReason}
-                      onChange={e => onConfigReasonChange(e.target.value)}
-                      placeholder={language === 'zh' ? '例如：添加 VLAN 100 接口配置' : 'e.g. Add VLAN 100 interface config'}
-                      className="w-full rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs outline-none focus:border-amber-500 placeholder:text-amber-300"
-                      maxLength={200}
-                    />
-                  </div>
-
-                  {/* 第二行：审批人 + 发送按钮 */}
-                  <div className="flex items-end gap-2">
-                    <div className="flex-1">
-                      <label className="text-[11px] font-medium text-amber-700 mb-1 block">
-                        {language === 'zh' ? '审批人账号' : 'Approver Username'}
+                <div className="px-4 py-3.5 bg-[#f7fbfc] space-y-3">
+                  {/* 变更原因 + 审批人 — 双列 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[11px] font-semibold text-black/50 mb-1 block tracking-wide">
+                        {language === 'zh' ? '变更原因' : 'Change Reason'}
                       </label>
                       <input
-                        value={approverUsername}
-                        onChange={e => onApproverUsernameChange(e.target.value)}
-                        placeholder={language === 'zh' ? '例如：admin' : 'e.g. admin'}
-                        className="w-full rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs outline-none focus:border-amber-500 placeholder:text-amber-300"
-                        disabled={approvalStatus === 'sent' || approvalStatus === 'sending'}
+                        value={configReason}
+                        onChange={e => onConfigReasonChange(e.target.value)}
+                        placeholder={language === 'zh' ? '例如：添加 VLAN 100 接口配置' : 'e.g. Add VLAN 100 interface config'}
+                        className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20 placeholder:text-black/25 transition-all"
+                        maxLength={200}
                       />
                     </div>
-                    <button
-                      onClick={onRequestApproval}
-                      disabled={!canSendCode || (approvalStatus === 'sent' && approvalCountdown > 0)}
-                      className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                        canSendCode && !(approvalStatus === 'sent' && approvalCountdown > 0)
-                          ? 'bg-amber-600 text-white hover:bg-amber-700'
-                          : 'bg-amber-200 text-amber-400 cursor-not-allowed'
-                      }`}
-                    >
-                      {approvalStatus === 'sending'
-                        ? (language === 'zh' ? '发送中...' : 'Sending...')
-                        : approvalStatus === 'sent' && approvalCountdown > 0
-                          ? (language === 'zh' ? `${approvalCountdown}s 后重发` : `Resend in ${approvalCountdown}s`)
-                          : (language === 'zh' ? '发送验证码' : 'Send Code')}
-                    </button>
+                    <div>
+                      <label className="text-[11px] font-semibold text-black/50 mb-1 block tracking-wide">
+                        {language === 'zh' ? '审批人' : 'Approver'}
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={approverUsername}
+                          onChange={e => onApproverUsernameChange(e.target.value)}
+                          title={language === 'zh' ? '选择审批人' : 'Select approver'}
+                          className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20 transition-all appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20d%3D%22M3%205l3%203%203-3%22%20stroke%3D%22%23999%22%20stroke-width%3D%221.5%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[right_10px_center] bg-no-repeat pr-8"
+                          disabled={approvalStatus === 'sent' || approvalStatus === 'sending'}
+                        >
+                          <option value="">{language === 'zh' ? '选择审批人...' : 'Select approver...'}</option>
+                          {eligibleApprovers.map(u => (
+                            <option key={u.id} value={u.username}>
+                              {u.username} ({u.role})
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={onRequestApproval}
+                          disabled={!canSendCode || (approvalStatus === 'sent' && approvalCountdown > 0)}
+                          className={`px-3.5 py-2 rounded-xl text-[11px] font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                            canSendCode && !(approvalStatus === 'sent' && approvalCountdown > 0)
+                              ? 'bg-[#005b75] text-white hover:bg-[#00465a] shadow-sm shadow-[#005b75]/20'
+                              : 'bg-black/8 text-black/30 cursor-not-allowed'
+                          }`}
+                        >
+                          {approvalStatus === 'sending' ? (
+                            <><svg className="animate-spin" width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28" strokeDashoffset="8" strokeLinecap="round" opacity="0.7"/></svg>{language === 'zh' ? '发送中' : 'Sending'}</>
+                          ) : approvalStatus === 'sent' && approvalCountdown > 0 ? (
+                            <>{approvalCountdown}s</>
+                          ) : (
+                            <><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 3h12v10H2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M2 3l6 5 6-5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>{language === 'zh' ? '发送验证码' : 'Send Code'}</>
+                          )}
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* 第三行：验证码输入（仅在发送后显示） */}
+                  {/* 验证码输入区 — 仅发送后展示 */}
                   {(approvalStatus === 'sent' || approvalStatus === 'error') && (
-                    <div className="flex items-end gap-2">
-                      <div className="flex-1">
-                        <label className="text-[11px] font-medium text-amber-700 mb-1 block">
-                          {language === 'zh' ? '输入 6 位验证码' : 'Enter 6-digit code'}
-                        </label>
-                        <input
-                          value={approvalCode}
-                          onChange={e => {
-                            const v = e.target.value.replace(/\D/g, '').slice(0, 6);
-                            onApprovalCodeChange(v);
-                          }}
-                          placeholder="000000"
-                          className="w-full rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs outline-none focus:border-amber-500 placeholder:text-amber-300 tracking-[0.3em] font-mono text-center"
-                          maxLength={6}
-                        />
+                    <div className="rounded-xl border border-dashed border-[#00bceb]/30 bg-[#ecfeff]/50 px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          <label className="text-[11px] font-semibold text-[#0087a9] mb-1.5 block">
+                            {language === 'zh' ? '输入审批人收到的 6 位验证码' : 'Enter the 6-digit code sent to approver'}
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={approvalCode}
+                              onChange={e => {
+                                const v = e.target.value.replace(/\D/g, '').slice(0, 6);
+                                onApprovalCodeChange(v);
+                              }}
+                              placeholder="· · · · · ·"
+                              className="flex-1 rounded-xl border border-[#00bceb]/25 bg-white px-4 py-2 text-sm outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20 placeholder:text-black/20 tracking-[0.5em] font-mono text-center font-semibold transition-all"
+                              maxLength={6}
+                              autoFocus
+                            />
+                            <button
+                              onClick={onVerifyApproval}
+                              disabled={approvalCode.length !== 6}
+                              className={`px-4 py-2 rounded-xl text-[11px] font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                                approvalCode.length === 6
+                                  ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm shadow-emerald-600/20'
+                                  : 'bg-black/8 text-black/30 cursor-not-allowed'
+                              }`}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 8.5L6.5 12L13 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                              {language === 'zh' ? '验证' : 'Verify'}
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                      <button
-                        onClick={onVerifyApproval}
-                        disabled={approvalCode.length !== 6}
-                        className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                          approvalCode.length === 6
-                            ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                            : 'bg-emerald-200 text-emerald-400 cursor-not-allowed'
-                        }`}
-                      >
-                        {language === 'zh' ? '验证' : 'Verify'}
-                      </button>
                     </div>
                   )}
 
-                  {/* 错误提示 */}
+                  {/* 错误信息 */}
                   {approvalError && (
-                    <p className="text-[11px] text-red-600 font-medium">{approvalError}</p>
+                    <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2">
+                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="text-red-500 flex-shrink-0"><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/><path d="M8 5v3.5M8 10.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                      <p className="text-[11px] text-red-700 font-medium">{approvalError}</p>
+                    </div>
                   )}
 
-                  <p className="text-[11px] text-amber-500">
-                    {language === 'zh'
-                      ? '验证码将通过飞书发送给审批人，有效期 5 分钟。'
-                      : 'A verification code will be sent to the approver via Feishu, valid for 5 minutes.'}
-                  </p>
-                </>
+                  {/* 底部信息 */}
+                  <div className="flex items-center gap-1.5 pt-0.5">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-black/25 flex-shrink-0"><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.2"/><path d="M8 5v3.5M8 10.5v.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+                    <p className="text-[11px] text-black/35">
+                      {language === 'zh'
+                        ? '验证码将通过飞书发送给审批人，有效期 5 分钟。'
+                        : 'A verification code will be sent to the approver via Feishu, valid for 5 minutes.'}
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -443,7 +488,7 @@ const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
                 disabled={!canConfirmSubmit}
                 className={`px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-all ${
                   canConfirmSubmit
-                    ? (needsConfirm ? 'bg-amber-600 hover:bg-amber-700 shadow-lg shadow-amber-600/20' : 'bg-[#005b75] hover:bg-[#00465a] shadow-lg shadow-[#005b75]/20')
+                    ? (needsConfirm ? 'bg-[#005b75] hover:bg-[#00465a] shadow-lg shadow-[#005b75]/20' : 'bg-[#005b75] hover:bg-[#00465a] shadow-lg shadow-[#005b75]/20')
                     : 'bg-black/15 text-black/30 cursor-not-allowed'
                 }`}
               >

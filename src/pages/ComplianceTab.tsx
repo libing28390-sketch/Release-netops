@@ -58,7 +58,8 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Compliance');
-    XLSX.writeFile(wb, 'compliance_findings_export.xlsx');
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    XLSX.writeFile(wb, `compliance_findings_${ts}.xlsx`);
   };
 
   return (

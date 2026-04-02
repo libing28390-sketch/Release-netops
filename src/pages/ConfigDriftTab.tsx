@@ -136,7 +136,8 @@ const ConfigDriftTab: React.FC<ConfigDriftTabProps> = ({ language, t }) => {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Config Drift');
-    XLSX.writeFile(wb, 'config_drift_report.xlsx');
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    XLSX.writeFile(wb, `config_drift_report_${ts}.xlsx`);
   };
 
   const filtered = filterStatus === 'all' ? items : items.filter(i => i.drift_status === filterStatus);

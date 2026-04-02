@@ -479,7 +479,8 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
       }));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(addrData), zh ? 'IP地址' : 'Addresses');
     }
-    XLSX.writeFile(wb, zh ? 'IP资源管理导出.xlsx' : 'ipam_export.xlsx');
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    XLSX.writeFile(wb, zh ? `IP资源管理导出_${ts}.xlsx` : `ipam_export_${ts}.xlsx`);
   };
 
   const utilColor = (pct: number) => pct >= 90 ? 'text-red-600' : pct >= 80 ? 'text-orange-500' : pct >= 50 ? 'text-[#00172D]' : 'text-emerald-600';

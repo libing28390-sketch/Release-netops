@@ -473,7 +473,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
                     </button>
                   </div>
                 </div>
-                <div className="p-3 grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 max-h-[190px] overflow-auto content-start">
+                <div className="p-3 grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 max-h-[260px] overflow-auto content-start">
                   {filteredScenarios.slice(0, 16).map((scenario) => {
                     const riskColor = scenario.risk === 'high'
                       ? 'text-red-600 bg-red-50 border-red-200'
@@ -779,34 +779,22 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
                 </div>
               </>
             ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 p-6">
-                <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-black/[0.03]">
-                  <Zap size={24} strokeWidth={1.2} className="text-black/25" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-black/40">{isZh ? '从上方选择场景' : 'Select a scenario above'}</p>
-                  <p className="text-xs text-black/30 mt-1">{isZh ? '选中场景后在此填写变量并执行' : 'Fill in variables and run from this panel'}</p>
-                </div>
-                <div className="w-full max-w-xs grid grid-cols-3 gap-2 mt-2">
+              <div className="flex-1 flex flex-col items-center justify-center text-center gap-3 p-6">
+                <Zap size={20} strokeWidth={1.5} className="text-black/15" />
+                <p className="text-sm text-black/35">{isZh ? '从上方选择一个场景' : 'Select a scenario above'}</p>
+                <div className="flex items-center gap-3 mt-1">
                   {[
-                    { risk: 'low', color: 'emerald', label: isZh ? '低风险' : 'Low Risk' },
-                    { risk: 'medium', color: 'amber', label: isZh ? '中等' : 'Medium' },
-                    { risk: 'high', color: 'red', label: isZh ? '高危' : 'High Risk' },
+                    { risk: 'low', dot: 'bg-emerald-400', label: isZh ? '低风险' : 'Low' },
+                    { risk: 'medium', dot: 'bg-amber-400', label: isZh ? '中等' : 'Med' },
+                    { risk: 'high', dot: 'bg-rose-400', label: isZh ? '高危' : 'High' },
                   ].map((riskMeta) => {
                     const count = filteredScenarios.filter((scenario) => scenario.risk === riskMeta.risk).length;
                     return (
-                      <div key={riskMeta.risk} className={`rounded-xl border p-2.5 text-center ${
-                        riskMeta.color === 'emerald' ? 'border-emerald-100 bg-emerald-50/50' :
-                        riskMeta.color === 'amber' ? 'border-amber-100 bg-amber-50/50' :
-                        'border-red-100 bg-red-50/50'
-                      }`}>
-                        <p className={`text-lg font-bold ${
-                          riskMeta.color === 'emerald' ? 'text-emerald-600' :
-                          riskMeta.color === 'amber' ? 'text-amber-600' :
-                          'text-red-600'
-                        }`}>{count}</p>
-                        <p className="text-[10px] text-black/40">{riskMeta.label}</p>
-                      </div>
+                      <span key={riskMeta.risk} className="flex items-center gap-1.5 text-[11px] text-black/40">
+                        <span className={`h-2 w-2 rounded-full ${riskMeta.dot}`} />
+                        <span className="font-bold tabular-nums text-black/55">{count}</span>
+                        {riskMeta.label}
+                      </span>
                     );
                   })}
                 </div>
@@ -815,7 +803,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
           </div>
         </div>
 
-        <div className="w-[360px] flex-shrink-0 flex flex-col bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
+        <div className="w-[300px] flex-shrink-0 flex flex-col bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-black/5">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
@@ -1028,7 +1016,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
                                 <span className={`text-[10px] font-bold tracking-wide ${group.accentClass}`}>{group.label}</span>
                                 <div className={`flex-1 h-px ${group.accentClass}-line`} />
                               </div>
-                              <div className="grid grid-cols-4 gap-2">
+                              <div className="grid grid-cols-3 gap-2">
                                 {items.map((command, index) => (
                                   <button
                                     key={`${group.key}-${index}`}

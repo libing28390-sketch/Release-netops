@@ -371,7 +371,10 @@ export type AlertRuleMetricType =
   | 'bgp_neighbor_down'
   | 'ospf_neighbor_down'
   | 'bfd_session_down'
-  | 'ping_unreachable';
+  | 'ping_unreachable'
+  | 'host_cpu'
+  | 'host_memory'
+  | 'host_disk';
 
 export type AlertRuleScopeType = 'global' | 'site' | 'device' | 'interface';
 

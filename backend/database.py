@@ -861,6 +861,9 @@ def init_db():
             ('builtin-ospf-neighbor-down', 'OSPF Neighbor Down', 'ospf_neighbor_down', 'critical', None, 1),
             ('builtin-bfd-session-down', 'BFD Session Down', 'bfd_session_down', 'critical', None, 1),
             ('builtin-ping-unreachable', 'Ping Unreachable', 'ping_unreachable', 'critical', None, 1),
+            ('builtin-host-cpu', 'Host CPU Usage High', 'host_cpu', 'major', 75.0, 1),
+            ('builtin-host-memory', 'Host Memory Usage High', 'host_memory', 'major', 80.0, 1),
+            ('builtin-host-disk', 'Host Disk Usage High', 'host_disk', 'major', 80.0, 1),
         ]
 
         def _insert_seed_rule(rule_id, name, metric_type, severity, threshold, enabled, created_at):

@@ -204,7 +204,8 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Alerts');
-    XLSX.writeFile(wb, 'alerts_export.xlsx');
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    XLSX.writeFile(wb, `alerts_export_${ts}.xlsx`);
   };
 
   const handleBatchAck = async (nextStatus: 'acknowledged' | 'investigating') => {

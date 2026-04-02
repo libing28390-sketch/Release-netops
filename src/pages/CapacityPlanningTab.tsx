@@ -110,7 +110,8 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Capacity Warnings');
-    XLSX.writeFile(wb, 'capacity_planning.xlsx');
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    XLSX.writeFile(wb, `capacity_planning_${ts}.xlsx`);
   };
 
   // Combine trend + forecast for chart

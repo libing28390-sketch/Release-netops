@@ -24,7 +24,7 @@ import {
 } from './alertManagementShared';
 
 const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUsername, showToast }) => {
-  const thresholdMetrics = new Set<AlertRuleSettings['metric_type']>(['cpu', 'memory', 'interface_util', 'temperature_high', 'interface_error_rate_high']);
+  const thresholdMetrics = new Set<AlertRuleSettings['metric_type']>(['cpu', 'memory', 'interface_util', 'temperature_high', 'interface_error_rate_high', 'host_cpu', 'host_memory', 'host_disk']);
 
   const defaultSeverityForMetric = (metricType: AlertRuleSettings['metric_type']): AlertRuleSettings['severity'] => {
     switch (metricType) {
@@ -36,6 +36,9 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
       case 'temperature_high':
       case 'interface_error_rate_high':
       case 'interface_flap':
+      case 'host_cpu':
+      case 'host_memory':
+      case 'host_disk':
         return 'major';
       case 'fan_failure':
       case 'power_supply_failure':
@@ -52,9 +55,13 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const defaultThresholdForMetric = (metricType: AlertRuleSettings['metric_type']) => {
     switch (metricType) {
       case 'temperature_high':
+      case 'host_cpu':
         return 75;
       case 'interface_error_rate_high':
         return 2;
+      case 'host_memory':
+      case 'host_disk':
+        return 80;
       default:
         return 90;
     }
@@ -409,6 +416,11 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             <option value="bgp_neighbor_down">{metricTypeLabel('bgp_neighbor_down', language)}</option>
             <option value="ospf_neighbor_down">{metricTypeLabel('ospf_neighbor_down', language)}</option>
             <option value="bfd_session_down">{metricTypeLabel('bfd_session_down', language)}</option>
+            <option value="ping_unreachable">{metricTypeLabel('ping_unreachable', language)}</option>
+            <option disabled>─── {language === 'zh' ? '宿主机' : 'Host'} ───</option>
+            <option value="host_cpu">{metricTypeLabel('host_cpu', language)}</option>
+            <option value="host_memory">{metricTypeLabel('host_memory', language)}</option>
+            <option value="host_disk">{metricTypeLabel('host_disk', language)}</option>
           </select>
           <select
             title={language === 'zh' ? '按启用状态筛选规则' : 'Filter rules by enabled state'}
@@ -661,6 +673,10 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       <option value="ospf_neighbor_down">{metricTypeLabel('ospf_neighbor_down', language)}</option>
                       <option value="bfd_session_down">{metricTypeLabel('bfd_session_down', language)}</option>
                       <option value="ping_unreachable">{metricTypeLabel('ping_unreachable', language)}</option>
+                      <option disabled>─── {language === 'zh' ? '宿主机' : 'Host'} ───</option>
+                      <option value="host_cpu">{metricTypeLabel('host_cpu', language)}</option>
+                      <option value="host_memory">{metricTypeLabel('host_memory', language)}</option>
+                      <option value="host_disk">{metricTypeLabel('host_disk', language)}</option>
                     </select>
                   </label>
                 </div>

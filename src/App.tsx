@@ -1523,7 +1523,8 @@ const App: React.FC = () => {
       });
       
       const link = document.createElement('a');
-      link.download = `network-topology-${new Date().toISOString().slice(0, 10)}.png`;
+      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+      link.download = `network-topology-${ts}.png`;
       link.href = dataUrl;
       link.click();
       showToast('Topology map exported successfully', 'success');
@@ -3764,7 +3765,8 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${device.hostname}_config.txt`;
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    a.download = `${device.hostname}_config_${ts}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -4146,7 +4148,8 @@ const App: React.FC = () => {
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Inventory");
-    XLSX.writeFile(workbook, "network_inventory.xlsx");
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    XLSX.writeFile(workbook, `network_inventory_${ts}.xlsx`);
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -4476,7 +4479,7 @@ const App: React.FC = () => {
 
     const deviceName = sanitizeExportName(quickQueryStructured?.device?.hostname || 'device', 'device');
     const queryName = sanitizeExportName(quickQueryLabel || 'quick-query', 'quick-query');
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
     XLSX.writeFile(workbook, `${deviceName}_${queryName}_${timestamp}.xlsx`);
     showToast(language === 'zh' ? '已导出 Excel' : 'Excel exported', 'success');
   };
@@ -4772,7 +4775,7 @@ const App: React.FC = () => {
         : selectedDevice?.hostname || '';
       const resp = await fetch('/api/config-approval/request', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('netops_token') || ''}` },
         body: JSON.stringify({
           approver_username: approverUsername.trim(),
           config_reason: configReason.trim(),
@@ -4809,7 +4812,7 @@ const App: React.FC = () => {
     try {
       const resp = await fetch('/api/config-approval/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('netops_token') || ''}` },
         body: JSON.stringify({ approval_token: approvalToken, code: approvalCode }),
       });
       const data = await resp.json();
@@ -5933,6 +5936,7 @@ const App: React.FC = () => {
           onApprovalCodeChange={setApprovalCode}
           onRequestApproval={handleRequestApproval}
           onVerifyApproval={handleVerifyApproval}
+          approverUsers={users}
           onScriptVarChange={(key, value) => setScriptVars((prev) => ({ ...prev, [key]: value }))}
           onToggleFavorite={saveFavorite}
           isFavorited={isFavorited}
