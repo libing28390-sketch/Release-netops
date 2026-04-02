@@ -41,7 +41,8 @@ export const navConfig: NavGroup[] = [
     icon: 'Server',
     children: [
       { id: 'assets',   label: '资产管理',     labelEn: 'Assets',               path: '/assets' },
-      { id: 'devices',  label: '设备列表',     labelEn: 'Device List',          path: '/inventory/devices' },
+      { id: 'devices',  label: '网络设备',     labelEn: 'Network Devices',      path: '/inventory/devices' },
+      { id: 'servers',  label: '服务器',       labelEn: 'Servers',              path: '/inventory/servers' },
       { id: 'ipam',     label: 'IP/VLAN管理',  labelEn: 'IP/VLAN Mgmt',        path: '/ipam' },
     ],
   },

@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   ChevronDown, ChevronUp, ChevronRight,
-  MoreHorizontal, Eye, Pencil, Trash2,
-  Wifi, Activity, WifiOff, Terminal, Cable,
+  Pencil, Trash2,
+  Activity, WifiOff, Terminal,
 } from 'lucide-react';
 import type { Device, DeviceConnectionCheckSummary } from '../../types';
 import StatusBadge from './StatusBadge';
@@ -47,59 +47,6 @@ export const DEFAULT_COLUMNS: ColumnVisibility = {
   status: true,
   cpuMem: true,
   actions: true,
-};
-
-/* ─── ActionDropdown ─── */
-const ActionDropdown: React.FC<{
-  language: string;
-  onDetails: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-}> = ({ language, onDetails, onEdit, onDelete }) => {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const items = [
-    { icon: Eye, label: language === 'zh' ? '查看详情' : 'Details', action: onDetails, cls: '' },
-    { icon: Pencil, label: language === 'zh' ? '编辑设备' : 'Edit', action: onEdit, cls: '' },
-    { icon: Trash2, label: language === 'zh' ? '删除' : 'Delete', action: onDelete, cls: 'text-red-500 dark:text-red-400' },
-  ];
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        title={language === 'zh' ? '更多操作' : 'More actions'}
-        className="p-1 rounded-md text-black/30 dark:text-white/30 hover:text-black/60 dark:hover:text-white/60
-          hover:bg-black/5 dark:hover:bg-white/8 transition-all"
-      >
-        <MoreHorizontal size={15} />
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-36 rounded-lg border border-black/8 dark:border-white/12
-          bg-white dark:bg-[#111b2d] shadow-lg shadow-black/10 dark:shadow-black/40 py-1">
-          {items.map(({ icon: Icon, label, action, cls }) => (
-            <button
-              key={label}
-              onClick={() => { setOpen(false); action(); }}
-              className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium
-                hover:bg-black/5 dark:hover:bg-white/8 transition-colors ${cls || 'text-black/65 dark:text-white/65'}`}
-            >
-              <Icon size={13} />
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 };
 
 /* ─── SortHeader ─── */
@@ -239,12 +186,14 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
 
             return (
               <React.Fragment key={device.id}>
-                <tr className={`border-b border-black/[.04] dark:border-white/[.04] transition-colors
+                <tr
+                  onClick={() => onShowDetails(device)}
+                  className={`border-b border-black/[.04] dark:border-white/[.04] transition-colors cursor-pointer
                   hover:bg-black/[.02] dark:hover:bg-white/[.025] group
                   ${selected ? 'bg-[#00bceb]/[.04] dark:bg-[#00bceb]/[.06]' : ''}
                   ${expanded ? 'bg-black/[.015] dark:bg-white/[.02]' : ''}`}>
                   {/* Checkbox */}
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       title={`Select ${device.hostname || device.ip_address}`}
@@ -257,7 +206,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                     />
                   </td>
                   {/* Expand */}
-                  <td className="px-1 py-2">
+                  <td className="px-1 py-2" onClick={e => e.stopPropagation()}>
                     <button onClick={() => toggleExpand(device.id)}
                       className="p-0.5 rounded text-black/25 dark:text-white/20 hover:text-black/50 dark:hover:text-white/50 transition-colors"
                       title={zh ? '展开详情' : 'Expand details'}>
@@ -267,14 +216,14 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   {/* Device (hostname + ip + role) */}
                   {columns.device && (
                     <td className="px-3 py-2">
-                      <button onClick={() => onShowDetails(device)} className="text-left group/name">
-                        <span className="text-[12px] font-semibold text-black/80 dark:text-white/85 group-hover/name:text-[#00bceb] transition-colors">
+                      <div className="text-left">
+                        <span className="text-[12px] font-semibold text-black/80 dark:text-white/85 group-hover:text-[#00bceb] transition-colors">
                           {device.hostname || 'Unknown'}
                         </span>
                         <span className="block text-[10px] font-mono text-black/35 dark:text-white/30 mt-0.5">
                           {device.ip_address || '0.0.0.0'}
                         </span>
-                      </button>
+                      </div>
                       {device.role && (
                         <span className="inline-block mt-0.5 text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded
                           bg-black/[.04] dark:bg-white/6 text-black/30 dark:text-white/30">
@@ -330,7 +279,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   )}
                   {/* Actions */}
                   {columns.actions && (
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
                         <button
                           onClick={() => onManage(device)}
@@ -346,12 +295,22 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                             ${testing ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'bg-violet-500/10 text-violet-600 dark:text-violet-400 hover:bg-violet-500/20'}`}>
                           <Activity size={13} className={testing ? 'animate-pulse' : ''} />
                         </button>
-                        <ActionDropdown
-                          language={language}
-                          onDetails={() => onShowDetails(device)}
-                          onEdit={() => onEdit(device)}
-                          onDelete={() => onDelete(device.id)}
-                        />
+                        <button
+                          onClick={() => onEdit(device)}
+                          title={zh ? '编辑' : 'Edit'}
+                          className="inline-flex items-center justify-center w-7 h-7 rounded-md
+                            text-black/30 dark:text-white/25 hover:bg-black/5 dark:hover:bg-white/8
+                            hover:text-black/60 dark:hover:text-white/60 transition-all">
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          onClick={() => onDelete(device.id)}
+                          title={zh ? '删除' : 'Delete'}
+                          className="inline-flex items-center justify-center w-7 h-7 rounded-md
+                            text-black/30 dark:text-white/25 hover:bg-red-500/10
+                            hover:text-red-500 dark:hover:text-red-400 transition-all">
+                          <Trash2 size={13} />
+                        </button>
                       </div>
                     </td>
                   )}

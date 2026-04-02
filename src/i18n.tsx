@@ -66,9 +66,9 @@ export const translations: Translations = {
   allRightsReserved: { en: 'NetPilot. All rights reserved.', zh: 'NetPilot. 保留所有权利。' },
 
   // Inventory
-  deviceList: { en: 'Device List', zh: '设备列表' },
+  deviceList: { en: 'Network Devices', zh: '网络设备' },
   interfaceMonitoring: { en: 'Interfaces', zh: '接口监控' },
-  deviceInventory: { en: 'Device Inventory', zh: '设备资产' },
+  deviceInventory: { en: 'Network Devices', zh: '网络设备' },
   manageMonitor: { en: 'Manage and monitor your network infrastructure.', zh: '管理和监控您的网络基础设施。' },
   import: { en: 'Import', zh: '导入' },
   export: { en: 'Export', zh: '导出' },

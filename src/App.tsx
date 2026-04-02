@@ -44,6 +44,7 @@ const HistoryTab = lazy(() => import('./pages/HistoryTab'));
 const UsersTab = lazy(() => import('./pages/UsersTab'));
 const TopologyPage = lazy(() => import('./pages/TopologyPage'));
 const InventoryDevicesTab = lazy(() => import('./pages/InventoryDevicesTab'));
+const InventoryServersTab = lazy(() => import('./pages/InventoryServersTab'));
 const AlertDeskTab = lazy(() => import('./pages/AlertDeskTab'));
 const AlertRulesTab = lazy(() => import('./pages/AlertRulesTab'));
 const AlertMaintenanceTab = lazy(() => import('./pages/AlertMaintenanceTab'));
@@ -490,6 +491,7 @@ const App: React.FC = () => {
     if (path === '/alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
     if (path === '/maintenance') return language === 'zh' ? '维护期' : 'Maintenance';
     if (path === '/inventory/devices') return t('deviceList');
+    if (path === '/inventory/servers') return language === 'zh' ? '服务器' : 'Servers';
     if (path === '/inventory/interfaces') return t('interfaceMonitoring');
     if (path === '/ipam') return language === 'zh' ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt';
     if (path === '/assets') return language === 'zh' ? '资产管理' : 'Assets';
@@ -530,6 +532,7 @@ const App: React.FC = () => {
       { path: '/topology', label: zh ? '网络拓扑' : 'Topology', group: zh ? '实时监控' : 'Real-time' },
       { path: '/health', label: zh ? '健康检测' : 'Health Detection', group: zh ? '实时监控' : 'Real-time' },
       { path: '/inventory/devices', label: t('deviceList'), group: zh ? '设备清单' : 'Inventory' },
+      { path: '/inventory/servers', label: zh ? '服务器' : 'Servers', group: zh ? '设备清单' : 'Inventory' },
       { path: '/inventory/interfaces', label: t('interfaceMonitoring'), group: zh ? '设备清单' : 'Inventory' },
       { path: '/ipam', label: zh ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt', group: zh ? '设备清单' : 'Inventory' },
       { path: '/assets', label: zh ? '资产管理' : 'Assets', group: zh ? '设备清单' : 'Inventory' },
@@ -600,6 +603,7 @@ const App: React.FC = () => {
       const map: Record<string, string> = {
         devices: t('deviceList'),
         interfaces: t('interfaceMonitoring'),
+        servers: language === 'zh' ? '服务器' : 'Servers',
       };
       return map[inventorySubPage] || inventorySubPage;
     }
@@ -5445,6 +5449,12 @@ const App: React.FC = () => {
                 onSnmpTest={handleSnmpTest}
                 onSnmpSyncNow={handleSnmpSyncNow}
               />
+            </Suspense>
+          )}
+
+          {activeTab === 'inventory' && inventorySubPage === 'servers' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <InventoryServersTab language={language} t={t} />
             </Suspense>
           )}
 
