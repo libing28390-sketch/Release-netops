@@ -10,6 +10,7 @@ from services.topology_service import (
     execute_discovery_run,
     get_current_links,
     get_discovery_run,
+    get_unmanaged_neighbors,
     list_discovery_runs,
 )
 
@@ -58,7 +59,13 @@ async def trigger_discovery(background_tasks: BackgroundTasks):
 
 @router.get('/topology/links')
 def get_links():
-    return get_current_links()
+    managed_links = get_current_links()
+    unmanaged = get_unmanaged_neighbors()
+    return {
+        'links': managed_links,
+        'unmanaged_nodes': unmanaged.get('unmanaged_nodes', []),
+        'unmanaged_links': unmanaged.get('unmanaged_links', []),
+    }
 
 
 @router.get('/topology/layout')

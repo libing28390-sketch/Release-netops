@@ -472,6 +472,21 @@ async def health_check():
 
     overall = "healthy" if (db_ok and not disk_warn) else "degraded"
 
+    # Device summary for public display (login page)
+    device_total = 0
+    device_online = 0
+    try:
+        conn = get_db_connection()
+        row = conn.execute(
+            "SELECT COUNT(*) as total, SUM(CASE WHEN status='online' THEN 1 ELSE 0 END) as online FROM devices"
+        ).fetchone()
+        if row:
+            device_total = row["total"] or 0
+            device_online = row["online"] or 0
+        conn.close()
+    except Exception:
+        pass
+
     return {
         "status": overall,
         "environment": settings.ENVIRONMENT,
@@ -479,6 +494,8 @@ async def health_check():
         "database": db_status,
         "disk_free_gb": disk_free_gb,
         "disk_warning": disk_warn,
+        "device_total": device_total,
+        "device_online": device_online,
         "resources": {
             "status": resources["status"],
             "cpu_percent": resources["cpu_percent"],

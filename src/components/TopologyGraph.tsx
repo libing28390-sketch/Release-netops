@@ -16,6 +16,7 @@ interface Device {
   health_status?: string;
   open_alert_count?: number;
   critical_open_alerts?: number;
+  is_unmanaged?: boolean;
 }
 
 interface Link {
@@ -30,6 +31,7 @@ interface Link {
   target_hostname?: string;
   operational_state?: 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
   evidence_count?: number;
+  is_unmanaged?: boolean;
 }
 
 interface TopologyGraphProps {
@@ -111,6 +113,9 @@ const getSiteKey = (site?: string) => {
 };
 
 const getNodeTone = (device: Device) => {
+  if (device.is_unmanaged) {
+    return { fill: '#94a3b8', stroke: '#64748b', halo: 'rgba(148,163,184,0.18)' };
+  }
   if (device.status === 'offline') {
     return { fill: '#ef4444', stroke: '#b91c1c', halo: 'rgba(239,68,68,0.18)' };
   }
@@ -283,31 +288,50 @@ const layerMeta = (height: number) => ([
   { key: 'other', label: 'Other', y: height * 0.84, tone: 'rgba(241, 245, 249, 0.92)', stroke: 'rgba(100, 116, 139, 0.24)', accent: '#64748b' },
 ]);
 
-const getOrthogonalRoute = (source: { x: number; y: number }, target: { x: number; y: number }) => {
+const getOrthogonalRoute = (source: { x: number; y: number }, target: { x: number; y: number }, offset = 0) => {
   const deltaX = target.x - source.x;
   const deltaY = target.y - source.y;
+  const dist = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
 
+  // Perpendicular unit vector for offsetting parallel links
+  const perpX = dist > 0 ? -deltaY / dist : 0;
+  const perpY = dist > 0 ? deltaX / dist : 0;
+  const sx = source.x + perpX * offset;
+  const sy = source.y + perpY * offset;
+  const tx = target.x + perpX * offset;
+  const ty = target.y + perpY * offset;
+
+  // Nearly horizontal: straight line
   if (Math.abs(deltaY) <= 14) {
     return {
-      path: `M ${source.x} ${source.y} L ${target.x} ${target.y}`,
-      labelX: source.x + deltaX / 2,
-      labelY: source.y + deltaY / 2,
+      path: `M ${sx} ${sy} L ${tx} ${ty}`,
+      labelX: (sx + tx) / 2,
+      labelY: (sy + ty) / 2,
     };
   }
 
-  if (Math.abs(deltaX) < 48 || Math.abs(deltaY) < 40) {
-    const midX = source.x + deltaX / 2;
+  // Use smooth cubic Bézier curve — visually cleaner than L-shaped paths
+  const midX = (sx + tx) / 2;
+  const midY = (sy + ty) / 2;
+
+  // Control point offset: stronger curve for more vertical links
+  const curvature = Math.min(Math.abs(deltaX) * 0.5, Math.abs(deltaY) * 0.35, 80);
+  const cpOffsetY = Math.abs(deltaX) < 48 ? curvature * 0.6 : curvature;
+
+  // For mostly‐vertical links: S-curve via horizontal mids
+  if (Math.abs(deltaX) < 48) {
+    const cx = midX + (offset !== 0 ? offset * 1.8 : (deltaX >= 0 ? 28 : -28));
     return {
-      path: `M ${source.x} ${source.y} L ${midX} ${source.y} L ${midX} ${target.y} L ${target.x} ${target.y}`,
-      labelX: midX,
-      labelY: source.y + deltaY / 2,
+      path: `M ${sx} ${sy} C ${cx} ${sy + cpOffsetY}, ${cx} ${ty - cpOffsetY}, ${tx} ${ty}`,
+      labelX: cx,
+      labelY: midY,
     };
   }
 
-  const midY = source.y + deltaY / 2;
+  // General case: smooth S-curve passing through mid
   return {
-    path: `M ${source.x} ${source.y} L ${source.x} ${midY} L ${target.x} ${midY} L ${target.x} ${target.y}`,
-    labelX: source.x + deltaX / 2,
+    path: `M ${sx} ${sy} C ${sx} ${sy + cpOffsetY}, ${tx} ${ty - cpOffsetY}, ${tx} ${ty}`,
+    labelX: midX + perpX * offset * 0.5,
     labelY: midY,
   };
 };
@@ -635,12 +659,22 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     if (shouldAutoArrange) {
       layoutSimulation = d3.forceSimulation(nodes as any)
-        .force('link', d3.forceLink(d3Links as any).id((d: any) => d.id).distance((link: any) => (link.inferred ? 140 : 110)).strength((link: any) => (link.inferred ? 0.24 : 0.88)))
-        .force('charge', d3.forceManyBody().strength(-620))
-        .force('center', d3.forceCenter(width / 2, height / 2))
-        .force('collide', d3.forceCollide().radius(50))
-        .force('x', d3.forceX((node: any) => seededPositions[node.id]?.x ?? width / 2).strength(0.24))
-        .force('y', d3.forceY((node: any) => seededPositions[node.id]?.y ?? height / 2).strength(0.3))
+        .force('link', d3.forceLink(d3Links as any).id((d: any) => d.id)
+          .distance((link: any) => {
+            if (link.inferred) return 140;
+            if (link.is_unmanaged) return 100;
+            return 110;
+          })
+          .strength((link: any) => {
+            if (link.inferred) return 0.24;
+            if (link.is_unmanaged) return 0.5;
+            return 0.88;
+          }))
+        .force('charge', d3.forceManyBody().strength((node: any) => (node.is_unmanaged ? -280 : -620)))
+        .force('center', d3.forceCenter(width / 2, height / 2).strength(0.04))
+        .force('collide', d3.forceCollide().radius((node: any) => (node.is_unmanaged ? 36 : 50)))
+        .force('x', d3.forceX((node: any) => seededPositions[node.id]?.x ?? width / 2).strength(0.32))
+        .force('y', d3.forceY((node: any) => seededPositions[node.id]?.y ?? (node.is_unmanaged ? height * 0.92 : height / 2)).strength(0.55))
         .stop();
 
       const settleTicks = Math.max(120, Math.min(260, nodes.length * 18));
@@ -734,6 +768,25 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     const linkLayer = g.append('g').attr('stroke-linecap', 'round');
 
+    // Compute parallel link offsets: when multiple links connect the same device pair,
+    // spread them apart visually so they don't overlap
+    const parallelOffsetMap = new Map<string, number>();
+    const pairCountMap = new Map<string, number>();
+    d3Links.forEach((link: any) => {
+      const pair = [String(link.source_device_id || link.source?.id || ''), String(link.target_device_id || link.target?.id || '')].sort().join('::');
+      pairCountMap.set(pair, (pairCountMap.get(pair) || 0) + 1);
+    });
+    const pairIndexMap = new Map<string, number>();
+    d3Links.forEach((link: any, i: number) => {
+      const pair = [String(link.source_device_id || link.source?.id || ''), String(link.target_device_id || link.target?.id || '')].sort().join('::');
+      const count = pairCountMap.get(pair) || 1;
+      const idx = pairIndexMap.get(pair) || 0;
+      pairIndexMap.set(pair, idx + 1);
+      const spacing = 12;
+      const offset = count <= 1 ? 0 : (idx - (count - 1) / 2) * spacing;
+      parallelOffsetMap.set(String(i), offset);
+    });
+
     const linkHitArea = linkLayer
       .selectAll('path.link-hit')
       .data(d3Links)
@@ -760,21 +813,28 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         const isFocused = selectedNodeId && (item.source.id === selectedNodeId || item.target.id === selectedNodeId);
         if (isSelected) return '#0284c7';
         if (isFocused) return tone.stroke;
-        return item.inferred ? tone.muted : tone.stroke;
+        return item.inferred ? tone.muted : item.is_unmanaged ? 'rgba(148,163,184,0.45)' : tone.stroke;
       })
       .attr('stroke-width', (item: any) => {
         const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
         const isFocused = selectedNodeId && (item.source.id === selectedNodeId || item.target.id === selectedNodeId);
-        if (isSelected) return 4;
-        if (item.operational_state === 'down') return isFocused ? 3.6 : 2.8;
-        return isFocused ? 3 : item.inferred ? 1.5 : 2.2;
+        if (isSelected) return 3;
+        if (item.operational_state === 'down') return isFocused ? 2.8 : 2;
+        if (item.is_unmanaged) return isFocused ? 1.8 : 1.2;
+        return isFocused ? 2.4 : item.inferred ? 1.2 : 1.8;
       })
-      .attr('stroke-dasharray', (item: any) => (item.inferred ? '6,5' : 'none'))
+      .attr('stroke-dasharray', (item: any) => {
+        if (item.inferred) return '6,5';
+        if (item.is_unmanaged) return '4,3';
+        if (item.operational_state === 'down') return '8,4';
+        return 'none';
+      })
+      .attr('stroke-linejoin', 'round')
       .attr('opacity', (item: any) => {
         const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
         if (isSelected) return 1;
-        if (!hasFocus) return 1;
-        return item.source.id === selectedNodeId || item.target.id === selectedNodeId ? 1 : 0.18;
+        if (!hasFocus) return 0.88;
+        return item.source.id === selectedNodeId || item.target.id === selectedNodeId ? 1 : 0.14;
       });
 
     const labelledLinks = d3Links.filter((item: any) => item.source_port || item.target_port);
@@ -785,34 +845,34 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     const linkLabelText = linkLabelGroup
       .append('text')
-      .attr('font-size', 10)
+      .attr('font-size', 9)
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
-      .attr('fill', '#0f172a')
-      .attr('font-weight', 700)
+      .attr('fill', '#334155')
+      .attr('font-weight', 600)
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
       .text((item: any) => {
         const left = abbreviateInterface(item.source_port);
         const right = abbreviateInterface(item.target_port);
-        if (left && right) return `${left} <> ${right}`;
+        if (left && right) return `${left}  ↔  ${right}`;
         return left || right;
       });
 
     const linkLabelBg = linkLabelGroup
       .insert('rect', 'text')
-      .attr('rx', 8)
-      .attr('ry', 8)
+      .attr('rx', 10)
+      .attr('ry', 10)
       .attr('fill', (item: any) => {
         const tone = getLinkTone(item as Link);
         const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
-        return isSelected ? 'rgba(224,242,254,0.96)' : tone.labelFill;
+        return isSelected ? 'rgba(224,242,254,0.98)' : tone.labelFill;
       })
       .attr('stroke', (item: any) => {
         const tone = getLinkTone(item as Link);
         const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
-        return isSelected ? 'rgba(2,132,199,0.55)' : tone.labelStroke;
+        return isSelected ? 'rgba(2,132,199,0.50)' : tone.labelStroke;
       })
-      .attr('stroke-width', 1);
+      .attr('stroke-width', 0.8);
 
     const node = g.append('g')
       .selectAll('g')
@@ -830,12 +890,20 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     node.append('circle')
       .attr('r', 31)
       .attr('fill', (d: any) => {
+        if (d.is_unmanaged) return 'rgba(148,163,184,0.08)';
         if (shouldRenderDeviceGlyph(d as Device)) return 'transparent';
         const tone = getNodeTone(d);
         return selectedNodeId === d.id ? tone.halo : 'rgba(148,163,184,0.08)';
       })
-      .attr('stroke', (d: any) => (shouldRenderDeviceGlyph(d as Device) ? 'none' : (selectedNodeId === d.id ? '#0f172a' : 'rgba(148,163,184,0.18)')))
-      .attr('stroke-width', (d: any) => (shouldRenderDeviceGlyph(d as Device) ? 0 : (selectedNodeId === d.id ? 2.5 : 1)))
+      .attr('stroke', (d: any) => {
+        if (d.is_unmanaged) return 'rgba(100,116,139,0.35)';
+        return shouldRenderDeviceGlyph(d as Device) ? 'none' : (selectedNodeId === d.id ? '#0f172a' : 'rgba(148,163,184,0.18)');
+      })
+      .attr('stroke-width', (d: any) => {
+        if (d.is_unmanaged) return 1.5;
+        return shouldRenderDeviceGlyph(d as Device) ? 0 : (selectedNodeId === d.id ? 2.5 : 1);
+      })
+      .attr('stroke-dasharray', (d: any) => (d.is_unmanaged ? '4,3' : 'none'))
       .attr('opacity', (d: any) => {
         if (!hasFocus) return 1;
         return d.id === selectedNodeId || selectedNeighbors.has(d.id) ? 1 : 0.25;
@@ -848,16 +916,25 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .style('cursor', 'pointer');
 
     node.append("circle")
-      .attr("r", (d: any) => (shouldRenderDeviceGlyph(d as Device) ? 0 : 24))
+      .attr("r", (d: any) => {
+        if (d.is_unmanaged) return 20;
+        return shouldRenderDeviceGlyph(d as Device) ? 0 : 24;
+      })
       .attr('fill', (d: any) => {
+        if (d.is_unmanaged) return 'rgba(241,245,249,0.96)';
         if (shouldRenderDeviceGlyph(d as Device)) return 'rgba(255,255,255,0.96)';
         return getNodeTone(d).fill;
       })
       .attr('stroke', (d: any) => {
+        if (d.is_unmanaged) return '#94a3b8';
         const tone = getNodeTone(d);
-        return hasDeviceIconAsset(d as Device) ? tone.stroke : tone.stroke;
+        return tone.stroke;
       })
-      .attr('stroke-width', (d: any) => (selectedNodeId === d.id ? 3 : 2))
+      .attr('stroke-width', (d: any) => {
+        if (d.is_unmanaged) return 1.5;
+        return selectedNodeId === d.id ? 3 : 2;
+      })
+      .attr('stroke-dasharray', (d: any) => (d.is_unmanaged ? '3,2' : 'none'))
       .style('cursor', 'pointer')
       .attr('opacity', (d: any) => {
         if (!hasFocus) return 1;
@@ -887,7 +964,20 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       });
 
     nodeGlyph.each(function (d: any) {
-      appendDeviceGlyph(d3.select(this), d as Device);
+      if (d.is_unmanaged) {
+        // Render a "?" question mark for unmanaged devices
+        d3.select(this).append('text')
+          .attr('text-anchor', 'middle')
+          .attr('dominant-baseline', 'central')
+          .attr('fill', '#64748b')
+          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+          .attr('font-size', '18px')
+          .attr('font-weight', '700')
+          .attr('pointer-events', 'none')
+          .text('?');
+      } else {
+        appendDeviceGlyph(d3.select(this), d as Device);
+      }
     });
 
     const nodeLabelGroup = node.append('g')
@@ -909,7 +999,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const nodeHostnameText = nodeLabelGroup.append('text')
       .attr('y', 10)
       .attr('text-anchor', 'middle')
-      .attr('fill', '#0f172a')
+      .attr('fill', (d: any) => (d.is_unmanaged ? '#64748b' : '#0f172a'))
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
       .attr('font-size', '12px')
       .attr('font-weight', '700')
@@ -922,7 +1012,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
       .attr('font-size', '10px')
       .attr('font-weight', '600')
-      .text((d: any) => d.site || d.ip_address);
+      .text((d: any) => {
+        if (d.is_unmanaged) return 'Unmanaged';
+        return d.site || d.ip_address;
+      });
 
     const renderGraph = () => {
       nodes.forEach((node: any) => {
@@ -931,14 +1024,14 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       });
 
       link
-        .attr('d', (d: any) => getOrthogonalRoute(d.source, d.target).path);
+        .attr('d', (d: any, i: number) => getOrthogonalRoute(d.source, d.target, parallelOffsetMap.get(String(i)) || 0).path);
 
       linkHitArea
-        .attr('d', (d: any) => getOrthogonalRoute(d.source, d.target).path);
+        .attr('d', (d: any, i: number) => getOrthogonalRoute(d.source, d.target, parallelOffsetMap.get(String(i)) || 0).path);
 
       linkLabelGroup
-        .attr('transform', (d: any) => {
-          const route = getOrthogonalRoute(d.source, d.target);
+        .attr('transform', (d: any, i: number) => {
+          const route = getOrthogonalRoute(d.source, d.target, parallelOffsetMap.get(String(i)) || 0);
           return `translate(${route.labelX},${route.labelY - 6})`;
         })
         .attr('opacity', (item: any) => {

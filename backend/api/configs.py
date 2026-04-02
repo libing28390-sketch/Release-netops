@@ -7,8 +7,9 @@ Stores metadata in SQLite table config_snapshots.
 import os
 import uuid
 import json
+import gzip
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -60,12 +61,12 @@ def _resolve_backup_dir(vendor: str, hostname: str, ts: datetime) -> str:
 
 
 def _write_config_file(vendor: str, hostname: str, ts: datetime, trigger: str, content: str) -> str:
-    """Write config to disk (optionally encrypted); return relative file path from BACKUP_ROOT."""
+    """Write config to disk (gzip compressed, optionally encrypted); return relative file path from BACKUP_ROOT."""
     dir_path = _resolve_backup_dir(vendor, hostname, ts)
     os.makedirs(dir_path, exist_ok=True)
     filename = f"{ts.strftime('%Y%m%d_%H%M%S')}_{trigger}.cfg"
     abs_path = os.path.join(dir_path, filename)
-    data = content.encode('utf-8')
+    data = gzip.compress(content.encode('utf-8'))
     # Encrypt backup files if a valid encryption key is configured
     try:
         from core.crypto import _get_fernet
@@ -89,10 +90,16 @@ def _read_config_file(file_path: str) -> str:
         try:
             from core.crypto import _get_fernet
             f = _get_fernet()
-            return f.decrypt(data[len(b'ENCRYPTED:'):]).decode('utf-8')
+            data = f.decrypt(data[len(b'ENCRYPTED:'):])
         except Exception:
             logger.error(f"Failed to decrypt config file: {file_path}")
             return ''
+    # Detect gzip compression (magic bytes \x1f\x8b)
+    if data[:2] == b'\x1f\x8b':
+        try:
+            data = gzip.decompress(data)
+        except Exception:
+            logger.warning(f"Failed to decompress config file: {file_path}")
     return data.decode('utf-8')
 
 
@@ -123,6 +130,53 @@ def _row_to_dict(row) -> dict:
 # ──────────────────────────────────────────────
 # Endpoints
 # ──────────────────────────────────────────────
+
+@router.get('/configs/devices-with-backups')
+def list_devices_with_backups(
+    search: str = Query(default='', description='Search hostname or IP'),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+):
+    """Return devices that have at least one config snapshot, with backup count and pagination."""
+    conn = get_db_connection()
+    try:
+        where_sql = ''
+        params: list = []
+        if search and search.strip():
+            fuzzy = f"%{search.strip().lower()}%"
+            where_sql = "AND (LOWER(d.hostname) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ?)"
+            params = [fuzzy, fuzzy]
+
+        count_sql = f'''
+            SELECT COUNT(DISTINCT d.id)
+            FROM devices d
+            INNER JOIN config_snapshots cs ON cs.device_id = d.id
+            WHERE 1=1 {where_sql}
+        '''
+        total = conn.execute(count_sql, tuple(params)).fetchone()[0]
+
+        offset = (page - 1) * page_size
+        rows = conn.execute(f'''
+            SELECT d.id, d.hostname, d.ip_address, d.platform, d.status,
+                   COUNT(cs.id) AS backup_count,
+                   MAX(cs.timestamp) AS latest_backup
+            FROM devices d
+            INNER JOIN config_snapshots cs ON cs.device_id = d.id
+            WHERE 1=1 {where_sql}
+            GROUP BY d.id
+            ORDER BY MAX(cs.timestamp) DESC
+            LIMIT ? OFFSET ?
+        ''', tuple([*params, page_size, offset])).fetchall()
+
+        return {
+            'items': [dict(r) for r in rows],
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+        }
+    finally:
+        conn.close()
+
 
 @router.get('/configs/snapshots')
 def list_snapshots(device_id: str = None, hostname: str = None, ip_address: str = None, q: str = None):
@@ -301,7 +355,16 @@ def get_snapshot_content(snap_id: str):
         raise HTTPException(status_code=404, detail='Snapshot not found')
 
     content = _read_config_file(row['file_path'])
-    return {'id': snap_id, 'content': content}
+    return {
+        'id': snap_id,
+        'content': content,
+        'hostname': row['hostname'],
+        'vendor': row['vendor'] or '',
+        'timestamp': row['timestamp'],
+        'trigger': row['trigger'] or '',
+        'device_id': row['device_id'],
+        'size': row['size'] or 0,
+    }
 
 
 @router.get('/configs/snapshots/{snap_id}/download')
@@ -367,21 +430,21 @@ def delete_snapshot(snap_id: str):
 @router.get('/configs/search')
 def search_configs(q: str = '', limit: int = 50):
     """
-    Search ALL config snapshots for a keyword/IP.
-    Returns the latest snapshot per device that matches, with matched lines highlighted.
+    Search latest config snapshots for a keyword.
+    Caps file I/O to avoid excessive reads on large deployments.
     """
     if not q or len(q.strip()) < 2:
         return []
 
     query = q.strip().lower()
+    MAX_FILE_READS = 200  # Cap to avoid excessive disk I/O
+
     conn = get_db_connection()
     try:
-        # Get all devices
         all_devices = conn.execute(
             'SELECT id, hostname, ip_address, platform FROM devices'
         ).fetchall()
 
-        # Get the latest snapshot per device
         latest_snaps = conn.execute('''
             SELECT cs.* FROM config_snapshots cs
             INNER JOIN (
@@ -389,18 +452,24 @@ def search_configs(q: str = '', limit: int = 50):
                 FROM config_snapshots
                 GROUP BY device_id
             ) latest ON cs.device_id = latest.device_id AND cs.timestamp = latest.max_ts
+            ORDER BY cs.timestamp DESC
         ''').fetchall()
     finally:
         conn.close()
 
-    snap_map = {s['device_id']: dict(s) for s in latest_snaps}
     device_map = {d['id']: dict(d) for d in all_devices}
 
     results = []
-    for dev_id, snap in snap_map.items():
-        content = ''
-        if snap.get('file_path'):
-            content = _read_config_file(snap['file_path'])
+    files_read = 0
+    for snap in latest_snaps:
+        if files_read >= MAX_FILE_READS or len(results) >= limit:
+            break
+        snap = dict(snap)
+        if not snap.get('file_path'):
+            continue
+
+        files_read += 1
+        content = _read_config_file(snap['file_path'])
         if not content:
             continue
 
@@ -408,7 +477,6 @@ def search_configs(q: str = '', limit: int = 50):
         matches = []
         for i, line in enumerate(lines):
             if query in line.lower():
-                # Include context: 1 line before and after
                 ctx_start = max(0, i - 1)
                 ctx_end = min(len(lines), i + 2)
                 matches.append({
@@ -419,9 +487,9 @@ def search_configs(q: str = '', limit: int = 50):
         if not matches:
             continue
 
-        dev = device_map.get(dev_id, {})
+        dev = device_map.get(snap['device_id'], {})
         results.append({
-            'device_id': dev_id,
+            'device_id': snap['device_id'],
             'hostname': snap.get('hostname') or dev.get('hostname', ''),
             'ip_address': dev.get('ip_address', ''),
             'platform': dev.get('platform', ''),
@@ -429,10 +497,9 @@ def search_configs(q: str = '', limit: int = 50):
             'snapshot_id': snap['id'],
             'snapshot_time': snap.get('timestamp', ''),
             'total_matches': len(matches),
-            'matches': matches[:30],  # Limit to 30 matched lines per device
+            'matches': matches[:30],
         })
 
-    # Sort by number of matches descending
     results.sort(key=lambda x: x['total_matches'], reverse=True)
     return results[:limit]
 
@@ -490,11 +557,117 @@ def update_schedule(body: ScheduleUpdate):
 
 
 # ──────────────────────────────────────────────
+# Backup retention policy
+# ──────────────────────────────────────────────
+
+RETENTION_KEY = 'backup_retention'
+DEFAULT_RETENTION = {'max_days': 90, 'max_per_device': 30}
+
+
+class RetentionUpdate(BaseModel):
+    max_days: int = 90
+    max_per_device: int = 30
+
+
+def _get_retention_from_db() -> dict:
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT value FROM global_vars WHERE key = ?", (RETENTION_KEY,)
+        ).fetchone()
+        if row:
+            return json.loads(row['value'])
+        return DEFAULT_RETENTION.copy()
+    finally:
+        conn.close()
+
+
+def _save_retention_to_db(cfg: dict):
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO global_vars (id, key, value) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(uuid.uuid4()), RETENTION_KEY, json.dumps(cfg))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@router.get('/configs/retention')
+def get_retention():
+    return _get_retention_from_db()
+
+
+@router.put('/configs/retention')
+def update_retention(body: RetentionUpdate):
+    cfg = {'max_days': body.max_days, 'max_per_device': body.max_per_device}
+    _save_retention_to_db(cfg)
+    return cfg
+
+
+def _cleanup_expired_snapshots():
+    """Delete snapshots that exceed retention policy (by age and per-device count)."""
+    retention = _get_retention_from_db()
+    max_days = retention.get('max_days', 90)
+    max_per_device = retention.get('max_per_device', 30)
+    deleted = 0
+
+    conn = get_db_connection()
+    try:
+        # 1. Delete snapshots older than max_days
+        cutoff = (datetime.now() - timedelta(days=max_days)).isoformat()
+        old = conn.execute(
+            'SELECT id, file_path FROM config_snapshots WHERE timestamp < ?', (cutoff,)
+        ).fetchall()
+        for s in old:
+            _delete_config_file(s['file_path'])
+        if old:
+            conn.execute('DELETE FROM config_snapshots WHERE timestamp < ?', (cutoff,))
+            deleted += len(old)
+
+        # 2. Per-device: keep only max_per_device most recent
+        devs = conn.execute('SELECT DISTINCT device_id FROM config_snapshots').fetchall()
+        for d in devs:
+            excess = conn.execute(
+                '''SELECT id, file_path FROM config_snapshots
+                   WHERE device_id = ? ORDER BY timestamp DESC LIMIT -1 OFFSET ?''',
+                (d['device_id'], max_per_device)
+            ).fetchall()
+            for s in excess:
+                _delete_config_file(s['file_path'])
+            if excess:
+                ids = [s['id'] for s in excess]
+                conn.execute(
+                    f"DELETE FROM config_snapshots WHERE id IN ({','.join('?' * len(ids))})",
+                    ids
+                )
+                deleted += len(excess)
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    if deleted:
+        logger.info(f"[Retention Cleanup] Removed {deleted} expired snapshots")
+
+
+# ──────────────────────────────────────────────
 # Core backup logic — called by scheduler & manual triggers
 # ──────────────────────────────────────────────
 
+MOCK_IPS = {'127.0.0.1', '0.0.0.0', 'localhost'}
+
+
 async def run_scheduled_backup():
-    """Backup all online devices. Called by APScheduler every day at 2AM."""
+    """Backup all online devices. Called by APScheduler.
+    Skips mock/loopback IPs, uses 120s timeout with 1 retry, validates output.
+    Runs retention cleanup afterward.
+    """
+    import httpx
+    import asyncio
+
     logger.info("[Scheduled Backup] Starting daily config backup for all online devices...")
     conn = get_db_connection()
     try:
@@ -506,29 +679,56 @@ async def run_scheduled_backup():
 
     success = 0
     failed = 0
-    for device in devices:
-        try:
-            # Fetch live config via execute API (reuse existing logic)
-            import httpx
-            async with httpx.AsyncClient(timeout=30) as client:
-                # Select backup command based on device platform
-                _platform = (device['platform'] or '').lower()
-                if 'cisco' in _platform or 'arista' in _platform or 'rgos' in _platform:
-                    _backup_cmd = 'show running-config'
-                elif 'juniper' in _platform or 'junos' in _platform:
-                    _backup_cmd = 'show configuration'
-                else:  # huawei, h3c, comware, or unknown — default to VRP command
-                    _backup_cmd = 'display current-configuration'
-                resp = await client.post(
-                    'http://localhost:8003/api/execute',
-                    json={'device_id': device['id'], 'command': _backup_cmd, 'isConfig': False}
-                )
-                if resp.status_code == 200:
-                    output = resp.json().get('output', '')
-                else:
-                    output = '% Backup failed — device unreachable'
+    skipped = 0
 
-            # Determine vendor from platform
+    for device in devices:
+        # Skip mock / loopback devices
+        if (device['ip_address'] or '') in MOCK_IPS:
+            skipped += 1
+            logger.info(f"[Scheduled Backup] ⊘ {device['hostname']} (mock IP, skipped)")
+            continue
+
+        _platform = (device['platform'] or '').lower()
+        if 'cisco' in _platform or 'arista' in _platform or 'rgos' in _platform:
+            _backup_cmd = 'show running-config'
+        elif 'juniper' in _platform or 'junos' in _platform:
+            _backup_cmd = 'show configuration'
+        else:
+            _backup_cmd = 'display current-configuration'
+
+        output = ''
+        backup_ok = False
+        max_retries = 2
+
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    resp = await client.post(
+                        'http://localhost:8003/api/execute',
+                        json={'device_id': device['id'], 'command': _backup_cmd, 'isConfig': False}
+                    )
+                    if resp.status_code == 200:
+                        output = resp.json().get('output', '')
+                    else:
+                        output = ''
+            except Exception as e:
+                logger.warning(f"[Scheduled Backup] Attempt {attempt + 1} failed for {device['hostname']}: {e}")
+                output = ''
+
+            # Validate: reject mock output, error placeholders, or empty
+            if output and not output.startswith('[Mock ') and not output.startswith('% '):
+                backup_ok = True
+                break
+
+            if attempt < max_retries - 1:
+                await asyncio.sleep(5)
+
+        if not backup_ok:
+            failed += 1
+            logger.error(f"[Scheduled Backup] ✗ {device['hostname']}: no valid config obtained")
+            continue
+
+        try:
             platform = (device['platform'] or '').lower()
             if 'cisco' in platform:
                 vendor = 'Cisco'
@@ -563,4 +763,10 @@ async def run_scheduled_backup():
             failed += 1
             logger.error(f"[Scheduled Backup] ✗ {device['hostname']}: {e}")
 
-    logger.info(f"[Scheduled Backup] Done — {success} succeeded, {failed} failed")
+    logger.info(f"[Scheduled Backup] Done — {success} succeeded, {failed} failed, {skipped} skipped")
+
+    # Run retention cleanup after backup
+    try:
+        _cleanup_expired_snapshots()
+    except Exception as e:
+        logger.error(f"[Retention Cleanup] Error: {e}")

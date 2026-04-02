@@ -34,6 +34,7 @@ import SetupWizard from './components/SetupWizard';
 import TestConnectionResultModal from './components/TestConnectionResultModal';
 import SnmpTestResultModal from './components/SnmpTestResultModal';
 import { buildConnectionTestMessage, buildConnectionTestHint, buildConnectionCheckStatus, connectionCheckBadgeMeta, formatConnectionCheckTime } from './utils/connectionHelpers';
+import { useConfigDiff } from './hooks/useConfigDiff';
 
 const MonitoringCenter = lazy(() => import('./components/MonitoringCenter.tsx'));
 const DeviceHealthTab = lazy(() => import('./pages/DeviceHealthTab'));
@@ -304,18 +305,11 @@ const App: React.FC = () => {
   const [configCenterDevice, setConfigCenterDevice] = useState<Device | null>(null);
   const [configViewContent, setConfigViewContent] = useState<string>('');
   const [configViewSnapshot, setConfigViewSnapshot] = useState<ConfigSnapshot | null>(null);
-  const [configDiffLeft, setConfigDiffLeft] = useState<ConfigSnapshot | null>(null);
-  const [configDiffRight, setConfigDiffRight] = useState<ConfigSnapshot | null>(null);
-  const [diffOnlyChanges, setDiffOnlyChanges] = useState(false);
-  const [diffShowFullBoth, setDiffShowFullBoth] = useState(false);
-  const [diffFocusChangeIdx, setDiffFocusChangeIdx] = useState(0);
-  const [diffBlockQuery, setDiffBlockQuery] = useState('');
   const [configSnapshotKeyword, setConfigSnapshotKeyword] = useState('');
   const [configSearchQuery, setConfigSearchQuery] = useState('');
   const [configSearchResults, setConfigSearchResults] = useState<any[]>([]);
   const [configSearchLoading, setConfigSearchLoading] = useState(false);
   const [isTakingSnapshot, setIsTakingSnapshot] = useState(false);
-  const diffLineRefs = React.useRef<Record<number, HTMLDivElement | null>>({});
   // Schedule state
   const [scheduleEnabled, setScheduleEnabled] = useState(true);
   const [scheduleHour, setScheduleHour] = useState(2);
@@ -413,6 +407,8 @@ const App: React.FC = () => {
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [topologyLinks, setTopologyLinks] = useState<any[]>([]);
+  const [topologyUnmanagedNodes, setTopologyUnmanagedNodes] = useState<any[]>([]);
+  const [topologyUnmanagedLinks, setTopologyUnmanagedLinks] = useState<any[]>([]);
   const [topologySearch, setTopologySearch] = useState('');
   const [topologyStatusFilter, setTopologyStatusFilter] = useState<'all' | 'online' | 'offline' | 'pending'>('all');
   const [topologyRoleFilter, setTopologyRoleFilter] = useState('all');
@@ -1412,8 +1408,7 @@ const App: React.FC = () => {
     }
 
     if (page === 'diff') {
-      setConfigDiffLeft(null);
-      setConfigDiffRight(null);
+      handleResetDiffView();
       return;
     }
 
@@ -2023,7 +2018,19 @@ const App: React.FC = () => {
         }
       }
       if (varsRes.ok) setGlobalVars(await varsRes.json());
-      if (linksRes.ok) setTopologyLinks(await linksRes.json());
+      if (linksRes.ok) {
+        const linksPayload = await linksRes.json();
+        if (linksPayload && typeof linksPayload === 'object' && !Array.isArray(linksPayload)) {
+          setTopologyLinks(Array.isArray(linksPayload.links) ? linksPayload.links : []);
+          setTopologyUnmanagedNodes(Array.isArray(linksPayload.unmanaged_nodes) ? linksPayload.unmanaged_nodes : []);
+          setTopologyUnmanagedLinks(Array.isArray(linksPayload.unmanaged_links) ? linksPayload.unmanaged_links : []);
+        } else {
+          // Backward compat: plain array response
+          setTopologyLinks(Array.isArray(linksPayload) ? linksPayload : []);
+          setTopologyUnmanagedNodes([]);
+          setTopologyUnmanagedLinks([]);
+        }
+      }
       setDashLastRefresh(new Date());
     } catch (error) {
       console.error('Failed to fetch shared data:', error);
@@ -2993,14 +3000,44 @@ const App: React.FC = () => {
 
   const topologyVisibleDevices = useMemo(() => {
     const query = topologySearch.trim().toLowerCase();
-    return devices.filter((device) => {
+    const managed = devices.filter((device) => {
       const matchesQuery = !query || [device.hostname, device.ip_address, device.site, device.role].some((value) => String(value || '').toLowerCase().includes(query));
       const matchesStatus = topologyStatusFilter === 'all' || device.status === topologyStatusFilter;
       const matchesRole = topologyRoleFilter === 'all' || String(device.role || '') === topologyRoleFilter;
       const matchesSite = topologySiteFilter === 'all' || String(device.site || '') === topologySiteFilter;
       return matchesQuery && matchesStatus && matchesRole && matchesSite;
     });
-  }, [devices, topologyRoleFilter, topologySearch, topologySiteFilter, topologyStatusFilter]);
+
+    // Include unmanaged neighbors as pseudo-Device entries
+    const managedIds = new Set(managed.map((d) => d.id));
+    const unmanagedPseudo: Device[] = topologyUnmanagedNodes
+      .filter((n: any) => {
+        // Only include if at least one connected managed device is visible
+        const connectedIds: string[] = n.connected_device_ids || [];
+        return connectedIds.some((id: string) => managedIds.has(id));
+      })
+      .filter((n: any) => {
+        if (!query) return true;
+        return [n.hostname, n.ip_address].some((v: string) => String(v || '').toLowerCase().includes(query));
+      })
+      .map((n: any) => ({
+        id: n.id,
+        hostname: n.hostname || 'Unknown',
+        ip_address: n.ip_address || '',
+        platform: '',
+        status: 'unmanaged' as unknown as Device['status'],
+        compliance: 'unknown' as const,
+        sn: '', model: '', version: '',
+        role: '',
+        site: '',
+        uptime: '',
+        connection_method: 'ssh' as const,
+        config_history: [],
+        is_unmanaged: true,
+      } satisfies Device & { is_unmanaged: boolean } as Device));
+
+    return [...managed, ...unmanagedPseudo];
+  }, [devices, topologyRoleFilter, topologySearch, topologySiteFilter, topologyStatusFilter, topologyUnmanagedNodes]);
 
   const topologyVisibleDeviceIds = useMemo(
     () => new Set(topologyVisibleDevices.map((device) => device.id)),
@@ -3012,10 +3049,26 @@ const App: React.FC = () => {
     topologyVisibleDevices.forEach((device) => {
       deviceMap.set(device.id, device);
     });
-    return topologyLinks
+    const managedDecoratedLinks = topologyLinks
       .filter((link) => topologyVisibleDeviceIds.has(link.source_device_id) && topologyVisibleDeviceIds.has(link.target_device_id))
       .map((link) => describeTopologyLink(link, deviceMap.get(link.source_device_id), deviceMap.get(link.target_device_id)));
-  }, [describeTopologyLink, topologyLinks, topologyVisibleDeviceIds, topologyVisibleDevices]);
+
+    // Include unmanaged links where both endpoints are visible
+    const unmanagedDecoratedLinks = topologyUnmanagedLinks
+      .filter((link: any) => topologyVisibleDeviceIds.has(link.source_device_id) && topologyVisibleDeviceIds.has(link.target_device_id))
+      .map((link: any) => ({
+        ...link,
+        operational_state: 'unknown' as TopologyOperationalState,
+        operational_summary: '',
+        evidence_sources: [link.discovery_source || 'lldp'],
+        reverse_confirmed: false,
+        source_interface_snapshot: null,
+        target_interface_snapshot: null,
+        is_unmanaged: true,
+      }));
+
+    return [...managedDecoratedLinks, ...unmanagedDecoratedLinks];
+  }, [describeTopologyLink, topologyLinks, topologyUnmanagedLinks, topologyVisibleDeviceIds, topologyVisibleDevices]);
 
   const topologyDeviceLinks = useMemo(() => {
     if (!selectedTopologyDeviceId) return [] as any[];
@@ -4062,8 +4115,16 @@ const App: React.FC = () => {
           try {
             const linksResponse = await fetch('/api/topology/links');
             if (linksResponse.ok) {
-              const nextLinks = await linksResponse.json();
-              setTopologyLinks(Array.isArray(nextLinks) ? nextLinks : []);
+              const linksPayload = await linksResponse.json();
+              if (linksPayload && typeof linksPayload === 'object' && !Array.isArray(linksPayload)) {
+                setTopologyLinks(Array.isArray(linksPayload.links) ? linksPayload.links : []);
+                setTopologyUnmanagedNodes(Array.isArray(linksPayload.unmanaged_nodes) ? linksPayload.unmanaged_nodes : []);
+                setTopologyUnmanagedLinks(Array.isArray(linksPayload.unmanaged_links) ? linksPayload.unmanaged_links : []);
+              } else {
+                setTopologyLinks(Array.isArray(linksPayload) ? linksPayload : []);
+                setTopologyUnmanagedNodes([]);
+                setTopologyUnmanagedLinks([]);
+              }
             }
           } catch {
             // Ignore delayed refresh errors. The next shared data refresh will reconcile state.
@@ -4172,6 +4233,35 @@ const App: React.FC = () => {
     // Reset input
     e.target.value = '';
   };
+
+  const loadSnapshotContent = async (snap: ConfigSnapshot): Promise<string> => {
+    if (snap.content) return snap.content;
+    try {
+      const resp = await fetch(`/api/configs/snapshots/${snap.id}/content`);
+      if (resp.ok) {
+        const data = await resp.json();
+        return data.content as string;
+      }
+    } catch { /* ignore */ }
+    return '';
+  };
+
+  // ── Config Diff (hook) ──
+  const configDiff = useConfigDiff({
+    language,
+    configSnapshots,
+    loadSnapshotContent,
+    showToast,
+  });
+  const {
+    configDiffLeft, configDiffRight, diffPreSelectedDeviceId,
+    diffOnlyChanges, setDiffOnlyChanges, diffShowFullBoth, setDiffShowFullBoth,
+    diffFocusChangeIdx, diffBlockQuery, setDiffBlockQuery,
+    diffLineRefs, activeDiffLines, activeChangeLineIndexes,
+    renderedDiffLines, fullSideBySideRows, diffChangeBlocks, filteredDiffChangeBlocks,
+    handleResetDiffView, handleNavigateToConfigDiff, handleSelectSnapshotPair,
+    focusDiffChangeAt, jumpToDiff,
+  } = configDiff;
 
   if (authChecking) {
     return (
@@ -4780,10 +4870,18 @@ const App: React.FC = () => {
 
   // ---------- Config Center helpers ----------
   const takeConfigSnapshot = async (device: Device, trigger: ConfigSnapshot['trigger'] = 'manual') => {
+    const MOCK_IPS = ['127.0.0.1', '0.0.0.0', 'localhost'];
+    if (MOCK_IPS.includes(device.ip_address || '')) {
+      showToast(language === 'zh'
+        ? `${device.hostname} (${device.ip_address}) 为模拟设备，无法备份真实配置`
+        : `${device.hostname} (${device.ip_address}) is a mock device, cannot backup real config`, 'error');
+      return null;
+    }
     setIsTakingSnapshot(true);
     try {
       // Step 1: fetch live config from device
-      let configContent = '% No configuration returned';
+      let configContent = '';
+      let fetchSuccess = false;
       try {
         const _p = (device.platform || '').toLowerCase();
         const _cmd = (_p.includes('cisco') || _p.includes('arista') || _p.includes('rgos'))
@@ -4805,12 +4903,22 @@ const App: React.FC = () => {
         });
         if (execResp.ok) {
           const execData = await execResp.json();
-          configContent = execData.output || device.current_config || '% No configuration returned';
-        } else {
-          configContent = device.current_config || '% No configuration available (device offline)';
+          const output = execData.output || '';
+          // Reject mock driver output
+          if (output && !output.startsWith('[Mock ') && !output.startsWith('% ')) {
+            configContent = output;
+            fetchSuccess = true;
+          }
         }
       } catch {
-        configContent = device.current_config || '% Device unreachable';
+        // device unreachable
+      }
+
+      if (!fetchSuccess || !configContent.trim()) {
+        showToast(language === 'zh'
+          ? `${device.hostname} 配置获取失败，无法建立备份`
+          : `Failed to fetch config from ${device.hostname}, backup skipped`, 'error');
+        return null;
       }
 
       // Step 2: persist to backend (filesystem + SQLite)
@@ -4847,46 +4955,6 @@ const App: React.FC = () => {
   };
 
   // Load content for a snapshot (lazy, from backend)
-  const loadSnapshotContent = async (snap: ConfigSnapshot): Promise<string> => {
-    if (snap.content) return snap.content;
-    try {
-      const resp = await fetch(`/api/configs/snapshots/${snap.id}/content`);
-      if (resp.ok) {
-        const data = await resp.json();
-        return data.content as string;
-      }
-    } catch { /* ignore */ }
-    return '';
-  };
-
-  const getSnapshotCompareKey = (snap: ConfigSnapshot | null): string => {
-    if (!snap) return '';
-    const ip = (snap.ip_address || '').trim();
-    if (ip) return `ip:${ip}`;
-    // Fallback for historical records without IP metadata.
-    return `device:${snap.device_id}`;
-  };
-
-  const sameTargetSnapshots = (() => {
-    const leftKey = getSnapshotCompareKey(configDiffLeft);
-    if (!leftKey) return [] as ConfigSnapshot[];
-    return configSnapshots.filter((snap) => {
-      if (configDiffLeft && snap.id === configDiffLeft.id) return false;
-      return getSnapshotCompareKey(snap) === leftKey;
-    });
-  })();
-
-  // Delete a snapshot
-  const deleteSnapshot = async (snapId: string) => {
-    try {
-      const resp = await fetch(`/api/configs/snapshots/${snapId}`, { method: 'DELETE' });
-      if (resp.ok) {
-        setConfigSnapshots(prev => prev.filter(s => s.id !== snapId));
-        showToast(t('snapshotDeleted'), 'success');
-      }
-    } catch { /* ignore */ }
-  };
-
   // Save schedule config
   const saveScheduleConfig = async () => {
     setScheduleLoading(true);
@@ -4901,169 +4969,6 @@ const App: React.FC = () => {
     finally { setScheduleLoading(false); }
   };
 
-
-
-  // Simple unified diff — returns DiffLine[]
-  const computeDiff = (oldText: string, newText: string): DiffLine[] => {
-    const oldLines = oldText.replace(/\r\n/g, '\n').split('\n');
-    const newLines = newText.replace(/\r\n/g, '\n').split('\n');
-    const m = oldLines.length;
-    const n = newLines.length;
-
-    // LCS dynamic programming — O(m*n) correctness, handles any offset
-    const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-    for (let i = 1; i <= m; i++) {
-      for (let j = 1; j <= n; j++) {
-        if (oldLines[i - 1] === newLines[j - 1]) {
-          dp[i][j] = dp[i - 1][j - 1] + 1;
-        } else {
-          dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-        }
-      }
-    }
-
-    // Backtrack through dp table to reconstruct edit operations
-    const ops: Array<{ type: 'context' | 'add' | 'remove'; oi?: number; ni?: number }> = [];
-    let i = m, j = n;
-    while (i > 0 || j > 0) {
-      if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-        ops.push({ type: 'context', oi: i - 1, ni: j - 1 });
-        i--; j--;
-      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-        ops.push({ type: 'add', ni: j - 1 });
-        j--;
-      } else {
-        ops.push({ type: 'remove', oi: i - 1 });
-        i--;
-      }
-    }
-    ops.reverse();
-
-    return ops.map(op => {
-      if (op.type === 'context') return { type: 'context', lineA: op.oi! + 1, lineB: op.ni! + 1, content: oldLines[op.oi!] };
-      if (op.type === 'add')     return { type: 'add',     lineB: op.ni! + 1, content: newLines[op.ni!] };
-      return                            { type: 'remove',  lineA: op.oi! + 1, content: oldLines[op.oi!] };
-    });
-  };
-
-  const activeDiffLines: DiffLine[] = configDiffLeft && configDiffRight
-    ? computeDiff(configDiffLeft.content || '', configDiffRight.content || '')
-    : [];
-
-  const activeChangeLineIndexes: number[] = [];
-  activeDiffLines.forEach((line, idx) => {
-    if (line.type !== 'context') activeChangeLineIndexes.push(idx);
-  });
-
-  const renderedDiffLines = activeDiffLines
-    .map((line, originalIndex) => ({ line, originalIndex }))
-    .filter((entry) => (diffOnlyChanges ? entry.line.type !== 'context' : true));
-
-  const fullSideBySideRows = activeDiffLines
-    .map((line, originalIndex) => {
-      if (line.type === 'context') {
-        return {
-          originalIndex,
-          rowType: 'context' as const,
-          leftLine: line.lineA || null,
-          rightLine: line.lineB || null,
-          leftContent: line.content,
-          rightContent: line.content,
-        };
-      }
-
-      if (line.type === 'remove') {
-        return {
-          originalIndex,
-          rowType: 'remove' as const,
-          leftLine: line.lineA || null,
-          rightLine: null,
-          leftContent: line.content,
-          rightContent: '',
-        };
-      }
-
-      return {
-        originalIndex,
-        rowType: 'add' as const,
-        leftLine: null,
-        rightLine: line.lineB || null,
-        leftContent: '',
-        rightContent: line.content,
-      };
-    })
-    .filter((row) => (diffOnlyChanges ? row.rowType !== 'context' : true));
-
-  const diffChangeBlocks: Array<{ startChangeIdx: number; endChangeIdx: number; label: string; searchText: string }> = [];
-  if (activeChangeLineIndexes.length > 0) {
-    let blockStart = 0;
-    for (let i = 1; i < activeChangeLineIndexes.length; i++) {
-      const prevLineIndex = activeChangeLineIndexes[i - 1];
-      const currentLineIndex = activeChangeLineIndexes[i];
-      if (currentLineIndex - prevLineIndex > 8) {
-        const startLine = activeDiffLines[activeChangeLineIndexes[blockStart]];
-        const labelBase = (startLine?.content || '').trim();
-        const searchText = activeChangeLineIndexes
-          .slice(blockStart, i)
-          .map((idx) => activeDiffLines[idx]?.content || '')
-          .join(' ')
-          .toLowerCase();
-        diffChangeBlocks.push({
-          startChangeIdx: blockStart,
-          endChangeIdx: i - 1,
-          label: labelBase.length > 42 ? `${labelBase.slice(0, 42)}...` : (labelBase || (language === 'zh' ? '变更片段' : 'Change block')),
-          searchText,
-        });
-        blockStart = i;
-      }
-    }
-
-    const lastLine = activeDiffLines[activeChangeLineIndexes[blockStart]];
-    const lastLabelBase = (lastLine?.content || '').trim();
-    const lastSearchText = activeChangeLineIndexes
-      .slice(blockStart)
-      .map((idx) => activeDiffLines[idx]?.content || '')
-      .join(' ')
-      .toLowerCase();
-    diffChangeBlocks.push({
-      startChangeIdx: blockStart,
-      endChangeIdx: activeChangeLineIndexes.length - 1,
-      label: lastLabelBase.length > 42 ? `${lastLabelBase.slice(0, 42)}...` : (lastLabelBase || (language === 'zh' ? '变更片段' : 'Change block')),
-      searchText: lastSearchText,
-    });
-  }
-
-  const q = diffBlockQuery.trim().toLowerCase();
-  const filteredDiffChangeBlocks = q
-    ? diffChangeBlocks.filter((block) => block.label.toLowerCase().includes(q) || block.searchText.includes(q))
-    : diffChangeBlocks;
-
-  const focusDiffChangeAt = (changeIdx: number) => {
-    if (activeChangeLineIndexes.length === 0) return;
-    const safeIdx = Math.max(0, Math.min(changeIdx, activeChangeLineIndexes.length - 1));
-    const targetLine = activeChangeLineIndexes[safeIdx];
-    setDiffFocusChangeIdx(safeIdx);
-    window.requestAnimationFrame(() => {
-      diffLineRefs.current[targetLine]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-  };
-
-  const jumpToDiff = (direction: 'prev' | 'next') => {
-    const total = activeChangeLineIndexes.length;
-    if (total === 0) return;
-
-    setDiffFocusChangeIdx((prev) => {
-      const next = direction === 'next'
-        ? (prev + 1) % total
-        : (prev - 1 + total) % total;
-      const targetLine = activeChangeLineIndexes[next];
-      window.requestAnimationFrame(() => {
-        diffLineRefs.current[targetLine]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      });
-      return next;
-    });
-  };
-
   const handleSearchConfigSnapshots = async (query = configSnapshotKeyword) => {
     await loadConfigSnapshots(configCenterDevice?.id, { requireFilter: true, q: query });
   };
@@ -5074,13 +4979,33 @@ const App: React.FC = () => {
   };
 
   const handleRunBackupAllOnline = async () => {
-    const online = devices.filter((device) => device.status === 'online');
-    showToast(`${t('backupStarted')} (${online.length} ${t('devicesOnline')})`, 'info');
-    for (const device of online) {
-      await takeConfigSnapshot(device, 'manual');
+    const MOCK_IPS = ['127.0.0.1', '0.0.0.0', 'localhost'];
+    const online = devices.filter(
+      (device) => device.status === 'online' && !MOCK_IPS.includes(device.ip_address || '')
+    );
+    if (online.length === 0) {
+      showToast(language === 'zh' ? '没有可备份的真实在线设备' : 'No real online devices to backup', 'error');
+      return;
     }
-    showToast(t('backupComplete'), 'success');
+    showToast(`${t('backupStarted')} (${online.length} ${t('devicesOnline')})`, 'info');
+    let success = 0;
+    let failed = 0;
+    for (const device of online) {
+      const snap = await takeConfigSnapshot(device, 'manual');
+      if (snap) success++;
+      else failed++;
+    }
+    const summary = language === 'zh'
+      ? `备份完成: ${success} 成功${failed > 0 ? `, ${failed} 失败` : ''}`
+      : `Backup complete: ${success} succeeded${failed > 0 ? `, ${failed} failed` : ''}`;
+    showToast(summary, failed > 0 ? 'error' : 'success');
     await loadConfigSnapshots(configCenterDevice?.id, { requireFilter: true });
+  };
+
+  const handleBackupSingleDevice = async (deviceId: string) => {
+    const device = devices.find(d => d.id === deviceId);
+    if (!device) return;
+    await takeConfigSnapshot(device, 'manual');
   };
 
   const handleCopyConfigContent = async () => {
@@ -5103,70 +5028,10 @@ const App: React.FC = () => {
     setConfigViewContent(content);
   };
 
-  const handleOpenConfigDiff = async (snapshot: ConfigSnapshot) => {
-    const content = await loadSnapshotContent(snapshot);
-    setConfigSnapshotKeyword(snapshot.ip_address || snapshot.hostname || '');
-    setConfigDiffLeft({ ...snapshot, content });
-    setConfigDiffRight(null);
-    setDiffFocusChangeIdx(0);
-    setDiffBlockQuery('');
-    diffLineRefs.current = {};
-    navigate('/config/diff');
-  };
-
   const handleCopyConfigSnapshot = async (snapshot: ConfigSnapshot) => {
     const content = await loadSnapshotContent(snapshot);
     const copied = await copyTextWithFallback(content);
     showToast(copied ? t('configCopied') : (language === 'zh' ? '复制失败' : 'Copy failed'), copied ? 'success' : 'error');
-  };
-
-  const handleResetDiffView = () => {
-    setConfigDiffLeft(null);
-    setConfigDiffRight(null);
-    setDiffFocusChangeIdx(0);
-    setDiffBlockQuery('');
-    diffLineRefs.current = {};
-  };
-
-  const handleSelectDiffSnapshot = async (side: 'left' | 'right', snapshotId: string) => {
-    const snapshotList = side === 'right' && configDiffLeft ? sameTargetSnapshots : configSnapshots;
-    const snapshot = snapshotList.find((item) => item.id === snapshotId) || null;
-
-    if (snapshot) {
-      const content = await loadSnapshotContent(snapshot);
-      const selected = { ...snapshot, content };
-
-      if (side === 'left') {
-        setConfigDiffLeft(selected);
-        setDiffFocusChangeIdx(0);
-        setDiffBlockQuery('');
-        diffLineRefs.current = {};
-        if (
-          configDiffRight &&
-          (configDiffRight.id === selected.id || getSnapshotCompareKey(configDiffRight) !== getSnapshotCompareKey(selected))
-        ) {
-          setConfigDiffRight(null);
-        }
-      } else {
-        if (configDiffLeft && getSnapshotCompareKey(selected) !== getSnapshotCompareKey(configDiffLeft)) {
-          setConfigDiffRight(null);
-        } else {
-          setConfigDiffRight(selected);
-        }
-        setDiffFocusChangeIdx(0);
-        diffLineRefs.current = {};
-      }
-      return;
-    }
-
-    if (side === 'left') {
-      handleResetDiffView();
-      return;
-    }
-
-    setConfigDiffRight(null);
-    setDiffFocusChangeIdx(0);
-    diffLineRefs.current = {};
   };
 
   const handleRunScheduledBackupNow = async () => {
@@ -5807,6 +5672,8 @@ const App: React.FC = () => {
                 language={language}
                 isTakingSnapshot={isTakingSnapshot}
                 onBackupAllOnline={handleRunBackupAllOnline}
+                onBackupDevice={handleBackupSingleDevice}
+                onNavigateToDiff={handleNavigateToConfigDiff}
                 showToast={showToast}
               />
             </Suspense>
@@ -5816,12 +5683,6 @@ const App: React.FC = () => {
               <ConfigDiffViewTab
                 t={t}
                 language={language}
-                configSnapshotKeyword={configSnapshotKeyword}
-                configSnapshotsLoading={configSnapshotsLoading}
-                configSnapshots={configSnapshots}
-                configDiffLeft={configDiffLeft}
-                configDiffRight={configDiffRight}
-                sameTargetSnapshots={sameTargetSnapshots}
                 activeDiffLines={activeDiffLines}
                 activeChangeLineIndexes={activeChangeLineIndexes}
                 diffFocusChangeIdx={diffFocusChangeIdx}
@@ -5833,17 +5694,17 @@ const App: React.FC = () => {
                 filteredDiffChangeBlocks={filteredDiffChangeBlocks}
                 diffBlockQuery={diffBlockQuery}
                 diffLineRefs={diffLineRefs}
+                configDiffLeft={configDiffLeft}
+                configDiffRight={configDiffRight}
                 onReset={handleResetDiffView}
-                onConfigSnapshotKeywordChange={setConfigSnapshotKeyword}
-                onSearchSnapshots={handleSearchConfigSnapshots}
-                onClearSearch={handleClearConfigSnapshotSearch}
-                onSelectSnapshot={handleSelectDiffSnapshot}
+                onSelectSnapshotPair={handleSelectSnapshotPair}
                 onJumpToDiff={jumpToDiff}
                 onToggleOnlyChanges={() => setDiffOnlyChanges((prev) => !prev)}
                 onToggleFullBoth={() => setDiffShowFullBoth((prev) => !prev)}
                 onDiffBlockQueryChange={setDiffBlockQuery}
                 onToggleQuickKeyword={(keyword) => setDiffBlockQuery((prev) => (prev.toLowerCase() === keyword ? '' : keyword))}
                 onFocusDiffChangeAt={focusDiffChangeAt}
+                preSelectedDeviceId={diffPreSelectedDeviceId || undefined}
               />
             </Suspense>
           )}

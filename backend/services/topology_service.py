@@ -25,7 +25,7 @@ PLATFORM_MAP = {
     'juniper_junos': 'juniper_junos',
     'arista_eos': 'arista_eos',
     'fortinet_fortios': 'fortinet',
-    'huawei_vrp': 'huawei',
+    'huawei_vrp': 'huawei_vrp',
     'h3c_comware': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
 }
@@ -45,35 +45,47 @@ SCRAPLI_LEGACY_SSH_SKIP_PLATFORMS = frozenset({
 
 DISCOVERY_COMMANDS = {
     'cisco_ios': [
-        ('lldp', 'show lldp neighbors'),
+        ('lldp', 'show lldp neighbors detail'),
         ('cdp', 'show cdp neighbors detail'),
     ],
     'cisco_nxos': [
-        ('lldp', 'show lldp neighbors'),
+        ('lldp', 'show lldp neighbors detail'),
         ('cdp', 'show cdp neighbors detail'),
     ],
     'juniper_junos': [('lldp', 'show lldp neighbors')],
-    'arista_eos': [('lldp', 'show lldp neighbors')],
-    'huawei_vrp': [('lldp', 'display lldp neighbor brief')],
-    'h3c_comware': [('lldp', 'display lldp neighbor brief')],
-    'ruijie_rgos': [('lldp', 'show lldp neighbors')],
+    'arista_eos': [('lldp', 'show lldp neighbors detail')],
+    'huawei_vrp': [('lldp', 'display lldp neighbor')],
+    'h3c_comware': [('lldp', 'display lldp neighbor-information list')],
+    'ruijie_rgos': [('lldp', 'show lldp neighbors detail')],
 }
 
 INTERFACE_ALIASES = [
     ('tengigabitethernet', 'te'),
+    ('tengigeethernet', 'te'),
     ('twentyfivegige', 'tw'),
     ('twentyfivegigabitethernet', 'tw'),
     ('fortygigabitethernet', 'fo'),
+    ('fortyge', 'fo'),
     ('hundredgigabitethernet', 'hu'),
+    ('hundredge', 'hu'),
     ('gigabitethernet', 'gi'),
+    ('gige', 'gi'),
     ('fastethernet', 'fa'),
+    ('xgigabitethernet', 'xge'),            # Huawei 10GE
+    ('25gige', 'tw'),                       # Huawei 25GE
+    ('40gige', 'fo'),                       # Huawei 40GE
+    ('100gige', 'hu'),                      # Huawei 100GE
     ('ethernet', 'eth'),
+    ('eth-trunk', 'eth-trunk'),             # Huawei LAG
+    ('bridge-aggregation', 'bagg'),         # H3C LAG
     ('port-channel', 'po'),
     ('portchannel', 'po'),
     ('bundle-ether', 'be'),
     ('loopback', 'lo'),
     ('management', 'mgmt'),
     ('mgmteth', 'mgmt'),
+    ('meth', 'mgmt'),                       # Huawei management
+    ('vlanif', 'vlanif'),                   # Huawei VLAN interface
     ('vlan', 'vl'),
 ]
 
@@ -123,6 +135,44 @@ def _safe_json(value: Any) -> str:
         return '{}'
 
 
+def _regex_parse_lldp_detail(raw_text: str) -> list[dict[str, str]]:
+    """Regex fallback for 'show lldp neighbors detail' when no TextFSM template exists (e.g. Ruijie)."""
+    entries: list[dict[str, str]] = []
+    # Split by common LLDP detail block separator (20+ dashes or 'LLDP neighbor-information')
+    blocks = re.split(r'-{20,}|(?=LLDP neighbor-information of port)', raw_text)
+    for block in blocks:
+        if not block.strip():
+            continue
+        entry: dict[str, str] = {}
+        # Local interface (Cisco/Ruijie: "Local Intf: Gi0/1", Huawei: "LLDP neighbor-information of port GE0/0/1:")
+        m = re.search(r'(?:Local\s+Int(?:f|erface)\s*:\s*(.+?)$|of port\s+(\S+?)\s*:)', block, re.IGNORECASE | re.MULTILINE)
+        if m:
+            entry['local_interface'] = (m.group(1) or m.group(2) or '').strip()
+        # System Name
+        m = re.search(r'System\s*Name\s*[:\-]\s*(.+?)$', block, re.IGNORECASE | re.MULTILINE)
+        if m:
+            entry['neighbor_name'] = m.group(1).strip()
+        # Chassis ID
+        m = re.search(r'Chassis\s*(?:id|ID)\s*[:\-]\s*(.+?)$', block, re.IGNORECASE | re.MULTILINE)
+        if m:
+            entry['chassis_id'] = m.group(1).strip()
+        # Port ID / Neighbor interface
+        m = re.search(r'Port\s*(?:id|ID)\s*[:\-]\s*(.+?)$', block, re.IGNORECASE | re.MULTILINE)
+        if m:
+            entry['neighbor_interface'] = m.group(1).strip()
+        # Management Address (IP)
+        m = re.search(r'(?:Management\s+Address(?:es)?|Management\s+address\s+value|IP)\s*[:\-]\s*([\d.]+)', block, re.IGNORECASE)
+        if m:
+            entry['mgmt_address'] = m.group(1).strip()
+        # Device ID (CDP style)
+        m = re.search(r'Device\s+ID\s*:\s*(.+?)$', block, re.IGNORECASE | re.MULTILINE)
+        if m and 'neighbor_name' not in entry:
+            entry['neighbor_name'] = m.group(1).strip()
+        if entry.get('local_interface') and (entry.get('neighbor_name') or entry.get('chassis_id')):
+            entries.append(entry)
+    return entries
+
+
 def _extract_first(raw: dict[str, Any], *keys: str) -> str:
     for key in keys:
         value = raw.get(key)
@@ -137,17 +187,18 @@ def _extract_first(raw: dict[str, Any], *keys: str) -> str:
 def _extract_observation_fields(raw: dict[str, Any], protocol: str) -> dict[str, Any]:
     neighbor_name = _extract_first(
         raw,
-        'neighbor',
-        'neighbor_id',
-        'remote_system_name',
-        'destination_host',
-        'dest_host',
-        'device_id',
-        'system_name',
+        'neighbor_name',        # Cisco IOS/NX-OS detail, Arista EOS, Huawei VRP, H3C Comware
+        'neighbor',             # some textfsm variants
+        'neighbor_id',          # older templates
+        'remote_system_name',   # alternative naming
+        'destination_host',     # CDP
+        'dest_host',            # CDP short
+        'device_id',            # CDP
+        'system_name',          # generic
     )
     local_port = _extract_first(
         raw,
-        'local_interface',
+        'local_interface',      # Cisco, Arista, Huawei, H3C, Juniper
         'local_port',
         'local_port_id',
         'local_intf',
@@ -156,20 +207,26 @@ def _extract_observation_fields(raw: dict[str, Any], protocol: str) -> dict[str,
     )
     remote_port = _extract_first(
         raw,
-        'neighbor_interface',
+        'neighbor_interface',   # Cisco detail, Arista, Huawei, H3C Comware
+        'neighbor_port_id',     # Cisco IOS detail (NEIGHBOR_PORT_ID)
         'remote_port',
-        'port_id',
-        'neighbor_port_id',
+        'port_id',              # Juniper/generic
         'remote_interface',
         'port',
     )
     neighbor_ip = _extract_first(
         raw,
-        'management_address',
+        'mgmt_address',         # Cisco IOS/NX-OS detail, Arista EOS detail
+        'management_address',   # alternative
+        'mgmt_ip',              # Huawei VRP
         'neighbor_ip',
         'remote_management_address',
         'ip_address',
-        'mgmt_ip',
+    )
+    chassis_id = _extract_first(
+        raw,
+        'chassis_id',           # Cisco detail, Arista, Juniper, H3C Comware
+        'serial',               # some templates expose serial as chassis-id
     )
     confidence = 0.9 if protocol == 'lldp' else 0.82
     return {
@@ -177,6 +234,7 @@ def _extract_observation_fields(raw: dict[str, Any], protocol: str) -> dict[str,
         'neighbor_name_raw': neighbor_name,
         'neighbor_name_normalized': normalize_hostname(neighbor_name),
         'neighbor_ip_address': neighbor_ip,
+        'neighbor_chassis_id': chassis_id,
         'source_port_raw': local_port,
         'source_port_normalized': normalize_interface_name(local_port),
         'target_port_raw': remote_port,
@@ -195,7 +253,8 @@ def _get_device(device_id: str) -> dict[str, Any] | None:
         conn.close()
 
 
-def _match_target_device(conn, neighbor_name: str, neighbor_ip: str) -> dict[str, Any] | None:
+def _match_target_device(conn, neighbor_name: str, neighbor_ip: str, chassis_id: str = '') -> dict[str, Any] | None:
+    # Phase 1: Exact IP match (highest confidence)
     if neighbor_ip:
         row = conn.execute(
             'SELECT id, hostname, ip_address FROM devices WHERE ip_address = ? COLLATE NOCASE',
@@ -205,10 +264,14 @@ def _match_target_device(conn, neighbor_name: str, neighbor_ip: str) -> dict[str
             return dict(row)
 
     normalized_name = normalize_hostname(neighbor_name)
-    if not normalized_name:
+    normalized_chassis = str(chassis_id or '').strip().lower()
+
+    if not normalized_name and not normalized_chassis:
         return None
 
-    rows = conn.execute('SELECT id, hostname, ip_address, sys_name FROM devices').fetchall()
+    rows = conn.execute('SELECT id, hostname, ip_address, sys_name, sn, model FROM devices').fetchall()
+
+    # Phase 2: Exact hostname / sys_name / serial / chassis-id match
     for row in rows:
         device = dict(row)
         candidates = {
@@ -216,8 +279,29 @@ def _match_target_device(conn, neighbor_name: str, neighbor_ip: str) -> dict[str
             normalize_hostname(device.get('sys_name')),
             normalize_hostname(device.get('ip_address')),
         }
-        if normalized_name in candidates:
+        # Also check serial number as chassis-id (Cisco often advertises this)
+        sn = str(device.get('sn') or '').strip().lower()
+        if sn:
+            candidates.add(sn)
+        candidates.discard('')
+        if normalized_name and normalized_name in candidates:
             return device
+        # Match by chassis_id against serial number (common for Cisco/Arista)
+        if normalized_chassis and sn and normalized_chassis == sn:
+            return device
+
+    # Phase 3: Prefix match — neighbor "core-sw" matches device "core-sw-01.example.com"
+    # This handles LLDP system-name truncation and FQDN variations
+    if len(normalized_name) >= 3:
+        for row in rows:
+            device = dict(row)
+            device_hostname = normalize_hostname(device.get('hostname'))
+            device_sysname = normalize_hostname(device.get('sys_name'))
+            if device_hostname and (device_hostname.startswith(normalized_name) or normalized_name.startswith(device_hostname)):
+                return device
+            if device_sysname and (device_sysname.startswith(normalized_name) or normalized_name.startswith(device_sysname)):
+                return device
+
     return None
 
 
@@ -251,12 +335,19 @@ async def _collect_neighbors_with_scrapli(device: dict[str, Any], commands: list
         for protocol, command in commands:
             response = await client.send_command(command)
             parsed = response.textfsm_parse_output() or []
-            if not isinstance(parsed, list):
-                continue
-            for item in parsed:
-                observation = _extract_observation_fields(item, protocol)
-                if observation['neighbor_name_raw'] and observation['source_port_raw']:
-                    collected.append(observation)
+            if isinstance(parsed, list) and parsed:
+                for item in parsed:
+                    observation = _extract_observation_fields(item, protocol)
+                    if observation['neighbor_name_raw'] and observation['source_port_raw']:
+                        collected.append(observation)
+            elif response.result and response.result.strip():
+                # TextFSM template not found or returned empty — try regex fallback
+                logger.info('Scrapli TextFSM miss for %s %r, using regex fallback', platform, command)
+                regex_entries = _regex_parse_lldp_detail(response.result)
+                for item in regex_entries:
+                    observation = _extract_observation_fields(item, protocol)
+                    if observation['neighbor_name_raw'] and observation['source_port_raw']:
+                        collected.append(observation)
     return collected, 'scrapli'
 
 
@@ -277,12 +368,20 @@ async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list
         with ConnectHandler(**netmiko_device) as client:
             for protocol, command in commands:
                 parsed = client.send_command(command, use_textfsm=True)
-                if not isinstance(parsed, list):
-                    continue
-                for item in parsed:
-                    observation = _extract_observation_fields(item, protocol)
-                    if observation['neighbor_name_raw'] and observation['source_port_raw']:
-                        collected.append(observation)
+                if isinstance(parsed, list):
+                    # TextFSM parsed successfully
+                    for item in parsed:
+                        observation = _extract_observation_fields(item, protocol)
+                        if observation['neighbor_name_raw'] and observation['source_port_raw']:
+                            collected.append(observation)
+                elif isinstance(parsed, str) and parsed.strip():
+                    # TextFSM template not found — try regex fallback for LLDP/CDP detail
+                    logger.info('TextFSM template miss for %s %r, using regex fallback', device_type, command)
+                    regex_entries = _regex_parse_lldp_detail(parsed)
+                    for item in regex_entries:
+                        observation = _extract_observation_fields(item, protocol)
+                        if observation['neighbor_name_raw'] and observation['source_port_raw']:
+                            collected.append(observation)
         return collected
 
     loop = asyncio.get_running_loop()
@@ -322,6 +421,7 @@ def _replace_device_observations(device: dict[str, Any], observations: list[dict
                 conn,
                 observation['neighbor_name_raw'],
                 observation['neighbor_ip_address'],
+                observation.get('neighbor_chassis_id', ''),
             )
             conn.execute(
                 '''
@@ -662,6 +762,100 @@ def get_current_links() -> list[dict[str, Any]]:
             '''
         ).fetchall()
         return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_unmanaged_neighbors() -> dict[str, Any]:
+    """Aggregate topology observations where the neighbor was not matched to any managed device.
+
+    Returns a dict with:
+      - unmanaged_nodes: list of pseudo-device dicts for each unique unmanaged neighbor
+      - unmanaged_links: list of link dicts connecting managed source → unmanaged neighbor
+    """
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            '''
+            SELECT source_device_id, source_hostname, source_port_raw, source_port_normalized,
+                   neighbor_name_raw, neighbor_name_normalized, neighbor_ip_address,
+                   target_port_raw, target_port_normalized, protocol, confidence,
+                   collected_at
+            FROM topology_observations
+            WHERE target_device_id IS NULL
+              AND COALESCE(neighbor_name_raw, '') <> ''
+            ORDER BY source_hostname, neighbor_name_raw
+            '''
+        ).fetchall()
+
+        # Group by unique unmanaged neighbor identity (normalized name + ip)
+        neighbor_groups: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            obs = dict(row)
+            # Build a stable ID for this unmanaged neighbor
+            norm_name = obs.get('neighbor_name_normalized') or ''
+            ip = obs.get('neighbor_ip_address') or ''
+            # Prefer IP-based key for uniqueness, fall back to normalized name
+            neighbor_key = f'unmanaged::{ip}' if ip else f'unmanaged::{norm_name}'
+            neighbor_groups.setdefault(neighbor_key, []).append(obs)
+
+        unmanaged_nodes: list[dict[str, Any]] = []
+        unmanaged_links: list[dict[str, Any]] = []
+
+        for neighbor_key, observations in neighbor_groups.items():
+            first = observations[0]
+            display_name = first.get('neighbor_name_raw') or first.get('neighbor_name_normalized') or 'Unknown'
+            ip_address = first.get('neighbor_ip_address') or ''
+            protocols = sorted({obs.get('protocol') or 'lldp' for obs in observations})
+            max_confidence = max(float(obs.get('confidence') or 0.0) for obs in observations)
+
+            # Pseudo-device node
+            unmanaged_nodes.append({
+                'id': neighbor_key,
+                'hostname': display_name,
+                'ip_address': ip_address,
+                'platform': '',
+                'status': 'unmanaged',
+                'role': '',
+                'site': '',
+                'is_unmanaged': True,
+                'observation_count': len(observations),
+                'protocols': protocols,
+                'connected_device_ids': sorted({obs['source_device_id'] for obs in observations}),
+            })
+
+            # Create a link for each unique source_device + source_port combination
+            seen_link_keys: set[str] = set()
+            for obs in observations:
+                src_port = obs.get('source_port_normalized') or obs.get('source_port_raw') or ''
+                tgt_port = obs.get('target_port_normalized') or obs.get('target_port_raw') or ''
+                lk = f"{obs['source_device_id']}::{src_port}--{neighbor_key}::{tgt_port}"
+                if lk in seen_link_keys:
+                    continue
+                seen_link_keys.add(lk)
+                unmanaged_links.append({
+                    'link_key': lk,
+                    'source_device_id': obs['source_device_id'],
+                    'source_hostname': obs.get('source_hostname') or '',
+                    'source_port': obs.get('source_port_raw') or '',
+                    'source_port_normalized': src_port,
+                    'target_device_id': neighbor_key,
+                    'target_hostname': display_name,
+                    'target_port': obs.get('target_port_raw') or '',
+                    'target_port_normalized': tgt_port,
+                    'discovery_source': obs.get('protocol') or 'lldp',
+                    'confidence': float(obs.get('confidence') or 0.0),
+                    'status': 'up',
+                    'is_inferred': 0,
+                    'is_unmanaged': True,
+                    'evidence_count': 1,
+                    'last_seen': obs.get('collected_at') or '',
+                })
+
+        return {
+            'unmanaged_nodes': unmanaged_nodes,
+            'unmanaged_links': unmanaged_links,
+        }
     finally:
         conn.close()
 

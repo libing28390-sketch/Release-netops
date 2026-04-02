@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy } from 'lucide-react';
+import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy, ArrowLeftRight } from 'lucide-react';
 import Pagination from '../components/Pagination';
 
 interface LatestBackup {
@@ -21,6 +21,8 @@ interface ConfigBackupTabProps {
   language: string;
   isTakingSnapshot: boolean;
   onBackupAllOnline: () => Promise<void> | void;
+  onBackupDevice: (deviceId: string) => Promise<void>;
+  onNavigateToDiff: (deviceId: string) => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -29,6 +31,8 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   language,
   isTakingSnapshot,
   onBackupAllOnline,
+  onBackupDevice,
+  onNavigateToDiff,
   showToast,
 }) => {
   const zh = language === 'zh';
@@ -44,6 +48,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const [viewSnapshot, setViewSnapshot] = useState<LatestBackup | null>(null);
   const [viewContent, setViewContent] = useState('');
   const [viewLoading, setViewLoading] = useState(false);
+  const [backupingDeviceId, setBackupingDeviceId] = useState<string | null>(null);
 
   const loadLatestBackups = useCallback(async () => {
     setLoading(true);
@@ -66,6 +71,21 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   }, [page, pageSize, search, zh, showToast]);
 
   useEffect(() => { void loadLatestBackups(); }, [loadLatestBackups]);
+
+  const handleBackupAllClick = async () => {
+    await onBackupAllOnline();
+    void loadLatestBackups();
+  };
+
+  const handleBackupDeviceClick = async (deviceId: string) => {
+    setBackupingDeviceId(deviceId);
+    try {
+      await onBackupDevice(deviceId);
+      void loadLatestBackups();
+    } finally {
+      setBackupingDeviceId(null);
+    }
+  };
 
   const handleView = async (item: LatestBackup) => {
     setViewSnapshot(item);
@@ -150,7 +170,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => void onBackupAllOnline()}
+              onClick={() => void handleBackupAllClick()}
               disabled={isTakingSnapshot}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#06b6d4] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(6,182,212,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0891b2] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
             >
@@ -230,6 +250,23 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                     <td className="px-5 py-4 align-top text-sm text-black/50 font-mono">{formatSize(row.size)}</td>
                     <td className="px-5 py-4 align-top text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => void handleBackupDeviceClick(row.device_id)}
+                          disabled={backupingDeviceId === row.device_id || isTakingSnapshot}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent bg-white text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2] disabled:opacity-40 disabled:hover:translate-y-0"
+                          title={zh ? '备份此设备' : 'Backup this device'}
+                        >
+                          {backupingDeviceId === row.device_id
+                            ? <RefreshCw size={14} className="animate-spin" />
+                            : <Database size={14} />}
+                        </button>
+                        <button
+                          onClick={() => onNavigateToDiff(row.device_id)}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent bg-white text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2]"
+                          title={zh ? '对比配置变更' : 'Compare config changes'}
+                        >
+                          <ArrowLeftRight size={14} />
+                        </button>
                         <button
                           onClick={() => void handleView(row)}
                           className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2]"
