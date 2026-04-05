@@ -4505,7 +4505,10 @@ const App: React.FC = () => {
       if (operationalCategory) {
         const resp = await fetch(`/api/devices/${device.id}/operational-data`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
+          },
           body: JSON.stringify({ categories: [operationalCategory] }),
         });
         const data = await resp.json();
@@ -4524,7 +4527,10 @@ const App: React.FC = () => {
 
       const resp = await fetch('/api/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
+        },
         body: JSON.stringify({
           device_id: device.id,
           command: commands,

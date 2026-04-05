@@ -383,7 +383,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
         <div className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center">
           <label className="relative min-w-[240px] flex-1">
-            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
+            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
             <input
               value={search}
               onChange={(e) => {
@@ -550,8 +550,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                           : (language === 'zh' ? '点击启用' : 'Click to enable')}
                         onClick={() => void handleToggleEnabled(rule)}
                         disabled={!rule.id || togglingIds.has(rule.id)}
-                        className="group relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                        style={{ backgroundColor: rule.enabled ? '#06b6d4' : '#d1d5db' }}
+                        className={`group relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${rule.enabled ? 'bg-cyan-500' : 'bg-slate-300'}`}
                       >
                         <span
                           className="inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200"

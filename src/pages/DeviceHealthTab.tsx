@@ -3,6 +3,7 @@ import { Activity, AlertTriangle, Filter, ShieldCheck, Server } from 'lucide-rea
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '../types';
 import { sectionHeaderRowClass, severityBadgeClass } from '../components/shared';
+import { useChartTheme } from '../hooks/useChartTheme';
 
 interface DeviceHealthTabProps {
   devices: Device[];
@@ -26,6 +27,7 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
   onShowDetails,
   onOpenMonitoring,
 }) => {
+  const ct = useChartTheme();
   const isZh = language === 'zh';
   const [rangeHours, setRangeHours] = React.useState(24);
   const [history, setHistory] = React.useState<DeviceHealthHistoryResponse | null>(null);
@@ -267,12 +269,12 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
             {historySeries.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={historySeries} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="#dbe4ee" />
-                  <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} tickFormatter={(value) => new Date(String(value)).toLocaleString(isZh ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} minTickGap={28} />
-                  <YAxis yAxisId="score" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} domain={[0, 100]} width={32} />
-                  <YAxis yAxisId="count" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} width={28} />
+                  <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
+                  <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(value) => new Date(String(value)).toLocaleString(isZh ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} minTickGap={28} />
+                  <YAxis yAxisId="score" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} domain={[0, 100]} width={32} />
+                  <YAxis yAxisId="count" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} width={28} />
                   <Tooltip
-                    contentStyle={{ borderRadius: 10, borderColor: '#d9e3ef', boxShadow: '0 12px 28px rgba(15,23,42,0.10)', padding: '10px 12px', background: 'rgba(255,255,255,0.96)' }}
+                    contentStyle={{ borderRadius: 10, borderColor: ct.tooltipBorder, boxShadow: ct.tooltipShadow, padding: '10px 12px', background: ct.tooltipBg, color: ct.tooltipText }}
                     labelFormatter={(value) => new Date(String(value)).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}
                   />
                   <Area yAxisId="score" type="monotone" dataKey="average_score" name={isZh ? '平均健康分' : 'Average score'} stroke="#2563eb" fill="#2563eb1f" strokeWidth={2} isAnimationActive={false} />

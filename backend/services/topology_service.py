@@ -262,7 +262,7 @@ def _match_target_device(conn, neighbor_name: str, neighbor_ip: str, chassis_id:
     # Phase 1: Exact IP match (highest confidence)
     if neighbor_ip:
         row = conn.execute(
-            'SELECT id, hostname, ip_address FROM devices WHERE ip_address = ? COLLATE NOCASE',
+            'SELECT id, hostname, ip_address FROM devices WHERE LOWER(ip_address) = LOWER(?)',
             (neighbor_ip,),
         ).fetchone()
         if row:

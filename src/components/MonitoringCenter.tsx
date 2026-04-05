@@ -10,6 +10,7 @@ import {
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Brush } from 'recharts';
 import type { Device, HostResourceSnapshot, HostResourceHistoryPayload } from '../types';
 import DateTimePicker from './DateTimePicker';
+import { useChartTheme } from '../hooks/useChartTheme';
 
 type MonitorDevice = {
   id?: string;
@@ -235,6 +236,7 @@ const MonitoringPagination: React.FC<{
 };
 
 const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
+  const ct = useChartTheme();
   const navigate = useNavigate();
   const [refreshing, setRefreshing] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -991,10 +993,10 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
             {hostTrendData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={hostTrendData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="#dbe4ee" />
-                  <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} tickFormatter={(value) => formatTs(String(value), hostResourceRange === 1)} minTickGap={28} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} domain={[0, 100]} tickFormatter={(v) => `${v}%`} width={38} />
-                  <Tooltip contentStyle={{ borderRadius: 12, borderColor: '#d9e3ef', boxShadow: '0 12px 28px rgba(15,23,42,0.10)', padding: '10px 14px', background: 'rgba(255,255,255,0.96)' }} formatter={(value: any, name: any) => [`${Math.round(Number(value || 0))}%`, String(name)]} />
+                  <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
+                  <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(value) => formatTs(String(value), hostResourceRange === 1)} minTickGap={28} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} domain={[0, 100]} tickFormatter={(v) => `${v}%`} width={38} />
+                  <Tooltip contentStyle={{ borderRadius: 12, borderColor: ct.tooltipBorder, boxShadow: ct.tooltipShadow, padding: '10px 14px', background: ct.tooltipBg, color: ct.tooltipText }} formatter={(value: any, name: any) => [`${Math.round(Number(value || 0))}%`, String(name)]} />
                   <Area type="monotone" dataKey="cpu_percent" name="CPU" stroke="#2563eb" fill="#2563eb1a" strokeWidth={2} isAnimationActive={false} connectNulls />
                   <Area type="monotone" dataKey="memory_percent" name={language === 'zh' ? '\u5185\u5b58' : 'Memory'} stroke="#ea580c" fill="#ea580c14" strokeWidth={2} isAnimationActive={false} connectNulls />
                   <Area type="monotone" dataKey="disk_percent" name={language === 'zh' ? '\u78c1\u76d8' : 'Disk'} stroke="#16a34a" fill="#16a34a14" strokeWidth={2} isAnimationActive={false} connectNulls />
@@ -1315,7 +1317,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
                   const active = monitorTrendMetrics.includes(m.key);
                   return (
                     <button key={m.key} type="button" onClick={() => toggleTrendMetric(m.key)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-all ${active ? 'border-black/20 bg-black/[0.04] text-[var(--app-text)]' : 'border-transparent text-[var(--muted-text)] hover:bg-black/[0.02]'}`}>
-                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: active ? m.color : '#d1d5db' }} />
+                      <span className={`h-2 w-2 rounded-full ${!active ? 'bg-slate-300' : ''}`} style={active ? { backgroundColor: m.color } : undefined} />
                       {m.short}
                     </button>
                   );
@@ -1345,13 +1347,13 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
                       onMouseUp={() => { if (monitorTrendDragStart == null || monitorTrendDragEnd == null) return; const si = Math.max(0, Math.min(monitorTrendDragStart, monitorTrendDragEnd)); const ei = Math.min(fullEndIndex, Math.max(monitorTrendDragStart, monitorTrendDragEnd)); if (ei - si >= 2) setMonitorTrendZoom({ startIndex: si, endIndex: ei }); setMonitorTrendDragStart(null); setMonitorTrendDragEnd(null); }}
                       onMouseLeave={() => { if (monitorTrendDragStart != null) { setMonitorTrendDragStart(null); setMonitorTrendDragEnd(null); } }}
                     >
-                      <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="#dbe4ee" />
-                      <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} minTickGap={isCompactTrend ? 44 : 30} tickCount={axisTickCount} interval="preserveStartEnd" tickFormatter={(v) => formatPromAxisTimestamp(String(v), displayedRangeMs)} />
-                      {hasThroughputMetric && <YAxis yAxisId="throughput" width={80} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} tickFormatter={(v) => fmtThroughputAxis(Number(v))} />}
-                      {hasCountMetric && <YAxis yAxisId="count" width={68} orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} tickFormatter={(v) => Number(v || 0).toLocaleString()} />}
-                      <Tooltip contentStyle={{ borderRadius: 12, borderColor: '#d9e3ef', boxShadow: '0 12px 28px rgba(15,23,42,0.10)', padding: '10px 14px', background: 'rgba(255,255,255,0.96)' }} labelFormatter={(_, payload: any) => { const row = payload?.[0]?.payload; return row?.ts ? formatPromTimestamp(row.ts) : _; }} formatter={(v: any, _n: any, entry: any) => { const mk = String(entry?.dataKey || ''); const def = trendMetricMap[mk as keyof typeof trendMetricMap]; if (v == null || !Number.isFinite(Number(v))) return [language === 'zh' ? '\u65e0\u6837\u672c' : 'No sample', def?.short || mk]; if (def?.unit === 'throughput') return [fmtThroughputProm(Number(v)), def.short]; return [Number(v).toLocaleString(), def?.short || mk]; }} />
+                      <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
+                      <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} minTickGap={isCompactTrend ? 44 : 30} tickCount={axisTickCount} interval="preserveStartEnd" tickFormatter={(v) => formatPromAxisTimestamp(String(v), displayedRangeMs)} />
+                      {hasThroughputMetric && <YAxis yAxisId="throughput" width={80} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(v) => fmtThroughputAxis(Number(v))} />}
+                      {hasCountMetric && <YAxis yAxisId="count" width={68} orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(v) => Number(v || 0).toLocaleString()} />}
+                      <Tooltip contentStyle={{ borderRadius: 12, borderColor: ct.tooltipBorder, boxShadow: ct.tooltipShadow, padding: '10px 14px', background: ct.tooltipBg, color: ct.tooltipText }} labelFormatter={(_, payload: any) => { const row = payload?.[0]?.payload; return row?.ts ? formatPromTimestamp(row.ts) : _; }} formatter={(v: any, _n: any, entry: any) => { const mk = String(entry?.dataKey || ''); const def = trendMetricMap[mk as keyof typeof trendMetricMap]; if (v == null || !Number.isFinite(Number(v))) return [language === 'zh' ? '\u65e0\u6837\u672c' : 'No sample', def?.short || mk]; if (def?.unit === 'throughput') return [fmtThroughputProm(Number(v)), def.short]; return [Number(v).toLocaleString(), def?.short || mk]; }} />
                       {selectedMetricDefs.map((m) => <Area key={m.key} type="monotone" dataKey={m.key} yAxisId={m.unit === 'throughput' ? 'throughput' : 'count'} stroke={m.color} fill={`${m.color}1f`} strokeWidth={2} name={m.short} isAnimationActive={false} connectNulls={false} />)}
-                      {!zoomActive && chartData.length > 12 && <Brush dataKey="ts" height={24} travellerWidth={10} startIndex={0} endIndex={fullEndIndex} stroke="#94a3b8" fill="#eef2f6" tickFormatter={(v: any) => formatPromAxisTimestamp(String(v), displayedRangeMs)} onChange={(next: any) => { const si = Number(next?.startIndex), ei = Number(next?.endIndex); if (!Number.isInteger(si) || !Number.isInteger(ei)) return; if (si <= 0 && ei >= fullEndIndex) { setMonitorTrendZoom(null); return; } setMonitorTrendZoom({ startIndex: si, endIndex: ei }); }} />}
+                      {!zoomActive && chartData.length > 12 && <Brush dataKey="ts" height={24} travellerWidth={10} startIndex={0} endIndex={fullEndIndex} stroke="#94a3b8" fill={ct.brushFill} tickFormatter={(v: any) => formatPromAxisTimestamp(String(v), displayedRangeMs)} onChange={(next: any) => { const si = Number(next?.startIndex), ei = Number(next?.endIndex); if (!Number.isInteger(si) || !Number.isInteger(ei)) return; if (si <= 0 && ei >= fullEndIndex) { setMonitorTrendZoom(null); return; } setMonitorTrendZoom({ startIndex: si, endIndex: ei }); }} />}
                     </AreaChart>
                   </ResponsiveContainer>
                 ) : monitorSelectedDevice && selectedMetricDefs.length === 0 ? (

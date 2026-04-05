@@ -23,7 +23,7 @@ from typing import Any
 
 from netmiko import ConnectHandler
 
-from database import get_db_connection
+from database import get_db_connection, _SERIAL_PK
 from core.crypto import decrypt_credential
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 from services.operational_data_service import (
@@ -143,9 +143,9 @@ def _ensure_arp_cache_table():
         ''')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_arp_cache_expires ON arp_cache(expires_at)')
         # MAC 变更日志表
-        conn.execute('''
+        conn.execute(f'''
             CREATE TABLE IF NOT EXISTS mac_change_log (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          {_SERIAL_PK},
                 ip          TEXT NOT NULL,
                 old_mac     TEXT NOT NULL,
                 new_mac     TEXT NOT NULL,

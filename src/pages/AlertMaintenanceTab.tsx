@@ -558,7 +558,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
 
         <div className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center">
           <label className="relative min-w-[240px] flex-1">
-            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
+            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
             <input
               value={searchQuery}
               onChange={(e) => {
@@ -955,7 +955,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
 
               <div className="space-y-4 px-6 py-6">
                 <label className="relative block">
-                  <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
+                  <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
                   <input
                     autoFocus
                     value={assetSearchQuery}

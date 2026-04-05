@@ -4,8 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "cleanup": "node cleanup-ports.js",
-    "dev": "npm run cleanup && concurrently \"npm run dev:backend\" \"npm run wait:backend && npm run dev:frontend\"",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run wait:backend && npm run dev:frontend\"",
     "wait:backend": "wait-on tcp:127.0.0.1:8003 --interval 500 --timeout 120000",
     "dev:backend:win": "cross-env NODE_ENV=development PYTHONPATH=backend .venv/Scripts/python.exe backend/main.py",
     "dev:backend:linux": "cross-env NODE_ENV=development PYTHONPATH=backend .venv/bin/python backend/main.py",

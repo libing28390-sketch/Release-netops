@@ -3,6 +3,7 @@ import { TrendingUp, Cpu, HardDrive, Activity, AlertTriangle, RefreshCw, Downloa
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import * as XLSX from 'xlsx';
 import { sectionHeaderRowClass } from '../components/shared';
+import { useChartTheme } from '../hooks/useChartTheme';
 
 interface CapacityOverview {
   total_devices: number;
@@ -44,6 +45,7 @@ interface CapacityPlanningTabProps {
 }
 
 const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }) => {
+  const ct = useChartTheme();
   const [overview, setOverview] = useState<CapacityOverview | null>(null);
   const [warnings, setWarnings] = useState<ForecastWarning[]>([]);
   const [forecastSummary, setForecastSummary] = useState({ total: 0, critical: 0, warning: 0 });
@@ -281,10 +283,10 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
                           <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#94a3b8' }} interval={Math.max(0, Math.floor(chartData.length / 8) - 1)} />
-                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#94a3b8' }} domain={[0, 100]} unit="%" />
-                      <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 25px -5px rgb(0 0 0 / 0.1)', fontSize: 12 }} />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ct.grid} />
+                      <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axis }} interval={Math.max(0, Math.floor(chartData.length / 8) - 1)} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axis }} domain={[0, 100]} unit="%" />
+                      <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: ct.tooltipShadow, fontSize: 12, background: ct.tooltipBg, color: ct.tooltipText }} />
                       <Area type="monotone" dataKey="actual" stroke="#00bceb" strokeWidth={2} fillOpacity={1} fill="url(#colorActual)" name={language === 'zh' ? '实际利用率' : 'Actual'} connectNulls={false} />
                       <Area type="monotone" dataKey="predicted" stroke="#f97316" strokeWidth={2} strokeDasharray="5 3" fillOpacity={1} fill="url(#colorPredicted)" name={language === 'zh' ? '预测' : 'Forecast'} connectNulls={false} />
                       {/* Threshold lines */}

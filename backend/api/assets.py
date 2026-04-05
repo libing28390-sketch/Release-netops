@@ -8,7 +8,7 @@ the single source of truth (Plan-A).
 
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -196,9 +196,10 @@ def asset_summary():
 
         # Warranty expiring within 90 days
         now_str = _utc_now()[:10]
+        future_str = (datetime.now(timezone.utc) + timedelta(days=90)).strftime('%Y-%m-%d')
         warranty_soon = conn.execute(
-            "SELECT COUNT(*) FROM physical_assets WHERE warranty_expiry != '' AND warranty_expiry <= date(?, '+90 days') AND warranty_expiry >= ?",
-            (now_str, now_str)
+            "SELECT COUNT(*) FROM physical_assets WHERE warranty_expiry != '' AND warranty_expiry <= ? AND warranty_expiry >= ?",
+            (future_str, now_str)
         ).fetchone()[0]
 
         # By status

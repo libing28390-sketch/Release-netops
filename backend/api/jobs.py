@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
+from datetime import datetime, timedelta, timezone
 from database import get_db_connection
 
 router = APIRouter()
@@ -20,14 +21,12 @@ def read_jobs(
             where_clauses.append('status = ?')
             params.append(status)
 
-        # SQLite datetime filters are interpreted in UTC.
         if time_range and time_range != 'all':
-            if time_range == '24h':
-                where_clauses.append("datetime(created_at) >= datetime('now', '-1 day')")
-            elif time_range == '7d':
-                where_clauses.append("datetime(created_at) >= datetime('now', '-7 days')")
-            elif time_range == '30d':
-                where_clauses.append("datetime(created_at) >= datetime('now', '-30 days')")
+            _delta = {'24h': 1, '7d': 7, '30d': 30}.get(time_range)
+            if _delta:
+                _cutoff = (datetime.now(timezone.utc) - timedelta(days=_delta)).isoformat()
+                where_clauses.append("created_at >= ?")
+                params.append(_cutoff)
 
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
 

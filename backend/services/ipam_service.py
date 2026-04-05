@@ -9,9 +9,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from database import get_db_connection
+from database import get_db_connection, _USE_PG
 
 logger = logging.getLogger(__name__)
+
+_GROUP_CONCAT = 'STRING_AGG({col}, \',\')' if _USE_PG else 'GROUP_CONCAT({col})'
 
 
 def _utc_now() -> str:
@@ -308,13 +310,13 @@ def detect_conflicts() -> dict:
     """Scan for duplicate IPs across subnets and duplicate MACs."""
     conn = get_db_connection()
     try:
-        dup_ips = conn.execute('''
-            SELECT address, GROUP_CONCAT(subnet_id) as subnets, COUNT(*) as cnt
+        dup_ips = conn.execute(f'''
+            SELECT address, {_GROUP_CONCAT.format(col='subnet_id')} as subnets, COUNT(*) as cnt
             FROM ip_addresses GROUP BY address HAVING cnt > 1
         ''').fetchall()
 
-        dup_macs = conn.execute('''
-            SELECT mac_address, GROUP_CONCAT(address) as addresses, COUNT(*) as cnt
+        dup_macs = conn.execute(f'''
+            SELECT mac_address, {_GROUP_CONCAT.format(col='address')} as addresses, COUNT(*) as cnt
             FROM ip_addresses
             WHERE mac_address != '' AND mac_address IS NOT NULL
             GROUP BY mac_address HAVING cnt > 1

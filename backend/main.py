@@ -33,7 +33,6 @@ from api.setup import router as setup_router
 from api.ip_locator import router as ip_locator_router
 import logging
 import os
-import sqlite3
 import asyncio
 import json
 import uuid
@@ -41,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from urllib import request as urlrequest
 from urllib import error as urlerror
 from ping3 import ping
-from database import DB_PATH, init_db, get_db_connection
+from database import DB_PATH, init_db, get_db_connection, _USE_PG
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -180,14 +179,15 @@ def _daily_db_maintenance():
         conn.commit()
     finally:
         conn.close()
-    # VACUUM requires its own connection (cannot run inside transaction)
-    conn2 = get_db_connection()
-    try:
-        conn2.execute('VACUUM')
-    except Exception as e:
-        logger.warning(f"VACUUM failed: {e}")
-    finally:
-        conn2.close()
+    # VACUUM is SQLite-only maintenance; PG handles this via autovacuum
+    if not _USE_PG:
+        conn2 = get_db_connection()
+        try:
+            conn2.execute('VACUUM')
+        except Exception as e:
+            logger.warning(f"VACUUM failed: {e}")
+        finally:
+            conn2.close()
     logger.info("[Maintenance] Daily DB maintenance completed")
 
 def reschedule_backup(cfg: dict):
@@ -322,7 +322,7 @@ def _run_telemetry_maintenance():
     recent_window = (now - timedelta(hours=2)).replace(microsecond=0).isoformat()
 
     _db_quick('''
-        INSERT OR REPLACE INTO interface_telemetry_1m (
+        INSERT INTO interface_telemetry_1m (
             ts_minute, device_id, interface_name, samples,
             avg_in_bps, max_in_bps, avg_out_bps, max_out_bps,
             avg_bw_in_pct, max_bw_in_pct, avg_bw_out_pct, max_bw_out_pct,
@@ -349,6 +349,14 @@ def _run_telemetry_maintenance():
         FROM interface_telemetry_raw
         WHERE ts >= ?
         GROUP BY ts_minute, device_id, interface_name
+        ON CONFLICT (ts_minute, device_id, interface_name) DO UPDATE SET
+          samples=excluded.samples,
+          avg_in_bps=excluded.avg_in_bps, max_in_bps=excluded.max_in_bps,
+          avg_out_bps=excluded.avg_out_bps, max_out_bps=excluded.max_out_bps,
+          avg_bw_in_pct=excluded.avg_bw_in_pct, max_bw_in_pct=excluded.max_bw_in_pct,
+          avg_bw_out_pct=excluded.avg_bw_out_pct, max_bw_out_pct=excluded.max_bw_out_pct,
+          in_pkts_sum=excluded.in_pkts_sum, out_pkts_sum=excluded.out_pkts_sum,
+          err_delta_sum=excluded.err_delta_sum, discard_delta_sum=excluded.discard_delta_sum
     ''', (recent_window,))
 
     _db_quick('DELETE FROM interface_telemetry_raw WHERE ts < ?', (raw_cutoff,))

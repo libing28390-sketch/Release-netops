@@ -24,6 +24,7 @@ import type {
   DeviceHealthTrendResponse,
 } from '../types';
 import { connectionCheckBadgeMeta, formatConnectionCheckTime } from '../utils/connectionHelpers';
+import { useChartTheme } from '../hooks/useChartTheme';
 
 interface DeviceOperationalCategory {
   key: string;
@@ -111,6 +112,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   snmpSyncingId,
   onGoToAutomation,
 }) => {
+  const ct = useChartTheme();
   const deviceTrendInsights = useMemo(() => {
     const series = deviceHealthTrend?.series || [];
     if (series.length === 0) {
@@ -332,19 +334,19 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                     {deviceHealthTrend?.series?.length ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <AreaChart data={deviceHealthTrend.series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="#dbe4ee" />
+                          <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
                           <XAxis
                             dataKey="ts"
                             axisLine={false}
                             tickLine={false}
-                            tick={{ fontSize: 11, fill: '#60748a' }}
+                            tick={{ fontSize: 11, fill: ct.axisAlt }}
                             tickFormatter={(value) => new Date(String(value)).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
                             minTickGap={28}
                           />
-                          <YAxis yAxisId="score" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#60748a' }} domain={[0, 100]} width={32} />
-                          <YAxis yAxisId="alerts" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#60748a' }} width={28} />
+                          <YAxis yAxisId="score" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: ct.axisAlt }} domain={[0, 100]} width={32} />
+                          <YAxis yAxisId="alerts" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: ct.axisAlt }} width={28} />
                           <Tooltip
-                            contentStyle={{ borderRadius: 14, borderColor: '#d9e3ef', boxShadow: '0 18px 38px rgba(15,23,42,0.12)', padding: '14px 16px', background: 'rgba(255,255,255,0.96)' }}
+                            contentStyle={{ borderRadius: 14, borderColor: ct.tooltipBorder, boxShadow: ct.tooltipShadow, padding: '14px 16px', background: ct.tooltipBg, color: ct.tooltipText }}
                             labelFormatter={(value) => new Date(String(value)).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}
                           />
                           <Area yAxisId="score" type="monotone" dataKey="health_score" name={language === 'zh' ? '健康分' : 'Health score'} stroke="#2563eb" fill="#2563eb1f" strokeWidth={2.1} isAnimationActive={false} />

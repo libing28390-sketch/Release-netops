@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 
@@ -102,7 +103,7 @@ def save_topology_layout(request: Request, payload: dict = Body(...)):
 
     conn = get_db_connection()
     try:
-        updated_at = conn.execute("SELECT datetime('now')").fetchone()[0]
+        updated_at = datetime.now(timezone.utc).isoformat()
         conn.execute(
             '''
             INSERT INTO topology_layouts (user_id, layout_json, updated_at)

@@ -4,6 +4,7 @@ import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, Cart
 import * as XLSX from 'xlsx';
 import type { Device, Job, ComplianceOverview } from '../types';
 import { sectionHeaderRowClass } from '../components/shared';
+import { useChartTheme } from '../hooks/useChartTheme';
 
 interface AlertSummary {
   open_count: number;
@@ -30,6 +31,7 @@ const REFRESH_INTERVAL = 30_000; // 30s
 const ReportsTab: React.FC<ReportsTabProps> = ({
   devices, jobs, complianceOverview, platformData, language, t,
 }) => {
+  const ct = useChartTheme();
   const [alertSummary, setAlertSummary] = useState<AlertSummary | null>(null);
   const [reportRange, setReportRange] = useState<'7d' | '30d'>('7d');
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -236,10 +238,10 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
           <div className="h-[240px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={jobTrend} barGap={2}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} dy={8} interval={rangeDays > 7 ? Math.floor(rangeDays / 7) - 1 : 0} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} allowDecimals={false} />
-                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 25px -5px rgb(0 0 0 / 0.1)', padding: '10px', fontSize: '12px' }} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ct.grid} />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axis, fontWeight: 600 }} dy={8} interval={rangeDays > 7 ? Math.floor(rangeDays / 7) - 1 : 0} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axis, fontWeight: 600 }} allowDecimals={false} />
+                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: ct.tooltipShadow, padding: '10px', fontSize: '12px', background: ct.tooltipBg, color: ct.tooltipText }} />
                 <Bar dataKey="success" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={32} />
                 <Bar dataKey="failed" fill="#f87171" radius={[4, 4, 0, 0]} maxBarSize={32} />
               </BarChart>
@@ -260,7 +262,7 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip />
+                <Tooltip contentStyle={{ background: ct.tooltipBg, color: ct.tooltipText, borderColor: ct.tooltipBorder, borderRadius: 12, boxShadow: ct.tooltipShadow }} />
               </PieChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
@@ -300,10 +302,10 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
                     <stop offset="95%" stopColor="#00bceb" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} dy={8} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} domain={[0, 100]} />
-                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 25px -5px rgb(0 0 0 / 0.1)', padding: '10px' }} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ct.grid} />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axis, fontWeight: 600 }} dy={8} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axis, fontWeight: 600 }} domain={[0, 100]} />
+                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: ct.tooltipShadow, padding: '10px', background: ct.tooltipBg, color: ct.tooltipText }} />
                 <Area type="monotone" dataKey="rate" stroke="#00bceb" strokeWidth={2.5} fillOpacity={1} fill="url(#colorRateReport)" />
               </AreaChart>
             </ResponsiveContainer>

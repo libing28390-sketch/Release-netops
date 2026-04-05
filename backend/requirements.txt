@@ -22,3 +22,4 @@ bcrypt
 cryptography
 slowapi
 psutil
+psycopg2-binary

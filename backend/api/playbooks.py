@@ -3151,10 +3151,16 @@ async def _save_device_result_to_db(
     try:
         conn = get_db_connection()
         conn.execute(
-            '''INSERT OR REPLACE INTO execution_device_results
+            '''INSERT INTO execution_device_results
                (id, execution_id, device_id, hostname, ip_address, status,
                 error_message, phases_json, started_at, completed_at, duration_ms)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (id) DO UPDATE SET
+                 execution_id=excluded.execution_id, device_id=excluded.device_id,
+                 hostname=excluded.hostname, ip_address=excluded.ip_address,
+                 status=excluded.status, error_message=excluded.error_message,
+                 phases_json=excluded.phases_json, started_at=excluded.started_at,
+                 completed_at=excluded.completed_at, duration_ms=excluded.duration_ms''',
             (
                 str(uuid.uuid4()), execution_id, device_id,
                 device.get('hostname', device_id),

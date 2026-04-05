@@ -3,6 +3,7 @@ import { Server, Activity, ShieldCheck, AlertCircle, AlertTriangle, Bell, Trendi
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, PieChart, Pie, Cell } from 'recharts';
 import type { Device, Job, ScheduledTask, HostResourceSnapshot, NotificationItem } from '../types';
 import { sectionHeaderRowClass, primaryActionBtnClass, secondaryActionBtnClass } from '../components/shared';
+import { useChartTheme } from '../hooks/useChartTheme';
 
 interface DashboardTabProps {
   devices: Device[];
@@ -29,6 +30,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
   complianceTrend, platformData, dashBannerCollapsed, setDashBannerCollapsed,
   dashLastRefresh, hostResources, unreadNotificationCount, notifications, language, t, setActiveTab, navigate,
 }) => {
+  const ct = useChartTheme();
   const onlineCount = devices.filter(d => d.status === 'online').length;
   const onlinePct = devices.length > 0 ? Math.round((onlineCount / devices.length) * 100) : 0;
   const compPct = devices.length > 0 ? Math.round((devices.filter(d => d.compliance === 'compliant').length / devices.length) * 100) : 0;
@@ -274,30 +276,30 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                     <stop offset="95%" stopColor="#00bceb" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ct.grid} />
                 <XAxis
                   dataKey="name"
                   axisLine={false}
                   tickLine={false}
-                  tick={{fontSize: 10, fill: '#94a3b8', fontWeight: 600}}
+                  tick={{fontSize: 10, fill: ct.axis, fontWeight: 600}}
                   dy={10}
                   interval={trendDays > 7 ? Math.floor(trendDays / 7) - 1 : 0}
                 />
                 <YAxis
                   axisLine={false}
                   tickLine={false}
-                  tick={{fontSize: 10, fill: '#94a3b8', fontWeight: 600}}
+                  tick={{fontSize: 10, fill: ct.axis, fontWeight: 600}}
                   domain={useNarrowDomain ? [yDomainLow, yDomainHigh] : [0, 100]}
                 />
                 <Tooltip
-                  contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '12px'}}
+                  contentStyle={{borderRadius: '16px', border: 'none', boxShadow: ct.tooltipShadowLg, padding: '12px', background: ct.tooltipBg, color: ct.tooltipText}}
                   formatter={(value: number, name: string) => [
                     `${value}%`,
                     name === 'rate' ? (language === 'zh' ? '合规率' : 'Compliance') : (language === 'zh' ? '作业成功率' : 'Job Success'),
                   ]}
                 />
                 {/* Average reference line */}
-                <ReferenceLine y={trendAvg} stroke="#94a3b8" strokeDasharray="6 4" strokeWidth={1} label={{ value: `${language === 'zh' ? '均值' : 'Avg'} ${trendAvg}%`, position: 'insideTopRight', fill: '#94a3b8', fontSize: 10 }} />
+                <ReferenceLine y={trendAvg} stroke={ct.reference} strokeDasharray="6 4" strokeWidth={1} label={{ value: `${language === 'zh' ? '均值' : 'Avg'} ${trendAvg}%`, position: 'insideTopRight', fill: ct.reference, fontSize: 10 }} />
                 <Area type="monotone" dataKey="rate" stroke="#00bceb" strokeWidth={3} fillOpacity={1} fill="url(#colorRate)" name="rate" />
                 <Area type="monotone" dataKey="jobRate" stroke="#10b981" strokeWidth={2} strokeDasharray="5 3" fillOpacity={0} dot={false} connectNulls name="jobRate" />
               </AreaChart>
@@ -318,7 +320,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value: number, name: string) => [`${value}%`, name]} />
+                <Tooltip contentStyle={{ background: ct.tooltipBg, color: ct.tooltipText, borderColor: ct.tooltipBorder, borderRadius: 12, boxShadow: ct.tooltipShadow }} formatter={(value: number, name: string) => [`${value}%`, name]} />
               </PieChart>
             </ResponsiveContainer>
             {/* P1: Total device count in donut center */}

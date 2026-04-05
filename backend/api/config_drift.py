@@ -139,10 +139,17 @@ def scan_all_devices():
             # Upsert drift result
             drift_id = f"drift-{uuid.uuid4().hex[:12]}"
             conn.execute('''
-                INSERT OR REPLACE INTO config_drift_results
+                INSERT INTO config_drift_results
                 (id, device_id, hostname, baseline_snapshot_id, current_snapshot_id,
                  drift_status, added_lines, removed_lines, changed_lines, diff_summary, checked_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                  device_id=excluded.device_id, hostname=excluded.hostname,
+                  baseline_snapshot_id=excluded.baseline_snapshot_id,
+                  current_snapshot_id=excluded.current_snapshot_id,
+                  drift_status=excluded.drift_status, added_lines=excluded.added_lines,
+                  removed_lines=excluded.removed_lines, changed_lines=excluded.changed_lines,
+                  diff_summary=excluded.diff_summary, checked_at=excluded.checked_at
             ''', (drift_id, device_id, dev['hostname'] or '', baseline_snap['id'],
                   current_snap['id'], drift_status, added, removed, changed, '', now_iso))
 

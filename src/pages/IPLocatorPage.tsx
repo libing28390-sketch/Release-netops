@@ -330,31 +330,31 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
           <h2 className="text-2xl font-bold tracking-tight text-[#164e63]">
             {zh ? 'IP 工具箱' : 'IP Toolbox'}
           </h2>
-          <p className="text-sm text-black/40 mt-0.5">
+          <p className="text-sm text-black/40 dark:text-white/40 mt-0.5">
             {zh ? 'IP 地址定位 · 连通性探测 · 全链路诊断' : 'IP Locate · Connectivity Probe · Full-path Diagnostics'}
           </p>
         </div>
       </div>
 
       {/* ── Tab Bar ── */}
-      <div className="flex gap-1 bg-black/[0.03] rounded-xl p-1 w-fit">
+      <div className="flex gap-1 bg-black/[0.03] dark:bg-white/[0.04] rounded-xl p-1 w-fit">
         <button
           onClick={() => setActiveTab('locate')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'locate' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40 hover:text-black/60'}`}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'locate' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
         >
           <MapPin size={14} />
           {zh ? 'IP 定位' : 'IP Locate'}
         </button>
         <button
           onClick={() => setActiveTab('probe')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'probe' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40 hover:text-black/60'}`}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'probe' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
         >
           <Activity size={14} />
           {zh ? '连通性探测' : 'Connectivity Probe'}
         </button>
         <button
           onClick={() => setActiveTab('arp-table')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'arp-table' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40 hover:text-black/60'}`}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'arp-table' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
         >
           <Database size={14} />
           {zh ? 'ARP 表' : 'ARP Table'}
@@ -362,11 +362,11 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
         </button>
         <button
           onClick={() => setActiveTab('mac-changes')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'mac-changes' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40 hover:text-black/60'}`}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'mac-changes' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
         >
           <RefreshCw size={14} />
           {zh ? 'MAC 变更' : 'MAC Changes'}
-          {macChanges && macChanges.total > 0 && <span className="text-[10px] bg-amber-100 text-amber-600 rounded-full px-1.5 py-0.5 font-mono">{macChanges.total}</span>}
+          {macChanges && macChanges.total > 0 && <span className="text-[10px] bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 rounded-full px-1.5 py-0.5 font-mono">{macChanges.total}</span>}
         </button>
       </div>
 
@@ -402,7 +402,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
               onClick={() => doLocate(undefined, true)}
               disabled={loading}
               title={zh ? '跳过缓存，从设备实时采集最新数据' : 'Skip cache and query devices in real-time'}
-              className="px-3 py-3 rounded-xl border border-amber-300 text-amber-600 text-sm hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 font-medium"
+              className="px-3 py-3 rounded-xl border border-amber-300 dark:border-amber-500/30 text-amber-600 dark:text-amber-400 text-sm hover:bg-amber-50 dark:hover:bg-amber-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 font-medium"
             >
               <RotateCcw size={14} />
               {zh ? '实时刷新' : 'Refresh'}
@@ -420,11 +420,11 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
 
       {/* ── Loading ── */}
       {loading && (
-        <div className="bg-[#ecfeff]/60 border border-[#06b6d4]/20 rounded-2xl px-6 py-5">
+        <div className="bg-[#ecfeff]/60 dark:bg-cyan-500/5 border border-[#06b6d4]/20 rounded-2xl px-6 py-5">
           <div className="flex items-center gap-3">
             <Loader2 size={20} className="animate-spin text-[#0891b2]" />
             <div>
-              <p className="text-sm font-semibold text-[#164e63]">{zh ? '正在定位...' : 'Locating...'}</p>
+              <p className="text-sm font-semibold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '正在定位...' : 'Locating...'}</p>
               <p className="text-xs text-[#0891b2] mt-0.5">{zh ? '正在查询网关 ARP 表和交换机 MAC 地址表，请稍候' : 'Querying gateway ARP tables and switch MAC tables, please wait'}</p>
             </div>
           </div>
@@ -433,11 +433,11 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
 
       {/* ── Error ── */}
       {error && !loading && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 flex items-start gap-3">
+        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl px-5 py-4 flex items-start gap-3">
           <AlertCircle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
           <div>
-            <p className="text-sm font-semibold text-red-700">{zh ? '查询失败' : 'Locate Failed'}</p>
-            <p className="text-xs text-red-500 mt-0.5">{error}</p>
+            <p className="text-sm font-semibold text-red-700 dark:text-red-300">{zh ? '查询失败' : 'Locate Failed'}</p>
+            <p className="text-xs text-red-500 dark:text-red-400 mt-0.5">{error}</p>
           </div>
         </div>
       )}
@@ -446,26 +446,26 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       {result && !loading && (
         <div className="space-y-4">
           {result.found && accessLocations.length > 0 ? (
-            <div className="bg-gradient-to-r from-emerald-50 to-[#ecfeff] border border-emerald-200/60 rounded-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-emerald-50 to-[#ecfeff] dark:from-emerald-950/40 dark:to-cyan-950/30 border border-emerald-200/60 dark:border-emerald-500/20 rounded-2xl overflow-hidden">
               {/* Path header */}
-              <div className="px-5 py-3.5 border-b border-emerald-200/40 bg-white/40">
+              <div className="px-5 py-3.5 border-b border-emerald-200/40 dark:border-emerald-500/15 bg-white/40 dark:bg-white/[0.03]">
                 <div className="flex items-center gap-2 flex-wrap">
                   <div className="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center">
                     <MapPin size={13} className="text-white" />
                   </div>
-                  <span className="text-sm font-bold text-emerald-800">{zh ? '定位成功' : 'Located'}</span>
+                  <span className="text-sm font-bold text-emerald-800 dark:text-emerald-300">{zh ? '定位成功' : 'Located'}</span>
                   {result.cache?.arp_cache_hit && result.cache.cached_at ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] bg-amber-50 text-amber-600 border border-amber-200/60 rounded-full px-2.5 py-0.5 font-medium">
+                    <span className="inline-flex items-center gap-1 text-[10px] bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-500/20 rounded-full px-2.5 py-0.5 font-medium">
                       <Clock size={10} />
                       {zh ? `ARP 缓存命中 · ${formatRelativeTime(result.cache.cached_at, zh)}采集` : `ARP cached · collected ${formatRelativeTime(result.cache.cached_at, false)}`}
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100/60 text-emerald-600 border border-emerald-200/60 rounded-full px-2.5 py-0.5 font-medium">
+                    <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100/60 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-500/20 rounded-full px-2.5 py-0.5 font-medium">
                       <Zap size={10} />
                       {zh ? '实时采集' : 'Real-time'}
                     </span>
                   )}
-                  <span className="text-xs text-emerald-600 ml-auto font-mono">{result.timestamp?.replace('T', ' ').slice(0, 19)}</span>
+                  <span className="text-xs text-emerald-600 dark:text-emerald-400/70 ml-auto font-mono">{result.timestamp?.replace('T', ' ').slice(0, 19)}</span>
                 </div>
               </div>
 
@@ -473,22 +473,22 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
               <div className="px-5 py-5">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {/* IP */}
-                  <div className="flex items-center gap-2.5 bg-white rounded-xl px-4 py-3 border border-black/8 shadow-sm">
+                  <div className="flex items-center gap-2.5 bg-white dark:bg-white/[0.06] rounded-xl px-4 py-3 border border-black/8 dark:border-white/10 shadow-sm">
                     <Monitor size={16} className="text-violet-500" />
                     <div>
-                      <p className="text-[10px] text-black/40 font-medium uppercase tracking-wide">IP</p>
-                      <p className="text-base font-bold text-[#164e63] font-mono">{result.target_ip}</p>
+                      <p className="text-[10px] text-black/40 dark:text-white/40 font-medium uppercase tracking-wide">IP</p>
+                      <p className="text-base font-bold text-[#164e63] dark:text-[var(--app-text)] font-mono">{result.target_ip}</p>
                     </div>
                   </div>
 
-                  <ArrowRight size={16} className="text-black/20 mx-1 flex-shrink-0" />
+                  <ArrowRight size={16} className="text-black/20 dark:text-white/20 mx-1 flex-shrink-0" />
 
                   {/* MAC */}
-                  <div className="flex items-center gap-2.5 bg-white rounded-xl px-4 py-3 border border-black/8 shadow-sm">
+                  <div className="flex items-center gap-2.5 bg-white dark:bg-white/[0.06] rounded-xl px-4 py-3 border border-black/8 dark:border-white/10 shadow-sm">
                     <Cable size={16} className="text-amber-500" />
                     <div>
-                      <p className="text-[10px] text-black/40 font-medium uppercase tracking-wide">MAC</p>
-                      <p className="text-base font-bold text-[#164e63] font-mono">{result.mac_display}</p>
+                      <p className="text-[10px] text-black/40 dark:text-white/40 font-medium uppercase tracking-wide">MAC</p>
+                      <p className="text-base font-bold text-[#164e63] dark:text-[var(--app-text)] font-mono">{result.mac_display}</p>
                       {result.arp_source && (
                         <p className="text-[10px] text-black/35 mt-0.5">
                           via {result.arp_source.device} ({result.arp_source.interface})
@@ -497,29 +497,29 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
                     </div>
                   </div>
 
-                  <ArrowRight size={16} className="text-black/20 mx-1 flex-shrink-0" />
+                  <ArrowRight size={16} className="text-black/20 dark:text-white/20 mx-1 flex-shrink-0" />
 
                   {/* Switch:Port(s) */}
                   {accessLocations.map((loc, i) => (
                     <React.Fragment key={i}>
                       {i > 0 && <span className="text-xs text-black/30 mx-1">/</span>}
-                      <div className="flex items-center gap-2.5 bg-white rounded-xl px-4 py-3 border border-[#06b6d4]/30 shadow-sm ring-1 ring-[#06b6d4]/10">
+                      <div className="flex items-center gap-2.5 bg-white dark:bg-white/[0.06] rounded-xl px-4 py-3 border border-[#06b6d4]/30 dark:border-[#06b6d4]/20 shadow-sm ring-1 ring-[#06b6d4]/10">
                         <Server size={16} className="text-[#0891b2]" />
                         <div>
-                          <p className="text-[10px] text-black/40 font-medium uppercase tracking-wide">
+                          <p className="text-[10px] text-black/40 dark:text-white/40 font-medium uppercase tracking-wide">
                             {loc.type === 'ARP_DIRECT'
                               ? (zh ? 'ARP 来源设备:接口' : 'ARP Source:Interface')
                               : (zh ? '交换机:端口' : 'Switch:Port')}
                           </p>
-                          <p className="text-base font-bold text-[#164e63]">
+                          <p className="text-base font-bold text-[#164e63] dark:text-[var(--app-text)]">
                             <span className="font-mono">{loc.switch_name}</span>
                             <span className="text-[#0891b2] mx-1">:</span>
                             <span className="font-mono text-[#0891b2]">{loc.port}</span>
                           </p>
                           <div className="flex items-center gap-2 mt-1">
-                            {loc.vlan && <span className="text-[10px] bg-cyan-50 text-cyan-700 rounded px-1.5 py-0.5 font-medium">VLAN {loc.vlan}</span>}
+                            {loc.vlan && <span className="text-[10px] bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 rounded px-1.5 py-0.5 font-medium">VLAN {loc.vlan}</span>}
                             {loc.type === 'ARP_DIRECT'
-                              ? <span className="text-[10px] bg-amber-50 text-amber-700 rounded px-1.5 py-0.5 font-medium">{zh ? '直连/网关' : 'Direct/Gateway'}</span>
+                              ? <span className="text-[10px] bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded px-1.5 py-0.5 font-medium">{zh ? '直连/网关' : 'Direct/Gateway'}</span>
                               : loc.type && <span className="text-[10px] text-black/35">{loc.type}</span>}
                           </div>
                           {loc.note && (
@@ -539,8 +539,8 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
 
                 {/* Uplink entries */}
                 {uplinkLocations.length > 0 && (
-                  <div className="mt-4 pt-3 border-t border-emerald-200/40">
-                    <p className="text-[10px] text-black/35 font-medium mb-2">{zh ? '上联口也匹配到该 MAC（可忽略）' : 'Also seen on uplink ports (can ignore)'}:</p>
+                  <div className="mt-4 pt-3 border-t border-emerald-200/40 dark:border-emerald-500/15">
+                    <p className="text-[10px] text-black/35 dark:text-white/35 font-medium mb-2">{zh ? '上联口也匹配到该 MAC（可忽略）' : 'Also seen on uplink ports (can ignore)'}:</p>
                     <div className="flex flex-wrap gap-1.5">
                       {uplinkLocations.map((loc, i) => (
                         <span key={i} className="text-[10px] bg-black/5 text-black/50 rounded px-2 py-0.5 font-mono">
@@ -553,11 +553,11 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
               </div>
             </div>
           ) : !result.found ? (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4">
+            <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-2xl px-5 py-4">
               <div className="flex items-start gap-3">
                 <AlertCircle size={18} className="text-amber-500 mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-semibold text-amber-800">{zh ? '未找到该 IP 地址' : 'IP Address Not Found'}</p>
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">{zh ? '未找到该 IP 地址' : 'IP Address Not Found'}</p>
                   {result.errors?.map((err, i) => (
                     <p key={i} className="text-xs text-amber-600 mt-0.5">{err}</p>
                   ))}
@@ -575,7 +575,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
           {result.searched_devices && (
             <button
               onClick={() => setShowDetails(!showDetails)}
-              className="flex items-center gap-1.5 text-xs text-black/40 hover:text-black/60 transition-colors ml-1"
+              className="flex items-center gap-1.5 text-xs text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60 transition-colors ml-1"
             >
               {showDetails ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
               {zh ? `查询详情（扫描了 ${result.searched_devices.arp?.length || 0} 台 ARP + ${result.searched_devices.mac?.length || 0} 台 MAC）` :
@@ -584,7 +584,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
           )}
 
           {showDetails && result.searched_devices && (
-            <div className="bg-black/[0.02] rounded-xl border border-black/5 px-5 py-3.5 text-xs text-black/50 space-y-2">
+            <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-xl border border-black/5 dark:border-white/8 px-5 py-3.5 text-xs text-black/50 dark:text-white/50 space-y-2">
               {result.cache?.arp_cache_hit && result.cache.cached_at && (
                 <div className="flex items-center gap-2 pb-2 border-b border-black/5 mb-1">
                   <Clock size={11} className="text-amber-500" />
@@ -597,18 +597,18 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
                 </div>
               )}
               <div>
-                <span className="font-semibold text-black/60">{zh ? 'ARP 查询设备' : 'ARP Devices'}:</span>{' '}
+                <span className="font-semibold text-black/60 dark:text-white/60">{zh ? 'ARP 查询设备' : 'ARP Devices'}:</span>{' '}
                 {result.cache?.arp_cache_hit
                   ? (zh ? '（缓存命中，未查设备）' : '(cache hit, no device queried)')
                   : (result.searched_devices.arp?.join(', ') || '-')}
               </div>
               <div>
-                <span className="font-semibold text-black/60">{zh ? 'MAC 查询设备' : 'MAC Devices'}:</span>{' '}
+                <span className="font-semibold text-black/60 dark:text-white/60">{zh ? 'MAC 查询设备' : 'MAC Devices'}:</span>{' '}
                 {result.searched_devices.mac?.join(', ') || '-'}
               </div>
               {(result.searched_devices.lldp?.length ?? 0) > 0 && (
                 <div>
-                  <span className="font-semibold text-black/60">{zh ? 'LLDP 查询设备' : 'LLDP Devices'}:</span>{' '}
+                  <span className="font-semibold text-black/60 dark:text-white/60">{zh ? 'LLDP 查询设备' : 'LLDP Devices'}:</span>{' '}
                   {result.searched_devices.lldp?.join(', ')}
                 </div>
               )}
@@ -621,11 +621,11 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       {history.length > 0 && !loading && (
         <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-5">
           <div className="flex items-center gap-2 mb-3">
-            <Clock size={14} className="text-black/30" />
-            <p className="text-xs font-semibold text-black/40 uppercase tracking-wider">{zh ? '查询历史' : 'Recent Queries'}</p>
+            <Clock size={14} className="text-black/30 dark:text-white/30" />
+            <p className="text-xs font-semibold text-black/40 dark:text-white/40 uppercase tracking-wider">{zh ? '查询历史' : 'Recent Queries'}</p>
             <button
               onClick={() => setHistory([])}
-              className="ml-auto text-[10px] text-black/25 hover:text-black/50 transition-colors flex items-center gap-1"
+              className="ml-auto text-[10px] text-black/25 dark:text-white/25 hover:text-black/50 dark:hover:text-white/50 transition-colors flex items-center gap-1"
             >
               <RotateCcw size={10} />
               {zh ? '清空' : 'Clear'}
@@ -636,7 +636,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
               <button
                 key={i}
                 onClick={() => doLocate(h.ip)}
-                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all hover:shadow-sm ${h.found ? 'border-emerald-200 bg-emerald-50/50 text-emerald-700 hover:bg-emerald-50' : 'border-amber-200 bg-amber-50/50 text-amber-700 hover:bg-amber-50'}`}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all hover:shadow-sm ${h.found ? 'border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/15' : 'border-amber-200 dark:border-amber-500/20 bg-amber-50/50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/15'}`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${h.found ? 'bg-emerald-400' : 'bg-amber-400'}`} />
                 {h.ip}
@@ -681,12 +681,12 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
         <div className="flex flex-wrap items-center gap-4">
           {/* Test toggles */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-black/40 font-medium">{zh ? '测试项:' : 'Tests:'}</span>
+            <span className="text-xs text-black/40 dark:text-white/40 font-medium">{zh ? '测试项:' : 'Tests:'}</span>
             {(['ping', 'tcp', 'traceroute'] as const).map(t => (
               <button
                 key={t}
                 onClick={() => toggleTest(t)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all border ${probeTests.has(t) ? 'bg-[#ecfeff] border-[#06b6d4]/30 text-[#0891b2]' : 'bg-black/[0.02] border-black/5 text-black/30'}`}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all border ${probeTests.has(t) ? 'bg-[#ecfeff] dark:bg-cyan-500/10 border-[#06b6d4]/30 text-[#0891b2]' : 'bg-black/[0.02] dark:bg-white/[0.04] border-black/5 dark:border-white/8 text-black/30 dark:text-white/30'}`}
               >
                 {t === 'ping' ? 'PING' : t === 'tcp' ? 'TCP' : 'Traceroute'}
               </button>
@@ -696,7 +696,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
           {/* TCP Ports */}
           {probeTests.has('tcp') && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-black/40 font-medium">{zh ? '端口:' : 'Ports:'}</span>
+              <span className="text-xs text-black/40 dark:text-white/40 font-medium">{zh ? '端口:' : 'Ports:'}</span>
               <input
                 type="text"
                 value={probePorts}
@@ -709,7 +709,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
 
           {/* Source device */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-black/40 font-medium">{zh ? '探测源:' : 'Source:'}</span>
+            <span className="text-xs text-black/40 dark:text-white/40 font-medium">{zh ? '探测源:' : 'Source:'}</span>
             <select
               value={sourceDeviceId ?? ''}
               onChange={e => setSourceDeviceId(e.target.value ? Number(e.target.value) : null)}
@@ -727,11 +727,11 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
 
       {/* ── Probe Loading ── */}
       {probeLoading && (
-        <div className="bg-[#ecfeff]/60 border border-[#06b6d4]/20 rounded-2xl px-6 py-5">
+        <div className="bg-[#ecfeff]/60 dark:bg-cyan-500/5 border border-[#06b6d4]/20 rounded-2xl px-6 py-5">
           <div className="flex items-center gap-3">
             <Loader2 size={20} className="animate-spin text-[#0891b2]" />
             <div>
-              <p className="text-sm font-semibold text-[#164e63]">{zh ? '正在探测...' : 'Probing...'}</p>
+              <p className="text-sm font-semibold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '正在探测...' : 'Probing...'}</p>
               <p className="text-xs text-[#0891b2] mt-0.5">{zh ? '执行 PING/TCP/Traceroute 测试，请稍候' : 'Running PING/TCP/Traceroute tests, please wait'}</p>
             </div>
           </div>
@@ -740,11 +740,11 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
 
       {/* ── Probe Error ── */}
       {probeError && !probeLoading && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 flex items-start gap-3">
+        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl px-5 py-4 flex items-start gap-3">
           <AlertCircle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
           <div>
-            <p className="text-sm font-semibold text-red-700">{zh ? '探测失败' : 'Probe Failed'}</p>
-            <p className="text-xs text-red-500 mt-0.5">{probeError}</p>
+            <p className="text-sm font-semibold text-red-700 dark:text-red-300">{zh ? '探测失败' : 'Probe Failed'}</p>
+            <p className="text-xs text-red-500 dark:text-red-400 mt-0.5">{probeError}</p>
           </div>
         </div>
       )}
@@ -754,14 +754,14 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
         <div className="space-y-4">
           {/* Header */}
           <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-black/5 bg-gradient-to-r from-[#ecfeff]/50 to-transparent">
+            <div className="px-5 py-3.5 border-b border-black/5 dark:border-white/8 bg-gradient-to-r from-[#ecfeff]/50 dark:from-cyan-950/30 to-transparent">
               <div className="flex items-center gap-3">
                 <div className="w-7 h-7 rounded-full bg-[#0891b2] flex items-center justify-center">
                   <Activity size={14} className="text-white" />
                 </div>
                 <div>
-                  <span className="text-sm font-bold text-[#164e63]">{zh ? '探测结果' : 'Probe Results'}</span>
-                  <span className="text-xs text-black/35 ml-3">{probeResult.target}</span>
+                  <span className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '探测结果' : 'Probe Results'}</span>
+                  <span className="text-xs text-black/35 dark:text-white/35 ml-3">{probeResult.target}</span>
                   {probeResult.source_device && (
                     <span className="text-xs text-[#0891b2] ml-2">via {probeResult.source_device}</span>
                   )}
@@ -778,33 +778,33 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <Wifi size={14} className="text-[#0891b2]" />
-                      <span className="text-xs font-bold text-[#164e63] uppercase tracking-wide">PING</span>
+                      <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)] uppercase tracking-wide">PING</span>
                       {p.success
                         ? <CheckCircle2 size={14} className="text-emerald-500" />
                         : <XCircle size={14} className="text-red-500" />}
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="bg-black/[0.02] rounded-xl px-4 py-3">
-                        <p className="text-[10px] text-black/40 font-medium">{zh ? '状态' : 'Status'}</p>
+                      <div className="bg-black/[0.02] dark:bg-white/[0.04] rounded-xl px-4 py-3">
+                        <p className="text-[10px] text-black/40 dark:text-white/40 font-medium">{zh ? '状态' : 'Status'}</p>
                         <p className={`text-sm font-bold ${p.success ? 'text-emerald-600' : 'text-red-600'}`}>
                           {p.success ? (zh ? '可达' : 'Reachable') : (zh ? '不可达' : 'Unreachable')}
                         </p>
                       </div>
-                      <div className="bg-black/[0.02] rounded-xl px-4 py-3">
-                        <p className="text-[10px] text-black/40 font-medium">{zh ? '丢包率' : 'Loss'}</p>
+                      <div className="bg-black/[0.02] dark:bg-white/[0.04] rounded-xl px-4 py-3">
+                        <p className="text-[10px] text-black/40 dark:text-white/40 font-medium">{zh ? '丢包率' : 'Loss'}</p>
                         <p className={`text-sm font-bold ${p.loss_percent === 0 ? 'text-emerald-600' : p.loss_percent < 50 ? 'text-amber-600' : 'text-red-600'}`}>
                           {p.loss_percent}%
                         </p>
                       </div>
-                      <div className="bg-black/[0.02] rounded-xl px-4 py-3">
-                        <p className="text-[10px] text-black/40 font-medium">{zh ? '平均延迟' : 'Avg RTT'}</p>
-                        <p className="text-sm font-bold text-[#164e63] font-mono">
+                      <div className="bg-black/[0.02] dark:bg-white/[0.04] rounded-xl px-4 py-3">
+                        <p className="text-[10px] text-black/40 dark:text-white/40 font-medium">{zh ? '平均延迟' : 'Avg RTT'}</p>
+                        <p className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)] font-mono">
                           {p.rtt.avg != null ? `${p.rtt.avg} ms` : '-'}
                         </p>
                       </div>
-                      <div className="bg-black/[0.02] rounded-xl px-4 py-3">
-                        <p className="text-[10px] text-black/40 font-medium">{zh ? '延迟范围' : 'RTT Range'}</p>
-                        <p className="text-xs font-mono text-black/50">
+                      <div className="bg-black/[0.02] dark:bg-white/[0.04] rounded-xl px-4 py-3">
+                        <p className="text-[10px] text-black/40 dark:text-white/40 font-medium">{zh ? '延迟范围' : 'RTT Range'}</p>
+                        <p className="text-xs font-mono text-black/50 dark:text-white/50">
                           {p.rtt.min != null && p.rtt.max != null ? `${p.rtt.min} – ${p.rtt.max} ms` : '-'}
                         </p>
                       </div>
@@ -818,19 +818,19 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <Globe size={14} className="text-[#0891b2]" />
-                    <span className="text-xs font-bold text-[#164e63] uppercase tracking-wide">TCP</span>
+                    <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)] uppercase tracking-wide">TCP</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {probeResult.tests.tcp.map((tc, i) => (
                       <div
                         key={i}
-                        className={`flex items-center gap-2.5 rounded-xl px-4 py-3 border ${tc.success ? 'bg-emerald-50/50 border-emerald-200/60' : 'bg-red-50/50 border-red-200/60'}`}
+                        className={`flex items-center gap-2.5 rounded-xl px-4 py-3 border ${tc.success ? 'bg-emerald-50/50 dark:bg-emerald-500/10 border-emerald-200/60 dark:border-emerald-500/20' : 'bg-red-50/50 dark:bg-red-500/10 border-red-200/60 dark:border-red-500/20'}`}
                       >
                         {tc.success
                           ? <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0" />
                           : <XCircle size={14} className="text-red-400 flex-shrink-0" />}
                         <div>
-                          <p className="text-sm font-bold font-mono text-[#164e63]">
+                          <p className="text-sm font-bold font-mono text-[#164e63] dark:text-[var(--app-text)]">
                             :{tc.port}
                           </p>
                           <p className={`text-[10px] ${tc.success ? 'text-emerald-600' : 'text-red-500'}`}>
@@ -848,25 +848,25 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <Network size={14} className="text-[#0891b2]" />
-                    <span className="text-xs font-bold text-[#164e63] uppercase tracking-wide">Traceroute</span>
-                    <span className="text-[10px] text-black/30">
+                    <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)] uppercase tracking-wide">Traceroute</span>
+                    <span className="text-[10px] text-black/30 dark:text-white/30">
                       {probeResult.tests.traceroute.hops?.length || 0} {zh ? '跳' : 'hops'}
                     </span>
                   </div>
                   {probeResult.tests.traceroute.hops?.length > 0 ? (
-                    <div className="bg-black/[0.02] rounded-xl border border-black/5 overflow-hidden">
-                      <div className="grid grid-cols-[3rem_1fr_6rem] text-[10px] font-medium text-black/40 uppercase tracking-wider px-4 py-2 border-b border-black/5">
+                    <div className="bg-black/[0.02] dark:bg-white/[0.03] rounded-xl border border-black/5 dark:border-white/8 overflow-hidden">
+                      <div className="grid grid-cols-[3rem_1fr_6rem] text-[10px] font-medium text-black/40 dark:text-white/40 uppercase tracking-wider px-4 py-2 border-b border-black/5 dark:border-white/8">
                         <span>{zh ? '跳数' : 'Hop'}</span>
                         <span>IP</span>
                         <span>{zh ? '延迟' : 'RTT'}</span>
                       </div>
                       {probeResult.tests.traceroute.hops.map((h, i) => (
-                        <div key={i} className={`grid grid-cols-[3rem_1fr_6rem] px-4 py-2 text-xs ${i % 2 ? 'bg-black/[0.01]' : ''} ${h.ip === probeResult.target ? 'bg-emerald-50/50' : ''}`}>
-                          <span className="text-black/40 font-mono">{h.hop}</span>
-                          <span className={`font-mono ${h.timeout ? 'text-black/25' : h.ip === probeResult.target ? 'text-emerald-700 font-semibold' : 'text-[#164e63]'}`}>
+                        <div key={i} className={`grid grid-cols-[3rem_1fr_6rem] px-4 py-2 text-xs ${i % 2 ? 'bg-black/[0.01] dark:bg-white/[0.02]' : ''} ${h.ip === probeResult.target ? 'bg-emerald-50/50 dark:bg-emerald-500/10' : ''}`}>
+                          <span className="text-black/40 dark:text-white/40 font-mono">{h.hop}</span>
+                          <span className={`font-mono ${h.timeout ? 'text-black/25 dark:text-white/25' : h.ip === probeResult.target ? 'text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-[#164e63] dark:text-[var(--app-text)]'}`}>
                             {h.ip}
                           </span>
-                          <span className="text-black/40 font-mono">
+                          <span className="text-black/40 dark:text-white/40 font-mono">
                             {h.rtt_ms.length > 0 ? h.rtt_ms.map(r => `${r}ms`).join(' / ') : (h.timeout ? '*' : '-')}
                           </span>
                         </div>
@@ -964,21 +964,21 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
 
       {/* ── Error ── */}
       {arpError && !arpLoading && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 flex items-start gap-3">
+        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl px-5 py-4 flex items-start gap-3">
           <AlertCircle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
           <div>
-            <p className="text-sm font-semibold text-red-700">{zh ? '加载失败' : 'Load Failed'}</p>
-            <p className="text-xs text-red-500 mt-0.5">{arpError}</p>
+            <p className="text-sm font-semibold text-red-700 dark:text-red-300">{zh ? '加载失败' : 'Load Failed'}</p>
+            <p className="text-xs text-red-500 dark:text-red-400 mt-0.5">{arpError}</p>
           </div>
         </div>
       )}
 
       {/* ── Loading ── */}
       {arpLoading && (
-        <div className="bg-[#ecfeff]/60 border border-[#06b6d4]/20 rounded-2xl px-6 py-5">
+        <div className="bg-[#ecfeff]/60 dark:bg-cyan-500/5 border border-[#06b6d4]/20 rounded-2xl px-6 py-5">
           <div className="flex items-center gap-3">
             <Loader2 size={18} className="text-[#0891b2] animate-spin" />
-            <span className="text-sm font-semibold text-[#164e63]">{zh ? '正在加载 ARP 表...' : 'Loading ARP table...'}</span>
+            <span className="text-sm font-semibold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '正在加载 ARP 表...' : 'Loading ARP table...'}</span>
           </div>
         </div>
       )}
@@ -986,8 +986,8 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       {/* ── Empty state ── */}
       {!arpLoading && !arpError && arpTable && arpTable.total === 0 && (
         <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-8 text-center">
-          <Database size={32} className="mx-auto text-black/15 mb-3" />
-          <p className="text-sm text-black/40">{zh ? '暂无 ARP 缓存数据。点击「立即采集」从网关设备获取 ARP 表。' : 'No ARP cache data. Click "Sweep Now" to collect from gateways.'}</p>
+          <Database size={32} className="mx-auto text-black/15 dark:text-white/15 mb-3" />
+          <p className="text-sm text-black/40 dark:text-white/40">{zh ? '暂无 ARP 缓存数据。点击「立即采集」从网关设备获取 ARP 表。' : 'No ARP cache data. Click "Sweep Now" to collect from gateways.'}</p>
         </div>
       )}
 
@@ -1010,7 +1010,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
         return (
           <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
             {/* Table header */}
-            <div className="grid grid-cols-[1fr_1fr_6rem_6rem_10rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 uppercase tracking-wider border-b border-black/5 bg-black/[0.01]">
+            <div className="grid grid-cols-[1fr_1fr_6rem_6rem_10rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
               <span>IP</span>
               <span>MAC</span>
               <span>{zh ? '厂商' : 'Vendor'}</span>
@@ -1029,7 +1029,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
                 pageEntries.map((entry, idx) => (
                   <div
                     key={entry.ip}
-                    className={`grid grid-cols-[1fr_1fr_6rem_6rem_10rem_8rem] gap-2 px-5 py-2 text-xs items-center border-b border-black/[0.03] hover:bg-[#ecfeff]/30 transition-colors cursor-pointer ${idx % 2 ? 'bg-black/[0.008]' : ''}`}
+                    className={`grid grid-cols-[1fr_1fr_6rem_6rem_10rem_8rem] gap-2 px-5 py-2 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] hover:bg-[#ecfeff]/30 dark:hover:bg-cyan-500/5 transition-colors cursor-pointer ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
                     onClick={() => { setIp(entry.ip); setActiveTab('locate'); }}
                     title={zh ? '点击定位此 IP' : 'Click to locate this IP'}
                   >
@@ -1066,7 +1066,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       {/* ── Controls ── */}
       <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-5">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2 text-sm text-black/50">
+          <div className="flex items-center gap-2 text-sm text-black/50 dark:text-white/50">
             <RefreshCw size={14} />
             <span>{zh ? 'IP-MAC 绑定变更记录 — 检测 MAC 地址漂移与异常' : 'IP-MAC binding change log — detect MAC drift & anomalies'}</span>
           </div>
@@ -1082,7 +1082,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
           </div>
         </div>
         {macChanges && (
-          <div className="flex items-center gap-4 mt-3 text-[11px] text-black/30">
+          <div className="flex items-center gap-4 mt-3 text-[11px] text-black/30 dark:text-white/30">
             <span>{macChanges.total} {zh ? '条变更记录' : 'change records'}</span>
             <span>·</span>
             <span>{zh ? '更新时间' : 'Updated'}: {macChanges.timestamp?.replace('T', ' ').slice(0, 19)}</span>
@@ -1092,21 +1092,21 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
 
       {/* ── Error ── */}
       {macChangesError && !macChangesLoading && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 flex items-start gap-3">
+        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl px-5 py-4 flex items-start gap-3">
           <AlertCircle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
           <div>
-            <p className="text-sm font-semibold text-red-700">{zh ? '加载失败' : 'Load Failed'}</p>
-            <p className="text-xs text-red-500 mt-0.5">{macChangesError}</p>
+            <p className="text-sm font-semibold text-red-700 dark:text-red-300">{zh ? '加载失败' : 'Load Failed'}</p>
+            <p className="text-xs text-red-500 dark:text-red-400 mt-0.5">{macChangesError}</p>
           </div>
         </div>
       )}
 
       {/* ── Loading ── */}
       {macChangesLoading && (
-        <div className="bg-[#ecfeff]/60 border border-[#06b6d4]/20 rounded-2xl px-6 py-5">
+        <div className="bg-[#ecfeff]/60 dark:bg-cyan-500/5 border border-[#06b6d4]/20 rounded-2xl px-6 py-5">
           <div className="flex items-center gap-3">
             <Loader2 size={18} className="text-[#0891b2] animate-spin" />
-            <span className="text-sm font-semibold text-[#164e63]">{zh ? '正在加载变更记录...' : 'Loading change log...'}</span>
+            <span className="text-sm font-semibold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '正在加载变更记录...' : 'Loading change log...'}</span>
           </div>
         </div>
       )}
@@ -1114,8 +1114,8 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       {/* ── Empty ── */}
       {!macChangesLoading && !macChangesError && macChanges && macChanges.total === 0 && (
         <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-8 text-center">
-          <CheckCircle2 size={32} className="mx-auto text-emerald-300 mb-3" />
-          <p className="text-sm text-black/40">{zh ? '暂无 MAC 变更记录。所有 IP-MAC 绑定关系稳定。' : 'No MAC changes detected. All IP-MAC bindings are stable.'}</p>
+          <CheckCircle2 size={32} className="mx-auto text-emerald-300 dark:text-emerald-500/50 mb-3" />
+          <p className="text-sm text-black/40 dark:text-white/40">{zh ? '暂无 MAC 变更记录。所有 IP-MAC 绑定关系稳定。' : 'No MAC changes detected. All IP-MAC bindings are stable.'}</p>
         </div>
       )}
 
@@ -1123,7 +1123,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       {!macChangesLoading && macChanges && macChanges.total > 0 && (
         <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
           {/* Table header */}
-          <div className="grid grid-cols-[8rem_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 uppercase tracking-wider border-b border-black/5 bg-black/[0.01]">
+          <div className="grid grid-cols-[8rem_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
             <span>IP</span>
             <span>{zh ? '旧 MAC → 新 MAC' : 'Old MAC → New MAC'}</span>
             <span>{zh ? '厂商变化' : 'Vendor Change'}</span>
@@ -1135,21 +1135,21 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
             {macChanges.entries.map((entry, idx) => (
               <div
                 key={entry.id}
-                className={`grid grid-cols-[8rem_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-xs items-center border-b border-black/[0.03] ${idx % 2 ? 'bg-black/[0.008]' : ''}`}
+                className={`grid grid-cols-[8rem_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
               >
                 <span className="font-mono font-semibold text-[#164e63]">{entry.ip}</span>
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span className="font-mono text-red-400 truncate" title={entry.old_mac}>{entry.old_mac}</span>
-                  <ArrowRight size={12} className="text-black/20 flex-shrink-0" />
-                  <span className="font-mono text-emerald-600 truncate" title={entry.new_mac}>{entry.new_mac}</span>
+                  <ArrowRight size={12} className="text-black/20 dark:text-white/20 flex-shrink-0" />
+                  <span className="font-mono text-emerald-600 dark:text-emerald-400 truncate" title={entry.new_mac}>{entry.new_mac}</span>
                 </div>
-                <div className="flex items-center gap-1.5 min-w-0 text-black/45">
+                <div className="flex items-center gap-1.5 min-w-0 text-black/45 dark:text-white/45">
                   <span className="truncate">{entry.old_vendor || '?'}</span>
-                  <ArrowRight size={10} className="text-black/15 flex-shrink-0" />
+                  <ArrowRight size={10} className="text-black/15 dark:text-white/15 flex-shrink-0" />
                   <span className="truncate">{entry.new_vendor || '?'}</span>
                 </div>
                 <span className="text-[#0891b2] truncate font-medium" title={entry.new_device}>{entry.new_device || '-'}</span>
-                <span className="text-black/30" title={entry.detected_at}>{formatRelativeTime(entry.detected_at, zh)}</span>
+                <span className="text-black/30 dark:text-white/30" title={entry.detected_at}>{formatRelativeTime(entry.detected_at, zh)}</span>
               </div>
             ))}
           </div>

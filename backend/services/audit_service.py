@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from database import get_db_connection
@@ -107,12 +107,11 @@ def list_audit_events(
         where_clauses.append("status = ?")
         params.append(status)
     if time_range and time_range != "all":
-        if time_range == "24h":
-            where_clauses.append("datetime(created_at) >= datetime('now', '-1 day')")
-        elif time_range == "7d":
-            where_clauses.append("datetime(created_at) >= datetime('now', '-7 days')")
-        elif time_range == "30d":
-            where_clauses.append("datetime(created_at) >= datetime('now', '-30 days')")
+        _delta = {'24h': 1, '7d': 7, '30d': 30}.get(time_range)
+        if _delta:
+            _cutoff = (datetime.now(timezone.utc) - timedelta(days=_delta)).isoformat()
+            where_clauses.append("created_at >= ?")
+            params.append(_cutoff)
     if search and search.strip():
         q = f"%{search.strip()}%"
         where_clauses.append("(summary LIKE ? OR target_name LIKE ? OR actor_username LIKE ? OR event_type LIKE ?)")

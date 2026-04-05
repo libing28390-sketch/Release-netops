@@ -320,7 +320,7 @@ def api_get_change_order_timeline(order_id: str, user=require_role("Viewer")):
             SELECT id, event_type, summary, actor_username, created_at, details_json
             FROM audit_events
             WHERE category = 'change_order' AND target_id = ?
-            ORDER BY created_at ASC, rowid ASC
+            ORDER BY created_at ASC, id ASC
             ''',
             (order_id,),
         ).fetchall()

@@ -1,5 +1,5 @@
-import sqlite3
 import os
+import re
 import queue
 import logging
 from datetime import datetime, timezone
@@ -10,67 +10,193 @@ DB_PATH = os.path.join(PROJECT_ROOT, 'data', 'netops.db')
 
 logger = logging.getLogger(__name__)
 
+# ── Backend Detection ───────────────────────────────────────
+# Priority: DATABASE_URL env > default SQLite
+_DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
+_USE_PG = _DATABASE_URL.startswith('postgresql')
+
+if _USE_PG:
+    import psycopg2
+    import psycopg2.extras
+    import psycopg2.pool
+else:
+    import sqlite3
+
 # ── Connection Pool ─────────────────────────────────────────
 _POOL_SIZE = 8
-_pool: queue.Queue[sqlite3.Connection] = queue.Queue(maxsize=_POOL_SIZE)
 
+# ── PostgreSQL Wrappers ────────────────────────────────────
+if _USE_PG:
+    _pg_pool: psycopg2.pool.ThreadedConnectionPool | None = None
 
-class _PooledConnection:
-    """Transparent wrapper: close() returns the real connection to the pool."""
-    __slots__ = ('_conn',)
+    def _ensure_pg_pool():
+        global _pg_pool
+        if _pg_pool is None:
+            _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=2, maxconn=_POOL_SIZE, dsn=_DATABASE_URL,
+            )
 
-    def __init__(self, conn: sqlite3.Connection):
-        self._conn = conn
+    _LIKE_RE = re.compile(r'\bLIKE\b', re.IGNORECASE)
 
-    def close(self):
-        conn = self._conn
-        if conn is None:
-            return
-        self._conn = None
-        try:
-            conn.rollback()          # discard uncommitted state
-            _pool.put_nowait(conn)
-        except queue.Full:
-            conn.close()             # pool full, actually close
-        except Exception:
+    class _PgCursor:
+        """Wraps psycopg2 DictCursor; auto-translates ``?`` → ``%s`` and ``LIKE`` → ``ILIKE``."""
+        __slots__ = ('_cur',)
+
+        def __init__(self, cur):
+            self._cur = cur
+
+        @staticmethod
+        def _adapt(sql: str) -> str:
+            sql = sql.replace('?', '%s')
+            sql = _LIKE_RE.sub('ILIKE', sql)
+            return sql
+
+        def execute(self, sql, params=None):
+            self._cur.execute(self._adapt(sql), params)
+            return self
+
+        def executemany(self, sql, params_list):
+            self._cur.executemany(self._adapt(sql), params_list)
+            return self
+
+        def __getattr__(self, name):
+            return getattr(self._cur, name)
+
+        def __iter__(self):
+            return iter(self._cur)
+
+    class _PgRawConnection:
+        """Wraps psycopg2 connection; provides sqlite3-like ``.execute()``."""
+        __slots__ = ('_conn',)
+
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, params=None):
+            cur = self.cursor()
+            cur.execute(sql, params)
+            return cur
+
+        def executemany(self, sql, params_list):
+            cur = self.cursor()
+            cur.executemany(sql, params_list)
+            return cur
+
+        def cursor(self):
+            return _PgCursor(self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor))
+
+        def commit(self):
+            self._conn.commit()
+
+        def rollback(self):
+            self._conn.rollback()
+
+        def close(self):
+            self._conn.close()
+
+    class _PgPooledConnection:
+        """Close returns PG connection to the pool."""
+        __slots__ = ('_conn', '_raw')
+
+        def __init__(self, wrapped, raw):
+            self._conn = wrapped
+            self._raw = raw
+
+        def close(self):
+            raw = self._raw
+            if raw is None:
+                return
+            self._raw = None
+            self._conn = None
             try:
+                raw.rollback()
+                _pg_pool.putconn(raw)
+            except Exception:
+                try:
+                    raw.close()
+                except Exception:
+                    pass
+
+        def __getattr__(self, name):
+            if self._conn is None:
+                raise RuntimeError("Connection already returned to pool")
+            return getattr(self._conn, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.close()
+
+        def __del__(self):
+            self.close()
+
+# ── SQLite Wrappers ─────────────────────────────────────────
+else:
+    _pool: queue.Queue = queue.Queue(maxsize=_POOL_SIZE)
+
+    class _PooledConnection:
+        """Transparent wrapper: close() returns the real connection to the pool."""
+        __slots__ = ('_conn',)
+
+        def __init__(self, conn):
+            self._conn = conn
+
+        def close(self):
+            conn = self._conn
+            if conn is None:
+                return
+            self._conn = None
+            try:
+                conn.rollback()
+                _pool.put_nowait(conn)
+            except queue.Full:
                 conn.close()
             except Exception:
-                pass
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
-    # Delegate everything else to the real connection
-    def __getattr__(self, name):
-        conn = self._conn
-        if conn is None:
-            raise RuntimeError("Connection already returned to pool")
-        return getattr(conn, name)
+        def __getattr__(self, name):
+            conn = self._conn
+            if conn is None:
+                raise RuntimeError("Connection already returned to pool")
+            return getattr(conn, name)
 
-    def __enter__(self):
-        return self
+        def __enter__(self):
+            return self
 
-    def __exit__(self, *args):
-        self.close()
+        def __exit__(self, *args):
+            self.close()
 
-    def __del__(self):
-        self.close()
+        def __del__(self):
+            self.close()
 
 
-def _make_raw_connection() -> sqlite3.Connection:
-    """Create a new raw sqlite3 connection with standard PRAGMAs."""
-    conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
-    conn.execute('PRAGMA journal_mode=WAL;')
-    conn.execute('PRAGMA synchronous=NORMAL;')
-    conn.row_factory = sqlite3.Row
-    return conn
+def _make_raw_connection():
+    """Create a new raw connection (SQLite or PG) with standard settings."""
+    if _USE_PG:
+        _ensure_pg_pool()
+        raw = _pg_pool.getconn()
+        return _PgPooledConnection(_PgRawConnection(raw), raw)
+    else:
+        conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
+        conn.execute('PRAGMA journal_mode=WAL;')
+        conn.execute('PRAGMA synchronous=NORMAL;')
+        conn.row_factory = sqlite3.Row
+        return _PooledConnection(conn)
 
 
 def _utc_now_iso():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 def get_db_connection():
+    if _USE_PG:
+        return _make_raw_connection()
+    # SQLite path
     if not os.path.exists(os.path.dirname(DB_PATH)):
         os.makedirs(os.path.dirname(DB_PATH))
-    # Try reusing a pooled connection
     try:
         conn = _pool.get_nowait()
         try:
@@ -83,9 +209,8 @@ def get_db_connection():
                 pass
     except queue.Empty:
         pass
-    # Create new
     try:
-        return _PooledConnection(_make_raw_connection())
+        return _make_raw_connection()
     except sqlite3.DatabaseError as e:
         if "malformed" in str(e).lower():
             logger.warning(f"Database corrupted, deleting {DB_PATH} and recreating...")
@@ -93,8 +218,24 @@ def get_db_connection():
                 path = DB_PATH + suffix
                 if os.path.exists(path):
                     os.remove(path)
-            return _PooledConnection(_make_raw_connection())
+            return _make_raw_connection()
         raise e
+
+
+# ── Helpers ─────────────────────────────────────────────────
+_SERIAL_PK = 'SERIAL PRIMARY KEY' if _USE_PG else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+_JSON_ARRAY_FN = 'json_build_array' if _USE_PG else 'json_array'
+
+
+def _table_columns(cursor, table_name: str) -> set[str]:
+    """Return column names for *table_name*. Backend-aware."""
+    if _USE_PG:
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+            (table_name,),
+        )
+        return {row[0] for row in cursor.fetchall()}
+    return {row['name'] for row in cursor.execute(f'PRAGMA table_info({table_name})').fetchall()}
 
 def init_db():
     conn = get_db_connection()
@@ -102,8 +243,8 @@ def init_db():
         cursor = conn.cursor()
 
         def ensure_column(table_name: str, column_name: str, definition: str):
-            columns = {row['name'] for row in cursor.execute(f'PRAGMA table_info({table_name})').fetchall()}
-            if column_name not in columns:
+            cols = _table_columns(cursor, table_name)
+            if column_name not in cols:
                 cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}')
         
         # Create devices table if not exists
@@ -518,9 +659,9 @@ def init_db():
         ''')
 
         # Password reset verification codes (sent via Feishu/DingTalk/WeChat)
-        cursor.execute('''
+        cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS password_reset_codes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {_SERIAL_PK},
             username TEXT NOT NULL,
             code TEXT NOT NULL,
             created_at REAL NOT NULL,
@@ -531,9 +672,9 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_pwd_reset_username ON password_reset_codes(username)')
 
         # High-frequency raw interface telemetry (short retention)
-        cursor.execute('''
+        cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS interface_telemetry_raw (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {_SERIAL_PK},
             ts TEXT NOT NULL,
             device_id TEXT NOT NULL,
             interface_name TEXT NOT NULL,
@@ -745,8 +886,7 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_health_samples_device_ts ON device_health_samples(device_id, ts)')
 
         # Migration: add columns to playbook_executions if missing
-        cursor.execute("PRAGMA table_info(playbook_executions)")
-        pb_cols = [c[1] for c in cursor.fetchall()]
+        pb_cols = _table_columns(cursor, 'playbook_executions')
         if 'platform' not in pb_cols:
             cursor.execute("ALTER TABLE playbook_executions ADD COLUMN platform TEXT DEFAULT 'cisco_ios'")
         if 'total_devices' not in pb_cols:
@@ -758,8 +898,7 @@ def init_db():
         if 'partial_count' not in pb_cols:
             cursor.execute("ALTER TABLE playbook_executions ADD COLUMN partial_count INTEGER DEFAULT 0")
 
-        cursor.execute("PRAGMA table_info(device_health_samples)")
-        device_health_columns = [column[1] for column in cursor.fetchall()]
+        device_health_columns = _table_columns(cursor, 'device_health_samples')
         if device_health_columns and 'health_reasons_json' not in device_health_columns:
             cursor.execute("ALTER TABLE device_health_samples ADD COLUMN health_reasons_json TEXT DEFAULT '[]'")
             cursor.execute(
@@ -767,8 +906,7 @@ def init_db():
             )
 
         # Migration: Add new columns if they don't exist
-        cursor.execute("PRAGMA table_info(devices)")
-        columns = [column[1] for column in cursor.fetchall()]
+        columns = _table_columns(cursor, 'devices')
         
         if 'cpu_usage' not in columns:
             cursor.execute('ALTER TABLE devices ADD COLUMN cpu_usage INTEGER DEFAULT 0')
@@ -786,8 +924,7 @@ def init_db():
             cursor.execute('ALTER TABLE devices ADD COLUMN memory_history TEXT DEFAULT "[]"')
 
         # Migration: add alert workflow columns if they don't exist
-        cursor.execute("PRAGMA table_info(alert_events)")
-        alert_columns = [column[1] for column in cursor.fetchall()]
+        alert_columns = _table_columns(cursor, 'alert_events')
         if 'workflow_status' not in alert_columns:
             cursor.execute("ALTER TABLE alert_events ADD COLUMN workflow_status TEXT NOT NULL DEFAULT 'open'")
         if 'assignee' not in alert_columns:
@@ -805,8 +942,7 @@ def init_db():
         )
         cursor.execute("UPDATE alert_events SET updated_at = COALESCE(updated_at, resolved_at, created_at)")
 
-        cursor.execute("PRAGMA table_info(alert_maintenance_windows)")
-        maintenance_columns = [column[1] for column in cursor.fetchall()]
+        maintenance_columns = _table_columns(cursor, 'alert_maintenance_windows')
         if 'target_ips_json' not in maintenance_columns:
             cursor.execute("ALTER TABLE alert_maintenance_windows ADD COLUMN target_ips_json TEXT DEFAULT '[]'")
         if 'selection_mode' not in maintenance_columns:
@@ -816,10 +952,10 @@ def init_db():
         if 'match_conditions_json' not in maintenance_columns:
             cursor.execute("ALTER TABLE alert_maintenance_windows ADD COLUMN match_conditions_json TEXT DEFAULT '[]'")
         cursor.execute(
-            '''
+            f'''
             UPDATE alert_maintenance_windows
             SET target_ips_json = CASE
-                WHEN COALESCE(target_ips_json, '') = '' OR target_ips_json = '[]' THEN json_array(target_ip)
+                WHEN COALESCE(target_ips_json, '') = '' OR target_ips_json = '[]' THEN CAST({_JSON_ARRAY_FN}(target_ip) AS TEXT)
                 ELSE target_ips_json
             END
             WHERE COALESCE(target_ip, '') != ''
@@ -847,8 +983,7 @@ def init_db():
             '''
         )
 
-        cursor.execute("PRAGMA table_info(alert_rule_settings)")
-        rule_columns = [column[1] for column in cursor.fetchall()]
+        rule_columns = _table_columns(cursor, 'alert_rule_settings')
         if rule_columns:
             if 'aggregation_mode' not in rule_columns:
                 cursor.execute("ALTER TABLE alert_rule_settings ADD COLUMN aggregation_mode TEXT DEFAULT 'dedupe_key'")
@@ -867,12 +1002,13 @@ def init_db():
 
         cursor.execute(
             '''
-            INSERT OR IGNORE INTO alert_rule_settings (
+            INSERT INTO alert_rule_settings (
                 id, interface_down_enabled, interface_util_threshold, cpu_threshold, memory_threshold,
                 aggregation_mode, notification_repeat_window_seconds,
                 notify_on_active, notify_on_recovery, notify_on_reopen_after_maintenance,
                 updated_by, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO NOTHING
             ''',
             (
                 'default',
@@ -891,8 +1027,7 @@ def init_db():
         )
         cursor.execute("UPDATE alert_rule_settings SET updated_at = COALESCE(updated_at, ?) WHERE updated_at IS NULL OR updated_at = ''", (_utc_now_iso(),))
 
-        cursor.execute("PRAGMA table_info(alert_rules)")
-        alert_rule_columns = [column[1] for column in cursor.fetchall()]
+        alert_rule_columns = _table_columns(cursor, 'alert_rules')
         if alert_rule_columns and 'scope_match_mode' not in alert_rule_columns:
             cursor.execute("ALTER TABLE alert_rules ADD COLUMN scope_match_mode TEXT NOT NULL DEFAULT 'exact'")
         if alert_rule_columns and 'for_duration_seconds' not in alert_rule_columns:
@@ -943,12 +1078,13 @@ def init_db():
         def _insert_seed_rule(rule_id, name, metric_type, severity, threshold, enabled, created_at):
             cursor.execute(
                 '''
-                INSERT OR IGNORE INTO alert_rules (
+                INSERT INTO alert_rules (
                     id, name, metric_type, scope_type, scope_match_mode, scope_value, severity, threshold, enabled,
                     aggregation_mode, notification_repeat_window_seconds,
                     notify_on_active, notify_on_recovery, notify_on_reopen_after_maintenance,
                     created_by, created_at, updated_by, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO NOTHING
                 ''',
                 (
                     rule_id,
@@ -992,16 +1128,14 @@ def init_db():
             cursor.execute('ALTER TABLE devices ADD COLUMN sys_contact TEXT')
 
         # Migration for scripts table
-        cursor.execute("PRAGMA table_info(scripts)")
-        script_columns = [column[1] for column in cursor.fetchall()]
+        script_columns = _table_columns(cursor, 'scripts')
         if 'platform' not in script_columns:
             cursor.execute('ALTER TABLE scripts ADD COLUMN platform TEXT')
         if 'category' not in script_columns:
             cursor.execute('ALTER TABLE scripts ADD COLUMN category TEXT DEFAULT "custom"')
 
         # Migration for users table
-        cursor.execute("PRAGMA table_info(users)")
-        user_columns = [column[1] for column in cursor.fetchall()]
+        user_columns = _table_columns(cursor, 'users')
         if 'avatar_url' not in user_columns:
             cursor.execute('ALTER TABLE users ADD COLUMN avatar_url TEXT')
         if 'group_name' not in user_columns:
@@ -1013,8 +1147,7 @@ def init_db():
         if 'preferred_language' not in user_columns:
             cursor.execute("ALTER TABLE users ADD COLUMN preferred_language TEXT DEFAULT 'zh'")
 
-        cursor.execute("PRAGMA table_info(compliance_findings)")
-        finding_columns = [column[1] for column in cursor.fetchall()]
+        finding_columns = _table_columns(cursor, 'compliance_findings')
         if finding_columns:
             if 'owner' not in finding_columns:
                 cursor.execute("ALTER TABLE compliance_findings ADD COLUMN owner TEXT DEFAULT ''")
@@ -1022,8 +1155,7 @@ def init_db():
                 cursor.execute("ALTER TABLE compliance_findings ADD COLUMN note TEXT DEFAULT ''")
 
         # Migration for interface_telemetry_raw table
-        cursor.execute("PRAGMA table_info(interface_telemetry_raw)")
-        raw_columns = [column[1] for column in cursor.fetchall()]
+        raw_columns = _table_columns(cursor, 'interface_telemetry_raw')
         if raw_columns:
             if 'in_pkts' not in raw_columns:
                 cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN in_pkts INTEGER')
@@ -1031,8 +1163,7 @@ def init_db():
                 cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN out_pkts INTEGER')
 
         # Migration for interface_telemetry_1m table
-        cursor.execute("PRAGMA table_info(interface_telemetry_1m)")
-        rollup_columns = [column[1] for column in cursor.fetchall()]
+        rollup_columns = _table_columns(cursor, 'interface_telemetry_1m')
         if rollup_columns:
             if 'in_pkts_sum' not in rollup_columns:
                 cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN in_pkts_sum INTEGER DEFAULT 0')
@@ -1101,7 +1232,7 @@ def init_db():
         cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_addr_unique ON ip_addresses(subnet_id, address)')
 
         # Migration: add device_type column if missing
-        ip_addr_cols = [r[1] for r in cursor.execute('PRAGMA table_info(ip_addresses)').fetchall()]
+        ip_addr_cols = _table_columns(cursor, 'ip_addresses')
         if 'device_type' not in ip_addr_cols:
             cursor.execute("ALTER TABLE ip_addresses ADD COLUMN device_type TEXT DEFAULT ''")
 

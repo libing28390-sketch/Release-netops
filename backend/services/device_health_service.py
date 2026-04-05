@@ -306,12 +306,25 @@ def record_device_health_snapshot() -> dict[str, Any]:
         if devices:
             conn.executemany(
                 '''
-                INSERT OR REPLACE INTO device_health_samples (
+                INSERT INTO device_health_samples (
                     ts, device_id, hostname, status, health_status, health_score,
                     open_alert_count, critical_open_alerts, major_open_alerts, warning_open_alerts,
                     interface_down_count, interface_flap_count, high_util_interface_count,
                     interface_error_count, health_summary, health_reasons_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (ts, device_id) DO UPDATE SET
+                  hostname=excluded.hostname, status=excluded.status,
+                  health_status=excluded.health_status, health_score=excluded.health_score,
+                  open_alert_count=excluded.open_alert_count,
+                  critical_open_alerts=excluded.critical_open_alerts,
+                  major_open_alerts=excluded.major_open_alerts,
+                  warning_open_alerts=excluded.warning_open_alerts,
+                  interface_down_count=excluded.interface_down_count,
+                  interface_flap_count=excluded.interface_flap_count,
+                  high_util_interface_count=excluded.high_util_interface_count,
+                  interface_error_count=excluded.interface_error_count,
+                  health_summary=excluded.health_summary,
+                  health_reasons_json=excluded.health_reasons_json
                 ''',
                 [(
                     ts,

@@ -460,11 +460,20 @@ def record_host_resource_snapshot(sync_alerts: bool = True) -> dict[str, Any]:
     try:
         conn.execute(
             '''
-            INSERT OR REPLACE INTO host_resource_samples (
+            INSERT INTO host_resource_samples (
                 ts, status, cpu_percent, memory_percent, disk_percent, load_1m,
                 process_memory_mb, process_cpu_percent, memory_used_gb, memory_total_gb,
                 disk_used_gb, disk_total_gb, disk_free_gb, uptime_hours, database_ok, database_status
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (ts) DO UPDATE SET
+              status=excluded.status, cpu_percent=excluded.cpu_percent,
+              memory_percent=excluded.memory_percent, disk_percent=excluded.disk_percent,
+              load_1m=excluded.load_1m, process_memory_mb=excluded.process_memory_mb,
+              process_cpu_percent=excluded.process_cpu_percent,
+              memory_used_gb=excluded.memory_used_gb, memory_total_gb=excluded.memory_total_gb,
+              disk_used_gb=excluded.disk_used_gb, disk_total_gb=excluded.disk_total_gb,
+              disk_free_gb=excluded.disk_free_gb, uptime_hours=excluded.uptime_hours,
+              database_ok=excluded.database_ok, database_status=excluded.database_status
             ''',
             (
                 snapshot["updated_at"],

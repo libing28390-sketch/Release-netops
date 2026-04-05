@@ -571,12 +571,10 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
               </>
             ) : (quickQueryRunning || quickQueryOutput) ? (
               <>
-                {quickQueryMaximized && (
-                  <div className="fixed inset-0 z-[70] bg-[#020817]/72 backdrop-blur-sm" />
-                )}
+                <div className="fixed inset-0 z-[70] bg-[#020817]/72 backdrop-blur-sm" onClick={onResetQuickQuery} />
                 <div className={quickQueryMaximized
                   ? 'fixed left-1/2 top-1/2 z-[80] flex h-[84vh] w-[min(1280px,90vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-3xl border border-white/10 bg-[linear-gradient(180deg,#0d1117_0%,#151b23_100%)] shadow-[0_32px_120px_rgba(0,0,0,0.6)]'
-                  : 'flex flex-1 flex-col overflow-hidden rounded-b-2xl bg-[linear-gradient(180deg,#0d1117_0%,#151b23_100%)]'}>
+                  : 'fixed left-1/2 top-1/2 z-[80] flex h-[min(520px,70vh)] w-[min(720px,85vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-3xl border border-white/10 bg-[linear-gradient(180deg,#0d1117_0%,#151b23_100%)] shadow-[0_32px_120px_rgba(0,0,0,0.6)]'}>
                   <div className="shrink-0 flex items-center justify-between border-b border-white/[0.06] bg-[linear-gradient(90deg,#1c2030_0%,#161b22_100%)] px-4 py-2.5">
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="flex gap-[6px] mr-1 shrink-0">

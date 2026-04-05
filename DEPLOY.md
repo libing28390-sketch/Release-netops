@@ -6,7 +6,7 @@
 |------|--------|------|
 | 前端 | React 19 + TypeScript + Vite + TailwindCSS | 4300 (dev) |
 | 后端 | Python FastAPI + Uvicorn | 8003 |
-| 数据库 | SQLite (WAL mode) | - |
+| 数据库 | PostgreSQL 17 (默认) / SQLite (fallback) | 5432 |
 | SNMP | pysnmp 7.x | - |
 
 ## 项目结构
@@ -15,7 +15,7 @@
 netops-automation/
 ├── backend/              # Python 后端
 │   ├── main.py           # FastAPI 入口 + 状态监控
-│   ├── database.py       # SQLite 数据库管理
+│   ├── database.py       # 数据库管理 (PG/SQLite 双后端)
 │   ├── api/              # API 路由
 │   ├── core/             # 配置与日志
 │   ├── drivers/          # 设备驱动 (Netmiko/Scrapli)
@@ -28,11 +28,11 @@ netops-automation/
 │   ├── main.tsx          # 入口
 │   ├── i18n.tsx          # 国际化
 │   └── components/       # UI 组件
-├── data/                 # SQLite 数据库目录
+├── data/                 # 日志与本地数据目录
 ├── backup/               # 配置备份目录
 ├── package.json          # Node.js 依赖与脚本
 ├── vite.config.ts        # Vite 配置
-└── cleanup-ports.js      # 端口清理脚本 (跨平台)
+└── docker-compose.yml    # Docker 编排 (含 PostgreSQL)
 ```
 
 ---
@@ -226,7 +226,6 @@ npm run build
 | `npm run dev:frontend` | 仅启动前端开发服务器 |
 | `npm run build` | 构建前端生产版本到 `dist/` |
 | `npm run start` | 构建 + 启动生产模式（自动检测平台） |
-| `npm run cleanup` | 清理占用的 8003/4300 端口 |
 | `npm run clean` | 删除 `dist/` 构建目录 |
 
 ### 默认账号
@@ -398,4 +397,52 @@ docker compose logs -f nginx   # 查看 Nginx 日志
 docker compose logs -f netops  # 查看后端日志
 docker compose restart nginx   # 重启 Nginx
 ```
+
+---
+
+## PostgreSQL 数据库
+
+默认使用 PostgreSQL。如设置了 `DATABASE_URL=postgresql://...` 环境变量，系统自动启用 PG；未设置时 fallback 到 SQLite。
+
+### 1. 安装 PostgreSQL
+
+```bash
+# Ubuntu
+sudo apt install postgresql postgresql-contrib
+sudo systemctl enable postgresql
+
+# 创建数据库和用户
+sudo -u postgres psql -c "CREATE USER netops WITH PASSWORD 'your-secure-password';"
+sudo -u postgres psql -c "CREATE DATABASE netops OWNER netops;"
+```
+
+### 2. 配置环境变量
+
+在 `.env` 文件中添加：
+
+```env
+DATABASE_URL=postgresql://netops:your-secure-password@localhost:5432/netops
+```
+
+或设置系统环境变量：
+
+```bash
+export DATABASE_URL="postgresql://netops:your-secure-password@localhost:5432/netops"
+```
+
+> 设置 `DATABASE_URL` 后，系统自动使用 PostgreSQL；不设置则使用默认 SQLite。
+
+### 3. 初始化
+
+首次启动时，系统自动在 PostgreSQL 中创建所有表结构，无需手动迁移。
+
+### 4. Docker 部署
+
+`docker-compose.yml` 已内置 PostgreSQL 服务，`docker compose up -d --build` 即可启动完整环境。
+
+### 注意事项
+
+- 首次启动自动建表，无需迁移脚本
+- 切换回 SQLite 只需删除 `DATABASE_URL` 环境变量
+- PostgreSQL 驱动 `psycopg2-binary` 已包含在 requirements.txt 中
 
