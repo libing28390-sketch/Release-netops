@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Package, Plus, Trash2, Search, X, RefreshCw, Download, Pencil,
+  Package, Plus, Trash2, Search, X, RefreshCw, Download, Pencil, Copy,
   Server, Router, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
   AlertTriangle, Network,
   ExternalLink, Wifi, Building2, Upload,
   FileText, ChevronDown, ChevronUp,
   Zap, AlertCircle, CheckCircle2, Tag,
   Flame, MonitorSpeaker, LayoutList, LayoutGrid,
+  Lock, Terminal, Eye, EyeOff,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
@@ -66,9 +67,25 @@ const EMPTY_FORM = {
   hostname: '', datacenter: '', rack: '', rack_unit: '', management_ip: '',
   business_ip: '', device_role: '', vlan: '', uplink_switch: '', uplink_port: '',
   status: 'active', purchase_date: '', warranty_expiry: '', department: '', notes: '',
+  // network_device specific
+  platform: 'cisco_ios', connection_method: 'ssh', username: '', password: '',
+  snmp_community: 'public', snmp_port: '161',
 };
 
 const PAGE_SIZE = 25;
+
+const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
+  Cisco:      [{ value: 'cisco_ios', label: 'Cisco IOS' }, { value: 'cisco_nxos', label: 'Cisco NX-OS' }, { value: 'cisco_xe', label: 'Cisco IOS-XE' }],
+  Huawei:     [{ value: 'huawei_vrp', label: 'Huawei VRP' }],
+  H3C:        [{ value: 'hp_comware', label: 'H3C Comware' }],
+  Arista:     [{ value: 'arista_eos', label: 'Arista EOS' }],
+  Juniper:    [{ value: 'juniper_junos', label: 'Juniper JunOS' }],
+  Ruijie:     [{ value: 'ruijie_os', label: 'Ruijie RGOS' }],
+  Fortinet:   [{ value: 'fortinet', label: 'FortiOS' }],
+  'Palo Alto':[{ value: 'paloalto_panos', label: 'PAN-OS' }],
+  ZTE:        [{ value: 'zte_zxros', label: 'ZTE ZXROS' }],
+};
+const ALL_PLATFORMS = Object.values(VENDOR_PLATFORMS).flat();
 
 /* ═══════════════════════════════════════════════════════════════════
    Helpers
@@ -200,6 +217,12 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       status: a.status,
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
+      platform: (a as any).platform || 'cisco_ios',
+      connection_method: (a as any).connection_method || 'ssh',
+      username: (a as any).username || '',
+      password: '',
+      snmp_community: (a as any).snmp_community || 'public',
+      snmp_port: String((a as any).snmp_port || '161'),
     });
     setShowModal(true);
   };
@@ -211,8 +234,34 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       const url = editingAsset ? `/api/assets/${editingAsset.id}` : '/api/assets';
       const r = await fetch(url, { method: editingAsset ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
       if (r.ok) { setShowModal(false); fetchAssets(); fetchSummary(); }
-    } catch { /* noop */ }
+      else {
+        const err = await r.json().catch(() => null);
+        alert(zh ? `保存失败: ${err?.detail || r.statusText}` : `Save failed: ${err?.detail || r.statusText}`);
+      }
+    } catch (e) { alert(zh ? `网络错误: ${e}` : `Network error: ${e}`); }
     setSaving(false);
+  };
+
+  const openCopy = (a: Asset) => {
+    setEditingAsset(null);
+    const copyTag = a.asset_tag ? `${a.asset_tag}-${Date.now().toString(36).slice(-4)}` : '';
+    setForm({
+      asset_type: a.asset_type, asset_tag: copyTag, serial_number: '',
+      vendor: a.vendor, model: a.model, hostname: '', datacenter: a.datacenter,
+      rack: a.rack, rack_unit: '', management_ip: '',
+      business_ip: '', device_role: a.device_role,
+      vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
+      status: a.status,
+      purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
+      department: a.department, notes: a.notes,
+      platform: (a as any).platform || 'cisco_ios',
+      connection_method: (a as any).connection_method || 'ssh',
+      username: (a as any).username || '',
+      password: '',
+      snmp_community: (a as any).snmp_community || 'public',
+      snmp_port: String((a as any).snmp_port || '161'),
+    });
+    setShowModal(true);
   };
 
   const handleDelete = async () => {
@@ -498,6 +547,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
               )}
             </AnimatePresence>
 
+            <button onClick={openAdd} className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#00bceb] text-white text-[11px] font-semibold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20" title={zh ? '新增资产' : 'Add Asset'}><Plus size={13} /><span className="hidden sm:inline">{zh ? '新增' : 'Add'}</span></button>
             <button onClick={() => { fetchAssets(); fetchSummary(); }} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '刷新' : 'Refresh'}><RefreshCw size={13} /></button>
             <button onClick={handleDownloadTemplate} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '下载模板' : 'Template'}><FileText size={13} /></button>
             <button onClick={handleExport} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '导出' : 'Export'}><Download size={13} /></button>
@@ -643,6 +693,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                       {/* Actions */}
                       <td className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-px">
+                          <ActionBtn icon={Copy}    title={zh ? '复制' : 'Copy'}  hoverCls="hover:text-emerald-500 hover:bg-emerald-50" onClick={() => openCopy(a)} />
                           <ActionBtn icon={Pencil}  title={zh ? '编辑' : 'Edit'}  hoverCls="hover:text-[#00bceb] hover:bg-[#00bceb]/5" onClick={() => openEdit(a)} />
                           <ActionBtn icon={Trash2}  title={zh ? '删除' : 'Delete'} hoverCls="hover:text-red-500 hover:bg-red-50" onClick={() => setDeleteTarget(a)} />
                         </div>
@@ -707,6 +758,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                                   </td>
                                   <td className="px-2 py-1.5 text-[9px] text-black/30 capitalize">{a.device_role || '—'}</td>
                                   <td className="px-2 py-1.5 text-right">
+                                    <button onClick={e => { e.stopPropagation(); openCopy(a); }} title={zh ? '复制' : 'Copy'} className="p-1 rounded text-black/10 hover:text-emerald-500 hover:bg-emerald-50"><Copy size={11} /></button>
                                     <button onClick={e => { e.stopPropagation(); openEdit(a); }} title="Edit" className="p-1 rounded text-black/10 hover:text-[#00bceb] hover:bg-[#00bceb]/5"><Pencil size={11} /></button>
                                   </td>
                                 </tr>
@@ -795,10 +847,35 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
               </div>
 
               <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                {/* ─── 基础信息 ─── */}
                 <Field label={zh ? '主机名 *' : 'Hostname *'}   value={form.hostname}      onChange={v => setForm(f => ({ ...f, hostname: v }))}      placeholder="core-sw-01" />
                 <Field label={zh ? '资产编号' : 'Asset Tag'}     value={form.asset_tag}     onChange={v => setForm(f => ({ ...f, asset_tag: v }))}     placeholder="SRV-BJ-001" />
                 <Field label={zh ? '序列号' : 'Serial No.'}     value={form.serial_number} onChange={v => setForm(f => ({ ...f, serial_number: v }))} />
-                <Field label={zh ? '厂商' : 'Vendor'}           value={form.vendor}        onChange={v => setForm(f => ({ ...f, vendor: v }))}        placeholder="Cisco, Huawei" />
+                <div>
+                  <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '厂商' : 'Vendor'}</label>
+                  <select value={form.vendor} onChange={e => {
+                    const v = e.target.value;
+                    const plats = VENDOR_PLATFORMS[v];
+                    setForm(f => ({ ...f, vendor: v, platform: plats?.[0]?.value || f.platform }));
+                  }} title="Vendor"
+                    className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25">
+                    <option value="">{zh ? '请选择' : 'Select...'}</option>
+                    <option value="Cisco">Cisco</option>
+                    <option value="Huawei">Huawei</option>
+                    <option value="H3C">H3C</option>
+                    <option value="Arista">Arista</option>
+                    <option value="Juniper">Juniper</option>
+                    <option value="Dell">Dell</option>
+                    <option value="HPE">HPE</option>
+                    <option value="Lenovo">Lenovo</option>
+                    <option value="Inspur">Inspur (浪潮)</option>
+                    <option value="Ruijie">Ruijie (锐捷)</option>
+                    <option value="ZTE">ZTE (中兴)</option>
+                    <option value="Fortinet">Fortinet</option>
+                    <option value="Palo Alto">Palo Alto</option>
+                    <option value="Other">{zh ? '其他' : 'Other'}</option>
+                  </select>
+                </div>
                 <Field label={zh ? '型号' : 'Model'}            value={form.model}         onChange={v => setForm(f => ({ ...f, model: v }))}         placeholder="C9300-48P" />
                 <div>
                   <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '状态' : 'Status'}</label>
@@ -808,22 +885,73 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                   </select>
                 </div>
                 <Field label={zh ? '管理IP' : 'Mgmt IP'}        value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="10.0.0.1" />
-                {form.asset_type === 'server' && (
-                  <Field label={zh ? '业务IP' : 'Biz IP'}       value={form.business_ip}   onChange={v => setForm(f => ({ ...f, business_ip: v }))}   placeholder="192.168.1.10" />
-                )}
-                {form.asset_type === 'server' && (
-                  <Field label="VLAN"                            value={form.vlan}          onChange={v => setForm(f => ({ ...f, vlan: v }))}          placeholder="VLAN 100" />
-                )}
-                {form.asset_type === 'server' && (
-                  <Field label={zh ? '上联交换机' : 'Uplink Switch'} value={form.uplink_switch} onChange={v => setForm(f => ({ ...f, uplink_switch: v }))} placeholder="core-sw-01" />
-                )}
-                {form.asset_type === 'server' && (
-                  <Field label={zh ? '上联端口' : 'Uplink Port'} value={form.uplink_port}   onChange={v => setForm(f => ({ ...f, uplink_port: v }))}   placeholder="Gi0/1" />
-                )}
+                <Field label={zh ? '角色' : 'Role'}             value={form.device_role}   onChange={v => setForm(f => ({ ...f, device_role: v }))}   placeholder="Core, Access..." />
+              </div>
+
+              {/* ─── 网络设备: 连接 & SNMP ─── */}
+              {form.asset_type === 'network_device' && (
+                <>
+                  <div className="flex items-center gap-1.5 mt-4 mb-2">
+                    <Terminal size={12} className="text-[#00bceb]/60" />
+                    <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">{zh ? '连接配置' : 'Connection'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                    <div>
+                      <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '平台' : 'Platform'}</label>
+                      <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value }))} title="Platform"
+                        className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25">
+                        {(VENDOR_PLATFORMS[form.vendor] || ALL_PLATFORMS).map(p => (
+                          <option key={p.value} value={p.value}>{p.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '连接方式' : 'Method'}</label>
+                      <select value={form.connection_method} onChange={e => setForm(f => ({ ...f, connection_method: e.target.value }))} title="Connection"
+                        className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25">
+                        <option value="ssh">SSH</option>
+                        <option value="netconf">NETCONF</option>
+                      </select>
+                    </div>
+                    <Field label={zh ? '用户名' : 'Username'} value={form.username} onChange={v => setForm(f => ({ ...f, username: v }))} placeholder="admin" />
+                    <PasswordField label={zh ? '密码' : 'Password'} value={form.password} onChange={v => setForm(f => ({ ...f, password: v }))} placeholder={editingAsset ? (zh ? '留空保持不变' : 'Leave empty to keep') : ''} />
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-4 mb-2">
+                    <Wifi size={12} className="text-[#00bceb]/60" />
+                    <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">SNMP</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                    <Field label={zh ? '团体字' : 'Community'} value={form.snmp_community} onChange={v => setForm(f => ({ ...f, snmp_community: v }))} placeholder="public" />
+                    <Field label={zh ? '端口' : 'Port'} value={form.snmp_port} onChange={v => setForm(f => ({ ...f, snmp_port: v }))} placeholder="161" />
+                  </div>
+                </>
+              )}
+
+              {/* ─── 服务器: 网络接入 ─── */}
+              {form.asset_type === 'server' && (
+                <>
+                  <div className="flex items-center gap-1.5 mt-4 mb-2">
+                    <Network size={12} className="text-violet-400" />
+                    <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">{zh ? '网络接入' : 'Network'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                    <Field label={zh ? '业务IP' : 'Biz IP'}       value={form.business_ip}   onChange={v => setForm(f => ({ ...f, business_ip: v }))}   placeholder="192.168.1.10" />
+                    <Field label="VLAN"                            value={form.vlan}          onChange={v => setForm(f => ({ ...f, vlan: v }))}          placeholder="VLAN 100" />
+                    <Field label={zh ? '上联交换机' : 'Uplink Switch'} value={form.uplink_switch} onChange={v => setForm(f => ({ ...f, uplink_switch: v }))} placeholder="core-sw-01" />
+                    <Field label={zh ? '上联端口' : 'Uplink Port'} value={form.uplink_port}   onChange={v => setForm(f => ({ ...f, uplink_port: v }))}   placeholder="Gi0/1" />
+                  </div>
+                </>
+              )}
+
+              {/* ─── 位置 & 资产 ─── */}
+              <div className="flex items-center gap-1.5 mt-4 mb-2">
+                <Building2 size={12} className="text-black/20" />
+                <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">{zh ? '位置 & 资产' : 'Location & Asset'}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
                 <Field label={zh ? '数据中心' : 'DC'}            value={form.datacenter}    onChange={v => setForm(f => ({ ...f, datacenter: v }))}    placeholder="BJ-DC1" />
                 <Field label={zh ? '机柜' : 'Rack'}             value={form.rack}          onChange={v => setForm(f => ({ ...f, rack: v }))}          placeholder="A-01" />
                 <Field label={zh ? 'U位' : 'Unit'}              value={form.rack_unit}     onChange={v => setForm(f => ({ ...f, rack_unit: v }))}     placeholder="12" />
-                <Field label={zh ? '角色' : 'Role'}             value={form.device_role}   onChange={v => setForm(f => ({ ...f, device_role: v }))}   placeholder="Core, Access..." />
                 <Field label={zh ? '部门/业务' : 'Service'}      value={form.department}    onChange={v => setForm(f => ({ ...f, department: v }))} />
                 <DateTimePicker label={zh ? '购买日期' : 'Purchased'} value={form.purchase_date} onChange={v => setForm(f => ({ ...f, purchase_date: v }))} language={language} mode="date" />
                 <DateTimePicker label={zh ? '保修到期' : 'Warranty'} value={form.warranty_expiry} onChange={v => setForm(f => ({ ...f, warranty_expiry: v }))} language={language} mode="date" />
@@ -1012,6 +1140,24 @@ function Field({ label, value, onChange, placeholder, type = 'text' }: {
       <label className="block text-[10px] text-black/30 mb-0.5">{label}</label>
       <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 placeholder:text-black/12 focus:outline-none focus:border-[#00bceb]/25" />
+    </div>
+  );
+}
+
+function PasswordField({ label, value, onChange, placeholder }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string;
+}) {
+  const [show, setShow] = React.useState(false);
+  return (
+    <div>
+      <label className="block text-[10px] text-black/30 mb-0.5">{label}</label>
+      <div className="relative">
+        <input type={show ? 'text' : 'password'} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+          className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 pr-7 text-xs text-black/65 placeholder:text-black/12 focus:outline-none focus:border-[#00bceb]/25" />
+        <button type="button" onClick={() => setShow(!show)} className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-black/15 hover:text-black/30">
+          {show ? <EyeOff size={12} /> : <Eye size={12} />}
+        </button>
+      </div>
     </div>
   );
 }

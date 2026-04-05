@@ -1,6 +1,9 @@
 """
 assets.py — Physical Asset Management (PAM) API
 Provides CRUD for servers and network devices with physical/location metadata.
+When asset_type='network_device', a linked record in the `devices` table is
+auto-created / synced / cascade-deleted so that the asset registry serves as
+the single source of truth (Plan-A).
 """
 
 import uuid
@@ -10,6 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from database import get_db_connection
+from core.crypto import encrypt_credential
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +22,104 @@ router = APIRouter()
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+
+
+# ── helpers: devices ↔ physical_assets sync ──────────────────────────
+
+def _platform_from_vendor(vendor: str) -> str:
+    """Map asset vendor string to a best-guess Netmiko platform."""
+    v = vendor.lower()
+    if 'cisco' in v:
+        return 'cisco_ios'
+    if 'huawei' in v:
+        return 'huawei_vrp'
+    if 'h3c' in v or 'comware' in v:
+        return 'hp_comware'
+    if 'arista' in v:
+        return 'arista_eos'
+    if 'juniper' in v:
+        return 'juniper_junos'
+    return 'cisco_ios'
+
+
+def _safe_encrypt(plaintext: str) -> str:
+    """Encrypt credential, return empty string if encryption key is not configured."""
+    if not plaintext:
+        return plaintext
+    try:
+        return encrypt_credential(plaintext)
+    except RuntimeError:
+        logger.warning('CREDENTIAL_ENCRYPTION_KEY not configured, storing empty password')
+        return ''
+
+
+def _create_linked_device(conn, asset_id: str, body) -> str:
+    """Create a devices row linked to a physical_assets row."""
+    device_id = str(uuid.uuid4())
+    platform = getattr(body, 'platform', '') or _platform_from_vendor(body.vendor)
+    method = getattr(body, 'connection_method', '') or 'ssh'
+    uname = getattr(body, 'username', '') or ''
+    pwd = getattr(body, 'password', '') or ''
+    community = getattr(body, 'snmp_community', '') or 'public'
+    port = getattr(body, 'snmp_port', None) or 161
+    conn.execute('''
+        INSERT INTO devices (
+            id, asset_id, hostname, ip_address, platform, status, compliance,
+            username, password, sn, model, version, role, site, uptime,
+            connection_method, vendor, snmp_community, snmp_port
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        device_id, asset_id,
+        body.hostname, body.management_ip,
+        platform, 'pending', 'unknown',
+        uname, _safe_encrypt(pwd),
+        body.serial_number, body.model, '', body.device_role,
+        body.datacenter, '0d 0h', method, body.vendor,
+        community, port,
+    ))
+    return device_id
+
+
+def _sync_device_from_asset(conn, asset_id: str, body) -> None:
+    """Push basic-info changes from asset to its linked device row."""
+    row = conn.execute('SELECT id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+    if not row:
+        return
+    updates = {
+        'hostname': body.hostname,
+        'ip_address': body.management_ip,
+        'sn': body.serial_number,
+        'model': body.model,
+        'role': body.device_role,
+        'site': body.datacenter,
+        'vendor': body.vendor,
+        'platform': body.platform if hasattr(body, 'platform') else None,
+        'connection_method': body.connection_method if hasattr(body, 'connection_method') else None,
+        'snmp_community': body.snmp_community if hasattr(body, 'snmp_community') else None,
+        'snmp_port': body.snmp_port if hasattr(body, 'snmp_port') else None,
+    }
+    # Handle username/password specially
+    uname = getattr(body, 'username', None)
+    pwd = getattr(body, 'password', None)
+    if uname is not None:
+        updates['username'] = uname
+    if pwd is not None and pwd != '':
+        updates['password'] = _safe_encrypt(pwd)
+    # Only update non-None values (AssetUpdate has Optional fields)
+    set_parts = []
+    params = []
+    for col, val in updates.items():
+        if val is not None:
+            set_parts.append(f'{col} = ?')
+            params.append(val)
+    if set_parts:
+        params.append(row['id'])
+        conn.execute(f"UPDATE devices SET {', '.join(set_parts)} WHERE id = ?", params)
+
+
+def _delete_linked_device(conn, asset_id: str) -> None:
+    """Cascade-delete the devices row linked to the asset."""
+    conn.execute('DELETE FROM devices WHERE asset_id = ?', (asset_id,))
 
 
 # ── Pydantic Models ──────────────────────────────────────────────────
@@ -43,6 +145,13 @@ class AssetCreate(BaseModel):
     warranty_expiry: str = ''
     department: str = ''
     notes: str = ''
+    # Network-device-only fields (forwarded to devices table)
+    platform: str = ''
+    connection_method: str = 'ssh'
+    username: str = ''
+    password: str = ''
+    snmp_community: str = 'public'
+    snmp_port: int = 161
 
 
 class AssetUpdate(BaseModel):
@@ -66,6 +175,13 @@ class AssetUpdate(BaseModel):
     warranty_expiry: Optional[str] = None
     department: Optional[str] = None
     notes: Optional[str] = None
+    # Network-device-only fields (forwarded to devices table)
+    platform: Optional[str] = None
+    connection_method: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    snmp_community: Optional[str] = None
+    snmp_port: Optional[int] = None
 
 
 # ── Summary ──────────────────────────────────────────────────────────
@@ -212,8 +328,15 @@ def create_asset(body: AssetCreate):
             body.status,
             body.purchase_date, body.warranty_expiry, body.department, body.notes, now, now
         ))
+
+        # Plan-A: auto-create linked device for network_device assets
+        device_id = None
+        if body.asset_type == 'network_device':
+            device_id = _create_linked_device(conn, asset_id, body)
+            logger.info('Auto-created device %s for asset %s', device_id, asset_id)
+
         conn.commit()
-        return {'id': asset_id}
+        return {'id': asset_id, 'device_id': device_id}
     finally:
         conn.close()
 
@@ -253,6 +376,12 @@ def update_asset(asset_id: str, body: AssetUpdate):
             params.append(_utc_now())
             params.append(asset_id)
             conn.execute(f"UPDATE physical_assets SET {', '.join(updates)} WHERE id = ?", tuple(params))
+
+            # Plan-A: sync basic info to linked device
+            current_type = body.asset_type if body.asset_type is not None else row['asset_type']
+            if current_type == 'network_device':
+                _sync_device_from_asset(conn, asset_id, body)
+
             conn.commit()
         return {'ok': True}
     finally:
@@ -268,6 +397,8 @@ def delete_asset(asset_id: str):
         row = conn.execute('SELECT id FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Asset not found')
+        # Plan-A: cascade-delete linked device first
+        _delete_linked_device(conn, asset_id)
         conn.execute('DELETE FROM physical_assets WHERE id = ?', (asset_id,))
         conn.commit()
         return {'ok': True}
@@ -306,6 +437,9 @@ def import_assets(items: list[AssetCreate]):
                 body.status,
                 body.purchase_date, body.warranty_expiry, body.department, body.notes, now, now
             ))
+            # Plan-A: auto-create linked device for network_device assets
+            if body.asset_type == 'network_device':
+                _create_linked_device(conn, asset_id, body)
             created += 1
         conn.commit()
         return {'created': created, 'skipped': skipped}

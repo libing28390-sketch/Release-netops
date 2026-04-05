@@ -15,6 +15,7 @@ scrapli
 asyncssh
 scrapli-community
 apscheduler
+croniter
 httpx
 puresnmp>=2.0
 bcrypt

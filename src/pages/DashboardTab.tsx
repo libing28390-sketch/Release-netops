@@ -96,7 +96,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           <button onClick={() => setDashBannerCollapsed(true)} className="absolute top-2.5 right-3 p-1 rounded-lg hover:bg-black/5 text-black/30 hover:text-black/60 transition-all" aria-label="Close banner"><X size={14} /></button>
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a5cd]">{language === 'zh' ? 'NetPilot 运营中心' : 'NetPilot Command Center'}</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a5cd]">{language === 'zh' ? 'Nexora 运营中心' : 'Nexora Command Center'}</p>
               <h3 className="mt-0.5 text-lg font-bold text-[#0d2c40]">{t('todaySnapshot')}</h3>
               <p className="mt-0.5 text-xs text-[#21546d]/80">{t('todaySnapshotDesc')}</p>
               {hostResources && <p className="mt-1 text-[11px] text-[#21546d]/85">{language === 'zh' ? `平台宿主机: CPU ${Math.round(hostResources.cpu_percent || 0)}% / 内存 ${Math.round(hostResources.memory_percent || 0)}% / 磁盘 ${Math.round(hostResources.disk_percent || 0)}%` : `Platform host: CPU ${Math.round(hostResources.cpu_percent || 0)}% / Memory ${Math.round(hostResources.memory_percent || 0)}% / Disk ${Math.round(hostResources.disk_percent || 0)}%`}</p>}

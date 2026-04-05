@@ -5,6 +5,7 @@ import uuid
 import json
 import socket
 import time
+import logging
 from typing import Optional
 from database import get_db_connection
 from services.audit_service import log_audit_event
@@ -12,8 +13,59 @@ from services.device_health_service import annotate_devices_with_health
 from services.operational_data_service import collect_operational_data, collect_custom_command_data
 from core.crypto import encrypt_credential, decrypt_credential
 from drivers.ssh_compat import build_ssh_error_guidance, get_ssh_error_code
+from datetime import datetime, timezone
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+
+
+def _vendor_from_platform(platform: str) -> str:
+    """Best-effort vendor from Netmiko platform string."""
+    p = (platform or '').lower()
+    if 'cisco' in p:
+        return 'Cisco'
+    if 'huawei' in p or 'vrp' in p:
+        return 'Huawei'
+    if 'h3c' in p or 'comware' in p:
+        return 'H3C'
+    if 'arista' in p:
+        return 'Arista'
+    if 'juniper' in p or 'junos' in p:
+        return 'Juniper'
+    return ''
+
+
+def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str | None:
+    """Reverse-link: when creating a device directly, auto-create a physical_assets record."""
+    now = _utc_now()
+    asset_id = f"asset-{uuid.uuid4().hex[:12]}"
+    vendor = device.get('vendor') or _vendor_from_platform(device.get('platform', ''))
+    try:
+        conn.execute('''
+            INSERT INTO physical_assets (
+                id, asset_type, asset_tag, serial_number, vendor, model, hostname,
+                datacenter, rack, rack_unit, management_ip, business_ip, device_role,
+                vlan, uplink_switch, uplink_port,
+                status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            asset_id, 'network_device', '', device.get('sn', ''), vendor,
+            device.get('model', ''), device.get('hostname', ''),
+            device.get('site', ''), '', '',
+            device.get('ip_address', ''), '', device.get('role', ''),
+            '', '', '',
+            'active', '', '', '', '', now, now,
+        ))
+        conn.execute('UPDATE devices SET asset_id = ?, vendor = ? WHERE id = ?', (asset_id, vendor, device_id))
+        return asset_id
+    except Exception as exc:
+        _logger.warning('Failed to create linked asset for device %s: %s', device_id, exc)
+        return None
 
 
 def _probe_tcp_port(host: str, port: int, timeout: float = 1.5) -> tuple[bool, float | None, str | None]:
@@ -161,70 +213,80 @@ def read_devices(
 
         if search and search.strip():
             q = f"%{search.strip()}%"
-            where_clauses.append('(hostname LIKE ? OR ip_address LIKE ? OR sn LIKE ?)')
+            where_clauses.append('(d.hostname LIKE ? OR d.ip_address LIKE ? OR d.sn LIKE ?)')
             params.extend([q, q, q])
 
         if platform and platform != 'all':
-            where_clauses.append('platform = ?')
+            where_clauses.append('d.platform = ?')
             params.append(platform)
 
         if role and role != 'all':
-            where_clauses.append('LOWER(role) LIKE ?')
+            where_clauses.append('LOWER(d.role) LIKE ?')
             params.append(f'%{role.lower()}%')
 
         if status and status != 'all':
-            where_clauses.append('status = ?')
+            where_clauses.append('d.status = ?')
             params.append(status)
 
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
 
         sortable_columns = {
-            'hostname': 'hostname',
-            'model': 'model',
-            'platform': 'platform',
-            'site': 'site',
-            'connection_method': 'connection_method',
-            'status': 'status',
-            'ip_address': 'ip_address',
-            'role': 'role',
+            'hostname': 'd.hostname',
+            'model': 'd.model',
+            'platform': 'd.platform',
+            'site': 'd.site',
+            'connection_method': 'd.connection_method',
+            'status': 'd.status',
+            'ip_address': 'd.ip_address',
+            'role': 'd.role',
         }
-        order_col = sortable_columns.get(sort_key or '', 'hostname')
+        order_col = sortable_columns.get(sort_key or '', 'd.hostname')
         order_dir = 'DESC' if str(sort_direction).lower() == 'desc' else 'ASC'
-        select_clause = '*'
+
+        # Plan-A: LEFT JOIN physical_assets to surface asset metadata
+        asset_cols = (
+            ', pa.asset_tag, pa.datacenter, pa.rack, pa.rack_unit, '
+            'pa.department, pa.warranty_expiry, pa.purchase_date, '
+            'pa.business_ip, pa.vlan, pa.uplink_switch, pa.uplink_port'
+        )
+        from_clause = 'FROM devices d LEFT JOIN physical_assets pa ON d.asset_id = pa.id'
+
+        select_clause = f'd.*{asset_cols}'
         if str(mode).lower() == 'light':
             # Lightweight projection for high-frequency polling.
             select_clause = (
-                'id, hostname, ip_address, platform, status, compliance, sn, model, version, '
-                'role, site, uptime, connection_method, cpu_usage, memory_usage, temp, '
-                'fan_status, psu_status, sys_name, sys_location, sys_contact'
+                'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.sn, d.model, d.version, '
+                'd.role, d.site, d.uptime, d.connection_method, d.cpu_usage, d.memory_usage, d.temp, '
+                'd.fan_status, d.psu_status, d.sys_name, d.sys_location, d.sys_contact, d.asset_id, d.vendor'
+                + asset_cols
             )
 
         # Backward-compatible mode: no pagination params -> return array.
         # Safety cap: never return more than 500 rows without explicit pagination.
         if page is None or page_size is None:
             devices = conn.execute(
-                f'SELECT {select_clause} FROM devices {where_sql} ORDER BY {order_col} {order_dir} LIMIT 500',
+                f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT 500',
                 tuple(params)
             ).fetchall()
             items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d) for d in devices]
             return annotate_devices_with_health(conn, items)
 
         total_row = conn.execute(
-            f'SELECT COUNT(*) AS count FROM devices {where_sql}',
+            f'SELECT COUNT(*) AS count {from_clause} {where_sql}',
             tuple(params)
         ).fetchone()
         total = int(total_row['count']) if total_row else 0
 
         # Status counts across full filtered set (not just current page)
         status_count_rows = conn.execute(
-            f'SELECT status, COUNT(*) AS cnt FROM devices {where_sql} GROUP BY status',
+            f'SELECT d.status, COUNT(*) AS cnt {from_clause} {where_sql} GROUP BY d.status',
             tuple(params)
         ).fetchall()
         status_counts = {r['status']: r['cnt'] for r in status_count_rows}
 
         offset = (page - 1) * page_size
         devices = conn.execute(
-            f'SELECT {select_clause} FROM devices {where_sql} ORDER BY {order_col} {order_dir} LIMIT ? OFFSET ?',
+            f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT ? OFFSET ?',
             tuple([*params, page_size, offset])
         ).fetchall()
 
@@ -267,6 +329,8 @@ def create_device(device: dict = Body(...)):
             device.get('snmp_community', 'public'),
             device.get('snmp_port', 161)
         ))
+        # Plan-A: auto-create linked physical_assets record
+        _create_linked_asset_for_device(conn, device_id, device)
         conn.commit()
         new_device = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
         log_audit_event(
@@ -293,7 +357,10 @@ def create_device(device: dict = Body(...)):
 def delete_device(device_id: str):
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT hostname FROM devices WHERE id = ?', (device_id,)).fetchone()
+        row = conn.execute('SELECT hostname, asset_id FROM devices WHERE id = ?', (device_id,)).fetchone()
+        # Plan-A: cascade-delete linked asset
+        if row and row['asset_id']:
+            conn.execute('DELETE FROM physical_assets WHERE id = ?', (row['asset_id'],))
         conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
         conn.commit()
         log_audit_event(

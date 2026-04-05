@@ -181,7 +181,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const inactiveSubItemClass = 'text-slate-300/92 hover:bg-white/[0.04] hover:text-slate-100';
   const shelfClass = 'mx-2 rounded-xl border border-white/5 bg-white/[0.022] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]';
   const sectionDividerClass = 'hidden';
-  const shellToneLabel = language === 'zh' ? '网络运维中枢' : 'NETWORK OPS';
+  const shellToneLabel = language === 'zh' ? '智能网络中枢' : 'SMART NET HUB';
 
   return (
     <>
@@ -206,7 +206,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               <Activity size={18} />
             </div>
             <div className="min-w-0">
-              <h1 className="font-semibold text-[1.05rem] tracking-[0.01em] text-white whitespace-nowrap">NetPilot</h1>
+              <h1 className="font-semibold text-[1.05rem] tracking-[0.01em] text-white whitespace-nowrap">Nexora</h1>
               <p className="mt-0.5 text-[9.5px] font-medium tracking-[0.16em] text-cyan-100/48 whitespace-nowrap">{shellToneLabel}</p>
             </div>
           </div>

@@ -109,6 +109,32 @@ def api_delete_subnet(subnet_id: str, user=require_role("Administrator")):
     return {'ok': True}
 
 
+@router.post('/ipam/subnets/batch-delete')
+def api_batch_delete_subnets(body: dict, user=require_role("Administrator")):
+    ids = body.get("ids", [])
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(status_code=422, detail="ids must be a non-empty list")
+    deleted = 0
+    failed = 0
+    for sid in ids:
+        if delete_subnet(str(sid)):
+            deleted += 1
+            log_audit_event(
+                event_type="ipam.subnet.delete",
+                category="ipam",
+                severity="warning",
+                status="success",
+                summary=f"Batch deleted subnet {sid}",
+                actor_username=user.get("username"),
+                actor_role=user.get("role"),
+                target_type="subnet",
+                target_id=str(sid),
+            )
+        else:
+            failed += 1
+    return {'ok': True, 'deleted': deleted, 'failed': failed}
+
+
 # ── IP Addresses ──────────────────────────────
 
 @router.get('/ipam/subnets/{subnet_id}/addresses')

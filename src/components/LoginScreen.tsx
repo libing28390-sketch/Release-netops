@@ -162,10 +162,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
               <Activity size={34} className="text-white" />
             </div>
             <h1 className="mt-7 text-[48px] font-extrabold tracking-tight leading-none text-white">
-              Net<span className="text-[#06b6d4]">Pilot</span>
+              Nex<span className="text-[#06b6d4]">ora</span>
             </h1>
             <p className="text-[#06b6d4]/50 text-[10px] font-bold uppercase tracking-[0.32em] mt-2">
-              Network Operations Command Center
+              Network Automation Platform
             </p>
             <p className="mt-5 text-white/30 text-[13px] leading-relaxed max-w-[320px]">
               统一网络运维管理平台 —— 设备管理、自动化编排、合规审计、实时监控，一站式掌控全网。
@@ -227,8 +227,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
             <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#164e63] to-[#06b6d4] shadow-[0_0_40px_rgba(6,182,212,0.25)]">
               <Activity size={32} className="text-white" />
             </div>
-            <h1 className="text-3xl font-extrabold tracking-tight text-white">Net<span className="text-[#06b6d4]">Pilot</span></h1>
-            <p className="text-[#06b6d4]/50 text-[10px] font-bold uppercase tracking-[0.26em] mt-1.5">Network Operations Command Center</p>
+            <h1 className="text-3xl font-extrabold tracking-tight text-white">Nex<span className="text-[#06b6d4]">ora</span></h1>
+            <p className="text-[#06b6d4]/50 text-[10px] font-bold uppercase tracking-[0.26em] mt-1.5">Network Automation Platform</p>
           </div>
 
           {/* card */}
@@ -396,7 +396,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                   <span className="text-[10px] text-white/8">·</span>
                   <span className="text-[10px] font-mono text-white/12">NOC v2.0</span>
                   <span className="text-[10px] text-white/8">·</span>
-                  <span className="text-[10px] text-white/12">© {new Date().getFullYear()} NetPilot</span>
+                  <span className="text-[10px] text-white/12">© {new Date().getFullYear()} Nexora</span>
                 </div>
               </motion.div>
             </div>

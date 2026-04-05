@@ -100,7 +100,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
       hasSecret: true,
       docsUrl: 'https://open.dingtalk.com/document/robots/custom-robot-access',
       docsLabel: '配置教程 →',
-      tip: '在钉钉群 ➜ 群设置 ➜ 智能群助手 ➜ 添加机器人 ➜ 自定义。安全设置选「加签」时把密钥填入下方 Secret 栏；选「自定义关键词」时关键词填 NetPilot 即可。',
+      tip: '在钉钉群 ➜ 群设置 ➜ 智能群助手 ➜ 添加机器人 ➜ 自定义。安全设置选「加签」时把密钥填入下方 Secret 栏；选「自定义关键词」时关键词填 Nexora 即可。',
     },
     {
       key: 'wechat',

@@ -1,15 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CheckCircle2, CheckSquare, Clock, Download, Eye, ExternalLink, MapPin, RefreshCw, Repeat, Search, Square, UserCheck, Wrench, X } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, CheckSquare, Clock, Download, Eye, ExternalLink, MapPin, RefreshCw, Repeat, Search, Square, UserCheck, Wrench, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { AlertDetailResponse, AlertListResponse, AlertRecord } from '../types';
 import Pagination from '../components/Pagination';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
 import {
-  alertAccentButtonClass,
   alertInputClass,
   alertPanelClass,
-  alertPrimaryButtonClass,
   alertSecondaryButtonClass,
   alertTableActionButtonClass,
   AlertPageCommonProps,
@@ -572,11 +570,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
       <AnimatePresence>
         {selectedAlertId ? (
           <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) {
                 closeDetail();
@@ -584,171 +582,261 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
             }}
           >
             <motion.div
-              className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-3xl bg-white shadow-2xl"
-              initial={{ y: 18, opacity: 0, scale: 0.98 }}
+              className="relative max-h-[92vh] w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-[0_32px_80px_rgba(0,0,0,0.18)]"
+              initial={{ y: 24, opacity: 0, scale: 0.97 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
-              exit={{ y: 18, opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
+              exit={{ y: 24, opacity: 0, scale: 0.97 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
             >
-              <div className="flex items-start justify-between gap-4 border-b border-black/5 px-6 py-5">
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
-                    {language === 'zh' ? '告警详情' : 'Alert Detail'}
-                  </p>
-                  <h3 className="mt-2 text-xl font-semibold text-[#164e63]">
-                    {selectedItem?.title || (language === 'zh' ? '加载中...' : 'Loading...')}
-                    {selectedItem && (selectedItem.occurrence_count ?? 1) > 1 && (
-                      <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-600">
-                        <Repeat size={11} />
-                        {language === 'zh' ? `出现 ${selectedItem.occurrence_count} 次` : `${selectedItem.occurrence_count} occurrences`}
-                      </span>
-                    )}
-                  </h3>
-                </div>
-                <button title={language === 'zh' ? '关闭详情' : 'Close detail'} onClick={closeDetail} className="rounded-xl border border-black/10 p-2 text-black/55 hover:bg-black/[0.03]">
-                  <X size={16} />
-                </button>
-              </div>
+              {/* Severity accent top bar */}
+              <div className={`h-1 w-full ${
+                selectedItem?.severity === 'critical' ? 'bg-gradient-to-r from-red-500 via-red-400 to-rose-400' :
+                selectedItem?.severity === 'major' ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-amber-400' :
+                selectedItem?.severity === 'warning' ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400' :
+                'bg-gradient-to-r from-slate-400 via-slate-300 to-slate-400'
+              }`} />
 
-              {detailLoading || !selectedItem ? (
-                <div className="px-6 py-16 text-center text-sm text-black/40">
-                  {language === 'zh' ? '正在加载告警详情...' : 'Loading alert details...'}
-                </div>
-              ) : (
-                <div className="space-y-5 px-6 py-6">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl bg-[#f7f8fb] p-4 text-sm text-black/65">
-                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{language === 'zh' ? '基本信息' : 'Basic Info'}</p>
-                      <div className="mt-3 space-y-2">
-                        <p><span className="text-black/35">IP:</span> {selectedItem.ip_address || '--'}</p>
-                        <p>
-                          <span className="text-black/35">Hostname:</span>{' '}
-                          {selectedItem.device_id ? (
-                            <button onClick={() => { closeDetail(); onNavigateToDevice?.(selectedItem.device_id!); }} className="text-[#2b6b8f] hover:underline">
-                              {selectedItem.hostname || '--'}
-                            </button>
-                          ) : (selectedItem.hostname || '--')}
-                        </p>
-                        <p><span className="text-black/35">Site:</span> {selectedItem.site || '--'}</p>
-                        <p><span className="text-black/35">Interface:</span> {selectedItem.interface_name || '--'}</p>
+              <div className="max-h-[calc(92vh-4px)] overflow-y-auto">
+                {detailLoading || !selectedItem ? (
+                  <div className="flex items-center justify-center py-24">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-200 border-t-cyan-500" />
+                      <span className="text-sm text-black/40">{language === 'zh' ? '正在加载告警详情...' : 'Loading alert details...'}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* Header */}
+                    <div className="relative px-6 pt-5 pb-4">
+                      <button
+                        title={language === 'zh' ? '关闭详情' : 'Close detail'}
+                        onClick={closeDetail}
+                        className="absolute right-4 top-4 rounded-lg p-1.5 text-black/30 transition-colors hover:bg-black/5 hover:text-black/60"
+                      >
+                        <X size={18} />
+                      </button>
+
+                      <div className="flex items-start gap-3.5 pr-10">
+                        <div className={`mt-1 flex-shrink-0 rounded-xl p-2 ${
+                          selectedItem.severity === 'critical' ? 'bg-red-50 ring-1 ring-red-200/60' :
+                          selectedItem.severity === 'major' ? 'bg-orange-50 ring-1 ring-orange-200/60' :
+                          selectedItem.severity === 'warning' ? 'bg-amber-50 ring-1 ring-amber-200/60' :
+                          'bg-slate-50 ring-1 ring-slate-200/60'
+                        }`}>
+                          <AlertTriangle size={18} className={
+                            selectedItem.severity === 'critical' ? 'text-red-500' :
+                            selectedItem.severity === 'major' ? 'text-orange-500' :
+                            selectedItem.severity === 'warning' ? 'text-amber-500' : 'text-slate-500'
+                          } />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${severityBadgeClass(selectedItem.severity)}`}>
+                              {severityLabel(selectedItem.severity, language)}
+                            </span>
+                            <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold ${alertWorkflowBadgeClass(selectedItem.workflow_status)}`}>
+                              {workflowLabel(selectedItem.workflow_status, language)}
+                            </span>
+                            {(selectedItem.occurrence_count ?? 1) > 1 && (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-600 ring-1 ring-violet-200/80">
+                                <Repeat size={10} />
+                                ×{selectedItem.occurrence_count}
+                              </span>
+                            )}
+                          </div>
+                          <h3 className="mt-2 text-[17px] font-semibold leading-snug text-[#0f2b35]">
+                            {selectedItem.title}
+                          </h3>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-black/38">
+                            <span className="inline-flex items-center gap-1">
+                              <Clock size={11} />
+                              {formatTs(selectedItem.created_at)}
+                            </span>
+                            {selectedItem.duration_seconds != null && (
+                              <span className="inline-flex items-center gap-1">
+                                <Activity size={11} />
+                                {formatDuration(selectedItem.duration_seconds, language)}
+                              </span>
+                            )}
+                            {selectedItem.assignee && (
+                              <span className="inline-flex items-center gap-1">
+                                <UserCheck size={11} />
+                                {selectedItem.assignee}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
+                    </div>
+
+                    <div className="mx-6 border-t border-black/[0.06]" />
+
+                    {/* Content */}
+                    <div className="space-y-4 px-6 py-5">
+                      {/* Metric pills */}
+                      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                        <div className="rounded-xl bg-gradient-to-b from-[#f8f9fb] to-[#f4f5f8] px-3 py-2.5 ring-1 ring-black/[0.04]">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? 'IP 地址' : 'IP Address'}</p>
+                          <p className="mt-0.5 truncate text-sm font-semibold tabular-nums text-[#164e63]">{selectedItem.ip_address || '--'}</p>
+                        </div>
+                        <div className="rounded-xl bg-gradient-to-b from-[#f8f9fb] to-[#f4f5f8] px-3 py-2.5 ring-1 ring-black/[0.04]">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '主机名' : 'Hostname'}</p>
+                          <p className="mt-0.5 truncate text-sm font-semibold text-[#164e63]">
+                            {selectedItem.device_id ? (
+                              <button onClick={() => { closeDetail(); onNavigateToDevice?.(selectedItem.device_id!); }} className="text-[#0e7490] hover:underline">
+                                {selectedItem.hostname || '--'}
+                              </button>
+                            ) : (selectedItem.hostname || '--')}
+                          </p>
+                        </div>
+                        <div className="rounded-xl bg-gradient-to-b from-[#f8f9fb] to-[#f4f5f8] px-3 py-2.5 ring-1 ring-black/[0.04]">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '站点' : 'Site'}</p>
+                          <p className="mt-0.5 truncate text-sm font-semibold text-[#164e63]">{selectedItem.site || '--'}</p>
+                        </div>
+                        <div className="rounded-xl bg-gradient-to-b from-[#f8f9fb] to-[#f4f5f8] px-3 py-2.5 ring-1 ring-black/[0.04]">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '接口' : 'Interface'}</p>
+                          <p className="mt-0.5 truncate text-sm font-semibold text-[#164e63]">{selectedItem.interface_name || '--'}</p>
+                        </div>
+                      </div>
+
+                      {/* Topology link */}
                       {selectedItem.device_id && (
                         <button
                           onClick={() => { closeDetail(); onNavigateToTopology?.(selectedItem.device_id!); }}
-                          className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-[#2b6b8f] hover:underline"
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-[#0e7490] ring-1 ring-cyan-200/60 transition-all hover:bg-cyan-100 hover:ring-cyan-300/60"
                         >
                           <MapPin size={12} />
                           {language === 'zh' ? '在拓扑中定位' : 'Locate in Topology'}
                         </button>
                       )}
-                    </div>
 
-                    <div className="rounded-2xl bg-[#f7f8fb] p-4 text-sm text-black/65">
-                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{language === 'zh' ? '当前状态' : 'Current State'}</p>
-                      <div className="mt-3 space-y-2">
-                        <p><span className="text-black/35">{language === 'zh' ? '级别' : 'Severity'}:</span> {severityLabel(selectedItem.severity, language)}</p>
-                        <p><span className="text-black/35">{language === 'zh' ? '状态' : 'Status'}:</span> {workflowLabel(selectedItem.workflow_status, language)}</p>
-                        <p><span className="text-black/35">{language === 'zh' ? '创建时间' : 'Created'}:</span> {formatTs(selectedItem.created_at)}</p>
-                        <p><span className="text-black/35">{language === 'zh' ? '持续时间' : 'Duration'}:</span> {formatDuration(selectedItem.duration_seconds, language)}</p>
+                      {/* Alert message */}
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '告警内容' : 'Alert Message'}</p>
+                        <div className="mt-1.5 rounded-xl border border-black/[0.06] bg-[#fafbfc] p-3.5 text-[13px] leading-relaxed text-black/65">
+                          {selectedItem.message}
+                        </div>
                       </div>
-                    </div>
-                  </div>
 
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{language === 'zh' ? '告警内容' : 'Alert Message'}</p>
-                    <div className="mt-2 rounded-2xl border border-black/8 bg-white p-4 text-sm leading-6 text-black/70">
-                      {selectedItem.message}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_160px]">
-                    <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{language === 'zh' ? '责任人' : 'Assignee'}</p>
-                      <div className="mt-2 flex gap-2">
-                        <input
-                          value={assignValue}
-                          onChange={(e) => setAssignValue(e.target.value)}
-                          placeholder={language === 'zh' ? '输入责任人用户名' : 'Enter assignee username'}
-                          className={`${alertInputClass} rounded-xl px-3 py-2`}
-                        />
-                        <button disabled={actionLoading === 'assign' || !assignValue.trim()} onClick={() => void handleAssign()} className={alertAccentButtonClass}>
-                          {language === 'zh' ? '分派' : 'Assign'}
-                        </button>
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{language === 'zh' ? '快捷操作' : 'Actions'}</p>
-                      <div className="mt-2 flex flex-col gap-2">
-                        {!selectedItem.resolved_at && selectedItem.workflow_status !== 'suppressed' ? (
-                          <button disabled={actionLoading === 'ack'} onClick={() => void handleAck('acknowledged')} className={alertPrimaryButtonClass}>
-                            <CheckCircle2 size={14} />
-                            {language === 'zh' ? '确认' : 'Acknowledge'}
-                          </button>
-                        ) : null}
-                        <button onClick={() => onOpenMaintenanceForAlert?.(selectedItem)} className={alertSecondaryButtonClass}>
-                          <Wrench size={14} />
-                          {language === 'zh' ? '转维护期' : 'Maintenance'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{language === 'zh' ? '处置备注' : 'Response Note'}</p>
-                    <textarea
-                      value={detailNote}
-                      onChange={(e) => setDetailNote(e.target.value)}
-                      rows={4}
-                      className={`${alertInputClass} mt-2 min-h-[112px] resize-y`}
-                      placeholder={language === 'zh' ? '记录处理动作和结论。' : 'Capture actions and conclusion.'}
-                    />
-                    <div className="mt-3 flex justify-end">
-                      <button disabled={actionLoading === 'note'} onClick={() => void handleSaveNote()} className={alertAccentButtonClass}>
-                        {language === 'zh' ? '保存备注' : 'Save Note'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {selectedDetail?.timeline && selectedDetail.timeline.length > 1 && (
-                    <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
-                        {language === 'zh' ? '关联告警时间轴' : 'Related Alert Timeline'}
-                        <span className="ml-1.5 text-black/25">({selectedDetail.timeline.length})</span>
-                      </p>
-                      <div className="mt-2 max-h-[200px] overflow-y-auto rounded-2xl border border-black/8 bg-[#fafbfc]">
-                        {selectedDetail.timeline.map((tl, idx) => (
-                          <div
-                            key={tl.id}
-                            className={`flex items-start gap-3 px-4 py-3 ${idx !== selectedDetail.timeline.length - 1 ? 'border-b border-black/5' : ''} ${tl.id === selectedItem.id ? 'bg-blue-50/50' : ''}`}
-                          >
-                            <div className="mt-0.5 flex-shrink-0">
-                              <div className={`h-2 w-2 rounded-full ${tl.resolved_at ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="truncate text-sm font-medium text-[#164e63]">{tl.title}</span>
-                                <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${severityBadgeClass(tl.severity)}`}>
-                                  {severityLabel(tl.severity, language)}
-                                </span>
-                                {tl.id === selectedItem.id && (
-                                  <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-blue-600">
-                                    {language === 'zh' ? '当前' : 'Current'}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="mt-1 flex items-center gap-3 text-xs text-black/40">
-                                <span>{formatTs(tl.created_at)}</span>
-                                {tl.resolved_at && <span className="text-emerald-600">{language === 'zh' ? '已恢复' : 'Resolved'}</span>}
-                                {tl.ack_by && <span>{language === 'zh' ? `确认人: ${tl.ack_by}` : `Ack: ${tl.ack_by}`}</span>}
-                              </div>
+                      {/* Assignee & Actions */}
+                      <div className="rounded-xl border border-black/[0.06] bg-[#fafbfc] p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                          <div className="flex-1">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '责任人' : 'Assignee'}</p>
+                            <div className="mt-1.5 flex gap-2">
+                              <input
+                                value={assignValue}
+                                onChange={(e) => setAssignValue(e.target.value)}
+                                placeholder={language === 'zh' ? '输入用户名' : 'Enter username'}
+                                className="flex-1 rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[#164e63] outline-none placeholder:text-black/25 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100 transition-shadow"
+                              />
+                              <button
+                                disabled={actionLoading === 'assign' || !assignValue.trim()}
+                                onClick={() => void handleAssign()}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-[#0e7490] px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0a5e75] disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                <UserCheck size={13} />
+                                {language === 'zh' ? '分派' : 'Assign'}
+                              </button>
                             </div>
                           </div>
-                        ))}
+                          <div className="flex gap-2">
+                            {!selectedItem.resolved_at && selectedItem.workflow_status !== 'suppressed' && (
+                              <button
+                                disabled={actionLoading === 'ack'}
+                                onClick={() => void handleAck('acknowledged')}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                <CheckCircle2 size={13} />
+                                {language === 'zh' ? '确认' : 'Ack'}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => onOpenMaintenanceForAlert?.(selectedItem)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 bg-white px-3.5 py-2 text-sm font-semibold text-[#164e63] transition-all hover:border-black/15 hover:bg-black/[0.02]"
+                            >
+                              <Wrench size={13} />
+                              {language === 'zh' ? '维护' : 'Maint.'}
+                            </button>
+                          </div>
+                        </div>
                       </div>
+
+                      {/* Response note */}
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '处置备注' : 'Response Note'}</p>
+                        <textarea
+                          value={detailNote}
+                          onChange={(e) => setDetailNote(e.target.value)}
+                          rows={3}
+                          className="mt-1.5 w-full resize-y rounded-xl border border-black/[0.08] bg-white px-3.5 py-2.5 text-sm text-[#164e63] outline-none placeholder:text-black/25 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100 transition-shadow"
+                          placeholder={language === 'zh' ? '记录处理动作和结论…' : 'Capture actions and conclusion…'}
+                        />
+                        <div className="mt-2 flex justify-end">
+                          <button
+                            disabled={actionLoading === 'note'}
+                            onClick={() => void handleSaveNote()}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-[#06b6d4] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0891b2] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {language === 'zh' ? '保存备注' : 'Save Note'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Timeline */}
+                      {selectedDetail?.timeline && selectedDetail.timeline.length > 1 && (
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">
+                            {language === 'zh' ? '关联告警时间轴' : 'Related Alert Timeline'}
+                            <span className="ml-1 text-black/20">({selectedDetail.timeline.length})</span>
+                          </p>
+                          <div className="relative mt-2 max-h-[200px] overflow-y-auto rounded-xl border border-black/[0.06] bg-[#fafbfc]">
+                            {selectedDetail.timeline.map((tl, idx) => {
+                              const isCurrent = tl.id === selectedItem.id;
+                              return (
+                                <div
+                                  key={tl.id}
+                                  className={`relative flex items-start gap-3 px-4 py-3 ${idx !== selectedDetail.timeline.length - 1 ? 'border-b border-black/[0.04]' : ''} ${isCurrent ? 'bg-cyan-50/40' : ''}`}
+                                >
+                                  {/* Vertical connector */}
+                                  {idx !== selectedDetail.timeline.length - 1 && (
+                                    <div className="absolute left-[22px] top-[26px] bottom-0 w-px bg-black/[0.06]" />
+                                  )}
+                                  <div className="relative z-10 mt-1 flex-shrink-0">
+                                    <div className={`h-3 w-3 rounded-full ring-2 ring-white ${
+                                      isCurrent ? 'bg-cyan-500 shadow-[0_0_0_3px_rgba(6,182,212,0.15)]' :
+                                      tl.resolved_at ? 'bg-emerald-400' : 'bg-black/15'
+                                    }`} />
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="truncate text-[13px] font-medium text-[#164e63]">{tl.title}</span>
+                                      <span className={`inline-flex flex-shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase ${severityBadgeClass(tl.severity)}`}>
+                                        {severityLabel(tl.severity, language)}
+                                      </span>
+                                      {isCurrent && (
+                                        <span className="flex-shrink-0 rounded bg-cyan-100 px-1.5 py-0.5 text-[9px] font-bold text-cyan-700">
+                                          {language === 'zh' ? '当前' : 'Current'}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="mt-0.5 flex items-center gap-3 text-[11px] text-black/35">
+                                      <span>{formatTs(tl.created_at)}</span>
+                                      {tl.resolved_at && <span className="text-emerald-600">{language === 'zh' ? '已恢复' : 'Resolved'}</span>}
+                                      {tl.ack_by && <span>{language === 'zh' ? `确认: ${tl.ack_by}` : `Ack: ${tl.ack_by}`}</span>}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              )}
+                  </>
+                )}
+              </div>
             </motion.div>
           </motion.div>
         ) : null}

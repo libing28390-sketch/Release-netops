@@ -51,6 +51,20 @@ export interface Device {
   interface_flap_count?: number;
   high_util_interface_count?: number;
   interface_error_count?: number;
+  // Plan-A: asset linkage fields (from LEFT JOIN physical_assets)
+  asset_id?: string;
+  vendor?: string;
+  asset_tag?: string;
+  datacenter?: string;
+  rack?: string;
+  rack_unit?: string;
+  department?: string;
+  warranty_expiry?: string;
+  purchase_date?: string;
+  business_ip?: string;
+  vlan?: string;
+  uplink_switch?: string;
+  uplink_port?: string;
   interface_data?: {
     name: string; status: string; speed_mbps: number;
     in_octets: number; out_octets: number; description: string;

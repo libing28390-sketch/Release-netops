@@ -180,16 +180,30 @@ def reschedule_backup(cfg: dict):
     if scheduler.get_job('daily_backup'):
         scheduler.remove_job('daily_backup')
     if cfg.get('enabled', True):
+        cron_expr = cfg.get('cron', '')
+        if not cron_expr:
+            # 兼容旧格式
+            h = cfg.get('hour', 2)
+            m = cfg.get('minute', 0)
+            cron_expr = f'{m} {h} * * *'
+        parts = cron_expr.split()
+        if len(parts) >= 5:
+            trigger = CronTrigger(
+                minute=parts[0], hour=parts[1],
+                day=parts[2], month=parts[3], day_of_week=parts[4],
+            )
+        else:
+            trigger = CronTrigger(hour=cfg.get('hour', 2), minute=cfg.get('minute', 0))
         scheduler.add_job(
             run_scheduled_backup,
-            CronTrigger(hour=cfg.get('hour', 2), minute=cfg.get('minute', 0)),
+            trigger,
             id='daily_backup',
-            name='Daily Config Backup',
+            name='Scheduled Config Backup',
             replace_existing=True,
         )
-        logger.info(f"[Scheduler] Daily backup scheduled at {cfg['hour']:02d}:{cfg['minute']:02d}")
+        logger.info(f"[Scheduler] Backup scheduled with cron: {cron_expr}")
     else:
-        logger.info("[Scheduler] Daily backup disabled")
+        logger.info("[Scheduler] Scheduled backup disabled")
 
 # Serve static files from dist directory if it exists
 if os.path.exists("dist"):

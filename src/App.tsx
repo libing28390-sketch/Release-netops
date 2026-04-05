@@ -313,8 +313,7 @@ const App: React.FC = () => {
   const [isTakingSnapshot, setIsTakingSnapshot] = useState(false);
   // Schedule state
   const [scheduleEnabled, setScheduleEnabled] = useState(true);
-  const [scheduleHour, setScheduleHour] = useState(2);
-  const [scheduleMinute, setScheduleMinute] = useState(0);
+  const [scheduleCron, setScheduleCron] = useState('0 2 * * *');
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -747,8 +746,7 @@ const App: React.FC = () => {
       if (resp.ok) {
         const cfg = await resp.json();
         setScheduleEnabled(cfg.enabled ?? true);
-        setScheduleHour(cfg.hour ?? 2);
-        setScheduleMinute(cfg.minute ?? 0);
+        setScheduleCron(cfg.cron || '0 2 * * *');
       }
     } catch { /* ignore */ }
   };
@@ -4896,9 +4894,10 @@ const App: React.FC = () => {
           : (_p.includes('juniper') || _p.includes('junos'))
             ? 'show configuration'
             : 'display current-configuration';
+        const _token = localStorage.getItem('netops_token');
         const execResp = await fetch('/api/execute', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...(_token ? { Authorization: `Bearer ${_token}` } : {}) },
           body: JSON.stringify({
             device_id: device.id,
             command: _cmd,
@@ -4969,9 +4968,13 @@ const App: React.FC = () => {
       const resp = await fetch('/api/configs/schedule', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: scheduleEnabled, hour: scheduleHour, minute: scheduleMinute })
+        body: JSON.stringify({ enabled: scheduleEnabled, cron: scheduleCron })
       });
       if (resp.ok) showToast(t('scheduleUpdated'), 'success');
+      else {
+        const err = await resp.json().catch(() => ({}));
+        showToast(err.detail || 'Invalid schedule', 'error');
+      }
     } catch { /* ignore */ }
     finally { setScheduleLoading(false); }
   };
@@ -5735,17 +5738,16 @@ const App: React.FC = () => {
                 configSnapshots={configSnapshots}
                 isTakingSnapshot={isTakingSnapshot}
                 scheduleEnabled={scheduleEnabled}
-                scheduleHour={scheduleHour}
-                scheduleMinute={scheduleMinute}
+                scheduleCron={scheduleCron}
                 scheduleLoading={scheduleLoading}
                 retentionDays={retentionDays}
                 getVendorFromPlatform={getVendorFromPlatform}
                 onToggleScheduleEnabled={() => setScheduleEnabled((prev) => !prev)}
-                onScheduleHourChange={setScheduleHour}
-                onScheduleMinuteChange={setScheduleMinute}
+                onCronChange={setScheduleCron}
                 onRetentionDaysChange={setRetentionDays}
                 onSaveSchedule={saveScheduleConfig}
                 onRunBackupNow={handleRunScheduledBackupNow}
+                showToast={showToast}
               />
             </Suspense>
           )}
@@ -5910,7 +5912,7 @@ const App: React.FC = () => {
           )}
         </main>
         <footer className={`h-10 px-8 border-t flex items-center justify-between text-[11px] ${resolvedTheme === 'dark' ? 'border-white/10 text-white/45 bg-[#0b1320]' : 'border-black/8 text-black/45 bg-white/70'}`}>
-          <span>Copyright (c) {new Date().getFullYear()} NetPilot. All rights reserved.</span>
+          <span>Copyright (c) {new Date().getFullYear()} Nexora. All rights reserved.</span>
           <span className="font-mono">NOC v2.0</span>
         </footer>
       </div>

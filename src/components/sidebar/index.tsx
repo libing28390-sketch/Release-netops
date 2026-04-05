@@ -439,9 +439,9 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
           </div>
           {!isMini && (
             <div className="sidebar-logo-text min-w-0 flex-1">
-              <h1 className="text-[14px] font-semibold text-white tracking-[-0.01em] truncate">NetPilot</h1>
+              <h1 className="text-[14px] font-semibold text-white tracking-[-0.01em] truncate">Nexora</h1>
               <p className="text-[10px] text-[#4a5568] tracking-[0.06em] font-medium">
-                {language === 'zh' ? '网络自动化平台' : 'NETWORK AUTOMATION'}
+                {language === 'zh' ? '智能网络中枢' : 'SMART NET HUB'}
               </p>
             </div>
           )}

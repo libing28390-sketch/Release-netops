@@ -192,8 +192,9 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
   }, []);
   const [editingIP, setEditingIP] = useState<IPAddress | null>(null);
   const [addrStatusFilter, setAddrStatusFilter] = useState<'all' | 'active' | 'reserved' | 'deprecated'>('all');
-  const [confirmDelete, setConfirmDelete] = useState<{ type: 'subnet' | 'ip'; id: string; label: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ type: 'subnet' | 'ip' | 'batch-subnet'; id: string; label: string } | null>(null);
   const [editingSubnet, setEditingSubnet] = useState<Subnet | null>(null);
+  const [selectedSubnetIds, setSelectedSubnetIds] = useState<Set<string>>(new Set());
   const [addrSearch, setAddrSearch] = useState('');
   const [addrPage, setAddrPage] = useState(1);
   const [subnetPage, setSubnetPage] = useState(1);
@@ -399,9 +400,33 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
     } catch (e) { setApiError(`网络错误: ${e instanceof Error ? e.message : String(e)}`); }
   };
 
+  const handleBatchDeleteSubnets = async (ids: string[]) => {
+    setApiError('');
+    try {
+      const r = await fetch('/api/ipam/subnets/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ ids }),
+      });
+      if (!r.ok) {
+        const detail = await r.json().catch(() => null);
+        setApiError(detail?.detail || `批量删除失败: ${r.status}`);
+        return;
+      }
+      if (selectedSubnet && ids.includes(selectedSubnet.id)) {
+        setSelectedSubnet(null);
+        setAddresses([]);
+      }
+      setSelectedSubnetIds(new Set());
+      loadData();
+    } catch (e) { setApiError(`网络错误: ${e instanceof Error ? e.message : String(e)}`); }
+  };
+
   const executeConfirmedDelete = async () => {
     if (!confirmDelete) return;
-    if (confirmDelete.type === 'subnet') await handleDeleteSubnet(confirmDelete.id);
+    if (confirmDelete.type === 'batch-subnet') {
+      await handleBatchDeleteSubnets(confirmDelete.id.split(','));
+    } else if (confirmDelete.type === 'subnet') await handleDeleteSubnet(confirmDelete.id);
     else await handleDeleteIP(confirmDelete.id);
     setConfirmDelete(null);
   };
@@ -726,6 +751,23 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                 </button>
               </div>
               )}
+              {/* Batch delete toolbar */}
+              {!selectedSubnet && selectedSubnetIds.size > 0 && (
+                <div className="flex items-center justify-between gap-2 mt-2 px-1 py-1.5 rounded-lg bg-red-50 border border-red-200">
+                  <span className="text-[11px] font-semibold text-red-700">{language === 'zh' ? `已选 ${selectedSubnetIds.size} 个子网` : `${selectedSubnetIds.size} subnet(s) selected`}</span>
+                  <div className="flex items-center gap-1.5">
+                    <button type="button" onClick={() => setSelectedSubnetIds(new Set())} className="text-[10px] text-black/50 hover:text-black/70 underline">{language === 'zh' ? '取消选择' : 'Clear'}</button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete({ type: 'batch-subnet', id: Array.from(selectedSubnetIds).join(','), label: String(selectedSubnetIds.size) })}
+                      className="inline-flex items-center gap-1 rounded-lg bg-red-500 hover:bg-red-600 text-white px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                    >
+                      <Trash2 size={12} />
+                      {language === 'zh' ? '批量删除' : 'Delete Selected'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
             <div className={`flex-1 min-h-0 overflow-y-auto ${subnetViewMode === 'card' ? 'divide-y divide-black/5' : ''}`}>
               {visibleSubnets.length === 0 && !loading && (
@@ -755,6 +797,19 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                   {!selectedSubnet && (
                   <thead>
                     <tr className="bg-black/[0.02] border-b border-black/5">
+                      <th className="px-2 py-2 w-8">
+                        <input
+                          type="checkbox"
+                          className="accent-[#00bceb] w-3.5 h-3.5 cursor-pointer"
+                          checked={pagedVisibleSubnets.length > 0 && pagedVisibleSubnets.every(s => selectedSubnetIds.has(s.id))}
+                          onChange={(e) => {
+                            const next = new Set(selectedSubnetIds);
+                            if (e.target.checked) { pagedVisibleSubnets.forEach(s => next.add(s.id)); }
+                            else { pagedVisibleSubnets.forEach(s => next.delete(s.id)); }
+                            setSelectedSubnetIds(next);
+                          }}
+                        />
+                      </th>
                       <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '名称' : 'Name'}</th>
                       <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '网段' : 'CIDR'}</th>
                       <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-black/40 hidden lg:table-cell">VLAN</th>
@@ -768,7 +823,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                   )}
                   <tbody>
                     {pagedVisibleSubnets.length === 0 && (
-                      <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-black/30">{subnets.length === 0 ? (language === 'zh' ? '还没有子网' : 'No subnets yet') : (language === 'zh' ? '当前筛选条件下没有子网' : 'No subnets match')}</td></tr>
+                      <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-black/30">{subnets.length === 0 ? (language === 'zh' ? '还没有子网' : 'No subnets yet') : (language === 'zh' ? '当前筛选条件下没有子网' : 'No subnets match')}</td></tr>
                     )}
                     {pagedVisibleSubnets.map(subnet => {
                       const riskScore = subnetRiskScoreMap.get(subnet.id) || 0;
@@ -794,8 +849,20 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                       <tr
                         key={subnet.id}
                         onClick={() => { if (selectedSubnet?.id === subnet.id) { setSelectedSubnet(null); setAddresses([]); } else { loadAddresses(subnet); } }}
-                        className={`group/row border-b border-black/5 cursor-pointer hover:bg-black/[0.015] transition-colors ${selectedSubnet?.id === subnet.id ? 'bg-[#00bceb]/5' : ''}`}
+                        className={`group/row border-b border-black/5 cursor-pointer hover:bg-black/[0.015] transition-colors ${selectedSubnet?.id === subnet.id ? 'bg-[#00bceb]/5' : ''} ${selectedSubnetIds.has(subnet.id) ? 'bg-[#00bceb]/[0.04]' : ''}`}
                       >
+                        <td className="px-2 py-2 w-8" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="accent-[#00bceb] w-3.5 h-3.5 cursor-pointer"
+                            checked={selectedSubnetIds.has(subnet.id)}
+                            onChange={() => {
+                              const next = new Set(selectedSubnetIds);
+                              if (next.has(subnet.id)) next.delete(subnet.id); else next.add(subnet.id);
+                              setSelectedSubnetIds(next);
+                            }}
+                          />
+                        </td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-1.5">
                             <Network size={12} className="text-[#00bceb] flex-shrink-0" />
@@ -1370,7 +1437,9 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                 {language === 'zh' ? '确认删除' : 'Confirm Delete'}
               </h3>
               <p className="text-sm text-black/50 text-center">
-                {confirmDelete.type === 'subnet'
+                {confirmDelete.type === 'batch-subnet'
+                  ? (language === 'zh' ? `确定删除选中的 ${confirmDelete.label} 个子网及其所有IP分配记录？此操作不可撤销。` : `Delete ${confirmDelete.label} selected subnet(s) and all their IP assignments? This cannot be undone.`)
+                  : confirmDelete.type === 'subnet'
                   ? (language === 'zh' ? `确定删除子网 "${confirmDelete.label}" 及其所有IP分配记录？此操作不可撤销。` : `Delete subnet "${confirmDelete.label}" and all its IP assignments? This cannot be undone.`)
                   : (language === 'zh' ? `确定删除IP地址 ${confirmDelete.label}？` : `Delete IP address ${confirmDelete.label}?`)}
               </p>

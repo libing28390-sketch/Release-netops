@@ -244,7 +244,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   {/* Platform */}
                   {columns.platform && (
                     <td className="px-3 py-2">
-                      <span className="text-[11px] font-medium text-black/65 dark:text-white/65">{vendorOf(device.platform)}</span>
+                      <span className="text-[11px] font-medium text-black/65 dark:text-white/65">{device.vendor || vendorOf(device.platform)}</span>
                       <span className="block text-[10px] text-black/35 dark:text-white/30 mt-0.5">{device.platform || 'unknown'}</span>
                       {device.version && (
                         <span className="block text-[10px] font-mono text-black/25 dark:text-white/20 mt-0.5 truncate max-w-[120px]" title={device.version}>
@@ -256,7 +256,12 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   {/* Site */}
                   {columns.site && (
                     <td className="px-3 py-2">
-                      <span className="text-[11px] text-black/55 dark:text-white/55">{device.site || '—'}</span>
+                      <span className="text-[11px] text-black/55 dark:text-white/55">{device.datacenter || device.site || '—'}</span>
+                      {device.rack && (
+                        <span className="block text-[10px] text-black/35 dark:text-white/30 mt-0.5">
+                          Rack {device.rack}{device.rack_unit ? ` / U${device.rack_unit}` : ''}
+                        </span>
+                      )}
                     </td>
                   )}
                   {/* Status */}

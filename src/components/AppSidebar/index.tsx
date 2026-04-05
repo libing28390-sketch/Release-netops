@@ -288,9 +288,9 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                 <Activity size={16} className="text-cyan-400" />
               </div>
               <div className="min-w-0">
-                <h1 className="text-base font-bold text-white tracking-tight leading-none">NetPilot</h1>
+                <h1 className="text-base font-bold text-white tracking-tight leading-none">Nexora</h1>
                 <p className="text-xs text-slate-500 mt-0.5 leading-none">
-                  {zh ? '网络运维中枢' : 'NETWORK OPS'}
+                  {zh ? '智能网络中枢' : 'SMART NET HUB'}
                 </p>
               </div>
             </div>

@@ -93,7 +93,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
             {pageTitle}
           </h2>
           <p className={`text-[11px] hidden sm:block ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/40'}`}>
-            {new Date().toLocaleDateString()} · NetPilot Control Plane
+            {new Date().toLocaleDateString()} · Nexora Control Plane
           </p>
         </div>
       </div>

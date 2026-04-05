@@ -1088,6 +1088,22 @@ def init_db():
         ensure_column('physical_assets', 'uplink_switch', "TEXT DEFAULT ''")
         ensure_column('physical_assets', 'uplink_port', "TEXT DEFAULT ''")
 
+        # Migration: link devices to physical_assets (Plan-A unification)
+        ensure_column('devices', 'asset_id', 'TEXT')
+        ensure_column('devices', 'vendor', "TEXT DEFAULT ''")
+
+        # Auto-link existing devices to matching assets (one-time migration)
+        unlinked = cursor.execute(
+            "SELECT id, hostname, ip_address FROM devices WHERE (asset_id IS NULL OR asset_id = '')"
+        ).fetchall()
+        for dev in unlinked:
+            match = cursor.execute(
+                "SELECT id FROM physical_assets WHERE asset_type='network_device' AND (hostname = ? OR management_ip = ?) LIMIT 1",
+                (dev['hostname'], dev['ip_address'])
+            ).fetchone()
+            if match:
+                cursor.execute('UPDATE devices SET asset_id = ? WHERE id = ?', (match['id'], dev['id']))
+
         # ── Change Order / Ticket Management ──
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS change_orders (

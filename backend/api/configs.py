@@ -41,8 +41,10 @@ class SnapshotCreate(BaseModel):
 
 class ScheduleUpdate(BaseModel):
     enabled: bool
-    hour: int = 2
-    minute: int = 0
+    cron: str = '0 2 * * *'          # 标准 5 段 cron
+    # 兼容旧字段（前端平滑迁移后可移除）
+    hour: int | None = None
+    minute: int | None = None
 
 
 # ──────────────────────────────────────────────
@@ -509,7 +511,7 @@ def search_configs(q: str = '', limit: int = 50):
 # ──────────────────────────────────────────────
 
 SCHEDULE_KEY = 'backup_schedule'
-DEFAULT_SCHEDULE = {'enabled': True, 'hour': 2, 'minute': 0}
+DEFAULT_SCHEDULE = {'enabled': True, 'cron': '0 2 * * *'}
 
 
 def _get_schedule_from_db() -> dict:
@@ -540,12 +542,26 @@ def _save_schedule_to_db(cfg: dict):
 
 @router.get('/configs/schedule')
 def get_schedule():
-    return _get_schedule_from_db()
+    cfg = _get_schedule_from_db()
+    # 兼容旧格式：如果库里没有 cron 字段，从 hour/minute 合成
+    if 'cron' not in cfg:
+        h = cfg.get('hour', 2)
+        m = cfg.get('minute', 0)
+        cfg['cron'] = f'{m} {h} * * *'
+    return cfg
 
 
 @router.put('/configs/schedule')
 def update_schedule(body: ScheduleUpdate):
-    cfg = {'enabled': body.enabled, 'hour': body.hour, 'minute': body.minute}
+    cron_expr = body.cron.strip()
+    # 验证 cron 表达式合法性
+    try:
+        from croniter import croniter
+        if not croniter.is_valid(cron_expr):
+            raise ValueError()
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid cron expression: {cron_expr}")
+    cfg = {'enabled': body.enabled, 'cron': cron_expr}
     _save_schedule_to_db(cfg)
     # Reschedule in-process APScheduler job
     try:
@@ -554,6 +570,47 @@ def update_schedule(body: ScheduleUpdate):
     except Exception as e:
         logger.warning(f"Could not reschedule: {e}")
     return cfg
+
+
+@router.get('/configs/schedule/preview')
+def preview_schedule(n: int = Query(default=10, ge=1, le=50)):
+    """Return the next N scheduled execution times + device list."""
+    from croniter import croniter
+    cfg = _get_schedule_from_db()
+    cron_expr = cfg.get('cron', '0 2 * * *')
+    if 'cron' not in cfg:
+        h = cfg.get('hour', 2)
+        m = cfg.get('minute', 0)
+        cron_expr = f'{m} {h} * * *'
+    enabled = cfg.get('enabled', True)
+
+    # 计算未来 N 次执行时间
+    upcoming: list[str] = []
+    if enabled:
+        cron = croniter(cron_expr, datetime.now())
+        for _ in range(n):
+            upcoming.append(cron.get_next(datetime).isoformat())
+
+    # 备份涉及的设备列表
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, hostname, ip_address, platform, status FROM devices WHERE status = 'online'"
+        ).fetchall()
+        devices = [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+    MOCK_IPS_SET = {'127.0.0.1', '0.0.0.0', 'localhost'}
+    devices = [d for d in devices if (d.get('ip_address') or '') not in MOCK_IPS_SET]
+
+    return {
+        'enabled': enabled,
+        'cron': cron_expr,
+        'upcoming': upcoming,
+        'devices': devices,
+        'device_count': len(devices),
+    }
 
 
 # ──────────────────────────────────────────────
