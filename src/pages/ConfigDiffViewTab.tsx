@@ -115,7 +115,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   const [devicesTotal, setDevicesTotal] = useState(0);
   const [devicesLoading, setDevicesLoading] = useState(false);
   const [devPage, setDevPage] = useState(1);
-  const [devPageSize, setDevPageSize] = useState(10);
+  const [devPageSize, setDevPageSize] = useState(15);
   const [selectedDevice, setSelectedDevice] = useState<BackupDevice | null>(null);
 
   /* ── Step 2: Snapshot list for selected device ── */
@@ -188,6 +188,22 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
     } else {
       setPickRight(snapId);
       if (pickLeft === snapId) setPickLeft(null);
+    }
+  };
+
+  /* ── Smart click: auto-assign A then B ── */
+  const handleSmartPick = (snapId: string) => {
+    if (!pickLeft) {
+      setPickLeft(snapId);
+    } else if (pickLeft === snapId) {
+      setPickLeft(null);
+    } else if (!pickRight) {
+      setPickRight(snapId);
+    } else if (pickRight === snapId) {
+      setPickRight(null);
+    } else {
+      // both set, replace B
+      setPickRight(snapId);
     }
   };
 
@@ -265,66 +281,79 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
           <div className="flex-1 overflow-auto">
             {!selectedDevice ? (
               /* ──── Step 1: Device list ──── */
-              <div className="p-5">
-                <div className="flex items-center gap-3 mb-4">
-                  <label className="relative flex-1 max-w-md">
-                    <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
+              <div className="flex flex-col h-full">
+                {/* Search + count bar */}
+                <div className="flex items-center gap-3 px-5 pt-4 pb-3 border-b border-black/[0.04]">
+                  <label className="relative flex-1 max-w-sm">
+                    <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/25" />
                     <input
                       value={deviceSearch}
                       onChange={(e) => { setDeviceSearch(e.target.value); setDevPage(1); }}
-                      placeholder={zh ? '搜索设备名称或 IP ...' : 'Search hostname or IP...'}
-                      className="w-full rounded-xl border border-black/10 bg-white py-3 pl-9 pr-9 text-sm text-[#164e63] outline-none placeholder:text-black/30 focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
+                      placeholder={zh ? '搜索主机名 / IP ...' : 'Search hostname / IP...'}
+                      className="w-full rounded-lg border border-black/8 bg-white py-2 pl-8 pr-8 text-[13px] text-[#164e63] outline-none placeholder:text-black/25 focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
                     />
                     {deviceSearch && (
-                      <button onClick={() => { setDeviceSearch(''); setDevPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
-                        <X size={14} />
+                      <button onClick={() => { setDeviceSearch(''); setDevPage(1); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-black/25 hover:text-black/50">
+                        <X size={13} />
                       </button>
                     )}
                   </label>
-                  <span className="rounded-xl bg-[#f0f9ff] px-3 py-2.5 text-sm font-medium text-[#164e63]">
-                    {zh ? `${devicesTotal} 台设备有备份` : `${devicesTotal} devices with backups`}
+                  <span className="text-[11px] font-medium text-black/35">
+                    {zh ? `共 ${devicesTotal} 台` : `${devicesTotal} devices`}
                   </span>
                 </div>
 
-                {devicesLoading ? (
-                  <div className="py-16 text-center text-sm text-black/40 flex items-center justify-center gap-2">
-                    <RotateCcw size={14} className="animate-spin" /> {zh ? '加载中...' : 'Loading...'}
-                  </div>
-                ) : devices.length === 0 ? (
-                  <div className="py-16 text-center text-black/25">
-                    <Database size={36} strokeWidth={1} className="mx-auto mb-3" />
-                    <p className="text-sm font-medium">{zh ? '暂无配置备份' : 'No config backups yet'}</p>
-                    <p className="text-xs mt-1">{zh ? '请先到备份中心执行备份操作' : 'Go to Backup Center first'}</p>
-                  </div>
-                ) : (
-                  <div className="grid gap-2">
-                    {devices.map((dev) => (
-                      <button
-                        key={dev.id}
-                        onClick={() => handleSelectDevice(dev)}
-                        className="group w-full text-left flex items-center gap-4 px-4 py-3.5 rounded-2xl border border-black/5 bg-white hover:bg-[#f0fdfa] hover:border-[#06b6d4]/20 hover:shadow-[0_4px_16px_rgba(6,182,212,0.08)] transition-all"
-                      >
-                        <div className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${dev.status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-sm font-semibold text-[#164e63]">{dev.hostname}</span>
-                            <span className="text-xs font-mono text-black/45">{dev.ip_address}</span>
+                {/* Table header */}
+                <div className="grid grid-cols-[auto_1fr_auto_auto_auto_auto] items-center gap-x-3 px-5 py-2 text-[10px] font-bold uppercase tracking-wider text-black/25 border-b border-black/[0.03]">
+                  <span className="w-2" />
+                  <span>{zh ? '设备' : 'Device'}</span>
+                  <span className="hidden sm:block">{zh ? '平台' : 'Platform'}</span>
+                  <span>{zh ? '备份数' : 'Backups'}</span>
+                  <span className="hidden sm:block">{zh ? '最近备份' : 'Last Backup'}</span>
+                  <span className="w-4" />
+                </div>
+
+                {/* Device rows */}
+                <div className="flex-1 overflow-auto">
+                  {devicesLoading ? (
+                    <div className="py-16 text-center text-sm text-black/35 flex items-center justify-center gap-2">
+                      <RotateCcw size={14} className="animate-spin" /> {zh ? '加载中...' : 'Loading...'}
+                    </div>
+                  ) : devices.length === 0 ? (
+                    <div className="py-16 text-center text-black/25">
+                      <Database size={32} strokeWidth={1} className="mx-auto mb-2 text-black/15" />
+                      <p className="text-sm font-medium">{zh ? '暂无配置备份' : 'No config backups yet'}</p>
+                      <p className="text-xs mt-1 text-black/30">{zh ? '请先到备份中心执行备份操作' : 'Go to Backup Center first'}</p>
+                    </div>
+                  ) : (
+                    <div>
+                      {devices.map((dev, idx) => (
+                        <button
+                          key={dev.id}
+                          onClick={() => handleSelectDevice(dev)}
+                          className={`group w-full text-left grid grid-cols-[auto_1fr_auto_auto_auto_auto] items-center gap-x-3 px-5 py-2.5 transition-colors hover:bg-[#f0fdfa] ${
+                            idx > 0 ? 'border-t border-black/[0.03]' : ''
+                          }`}
+                        >
+                          <div className={`h-2 w-2 flex-shrink-0 rounded-full ${dev.status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-[13px] font-semibold text-[#164e63] truncate">{dev.hostname}</span>
+                            <span className="text-[11px] font-mono text-black/30 truncate hidden md:inline">{dev.ip_address}</span>
                           </div>
-                          <div className="mt-0.5 text-[11px] text-black/35">
-                            {dev.platform || '--'} · {zh ? `最近备份: ${timeSince(dev.latest_backup)}` : `Last backup: ${timeSince(dev.latest_backup)}`}
-                          </div>
-                        </div>
-                        <span className="rounded-full bg-[#ecfeff] px-2.5 py-1 text-[11px] font-bold text-[#0e7490]">
-                          {dev.backup_count} {zh ? '份' : ''}
-                        </span>
-                        <ChevronRight size={14} className="text-black/20 group-hover:text-[#06b6d4] transition-colors" />
-                      </button>
-                    ))}
-                  </div>
-                )}
+                          <span className="text-[11px] text-black/35 hidden sm:block truncate max-w-[100px]">{dev.platform || '--'}</span>
+                          <span className="rounded-full bg-[#ecfeff] px-2 py-0.5 text-[10px] font-bold text-[#0e7490] tabular-nums">
+                            {dev.backup_count}
+                          </span>
+                          <span className="text-[11px] text-black/30 hidden sm:block whitespace-nowrap">{timeSince(dev.latest_backup)}</span>
+                          <ChevronRight size={13} className="text-black/15 group-hover:text-[#06b6d4] transition-colors" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {devicesTotal > devPageSize && (
-                  <div className="mt-4">
+                  <div className="px-5 py-3 border-t border-black/[0.04]">
                     <Pagination
                       currentPage={devPage}
                       totalItems={devicesTotal}
@@ -338,119 +367,260 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
               </div>
             ) : (
               /* ──── Step 2: Snapshot selection ──── */
-              <div className="p-5">
-                <div className="mb-4 flex flex-wrap items-center gap-3">
-                  <button onClick={handleBackToDevices} className="text-xs text-[#0e7490] hover:text-[#06b6d4] transition">
-                    ← {zh ? '返回设备列表' : 'Back'}
+              <div className="flex flex-col h-full">
+                {/* ── Top bar: back + device info + quick action ── */}
+                <div className="flex items-center gap-3 px-5 pt-4 pb-3 border-b border-black/[0.04]">
+                  <button onClick={handleBackToDevices} className="inline-flex items-center gap-1 text-xs text-[#0e7490] hover:text-[#06b6d4] transition font-medium">
+                    <ChevronLeft size={14} /> {zh ? '设备列表' : 'Devices'}
                   </button>
-                  <div className="flex items-center gap-2">
-                    <div className={`h-2 w-2 rounded-full ${selectedDevice.status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                    <span className="text-sm font-semibold text-[#164e63]">{selectedDevice.hostname}</span>
-                    <span className="text-xs font-mono text-black/45">{selectedDevice.ip_address}</span>
-                  </div>
-                  <div className="ml-auto flex items-center gap-2">
-                    {snapshots.length >= 2 && (
-                      <button
-                        onClick={() => void handleQuickCompare()}
-                        className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#06b6d4] px-3 text-xs font-semibold text-white shadow-[0_8px_16px_rgba(6,182,212,0.2)] hover:-translate-y-0.5 hover:bg-[#0891b2] transition-all"
-                      >
-                        <Zap size={13} />
-                        {zh ? '最近两次对比' : 'Compare Latest 2'}
-                      </button>
-                    )}
-                    {pickLeft && pickRight && (
-                      <button
-                        onClick={() => void handleStartCompare()}
-                        className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#164e63] px-4 text-xs font-semibold text-white shadow-[0_8px_16px_rgba(22,78,99,0.2)] hover:-translate-y-0.5 hover:bg-[#155e75] transition-all"
-                      >
-                        <ArrowLeftRight size={13} />
-                        {zh ? '开始对比' : 'Start Compare'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mb-3 text-xs text-black/40">
-                  {zh
-                    ? '请从下方列表中选择 基准(A) 和 对比(B) 两个快照，或点击「最近两次对比」快速开始。'
-                    : 'Select a Baseline (A) and Compare (B) snapshot below, or click "Compare Latest 2" to start quickly.'}
+                  <div className="h-4 w-px bg-black/10" />
+                  <div className={`h-2 w-2 rounded-full flex-shrink-0 ${selectedDevice.status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                  <span className="text-sm font-bold text-[#164e63]">{selectedDevice.hostname}</span>
+                  <span className="text-xs font-mono text-black/35">{selectedDevice.ip_address}</span>
+                  <span className="text-[11px] text-black/30">{selectedDevice.platform || ''}</span>
+                  {snapshots.length >= 2 && (
+                    <button
+                      onClick={() => void handleQuickCompare()}
+                      className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#06b6d4] to-[#0891b2] px-3.5 text-[11px] font-bold text-white shadow-[0_2px_10px_rgba(6,182,212,0.2)] hover:shadow-[0_4px_16px_rgba(6,182,212,0.3)] transition-all active:scale-[0.97]"
+                    >
+                      <Zap size={12} />
+                      {zh ? '快速对比最近两次' : 'Compare Latest 2'}
+                    </button>
+                  )}
                 </div>
 
                 {snapshotsLoading ? (
-                  <div className="py-16 text-center text-sm text-black/40 flex items-center justify-center gap-2">
-                    <RotateCcw size={14} className="animate-spin" /> {zh ? '加载快照列表...' : 'Loading snapshots...'}
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="text-sm text-black/40 flex items-center gap-2">
+                      <RotateCcw size={14} className="animate-spin" /> {zh ? '加载快照...' : 'Loading...'}
+                    </div>
                   </div>
                 ) : snapshots.length === 0 ? (
-                  <div className="py-16 text-center text-black/25">
-                    <Clock size={36} strokeWidth={1} className="mx-auto mb-3" />
-                    <p className="text-sm">{zh ? '该设备暂无配置备份' : 'No backups for this device'}</p>
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-black/[0.03]">
+                        <Clock size={28} strokeWidth={1.2} className="text-black/20" />
+                      </div>
+                      <p className="text-sm font-semibold text-[#164e63]">{zh ? '该设备暂无配置备份' : 'No backups yet'}</p>
+                      <p className="text-xs mt-1.5 text-black/30">{zh ? '请先到备份中心执行备份操作' : 'Go to Backup Center first'}</p>
+                    </div>
+                  </div>
+                ) : snapshots.length < 2 ? (
+                  /* ── Insufficient snapshots ── */
+                  <div className="flex-1 flex items-center justify-center px-5">
+                    <div className="text-center max-w-md">
+                      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-50 ring-1 ring-amber-200/60">
+                        <ArrowLeftRight size={24} className="text-amber-500" />
+                      </div>
+                      <p className="text-sm font-semibold text-[#164e63]">
+                        {zh ? '需要至少 2 份备份才能对比' : 'Need ≥ 2 Backups'}
+                      </p>
+                      <p className="mt-2 text-xs text-black/40 leading-relaxed">
+                        {zh
+                          ? '当前仅有 1 份快照，请在「备份中心」再次备份或等待定时任务。'
+                          : 'Only 1 snapshot exists. Back up again or wait for the next scheduled backup.'}
+                      </p>
+                      <div className="mt-5 inline-flex items-center gap-2.5 rounded-xl border border-black/5 bg-[#fafbfc] px-4 py-3">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#ecfeff]">
+                          <Database size={13} className="text-[#0e7490]" />
+                        </div>
+                        <div className="text-left">
+                          <div className="text-xs font-medium text-[#164e63]">{formatTime(snapshots[0].timestamp)}</div>
+                          <div className="text-[10px] text-black/30">{snapshots[0].trigger || 'manual'} · {snapshots[0].vendor || ''} · {formatSize(snapshots[0].size)}</div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : (
-                  <div className="grid gap-2">
-                    {snapshots.map((snap) => {
-                      const isLeft = pickLeft === snap.id;
-                      const isRight = pickRight === snap.id;
-                      const isPicked = isLeft || isRight;
-                      return (
-                        <div
-                          key={snap.id}
-                          className={`flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all ${
-                            isPicked
-                              ? isLeft
-                                ? 'border-[#06b6d4]/40 bg-[#ecfeff] shadow-[0_2px_12px_rgba(6,182,212,0.1)]'
-                                : 'border-[#164e63]/30 bg-[#f0f9ff] shadow-[0_2px_12px_rgba(22,78,99,0.08)]'
-                              : 'border-black/5 bg-white hover:bg-black/[0.01]'
-                          }`}
-                        >
-                          <div className="flex items-center gap-1.5 flex-shrink-0">
-                            <button
-                              onClick={() => handlePickSnapshot('left', snap.id)}
-                              className={`h-7 min-w-[28px] rounded-lg text-[10px] font-bold border transition-all ${
-                                isLeft
-                                  ? 'bg-[#06b6d4] border-[#06b6d4] text-white'
-                                  : 'border-black/10 text-black/35 hover:border-[#06b6d4]/40 hover:text-[#06b6d4]'
-                              }`}
-                              title={zh ? '设为基准 (A)' : 'Set as Baseline (A)'}
-                            >
-                              A
-                            </button>
-                            <button
-                              onClick={() => handlePickSnapshot('right', snap.id)}
-                              className={`h-7 min-w-[28px] rounded-lg text-[10px] font-bold border transition-all ${
-                                isRight
-                                  ? 'bg-[#164e63] border-[#164e63] text-white'
-                                  : 'border-black/10 text-black/35 hover:border-[#164e63]/40 hover:text-[#164e63]'
-                              }`}
-                              title={zh ? '设为对比 (B)' : 'Set as Compare (B)'}
-                            >
-                              B
-                            </button>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-[#164e63]">{formatTime(snap.timestamp)}</span>
-                              <span className="text-[10px] text-black/30">{timeSince(snap.timestamp)}</span>
+                  /* ── Main: A/B staging + timeline ── */
+                  <div className="flex-1 flex flex-col min-h-0">
+                    {/* ━━ A vs B staging area ━━ */}
+                    <div className="px-5 py-4 border-b border-black/[0.04] bg-gradient-to-b from-[#fafffe] to-white">
+                      <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-3">
+                        {/* Card A */}
+                        {(() => {
+                          const snapA = pickLeft ? snapshots.find(s => s.id === pickLeft) : null;
+                          return (
+                            <div className={`relative rounded-xl border-2 border-dashed px-4 py-3 transition-all min-h-[68px] flex items-center ${
+                              snapA
+                                ? 'border-[#06b6d4] bg-[#ecfeff]/60 border-solid'
+                                : 'border-black/10 bg-black/[0.01]'
+                            }`}>
+                              <div className="absolute -top-2.5 left-3 px-1.5 bg-white">
+                                <span className={`text-[10px] font-bold uppercase tracking-wider ${snapA ? 'text-[#06b6d4]' : 'text-black/25'}`}>
+                                  {zh ? '基准 A' : 'Baseline A'}
+                                </span>
+                              </div>
+                              {snapA ? (
+                                <div className="flex items-center gap-3 w-full">
+                                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#06b6d4] text-white text-sm font-bold flex-shrink-0">A</div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-semibold text-[#164e63] truncate">{formatTime(snapA.timestamp)}</div>
+                                    <div className="text-[10px] text-black/35">{snapA.trigger || 'manual'} · {snapA.vendor || ''} · {formatSize(snapA.size)}</div>
+                                  </div>
+                                  <button onClick={() => setPickLeft(null)} className="p-1 rounded-md text-black/25 hover:text-red-400 hover:bg-red-50 transition flex-shrink-0">
+                                    <X size={12} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2 text-black/25">
+                                  <div className="flex h-9 w-9 items-center justify-center rounded-lg border-2 border-dashed border-black/10 text-[11px] font-bold">A</div>
+                                  <span className="text-xs">{zh ? '点击下方快照选择基准' : 'Select a baseline snapshot'}</span>
+                                </div>
+                              )}
                             </div>
-                            <div className="mt-0.5 flex items-center gap-2 text-[11px] text-black/40">
-                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${
-                                snap.trigger === 'manual'
-                                  ? 'bg-cyan-50 text-cyan-600'
-                                  : 'bg-amber-50 text-amber-600'
-                              }`}>
-                                {snap.trigger || 'manual'}
-                              </span>
-                              {snap.vendor && <span>{snap.vendor}</span>}
-                              {snap.size != null && snap.size > 0 && <span className="font-mono">{formatSize(snap.size)}</span>}
-                            </div>
+                          );
+                        })()}
+
+                        {/* VS divider */}
+                        <div className="flex flex-col items-center gap-1">
+                          <div className="h-8 w-8 rounded-full bg-[#164e63]/5 flex items-center justify-center">
+                            <ArrowLeftRight size={14} className="text-[#164e63]/40" />
                           </div>
-                          {isPicked && (
-                            <span className={`text-[10px] font-bold ${isLeft ? 'text-[#06b6d4]' : 'text-[#164e63]'}`}>
-                              {isLeft ? (zh ? '基准' : 'Baseline') : (zh ? '对比' : 'Compare')}
-                            </span>
-                          )}
                         </div>
-                      );
-                    })}
+
+                        {/* Card B */}
+                        {(() => {
+                          const snapB = pickRight ? snapshots.find(s => s.id === pickRight) : null;
+                          return (
+                            <div className={`relative rounded-xl border-2 border-dashed px-4 py-3 transition-all min-h-[68px] flex items-center ${
+                              snapB
+                                ? 'border-[#164e63] bg-[#f0f9ff]/60 border-solid'
+                                : 'border-black/10 bg-black/[0.01]'
+                            }`}>
+                              <div className="absolute -top-2.5 left-3 px-1.5 bg-white">
+                                <span className={`text-[10px] font-bold uppercase tracking-wider ${snapB ? 'text-[#164e63]' : 'text-black/25'}`}>
+                                  {zh ? '对比 B' : 'Compare B'}
+                                </span>
+                              </div>
+                              {snapB ? (
+                                <div className="flex items-center gap-3 w-full">
+                                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#164e63] text-white text-sm font-bold flex-shrink-0">B</div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-semibold text-[#164e63] truncate">{formatTime(snapB.timestamp)}</div>
+                                    <div className="text-[10px] text-black/35">{snapB.trigger || 'manual'} · {snapB.vendor || ''} · {formatSize(snapB.size)}</div>
+                                  </div>
+                                  <button onClick={() => setPickRight(null)} className="p-1 rounded-md text-black/25 hover:text-red-400 hover:bg-red-50 transition flex-shrink-0">
+                                    <X size={12} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2 text-black/25">
+                                  <div className="flex h-9 w-9 items-center justify-center rounded-lg border-2 border-dashed border-black/10 text-[11px] font-bold">B</div>
+                                  <span className="text-xs">{zh ? '点击下方快照选择对比' : 'Select a compare snapshot'}</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* Compare button */}
+                        <button
+                          disabled={!pickLeft || !pickRight}
+                          onClick={() => void handleStartCompare()}
+                          className="h-12 w-12 rounded-xl bg-gradient-to-br from-[#164e63] to-[#155e75] text-white shadow-[0_4px_16px_rgba(22,78,99,0.25)] flex items-center justify-center transition-all hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(22,78,99,0.35)] active:scale-95 disabled:opacity-25 disabled:cursor-not-allowed disabled:translate-y-0 disabled:shadow-none"
+                          title={zh ? '开始对比' : 'Start Compare'}
+                        >
+                          <ArrowLeftRight size={18} />
+                        </button>
+                      </div>
+
+                      {/* hint text */}
+                      {!pickLeft && !pickRight && (
+                        <p className="mt-3 text-center text-[11px] text-black/30">
+                          {zh ? '↓ 点击快照行自动选择 A → B，也可点击行内 A / B 按钮手动指定' : '↓ Click rows to auto-assign A then B, or use A/B buttons'}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* ━━ Snapshot timeline ━━ */}
+                    <div className="flex-1 overflow-auto px-5 py-3">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-black/25 mb-3">{zh ? `${snapshots.length} 份配置快照` : `${snapshots.length} Snapshots`}</div>
+                      <div className="relative">
+                        {/* Timeline rail */}
+                        <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-gradient-to-b from-[#06b6d4]/25 via-[#06b6d4]/10 to-transparent rounded-full" />
+
+                        <div className="space-y-px">
+                          {snapshots.map((snap, idx) => {
+                            const isLeft = pickLeft === snap.id;
+                            const isRight = pickRight === snap.id;
+                            const isPicked = isLeft || isRight;
+                            const isNewest = idx === 0;
+                            return (
+                              <div
+                                key={snap.id}
+                                onClick={() => handleSmartPick(snap.id)}
+                                className={`group relative flex items-center gap-2.5 pl-8 pr-3 py-2 rounded-lg cursor-pointer transition-all ${
+                                  isPicked
+                                    ? isLeft
+                                      ? 'bg-[#ecfeff] ring-1 ring-[#06b6d4]/20'
+                                      : 'bg-[#f0f9ff] ring-1 ring-[#164e63]/15'
+                                    : 'hover:bg-black/[0.02]'
+                                }`}
+                              >
+                                {/* Timeline dot */}
+                                <div className="absolute left-2.5 top-1/2 -translate-y-1/2 z-10">
+                                  <div className={`h-2 w-2 rounded-full ring-2 ring-white transition-colors ${
+                                    isPicked
+                                      ? isLeft ? 'bg-[#06b6d4] ring-[#ecfeff]' : 'bg-[#164e63] ring-[#f0f9ff]'
+                                      : isNewest ? 'bg-emerald-400' : 'bg-black/12 group-hover:bg-black/20'
+                                  }`} />
+                                </div>
+
+                                {/* A / B buttons */}
+                                <div className="flex items-center gap-0.5 flex-shrink-0">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handlePickSnapshot('left', snap.id); }}
+                                    className={`h-6 w-6 rounded text-[9px] font-bold border transition-all ${
+                                      isLeft
+                                        ? 'bg-[#06b6d4] border-[#06b6d4] text-white'
+                                        : 'border-black/8 text-black/20 hover:border-[#06b6d4]/40 hover:text-[#06b6d4]'
+                                    }`}
+                                  >A</button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handlePickSnapshot('right', snap.id); }}
+                                    className={`h-6 w-6 rounded text-[9px] font-bold border transition-all ${
+                                      isRight
+                                        ? 'bg-[#164e63] border-[#164e63] text-white'
+                                        : 'border-black/8 text-black/20 hover:border-[#164e63]/40 hover:text-[#164e63]'
+                                    }`}
+                                  >B</button>
+                                </div>
+
+                                {/* Time + meta inline */}
+                                <span className="text-[12px] font-semibold text-[#164e63] tabular-nums">{formatTime(snap.timestamp)}</span>
+                                <span className="text-[10px] text-black/20">{timeSince(snap.timestamp)}</span>
+                                {isNewest && (
+                                  <span className="rounded bg-emerald-50 px-1 py-px text-[8px] font-bold text-emerald-600">
+                                    {zh ? '最新' : 'NEW'}
+                                  </span>
+                                )}
+                                <span className={`hidden sm:inline-flex rounded-full px-1.5 py-px text-[8px] font-bold uppercase ${
+                                  snap.trigger === 'manual'
+                                    ? 'bg-cyan-50 text-cyan-600'
+                                    : snap.trigger === 'scheduled'
+                                      ? 'bg-violet-50 text-violet-600'
+                                      : 'bg-amber-50 text-amber-600'
+                                }`}>
+                                  {snap.trigger || 'manual'}
+                                </span>
+                                {snap.vendor && <span className="hidden sm:inline text-[10px] text-black/25">{snap.vendor}</span>}
+                                {snap.size != null && snap.size > 0 && <span className="hidden sm:inline text-[10px] font-mono text-black/20">{formatSize(snap.size)}</span>}
+
+                                {/* Role pill (far right) */}
+                                {isPicked && (
+                                  <span className={`ml-auto flex-shrink-0 text-[9px] font-bold ${
+                                    isLeft ? 'text-[#06b6d4]' : 'text-[#164e63]'
+                                  }`}>
+                                    {isLeft ? (zh ? '基准' : 'A') : (zh ? '对比' : 'B')}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

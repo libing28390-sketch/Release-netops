@@ -356,15 +356,200 @@ def login(request: Request, payload: dict = Body(...)):
             )
             detail = "Invalid credentials"
             if 0 < attempts_left <= 3:
-                detail += f" ({attempts_left} attempts remaining before lockout)"
+                detail = "Invalid credentials. Account may be locked soon."
             raise HTTPException(status_code=401, detail=detail)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Login error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         conn.close()
+
+
+# ── Forgot-password: send verification code via notification channels ──
+
+_RESET_CODE_EXPIRE_MIN = 5
+_RESET_CODE_LENGTH = 6
+
+import secrets as _secrets
+
+def _generate_reset_code() -> str:
+    return ''.join([str(_secrets.randbelow(10)) for _ in range(_RESET_CODE_LENGTH)])
+
+
+@router.post("/forgot-password/send-code")
+@limiter.limit("3/minute")
+def forgot_password_send_code(request: Request, payload: dict = Body(...)):
+    """Send a verification code to the user's configured notification channels."""
+    username = (payload.get('username') or '').strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+
+    conn = get_db_connection()
+    try:
+        user = conn.execute(
+            'SELECT id, username, notification_channels, preferred_language FROM users WHERE username = ?',
+            (username,),
+        ).fetchone()
+        # Always return success to avoid username enumeration
+        if not user:
+            logger.warning(f"Password reset requested for non-existent user: {username}")
+            return {"success": True, "message": "If an account with that username exists and has notification channels configured, a code has been sent."}
+
+        channels = {}
+        try:
+            channels = json.loads(user['notification_channels'] or '{}')
+        except Exception:
+            pass
+
+        # Find at least one enabled channel
+        feishu = channels.get('feishu') or {}
+        dingtalk = channels.get('dingtalk') or {}
+        wechat = channels.get('wechat') or {}
+
+        has_channel = (
+            (feishu.get('enabled') and feishu.get('webhook_url', '').strip()) or
+            (dingtalk.get('enabled') and dingtalk.get('webhook_url', '').strip()) or
+            (wechat.get('enabled') and wechat.get('webhook_url', '').strip())
+        )
+        if not has_channel:
+            # Return generic message — don't reveal whether channels are configured
+            return {"success": False, "message": "No notification channels configured for this account. Please contact your administrator."}
+
+        # Generate and store code
+        code = _generate_reset_code()
+        now = time.time()
+        expires_at = now + _RESET_CODE_EXPIRE_MIN * 60
+
+        # Invalidate previous unused codes
+        conn.execute("UPDATE password_reset_codes SET used = 1 WHERE username = ? AND used = 0", (username,))
+        conn.execute(
+            "INSERT INTO password_reset_codes (username, code, created_at, expires_at, used) VALUES (?, ?, ?, ?, 0)",
+            (username, code, now, expires_at),
+        )
+        conn.commit()
+
+        lang = (user['preferred_language'] or 'zh').lower()
+        sent_to = []
+
+        # Send to all enabled channels
+        if feishu.get('enabled') and feishu.get('webhook_url', '').strip():
+            ok, msg = notification_service.send_feishu_verification_code(
+                feishu['webhook_url'], username, code, _RESET_CODE_EXPIRE_MIN, lang
+            )
+            sent_to.append({"platform": "feishu", "success": ok})
+            if not ok:
+                logger.warning(f"Feishu verification code send failed for {username}: {msg}")
+
+        if dingtalk.get('enabled') and dingtalk.get('webhook_url', '').strip():
+            ok, msg = notification_service.send_dingtalk_verification_code(
+                dingtalk['webhook_url'], username, code, _RESET_CODE_EXPIRE_MIN, lang,
+                secret=dingtalk.get('secret', ''),
+            )
+            sent_to.append({"platform": "dingtalk", "success": ok})
+
+        if wechat.get('enabled') and wechat.get('webhook_url', '').strip():
+            ok, msg = notification_service.send_wechat_verification_code(
+                wechat['webhook_url'], username, code, _RESET_CODE_EXPIRE_MIN, lang,
+            )
+            sent_to.append({"platform": "wechat", "success": ok})
+
+        any_success = any(s['success'] for s in sent_to)
+        if not any_success:
+            return {"success": False, "message": "Failed to send verification code. Please try again later."}
+
+        log_audit_event(
+            event_type='PASSWORD_RESET_REQUESTED',
+            category='identity',
+            severity='medium',
+            status='success',
+            summary=f"Password reset code sent for user {username}",
+            actor_username=username,
+            actor_role='unknown',
+            source_ip=request.client.host if request and request.client else None,
+            target_type='user',
+            target_name=username,
+        )
+        logger.info(f"Password reset code sent for user: {username}")
+        return {"success": True, "message": "Verification code sent to your notification channels.", "channels": sent_to}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Forgot password error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
+
+
+@router.post("/forgot-password/reset")
+@limiter.limit("5/minute")
+def forgot_password_reset(request: Request, payload: dict = Body(...)):
+    """Verify code and reset password."""
+    username = (payload.get('username') or '').strip()
+    code = (payload.get('code') or '').strip()
+    new_password = payload.get('new_password', '')
+
+    if not username or not code or not new_password:
+        raise HTTPException(status_code=400, detail="Username, code, and new_password are required")
+
+    # Validate password strength
+    pwd_error = _validate_password_strength(new_password)
+    if pwd_error:
+        raise HTTPException(status_code=400, detail=pwd_error)
+
+    conn = get_db_connection()
+    try:
+        # Find valid unused code
+        row = conn.execute(
+            "SELECT id, code, expires_at FROM password_reset_codes WHERE username = ? AND used = 0 ORDER BY created_at DESC LIMIT 1",
+            (username,),
+        ).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+
+        if time.time() > row['expires_at']:
+            conn.execute("UPDATE password_reset_codes SET used = 1 WHERE id = ?", (row['id'],))
+            conn.commit()
+            raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
+
+        if not hmac.compare_digest(code, row['code']):
+            raise HTTPException(status_code=400, detail="Invalid verification code")
+
+        # Mark code as used
+        conn.execute("UPDATE password_reset_codes SET used = 1 WHERE id = ?", (row['id'],))
+
+        # Update password
+        hashed = _hash_password(new_password)
+        conn.execute("UPDATE users SET password = ? WHERE username = ?", (hashed, username))
+
+        # Clear login failures / lockout
+        conn.execute("DELETE FROM login_failures WHERE username = ?", (username,))
+        conn.commit()
+
+        log_audit_event(
+            event_type='PASSWORD_RESET_COMPLETED',
+            category='identity',
+            severity='high',
+            status='success',
+            summary=f"Password reset completed for user {username}",
+            actor_username=username,
+            actor_role='unknown',
+            source_ip=request.client.host if request and request.client else None,
+            target_type='user',
+            target_name=username,
+        )
+        logger.info(f"Password reset completed for user: {username}")
+        return {"success": True, "message": "Password reset successfully. You can now log in with your new password."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Password reset error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
+
 
 @router.put("/users/{user_id}")
 def update_user(user_id: str, request: Request, user: dict = Body(...)):

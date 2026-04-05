@@ -44,6 +44,14 @@ NTC_PLATFORM_MAP = {
 }
 
 
+# 按设备角色排除不适用的采集类别
+# router: 不采集 mac_table（交换表是二层交换功能）
+# access/switch: 不采集 bgp、ospf、bfd（纯接入层通常无路由协议邻居）
+ROLE_EXCLUDED_CATEGORIES: dict[str, set[str]] = {
+    'router': {'mac_table'},
+    'access': {'bgp', 'ospf', 'bfd'},
+}
+
 COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
     'cisco_ios': {
         'interfaces': ['show ip interface brief'],
@@ -122,14 +130,19 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _resolve_categories(categories: list[str] | None) -> list[str]:
+def _resolve_categories(categories: list[str] | None, role: str = '') -> list[str]:
     if not categories:
-        return list(SUPPORTED_CATEGORIES)
-    requested = [str(item).strip().lower() for item in categories if str(item).strip()]
-    invalid = [item for item in requested if item not in SUPPORTED_CATEGORIES]
-    if invalid:
-        raise ValueError(f'Unsupported categories: {", ".join(sorted(set(invalid)))}')
-    return requested
+        base = list(SUPPORTED_CATEGORIES)
+    else:
+        requested = [str(item).strip().lower() for item in categories if str(item).strip()]
+        invalid = [item for item in requested if item not in SUPPORTED_CATEGORIES]
+        if invalid:
+            raise ValueError(f'Unsupported categories: {", ".join(sorted(set(invalid)))}')
+        base = requested
+    excluded = ROLE_EXCLUDED_CATEGORIES.get(role.lower().strip(), set()) if role else set()
+    if excluded:
+        base = [c for c in base if c not in excluded]
+    return base
 
 
 def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[str]]:
@@ -249,7 +262,8 @@ def _build_base_payload(device_info: dict[str, Any], platform: str) -> dict[str,
 
 
 def collect_operational_data(device_info: dict[str, Any], categories: list[str] | None = None) -> dict[str, Any]:
-    selected_categories = _resolve_categories(categories)
+    role = str(device_info.get('role') or '').strip()
+    selected_categories = _resolve_categories(categories, role=role)
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     commands_by_category = _resolve_commands(platform, selected_categories)
     conn_params = _build_connection_params(device_info)

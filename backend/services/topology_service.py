@@ -12,6 +12,7 @@ from scrapli.driver.core import AsyncEOSDriver, AsyncIOSXEDriver, AsyncJunosDriv
 from scrapli_community.hp.comware.async_driver import AsyncHPComwareDriver
 from scrapli_community.huawei.vrp.async_driver import AsyncHuaweiVRPDriver
 
+from core.crypto import decrypt_credential
 from core.textfsm import configure_ntc_templates
 from database import get_db_connection
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
@@ -248,7 +249,11 @@ def _get_device(device_id: str) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
         row = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        device = dict(row)
+        device['password'] = decrypt_credential(device.get('password')) or ''
+        return device
     finally:
         conn.close()
 
@@ -688,7 +693,13 @@ async def discover_device_neighbors(device_id: str, run_id: str | None = None) -
 
 
 async def discover_lldp_neighbors(device_id: str):
-    return await discover_device_neighbors(device_id, None)
+    try:
+        return await discover_device_neighbors(device_id, None)
+    except RuntimeError as exc:
+        # 凭据不完整 / 设备不存在等属于预期情况（如新增设备未配凭据），
+        # 周期任务中静默跳过即可，避免 "Task exception was never retrieved" 日志。
+        logger.debug('Periodic LLDP discovery skipped for device %s: %s', device_id, exc)
+        return None
 
 
 async def execute_discovery_run(run_id: str, device_ids: list[str]):

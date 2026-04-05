@@ -150,3 +150,57 @@ class IPAddressUpdate(BaseModel):
         if v and v not in ('active', 'reserved', 'deprecated'):
             raise ValueError("status must be one of: active, reserved, deprecated")
         return v
+
+
+# ──────────────────────────────────────────────
+# IP Locator Schemas
+# ──────────────────────────────────────────────
+
+class IPLocateRequest(BaseModel):
+    ip: str
+    force_refresh: bool = False
+
+    @field_validator('ip')
+    @classmethod
+    def validate_ip(cls, v: str) -> str:
+        v = v.strip()
+        try:
+            _ipaddress.ip_address(v)
+        except ValueError:
+            raise ValueError(f'Invalid IP address: {v}')
+        return v
+
+
+class ConnectivityProbeRequest(BaseModel):
+    target: str
+    tests: list[str] = ['ping', 'tcp', 'traceroute']
+    tcp_ports: list[int] = [22, 80, 443]
+    source_device_id: int | None = None
+    source_interface: str = ''
+    ping_count: int = 4
+
+    @field_validator('target')
+    @classmethod
+    def validate_target(cls, v: str) -> str:
+        v = v.strip()
+        try:
+            _ipaddress.ip_address(v)
+        except ValueError:
+            raise ValueError(f'Invalid IP address: {v}')
+        return v
+
+    @field_validator('tests')
+    @classmethod
+    def validate_tests(cls, v: list[str]) -> list[str]:
+        allowed = {'ping', 'tcp', 'traceroute'}
+        return [t for t in v if t in allowed]
+
+    @field_validator('tcp_ports')
+    @classmethod
+    def validate_ports(cls, v: list[int]) -> list[int]:
+        return [p for p in v if 1 <= p <= 65535][:10]
+
+    @field_validator('ping_count')
+    @classmethod
+    def validate_ping_count(cls, v: int) -> int:
+        return max(1, min(v, 10))

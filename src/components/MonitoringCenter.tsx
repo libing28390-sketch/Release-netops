@@ -5,7 +5,7 @@ import {
   AlertTriangle, CheckCircle2, XCircle, Shield,
   Zap, Bell, Clock, ArrowUpRight, Eye, Activity,
   Radio, Play, ChevronDown, ChevronUp, Server,
-  Terminal, Download, Wrench, Map, Globe, Layers,
+  Terminal, Download, Wrench, Map as MapIcon, Globe, Layers, BarChart3,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Brush } from 'recharts';
 import type { Device, HostResourceSnapshot, HostResourceHistoryPayload } from '../types';
@@ -131,19 +131,21 @@ const RiskDeviceRow: React.FC<{
   const statusColor = device.health_status === 'critical' ? '#ef4444' : device.health_status === 'warning' ? '#f59e0b' : device.health_status === 'healthy' ? '#10b981' : '#94a3b8';
   const statusLabel = device.health_status === 'critical' ? (language === 'zh' ? '严重' : 'Critical') : device.health_status === 'warning' ? (language === 'zh' ? '告警' : 'Warning') : device.health_status === 'healthy' ? (language === 'zh' ? '健康' : 'Healthy') : (language === 'zh' ? '未知' : 'Unknown');
   const isOffline = String(device.status || '').toLowerCase() === 'offline';
+  const score = device.health_score ?? 0;
+  const scoreColor = score < 30 ? '#ef4444' : score < 60 ? '#f59e0b' : '#10b981';
   return (
     <button type="button" onClick={onClick} className="group w-full flex items-center gap-3 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-3 py-2.5 text-left transition-all hover:border-red-300 hover:bg-red-50/30" style={{ borderLeftWidth: 3, borderLeftColor: statusColor }}>
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-black/5 text-[10px] font-bold text-[var(--muted-text)]">{index + 1}</span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="text-sm font-semibold text-[var(--app-text)] truncate">{device.hostname || device.ip_address}</p>
-          {isOffline && <span className="shrink-0 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-red-700">OFFLINE</span>}
+          {isOffline && <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-red-500" title="Offline" />}
         </div>
-        <p className="text-[11px] text-[var(--muted-text)] truncate">{[device.site, device.platform].filter(Boolean).join(' \u00b7 ') || device.ip_address}</p>
+        <p className="text-[11px] text-[var(--muted-text)] truncate">{[device.site, device.platform].filter(Boolean).join(' · ') || device.ip_address}</p>
       </div>
-      <div className="shrink-0 text-right">
+      <div className="shrink-0 flex items-center gap-2.5">
         <span className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${statusColor}18`, color: statusColor }}>{statusLabel}</span>
-        <p className="mt-0.5 text-xs font-bold text-[var(--app-text)]">{device.health_score ?? 0}<span className="text-[10px] font-normal text-[var(--muted-text)]"> /100</span></p>
+        <span className="text-lg font-extrabold tabular-nums" style={{ color: scoreColor }}>{score}</span>
       </div>
       <ArrowUpRight size={14} className="shrink-0 text-[var(--muted-text)] opacity-0 transition-opacity group-hover:opacity-100" />
     </button>
@@ -584,6 +586,25 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
     return siteMatch && severityMatch;
   });
 
+  // Group duplicate alerts by title+severity, keep newest, attach count
+  const groupedOpenAlerts = React.useMemo(() => {
+    const map = new Map<string, any>();
+    for (const a of filteredOpenAlerts) {
+      const key = `${a.title}||${a.severity}`;
+      const existing = map.get(key);
+      if (!existing) {
+        map.set(key, { ...a, _groupCount: 1 });
+      } else {
+        existing._groupCount += 1;
+        // keep the newest created_at
+        if (a.created_at > existing.created_at) {
+          Object.assign(existing, { ...a, _groupCount: existing._groupCount });
+        }
+      }
+    }
+    return Array.from(map.values());
+  }, [filteredOpenAlerts]);
+
   const toggleTrendMetric = (metricKey: string) => {
     setMonitorTrendMetrics((prev) => prev.includes(metricKey) ? prev.filter((k) => k !== metricKey) : [...prev, metricKey]);
   };
@@ -725,7 +746,12 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
   const unknownCount = deviceHealthSummary?.unknown ?? 0;
   const healthTotal = healthyCount + warningCount + criticalCount + unknownCount;
   const healthPct = healthTotal > 0 ? Math.round((healthyCount / healthTotal) * 100) : 0;
-  const healthBarWidth = (count: number) => healthTotal > 0 ? `${(count / healthTotal) * 100}%` : '0%';
+  const healthBarWidth = (count: number) => {
+    if (healthTotal <= 0 || count <= 0) return '0%';
+    const pct = (count / healthTotal) * 100;
+    // Ensure tiny segments are still visible (min 6%)
+    return `${Math.max(6, pct)}%`;
+  };
   const criticalAlertCount = defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'critical').length;
   const majorAlertCount = defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'major').length;
   const warningAlertCount = defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'warning').length;
@@ -761,7 +787,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
             <Play size={13} />{language === 'zh' ? '\u81ea\u52a8\u5316\u4efb\u52a1' : 'Automation'}
           </button>
           <button type="button" onClick={() => navigate('/topology')} className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700 transition-all hover:bg-indigo-100 hover:shadow-sm">
-            <Map size={13} />{language === 'zh' ? '\u7f51\u7edc\u62d3\u6251' : 'Topology'}
+            <MapIcon size={13} />{language === 'zh' ? '\u7f51\u7edc\u62d3\u6251' : 'Topology'}
           </button>
           <div className="h-6 w-px bg-black/10" />
           <button type="button" onClick={() => setAutoRefresh(!autoRefresh)} className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all ${autoRefresh ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)]'}`}>
@@ -852,10 +878,18 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
 
           {healthTotal > 0 && (
             <div className="flex h-5 w-full overflow-hidden rounded-full bg-black/[0.04]">
-              {healthyCount > 0 && <div className="flex items-center justify-center text-[9px] font-bold text-white transition-all duration-700" style={{ width: healthBarWidth(healthyCount), backgroundColor: '#10b981' }}>{healthyCount}</div>}
-              {warningCount > 0 && <div className="flex items-center justify-center text-[9px] font-bold text-white transition-all duration-700" style={{ width: healthBarWidth(warningCount), backgroundColor: '#f59e0b' }}>{warningCount}</div>}
-              {criticalCount > 0 && <div className="flex items-center justify-center text-[9px] font-bold text-white transition-all duration-700" style={{ width: healthBarWidth(criticalCount), backgroundColor: '#ef4444' }}>{criticalCount}</div>}
-              {unknownCount > 0 && <div className="flex items-center justify-center text-[9px] font-bold text-white transition-all duration-700" style={{ width: healthBarWidth(unknownCount), backgroundColor: '#94a3b8' }}>{unknownCount}</div>}
+              {[
+                { count: healthyCount, color: '#10b981' },
+                { count: warningCount, color: '#f59e0b' },
+                { count: criticalCount, color: '#ef4444' },
+                { count: unknownCount, color: '#94a3b8' },
+              ].map(({ count, color }) => (
+                count > 0 ? (
+                  <div key={color} className="flex items-center justify-center text-[9px] font-bold text-white transition-all duration-700" style={{ width: healthBarWidth(count), backgroundColor: color }}>{count}</div>
+                ) : (
+                  <div key={color} className="transition-all duration-700" style={{ width: '2px', backgroundColor: `${color}40` }} />
+                )
+              ))}
             </div>
           )}
 
@@ -869,13 +903,19 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
           {hostResources && (
             <div className="flex items-center justify-between rounded-xl border border-[var(--card-border)] bg-black/[0.015] px-5 py-3">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-text)]">{language === 'zh' ? '\u5e73\u53f0\u5bbf\u4e3b\u673a' : 'Platform Host'}</p>
-                <p className="text-xs text-[var(--muted-text)]">{hostResources.hostname || '--'} {hostResources.status === 'critical' ? '\ud83d\udd34' : hostResources.status === 'degraded' ? '\ud83d\udfe1' : '\ud83d\udfe2'} {hostResources.status}</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-text)]">{language === 'zh' ? 'Nexora 宿主机' : 'Nexora Host'}</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <p className="text-xs text-[var(--app-text)] font-medium">{hostResources.hostname || '--'}</p>
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${hostResources.status === 'critical' ? 'bg-red-100 text-red-700' : hostResources.status === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${hostResources.status === 'critical' ? 'bg-red-500' : hostResources.status === 'degraded' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                    {hostResources.status}
+                  </span>
+                </div>
               </div>
               <div className="flex items-center gap-5">
                 <MiniGauge value={hostResources.cpu_percent} label="CPU" />
-                <MiniGauge value={hostResources.memory_percent} label={language === 'zh' ? '\u5185\u5b58' : 'MEM'} />
-                <MiniGauge value={hostResources.disk_percent} label={language === 'zh' ? '\u78c1\u76d8' : 'DISK'} />
+                <MiniGauge value={hostResources.memory_percent} label={language === 'zh' ? '内存' : 'MEM'} />
+                <MiniGauge value={hostResources.disk_percent} label={language === 'zh' ? '磁盘' : 'DISK'} />
               </div>
             </div>
           )}
@@ -961,8 +1001,22 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <div className="flex h-full items-center justify-center text-sm text-[var(--muted-text)]">
-                {hostResourceHistoryLoading ? (language === 'zh' ? '\u52a0\u8f7d\u4e2d...' : 'Loading...') : (language === 'zh' ? '\u6682\u65e0\u8d8b\u52bf\u6570\u636e' : 'No trend data yet')}
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+                {hostResourceHistoryLoading ? (
+                  <>
+                    <RefreshCw size={20} className="animate-spin text-sky-400" />
+                    <p className="text-sm text-[var(--muted-text)]">{language === 'zh' ? '正在加载趋势数据...' : 'Loading trend data...'}</p>
+                  </>
+                ) : (
+                  <>
+                    <BarChart3 size={28} className="text-[var(--muted-text)] opacity-40" />
+                    <p className="text-sm font-medium text-[var(--muted-text)]">{language === 'zh' ? '暂无趋势数据' : 'No trend data yet'}</p>
+                    <p className="max-w-[220px] text-[11px] text-[var(--muted-text)] opacity-60">{language === 'zh' ? '系统将在采集到足够数据后自动生成趋势图，请稍候。' : 'Trends will appear once enough data points have been collected.'}</p>
+                    <button type="button" onClick={() => fetchHostResourceHistory(hostResourceRange)} className="mt-1 inline-flex items-center gap-1 rounded-lg border border-[var(--card-border)] px-3 py-1.5 text-[11px] font-semibold text-sky-600 transition-all hover:bg-sky-50 hover:border-sky-200">
+                      <RefreshCw size={11} />{language === 'zh' ? '立即刷新' : 'Refresh now'}
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -1020,13 +1074,18 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
           </div>
 
           <div className="space-y-0.5 max-h-[280px] overflow-auto rounded-xl border border-[var(--card-border)] bg-black/[0.01] p-1">
-            {filteredOpenAlerts.length > 0
-              ? filteredOpenAlerts.slice(0, 30).map((alert: any) => (
-                <EventStreamItem key={alert.id} alert={alert} language={language} onClick={() => openMonitorDevice(alert)} formatTs={formatTs} />
+            {groupedOpenAlerts.length > 0
+              ? groupedOpenAlerts.slice(0, 30).map((alert: any) => (
+                <div key={alert.id} className="relative">
+                  <EventStreamItem alert={alert} language={language} onClick={() => openMonitorDevice(alert)} formatTs={formatTs} />
+                  {alert._groupCount > 1 && (
+                    <span className="absolute top-1.5 right-16 rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">×{alert._groupCount}</span>
+                  )}
+                </div>
               ))
               : <div className="flex h-32 items-center justify-center text-sm text-[var(--muted-text)]">
                   <CheckCircle2 size={18} className="mr-2 text-emerald-500" />
-                  {language === 'zh' ? '\u5f53\u524d\u65e0\u6d3b\u8dc3\u544a\u8b66\uff0c\u4e00\u5207\u6b63\u5e38\u3002' : 'No active alerts \u2014 all clear.'}
+                  {language === 'zh' ? '当前无活跃告警，一切正常。' : 'No active alerts — all clear.'}
                 </div>
             }
           </div>

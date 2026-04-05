@@ -958,24 +958,26 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = ({
                 const isCisco = platform.includes('cisco') || platform.includes('arista') || platform.includes('rgos');
                 const isHuawei = platform.includes('huawei') || platform.includes('h3c') || platform.includes('ce_');
                 const isJuniper = platform.includes('juniper') || platform.includes('junos');
-                const presets: Array<{ icon: string; label: string; labelEn: string; cmds: string; group: string; operationalCategory?: string }> = [
+                const presets: Array<{ icon: string; label: string; labelEn: string; cmds: string; group: string; operationalCategory?: string; excludeRoles?: string[] }> = [
                   { icon: '📡', label: '接口状态', labelEn: 'Interfaces', group: 'net', operationalCategory: 'interfaces', cmds: isCisco ? 'show ip interface brief' : isHuawei ? 'display interface brief' : isJuniper ? 'show interfaces terse' : 'show ip interface brief' },
                   { icon: '📋', label: 'ARP表', labelEn: 'ARP Table', group: 'net', operationalCategory: 'arp', cmds: isCisco ? 'show arp' : isHuawei ? 'display arp' : isJuniper ? 'show arp' : 'show arp' },
-                  { icon: '🏷️', label: 'MAC表', labelEn: 'MAC Table', group: 'net', operationalCategory: 'mac_table', cmds: isCisco ? 'show mac address-table' : isHuawei ? 'display mac-address' : isJuniper ? 'show ethernet-switching table' : 'show mac address-table' },
-                  { icon: '📊', label: 'VLAN', labelEn: 'VLAN', group: 'net', cmds: isCisco ? 'show vlan brief' : isHuawei ? 'display vlan' : isJuniper ? 'show vlans' : 'show vlan brief' },
+                  { icon: '🏷️', label: 'MAC表', labelEn: 'MAC Table', group: 'net', operationalCategory: 'mac_table', excludeRoles: ['router'], cmds: isCisco ? 'show mac address-table' : isHuawei ? 'display mac-address' : isJuniper ? 'show ethernet-switching table' : 'show mac address-table' },
+                  { icon: '📊', label: 'VLAN', labelEn: 'VLAN', group: 'net', excludeRoles: ['router'], cmds: isCisco ? 'show vlan brief' : isHuawei ? 'display vlan' : isJuniper ? 'show vlans' : 'show vlan brief' },
                   { icon: '📌', label: 'LLDP邻居', labelEn: 'LLDP', group: 'net', operationalCategory: 'neighbors', cmds: isCisco ? 'show lldp neighbors' : isHuawei ? 'display lldp neighbor brief' : isJuniper ? 'show lldp neighbors' : 'show lldp neighbors' },
                   { icon: '🗺️', label: '路由表', labelEn: 'Routes', group: 'route', operationalCategory: 'routing_table', cmds: isCisco ? 'show ip route' : isHuawei ? 'display ip routing-table' : isJuniper ? 'show route' : 'show ip route' },
-                  { icon: '🔗', label: 'BGP邻居', labelEn: 'BGP Peers', group: 'route', operationalCategory: 'bgp', cmds: isCisco ? 'show bgp summary' : isHuawei ? 'display bgp peer' : isJuniper ? 'show bgp summary' : 'show bgp summary' },
-                  { icon: '🔍', label: 'OSPF邻居', labelEn: 'OSPF Nbrs', group: 'route', operationalCategory: 'ospf', cmds: isCisco ? 'show ip ospf neighbor' : isHuawei ? 'display ospf peer brief' : isJuniper ? 'show ospf neighbor' : 'show ip ospf neighbor' },
+                  { icon: '🔗', label: 'BGP邻居', labelEn: 'BGP Peers', group: 'route', operationalCategory: 'bgp', excludeRoles: ['access'], cmds: isCisco ? 'show bgp summary' : isHuawei ? 'display bgp peer' : isJuniper ? 'show bgp summary' : 'show bgp summary' },
+                  { icon: '🔍', label: 'OSPF邻居', labelEn: 'OSPF Nbrs', group: 'route', operationalCategory: 'ospf', excludeRoles: ['access'], cmds: isCisco ? 'show ip ospf neighbor' : isHuawei ? 'display ospf peer brief' : isJuniper ? 'show ospf neighbor' : 'show ip ospf neighbor' },
                   { icon: '🏥', label: '设备信息', labelEn: 'Version', group: 'sys', cmds: isCisco ? 'show version' : isHuawei ? 'display version' : isJuniper ? 'show version' : 'show version' },
                   { icon: '📝', label: '日志', labelEn: 'Logs', group: 'sys', cmds: isCisco ? 'show logging | tail 30' : isHuawei ? 'display logbuffer last 30' : isJuniper ? 'show log messages | last 30' : 'show logging | tail 30' },
                   { icon: '⏱️', label: '运行时间', labelEn: 'Uptime', group: 'sys', cmds: isCisco ? 'show uptime' : isHuawei ? 'display clock\ndisplay version | include uptime' : isJuniper ? 'show system uptime' : 'show uptime' },
                   { icon: '💾', label: '运行配置', labelEn: 'Running Config', group: 'sys', cmds: isCisco ? 'show running-config' : isHuawei ? 'display current-configuration' : isJuniper ? 'show configuration' : 'show running-config' },
                 ];
+                const deviceRole = (selectedDevice?.role || selectedBatchDevice?.role || '').toLowerCase();
+                const filteredPresets = presets.filter(p => !p.excludeRoles || !p.excludeRoles.includes(deviceRole));
                 const userSavedCmds: Array<{ icon: string; label: string; labelEn: string; cmds: string; operationalCategory?: string }> = (() => {
                   try { return JSON.parse(localStorage.getItem('quickQuerySaved') || '[]'); } catch { return []; }
                 })();
-                const allCommands = [...presets, ...userSavedCmds.map((command) => ({ ...command, group: 'custom' }))];
+                const allCommands = [...filteredPresets, ...userSavedCmds.map((command) => ({ ...command, group: 'custom' }))];
                 const hasDevice = !!(selectedDevice || selectedBatchDevice);
                 const deviceName = selectedDevice?.hostname || selectedBatchDevice?.hostname || '';
                 const categoryGroups = [

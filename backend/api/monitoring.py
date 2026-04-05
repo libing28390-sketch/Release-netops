@@ -11,7 +11,7 @@ from services.device_health_service import annotate_devices_with_health, build_h
 
 router = APIRouter()
 
-_OVERVIEW_CACHE_TTL_SECONDS = 5
+_OVERVIEW_CACHE_TTL_SECONDS = 30
 _overview_cache_lock = threading.Lock()
 _overview_cache: dict[str, object] = {
     'expires_at': None,
@@ -135,7 +135,9 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         ).fetchone()['c']
 
         devices = conn.execute(
-            "SELECT id, hostname, ip_address, platform, role, site, interface_data FROM devices WHERE status = 'online'"
+            "SELECT id, hostname, ip_address, platform, status, compliance, role, site, "
+            "cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data "
+            "FROM devices WHERE status = 'online'"
         ).fetchall()
 
         interfaces_up = 0
@@ -255,15 +257,20 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
             'updated_at': now_utc.isoformat(),
         }
 
-        health_rows = conn.execute(
+        # Health evaluation: reuse already-fetched online device rows,
+        # only query non-online devices to avoid loading interface_data twice.
+        online_dicts = [dict(row) for row in devices]
+        non_online_rows = conn.execute(
             '''
             SELECT id, hostname, ip_address, platform, status, compliance, role, site,
                    cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data
             FROM devices
+            WHERE status != 'online'
             ORDER BY hostname ASC
             '''
         ).fetchall()
-        evaluated_devices = annotate_devices_with_health(conn, [dict(row) for row in health_rows])
+        all_device_dicts = online_dicts + [dict(row) for row in non_online_rows]
+        evaluated_devices = annotate_devices_with_health(conn, all_device_dicts)
         payload['device_health_summary'] = build_health_overview(evaluated_devices)
         payload['top_risky_devices'] = payload['device_health_summary']['top_risky_devices']
 

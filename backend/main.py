@@ -30,6 +30,7 @@ from api.ipam import router as ipam_router
 from api.assets import router as assets_router
 from api.change_orders import router as change_orders_router
 from api.setup import router as setup_router
+from api.ip_locator import router as ip_locator_router
 import logging
 import os
 import sqlite3
@@ -73,6 +74,7 @@ async def lifespan(app: FastAPI):
         id='host_resource_sampler',
         name='Host Resource Sampler',
         replace_existing=True,
+        max_instances=1,
     )
     record_device_health_snapshot()
     scheduler.add_job(
@@ -82,6 +84,7 @@ async def lifespan(app: FastAPI):
         id='device_health_sampler',
         name='Device Health Sampler',
         replace_existing=True,
+        max_instances=1,
     )
     reschedule_backup(schedule_cfg)
     # Schedule daily DB maintenance: clean expired sessions, VACUUM
@@ -91,6 +94,17 @@ async def lifespan(app: FastAPI):
         id='daily_db_maintenance',
         name='Daily DB Maintenance',
         replace_existing=True,
+    )
+    # Schedule periodic ARP sweep for IP Locator cache
+    from services.ip_locator_service import run_arp_sweep, ARP_SWEEP_INTERVAL_SECONDS
+    scheduler.add_job(
+        run_arp_sweep,
+        'interval',
+        seconds=ARP_SWEEP_INTERVAL_SECONDS,
+        id='arp_cache_sweep',
+        name='ARP Cache Sweep',
+        replace_existing=True,
+        max_instances=1,
     )
     logger.info("[Scheduler] APScheduler started")
     yield
@@ -150,6 +164,7 @@ app.include_router(ipam_router, prefix="/api")
 app.include_router(assets_router, prefix="/api")
 app.include_router(change_orders_router, prefix="/api")
 app.include_router(setup_router, prefix="/api")
+app.include_router(ip_locator_router, prefix="/api")
 
 # ── APScheduler ──────────────────────────────────────────────────────
 scheduler = AsyncIOScheduler()
@@ -909,15 +924,29 @@ async def status_monitor():
                 )
                 if not rows:
                     return
+                sent_urls: set[str] = set()  # dedupe: same webhook URL across users
                 for row in rows:
                     try:
                         channels = json.loads(row['notification_channels'] or '{}')
                     except Exception:
                         continue
-                    if channels:
+                    if not channels:
+                        continue
+                    # Remove channels whose webhook_url has already been sent
+                    deduped_channels: dict = {}
+                    for platform, cfg in channels.items():
+                        if not isinstance(cfg, dict):
+                            continue
+                        url = (cfg.get('webhook_url') or '').strip()
+                        if url and url in sent_urls:
+                            continue
+                        deduped_channels[platform] = cfg
+                        if url:
+                            sent_urls.add(url)
+                    if deduped_channels:
                         user_lang = row['preferred_language'] if 'preferred_language' in row.keys() else 'zh'
                         user_alert = {**alert_info, 'lang': user_lang or 'zh'}
-                        notification_service.send_all_channels(channels, user_alert)
+                        notification_service.send_all_channels(deduped_channels, user_alert)
             except Exception as exc:
                 logger.warning(f"[Alert] User channel dispatch failed: {exc}")
 
@@ -1100,7 +1129,7 @@ async def status_monitor():
                     else:
                         _db_quick('UPDATE devices SET status = ? WHERE id = ?', (new_status, dev_id))
                         set_alert_state(
-                            f"dev_offline:{dev_id}", False, 'critical', 'Device Offline',
+                            f"dev_offline:{dev_id}", False, 'info', 'Device Offline',
                             f"{dev_label} ({ip}) 已恢复连接",
                             dev_id, ip_address=ip, status='resolved',
                         )

@@ -227,6 +227,81 @@ def send_feishu(webhook_url: str, alert: dict) -> tuple[bool, str]:
     return ok, resp
 
 
+def send_feishu_verification_code(webhook_url: str, username: str, code: str, expires_min: int = 5, lang: str = 'zh') -> tuple[bool, str]:
+    """通过飞书 Webhook 发送密码重置验证码卡片。"""
+    is_en = lang == 'en'
+    if is_en:
+        title = "🔐 Password Reset Verification Code"
+        fields = [
+            {"is_short": True, "text": {"tag": "lark_md", "content": f"**User:**\n{username}"}},
+            {"is_short": True, "text": {"tag": "lark_md", "content": f"**Verification Code:**\n**{code}**"}},
+            {"is_short": False, "text": {"tag": "lark_md", "content": f"⏱ This code expires in **{expires_min} minutes**. Do not share it with anyone."}},
+        ]
+    else:
+        title = "🔐 密码重置验证码"
+        fields = [
+            {"is_short": True, "text": {"tag": "lark_md", "content": f"**用户：**\n{username}"}},
+            {"is_short": True, "text": {"tag": "lark_md", "content": f"**验证码：**\n**{code}**"}},
+            {"is_short": False, "text": {"tag": "lark_md", "content": f"⏱ 验证码 **{expires_min} 分钟**内有效，请勿泄露给他人。"}},
+        ]
+    payload = {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": title},
+                "template": "blue",
+            },
+            "elements": [
+                {"tag": "div", "fields": fields},
+                {"tag": "hr"},
+                {"tag": "note", "elements": [{"tag": "plain_text", "content": "NetOps / Nexora Platform" if is_en else "NetOps / Nexora 平台"}]},
+            ],
+        },
+    }
+    ok, resp = _post_json(webhook_url, payload)
+    if ok:
+        try:
+            body = json.loads(resp)
+            resp_code = body.get('code') if 'code' in body else body.get('StatusCode', 0)
+            if resp_code != 0:
+                return False, f"Feishu error code={resp_code} msg={body.get('msg', resp[:200])}"
+        except Exception:
+            pass
+    return ok, resp
+
+
+def send_dingtalk_verification_code(webhook_url: str, username: str, code: str, expires_min: int = 5, lang: str = 'zh', secret: str = '') -> tuple[bool, str]:
+    """通过钉钉 Webhook 发送密码重置验证码。"""
+    is_en = lang == 'en'
+    if is_en:
+        md_text = f"## 🔐 Password Reset Code\n\n**User:** {username}\n\n**Code:** `{code}`\n\n⏱ Expires in {expires_min} minutes."
+        title = "Password Reset Code"
+    else:
+        md_text = f"## 🔐 密码重置验证码\n\n**用户：** {username}\n\n**验证码：** `{code}`\n\n⏱ {expires_min} 分钟内有效，请勿泄露。"
+        title = "密码重置验证码"
+    url = webhook_url
+    if secret and secret.strip():
+        ts = str(round(time.time() * 1000))
+        string_to_sign = f"{ts}\n{secret}"
+        hmac_code = hmac.new(secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha256).digest()
+        sign = base64.b64encode(hmac_code).decode()
+        url = f"{webhook_url}&timestamp={ts}&sign={quote(sign)}"
+    payload = {"msgtype": "markdown", "markdown": {"title": title, "text": md_text}}
+    return _post_json(url, payload)
+
+
+def send_wechat_verification_code(webhook_url: str, username: str, code: str, expires_min: int = 5, lang: str = 'zh') -> tuple[bool, str]:
+    """通过企业微信 Webhook 发送密码重置验证码。"""
+    is_en = lang == 'en'
+    if is_en:
+        content = f"## 🔐 Password Reset Code\n\n> **User:** {username}\n> **Code:** `{code}`\n> ⏱ Expires in {expires_min} minutes."
+    else:
+        content = f"## 🔐 密码重置验证码\n\n> **用户：** {username}\n> **验证码：** `{code}`\n> ⏱ {expires_min} 分钟内有效，请勿泄露。"
+    payload = {"msgtype": "markdown", "markdown": {"content": content}}
+    return _post_json(webhook_url, payload)
+
+
 # ── 钉钉 Markdown 卡片 ─────────────────────────
 
 

@@ -36,6 +36,7 @@ SNMP 采集服务 — 多厂商 CPU / 内存 / 温度 / 风扇 / 电源 / 接口
 import asyncio
 import logging
 import sys
+import time as _time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,45 @@ def _install_snmp_error_filter() -> None:
 
 
 _install_snmp_error_filter()
+
+# ═══════════════════════════════════════════════════════════════
+# SNMP 并发控制 — 限制全局同时进行的 SNMP 操作数
+# ═══════════════════════════════════════════════════════════════
+_SNMP_CONCURRENCY = 15
+_snmp_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_snmp_semaphore() -> asyncio.Semaphore:
+    """Lazy-init semaphore bound to the current event loop."""
+    global _snmp_semaphore
+    if _snmp_semaphore is None:
+        _snmp_semaphore = asyncio.Semaphore(_SNMP_CONCURRENCY)
+    return _snmp_semaphore
+
+
+# ═══════════════════════════════════════════════════════════════
+# SNMP 采集结果短期缓存 — 避免同一设备短时间内重复采集
+# ═══════════════════════════════════════════════════════════════
+_SNMP_RESULT_CACHE_TTL = 20  # seconds
+_snmp_result_cache: dict[str, tuple[float, object]] = {}
+
+
+def _get_result_cache(key: str):
+    entry = _snmp_result_cache.get(key)
+    if entry and _time.monotonic() - entry[0] < _SNMP_RESULT_CACHE_TTL:
+        return entry[1]
+    return None
+
+
+def _set_result_cache(key: str, value):
+    _snmp_result_cache[key] = (_time.monotonic(), value)
+    # Prune stale entries when cache grows large
+    if len(_snmp_result_cache) > 500:
+        cutoff = _time.monotonic() - _SNMP_RESULT_CACHE_TTL
+        stale = [k for k, v in _snmp_result_cache.items() if v[0] < cutoff]
+        for k in stale:
+            del _snmp_result_cache[k]
+
 
 # ═══════════════════════════════════════════════════════════════
 # OID Definitions per vendor
@@ -236,7 +276,9 @@ def _val_to_str(val) -> str:
 
 async def _snmp_get(ip: str, community: str, oid: str, port: int = 161, timeout: float = 3) -> Optional[str]:
     """GET a single OID value via puresnmp (SNMPv2c)."""
-    try:
+    sem = _get_snmp_semaphore()
+    async with sem:
+      try:
         from puresnmp import Client, V2C, PyWrapper
         client = PyWrapper(Client(ip, V2C(community), port=port))
         result = await asyncio.wait_for(client.get(oid), timeout=timeout)
@@ -245,15 +287,16 @@ async def _snmp_get(ip: str, community: str, oid: str, port: int = 161, timeout:
         v = _val_to_str(result)
         if v and 'noSuchObject' not in v and 'noSuchInstance' not in v:
             return v
-    except Exception as e:
+      except Exception as e:
         logger.debug(f"SNMP GET {ip} {oid} failed: {e}")
-    return None
+      return None
 
 
 async def _snmp_walk(ip: str, community: str, oid: str, port: int = 161, timeout: float = 5, max_rows: int = 200) -> list[tuple[str, str]]:
     """Walk an OID subtree via puresnmp, return list of (oid_suffix, value)."""
     results: list[tuple[str, str]] = []
     base_oid = oid.rstrip('.')
+    sem = _get_snmp_semaphore()
 
     async def _collect():
         from puresnmp import Client, V2C, PyWrapper
@@ -268,11 +311,12 @@ async def _snmp_walk(ip: str, community: str, oid: str, port: int = 161, timeout
             if len(results) >= max_rows:
                 return
 
-    try:
+    async with sem:
+      try:
         await asyncio.wait_for(_collect(), timeout=timeout)
-    except asyncio.TimeoutError:
+      except asyncio.TimeoutError:
         logger.debug(f"SNMP WALK {ip} {oid} timeout after {timeout}s ({len(results)} rows collected)")
-    except Exception as e:
+      except Exception as e:
         logger.debug(f"SNMP WALK {ip} {oid} failed: {e}")
     return results
 
@@ -323,6 +367,10 @@ async def collect_device_metrics(ip: str, platform: str, community: str = 'publi
     Returns dict with keys: cpu_usage, memory_usage, temp, fan_status, psu_status
     Falls back to None for any value that fails.
     """
+    cache_key = f"metrics:{ip}:{port}"
+    cached = _get_result_cache(cache_key)
+    if cached is not None:
+        return cached
     vendor = _resolve_platform(platform)
     oids = VENDOR_OIDS.get(vendor, VENDOR_OIDS['cisco_ios'])
     result = {'cpu_usage': None, 'memory_usage': None, 'temp': None, 'fan_status': None, 'psu_status': None}
@@ -570,6 +618,7 @@ async def collect_device_metrics(ip: str, platform: str, community: str = 'publi
         except Exception:
             pass
 
+    _set_result_cache(cache_key, result)
     return result
 
 
@@ -577,78 +626,106 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
     """
     Collect interface table via standard IF-MIB (works for all vendors).
     Returns: [{ name, status, speed_mbps, in_octets, out_octets, description }, ...]
+
+    Performance: after obtaining interface index (ifName), all remaining OID
+    walks are issued in parallel via asyncio.gather to reduce per-device
+    collection latency.
     """
+    cache_key = f"intf:{ip}:{port}"
+    cached = _get_result_cache(cache_key)
+    if cached is not None:
+        return cached
+
     interfaces = {}
     try:
-        # ifName (preferred) or ifDescr
+        # Step 1: ifName (preferred) or ifDescr — must be first to build index
         name_rows = await _snmp_walk(ip, community, IF_NAME, port)
         if not name_rows:
             name_rows = await _snmp_walk(ip, community, IF_DESCR, port)
         for idx, val in name_rows:
             interfaces[idx] = {'name': val, 'index': idx}
 
-        # ifOperStatus: 1=up, 2=down, 3=testing
-        status_rows = await _snmp_walk(ip, community, IF_OPER_STATUS, port)
+        # Step 2: Parallel fetch of all independent OIDs
+        (status_rows, hspeed_rows, speed_rows,
+         hc_in_rows, hc_out_rows, alias_rows,
+         in_err_rows, out_err_rows, in_disc_rows, out_disc_rows,
+         in_ucast_rows, out_ucast_rows,
+         sys_uptime_raw, lc_rows) = await asyncio.gather(
+            _snmp_walk(ip, community, IF_OPER_STATUS, port),
+            _snmp_walk(ip, community, IF_HIGH_SPEED, port),
+            _snmp_walk(ip, community, IF_SPEED, port),
+            _snmp_walk(ip, community, IF_HC_IN, port),
+            _snmp_walk(ip, community, IF_HC_OUT, port),
+            _snmp_walk(ip, community, IF_ALIAS, port),
+            _snmp_walk(ip, community, IF_IN_ERRORS, port),
+            _snmp_walk(ip, community, IF_OUT_ERRORS, port),
+            _snmp_walk(ip, community, IF_IN_DISCARDS, port),
+            _snmp_walk(ip, community, IF_OUT_DISCARDS, port),
+            _snmp_walk(ip, community, IF_IN_UCAST, port),
+            _snmp_walk(ip, community, IF_OUT_UCAST, port),
+            _snmp_get(ip, community, SYS_UPTIME, port),
+            _snmp_walk(ip, community, IF_LAST_CHANGE, port),
+        )
+
+        # HC counter fallback: if 64-bit counters empty, try 32-bit
+        in_rows = hc_in_rows
+        out_rows = hc_out_rows
+        if not in_rows or not out_rows:
+            fb_in, fb_out = await asyncio.gather(
+                _snmp_walk(ip, community, IF_IN_OCTETS, port) if not in_rows else asyncio.sleep(0, result=in_rows),
+                _snmp_walk(ip, community, IF_OUT_OCTETS, port) if not out_rows else asyncio.sleep(0, result=out_rows),
+            )
+            if not in_rows:
+                in_rows = fb_in
+            if not out_rows:
+                out_rows = fb_out
+
+        # ── Apply collected data to interfaces dict ──
+
+        # ifOperStatus
         for idx, val in status_rows:
             if idx in interfaces:
                 s = int(val) if val.isdigit() else 2
                 interfaces[idx]['status'] = 'up' if s == 1 else 'down' if s == 2 else 'testing'
 
-        # ifHighSpeed (Mbps) preferred for >=10G; fallback to ifSpeed (bps)
-        hspeed_rows = await _snmp_walk(ip, community, IF_HIGH_SPEED, port)
-        speed_rows = await _snmp_walk(ip, community, IF_SPEED, port)
+        # Speed
         speed_map = {idx: int(val) // 1_000_000 for idx, val in speed_rows if val.isdigit()}
         for idx, val in hspeed_rows:
             if idx in interfaces and val.isdigit():
                 hs = int(val)
-                # ifHighSpeed=0 means not applicable; use ifSpeed fallback
                 interfaces[idx]['speed_mbps'] = hs if hs > 0 else speed_map.get(idx, 0)
-        # Fill any interfaces that only have ifSpeed (no ifHighSpeed entry)
         for idx, spd in speed_map.items():
             if idx in interfaces and 'speed_mbps' not in interfaces[idx]:
                 interfaces[idx]['speed_mbps'] = spd
 
-        # ifHCInOctets / ifHCOutOctets (64-bit counters preferred)
-        in_rows = await _snmp_walk(ip, community, IF_HC_IN, port)
-        if not in_rows:
-            in_rows = await _snmp_walk(ip, community, IF_IN_OCTETS, port)
+        # Octets
         for idx, val in in_rows:
             if idx in interfaces and val.isdigit():
                 interfaces[idx]['in_octets'] = int(val)
-
-        out_rows = await _snmp_walk(ip, community, IF_HC_OUT, port)
-        if not out_rows:
-            out_rows = await _snmp_walk(ip, community, IF_OUT_OCTETS, port)
         for idx, val in out_rows:
             if idx in interfaces and val.isdigit():
                 interfaces[idx]['out_octets'] = int(val)
 
-        # ifAlias (interface description)
-        alias_rows = await _snmp_walk(ip, community, IF_ALIAS, port)
+        # Alias
         for idx, val in alias_rows:
             if idx in interfaces:
                 interfaces[idx]['description'] = val
 
-        # Error / discard / unicast packet counters
-        for oid_name, oid_val in [
-            ('in_errors', IF_IN_ERRORS), ('out_errors', IF_OUT_ERRORS),
-            ('in_discards', IF_IN_DISCARDS), ('out_discards', IF_OUT_DISCARDS),
-            ('in_ucast_pkts', IF_IN_UCAST), ('out_ucast_pkts', IF_OUT_UCAST),
+        # Error / discard / unicast counters
+        for oid_name, rows in [
+            ('in_errors', in_err_rows), ('out_errors', out_err_rows),
+            ('in_discards', in_disc_rows), ('out_discards', out_disc_rows),
+            ('in_ucast_pkts', in_ucast_rows), ('out_ucast_pkts', out_ucast_rows),
         ]:
-            rows = await _snmp_walk(ip, community, oid_val, port)
             for idx, val in rows:
                 if idx in interfaces and val.isdigit():
                     interfaces[idx][oid_name] = int(val)
 
-        # ifLastChange (TimeTicks, hundredths of sec since sysUpTime epoch)
-        # Read sysUpTime once to compute relative seconds ago
-        sys_uptime_raw = await _snmp_get(ip, community, SYS_UPTIME, port)
+        # ifLastChange
         sys_uptime_hs = int(sys_uptime_raw) if sys_uptime_raw and sys_uptime_raw.isdigit() else 0
-        lc_rows = await _snmp_walk(ip, community, IF_LAST_CHANGE, port)
         for idx, val in lc_rows:
             if idx in interfaces and val.isdigit():
                 lc_hs = int(val)
-                # seconds since last change = (sysUpTime - ifLastChange) / 100
                 if sys_uptime_hs > 0 and lc_hs <= sys_uptime_hs:
                     secs_ago = (sys_uptime_hs - lc_hs) // 100
                     interfaces[idx]['last_change_secs'] = secs_ago
@@ -678,4 +755,5 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
             'last_change_secs': data.get('last_change_secs'),
         })
 
+    _set_result_cache(cache_key, result)
     return result

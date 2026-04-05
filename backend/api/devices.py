@@ -262,10 +262,10 @@ def read_devices(
             )
 
         # Backward-compatible mode: no pagination params -> return array.
-        # Safety cap: never return more than 500 rows without explicit pagination.
+        # Safety cap: never return more than 200 rows without explicit pagination.
         if page is None or page_size is None:
             devices = conn.execute(
-                f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT 500',
+                f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT 200',
                 tuple(params)
             ).fetchall()
             items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d) for d in devices]
@@ -721,67 +721,63 @@ async def snmp_test(device_id: str):
         results['response_ms'] = elapsed
         results['error'] = str(e)
 
-    # ── 测试成功后立即全量同步数据 ──────────────────────────────────────
+    # ── 测试成功后在后台异步同步数据（不阻塞响应） ──────────────────────
     if results['success']:
-        try:
-            platform = device['platform'] or 'cisco_ios'
-            dev_info, intf_data, metrics = await _aio.gather(
-                collect_device_info(ip, community, port),
-                collect_interface_data(ip, community, port),
-                collect_device_metrics(ip, platform, community, port),
-            )
+        async def _background_sync():
+            try:
+                platform = device['platform'] or 'cisco_ios'
+                dev_info, intf_data, metrics = await _aio.gather(
+                    collect_device_info(ip, community, port),
+                    collect_interface_data(ip, community, port),
+                    collect_device_metrics(ip, platform, community, port),
+                )
 
-            updates: dict = {}
+                updates: dict = {}
 
-            # 设备基础信息
-            if dev_info.get('sys_name'):
-                updates['sys_name'] = dev_info['sys_name']
-                results['sys_name'] = dev_info['sys_name']
-            if dev_info.get('sys_descr'):
-                descr = dev_info['sys_descr']
-                results['sys_descr'] = descr
-                if not device['model']:
-                    first_line = descr.split('\r\n')[0].split('\n')[0].strip()
-                    if first_line:
-                        updates['model'] = first_line[:80]
-                if not device['version']:
-                    ver_match = _re.search(r'[Vv]ersion\s+([\w\.\(\)\-/]+)', descr)
-                    if ver_match:
-                        updates['version'] = ver_match.group(1)
-            if dev_info.get('uptime'):
-                updates['uptime'] = dev_info['uptime']
-            if dev_info.get('sys_location'):
-                updates['sys_location'] = dev_info['sys_location']
+                if dev_info.get('sys_name'):
+                    updates['sys_name'] = dev_info['sys_name']
+                if dev_info.get('sys_descr'):
+                    descr = dev_info['sys_descr']
+                    if not device['model']:
+                        first_line = descr.split('\r\n')[0].split('\n')[0].strip()
+                        if first_line:
+                            updates['model'] = first_line[:80]
+                    if not device['version']:
+                        ver_match = _re.search(r'[Vv]ersion\s+([\w\.\(\)\-/]+)', descr)
+                        if ver_match:
+                            updates['version'] = ver_match.group(1)
+                if dev_info.get('uptime'):
+                    updates['uptime'] = dev_info['uptime']
+                if dev_info.get('sys_location'):
+                    updates['sys_location'] = dev_info['sys_location']
 
-            # CPU / 内存
-            if metrics.get('cpu_usage') is not None:
-                updates['cpu_usage'] = metrics['cpu_usage']
-            if metrics.get('memory_usage') is not None:
-                updates['memory_usage'] = metrics['memory_usage']
-            if metrics.get('temp') is not None:
-                updates['temp'] = metrics['temp']
-            if metrics.get('fan_status') is not None:
-                updates['fan_status'] = metrics['fan_status']
-            if metrics.get('psu_status') is not None:
-                updates['psu_status'] = metrics['psu_status']
+                if metrics.get('cpu_usage') is not None:
+                    updates['cpu_usage'] = metrics['cpu_usage']
+                if metrics.get('memory_usage') is not None:
+                    updates['memory_usage'] = metrics['memory_usage']
+                if metrics.get('temp') is not None:
+                    updates['temp'] = metrics['temp']
+                if metrics.get('fan_status') is not None:
+                    updates['fan_status'] = metrics['fan_status']
+                if metrics.get('psu_status') is not None:
+                    updates['psu_status'] = metrics['psu_status']
 
-            # 接口数据
-            if intf_data:
-                updates['interface_data'] = _json.dumps(intf_data)
+                if intf_data:
+                    updates['interface_data'] = _json.dumps(intf_data)
 
-            if updates:
-                conn2 = get_db_connection()
-                try:
-                    set_clause = ', '.join(f'{k} = ?' for k in updates)
-                    conn2.execute(f'UPDATE devices SET {set_clause} WHERE id = ?',
-                                  (*updates.values(), device_id))
-                    conn2.commit()
-                finally:
-                    conn2.close()
+                if updates:
+                    conn2 = get_db_connection()
+                    try:
+                        set_clause = ', '.join(f'{k} = ?' for k in updates)
+                        conn2.execute(f'UPDATE devices SET {set_clause} WHERE id = ?',
+                                      (*updates.values(), device_id))
+                        conn2.commit()
+                    finally:
+                        conn2.close()
+            except Exception:
+                pass  # 后台同步失败不影响测试结果
 
-            results['synced'] = True
-        except Exception as sync_err:
-            results['sync_error'] = str(sync_err)
+        _aio.create_task(_background_sync())
 
     return results
 

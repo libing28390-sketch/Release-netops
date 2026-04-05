@@ -57,6 +57,7 @@ const ConfigScheduleTab = lazy(() => import('./pages/ConfigScheduleTab'));
 const ConfigSearchTab = lazy(() => import('./pages/ConfigSearchTab'));
 const CapacityPlanningTab = lazy(() => import('./pages/CapacityPlanningTab'));
 const IPVlanTab = lazy(() => import('./pages/IPVlanTab'));
+const IPLocatorPage = lazy(() => import('./pages/IPLocatorPage'));
 const AssetManagementTab = lazy(() => import('./pages/AssetManagementTab'));
 const ChangeOrderTab = lazy(() => import('./pages/ChangeOrderTab'));
 const InterfaceMonitoringTab = lazy(() => import('./pages/InterfaceMonitoringTab'));
@@ -493,6 +494,7 @@ const App: React.FC = () => {
     if (path === '/inventory/servers') return language === 'zh' ? '服务器' : 'Servers';
     if (path === '/inventory/interfaces') return t('interfaceMonitoring');
     if (path === '/ipam') return language === 'zh' ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt';
+    if (path === '/ip-locator') return language === 'zh' ? 'IP 定位' : 'IP Locator';
     if (path === '/assets') return language === 'zh' ? '资产管理' : 'Assets';
     if (path === '/automation/execute') return t('directExecution');
     if (path === '/automation/scenarios') return t('scenarioLibrary');
@@ -534,6 +536,7 @@ const App: React.FC = () => {
       { path: '/inventory/servers', label: zh ? '服务器' : 'Servers', group: zh ? '设备清单' : 'Inventory' },
       { path: '/inventory/interfaces', label: t('interfaceMonitoring'), group: zh ? '设备清单' : 'Inventory' },
       { path: '/ipam', label: zh ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt', group: zh ? '设备清单' : 'Inventory' },
+      { path: '/ip-locator', label: zh ? 'IP 定位' : 'IP Locator', group: zh ? '设备清单' : 'Inventory' },
       { path: '/assets', label: zh ? '资产管理' : 'Assets', group: zh ? '设备清单' : 'Inventory' },
       { path: '/alerts', label: zh ? '告警信息' : 'Alert Desk', group: zh ? '告警管理' : 'Alerts' },
       { path: '/alert-history', label: zh ? '历史告警' : 'Alert History', group: zh ? '告警管理' : 'Alerts' },
@@ -616,6 +619,7 @@ const App: React.FC = () => {
     if (activeTab === 'reports') return language === 'zh' ? '报表中心' : 'Reports';
     if (activeTab === 'capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
     if (activeTab === 'ipam') return language === 'zh' ? 'IP/VLAN管理' : 'IP/VLAN Management';
+    if (activeTab === 'ip-locator') return language === 'zh' ? 'IP 定位' : 'IP Locator';
     if (activeTab === 'assets') return language === 'zh' ? '资产管理' : 'Asset Management';
     if (activeTab === 'change-orders') return language === 'zh' ? '变更工单' : 'Change Orders';
     if (activeTab === 'compliance') return t('compliance');
@@ -691,7 +695,7 @@ const App: React.FC = () => {
     const alertActive = ['alerts', 'alert-rules', 'maintenance'].includes(activeTab);
     const configActive = activeTab === 'config' || activeTab === 'compliance' || location.pathname.startsWith('/config');
     const automationActive = activeTab === 'automation' || location.pathname.startsWith('/automation');
-    const inventoryActive = activeTab === 'inventory' || activeTab === 'ipam';
+    const inventoryActive = activeTab === 'inventory' || activeTab === 'ipam' || activeTab === 'ip-locator';
     const managementActive = ['history', 'configuration', 'users'].includes(activeTab);
     setMonitoringGroupOpen(monitoringActive);
     setAlertGroupOpen(alertActive);
@@ -2347,12 +2351,12 @@ const App: React.FC = () => {
     setIsLoading(true);
     Promise.all([fetchSharedData(), fetchDevicesData()]).finally(() => setIsLoading(false));
 
-    const sharedInterval = setInterval(fetchSharedData, 5000);
+    const sharedInterval = setInterval(fetchSharedData, 15000);
     // Reduce heavy full device refresh pressure while inventory table uses server-side paging.
     const devicePollMs = activeTab === 'inventory' && inventorySubPage === 'devices'
       ? 30000
       : activeTab === 'inventory' && inventorySubPage === 'interfaces'
-        ? 5000
+        ? 10000
         : 15000;
     const devicesInterval = setInterval(fetchDevicesData, devicePollMs);
 
@@ -2710,7 +2714,7 @@ const App: React.FC = () => {
 
     runResources();
     if (!monitorPageVisible) return;
-    const timer = window.setInterval(runResources, 15000);
+    const timer = window.setInterval(runResources, 30000);
     return () => {
       window.clearInterval(timer);
       if (currentController) currentController.abort();
@@ -4071,18 +4075,12 @@ const App: React.FC = () => {
       const resp = await fetch(`/api/devices/${deviceId}/snmp-test`, { method: 'POST' });
       const data = await resp.json();
       setSnmpTestResult(data);
-      // 测试成功且后端已同步数据 → 立刻用返回值更新本地 state，无需等待轮询
-      if (data.success && data.synced) {
-        setDevices(prev => prev.map(d => {
-          if (d.id !== deviceId) return d;
-          return {
-            ...d,
-            ...(data.sys_name   ? { hostname: d.hostname || data.sys_name } : {}),
-            ...(data.sys_descr  ? { model: d.model || data.sys_descr.split('\n')[0].slice(0, 80) } : {}),
-          };
-        }));
-        // 触发一次完整刷新，把接口/CPU/内存等新数据也拉回来
-        await fetchDevicesData();
+      // 测试成功 → 后端已启动后台同步，延迟几秒刷新设备数据
+      if (data.success) {
+        if (data.sys_name) {
+          setDevices(prev => prev.map(d => d.id !== deviceId ? d : { ...d, hostname: d.hostname || data.sys_name }));
+        }
+        setTimeout(() => fetchDevicesData(), 5000);
       }
     } catch (err: any) {
       setSnmpTestResult({ success: false, error: err.message || 'Network error' });
@@ -5896,6 +5894,12 @@ const App: React.FC = () => {
           {activeTab === 'ipam' && (
             <Suspense fallback={lazyPanelFallback}>
               <IPVlanTab language={language} t={t} />
+            </Suspense>
+          )}
+
+          {activeTab === 'ip-locator' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <IPLocatorPage language={language} t={t} />
             </Suspense>
           )}
 

@@ -123,7 +123,7 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
   const displayedRiskyDevices = hasActiveFilters ? filteredRiskyDevices : riskyDevices;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className={sectionHeaderRowClass}>
         <div>
           <h2 className="text-2xl font-medium tracking-tight">{isZh ? '健康检测中心' : 'Health Detection Center'}</h2>
@@ -141,66 +141,70 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
         {[
-          { label: isZh ? '设备总数' : 'Total Devices', value: summary.total_devices, icon: Server, tone: 'text-slate-700 bg-slate-100' },
-          { label: isZh ? '平均健康分' : 'Average Score', value: summary.average_score, icon: Activity, tone: 'text-cyan-700 bg-cyan-100' },
-          { label: isZh ? '健康' : 'Healthy', value: summary.healthy, icon: ShieldCheck, tone: 'text-emerald-700 bg-emerald-100' },
-          { label: isZh ? '告警' : 'Warning', value: summary.warning, icon: AlertTriangle, tone: 'text-amber-700 bg-amber-100' },
-          { label: isZh ? '严重' : 'Critical', value: summary.critical, icon: AlertTriangle, tone: 'text-red-700 bg-red-100' },
+          { label: isZh ? '设备总数' : 'Total Devices', value: summary.total_devices, icon: Server, tone: 'text-slate-700 bg-slate-100', filter: 'all' as const },
+          { label: isZh ? '平均健康分' : 'Average Score', value: summary.average_score, icon: Activity, tone: 'text-cyan-700 bg-cyan-100', filter: null },
+          { label: isZh ? '健康' : 'Healthy', value: summary.healthy, icon: ShieldCheck, tone: 'text-emerald-700 bg-emerald-100', filter: 'healthy' as const },
+          { label: isZh ? '告警' : 'Warning', value: summary.warning, icon: AlertTriangle, tone: 'text-amber-700 bg-amber-100', filter: 'warning' as const },
+          { label: isZh ? '严重' : 'Critical', value: summary.critical, icon: AlertTriangle, tone: 'text-red-700 bg-red-100', filter: 'critical' as const },
         ].map((card) => (
-          <div key={card.label} className="bg-white rounded-2xl border border-black/5 shadow-sm p-4">
+          <button
+            key={card.label}
+            type="button"
+            onClick={() => {
+              if (card.filter === null) return;
+              setStatusFilter(card.filter === statusFilter ? 'all' : card.filter);
+            }}
+            className={`bg-white rounded-2xl border shadow-sm p-4 text-left transition-all ${card.filter !== null ? 'cursor-pointer hover:border-black/15 hover:shadow-md active:scale-[0.98]' : ''} ${statusFilter !== 'all' && card.filter === statusFilter ? 'border-black/20 ring-2 ring-black/5' : 'border-black/5'}`}
+          >
             <div className="flex items-center justify-between gap-3">
               <p className="text-[10px] font-bold uppercase tracking-widest text-black/35">{card.label}</p>
               <span className={`inline-flex rounded-full p-2 ${card.tone}`}><card.icon size={14} /></span>
             </div>
             <p className="mt-2 text-3xl font-semibold text-[#00172D]">{card.value}</p>
-          </div>
+          </button>
         ))}
       </div>
 
-      <div className="rounded-2xl border border-black/5 bg-white shadow-sm p-5 space-y-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-black/[0.04] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-black/45">
-              <Filter size={12} />
-              {isZh ? '筛选工作台' : 'Filter Workbench'}
-            </div>
-            <h3 className="mt-3 text-lg font-semibold text-[#0b2340]">{isZh ? '按站点、角色和风险聚焦设备' : 'Focus devices by site, role, and risk'}</h3>
-            <p className="text-xs text-black/45">{isZh ? '筛选同时作用于高风险列表和健康清单，适合值班时快速收敛排障范围。' : 'Filters apply to both the priority list and the fleet inventory to narrow triage scope during operations.'}</p>
+      <div className="rounded-2xl border border-black/5 bg-white shadow-sm px-4 py-3 space-y-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Filter size={14} className="text-black/30" />
+            <span className="text-sm font-semibold text-[#0b2340]">{isZh ? '按站点、角色和风险聚焦设备' : 'Filter by site, role & risk'}</span>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-black/45">
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">{isZh ? '命中设备' : 'Matched'} {filteredSummary.total}</span>
-            <span className="rounded-full bg-red-100 px-2.5 py-1 font-semibold text-red-700">{isZh ? '严重' : 'Critical'} {filteredSummary.critical}</span>
-            <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-700">{isZh ? '告警' : 'Warning'} {filteredSummary.warning}</span>
-            <span className="rounded-full bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-700">{isZh ? '健康' : 'Healthy'} {filteredSummary.healthy}</span>
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">{isZh ? '命中' : 'Hit'} {filteredSummary.total}</span>
+            <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">{isZh ? '严重' : 'Crit'} {filteredSummary.critical}</span>
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">{isZh ? '告警' : 'Warn'} {filteredSummary.warning}</span>
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">{isZh ? '健康' : 'OK'} {filteredSummary.healthy}</span>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[1.2fr_repeat(4,minmax(0,0.9fr))] gap-3">
-          <label className="space-y-1.5">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[1.2fr_repeat(4,minmax(0,0.9fr))] gap-2">
+          <label className="space-y-1">
             <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '搜索' : 'Search'}</span>
             <input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
               placeholder={isZh ? '设备名 / IP / 平台 / 摘要' : 'Hostname / IP / platform / summary'}
-              className="w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5"
+              className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5"
             />
           </label>
-          <label className="space-y-1.5">
+          <label className="space-y-1">
             <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '站点' : 'Site'}</span>
-            <select value={siteFilter} onChange={(event) => setSiteFilter(event.target.value)} className="w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
+            <select value={siteFilter} onChange={(event) => setSiteFilter(event.target.value)} className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
               <option value="all">{isZh ? '全部站点' : 'All sites'}</option>
               {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
             </select>
           </label>
-          <label className="space-y-1.5">
+          <label className="space-y-1">
             <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '角色' : 'Role'}</span>
-            <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} className="w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
+            <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
               <option value="all">{isZh ? '全部角色' : 'All roles'}</option>
               {roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
             </select>
           </label>
-          <label className="space-y-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '健康状态' : 'Health status'}</span>
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
+          <label className="space-y-1">
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '健康状态' : 'Status'}</span>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
               <option value="all">{isZh ? '全部状态' : 'All states'}</option>
               <option value="critical">{isZh ? '严重' : 'Critical'}</option>
               <option value="warning">{isZh ? '告警' : 'Warning'}</option>
@@ -208,9 +212,9 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
               <option value="unknown">{isZh ? '未知' : 'Unknown'}</option>
             </select>
           </label>
-          <label className="space-y-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '风险维度' : 'Risk focus'}</span>
-            <select value={alertFilter} onChange={(event) => setAlertFilter(event.target.value)} className="w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
+          <label className="space-y-1">
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '风险维度' : 'Risk'}</span>
+            <select value={alertFilter} onChange={(event) => setAlertFilter(event.target.value)} className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
               <option value="all">{isZh ? '全部风险' : 'All risk types'}</option>
               <option value="open">{isZh ? '有开放告警' : 'Open alerts'}</option>
               <option value="critical">{isZh ? '有严重告警' : 'Critical alerts'}</option>
@@ -219,8 +223,8 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
           </label>
         </div>
         {hasActiveFilters && (
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-black/10 bg-black/[0.015] px-4 py-3 text-xs text-black/50">
-            <span>{isZh ? '当前列表已按筛选条件收敛。' : 'The current lists are narrowed by the active filters.'}</span>
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-black/10 bg-black/[0.015] px-3 py-2 text-xs text-black/50">
+            <span>{isZh ? '已按筛选条件收敛' : 'Filtered'}</span>
             <button
               type="button"
               onClick={() => {
@@ -230,20 +234,19 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
                 setStatusFilter('all');
                 setAlertFilter('all');
               }}
-              className="rounded-lg border border-black/10 px-3 py-1.5 text-[11px] font-semibold text-black/60 transition-all hover:bg-black/[0.03]"
+              className="rounded-md border border-black/10 px-2.5 py-1 text-[11px] font-semibold text-black/60 transition-all hover:bg-black/[0.03]"
             >
-              {isZh ? '清空筛选' : 'Clear filters'}
+              {isZh ? '清空' : 'Clear'}
             </button>
           </div>
         )}
       </div>
 
-      <div className="rounded-2xl border border-black/5 bg-white shadow-sm p-5 space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#0089ac]">{isZh ? '健康趋势' : 'Health Trend'}</p>
-            <h3 className="mt-1 text-lg font-semibold text-[#0b2340]">{isZh ? '全网健康分演进' : 'Fleet Health Evolution'}</h3>
-            <p className="text-xs text-black/45">{isZh ? '按采样点回看全网平均健康分和各健康等级设备数量。' : 'Review average fleet health score and health-state counts across sampling points.'}</p>
+      <div className="rounded-2xl border border-black/5 bg-white shadow-sm p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#0089ac]">{isZh ? '健康趋势' : 'Trend'}</p>
+            <h3 className="text-base font-semibold text-[#0b2340]">{isZh ? '全网健康分演进' : 'Fleet Health Evolution'}</h3>
           </div>
           <div className="flex items-center gap-2">
             {[1, 24, 168].map((hours) => (
@@ -251,7 +254,7 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
                 key={hours}
                 type="button"
                 onClick={() => setRangeHours(hours)}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${rangeHours === hours ? 'bg-black text-white' : 'border border-black/10 text-black/60 hover:bg-black/[0.03]'}`}
+                className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${rangeHours === hours ? 'bg-black text-white' : 'border border-black/10 text-black/60 hover:bg-black/[0.03]'}`}
               >
                 {hours === 1 ? (isZh ? '1 小时' : '1h') : hours === 24 ? (isZh ? '24 小时' : '24h') : (isZh ? '7 天' : '7d')}
               </button>
@@ -259,89 +262,89 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
             <span className="text-[11px] text-black/40">{historyLoading ? (isZh ? '加载中...' : 'Loading...') : `${history?.sample_count || 0} ${isZh ? '个样本' : 'samples'}`}</span>
           </div>
         </div>
-        <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.85fr] gap-4">
-          <div className="rounded-xl border border-black/8 bg-[linear-gradient(180deg,rgba(2,6,23,0.01),rgba(2,6,23,0.04))] p-4 h-[320px]">
+        <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-3">
+          <div className="rounded-xl border border-black/8 bg-[linear-gradient(180deg,rgba(2,6,23,0.01),rgba(2,6,23,0.04))] p-3 h-[240px]">
             {historySeries.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={historySeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <AreaChart data={historySeries} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="2 4" vertical={false} stroke="#dbe4ee" />
-                  <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#60748a' }} tickFormatter={(value) => new Date(String(value)).toLocaleString(isZh ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} minTickGap={28} />
-                  <YAxis yAxisId="score" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#60748a' }} domain={[0, 100]} width={36} />
-                  <YAxis yAxisId="count" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#60748a' }} width={32} />
+                  <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} tickFormatter={(value) => new Date(String(value)).toLocaleString(isZh ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} minTickGap={28} />
+                  <YAxis yAxisId="score" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} domain={[0, 100]} width={32} />
+                  <YAxis yAxisId="count" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#60748a' }} width={28} />
                   <Tooltip
-                    contentStyle={{ borderRadius: 14, borderColor: '#d9e3ef', boxShadow: '0 18px 38px rgba(15,23,42,0.12)', padding: '14px 16px', background: 'rgba(255,255,255,0.96)' }}
+                    contentStyle={{ borderRadius: 10, borderColor: '#d9e3ef', boxShadow: '0 12px 28px rgba(15,23,42,0.10)', padding: '10px 12px', background: 'rgba(255,255,255,0.96)' }}
                     labelFormatter={(value) => new Date(String(value)).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}
                   />
-                  <Area yAxisId="score" type="monotone" dataKey="average_score" name={isZh ? '平均健康分' : 'Average score'} stroke="#2563eb" fill="#2563eb1f" strokeWidth={2.1} isAnimationActive={false} />
-                  <Area yAxisId="count" type="monotone" dataKey="critical" name={isZh ? '严重设备' : 'Critical devices'} stroke="#dc2626" fill="#dc262618" strokeWidth={1.8} isAnimationActive={false} />
-                  <Area yAxisId="count" type="monotone" dataKey="warning" name={isZh ? '告警设备' : 'Warning devices'} stroke="#d97706" fill="#d9770612" strokeWidth={1.8} isAnimationActive={false} />
+                  <Area yAxisId="score" type="monotone" dataKey="average_score" name={isZh ? '平均健康分' : 'Average score'} stroke="#2563eb" fill="#2563eb1f" strokeWidth={2} isAnimationActive={false} />
+                  <Area yAxisId="count" type="monotone" dataKey="critical" name={isZh ? '严重设备' : 'Critical devices'} stroke="#dc2626" fill="#dc262618" strokeWidth={1.6} isAnimationActive={false} />
+                  <Area yAxisId="count" type="monotone" dataKey="warning" name={isZh ? '告警设备' : 'Warning devices'} stroke="#d97706" fill="#d9770612" strokeWidth={1.6} isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
               <div className="h-full flex items-center justify-center text-sm text-black/35">{isZh ? '当前还没有健康趋势样本。' : 'No health trend samples are available yet.'}</div>
             )}
           </div>
-          <div className="space-y-3">
+          <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
             {(historySeries.length > 0 ? [...historySeries].slice(-6).reverse() : []).map((point) => (
-              <div key={point.ts} className="rounded-xl border border-black/8 bg-white p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{new Date(point.ts).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}</p>
-                    <p className="mt-1 text-lg font-semibold text-[#00172D]">{isZh ? '平均分' : 'Avg'} {point.average_score}</p>
+              <div key={point.ts} className="rounded-lg border border-black/8 bg-white px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[10px] text-black/35 truncate">{new Date(point.ts).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}</p>
+                    <p className="text-base font-semibold text-[#00172D]">{isZh ? '平均分' : 'Avg'} {point.average_score}</p>
                   </div>
-                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{isZh ? `${point.total_devices} 台设备` : `${point.total_devices} devices`}</span>
+                  <span className="shrink-0 text-[10px] font-semibold text-slate-500">{point.total_devices} {isZh ? '台' : 'dev'}</span>
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold uppercase">
-                  <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">{isZh ? '健康' : 'Healthy'} {point.healthy}</span>
-                  <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-700">{isZh ? '告警' : 'Warning'} {point.warning}</span>
-                  <span className="rounded-full bg-red-100 px-2 py-1 text-red-700">{isZh ? '严重' : 'Critical'} {point.critical}</span>
+                <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] font-bold uppercase">
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">{isZh ? '健康' : 'OK'} {point.healthy}</span>
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">{isZh ? '告警' : 'W'} {point.warning}</span>
+                  <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-700">{isZh ? '严重' : 'C'} {point.critical}</span>
                 </div>
               </div>
             ))}
             {historySeries.length === 0 && (
-              <div className="rounded-xl border border-dashed border-black/10 bg-black/[0.01] p-6 text-center text-sm text-black/40">
-                {isZh ? '趋势样本将在健康采样器运行后自动出现。' : 'Trend samples will appear automatically after the health sampler runs.'}
+              <div className="rounded-lg border border-dashed border-black/10 bg-black/[0.01] p-4 text-center text-sm text-black/40">
+                {isZh ? '趋势样本将在采样器运行后出现。' : 'Trend samples will appear after the sampler runs.'}
               </div>
             )}
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.15fr] gap-4">
-        <div className="rounded-2xl border border-black/5 bg-white shadow-sm p-5 space-y-4">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red-600">{isZh ? '优先排障' : 'Priority Triage'}</p>
-            <h3 className="mt-1 text-lg font-semibold text-[#0b2340]">{isZh ? '高风险设备' : 'High-Risk Devices'}</h3>
-            <p className="text-xs text-black/45">{isZh ? '按健康等级、健康分和开放告警数排序，优先处理最需要关注的设备。' : 'Sorted by health level, score, and active alerts so the riskiest devices surface first.'}</p>
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.15fr] gap-3">
+        <div className="rounded-2xl border border-black/5 bg-white shadow-sm p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red-600">{isZh ? '优先排障' : 'Triage'}</p>
+              <h3 className="text-base font-semibold text-[#0b2340]">{isZh ? '高风险设备' : 'High-Risk Devices'}</h3>
+            </div>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {displayedRiskyDevices.length > 0 ? displayedRiskyDevices.map((device) => (
               <button
                 key={device.id}
                 type="button"
                 onClick={() => onShowDetails(device)}
-                className="w-full rounded-xl border border-black/10 p-3 text-left transition-all hover:border-red-200 hover:bg-red-50/20"
+                className="w-full rounded-lg border border-black/10 px-3 py-2 text-left transition-all hover:border-red-200 hover:bg-red-50/20"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-[#0b2340] truncate">{device.hostname || device.ip_address}</p>
-                    <p className="mt-1 text-[11px] text-black/45 truncate">{[device.site, device.role, device.platform].filter(Boolean).join(' • ')}</p>
+                    <p className="text-[11px] text-black/40 truncate">{[device.site, device.role, device.platform].filter(Boolean).join(' · ')}</p>
                   </div>
-                  <div className="shrink-0 text-right">
-                    <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase ${statusToneMap[device.health_status || 'unknown'] || statusToneMap.unknown}`}>
+                  <div className="shrink-0 flex items-center gap-2">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${statusToneMap[device.health_status || 'unknown'] || statusToneMap.unknown}`}>
                       {device.health_status || 'unknown'}
                     </span>
-                    <p className="mt-1 text-sm font-semibold text-[#00172D]">{isZh ? '评分' : 'Score'} {Number(device.health_score || 0)}</p>
+                    <span className="text-sm font-semibold text-[#00172D] tabular-nums">{Number(device.health_score || 0)}</span>
                   </div>
                 </div>
-                <p className="mt-2 text-[11px] text-black/55 line-clamp-2">{device.health_summary || (isZh ? '暂无健康摘要' : 'No health summary')}</p>
-                <div className="mt-2 flex items-center gap-3 text-[11px] text-black/40">
-                  <span>{isZh ? '开放告警' : 'Open alerts'} {Number(device.open_alert_count || 0)}</span>
-                  <span>{isZh ? 'Down 接口' : 'Down links'} {Number(device.interface_down_count || 0)}</span>
+                <div className="mt-1 flex items-center gap-3 text-[11px] text-black/40">
+                  <span>{isZh ? '告警' : 'Alerts'} {Number(device.open_alert_count || 0)}</span>
+                  <span>{isZh ? 'Down' : 'Down'} {Number(device.interface_down_count || 0)}</span>
                 </div>
               </button>
             )) : (
-              <div className="rounded-xl border border-dashed border-black/10 bg-black/[0.01] p-6 text-center text-sm text-black/40">
+              <div className="rounded-lg border border-dashed border-black/10 bg-black/[0.01] p-4 text-center text-sm text-black/40">
                 {hasActiveFilters
                   ? (isZh ? '没有设备匹配当前筛选条件。' : 'No devices match the active filters.')
                   : (isZh ? '当前没有风险设备。' : 'No risky devices right now.')}
@@ -350,11 +353,10 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
           </div>
         </div>
 
-        <div className="rounded-2xl border border-black/5 bg-white shadow-sm p-5 space-y-4">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#0089ac]">{isZh ? '全网视图' : 'Fleet View'}</p>
-            <h3 className="mt-1 text-lg font-semibold text-[#0b2340]">{isZh ? '设备健康清单' : 'Device Health Inventory'}</h3>
-            <p className="text-xs text-black/45">{isZh ? '这里是健康检测的单独入口，适合按健康度进行设备排班和巡检。' : 'A dedicated health entry point for operator triage, scheduling, and health-based review.'}</p>
+        <div className="rounded-2xl border border-black/5 bg-white shadow-sm p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#0089ac]">{isZh ? '全网视图' : 'Fleet'}</p>
+            <h3 className="text-base font-semibold text-[#0b2340]">{isZh ? '设备健康清单' : 'Device Health Inventory'}</h3>
           </div>
           <div className="overflow-hidden rounded-xl border border-black/10">
             <div className="max-h-[620px] overflow-auto">

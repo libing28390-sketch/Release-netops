@@ -639,5 +639,5 @@ async def health_resource_history(
         "range_hours": range_hours,
         "resolution_hint": '1m' if range_hours <= 1 else '5m' if range_hours <= 24 else '30m',
         "sample_count": len(series),
-        "thresholds": HOST_RESOURCE_ALERT_RULES,
+        "thresholds": _load_host_alert_rules(),
     }

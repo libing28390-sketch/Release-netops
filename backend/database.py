@@ -1,10 +1,67 @@
 import sqlite3
 import os
+import queue
+import logging
 from datetime import datetime, timezone
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 DB_PATH = os.path.join(PROJECT_ROOT, 'data', 'netops.db')
+
+logger = logging.getLogger(__name__)
+
+# ── Connection Pool ─────────────────────────────────────────
+_POOL_SIZE = 8
+_pool: queue.Queue[sqlite3.Connection] = queue.Queue(maxsize=_POOL_SIZE)
+
+
+class _PooledConnection:
+    """Transparent wrapper: close() returns the real connection to the pool."""
+    __slots__ = ('_conn',)
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def close(self):
+        conn = self._conn
+        if conn is None:
+            return
+        self._conn = None
+        try:
+            conn.rollback()          # discard uncommitted state
+            _pool.put_nowait(conn)
+        except queue.Full:
+            conn.close()             # pool full, actually close
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # Delegate everything else to the real connection
+    def __getattr__(self, name):
+        conn = self._conn
+        if conn is None:
+            raise RuntimeError("Connection already returned to pool")
+        return getattr(conn, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def __del__(self):
+        self.close()
+
+
+def _make_raw_connection() -> sqlite3.Connection:
+    """Create a new raw sqlite3 connection with standard PRAGMAs."""
+    conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
+    conn.execute('PRAGMA journal_mode=WAL;')
+    conn.execute('PRAGMA synchronous=NORMAL;')
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def _utc_now_iso():
@@ -13,26 +70,30 @@ def _utc_now_iso():
 def get_db_connection():
     if not os.path.exists(os.path.dirname(DB_PATH)):
         os.makedirs(os.path.dirname(DB_PATH))
+    # Try reusing a pooled connection
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
-        conn.execute('PRAGMA journal_mode=WAL;')
-        conn.execute('PRAGMA synchronous=NORMAL;')
-        conn.row_factory = sqlite3.Row
-        return conn
+        conn = _pool.get_nowait()
+        try:
+            conn.execute('SELECT 1')
+            return _PooledConnection(conn)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except queue.Empty:
+        pass
+    # Create new
+    try:
+        return _PooledConnection(_make_raw_connection())
     except sqlite3.DatabaseError as e:
         if "malformed" in str(e).lower():
-            print(f"Database corrupted, deleting {DB_PATH} and recreating...")
-            if os.path.exists(DB_PATH):
-                os.remove(DB_PATH)
-            if os.path.exists(DB_PATH + "-wal"):
-                os.remove(DB_PATH + "-wal")
-            if os.path.exists(DB_PATH + "-shm"):
-                os.remove(DB_PATH + "-shm")
-            conn = sqlite3.connect(DB_PATH, timeout=10.0)
-            conn.execute('PRAGMA journal_mode=WAL;')
-            conn.execute('PRAGMA synchronous=NORMAL;')
-            conn.row_factory = sqlite3.Row
-            return conn
+            logger.warning(f"Database corrupted, deleting {DB_PATH} and recreating...")
+            for suffix in ('', '-wal', '-shm'):
+                path = DB_PATH + suffix
+                if os.path.exists(path):
+                    os.remove(path)
+            return _PooledConnection(_make_raw_connection())
         raise e
 
 def init_db():
@@ -455,6 +516,19 @@ def init_db():
             locked_until REAL DEFAULT 0
         )
         ''')
+
+        # Password reset verification codes (sent via Feishu/DingTalk/WeChat)
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS password_reset_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            code TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            used INTEGER DEFAULT 0
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pwd_reset_username ON password_reset_codes(username)')
 
         # High-frequency raw interface telemetry (short retention)
         cursor.execute('''

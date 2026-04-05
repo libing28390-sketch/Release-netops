@@ -44,6 +44,7 @@ export const navConfig: NavGroup[] = [
       { id: 'devices',  label: '网络设备',     labelEn: 'Network Devices',      path: '/inventory/devices' },
       { id: 'servers',  label: '服务器',       labelEn: 'Servers',              path: '/inventory/servers' },
       { id: 'ipam',     label: 'IP/VLAN管理',  labelEn: 'IP/VLAN Mgmt',        path: '/ipam' },
+      { id: 'ip-locator', label: 'IP 工具箱',  labelEn: 'IP Toolbox',            path: '/ip-locator' },
     ],
   },
   {

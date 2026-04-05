@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, Eye, EyeOff, Lock, RotateCcw, ArrowRight, User, XCircle, Shield, Cpu, Wifi } from 'lucide-react';
+import { Activity, Eye, EyeOff, Lock, RotateCcw, ArrowRight, User, XCircle, Shield, Cpu, Wifi, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import './LoginScreen.css';
+import ForgotPasswordModal from './ForgotPasswordModal';
 
 interface LoginScreenProps {
   isDark: boolean;
@@ -73,77 +75,50 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     return () => { cancelled = true; };
   }, []);
 
+  const [showForgotPwd, setShowForgotPwd] = useState(false);
+
   const stats = [
-    { icon: Cpu, label: 'Devices', value: platformStats.devices },
-    { icon: Shield, label: 'Status', value: platformStats.status },
-    { icon: Wifi, label: 'Online', value: platformStats.online },
+    { icon: Cpu, label: t('loginStatDevices'), value: platformStats.devices },
+    { icon: Shield, label: t('loginStatStatus'), value: platformStats.status },
+    { icon: Wifi, label: t('loginStatOnline'), value: platformStats.online },
   ];
 
   return (
     <div className="min-h-screen flex font-sans relative overflow-hidden select-none bg-[#060e1a]">
-      {/* ── global styles ── */}
-      <style>{`
-        @keyframes auroraShift {
-          0%   { transform: translate(0, 0) scale(1); }
-          33%  { transform: translate(30px, -20px) scale(1.05); }
-          66%  { transform: translate(-20px, 15px) scale(0.97); }
-          100% { transform: translate(0, 0) scale(1); }
-        }
-        @keyframes gridScroll {
-          0%   { background-position: 0 0; }
-          100% { background-position: 0 40px; }
-        }
-        @keyframes scanLine {
-          0%   { top: -4px; opacity: 0; }
-          10%  { opacity: 0.12; }
-          90%  { opacity: 0.12; }
-          100% { top: 100%; opacity: 0; }
-        }
-        @keyframes dashFlow { 0%{stroke-dashoffset:0} 100%{stroke-dashoffset:-24} }
-        @keyframes nodePulse { 0%,100%{r:3;opacity:0.5} 50%{r:5;opacity:1} }
-        @keyframes ringPulse { 0%,100%{r:8;opacity:0.25} 50%{r:14;opacity:0.08} }
-        .aurora-blob { animation: auroraShift 12s ease-in-out infinite alternate; }
-        .aurora-blob-2 { animation: auroraShift 16s ease-in-out infinite alternate-reverse; }
-        .aurora-blob-3 { animation: auroraShift 20s ease-in-out infinite alternate; }
-        .grid-flow { animation: gridScroll 4s linear infinite; }
-        .scan-line { animation: scanLine 6s linear infinite; }
-        .line-flow { stroke-dasharray: 6 14; animation: dashFlow 2.5s linear infinite; }
-        .node-p { animation: nodePulse 3.5s ease-in-out infinite; }
-        .ring-p { animation: ringPulse 4.5s ease-in-out infinite; }
-      `}</style>
+
 
       {/* ── background layers ── */}
       <div className="absolute inset-0 pointer-events-none">
         {/* aurora blobs */}
-        <div className="aurora-blob absolute top-[-25%] right-[-10%] w-[70vw] h-[70vh] rounded-full bg-[radial-gradient(circle,rgba(6,182,212,0.15)_0%,rgba(6,182,212,0.04)_40%,transparent_70%)]" />
-        <div className="aurora-blob-2 absolute bottom-[-20%] left-[-15%] w-[60vw] h-[60vh] rounded-full bg-[radial-gradient(circle,rgba(14,116,144,0.18)_0%,rgba(8,145,178,0.05)_40%,transparent_70%)]" />
-        <div className="aurora-blob-3 absolute top-[30%] left-[40%] w-[40vw] h-[40vh] rounded-full bg-[radial-gradient(circle,rgba(6,182,212,0.08)_0%,transparent_60%)]" />
+        <div className="login-aurora-blob absolute top-[-25%] right-[-10%] w-[70vw] h-[70vh] rounded-full bg-[radial-gradient(circle,rgba(6,182,212,0.15)_0%,rgba(6,182,212,0.04)_40%,transparent_70%)]" />
+        <div className="login-aurora-blob-2 absolute bottom-[-20%] left-[-15%] w-[60vw] h-[60vh] rounded-full bg-[radial-gradient(circle,rgba(14,116,144,0.18)_0%,rgba(8,145,178,0.05)_40%,transparent_70%)]" />
+        <div className="login-aurora-blob-3 absolute top-[30%] left-[40%] w-[40vw] h-[40vh] rounded-full bg-[radial-gradient(circle,rgba(6,182,212,0.08)_0%,transparent_60%)]" />
         {/* dot grid — scrolling */}
-        <div className="absolute inset-0 grid-flow bg-[radial-gradient(rgba(6,182,212,0.45)_1px,transparent_1px)] bg-[length:40px_40px] opacity-[0.06]" />
+        <div className="absolute inset-0 login-grid-flow bg-[radial-gradient(rgba(6,182,212,0.45)_1px,transparent_1px)] bg-[length:40px_40px] opacity-[0.06]" />
         {/* scan line */}
-        <div className="scan-line absolute left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-[#06b6d4]/30 to-transparent" />
+        <div className="login-scan-line absolute left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-[#06b6d4]/30 to-transparent" />
       </div>
 
       {/* ── network topology SVG overlay ── */}
       <svg className="absolute inset-0 w-full h-full opacity-[0.10] pointer-events-none" xmlns="http://www.w3.org/2000/svg">
         {/* lines */}
-        <line x1="8%"  y1="18%" x2="28%" y2="40%" stroke="#06b6d4" strokeWidth="0.7" className="line-flow" />
-        <line x1="28%" y1="40%" x2="52%" y2="25%" stroke="#06b6d4" strokeWidth="0.7" className="line-flow" />
-        <line x1="52%" y1="25%" x2="78%" y2="42%" stroke="#06b6d4" strokeWidth="0.7" className="line-flow" />
-        <line x1="28%" y1="40%" x2="42%" y2="68%" stroke="#0e7490" strokeWidth="0.5" className="line-flow" />
-        <line x1="42%" y1="68%" x2="70%" y2="78%" stroke="#0e7490" strokeWidth="0.5" className="line-flow" />
-        <line x1="52%" y1="25%" x2="42%" y2="68%" stroke="#164e63" strokeWidth="0.4" className="line-flow" />
-        <line x1="78%" y1="42%" x2="92%" y2="60%" stroke="#164e63" strokeWidth="0.4" className="line-flow" />
-        <line x1="8%"  y1="82%" x2="28%" y2="40%" stroke="#164e63" strokeWidth="0.4" className="line-flow" />
-        <line x1="85%" y1="12%" x2="52%" y2="25%" stroke="#06b6d4" strokeWidth="0.5" className="line-flow" />
+        <line x1="8%"  y1="18%" x2="28%" y2="40%" stroke="#06b6d4" strokeWidth="0.7" className="login-line-flow" />
+        <line x1="28%" y1="40%" x2="52%" y2="25%" stroke="#06b6d4" strokeWidth="0.7" className="login-line-flow" />
+        <line x1="52%" y1="25%" x2="78%" y2="42%" stroke="#06b6d4" strokeWidth="0.7" className="login-line-flow" />
+        <line x1="28%" y1="40%" x2="42%" y2="68%" stroke="#0e7490" strokeWidth="0.5" className="login-line-flow" />
+        <line x1="42%" y1="68%" x2="70%" y2="78%" stroke="#0e7490" strokeWidth="0.5" className="login-line-flow" />
+        <line x1="52%" y1="25%" x2="42%" y2="68%" stroke="#164e63" strokeWidth="0.4" className="login-line-flow" />
+        <line x1="78%" y1="42%" x2="92%" y2="60%" stroke="#164e63" strokeWidth="0.4" className="login-line-flow" />
+        <line x1="8%"  y1="82%" x2="28%" y2="40%" stroke="#164e63" strokeWidth="0.4" className="login-line-flow" />
+        <line x1="85%" y1="12%" x2="52%" y2="25%" stroke="#06b6d4" strokeWidth="0.5" className="login-line-flow" />
         {/* nodes */}
         {[
           ['8%','18%',0],['28%','40%',0.6],['52%','25%',1.2],['78%','42%',1.8],
           ['42%','68%',2.4],['70%','78%',0.9],['8%','82%',1.5],['85%','12%',2.1],['92%','60%',0.3],
         ].map(([cx,cy,d], i) => (
           <g key={i}>
-            <circle cx={cx} cy={cy} r="3" fill="#06b6d4" className="node-p" style={{ animationDelay: `${d}s` }} />
-            <circle cx={cx} cy={cy} r="8" fill="none" stroke="#06b6d4" strokeWidth="0.4" className="ring-p" style={{ animationDelay: `${Number(d)+0.5}s` }} />
+            <circle cx={cx} cy={cy} r="3" fill="#06b6d4" className="login-node-p" style={{ animationDelay: `${d}s` }} />
+            <circle cx={cx} cy={cy} r="8" fill="none" stroke="#06b6d4" strokeWidth="0.4" className="login-ring-p" style={{ animationDelay: `${Number(d)+0.5}s` }} />
           </g>
         ))}
       </svg>
@@ -249,22 +224,29 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
               </motion.div>
 
               {/* form */}
+              <form
+                onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
+                className="space-y-5"
+                autoComplete="on"
+              >
               <motion.div
                 animate={loginError ? { x: [-8, 8, -6, 6, 0] } : {}}
                 transition={{ duration: 0.32 }}
                 className="space-y-5"
-                onKeyDown={(event) => { if (event.key === 'Enter') onSubmit(); }}
               >
                 {/* username */}
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-                  <label className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">{t('username')}</label>
+                  <label htmlFor="login-username" className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">{t('username')}</label>
                   <div className="relative group">
                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-[#06b6d4]/70 transition-colors">
                       <User size={16} />
                     </div>
                     <input
+                      id="login-username"
+                      name="username"
                       type="text"
                       placeholder="admin"
+                      autoComplete="username"
                       autoFocus
                       value={loginForm.username}
                       onChange={(event) => onUsernameChange(event.target.value)}
@@ -279,13 +261,16 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
 
                 {/* password */}
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
-                  <label className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">{t('password')}</label>
+                  <label htmlFor="login-password" className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">{t('password')}</label>
                   <div className="relative group">
                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-[#06b6d4]/70 transition-colors">
                       <Lock size={16} />
                     </div>
                     <input
+                      id="login-password"
+                      name="password"
                       type={showLoginPwd ? 'text' : 'password'}
+                      autoComplete="current-password"
                       placeholder="••••••••"
                       value={loginForm.password}
                       onChange={(event) => onPasswordChange(event.target.value)}
@@ -298,6 +283,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                     <button
                       type="button"
                       onClick={onTogglePassword}
+                      aria-label={showLoginPwd ? 'Hide password' : 'Show password'}
                       className="absolute right-4 top-1/2 -translate-y-1/2 text-white/20 hover:text-white/50 transition-colors"
                     >
                       {showLoginPwd ? <EyeOff size={15} /> : <Eye size={15} />}
@@ -330,6 +316,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                 >
                   <div className="relative">
                     <input
+                      id="login-remember-me"
                       type="checkbox"
                       checked={rememberMe}
                       onChange={(event) => onRememberMeChange(event.target.checked)}
@@ -350,6 +337,22 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                   <span className="text-xs text-white/30">{t('rememberMe')}</span>
                 </motion.label>
 
+                {/* forgot password hint */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.32 }}
+                  className="flex items-center justify-end"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotPwd(true)}
+                    className="text-[11px] text-white/20 hover:text-[#06b6d4]/70 flex items-center gap-1 transition-colors"
+                  >
+                    <HelpCircle size={11} />{t('forgotPassword')}
+                  </button>
+                </motion.div>
+
                 {/* submit */}
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
@@ -358,7 +361,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                   className="pt-1"
                 >
                   <button
-                    onClick={onSubmit}
+                    type="submit"
                     disabled={isAuthenticating}
                     className={`group relative flex w-full items-center justify-center gap-2.5 rounded-xl py-3.5 text-[13px] font-bold tracking-wide text-white transition-all duration-200 disabled:opacity-50 hover:shadow-[0_0_48px_rgba(6,182,212,0.3)] active:scale-[0.98] overflow-hidden ${
                       loginError
@@ -380,6 +383,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                   </button>
                 </motion.div>
               </motion.div>
+              </form>
 
               {/* footer */}
               <motion.div
@@ -394,7 +398,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-white/20">{t('systemOnline')}</span>
                   </div>
                   <span className="text-[10px] text-white/8">·</span>
-                  <span className="text-[10px] font-mono text-white/12">NOC v2.0</span>
+                  <span className="text-[10px] font-mono text-white/12">Nexora v2.0</span>
                   <span className="text-[10px] text-white/8">·</span>
                   <span className="text-[10px] text-white/12">© {new Date().getFullYear()} Nexora</span>
                 </div>
@@ -406,6 +410,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
           </div>
         </motion.div>
       </div>
+
+      {/* Forgot password modal */}
+      <ForgotPasswordModal
+        open={showForgotPwd}
+        onClose={() => setShowForgotPwd(false)}
+        t={t}
+        initialUsername={loginForm.username}
+      />
     </div>
   );
 };

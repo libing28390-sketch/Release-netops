@@ -132,7 +132,8 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || 'Failed to acknowledge alert');
       showToast(language === 'zh' ? '告警状态已更新' : 'Alert status updated', 'success');
-      await refreshAll();
+      closeDetail();
+      await loadAlerts();
     } catch (error: any) {
       showToast(error?.message || (language === 'zh' ? '更新告警状态失败' : 'Failed to update alert status'), 'error');
     } finally {
@@ -589,7 +590,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
             >
               {/* Severity accent top bar */}
-              <div className={`h-1 w-full ${
+              <div className={`h-1.5 w-full ${
                 selectedItem?.severity === 'critical' ? 'bg-gradient-to-r from-red-500 via-red-400 to-rose-400' :
                 selectedItem?.severity === 'major' ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-amber-400' :
                 selectedItem?.severity === 'warning' ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400' :
@@ -607,7 +608,12 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                 ) : (
                   <>
                     {/* Header */}
-                    <div className="relative px-6 pt-5 pb-4">
+                    <div className={`relative px-6 pt-6 pb-4 ${
+                      selectedItem.severity === 'critical' ? 'bg-gradient-to-b from-red-50/60 to-transparent' :
+                      selectedItem.severity === 'major' ? 'bg-gradient-to-b from-orange-50/60 to-transparent' :
+                      selectedItem.severity === 'warning' ? 'bg-gradient-to-b from-amber-50/60 to-transparent' :
+                      'bg-gradient-to-b from-slate-50/60 to-transparent'
+                    }`}>
                       <button
                         title={language === 'zh' ? '关闭详情' : 'Close detail'}
                         onClick={closeDetail}
@@ -719,47 +725,53 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         </div>
                       </div>
 
-                      {/* Assignee & Actions */}
+                      {/* Workflow Actions */}
+                      {!selectedItem.resolved_at && selectedItem.workflow_status !== 'suppressed' && (
+                        <div className="grid grid-cols-3 gap-2">
+                          <button
+                            disabled={actionLoading === 'ack'}
+                            onClick={() => void handleAck('acknowledged')}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-emerald-600 hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <CheckCircle2 size={15} />
+                            {language === 'zh' ? '确认告警' : 'Acknowledge'}
+                          </button>
+                          <button
+                            disabled={actionLoading === 'ack'}
+                            onClick={() => void handleAck('investigating')}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 transition-all hover:border-amber-300 hover:bg-amber-100 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Search size={15} />
+                            {language === 'zh' ? '介入调查' : 'Investigate'}
+                          </button>
+                          <button
+                            onClick={() => onOpenMaintenanceForAlert?.(selectedItem)}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-black/8 bg-white px-4 py-2.5 text-sm font-semibold text-[#164e63] transition-all hover:border-black/15 hover:bg-black/[0.03] active:scale-[0.98]"
+                          >
+                            <Wrench size={15} />
+                            {language === 'zh' ? '维护抑制' : 'Suppress'}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Assignee */}
                       <div className="rounded-xl border border-black/[0.06] bg-[#fafbfc] p-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                          <div className="flex-1">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '责任人' : 'Assignee'}</p>
-                            <div className="mt-1.5 flex gap-2">
-                              <input
-                                value={assignValue}
-                                onChange={(e) => setAssignValue(e.target.value)}
-                                placeholder={language === 'zh' ? '输入用户名' : 'Enter username'}
-                                className="flex-1 rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[#164e63] outline-none placeholder:text-black/25 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100 transition-shadow"
-                              />
-                              <button
-                                disabled={actionLoading === 'assign' || !assignValue.trim()}
-                                onClick={() => void handleAssign()}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-[#0e7490] px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0a5e75] disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                <UserCheck size={13} />
-                                {language === 'zh' ? '分派' : 'Assign'}
-                              </button>
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            {!selectedItem.resolved_at && selectedItem.workflow_status !== 'suppressed' && (
-                              <button
-                                disabled={actionLoading === 'ack'}
-                                onClick={() => void handleAck('acknowledged')}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                <CheckCircle2 size={13} />
-                                {language === 'zh' ? '确认' : 'Ack'}
-                              </button>
-                            )}
-                            <button
-                              onClick={() => onOpenMaintenanceForAlert?.(selectedItem)}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 bg-white px-3.5 py-2 text-sm font-semibold text-[#164e63] transition-all hover:border-black/15 hover:bg-black/[0.02]"
-                            >
-                              <Wrench size={13} />
-                              {language === 'zh' ? '维护' : 'Maint.'}
-                            </button>
-                          </div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '责任人' : 'Assignee'}</p>
+                        <div className="mt-2 flex gap-2">
+                          <input
+                            value={assignValue}
+                            onChange={(e) => setAssignValue(e.target.value)}
+                            placeholder={language === 'zh' ? '输入用户名' : 'Enter username'}
+                            className="flex-1 rounded-lg border border-black/10 bg-white px-3 py-2.5 text-sm text-[#164e63] outline-none placeholder:text-black/25 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100 transition-shadow"
+                          />
+                          <button
+                            disabled={actionLoading === 'assign' || !assignValue.trim()}
+                            onClick={() => void handleAssign()}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-[#0e7490] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0a5e75] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <UserCheck size={14} />
+                            {language === 'zh' ? '分派' : 'Assign'}
+                          </button>
                         </div>
                       </div>
 
