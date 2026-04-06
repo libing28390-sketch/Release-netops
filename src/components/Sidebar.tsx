@@ -606,7 +606,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                     { path: 'config/backup', icon: Download, label: t('backupHistory') },
                     { path: 'config/diff', icon: FileText, label: t('diffCompare') },
                     { path: 'config/search', icon: Search, label: t('configSearchTab') },
-                    { path: 'config/schedule', icon: Clock, label: t('scheduledBackup') },
+                    { path: 'config/schedule', icon: Clock, label: language === 'zh' ? '备份计划' : 'Backup Schedule' },
                     { path: 'config/drift', icon: GitCompareArrows, label: language === 'zh' ? '配置漂移' : 'Config Drift' },
                     { path: 'compliance', icon: ShieldCheck, label: t('compliance') },
                   ] as const).map((item) => {

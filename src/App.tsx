@@ -66,6 +66,7 @@ const AutomationPlaybooksTab = lazy(() => import('./pages/AutomationPlaybooksTab
 const AutomationScenariosTab = lazy(() => import('./pages/AutomationScenariosTab'));
 const AutomationHistoryTab = lazy(() => import('./pages/AutomationHistoryTab'));
 const InspectionTab = lazy(() => import('./pages/InspectionTab'));
+const ExecutionScheduleTab = lazy(() => import('./pages/ExecutionScheduleTab'));
 const PlatformSettingsTab = lazy(() => import('./pages/PlatformSettingsTab'));
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
@@ -487,6 +488,7 @@ const App: React.FC = () => {
     if (path === '/monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
     if (path === '/topology') return language === 'zh' ? '网络拓扑' : 'Topology';
     if (path === '/automation/inspection') return language === 'zh' ? '设备巡检' : 'Device Inspection';
+    if (path === '/automation/schedule') return language === 'zh' ? '执行计划' : 'Execution Schedules';
     if (path === '/alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
     if (path === '/alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
     if (path === '/alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
@@ -503,7 +505,7 @@ const App: React.FC = () => {
     if (path === '/config/backup') return t('backupHistory');
     if (path === '/config/diff') return t('diffCompare');
     if (path === '/config/search') return t('configSearchTab');
-    if (path === '/config/schedule') return t('scheduledBackup');
+    if (path === '/config/schedule') return language === 'zh' ? '备份计划' : 'Backup Schedule';
     if (path === '/config/drift') return language === 'zh' ? '配置漂移' : 'Config Drift';
     if (path === '/compliance') return t('compliance');
     if (path === '/capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
@@ -546,10 +548,11 @@ const App: React.FC = () => {
       { path: '/automation/scenarios', label: t('scenarioLibrary'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/history', label: t('executionHistory'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/inspection', label: zh ? '设备巡检' : 'Device Inspection', group: zh ? '作业自动化' : 'Automation' },
+      { path: '/automation/schedule', label: zh ? '执行计划' : 'Execution Schedules', group: zh ? '作业自动化' : 'Automation' },
       { path: '/config/backup', label: t('backupHistory'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/diff', label: t('diffCompare'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/search', label: t('configSearchTab'), group: zh ? '配置与合规' : 'Config & Compliance' },
-      { path: '/config/schedule', label: t('scheduledBackup'), group: zh ? '配置与合规' : 'Config & Compliance' },
+      { path: '/config/schedule', label: zh ? '备份计划' : 'Backup Schedule', group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/drift', label: zh ? '配置漂移' : 'Config Drift', group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/compliance', label: t('compliance'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/capacity', label: zh ? '容量规划' : 'Capacity Planning', group: zh ? '分析报告' : 'Analytics' },
@@ -590,6 +593,7 @@ const App: React.FC = () => {
         scenarios: t('scenarioLibrary'),
         history: t('executionHistory'),
         inspection: language === 'zh' ? '设备巡检' : 'Device Inspection',
+        schedule: language === 'zh' ? '执行计划' : 'Execution Schedules',
       };
       return map[automationPage] || automationPage;
     }
@@ -598,7 +602,7 @@ const App: React.FC = () => {
         backup: t('backupHistory'),
         diff: t('diffCompare'),
         search: t('configSearchTab'),
-        schedule: t('scheduledBackup'),
+        schedule: language === 'zh' ? '备份计划' : 'Backup Schedule',
         drift: language === 'zh' ? '配置漂移' : 'Config Drift',
       };
       return map[configPage] || configPage;
@@ -5656,6 +5660,11 @@ const App: React.FC = () => {
                 overview={monitorOverview?.device_health_summary || null}
                 onShowDetails={handleShowDetails}
               />
+            </Suspense>
+          )}
+          {activeTab === 'automation' && automationPage === 'schedule' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <ExecutionScheduleTab t={t} language={language} showToast={showToast} />
             </Suspense>
           )}
           {activeTab === 'compliance' && (
