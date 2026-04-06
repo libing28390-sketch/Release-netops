@@ -204,3 +204,41 @@ class ConnectivityProbeRequest(BaseModel):
     @classmethod
     def validate_ping_count(cls, v: int) -> int:
         return max(1, min(v, 10))
+
+
+# ─── Inspection 巡检 ─────────────────────────
+
+class InspectionRunRequest(BaseModel):
+    scope_type: str = 'all'
+    scope_filter: str = ''
+
+    @field_validator('scope_type')
+    @classmethod
+    def validate_scope_type(cls, v: str) -> str:
+        allowed = {'all', 'site', 'role', 'device', 'devices'}
+        if v not in allowed:
+            raise ValueError(f'scope_type must be one of {allowed}')
+        return v
+
+
+class InspectionScheduleCreate(BaseModel):
+    name: str
+    cron_expr: str
+    scope_type: str = 'all'
+    scope_filter: str = ''
+
+    @field_validator('scope_type')
+    @classmethod
+    def validate_scope_type(cls, v: str) -> str:
+        allowed = {'all', 'site', 'role', 'device', 'devices'}
+        if v not in allowed:
+            raise ValueError(f'scope_type must be one of {allowed}')
+        return v
+
+
+class InspectionScheduleUpdate(BaseModel):
+    name: str | None = None
+    cron_expr: str | None = None
+    scope_type: str | None = None
+    scope_filter: str | None = None
+    enabled: bool | None = None

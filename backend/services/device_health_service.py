@@ -159,9 +159,7 @@ def evaluate_device_health(device: dict[str, Any], alert_stats: dict[str, int] |
         if (_as_float(interface.get('in_errors')) + _as_float(interface.get('out_errors')) + _as_float(interface.get('in_discards')) + _as_float(interface.get('out_discards'))) > 0:
             error_interfaces += 1
 
-    if down_interfaces > 0:
-        penalty = min(16, 4 + down_interfaces * 2)
-        penalize(f'{down_interfaces} interface(s) are down', 'warning', penalty)
+    # down_interfaces is informational only — unused ports being down is normal
 
     if flapping_interfaces > 0:
         penalty = min(18, 6 + flapping_interfaces * 3)
@@ -191,9 +189,9 @@ def evaluate_device_health(device: dict[str, Any], alert_stats: dict[str, int] |
         penalize(f'{warning_open_alerts} minor alert(s) remain active', 'warning', penalty)
 
     if compliance == 'non-compliant':
-        penalize('Compliance status is non-compliant', 'warning', 12)
+        penalize('设备合规检查未通过', 'warning', 12)
     elif compliance == 'unknown':
-        penalize('Compliance state has not been assessed yet', 'warning', 5)
+        penalize('尚未进行合规检查', 'warning', 5)
 
     if forced_status == 'critical' or score < 50:
         health_status = 'critical'
@@ -208,6 +206,7 @@ def evaluate_device_health(device: dict[str, Any], alert_stats: dict[str, int] |
         health_status = 'unknown'
 
     ordered_reasons = [message for _severity, message, _points in sorted(reasons, key=lambda item: (0 if item[0] == 'critical' else 1, -item[2], item[1]))]
+    ordered_findings = [{'severity': severity, 'message': message} for severity, message, _points in sorted(reasons, key=lambda item: (0 if item[0] == 'critical' else 1, -item[2], item[1]))]
     summary = ordered_reasons[0] if ordered_reasons else 'No active health issues detected'
 
     return {
@@ -215,6 +214,7 @@ def evaluate_device_health(device: dict[str, Any], alert_stats: dict[str, int] |
         'health_score': max(0, min(100, int(round(score)))),
         'health_summary': summary,
         'health_reasons': ordered_reasons,
+        'health_findings': ordered_findings,
         'open_alert_count': open_alert_count,
         'critical_open_alerts': critical_open_alerts,
         'major_open_alerts': major_open_alerts,

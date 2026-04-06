@@ -426,6 +426,108 @@ def delete_snapshot(snap_id: str):
 
 
 # ──────────────────────────────────────────────
+# Backup stats & history (for schedule dashboard)
+# ──────────────────────────────────────────────
+
+@router.get('/configs/backup-stats')
+def get_backup_stats():
+    """Return aggregated backup execution statistics for the schedule dashboard."""
+    conn = get_db_connection()
+    try:
+        now = datetime.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+        # Today's backups
+        today_total = conn.execute(
+            "SELECT COUNT(*) as c FROM config_snapshots WHERE timestamp >= ?", (today_start,)
+        ).fetchone()['c']
+        today_scheduled = conn.execute(
+            "SELECT COUNT(*) as c FROM config_snapshots WHERE timestamp >= ? AND trigger = 'scheduled'",
+            (today_start,)
+        ).fetchone()['c']
+        today_manual = conn.execute(
+            "SELECT COUNT(*) as c FROM config_snapshots WHERE timestamp >= ? AND trigger = 'manual'",
+            (today_start,)
+        ).fetchone()['c']
+
+        # Last 7 days history (grouped by date)
+        seven_days_ago = (now - timedelta(days=7)).isoformat()
+        daily_rows = conn.execute(
+            """SELECT DATE(timestamp) as day, trigger, COUNT(*) as cnt
+               FROM config_snapshots WHERE timestamp >= ?
+               GROUP BY DATE(timestamp), trigger ORDER BY day""",
+            (seven_days_ago,)
+        ).fetchall()
+        daily_map: dict = {}
+        for r in daily_rows:
+            d = r['day']
+            if d not in daily_map:
+                daily_map[d] = {'date': d, 'scheduled': 0, 'manual': 0, 'total': 0}
+            daily_map[d][r['trigger']] = daily_map[d].get(r['trigger'], 0) + r['cnt']
+            daily_map[d]['total'] += r['cnt']
+        daily_history = sorted(daily_map.values(), key=lambda x: x['date'])
+
+        # Total snapshots & total storage
+        total_snapshots = conn.execute("SELECT COUNT(*) as c FROM config_snapshots").fetchone()['c']
+        total_devices_backed = conn.execute(
+            "SELECT COUNT(DISTINCT device_id) as c FROM config_snapshots"
+        ).fetchone()['c']
+
+        # Per-device latest backup & count
+        devices = conn.execute(
+            "SELECT id, hostname, ip_address, platform, status FROM devices"
+        ).fetchall()
+        device_stats = []
+        for dev in devices:
+            dev_snaps = conn.execute(
+                """SELECT COUNT(*) as cnt, MAX(timestamp) as latest, trigger
+                   FROM config_snapshots WHERE device_id = ?
+                   GROUP BY device_id""",
+                (dev['id'],)
+            ).fetchone()
+            last_trigger = conn.execute(
+                """SELECT trigger FROM config_snapshots WHERE device_id = ?
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (dev['id'],)
+            ).fetchone()
+            device_stats.append({
+                'id': dev['id'],
+                'hostname': dev['hostname'],
+                'ip_address': dev['ip_address'],
+                'platform': dev['platform'],
+                'status': dev['status'],
+                'backup_count': dev_snaps['cnt'] if dev_snaps else 0,
+                'latest_backup': dev_snaps['latest'] if dev_snaps else None,
+                'last_trigger': last_trigger['trigger'] if last_trigger else None,
+            })
+
+        # Recent 20 backups (execution log)
+        recent = conn.execute(
+            """SELECT id, device_id, hostname, vendor, timestamp, trigger, author, tag, size
+               FROM config_snapshots ORDER BY timestamp DESC LIMIT 20"""
+        ).fetchall()
+        recent_list = [dict(r) for r in recent]
+
+        return {
+            'success': True,
+            'data': {
+                'today': {
+                    'total': today_total,
+                    'scheduled': today_scheduled,
+                    'manual': today_manual,
+                },
+                'daily_history': daily_history,
+                'total_snapshots': total_snapshots,
+                'total_devices_backed': total_devices_backed,
+                'device_stats': device_stats,
+                'recent_backups': recent_list,
+            }
+        }
+    finally:
+        conn.close()
+
+
+# ──────────────────────────────────────────────
 # Global config search across ALL snapshots
 # ──────────────────────────────────────────────
 

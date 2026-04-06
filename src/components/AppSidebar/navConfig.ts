@@ -19,7 +19,6 @@ export const navConfig: NavGroup[] = [
       { id: 'dashboard',    label: '仪表盘',   labelEn: 'Dashboard',         path: '/dashboard' },
       { id: 'monitoring',   label: '监控中心',  labelEn: 'Monitoring',        path: '/monitoring' },
       { id: 'topology',     label: '网络拓扑',  labelEn: 'Topology',          path: '/topology' },
-      { id: 'health',       label: '健康检测',  labelEn: 'Health Detection',  path: '/health' },
     ],
   },
   {
@@ -65,6 +64,7 @@ export const navConfig: NavGroup[] = [
     icon: 'Zap',
     children: [
       { id: 'auto-exec',  label: '自动化任务',  labelEn: 'Automation',        path: '/automation/execute', activeMatch: '/automation/' },
+      { id: 'inspection', label: '设备巡检',    labelEn: 'Device Inspection', path: '/automation/inspection' },
       { id: 'scheduled',  label: '定时任务',    labelEn: 'Scheduled Tasks',   path: '/config/schedule' },
     ],
   },

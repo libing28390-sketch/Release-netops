@@ -1393,6 +1393,91 @@ def init_db():
         )
         ''')
 
+        # ── Device Inspection (Patrol) ──
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS inspection_schedules (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            cron_expr TEXT NOT NULL,
+            scope_type TEXT NOT NULL DEFAULT 'all',
+            scope_filter TEXT DEFAULT '',
+            enabled INTEGER DEFAULT 1,
+            created_by TEXT DEFAULT 'system',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_run_at TEXT
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_schedules_enabled ON inspection_schedules(enabled)')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS inspection_runs (
+            id TEXT PRIMARY KEY,
+            schedule_id TEXT,
+            trigger_type TEXT NOT NULL DEFAULT 'manual',
+            scope_type TEXT NOT NULL DEFAULT 'all',
+            scope_filter TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            total_devices INTEGER DEFAULT 0,
+            success_count INTEGER DEFAULT 0,
+            failed_count INTEGER DEFAULT 0,
+            unreachable_count INTEGER DEFAULT 0,
+            healthy_count INTEGER DEFAULT 0,
+            warning_count INTEGER DEFAULT 0,
+            critical_count INTEGER DEFAULT 0,
+            avg_health_score REAL DEFAULT 0,
+            summary_json TEXT DEFAULT '{}',
+            created_by TEXT DEFAULT 'system',
+            FOREIGN KEY (schedule_id) REFERENCES inspection_schedules(id)
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_runs_started_at ON inspection_runs(started_at)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_runs_status ON inspection_runs(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_runs_schedule_id ON inspection_runs(schedule_id)')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS inspection_results (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            hostname TEXT DEFAULT '',
+            ip_address TEXT DEFAULT '',
+            platform TEXT DEFAULT '',
+            role TEXT DEFAULT '',
+            site TEXT DEFAULT '',
+            ping_ok INTEGER DEFAULT 0,
+            ping_latency_ms REAL,
+            ssh_ok INTEGER DEFAULT 0,
+            ssh_error TEXT DEFAULT '',
+            health_score INTEGER,
+            health_status TEXT DEFAULT 'unknown',
+            cpu_usage REAL,
+            memory_usage REAL,
+            temperature REAL,
+            fan_status TEXT DEFAULT '',
+            psu_status TEXT DEFAULT '',
+            interface_total INTEGER DEFAULT 0,
+            interface_up INTEGER DEFAULT 0,
+            interface_down INTEGER DEFAULT 0,
+            interface_flapping INTEGER DEFAULT 0,
+            interface_high_util INTEGER DEFAULT 0,
+            interface_errors INTEGER DEFAULT 0,
+            open_alerts INTEGER DEFAULT 0,
+            critical_alerts INTEGER DEFAULT 0,
+            compliance_status TEXT DEFAULT 'unknown',
+            compliance_findings INTEGER DEFAULT 0,
+            findings_json TEXT DEFAULT '[]',
+            checked_at TEXT NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES inspection_runs(id),
+            FOREIGN KEY (device_id) REFERENCES devices(id)
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_run_id ON inspection_results(run_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_device_id ON inspection_results(device_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_health_status ON inspection_results(health_status)')
+
         conn.commit()
     finally:
         conn.close()

@@ -31,6 +31,7 @@ from api.assets import router as assets_router
 from api.change_orders import router as change_orders_router
 from api.setup import router as setup_router
 from api.ip_locator import router as ip_locator_router
+from api.inspections import router as inspections_router
 import logging
 import os
 import asyncio
@@ -105,6 +106,16 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
         max_instances=1,
     )
+    # Schedule inspection runner (checks cron plans every 30 minutes)
+    from services.inspection_service import run_scheduled_inspections
+    scheduler.add_job(
+        run_scheduled_inspections,
+        CronTrigger(minute='0,30'),
+        id='inspection_scheduler',
+        name='Inspection Scheduler',
+        replace_existing=True,
+        max_instances=1,
+    )
     logger.info("[Scheduler] APScheduler started")
     yield
     # ── shutdown ──
@@ -164,6 +175,7 @@ app.include_router(assets_router, prefix="/api")
 app.include_router(change_orders_router, prefix="/api")
 app.include_router(setup_router, prefix="/api")
 app.include_router(ip_locator_router, prefix="/api")
+app.include_router(inspections_router, prefix="/api")
 
 # ── APScheduler ──────────────────────────────────────────────────────
 scheduler = AsyncIOScheduler()

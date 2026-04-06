@@ -65,6 +65,7 @@ const AutomationExecuteTab = lazy(() => import('./pages/AutomationExecuteTab'));
 const AutomationPlaybooksTab = lazy(() => import('./pages/AutomationPlaybooksTab'));
 const AutomationScenariosTab = lazy(() => import('./pages/AutomationScenariosTab'));
 const AutomationHistoryTab = lazy(() => import('./pages/AutomationHistoryTab'));
+const InspectionTab = lazy(() => import('./pages/InspectionTab'));
 const PlatformSettingsTab = lazy(() => import('./pages/PlatformSettingsTab'));
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
@@ -485,7 +486,7 @@ const App: React.FC = () => {
     if (path === '/dashboard') return t('dashboard');
     if (path === '/monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
     if (path === '/topology') return language === 'zh' ? '网络拓扑' : 'Topology';
-    if (path === '/health') return language === 'zh' ? '健康检测' : 'Health Detection';
+    if (path === '/automation/inspection') return language === 'zh' ? '设备巡检' : 'Device Inspection';
     if (path === '/alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
     if (path === '/alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
     if (path === '/alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
@@ -531,7 +532,6 @@ const App: React.FC = () => {
       { path: '/dashboard', label: t('dashboard'), group: zh ? '实时监控' : 'Real-time' },
       { path: '/monitoring', label: zh ? '监控中心' : 'Monitoring Center', group: zh ? '实时监控' : 'Real-time' },
       { path: '/topology', label: zh ? '网络拓扑' : 'Topology', group: zh ? '实时监控' : 'Real-time' },
-      { path: '/health', label: zh ? '健康检测' : 'Health Detection', group: zh ? '实时监控' : 'Real-time' },
       { path: '/inventory/devices', label: t('deviceList'), group: zh ? '设备清单' : 'Inventory' },
       { path: '/inventory/servers', label: zh ? '服务器' : 'Servers', group: zh ? '设备清单' : 'Inventory' },
       { path: '/inventory/interfaces', label: t('interfaceMonitoring'), group: zh ? '设备清单' : 'Inventory' },
@@ -545,6 +545,7 @@ const App: React.FC = () => {
       { path: '/automation/execute', label: t('directExecution'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scenarios', label: t('scenarioLibrary'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/history', label: t('executionHistory'), group: zh ? '作业自动化' : 'Automation' },
+      { path: '/automation/inspection', label: zh ? '设备巡检' : 'Device Inspection', group: zh ? '作业自动化' : 'Automation' },
       { path: '/config/backup', label: t('backupHistory'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/diff', label: t('diffCompare'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/search', label: t('configSearchTab'), group: zh ? '配置与合规' : 'Config & Compliance' },
@@ -588,6 +589,7 @@ const App: React.FC = () => {
         execute: t('directExecution'),
         scenarios: t('scenarioLibrary'),
         history: t('executionHistory'),
+        inspection: language === 'zh' ? '设备巡检' : 'Device Inspection',
       };
       return map[automationPage] || automationPage;
     }
@@ -624,7 +626,7 @@ const App: React.FC = () => {
     if (activeTab === 'change-orders') return language === 'zh' ? '变更工单' : 'Change Orders';
     if (activeTab === 'compliance') return t('compliance');
     if (activeTab === 'monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
-    if (activeTab === 'health') return language === 'zh' ? '健康检测' : 'Health Detection';
+
     if (activeTab === 'topology') return language === 'zh' ? '网络拓扑' : 'Topology';
     return t('dashboard');
   }, [activeTab, automationPage, configPage, inventorySubPage, language, t]);
@@ -5318,17 +5320,7 @@ const App: React.FC = () => {
             </Suspense>
           )}
 
-          {activeTab === 'health' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <DeviceHealthTab
-                devices={devices}
-                overview={monitorOverview?.device_health_summary || null}
-                language={language}
-                onShowDetails={handleShowDetails}
-                onOpenMonitoring={() => setActiveTab('monitoring')}
-              />
-            </Suspense>
-          )}
+
 
           {activeTab === 'alerts' && (
             <Suspense fallback={lazyPanelFallback}>
@@ -5652,6 +5644,17 @@ const App: React.FC = () => {
                 onExecDevicesPageChange={handleExecDevicesPageChange}
                 onSelectExecDevice={handleSelectExecDevice}
                 onCloseDeviceDetail={() => setSelectedDeviceDetail(null)}
+              />
+            </Suspense>
+          )}
+          {activeTab === 'automation' && automationPage === 'inspection' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <InspectionTab
+                t={t}
+                language={language}
+                devices={devices}
+                overview={monitorOverview?.device_health_summary || null}
+                onShowDetails={handleShowDetails}
               />
             </Suspense>
           )}

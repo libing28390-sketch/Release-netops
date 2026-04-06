@@ -110,10 +110,13 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
   /* ─────────── Active detection ─────────── */
   const isActive = useCallback((item: NavChild): boolean => {
     const { pathname } = location;
+    if (pathname === item.path) return true;
     if (item.activeMatch) {
-      return pathname === item.path || pathname.startsWith(item.activeMatch);
+      // Don't match if another sibling has this exact path
+      return pathname.startsWith(item.activeMatch) &&
+        !navConfig.some(g => g.children.some(c => c !== item && c.path === pathname));
     }
-    return pathname === item.path;
+    return false;
   }, [location]);
 
   const sectionHasActive = useCallback(
