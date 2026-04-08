@@ -1712,4 +1712,9 @@ def seed_data():
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", "8003"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    workers = int(os.environ.get("WORKERS", "1"))
+    if workers > 1:
+        # Multi-worker: pass app as import string so each worker can import it
+        uvicorn.run("main:app", host="0.0.0.0", port=port, workers=workers)
+    else:
+        uvicorn.run(app, host="0.0.0.0", port=port)

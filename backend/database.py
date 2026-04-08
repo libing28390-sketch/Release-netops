@@ -23,7 +23,7 @@ else:
     import sqlite3
 
 # ── Connection Pool ─────────────────────────────────────────
-_POOL_SIZE = 8
+_POOL_SIZE = int(os.environ.get('DB_POOL_SIZE', '16'))
 
 # ── PostgreSQL Wrappers ────────────────────────────────────
 if _USE_PG:
