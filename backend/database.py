@@ -1297,6 +1297,25 @@ def init_db():
         ensure_column('devices', 'asset_id', 'TEXT')
         ensure_column('devices', 'vendor', "TEXT DEFAULT ''")
 
+        # Migration: device lifecycle status (staging → production → maintenance → decommissioned)
+        ensure_column('devices', 'lifecycle_status', "TEXT DEFAULT 'staging'")
+
+        # Migration: dual-credential model (normal + privileged)
+        ensure_column('devices', 'enable_password', "TEXT DEFAULT ''")
+        ensure_column('devices', 'priv_username', "TEXT DEFAULT ''")
+        # Credential source: 'local' (Fernet-encrypted in DB) or 'vault' (HashiCorp Vault KV)
+        ensure_column('devices', 'credential_source', "TEXT DEFAULT 'local'")
+        # Vault KV path (e.g. 'netops/devices/core-sw-01'), only used when credential_source='vault'
+        ensure_column('devices', 'vault_path', "TEXT DEFAULT ''")
+
+        # Migration: device onboarding status (口令上手 state machine)
+        ensure_column('devices', 'onboarding_status', "TEXT DEFAULT 'active'")
+        ensure_column('devices', 'onboarding_updated_at', "TEXT DEFAULT ''")
+
+        # Migration: password rotation tracking
+        ensure_column('devices', 'password_last_rotated', "TEXT DEFAULT ''")
+        ensure_column('devices', 'password_expires_at', "TEXT DEFAULT ''")
+
         # Auto-link existing devices to matching assets (one-time migration)
         unlinked = cursor.execute(
             "SELECT id, hostname, ip_address FROM devices WHERE (asset_id IS NULL OR asset_id = '')"

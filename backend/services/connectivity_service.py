@@ -18,6 +18,7 @@ from typing import Any
 
 from database import get_db_connection
 from core.crypto import decrypt_credential
+from services.vault_service import resolve_device_credentials
 from services.operational_data_service import collect_operational_data
 
 logger = logging.getLogger(__name__)
@@ -146,13 +147,16 @@ def _load_device(device_id: int) -> dict | None:
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT id, hostname, ip_address, device_type, username, password, port "
+            "SELECT id, hostname, ip_address, device_type, username, password, enable_password, priv_username, port, credential_source, vault_path "
             "FROM devices WHERE id = ?", (device_id,)
         ).fetchone()
         if not row:
             return None
         d = dict(row)
-        d['password'] = decrypt_credential(d.get('password')) or ''
+        creds = resolve_device_credentials(d)
+        d['username'] = creds['username'] or d.get('username', '')
+        d['password'] = creds['password']
+        d['enable_password'] = creds['enable_password']
         return d
     finally:
         conn.close()
@@ -167,6 +171,7 @@ def _build_device_info(dev: dict) -> dict:
         'device_type': dev.get('device_type', 'cisco_ios'),
         'username': dev.get('username', ''),
         'password': dev.get('password', ''),
+        'enable_password': dev.get('enable_password', ''),
         'port': dev.get('port') or 22,
     }
 

@@ -116,6 +116,16 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
         max_instances=1,
     )
+    # Schedule password rotation sweep (daily at 02:00)
+    from services.password_rotation_service import run_rotation_sweep
+    scheduler.add_job(
+        run_rotation_sweep,
+        CronTrigger(hour=2, minute=0),
+        id='password_rotation_sweep',
+        name='Password Rotation Sweep',
+        replace_existing=True,
+        max_instances=1,
+    )
     logger.info("[Scheduler] APScheduler started")
     yield
     # ── shutdown ──

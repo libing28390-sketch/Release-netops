@@ -24,6 +24,18 @@ class Settings(BaseSettings):
     # 「前往平台处理」按钮跳转地址，留空则不显示按钮
     PLATFORM_URL: str = ""
 
+    # HashiCorp Vault integration
+    VAULT_ENABLED: bool = False
+    VAULT_ADDR: str = "http://127.0.0.1:8200"
+    VAULT_TOKEN: str = ""
+    VAULT_MOUNT: str = "secret"               # KV v2 mount path
+    VAULT_PREFIX: str = "netops/devices"       # key prefix under mount
+
+    # Password rotation
+    PASSWORD_ROTATION_ENABLED: bool = False
+    PASSWORD_ROTATION_INTERVAL_DAYS: int = 90
+    PASSWORD_ROTATION_NOTIFY_DAYS: int = 14    # warn N days before expiry
+
     class Config:
         env_file = ".env"
         extra = "ignore"

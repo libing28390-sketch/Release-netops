@@ -1559,6 +1559,8 @@ const App: React.FC = () => {
   const [showEditUserPwd, setShowEditUserPwd] = useState(false);
   const [showAddDevicePwd, setShowAddDevicePwd] = useState(false);
   const [showEditDevicePwd, setShowEditDevicePwd] = useState(false);
+  const [showLifecycleConfirm, setShowLifecycleConfirm] = useState<'add' | 'edit' | null>(null);
+  const [lifecycleConfirmChecked, setLifecycleConfirmChecked] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showProfilePwd, setShowProfilePwd] = useState(false);
   const [profileForm, setProfileForm] = useState({ username: '', password: '', confirmPassword: '' });
@@ -2514,6 +2516,7 @@ const App: React.FC = () => {
   const [inventoryPlatformFilter, setInventoryPlatformFilter] = useState('all');
   const [inventoryRoleFilter, setInventoryRoleFilter] = useState('all');
   const [inventoryStatusFilter, setInventoryStatusFilter] = useState('all');
+  const [inventoryLifecycleFilter, setInventoryLifecycleFilter] = useState('all');
   const [inventorySortConfig, setInventorySortConfig] = useState<{ key: keyof Device, direction: 'asc' | 'desc' } | null>(null);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
 
@@ -3594,7 +3597,8 @@ const App: React.FC = () => {
     username: '',
     password: '',
     snmp_community: 'public',
-    snmp_port: 161
+    snmp_port: 161,
+    lifecycle_status: 'staging'
   });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deviceToDelete, setDeviceToDelete] = useState<string | null>(null);
@@ -3931,6 +3935,14 @@ const App: React.FC = () => {
 
   const handleSaveEdit = async () => {
     if (!editingDevice) return;
+    // Intercept: if lifecycle transitions to production, require explicit confirmation
+    const oldLifecycle = editingDevice.lifecycle_status || 'staging';
+    const newLifecycle = editForm.lifecycle_status || oldLifecycle;
+    if (newLifecycle === 'production' && oldLifecycle !== 'production' && showLifecycleConfirm !== 'edit') {
+      setLifecycleConfirmChecked(false);
+      setShowLifecycleConfirm('edit');
+      return;
+    }
     try {
       const response = await fetch(`/api/devices/${editingDevice.id}`, {
         method: 'PUT',
@@ -3941,6 +3953,7 @@ const App: React.FC = () => {
         setDevices(prev => prev.map(d => d.id === editingDevice.id ? { ...d, ...editForm } as Device : d));
         setInventoryRefreshTick((v) => v + 1);
         setShowEditModal(false);
+        setShowLifecycleConfirm(null);
         showToast('Device updated successfully', 'success');
       } else {
         const data = await response.json();
@@ -3954,6 +3967,12 @@ const App: React.FC = () => {
   const handleAddDevice = async () => {
     if (!addForm.hostname || !addForm.ip_address) {
       showToast('Hostname and IP Address are required', 'error');
+      return;
+    }
+    // Intercept: if lifecycle_status is production, require explicit confirmation
+    if (addForm.lifecycle_status === 'production' && showLifecycleConfirm !== 'add') {
+      setLifecycleConfirmChecked(false);
+      setShowLifecycleConfirm('add');
       return;
     }
     try {
@@ -3978,9 +3997,11 @@ const App: React.FC = () => {
           username: '',
           password: '',
           snmp_community: 'public',
-          snmp_port: 161
+          snmp_port: 161,
+          lifecycle_status: 'staging'
         });
         showToast('Device added successfully', 'success');
+        setShowLifecycleConfirm(null);
       } else {
         showToast(`Failed to add device: ${data.error}`, 'error');
       }
@@ -5416,6 +5437,8 @@ const App: React.FC = () => {
                 setInventoryRoleFilter={setInventoryRoleFilter}
                 inventoryStatusFilter={inventoryStatusFilter}
                 setInventoryStatusFilter={setInventoryStatusFilter}
+                inventoryLifecycleFilter={inventoryLifecycleFilter}
+                setInventoryLifecycleFilter={setInventoryLifecycleFilter}
                 inventorySortConfig={inventorySortConfig}
                 inventoryLoading={inventoryLoading}
                 selectedDeviceIds={selectedDeviceIds}
@@ -6195,6 +6218,66 @@ const App: React.FC = () => {
           onClose={() => setShowEditModal(false)}
           onSubmit={handleSaveEdit}
         />
+      )}
+
+      {/* Lifecycle → Production Confirmation Modal */}
+      {showLifecycleConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center gap-3 border-b border-black/5 bg-amber-50 p-5 rounded-t-2xl">
+              <div className="rounded-lg bg-amber-100 p-2 text-amber-600">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </div>
+              <h3 className="text-base font-semibold text-black">
+                {language === 'zh' ? '投产确认' : 'Production Confirmation'}
+              </h3>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-black/70 leading-relaxed">
+                {language === 'zh'
+                  ? '您正在将设备状态设置为「已投产」。请确认该设备的默认口令已完成上手（密码已从出厂默认修改为正式口令）。'
+                  : 'You are setting this device to "Production". Please confirm that the default credentials have been changed from factory defaults to production passwords.'}
+              </p>
+              <label className="flex items-start gap-2.5 cursor-pointer select-none group">
+                <input
+                  type="checkbox"
+                  checked={lifecycleConfirmChecked}
+                  onChange={(e) => setLifecycleConfirmChecked(e.target.checked)}
+                  className="mt-0.5 rounded border-black/20 text-[#00bceb] focus:ring-[#00bceb] focus:ring-offset-0"
+                />
+                <span className="text-sm font-medium text-black/80 group-hover:text-black">
+                  {language === 'zh'
+                    ? '我确认该设备默认口令已上手，密码已修改为正式口令'
+                    : 'I confirm the default credentials have been changed to production passwords'}
+                </span>
+              </label>
+            </div>
+            <div className="flex gap-3 border-t border-black/5 bg-black/[0.01] p-5 rounded-b-2xl">
+              <button
+                onClick={() => { setShowLifecycleConfirm(null); setLifecycleConfirmChecked(false); }}
+                className="flex-1 rounded-xl border border-black/10 px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-all hover:bg-black/5"
+              >
+                {language === 'zh' ? '取消' : 'Cancel'}
+              </button>
+              <button
+                disabled={!lifecycleConfirmChecked}
+                onClick={() => {
+                  if (showLifecycleConfirm === 'add') {
+                    handleAddDevice();
+                  } else {
+                    handleSaveEdit();
+                  }
+                }}
+                className={`flex-1 rounded-xl px-4 py-2.5 text-xs font-bold uppercase tracking-widest text-white shadow-lg transition-all
+                  ${lifecycleConfirmChecked
+                    ? 'bg-amber-500 shadow-amber-500/20 hover:bg-amber-600 cursor-pointer'
+                    : 'bg-black/20 shadow-none cursor-not-allowed'}`}
+              >
+                {language === 'zh' ? '确认投产' : 'Confirm Production'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Device Details Modal */}

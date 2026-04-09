@@ -44,6 +44,10 @@ class ScrapliDriver(BaseDriver):
             'timeout_transport': 60,    # 传输超时（含慢速设备）
             'timeout_ops': 30,          # 单次操作超时
         }
+        # Enable password for privilege escalation
+        secret = self.device_info.get('enable_password') or self.device_info.get('secret') or ''
+        if secret:
+            device_params['auth_secondary'] = secret
         
         # 检测操作系统，在 Windows 上使用 paramiko 传输
         if platform_module.system() == 'Windows':
@@ -66,6 +70,13 @@ class ScrapliDriver(BaseDriver):
             logger.debug(f"Connecting to {self.host}:{self.port} with platform {self.platform_type}")
             self.conn = Scrapli(**device_params)
             self.conn.open()
+            # If enable_password is provided, attempt privilege escalation
+            secret = self.device_info.get('enable_password') or self.device_info.get('secret') or ''
+            if secret:
+                try:
+                    self.conn.acquire_priv('privilege_exec')
+                except Exception:
+                    pass  # Not all platforms require privilege escalation
             logger.info(f"Successfully connected to {self.host}")
         except Exception as e:
             logger.error(f"Scrapli connection failed to {self.host}: {str(e)}", exc_info=True)

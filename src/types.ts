@@ -16,6 +16,7 @@ export interface Device {
   platform: string;
   status: 'online' | 'offline' | 'pending';
   compliance: 'compliant' | 'non-compliant' | 'unknown';
+  lifecycle_status?: 'staging' | 'production' | 'maintenance' | 'decommissioned';
   sn: string;
   model: string;
   version: string;
@@ -27,6 +28,14 @@ export interface Device {
   config_history: ConfigVersion[];
   username?: string;
   password?: string;
+  enable_password?: string;
+  priv_username?: string;
+  credential_source?: 'local' | 'vault';
+  vault_path?: string;
+  onboarding_status?: 'pending_credentials' | 'credentials_set' | 'verified' | 'active';
+  onboarding_updated_at?: string;
+  password_last_rotated?: string;
+  password_expires_at?: string;
   cpu_usage?: number;
   memory_usage?: number;
   cpu_history?: number[];

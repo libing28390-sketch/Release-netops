@@ -25,6 +25,7 @@ from netmiko import ConnectHandler
 
 from database import get_db_connection, _SERIAL_PK
 from core.crypto import decrypt_credential
+from services.vault_service import resolve_device_credentials
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 from services.operational_data_service import (
     collect_operational_data,
@@ -283,15 +284,18 @@ def _load_eligible_devices(role_filter: list[str] | None = None) -> list[dict]:
     devices = []
     for r in rows:
         d = dict(r)
-        username = (d.get('username') or '').strip()
-        password = decrypt_credential(d.get('password')) or ''
+        creds = resolve_device_credentials(d)
+        username = creds['username'] or (d.get('username') or '').strip()
+        password = creds['password']
         if not username or not password:
             continue
         if role_filter:
             dev_role = (d.get('role') or '').lower().strip()
             if dev_role not in role_filter:
                 continue
+        d['username'] = username
         d['password'] = password
+        d['enable_password'] = creds['enable_password']
         devices.append(d)
     return devices
 

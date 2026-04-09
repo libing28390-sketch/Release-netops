@@ -15,6 +15,7 @@ from scrapli_community.huawei.vrp.async_driver import AsyncHuaweiVRPDriver
 from core.crypto import decrypt_credential
 from core.textfsm import configure_ntc_templates
 from database import get_db_connection
+from services.vault_service import resolve_device_credentials
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 
 logger = logging.getLogger(__name__)
@@ -252,7 +253,10 @@ def _get_device(device_id: str) -> dict[str, Any] | None:
         if not row:
             return None
         device = dict(row)
-        device['password'] = decrypt_credential(device.get('password')) or ''
+        creds = resolve_device_credentials(device)
+        device['username'] = creds['username'] or device.get('username', '')
+        device['password'] = creds['password']
+        device['enable_password'] = creds['enable_password']
         return device
     finally:
         conn.close()

@@ -101,6 +101,8 @@ interface InventoryDevicesTabProps {
   setInventoryRoleFilter: (v: string) => void;
   inventoryStatusFilter: string;
   setInventoryStatusFilter: (v: string) => void;
+  inventoryLifecycleFilter: string;
+  setInventoryLifecycleFilter: (v: string) => void;
   inventorySortConfig: { key: string; direction: 'asc' | 'desc' } | null;
   inventoryLoading: boolean;
   selectedDeviceIds: string[];
@@ -131,6 +133,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   inventoryPlatformFilter, setInventoryPlatformFilter,
   inventoryRoleFilter, setInventoryRoleFilter,
   inventoryStatusFilter, setInventoryStatusFilter,
+  inventoryLifecycleFilter, setInventoryLifecycleFilter,
   inventorySortConfig, inventoryLoading,
   selectedDeviceIds, setSelectedDeviceIds,
   handleSort, handleImport, handleExport,
@@ -153,10 +156,14 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   const warningCount = inventoryRows.filter(d => d.health_status === 'warning' || d.health_status === 'critical').length;
   const healthyCount = onlineCount - warningCount;
 
-  const displayRows = quickFilter === 'all' ? inventoryRows
-    : quickFilter === 'offline' ? inventoryRows.filter(d => d.status === 'offline')
-    : quickFilter === 'warning' ? inventoryRows.filter(d => d.health_status === 'warning' || d.health_status === 'critical')
-    : inventoryRows.filter(d => d.status === 'online' && (d.health_status === 'healthy' || !d.health_status));
+  const baseRows = (inventoryLifecycleFilter && inventoryLifecycleFilter !== 'all')
+    ? inventoryRows.filter(d => d.lifecycle_status === inventoryLifecycleFilter)
+    : inventoryRows;
+
+  const displayRows = quickFilter === 'all' ? baseRows
+    : quickFilter === 'offline' ? baseRows.filter(d => d.status === 'offline')
+    : quickFilter === 'warning' ? baseRows.filter(d => d.health_status === 'warning' || d.health_status === 'critical')
+    : baseRows.filter(d => d.status === 'online' && (d.health_status === 'healthy' || !d.health_status));
 
   const handleEditDevice = (device: Device) => {
     setEditingDevice(device);
@@ -253,6 +260,16 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             <option value="online">{language === 'zh' ? '在线' : 'Online'}</option>
             <option value="offline">{language === 'zh' ? '离线' : 'Offline'}</option>
             <option value="pending">{language === 'zh' ? '等待中' : 'Pending'}</option>
+          </select>
+          <select value={inventoryLifecycleFilter ?? 'all'} onChange={e => setInventoryLifecycleFilter(e.target.value)}
+            title={language === 'zh' ? '按投产状态筛选' : 'Filter by lifecycle'}
+            className="px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
+              outline-none text-black/55 dark:text-white/55 focus:border-[#00bceb]/40">
+            <option value="all">{language === 'zh' ? '全部投产状态' : 'All Lifecycle'}</option>
+            <option value="staging">{language === 'zh' ? '待投产' : 'Staging'}</option>
+            <option value="production">{language === 'zh' ? '已投产' : 'Production'}</option>
+            <option value="maintenance">{language === 'zh' ? '维护中' : 'Maintenance'}</option>
+            <option value="decommissioned">{language === 'zh' ? '已退役' : 'Decommissioned'}</option>
           </select>
 
         </div>

@@ -12,6 +12,7 @@ from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health
 from services.operational_data_service import collect_operational_data, collect_custom_command_data
 from core.crypto import encrypt_credential, decrypt_credential
+from services.vault_service import resolve_device_credentials, write_credentials as vault_write, vault_available
 from drivers.ssh_compat import build_ssh_error_guidance, get_ssh_error_code
 from datetime import datetime, timezone
 
@@ -93,6 +94,8 @@ def _sanitize_device_item(item: dict) -> dict:
     sanitized = dict(item)
     if 'password' in sanitized:
         sanitized['password'] = ''
+    if 'enable_password' in sanitized:
+        sanitized['enable_password'] = ''
     return sanitized
 
 
@@ -155,18 +158,20 @@ def _resolve_connection_target(payload: dict) -> dict:
         raise HTTPException(status_code=404, detail='Device not found')
 
     stored = dict(row)
-    stored_password = decrypt_credential(stored.get('password')) or ''
+    creds = resolve_device_credentials(stored)
     payload_password = payload.get('password')
 
     resolved['hostname'] = resolved['hostname'] or stored.get('hostname')
     resolved['ip_address'] = resolved['ip_address'] or stored.get('ip_address')
-    resolved['username'] = resolved['username'] or stored.get('username') or ''
+    resolved['username'] = resolved['username'] or creds['username'] or ''
     resolved['method'] = payload.get('method') or stored.get('connection_method') or 'ssh'
     resolved['platform'] = payload.get('platform') or stored.get('platform') or 'cisco_ios'
     if payload_password and not str(payload_password).startswith('enc:v1:'):
         resolved['password'] = payload_password
     else:
-        resolved['password'] = stored_password
+        resolved['password'] = creds['password']
+    resolved['enable_password'] = creds['enable_password']
+    resolved['priv_username'] = creds.get('priv_username', '') or stored.get('priv_username') or ''
     return resolved
 
 def _normalize_device_row(row):
@@ -306,10 +311,27 @@ def read_devices(
 def create_device(device: dict = Body(...)):
     conn = get_db_connection()
     device_id = device.get('id') or str(uuid.uuid4())
+    cred_source = (device.get('credential_source') or 'local').lower()
+    vault_path = device.get('vault_path', '')
+
+    # If Vault mode, push creds to Vault and store empty in DB
+    local_password = ''
+    local_enable = ''
+    if cred_source == 'vault' and vault_available() and vault_path:
+        vault_write(vault_path, {
+            'username': device.get('username', ''),
+            'password': device.get('password', ''),
+            'enable_password': device.get('enable_password', ''),
+            'priv_username': device.get('priv_username', ''),
+        })
+    else:
+        local_password = encrypt_credential(device.get('password'))
+        local_enable = encrypt_credential(device.get('enable_password')) if device.get('enable_password') else ''
+
     try:
         conn.execute('''
-            INSERT INTO devices (id, hostname, ip_address, platform, status, compliance, username, password, sn, model, version, role, site, uptime, connection_method, snmp_community, snmp_port)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO devices (id, hostname, ip_address, platform, status, compliance, username, password, sn, model, version, role, site, uptime, connection_method, snmp_community, snmp_port, lifecycle_status, enable_password, priv_username, credential_source, vault_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             device_id,
             device.get('hostname'),
@@ -318,7 +340,7 @@ def create_device(device: dict = Body(...)):
             device.get('status', 'pending'),
             device.get('compliance', 'unknown'),
             device.get('username'),
-            encrypt_credential(device.get('password')),
+            local_password,
             device.get('sn', ''),
             device.get('model', ''),
             device.get('version', ''),
@@ -327,7 +349,12 @@ def create_device(device: dict = Body(...)):
             device.get('uptime', '0d 0h'),
             device.get('connection_method', 'ssh'),
             device.get('snmp_community', 'public'),
-            device.get('snmp_port', 161)
+            device.get('snmp_port', 161),
+            device.get('lifecycle_status', 'staging'),
+            local_enable,
+            device.get('priv_username', ''),
+            cred_source,
+            vault_path,
         ))
         # Plan-A: auto-create linked physical_assets record
         _create_linked_asset_for_device(conn, device_id, device)
@@ -386,19 +413,42 @@ def delete_device(device_id: str):
 def update_device(device_id: str, device: dict = Body(...)):
     conn = get_db_connection()
     try:
-        existing_row = conn.execute('SELECT password FROM devices WHERE id = ?', (device_id,)).fetchone()
+        existing_row = conn.execute('SELECT password, enable_password, lifecycle_status, credential_source FROM devices WHERE id = ?', (device_id,)).fetchone()
         if not existing_row:
             raise HTTPException(status_code=404, detail='Device not found')
 
+        cred_source = (device.get('credential_source') or existing_row['credential_source'] or 'local').lower()
+        vault_path = device.get('vault_path', '')
+
         submitted_password = device.get('password')
-        if submitted_password in (None, ''):
-            stored_password = existing_row['password']
+        submitted_enable = device.get('enable_password')
+
+        if cred_source == 'vault' and vault_available() and vault_path:
+            # Push credentials to Vault; store empty in DB
+            vault_write(vault_path, {
+                'username': device.get('username', ''),
+                'password': submitted_password or '',
+                'enable_password': submitted_enable or '',
+                'priv_username': device.get('priv_username', ''),
+            })
+            stored_password = ''
+            stored_enable = ''
         else:
-            stored_password = encrypt_credential(submitted_password)
+            if submitted_password in (None, ''):
+                stored_password = existing_row['password']
+            else:
+                stored_password = encrypt_credential(submitted_password)
+
+            if submitted_enable in (None, ''):
+                stored_enable = existing_row['enable_password'] or ''
+            else:
+                stored_enable = encrypt_credential(submitted_enable)
+
+        new_lifecycle = device.get('lifecycle_status') or existing_row['lifecycle_status'] or 'staging'
 
         conn.execute('''
             UPDATE devices 
-            SET hostname = ?, ip_address = ?, platform = ?, sn = ?, model = ?, version = ?, role = ?, site = ?, connection_method = ?, username = ?, password = ?, current_config = ?, config_history = ?, snmp_community = ?, snmp_port = ?
+            SET hostname = ?, ip_address = ?, platform = ?, sn = ?, model = ?, version = ?, role = ?, site = ?, connection_method = ?, username = ?, password = ?, current_config = ?, config_history = ?, snmp_community = ?, snmp_port = ?, lifecycle_status = ?, enable_password = ?, priv_username = ?, credential_source = ?, vault_path = ?
             WHERE id = ?
         ''', (
             device.get('hostname', ''),
@@ -416,22 +466,34 @@ def update_device(device_id: str, device: dict = Body(...)):
             json.dumps(device.get('config_history', [])) if device.get('config_history') else '[]',
             device.get('snmp_community', 'public'),
             device.get('snmp_port', 161),
+            new_lifecycle,
+            stored_enable,
+            device.get('priv_username', ''),
+            cred_source,
+            vault_path,
             device_id
         ))
         conn.commit()
+
+        # Track lifecycle transition in audit details
+        old_lifecycle = existing_row['lifecycle_status'] or 'staging'
+        audit_details: dict = {'ip_address': device.get('ip_address'), 'platform': device.get('platform')}
+        if old_lifecycle != new_lifecycle:
+            audit_details['lifecycle_transition'] = f"{old_lifecycle} → {new_lifecycle}"
+
         log_audit_event(
             event_type='DEVICE_UPDATE',
             category='inventory',
-            severity='medium',
+            severity='high' if new_lifecycle == 'production' and old_lifecycle != 'production' else 'medium',
             status='success',
-            summary=f"Updated device {device.get('hostname', device_id)}",
+            summary=f"Updated device {device.get('hostname', device_id)}" + (f" [lifecycle: {old_lifecycle} → {new_lifecycle}]" if old_lifecycle != new_lifecycle else ''),
             actor_username=device.get('actor_username') or 'admin',
             actor_role=device.get('actor_role') or 'Administrator',
             target_type='device',
             target_id=device_id,
             target_name=device.get('hostname', device_id),
             device_id=device_id,
-            details={'ip_address': device.get('ip_address'), 'platform': device.get('platform')},
+            details=audit_details,
         )
         return {"status": "success"}
     except Exception as e:
@@ -439,7 +501,159 @@ def update_device(device_id: str, device: dict = Body(...)):
     finally:
         conn.close()
 
-@router.post("/devices/{device_id}/config")
+
+# ──────────────────────────────────────────────
+# 口令上手 / Device Onboarding State Machine
+# ──────────────────────────────────────────────
+# States: pending_credentials → credentials_set → verified → active
+# Transitions:
+#   pending_credentials → credentials_set  (user supplies credentials)
+#   credentials_set     → verified         (connectivity test passes)
+#   credentials_set     → pending_credentials (reset / credential fix)
+#   verified            → active           (promote to operational)
+#   any                 → pending_credentials (reset)
+
+_ONBOARDING_TRANSITIONS: dict[str, set[str]] = {
+    'pending_credentials': {'credentials_set'},
+    'credentials_set':     {'verified', 'pending_credentials'},
+    'verified':            {'active', 'pending_credentials'},
+    'active':              {'pending_credentials'},   # allow re-onboard
+}
+
+
+@router.post("/devices/{device_id}/onboard")
+def device_onboard(device_id: str, payload: dict = Body(...)):
+    """
+    Progress device through the onboarding state machine.
+    Body:
+      action: 'set_credentials' | 'verify' | 'activate' | 'reset'
+      username, password, enable_password, priv_username (for set_credentials)
+    """
+    action = payload.get('action', '')
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT id, hostname, ip_address, platform, onboarding_status, credential_source, vault_path FROM devices WHERE id = ?',
+            (device_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Device not found')
+        device = dict(row)
+        current = device.get('onboarding_status') or 'active'
+
+        if action == 'set_credentials':
+            target = 'credentials_set'
+        elif action == 'verify':
+            target = 'verified'
+        elif action == 'activate':
+            target = 'active'
+        elif action == 'reset':
+            target = 'pending_credentials'
+        else:
+            raise HTTPException(status_code=400, detail=f'Unknown onboarding action: {action}')
+
+        # Validate transition
+        allowed = _ONBOARDING_TRANSITIONS.get(current, set())
+        if target not in allowed:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot transition from '{current}' → '{target}'. Allowed: {sorted(allowed)}"
+            )
+
+        now = _utc_now()
+
+        # Action-specific logic
+        if action == 'set_credentials':
+            cred_source = (payload.get('credential_source') or device.get('credential_source') or 'local').lower()
+            vault_path = payload.get('vault_path') or device.get('vault_path') or ''
+            raw_password = payload.get('password', '')
+            raw_enable = payload.get('enable_password', '')
+
+            if cred_source == 'vault' and vault_available() and vault_path:
+                vault_write(vault_path, {
+                    'username': payload.get('username', ''),
+                    'password': raw_password,
+                    'enable_password': raw_enable,
+                    'priv_username': payload.get('priv_username', ''),
+                })
+                enc_pwd = ''
+                enc_enable = ''
+            else:
+                enc_pwd = encrypt_credential(raw_password) if raw_password else ''
+                enc_enable = encrypt_credential(raw_enable) if raw_enable else ''
+
+            conn.execute(
+                'UPDATE devices SET username = ?, password = ?, enable_password = ?, priv_username = ?, '
+                'credential_source = ?, vault_path = ?, onboarding_status = ?, onboarding_updated_at = ? WHERE id = ?',
+                (
+                    payload.get('username', ''),
+                    enc_pwd,
+                    enc_enable,
+                    payload.get('priv_username', ''),
+                    cred_source,
+                    vault_path,
+                    target,
+                    now,
+                    device_id,
+                )
+            )
+        elif action == 'verify':
+            # Run a quick connectivity test
+            from services.automation_service import AutomationService
+            svc = AutomationService()
+            stored = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
+            creds = resolve_device_credentials(dict(stored))
+            try:
+                test_ok = svc.test_connectivity(
+                    ip_address=stored['ip_address'],
+                    username=creds['username'],
+                    password=creds['password'],
+                    platform=stored['platform'] or 'cisco_ios',
+                )
+            except Exception as exc:
+                _logger.warning("Onboard verify failed for %s: %s", device_id, exc)
+                test_ok = False
+            if not test_ok:
+                raise HTTPException(status_code=422, detail='Connectivity verification failed')
+            conn.execute(
+                'UPDATE devices SET onboarding_status = ?, onboarding_updated_at = ? WHERE id = ?',
+                (target, now, device_id)
+            )
+        elif action == 'activate':
+            conn.execute(
+                "UPDATE devices SET onboarding_status = ?, onboarding_updated_at = ?, status = 'online' WHERE id = ?",
+                (target, now, device_id)
+            )
+        elif action == 'reset':
+            conn.execute(
+                'UPDATE devices SET onboarding_status = ?, onboarding_updated_at = ? WHERE id = ?',
+                (target, now, device_id)
+            )
+
+        conn.commit()
+
+        log_audit_event(
+            event_type='DEVICE_ONBOARD',
+            category='inventory',
+            severity='medium',
+            status='success',
+            summary=f"Onboard {device.get('hostname', device_id)}: {current} → {target}",
+            actor_username=payload.get('actor_username') or 'admin',
+            actor_role=payload.get('actor_role') or 'Administrator',
+            target_type='device',
+            target_id=device_id,
+            target_name=device.get('hostname', device_id),
+            device_id=device_id,
+        )
+
+        return {"status": "success", "onboarding_status": target}
+    except HTTPException:
+        raise
+    except Exception as e:
+        _logger.exception("Onboard action failed")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 def update_device_config(device_id: str, payload: dict = Body(...)):
     conn = get_db_connection()
     try:
@@ -451,6 +665,46 @@ def update_device_config(device_id: str, payload: dict = Body(...)):
         return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
     finally:
         conn.close()
+
+
+# ──────────────────────────────────────────────
+# Password Rotation Endpoints
+# ──────────────────────────────────────────────
+
+@router.get("/devices/rotation/status")
+def rotation_status():
+    """密码轮换状态概览。"""
+    from services.password_rotation_service import get_rotation_status
+    return {"success": True, "data": get_rotation_status()}
+
+
+@router.get("/devices/rotation/expiring")
+def rotation_expiring(days: int = Query(default=14)):
+    """即将过期的设备列表。"""
+    from services.password_rotation_service import check_expiring
+    return {"success": True, "data": check_expiring(days_ahead=days)}
+
+
+@router.post("/devices/{device_id}/rotate-password")
+def rotate_device_password(device_id: str):
+    """手动触发单台设备密码轮换。"""
+    from services.password_rotation_service import rotate_password
+    result = rotate_password(device_id)
+    if result['success']:
+        log_audit_event(
+            event_type='PASSWORD_ROTATE',
+            category='security',
+            severity='high',
+            status='success',
+            summary=result.get('message', ''),
+            actor_username='admin',
+            actor_role='Administrator',
+            target_type='device',
+            target_id=device_id,
+            device_id=device_id,
+        )
+    return {"success": result['success'], "data": result}
+
 
 @router.post("/devices/connect")
 def test_device_connection(payload: dict = Body(...)):

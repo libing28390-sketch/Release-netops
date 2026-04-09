@@ -270,6 +270,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                       <StatusBadge
                         status={device.status}
                         healthStatus={device.health_status}
+                        lifecycleStatus={device.lifecycle_status}
                         uptime={device.uptime}
                         connectionCheck={deviceConnectionChecks[device.id]}
                         language={language}

@@ -1,5 +1,5 @@
 """
-NetPilot POC 详细测试脚本 v3
+Nexora POC 详细测试脚本 v3
 特别强化：自动化操作、告警处置、合规审计、变更工单、设备巡检等关键业务流程的交互截图。
 每个测试用例包含完整的操作步骤与多张截图。
 """
@@ -11,7 +11,7 @@ SCREENSHOT_DIR = os.path.join(os.path.dirname(__file__), "poc_screenshots")
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 USERNAME = "admin"
-PASSWORD = "Libing123456."
+PASSWORD = "lI19860921."
 
 _case_num = 0
 
@@ -98,6 +98,25 @@ def tc_login(page: Page):
     shot(page, f"TC{cid}_03_login_success")
     print(f"    当前URL: {page.url}")
 
+    # 步骤 4: 切换界面语言为中文
+    print(f"  步骤4: 切换界面语言为中文")
+    page.evaluate("""() => {
+        const token = localStorage.getItem('netops_token');
+        return fetch('/api/users/me', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        }).then(r => r.json()).then(d => {
+            const userId = d.data ? d.data.id : d.id;
+            return fetch('/api/users/' + userId, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({ preferred_language: 'zh' })
+            });
+        });
+    }""")
+    page.goto(BASE_URL)
+    page.wait_for_timeout(5000)
+    settle(page)
+
 
 # ═══════════════════════════════════════════════════════════
 # TC-02: 仪表盘
@@ -106,7 +125,7 @@ def tc_dashboard(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 仪表盘概览")
 
-    click_nav(page, "Dashboard", "/dashboard")
+    click_nav(page, "仪表盘", "/dashboard")
     print(f"  步骤1: 查看仪表盘顶部 KPI 卡片与主机资源")
     shot(page, f"TC{cid}_01_dashboard_top")
 
@@ -123,7 +142,7 @@ def tc_monitoring(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 监控中心")
 
-    click_nav(page, "Monitoring", "/monitoring")
+    click_nav(page, "监控中心", "/monitoring")
     print(f"  步骤1: 查看监控面板")
     shot(page, f"TC{cid}_01_monitoring")
 
@@ -135,7 +154,7 @@ def tc_topology(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 网络拓扑")
 
-    click_nav(page, "Topology", "/topology")
+    click_nav(page, "网络拓扑", "/topology")
     print(f"  步骤1: 查看拓扑可视化画布")
     shot(page, f"TC{cid}_01_topology")
 
@@ -147,7 +166,7 @@ def tc_alerts(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 告警中心 — 完整操作流程")
 
-    click_nav(page, "Alert Center", "/alerts")
+    click_nav(page, "告警中心", "/alerts")
     print(f"  步骤1: 查看告警列表（Open 标签）")
     shot(page, f"TC{cid}_01_alert_list_open")
 
@@ -203,7 +222,7 @@ def tc_alert_history(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 历史告警")
 
-    click_nav(page, "Alert History", "/alert-history")
+    click_nav(page, "历史告警", "/alert-history")
     print(f"  步骤1: 查看历史告警记录")
     shot(page, f"TC{cid}_01_alert_history")
 
@@ -215,7 +234,7 @@ def tc_alert_rules(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 告警规则")
 
-    click_nav(page, "Alert Rules", "/alert-rules")
+    click_nav(page, "告警规则", "/alert-rules")
     print(f"  步骤1: 查看告警规则列表")
     shot(page, f"TC{cid}_01_alert_rules")
 
@@ -227,7 +246,7 @@ def tc_maintenance(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 维护窗口")
 
-    click_nav(page, "Maintenance", "/maintenance")
+    click_nav(page, "维护期", "/maintenance")
     print(f"  步骤1: 查看维护期列表")
     shot(page, f"TC{cid}_01_maintenance")
 
@@ -239,7 +258,7 @@ def tc_assets(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 资产管理")
 
-    click_nav(page, "Assets", "/assets")
+    click_nav(page, "资产管理", "/assets")
     print(f"  步骤1: 查看资产概览")
     shot(page, f"TC{cid}_01_assets")
 
@@ -251,7 +270,7 @@ def tc_devices(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 网络设备清单 — 详细操作")
 
-    click_nav(page, "Device List", "/inventory/devices")
+    click_nav(page, "网络设备", "/inventory/devices")
     print(f"  步骤1: 查看设备列表（503台设备）")
     shot(page, f"TC{cid}_01_devices_list")
 
@@ -313,7 +332,7 @@ def tc_servers(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 服务器清单")
 
-    click_nav(page, "Servers", "/inventory/servers")
+    click_nav(page, "服务器", "/inventory/servers")
     print(f"  步骤1: 查看服务器列表")
     shot(page, f"TC{cid}_01_servers")
 
@@ -325,7 +344,7 @@ def tc_ipam(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] IP/VLAN 管理")
 
-    click_nav(page, "IP/VLAN Mgmt", "/ipam")
+    click_nav(page, "IP/VLAN管理", "/ipam")
     print(f"  步骤1: 查看 IP 地址管理")
     shot(page, f"TC{cid}_01_ipam")
 
@@ -337,7 +356,7 @@ def tc_ip_locator(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] IP 工具箱")
 
-    click_nav(page, "IP Toolbox", "/ip-locator")
+    click_nav(page, "IP 工具箱", "/ip-locator")
     print(f"  步骤1: 查看 IP 定位工具")
     shot(page, f"TC{cid}_01_ip_locator")
 
@@ -349,7 +368,7 @@ def tc_config_backup(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 配置备份 — 完整操作流程")
 
-    click_nav(page, "Backup Center", "/config/backup")
+    click_nav(page, "备份中心", "/config/backup")
     print(f"  步骤1: 查看配置备份列表")
     shot(page, f"TC{cid}_01_backup_list")
 
@@ -386,7 +405,7 @@ def tc_config_schedule(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 备份计划")
 
-    click_nav(page, "Backup Schedule", "/config/schedule")
+    click_nav(page, "备份计划", "/config/schedule")
     print(f"  步骤1: 查看备份计划列表")
     shot(page, f"TC{cid}_01_schedule")
 
@@ -398,7 +417,7 @@ def tc_config_diff(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 配置对比")
 
-    click_nav(page, "Config Diff", "/config/diff")
+    click_nav(page, "配置对比", "/config/diff")
     print(f"  步骤1: 查看配置差异比对界面")
     shot(page, f"TC{cid}_01_config_diff")
 
@@ -410,7 +429,7 @@ def tc_config_search(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 配置搜索")
 
-    click_nav(page, "Config Search", "/config/search")
+    click_nav(page, "配置搜索", "/config/search")
     print(f"  步骤1: 查看全局配置搜索页面")
     shot(page, f"TC{cid}_01_config_search")
 
@@ -704,7 +723,7 @@ def tc_scheduled_tasks(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 执行计划")
 
-    click_nav(page, "Scheduled Tasks", "/automation/schedule")
+    click_nav(page, "执行计划", "/automation/schedule")
     print(f"  步骤1: 查看执行计划列表")
     shot(page, f"TC{cid}_01_schedule")
 
@@ -716,7 +735,7 @@ def tc_change_orders(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 变更工单 — 完整生命周期")
 
-    click_nav(page, "Change Orders", "/change-orders")
+    click_nav(page, "变更工单", "/change-orders")
     print(f"  步骤1: 查看变更工单列表")
     shot(page, f"TC{cid}_01_change_orders_list")
 
@@ -839,7 +858,7 @@ def tc_capacity(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 容量分析")
 
-    click_nav(page, "Capacity", "/capacity")
+    click_nav(page, "容量分析", "/capacity")
     print(f"  步骤1: 查看容量规划")
     shot(page, f"TC{cid}_01_capacity")
 
@@ -851,7 +870,7 @@ def tc_reports(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 报表中心")
 
-    click_nav(page, "Reports", "/reports")
+    click_nav(page, "报表中心", "/reports")
     print(f"  步骤1: 查看报表中心")
     shot(page, f"TC{cid}_01_reports")
 
@@ -863,7 +882,7 @@ def tc_audit(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 审计日志")
 
-    click_nav(page, "Audit Logs", "/history")
+    click_nav(page, "审计日志", "/history")
     print(f"  步骤1: 查看审计日志列表")
     shot(page, f"TC{cid}_01_audit_logs")
 
@@ -888,7 +907,7 @@ def tc_platform_settings(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 平台设置")
 
-    click_nav(page, "Settings", "/configuration")
+    click_nav(page, "平台设置", "/configuration")
     print(f"  步骤1: 查看平台配置")
     shot(page, f"TC{cid}_01_settings")
 
@@ -900,7 +919,7 @@ def tc_users(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 用户管理")
 
-    click_nav(page, "Users", "/users")
+    click_nav(page, "用户管理", "/users")
     print(f"  步骤1: 查看用户列表")
     shot(page, f"TC{cid}_01_users")
 
@@ -925,7 +944,7 @@ def tc_device_health(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 设备健康检测")
 
-    click_nav(page, "Health Detection", "/health")
+    click_nav(page, "健康检测", "/health")
     print(f"  步骤1: 查看设备健康检测面板")
     shot(page, f"TC{cid}_01_health")
 
@@ -976,7 +995,7 @@ def tc_responsive(page: Page):
     cid = case_id()
     print(f"\n[TC-{cid}] 响应式布局测试")
 
-    click_nav(page, "Dashboard", "/dashboard")
+    click_nav(page, "仪表盘", "/dashboard")
 
     print(f"  步骤1: 桌面宽度 1920px")
     page.set_viewport_size({"width": 1920, "height": 1080})
@@ -1004,7 +1023,7 @@ def tc_api_perf(page: Page):
     print(f"\n[TC-{cid}] API 响应时间验证")
 
     page.evaluate("performance.clearResourceTimings()")
-    click_nav(page, "Device List", "/inventory/devices")
+    click_nav(page, "网络设备", "/inventory/devices")
     page.wait_for_timeout(3000)
 
     perf = page.evaluate("""() => {
@@ -1029,13 +1048,20 @@ def tc_api_perf(page: Page):
 # ═══════════════════════════════════════════════════════════
 def main():
     print("=" * 70)
-    print("  NetPilot POC 详细自动化测试 v3")
+    print("  Nexora POC 详细自动化测试 v3")
     print(f"  目标: {BASE_URL}")
     print(f"  截图目录: {SCREENSHOT_DIR}")
     print("=" * 70)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            executable_path=os.path.expandvars(
+                r"%LOCALAPPDATA%\ms-playwright\chromium-1161\chrome-win\chrome.exe"
+            ) if os.path.exists(os.path.expandvars(
+                r"%LOCALAPPDATA%\ms-playwright\chromium-1161\chrome-win\chrome.exe"
+            )) else None,
+        )
         ctx = browser.new_context(
             viewport={"width": 1920, "height": 1080},
             locale="zh-CN",

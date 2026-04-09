@@ -15,6 +15,13 @@ const HEALTH_CFG: Record<string, { bg: string; border: string; text: string; lab
   unknown:  { bg: 'bg-slate-500/10',   border: 'border-slate-500/20',  text: 'text-slate-500 dark:text-slate-400',     labelZh: '未知', labelEn: 'Unknown' },
 };
 
+const LIFECYCLE_CFG: Record<string, { bg: string; border: string; text: string; labelZh: string; labelEn: string }> = {
+  staging:         { bg: 'bg-blue-500/10',   border: 'border-blue-500/20',   text: 'text-blue-600 dark:text-blue-400',     labelZh: '待投产',   labelEn: 'Staging' },
+  production:      { bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', text: 'text-emerald-600 dark:text-emerald-400', labelZh: '已投产', labelEn: 'Production' },
+  maintenance:     { bg: 'bg-orange-500/10', border: 'border-orange-500/20', text: 'text-orange-600 dark:text-orange-400', labelZh: '维护中',   labelEn: 'Maintenance' },
+  decommissioned:  { bg: 'bg-slate-500/10',  border: 'border-slate-500/20',  text: 'text-slate-500 dark:text-slate-400',   labelZh: '已退役',   labelEn: 'Decommissioned' },
+};
+
 const CHECK_BADGE: Record<DeviceConnectionCheckSummary['status'], { zh: string; en: string; cls: string }> = {
   ok:            { zh: 'OK',            en: 'OK',           cls: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' },
   tcp_fail:      { zh: 'TCP 失败',      en: 'TCP Fail',     cls: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20' },
@@ -37,6 +44,7 @@ const formatCheckTime = (value: string, language: string) => {
 interface StatusBadgeProps {
   status: string;
   healthStatus?: string;
+  lifecycleStatus?: string;
   uptime?: string;
   connectionCheck?: DeviceConnectionCheckSummary;
   language: string;
@@ -44,16 +52,17 @@ interface StatusBadgeProps {
 
 /* ─── Component ─── */
 const StatusBadge: React.FC<StatusBadgeProps> = ({
-  status, healthStatus, uptime, connectionCheck, language,
+  status, healthStatus, lifecycleStatus, uptime, connectionCheck, language,
 }) => {
   const zh = language === 'zh';
   const st = STATUS_CFG[status as keyof typeof STATUS_CFG] || STATUS_CFG.pending;
   const health = HEALTH_CFG[healthStatus || 'unknown'] || HEALTH_CFG.unknown;
+  const lifecycle = LIFECYCLE_CFG[lifecycleStatus || 'staging'] || LIFECYCLE_CFG.staging;
   const chkBadge = connectionCheck ? (CHECK_BADGE[connectionCheck.status] || CHECK_BADGE.fail) : null;
 
   return (
     <div className="space-y-0.5">
-      {/* Row 1: Status dot + label + health badge */}
+      {/* Row 1: Status dot + label + health badge + lifecycle badge */}
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="relative flex h-[7px] w-[7px] shrink-0">
           {st.ping && (
@@ -70,6 +79,10 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
             {zh ? health.labelZh : health.labelEn}
           </span>
         )}
+        <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[8px] font-bold uppercase leading-none
+          ${lifecycle.bg} ${lifecycle.border} ${lifecycle.text}`}>
+          {zh ? lifecycle.labelZh : lifecycle.labelEn}
+        </span>
       </div>
 
       {/* Row 2: Connection check result (compact) */}
@@ -93,4 +106,4 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
 };
 
 export default StatusBadge;
-export { STATUS_CFG, HEALTH_CFG, CHECK_BADGE, formatCheckTime };
+export { STATUS_CFG, HEALTH_CFG, LIFECYCLE_CFG, CHECK_BADGE, formatCheckTime };

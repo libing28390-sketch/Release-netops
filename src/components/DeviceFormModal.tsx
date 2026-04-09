@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Edit2, Eye, EyeOff, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Edit2, Eye, EyeOff, Plus, X } from 'lucide-react';
 import type { Device } from '../types';
 
 type DeviceFormMode = 'add' | 'edit';
@@ -37,6 +37,13 @@ const ROLE_OPTIONS = [
   'Unknown',
 ];
 
+const LIFECYCLE_OPTIONS = [
+  { value: 'staging', labelZh: '待投产', labelEn: 'Staging' },
+  { value: 'production', labelZh: '已投产', labelEn: 'Production' },
+  { value: 'maintenance', labelZh: '维护中', labelEn: 'Maintenance' },
+  { value: 'decommissioned', labelZh: '已退役', labelEn: 'Decommissioned' },
+];
+
 const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   mode,
   language,
@@ -48,6 +55,10 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   onSubmit,
 }) => {
   const isAdd = mode === 'add';
+  const [enablePwdVisible, setEnablePwdVisible] = useState(false);
+  const [showAdvancedCred, setShowAdvancedCred] = useState(
+    !!(form.enable_password || form.priv_username || (form.credential_source && form.credential_source !== 'local') || form.vault_path)
+  );
 
   const handleFieldChange = <K extends keyof Device>(key: K, value: Device[K] | string | number | undefined) => {
     onFormChange({ ...form, [key]: value });
@@ -160,6 +171,23 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               />
             </div>
             <div>
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                {language === 'zh' ? '投产状态' : 'Lifecycle Status'}
+              </label>
+              <select
+                value={form.lifecycle_status || 'staging'}
+                title={language === 'zh' ? '投产状态' : 'Lifecycle status'}
+                onChange={(event) => handleFieldChange('lifecycle_status', event.target.value as Device['lifecycle_status'])}
+                className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+              >
+                {LIFECYCLE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {language === 'zh' ? opt.labelZh : opt.labelEn}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
               <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Serial Number</label>
               <input
                 type="text"
@@ -245,6 +273,87 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Advanced Credentials Section */}
+          <div className="col-span-1 sm:col-span-2">
+            <button
+              type="button"
+              onClick={() => setShowAdvancedCred(!showAdvancedCred)}
+              className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-black/50 transition-colors hover:text-black/80"
+            >
+              {showAdvancedCred ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              {language === 'zh' ? '特权凭据 / Vault' : 'Privileged Credentials / Vault'}
+            </button>
+          </div>
+          {showAdvancedCred && (
+            <>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                  {language === 'zh' ? '特权用户名' : 'Privileged Username'}
+                </label>
+                <input
+                  type="text"
+                  value={form.priv_username || ''}
+                  title={language === 'zh' ? '特权用户名（用于 enable 模式）' : 'Privileged username (for enable mode)'}
+                  onChange={(event) => handleFieldChange('priv_username', event.target.value)}
+                  className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+                  placeholder={language === 'zh' ? '留空则使用普通用户名' : 'Leave blank to use login username'}
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                  {language === 'zh' ? 'Enable 密码' : 'Enable Password'}
+                </label>
+                <div className="relative">
+                  <input
+                    type={enablePwdVisible ? 'text' : 'password'}
+                    value={form.enable_password || ''}
+                    title={language === 'zh' ? 'Enable 密码（特权模式）' : 'Enable password (privilege mode)'}
+                    onChange={(event) => handleFieldChange('enable_password', event.target.value)}
+                    placeholder={isAdd ? '' : (language === 'zh' ? '留空保持不变' : 'Leave blank to keep unchanged')}
+                    className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 pr-10 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+                  />
+                  <button
+                    type="button"
+                    title={enablePwdVisible ? 'Hide' : 'Show'}
+                    onClick={() => setEnablePwdVisible(!enablePwdVisible)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 transition-colors hover:text-black/60"
+                  >
+                    {enablePwdVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                  {language === 'zh' ? '凭据来源' : 'Credential Source'}
+                </label>
+                <select
+                  value={form.credential_source || 'local'}
+                  title={language === 'zh' ? '凭据存储方式' : 'Credential storage method'}
+                  onChange={(event) => handleFieldChange('credential_source', event.target.value as Device['credential_source'])}
+                  className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+                >
+                  <option value="local">{language === 'zh' ? '本地加密' : 'Local Encrypted'}</option>
+                  <option value="vault">{language === 'zh' ? 'HashiCorp Vault' : 'HashiCorp Vault'}</option>
+                </select>
+              </div>
+              {form.credential_source === 'vault' && (
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                    {language === 'zh' ? 'Vault 路径' : 'Vault Path'}
+                  </label>
+                  <input
+                    type="text"
+                    value={form.vault_path || ''}
+                    title={language === 'zh' ? 'Vault KV 路径' : 'Vault KV path'}
+                    onChange={(event) => handleFieldChange('vault_path', event.target.value)}
+                    className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+                    placeholder="netops/devices/core-sw-01"
+                  />
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         <div className={`border-t border-black/5 ${isAdd ? 'bg-black/[0.01]' : 'bg-black/[0.02]'} p-6 ${isAdd ? 'flex gap-3' : 'flex justify-end gap-3'}`}>
