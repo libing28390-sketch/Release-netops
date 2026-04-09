@@ -1292,6 +1292,7 @@ def init_db():
         ensure_column('physical_assets', 'vlan', "TEXT DEFAULT ''")
         ensure_column('physical_assets', 'uplink_switch', "TEXT DEFAULT ''")
         ensure_column('physical_assets', 'uplink_port', "TEXT DEFAULT ''")
+        ensure_column('physical_assets', 'lifecycle_status', "TEXT DEFAULT 'staging'")
 
         # Migration: link devices to physical_assets (Plan-A unification)
         ensure_column('devices', 'asset_id', 'TEXT')

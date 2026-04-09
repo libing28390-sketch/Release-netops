@@ -257,9 +257,9 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                 <input
                   type={passwordVisible ? 'text' : 'password'}
                   value={form.password || ''}
-                  title="Login password"
+                  title={language === 'zh' ? 'SSH / Telnet 登录密码' : 'SSH / Telnet login password'}
                   onChange={(event) => handleFieldChange('password', event.target.value)}
-                  placeholder={isAdd ? '' : 'Leave blank to keep unchanged'}
+                  placeholder={isAdd ? (language === 'zh' ? '输入 SSH 登录密码' : 'Enter SSH login password') : (language === 'zh' ? '留空则保持当前密码不变' : 'Leave blank to keep current password')}
                   className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 pr-10 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
                 />
                 <button
@@ -282,7 +282,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-black/50 transition-colors hover:text-black/80"
             >
               {showAdvancedCred ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              {language === 'zh' ? '特权凭据 / Vault' : 'Privileged Credentials / Vault'}
+              {language === 'zh' ? 'Enable 特权凭据 / Vault' : 'Enable / Vault Credentials'}
             </button>
           </div>
           {showAdvancedCred && (
@@ -302,15 +302,15 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               </div>
               <div>
                 <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
-                  {language === 'zh' ? 'Enable 密码' : 'Enable Password'}
+                  {language === 'zh' ? 'Enable Secret（特权密码）' : 'Enable Secret'}
                 </label>
                 <div className="relative">
                   <input
                     type={enablePwdVisible ? 'text' : 'password'}
                     value={form.enable_password || ''}
-                    title={language === 'zh' ? 'Enable 密码（特权模式）' : 'Enable password (privilege mode)'}
+                    title={language === 'zh' ? '设备特权提权密码' : 'Device privilege escalation password'}
                     onChange={(event) => handleFieldChange('enable_password', event.target.value)}
-                    placeholder={isAdd ? '' : (language === 'zh' ? '留空保持不变' : 'Leave blank to keep unchanged')}
+                    placeholder={isAdd ? (language === 'zh' ? '输入特权提权密码' : 'Enter enable secret') : (language === 'zh' ? '留空则保持不变' : 'Leave blank to keep unchanged')}
                     className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 pr-10 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
                   />
                   <button
@@ -322,6 +322,11 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                     {enablePwdVisible ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
                 </div>
+                <p className="mt-1 text-[11px] text-black/40">
+                  {language === 'zh'
+                    ? '设备特权提权密码（如 Cisco enable、Huawei super），与上方登录密码不同'
+                    : 'Privilege escalation (e.g. Cisco enable, Huawei super), differs from login password above'}
+                </p>
               </div>
               <div>
                 <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">

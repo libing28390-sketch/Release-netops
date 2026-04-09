@@ -141,6 +141,7 @@ class AssetCreate(BaseModel):
     uplink_switch: str = ''
     uplink_port: str = ''
     status: str = 'active'
+    lifecycle_status: str = 'staging'
     purchase_date: str = ''
     warranty_expiry: str = ''
     department: str = ''
@@ -171,6 +172,7 @@ class AssetUpdate(BaseModel):
     uplink_switch: Optional[str] = None
     uplink_port: Optional[str] = None
     status: Optional[str] = None
+    lifecycle_status: Optional[str] = None
     purchase_date: Optional[str] = None
     warranty_expiry: Optional[str] = None
     department: Optional[str] = None
@@ -319,14 +321,14 @@ def create_asset(body: AssetCreate):
                 id, asset_type, asset_tag, serial_number, vendor, model, hostname,
                 datacenter, rack, rack_unit, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
-                status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status, lifecycle_status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
             body.management_ip, body.business_ip, body.device_role,
             body.vlan, body.uplink_switch, body.uplink_port,
-            body.status,
+            body.status, body.lifecycle_status,
             body.purchase_date, body.warranty_expiry, body.department, body.notes, now, now
         ))
 
@@ -358,13 +360,18 @@ def update_asset(asset_id: str, body: AssetUpdate):
             if dup:
                 raise HTTPException(status_code=409, detail='Asset tag already exists')
 
+        # Detect lifecycle transition for auto password rotation
+        old_lifecycle = row['lifecycle_status'] if 'lifecycle_status' in row.keys() else 'staging'
+        new_lifecycle = body.lifecycle_status if body.lifecycle_status is not None else old_lifecycle
+        transitioning_to_production = (new_lifecycle == 'production' and old_lifecycle != 'production')
+
         updates = []
         params = []
         updatable = [
             'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
             'datacenter', 'rack', 'rack_unit', 'management_ip', 'business_ip', 'device_role',
             'vlan', 'uplink_switch', 'uplink_port',
-            'status', 'purchase_date', 'warranty_expiry', 'department', 'notes'
+            'status', 'lifecycle_status', 'purchase_date', 'warranty_expiry', 'department', 'notes'
         ]
         for field in updatable:
             val = getattr(body, field, None)
@@ -372,6 +379,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
                 updates.append(f'{field} = ?')
                 params.append(val)
 
+        rotation_result = None
         if updates:
             updates.append('updated_at = ?')
             params.append(_utc_now())
@@ -382,9 +390,37 @@ def update_asset(asset_id: str, body: AssetUpdate):
             current_type = body.asset_type if body.asset_type is not None else row['asset_type']
             if current_type == 'network_device':
                 _sync_device_from_asset(conn, asset_id, body)
+                # Also sync lifecycle_status to linked device
+                if body.lifecycle_status is not None:
+                    conn.execute(
+                        'UPDATE devices SET lifecycle_status = ? WHERE asset_id = ?',
+                        (body.lifecycle_status, asset_id)
+                    )
 
             conn.commit()
-        return {'ok': True}
+
+            # Auto-rotate default password when transitioning to production
+            if transitioning_to_production:
+                device_row = conn.execute(
+                    'SELECT id FROM devices WHERE asset_id = ?', (asset_id,)
+                ).fetchone()
+                if device_row:
+                    try:
+                        from services.password_rotation_service import rotate_password
+                        rotation_result = rotate_password(device_row['id'])
+                        logger.info(
+                            'Auto-rotated password for device %s on production transition (asset %s)',
+                            device_row['id'], asset_id
+                        )
+                    except Exception as e:
+                        logger.warning('Auto-rotation failed for asset %s: %s', asset_id, e)
+                        rotation_result = {'success': False, 'message': str(e)}
+
+        return {
+            'ok': True,
+            'password_rotated': rotation_result is not None and rotation_result.get('success', False),
+            'rotation_detail': rotation_result.get('message', '') if rotation_result else None,
+        }
     finally:
         conn.close()
 

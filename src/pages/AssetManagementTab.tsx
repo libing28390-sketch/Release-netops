@@ -48,8 +48,9 @@ interface Props {
    ═══════════════════════════════════════════════════════════════════ */
 
 const STATUSES = [
-  { value: 'active',         label: { zh: '在线', en: 'Online' },       dot: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-700', text: 'text-emerald-600' },
-  { value: 'inactive',       label: { zh: '离线', en: 'Offline' },      dot: 'bg-red-400',     badge: 'bg-red-50 text-red-600',         text: 'text-red-500' },
+  { value: 'active',         label: { zh: '在用', en: 'In Use' },        dot: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-700', text: 'text-emerald-600' },
+  { value: 'inactive',       label: { zh: '闲置', en: 'Idle' },          dot: 'bg-sky-400',     badge: 'bg-sky-50 text-sky-600',         text: 'text-sky-500' },
+  { value: 'in_storage',     label: { zh: '库存中', en: 'In Storage' },  dot: 'bg-blue-400',    badge: 'bg-blue-50 text-blue-600',       text: 'text-blue-500' },
   { value: 'maintenance',    label: { zh: '维护中', en: 'Maintenance' }, dot: 'bg-amber-500',   badge: 'bg-amber-50 text-amber-700',     text: 'text-amber-600' },
   { value: 'decommissioned', label: { zh: '已退役', en: 'Retired' },     dot: 'bg-slate-400',   badge: 'bg-slate-100 text-slate-500',    text: 'text-slate-400' },
 ] as const;
@@ -59,6 +60,13 @@ const TYPES = [
   { value: 'network_device', label: { zh: '网络设备', en: 'Network' }, icon: Router },
 ] as const;
 
+const LIFECYCLE_STATUSES = [
+  { value: 'staging',        label: { zh: '待投产', en: 'Staging' } },
+  { value: 'production',     label: { zh: '已投产', en: 'Production' } },
+  { value: 'maintenance',    label: { zh: '维护中', en: 'Maintenance' } },
+  { value: 'decommissioned', label: { zh: '已退役', en: 'Decommissioned' } },
+] as const;
+
 type ViewMode = 'table' | 'group' | 'topology';
 type GroupBy = 'datacenter' | 'department' | 'vendor';
 
@@ -66,7 +74,7 @@ const EMPTY_FORM = {
   asset_type: 'server', asset_tag: '', serial_number: '', vendor: '', model: '',
   hostname: '', datacenter: '', rack: '', rack_unit: '', management_ip: '',
   business_ip: '', device_role: '', vlan: '', uplink_switch: '', uplink_port: '',
-  status: 'active', purchase_date: '', warranty_expiry: '', department: '', notes: '',
+  status: 'active', lifecycle_status: 'staging', purchase_date: '', warranty_expiry: '', department: '', notes: '',
   // network_device specific
   platform: 'cisco_ios', connection_method: 'ssh', username: '', password: '',
   snmp_community: 'public', snmp_port: '161',
@@ -109,9 +117,10 @@ const ago = (iso: string) => {
 
 /** Map status to severity for P1-P4 classification */
 const severityOf = (a: Asset): 'critical' | 'major' | 'warning' | 'healthy' => {
-  if (a.status === 'inactive') return 'critical';
+  if (a.status === 'decommissioned') return 'critical';
   if (a.status === 'maintenance') return 'major';
   if (a.warranty_expiry && new Date(a.warranty_expiry) <= new Date(Date.now() + 90 * 86400000)) return 'warning';
+  if (a.status === 'inactive' || a.status === 'in_storage') return 'warning';
   return 'healthy';
 };
 
@@ -151,6 +160,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [showBatchTag, setShowBatchTag] = useState(false);
   const [batchTagValue, setBatchTagValue] = useState('');
+  const [showProductionConfirm, setShowProductionConfirm] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   /* ─── Data Fetching ─── */
@@ -214,7 +224,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       rack: a.rack, rack_unit: a.rack_unit, management_ip: a.management_ip,
       business_ip: a.business_ip, device_role: a.device_role,
       vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
-      status: a.status,
+      status: a.status, lifecycle_status: (a as any).lifecycle_status || 'staging',
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
       platform: (a as any).platform || 'cisco_ios',
@@ -229,12 +239,35 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
 
   const handleSave = async () => {
     if (!form.hostname.trim() && !form.asset_tag.trim()) return;
+
+    // Detect production transition → show confirmation first
+    const oldLifecycle = editingAsset ? ((editingAsset as any).lifecycle_status || 'staging') : 'staging';
+    if (editingAsset && form.lifecycle_status === 'production' && oldLifecycle !== 'production') {
+      setShowProductionConfirm(true);
+      return;
+    }
+
+    await doSave();
+  };
+
+  const doSave = async () => {
     setSaving(true);
     try {
       const url = editingAsset ? `/api/assets/${editingAsset.id}` : '/api/assets';
       const r = await fetch(url, { method: editingAsset ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
-      if (r.ok) { setShowModal(false); fetchAssets(); fetchSummary(); }
-      else {
+      if (r.ok) {
+        const data = await r.json().catch(() => null);
+        setShowModal(false);
+        setShowProductionConfirm(false);
+        fetchAssets();
+        fetchSummary();
+        // Report password rotation result
+        if (data?.password_rotated) {
+          alert(zh ? '已投产，默认口令已自动修改上收。' : 'Marked as production. Default password has been auto-rotated.');
+        } else if (data?.rotation_detail) {
+          alert(zh ? `已投产，但口令自动轮换失败: ${data.rotation_detail}` : `Marked as production, but auto-rotation failed: ${data.rotation_detail}`);
+        }
+      } else {
         const err = await r.json().catch(() => null);
         alert(zh ? `保存失败: ${err?.detail || r.statusText}` : `Save failed: ${err?.detail || r.statusText}`);
       }
@@ -251,7 +284,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       rack: a.rack, rack_unit: '', management_ip: '',
       business_ip: '', device_role: a.device_role,
       vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
-      status: a.status,
+      status: a.status, lifecycle_status: (a as any).lifecycle_status || 'staging',
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
       platform: (a as any).platform || 'cisco_ios',
@@ -826,7 +859,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
           <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowModal(false)}>
             <motion.div
-              className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5 shadow-2xl border border-black/5"
+              className="relative bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5 shadow-2xl border border-black/5"
               onClick={e => e.stopPropagation()}
               initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}
             >
@@ -882,6 +915,13 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                   <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} title="Status"
                     className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25">
                     {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label[zh ? 'zh' : 'en']}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '投产状态' : 'Lifecycle'}</label>
+                  <select value={form.lifecycle_status} onChange={e => setForm(f => ({ ...f, lifecycle_status: e.target.value }))} title="Lifecycle"
+                    className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25">
+                    {LIFECYCLE_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label[zh ? 'zh' : 'en']}</option>)}
                   </select>
                 </div>
                 <Field label={zh ? '管理IP' : 'Mgmt IP'}        value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="10.0.0.1" />
@@ -969,6 +1009,43 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                   {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
                 </button>
               </div>
+
+              {/* Production confirmation overlay */}
+              {showProductionConfirm && (
+                <motion.div
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-black/40"
+                >
+                  <div className="mx-6 max-w-sm rounded-xl bg-white p-5 shadow-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="h-7 w-7 rounded-full bg-amber-50 flex items-center justify-center">
+                        <AlertTriangle size={14} className="text-amber-500" />
+                      </div>
+                      <h4 className="text-sm font-bold text-black/80">{zh ? '投产确认' : 'Production Confirmation'}</h4>
+                    </div>
+                    <p className="text-xs leading-relaxed text-black/50 mb-4">
+                      {zh
+                        ? '设备即将标记为已投产，系统将自动修改默认口令并完成凭据上收，确保安全合规。'
+                        : 'Device will be marked as in production. Default passwords will be auto-rotated and credentials secured.'}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowProductionConfirm(false)}
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]"
+                      >
+                        {zh ? '取消' : 'Cancel'}
+                      </button>
+                      <button
+                        onClick={() => { setShowProductionConfirm(false); doSave(); }}
+                        disabled={saving}
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50"
+                      >
+                        {saving ? (zh ? '处理中...' : 'Processing...') : (zh ? '确认投产' : 'Confirm')}
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
             </motion.div>
           </motion.div>
         )}
