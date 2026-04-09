@@ -151,12 +151,12 @@ def test_notification(
 ):
     """Send a test alert message to the given webhook."""
     test_alert = {
-        "title": "NetPilot 测试通知",
+        "title": "Nexora 测试通知",
         "object_name": "Setup Wizard",
         "ip_address": "127.0.0.1",
         "status": "active",
         "severity": "info",
-        "message": "This is a test notification from NetPilot setup wizard. 这是来自 NetPilot 初始化向导的测试通知。",
+        "message": "This is a test notification from Nexora setup wizard. 这是来自 Nexora 初始化向导的测试通知。",
         "first_occurrence": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "last_occurrence": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "lang": "zh",

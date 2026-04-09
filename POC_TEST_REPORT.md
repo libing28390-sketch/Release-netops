@@ -1,4 +1,4 @@
-# NetPilot POC 自动化测试报告 v3
+# Nexora POC 自动化测试报告 v3
 
 > **测试时间**: 2026-04-08  
 > **测试工具**: Playwright 1.58.0 (Chromium Headless)  
@@ -30,9 +30,9 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 访问首页，展示登录界面 | `TC01_01_login_page.png` | ✅ |
-| 2 | 输入错误密码，验证错误提示 | `TC01_02_login_error.png` | ✅ |
-| 3 | 输入正确密码，跳转 Dashboard | `TC01_03_login_success.png` | ✅ |
+| 1 | 访问首页，展示登录界面 | ![TC01_01_login_page.png](tests/poc_screenshots/TC01_01_login_page.png) | ✅ |
+| 2 | 输入错误密码，验证错误提示 | ![TC01_02_login_error.png](tests/poc_screenshots/TC01_02_login_error.png) | ✅ |
+| 3 | 输入正确密码，跳转 Dashboard | ![TC01_03_login_success.png](tests/poc_screenshots/TC01_03_login_success.png) | ✅ |
 
 ---
 
@@ -40,8 +40,8 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | KPI 卡片与主机资源面板 | `TC02_01_dashboard_top.png` | ✅ |
-| 2 | 合规趋势图与平台分布饼图 | `TC02_02_dashboard_bottom.png` | ✅ |
+| 1 | KPI 卡片与主机资源面板 | ![TC02_01_dashboard_top.png](tests/poc_screenshots/TC02_01_dashboard_top.png) | ✅ |
+| 2 | 合规趋势图与平台分布饼图 | ![TC02_02_dashboard_bottom.png](tests/poc_screenshots/TC02_02_dashboard_bottom.png) | ✅ |
 
 ---
 
@@ -49,7 +49,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看实时监控面板 | `TC03_01_monitoring.png` | ✅ |
+| 1 | 查看实时监控面板 | ![TC03_01_monitoring.png](tests/poc_screenshots/TC03_01_monitoring.png) | ✅ |
 
 ---
 
@@ -57,7 +57,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看拓扑可视化画布 | `TC04_01_topology.png` | ✅ |
+| 1 | 查看拓扑可视化画布 | ![TC04_01_topology.png](tests/poc_screenshots/TC04_01_topology.png) | ✅ |
 
 ---
 
@@ -65,11 +65,11 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看告警列表（Open 标签） | `TC05_01_alert_list_open.png` | ✅ |
-| 2 | 点击「查看」查看告警详情 | `TC05_02_alert_detail_panel.png` | ✅ |
+| 1 | 查看告警列表（Open 标签） | ![TC05_01_alert_list_open.png](tests/poc_screenshots/TC05_01_alert_list_open.png) | ✅ |
+| 2 | 点击「查看」查看告警详情 | ![TC05_02_alert_detail_panel.png](tests/poc_screenshots/TC05_02_alert_detail_panel.png) | ✅ |
 | 3 | 点击「确认告警」按钮 | — | ⏭ 按钮未找到（告警可能已确认） |
-| 4 | 切换到「已确认」标签 | `TC05_04_alert_acknowledged_tab.png` | ✅ |
-| 5 | 切回「待处理」标签 | `TC05_05_alert_open_tab.png` | ✅ |
+| 4 | 切换到「已确认」标签 | ![TC05_04_alert_acknowledged_tab.png](tests/poc_screenshots/TC05_04_alert_acknowledged_tab.png) | ✅ |
+| 5 | 切回「待处理」标签 | ![TC05_05_alert_open_tab.png](tests/poc_screenshots/TC05_05_alert_open_tab.png) | ✅ |
 
 ---
 
@@ -77,7 +77,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看历史告警记录 | `TC06_01_alert_history.png` | ✅ |
+| 1 | 查看历史告警记录 | ![TC06_01_alert_history.png](tests/poc_screenshots/TC06_01_alert_history.png) | ✅ |
 
 ---
 
@@ -85,7 +85,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看告警规则列表 | `TC07_01_alert_rules.png` | ✅ |
+| 1 | 查看告警规则列表 | ![TC07_01_alert_rules.png](tests/poc_screenshots/TC07_01_alert_rules.png) | ✅ |
 
 ---
 
@@ -93,7 +93,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看维护期列表 | `TC08_01_maintenance.png` | ✅ |
+| 1 | 查看维护期列表 | ![TC08_01_maintenance.png](tests/poc_screenshots/TC08_01_maintenance.png) | ✅ |
 
 ---
 
@@ -101,7 +101,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看资产概览 | `TC09_01_assets.png` | ✅ |
+| 1 | 查看资产概览 | ![TC09_01_assets.png](tests/poc_screenshots/TC09_01_assets.png) | ✅ |
 
 ---
 
@@ -109,11 +109,11 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看设备列表（503 台） | `TC10_01_devices_list.png` | ✅ |
+| 1 | 查看设备列表（503 台） | ![TC10_01_devices_list.png](tests/poc_screenshots/TC10_01_devices_list.png) | ✅ |
 | 2 | 搜索设备 'SW-BJ' | — | ✅ 搜索执行 |
-| 3 | 平台下拉筛选 | `TC10_03_platform_filter.png` | ✅ |
-| 4 | 查看设备详情模态框 | `TC10_04_device_detail_modal.png` | ✅ |
-| 5 | 查看详情底部按钮（连通性/SNMP 测试等） | `TC10_05_device_detail_buttons.png` | ✅ |
+| 3 | 平台下拉筛选 | ![TC10_03_platform_filter.png](tests/poc_screenshots/TC10_03_platform_filter.png) | ✅ |
+| 4 | 查看设备详情模态框 | ![TC10_04_device_detail_modal.png](tests/poc_screenshots/TC10_04_device_detail_modal.png) | ✅ |
+| 5 | 查看详情底部按钮（连通性/SNMP 测试等） | ![TC10_05_device_detail_buttons.png](tests/poc_screenshots/TC10_05_device_detail_buttons.png) | ✅ |
 
 ---
 
@@ -121,7 +121,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看服务器列表 | `TC11_01_servers.png` | ✅ |
+| 1 | 查看服务器列表 | ![TC11_01_servers.png](tests/poc_screenshots/TC11_01_servers.png) | ✅ |
 
 ---
 
@@ -129,7 +129,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看 IP 地址管理 | `TC12_01_ipam.png` | ✅ |
+| 1 | 查看 IP 地址管理 | ![TC12_01_ipam.png](tests/poc_screenshots/TC12_01_ipam.png) | ✅ |
 
 ---
 
@@ -137,7 +137,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看 IP 定位工具 | `TC13_01_ip_locator.png` | ✅ |
+| 1 | 查看 IP 定位工具 | ![TC13_01_ip_locator.png](tests/poc_screenshots/TC13_01_ip_locator.png) | ✅ |
 
 ---
 
@@ -145,9 +145,9 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看配置备份列表 | `TC14_01_backup_list.png` | ✅ |
-| 2 | 点击「备份全部在线设备」 | `TC14_02_backup_triggered.png` | ✅ |
-| 3 | 查看某台设备的备份配置内容 | `TC14_03_backup_view_config.png` | ✅ |
+| 1 | 查看配置备份列表 | ![TC14_01_backup_list.png](tests/poc_screenshots/TC14_01_backup_list.png) | ✅ |
+| 2 | 点击「备份全部在线设备」 | ![TC14_02_backup_triggered.png](tests/poc_screenshots/TC14_02_backup_triggered.png) | ✅ |
+| 3 | 查看某台设备的备份配置内容 | ![TC14_03_backup_view_config.png](tests/poc_screenshots/TC14_03_backup_view_config.png) | ✅ |
 
 ---
 
@@ -155,7 +155,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看备份计划列表 | `TC15_01_schedule.png` | ✅ |
+| 1 | 查看备份计划列表 | ![TC15_01_schedule.png](tests/poc_screenshots/TC15_01_schedule.png) | ✅ |
 
 ---
 
@@ -163,7 +163,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看配置差异比对界面 | `TC16_01_config_diff.png` | ✅ |
+| 1 | 查看配置差异比对界面 | ![TC16_01_config_diff.png](tests/poc_screenshots/TC16_01_config_diff.png) | ✅ |
 
 ---
 
@@ -171,7 +171,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看全局配置搜索页面 | `TC17_01_config_search.png` | ✅ |
+| 1 | 查看全局配置搜索页面 | ![TC17_01_config_search.png](tests/poc_screenshots/TC17_01_config_search.png) | ✅ |
 | 2 | 搜索关键词 'vlan' | — | ⏭ 搜索交互未触发 |
 
 ---
@@ -182,14 +182,14 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 进入 Task Runner — 设备选择面板，展示在线设备网格、场景库（VLAN/BGP/ACL/NTP 等 8 个场景卡片）、执行决策区 | `TC18_01_step1_device_grid.png` | ✅ |
+| 1 | 进入 Task Runner — 设备选择面板，展示在线设备网格、场景库（VLAN/BGP/ACL/NTP 等 8 个场景卡片）、执行决策区 | ![TC18_01_step1_device_grid.png](tests/poc_screenshots/TC18_01_step1_device_grid.png) | ✅ |
 | 2 | 搜索设备 'AS-BJ' 缩小范围 | — | ✅ 搜索执行 |
 | 3 | 筛选在线设备 | — | ✅ 已按 ONLINE 筛选 |
-| 4 | **选择目标设备** AS-BJ-DC1-0020 — 设备卡片高亮，右侧 Quick Query 面板展开（Interfaces/ARP/MAC/VLAN/LLDP/Routes 等快捷按钮），Execution Decision 显示目标设备，底部出现 `+ Cmd → AS-BJ-DC1-0020` 按钮 | `TC18_04_step1_device_selected.png` | ✅ |
+| 4 | **选择目标设备** AS-BJ-DC1-0020 — 设备卡片高亮，右侧 Quick Query 面板展开（Interfaces/ARP/MAC/VLAN/LLDP/Routes 等快捷按钮），Execution Decision 显示目标设备，底部出现 `+ Cmd → AS-BJ-DC1-0020` 按钮 | ![TC18_04_step1_device_selected.png](tests/poc_screenshots/TC18_04_step1_device_selected.png) | ✅ |
 | 5 | 展开快捷查询面板 | — | ✅ Quick Query 已显示 |
 | 7 | 点击下一步进入场景选择 | — | ✅ |
-| 8 | **选择 ACL Rule Update 场景** — 显示场景参数表单（ACL Name/Number: 101, ACL Rules），标记为 HIGH RISK，右侧展示 BLOCKING ISSUES（平台不支持、缺必填字段、需确认高风险），底部出现 `Run Validation` 和 `Apply Changes (1)` 按钮 | `TC18_08_step3_cli_preview.png` | ✅ |
-| 9 | **查看 CLI 预览与参数配置区域** — General Parameters 表单已自动填充，ADVISORY 提示 "Validation mode is enabled: this run will not push config changes"，高风险确认复选框可见 | `TC18_09_step3_params_and_terminal.png` | ✅ |
+| 8 | **选择 ACL Rule Update 场景** — 显示场景参数表单（ACL Name/Number: 101, ACL Rules），标记为 HIGH RISK，右侧展示 BLOCKING ISSUES（平台不支持、缺必填字段、需确认高风险），底部出现 `Run Validation` 和 `Apply Changes (1)` 按钮 | ![TC18_08_step3_cli_preview.png](tests/poc_screenshots/TC18_08_step3_cli_preview.png) | ✅ |
+| 9 | **查看 CLI 预览与参数配置区域** — General Parameters 表单已自动填充，ADVISORY 提示 "Validation mode is enabled: this run will not push config changes"，高风险确认复选框可见 | ![TC18_09_step3_params_and_terminal.png](tests/poc_screenshots/TC18_09_step3_params_and_terminal.png) | ✅ |
 | 10 | 点击「Run Validation」运行校验 | — | ⏭ 按钮存在但需先勾选高风险确认 |
 | 11 | 点击「Apply Changes」执行配置下发 | — | ⏭ 需先通过校验 |
 
@@ -209,7 +209,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看巡检概览页 | `TC20_01_inspection_overview.png` | ✅ |
+| 1 | 查看巡检概览页 | ![TC20_01_inspection_overview.png](tests/poc_screenshots/TC20_01_inspection_overview.png) | ✅ |
 | 2 | 点击「立即巡检」 | — | ⏭ 巡检页面为空白状态（无历史数据） |
 | 3 | 切换到「巡检记录」标签 | — | ⏭ 无历史记录 |
 | 4 | 查看巡检记录详情 | — | ⏭ 无数据 |
@@ -220,7 +220,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看执行计划列表 | `TC21_01_schedule.png` | ✅ |
+| 1 | 查看执行计划列表 | ![TC21_01_schedule.png](tests/poc_screenshots/TC21_01_schedule.png) | ✅ |
 
 ---
 
@@ -228,10 +228,10 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看变更工单列表 | `TC22_01_change_orders_list.png` | ✅ |
-| 2 | 点击「+ 新建工单」打开表单 | `TC22_02_new_order_form_top.png` | ✅ |
-| 3 | 填写标题/描述/类型/优先级/风险等级，选择目标设备 | `TC22_03_new_order_filled.png` | ✅ |
-| 4 | 查看命令区域与回退方案 | `TC22_04_new_order_commands.png` | ✅ |
+| 1 | 查看变更工单列表 | ![TC22_01_change_orders_list.png](tests/poc_screenshots/TC22_01_change_orders_list.png) | ✅ |
+| 2 | 点击「+ 新建工单」打开表单 | ![TC22_02_new_order_form_top.png](tests/poc_screenshots/TC22_02_new_order_form_top.png) | ✅ |
+| 3 | 填写标题/描述/类型/优先级/风险等级，选择目标设备 | ![TC22_03_new_order_filled.png](tests/poc_screenshots/TC22_03_new_order_filled.png) | ✅ |
+| 4 | 查看命令区域与回退方案 | ![TC22_04_new_order_commands.png](tests/poc_screenshots/TC22_04_new_order_commands.png) | ✅ |
 | 5 | 查看现有工单详情面板 | — | ⏭ 无历史工单 |
 
 ---
@@ -240,11 +240,11 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看合规概览 KPI 卡片 | `TC23_01_compliance_overview.png` | ✅ |
-| 2 | 点击「执行审计」执行合规检查 | `TC23_02_compliance_audit_result.png` | ✅ |
+| 1 | 查看合规概览 KPI 卡片 | ![TC23_01_compliance_overview.png](tests/poc_screenshots/TC23_01_compliance_overview.png) | ✅ |
+| 2 | 点击「执行审计」执行合规检查 | ![TC23_02_compliance_audit_result.png](tests/poc_screenshots/TC23_02_compliance_audit_result.png) | ✅ |
 | 3 | 筛选 Severity = High/Critical | — | ✅ 筛选执行 |
-| 4 | 点击「Details」查看合规发现详情 — "AAA or Central Auth Enabled" HIGH 级别，含描述/修复建议/观测值/证据/状态/Owner/时间线/备注 | `TC23_04_compliance_finding_detail.png` | ✅ |
-| 5 | 滚动查看更多合规发现 | `TC23_05_compliance_bottom.png` | ✅ |
+| 4 | 点击「Details」查看合规发现详情 — "AAA or Central Auth Enabled" HIGH 级别，含描述/修复建议/观测值/证据/状态/Owner/时间线/备注 | ![TC23_04_compliance_finding_detail.png](tests/poc_screenshots/TC23_04_compliance_finding_detail.png) | ✅ |
+| 5 | 滚动查看更多合规发现 | ![TC23_05_compliance_bottom.png](tests/poc_screenshots/TC23_05_compliance_bottom.png) | ✅ |
 
 ---
 
@@ -252,7 +252,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看容量规划 | `TC24_01_capacity.png` | ✅ |
+| 1 | 查看容量规划 | ![TC24_01_capacity.png](tests/poc_screenshots/TC24_01_capacity.png) | ✅ |
 
 ---
 
@@ -260,7 +260,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看报表中心 | `TC25_01_reports.png` | ✅ |
+| 1 | 查看报表中心 | ![TC25_01_reports.png](tests/poc_screenshots/TC25_01_reports.png) | ✅ |
 
 ---
 
@@ -268,7 +268,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看审计日志列表 | `TC26_01_audit_logs.png` | ✅ |
+| 1 | 查看审计日志列表 | ![TC26_01_audit_logs.png](tests/poc_screenshots/TC26_01_audit_logs.png) | ✅ |
 | 2 | 点击审计记录查看详情 | — | ⏭ 点击目标不可达 |
 
 ---
@@ -277,7 +277,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看平台配置 | `TC27_01_settings.png` | ✅ |
+| 1 | 查看平台配置 | ![TC27_01_settings.png](tests/poc_screenshots/TC27_01_settings.png) | ✅ |
 
 ---
 
@@ -285,7 +285,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看用户列表 | `TC28_01_users.png` | ✅ |
+| 1 | 查看用户列表 | ![TC28_01_users.png](tests/poc_screenshots/TC28_01_users.png) | ✅ |
 | 2 | 点击「+ Add User」查看新增表单 | — | ⏭ 按钮超时 |
 
 ---
@@ -294,7 +294,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看设备健康检测面板 | `TC29_01_health.png` | ✅ |
+| 1 | 查看设备健康检测面板 | ![TC29_01_health.png](tests/poc_screenshots/TC29_01_health.png) | ✅ |
 
 ---
 
@@ -302,7 +302,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看配置漂移检测页面 | `TC30_01_config_drift.png` | ✅ |
+| 1 | 查看配置漂移检测页面 | ![TC30_01_config_drift.png](tests/poc_screenshots/TC30_01_config_drift.png) | ✅ |
 
 ---
 
@@ -310,7 +310,7 @@
 
 | 步骤 | 操作 | 截图 | 结果 |
 |------|------|------|------|
-| 1 | 查看执行历史列表 | `TC31_01_execution_history.png` | ✅ |
+| 1 | 查看执行历史列表 | ![TC31_01_execution_history.png](tests/poc_screenshots/TC31_01_execution_history.png) | ✅ |
 | 2 | 点击查看作业输出详情 | — | ⏭ 无历史数据 |
 
 ---
@@ -319,9 +319,9 @@
 
 | 步骤 | 视口宽度 | 截图 | 结果 |
 |------|----------|------|------|
-| 1 | 1920px（桌面） | `TC32_01_desktop_1920.png` | ✅ |
-| 2 | 768px（平板） | `TC32_02_tablet_768.png` | ✅ |
-| 3 | 375px（手机） | `TC32_03_mobile_375.png` | ✅ |
+| 1 | 1920px（桌面） | ![TC32_01_desktop_1920.png](tests/poc_screenshots/TC32_01_desktop_1920.png) | ✅ |
+| 2 | 768px（平板） | ![TC32_02_tablet_768.png](tests/poc_screenshots/TC32_02_tablet_768.png) | ✅ |
+| 3 | 375px（手机） | ![TC32_03_mobile_375.png](tests/poc_screenshots/TC32_03_mobile_375.png) | ✅ |
 
 ---
 

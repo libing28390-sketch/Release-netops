@@ -241,7 +241,7 @@ const buildSeedPositions = (devices: Device[], width: number, height: number) =>
 };
 
 const clampPosition = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-const TOPOLOGY_LAYOUT_STORAGE_KEY = 'netpilot.topology.layout.v1';
+const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v1';
 
 type PersistedTopologyLayout = {
   positions?: Record<string, { x: number; y: number }>;

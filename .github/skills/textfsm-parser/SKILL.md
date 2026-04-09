@@ -5,7 +5,7 @@ description: "Converts network CLI output to structured JSON using TextFSM and t
 
 # CLI Parsing Expert Skill
 
-你负责 NetPilot 的 CLI 输出解析，核心配置在 `core/textfsm.py`。
+你负责 Nexora 的 CLI 输出解析，核心配置在 `core/textfsm.py`。
 
 ---
 

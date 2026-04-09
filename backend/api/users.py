@@ -683,7 +683,7 @@ def test_notification_channel(user_id: str, request: Request, payload: dict = Bo
 
     test_ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     test_alert = {
-        'title':            'NetPilot 连通性测试',
+        'title':            'Nexora 连通性测试',
         'object_name':      f'{platform.capitalize()} 机器人',
         'ip_address':       'webhook',
         'status':           'active',

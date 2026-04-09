@@ -188,7 +188,7 @@ def _feishu_card(alert: dict) -> dict:
             "tag": "action",
             "actions": [{
                 "tag": "button",
-                "text": {"tag": "plain_text", "content": "Open NetPilot Platform" if is_en else "前往 NetPilot 平台处理"},
+                "text": {"tag": "plain_text", "content": "Open Nexora Platform" if is_en else "前往 Nexora 平台处理"},
                 "type": "primary",
                 "url": platform_url,
             }],
@@ -196,7 +196,7 @@ def _feishu_card(alert: dict) -> dict:
     else:
         elements.append({
             "tag": "note",
-            "elements": [{"tag": "plain_text", "content": "NetPilot NOC Auto Alert" if is_en else "NetPilot NOC 自动告警"}],
+            "elements": [{"tag": "plain_text", "content": "Nexora NOC Auto Alert" if is_en else "Nexora NOC 自动告警"}],
         })
 
     return {
@@ -346,7 +346,7 @@ def _dingtalk_markdown(alert: dict) -> dict:
             f"| First Occurrence | {first_ts} |\n"
             f"| Last Occurrence | {last_ts} |\n"
             f"{extra_rows}"
-            f"\n---\n*NetPilot NOC Auto Alert*"
+            f"\n---\n*Nexora NOC Auto Alert*"
         )
     else:
         extra_rows = ""
@@ -369,7 +369,7 @@ def _dingtalk_markdown(alert: dict) -> dict:
             f"| 首次发生 | {first_ts} |\n"
             f"| 最后发生 | {last_ts} |\n"
             f"{extra_rows}"
-            f"\n---\n*NetPilot NOC 自动告警*"
+            f"\n---\n*Nexora NOC 自动告警*"
         )
     return {
         "msgtype": "markdown",
@@ -446,7 +446,7 @@ def _wechat_markdown(alert: dict) -> dict:
             f"> **First Occurrence**: {first_ts}\n"
             f"> **Last Occurrence**: {last_ts}\n"
             f"{extra_lines}"
-            f"> Source: NetPilot NOC"
+            f"> Source: Nexora NOC"
         )
     else:
         extra_lines = ""
@@ -467,7 +467,7 @@ def _wechat_markdown(alert: dict) -> dict:
             f"> **首次发生**：{first_ts}\n"
             f"> **最后发生**：{last_ts}\n"
             f"{extra_lines}"
-            f"> 来源：NetPilot NOC"
+            f"> 来源：Nexora NOC"
         )
     return {"msgtype": "markdown", "markdown": {"content": content}}
 

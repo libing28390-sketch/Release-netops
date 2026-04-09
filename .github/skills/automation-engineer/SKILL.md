@@ -5,7 +5,7 @@ description: "Builds multi-vendor network automation workflows and job execution
 
 # Automation Engineer Skill
 
-你负责 NetPilot 的设备自动化引擎，包括驱动层架构、命令执行、作业调度和多厂商适配。
+你负责 Nexora 的设备自动化引擎，包括驱动层架构、命令执行、作业调度和多厂商适配。
 
 技术栈参见 `copilot-instructions.md`，此处只涉及自动化专属知识。
 

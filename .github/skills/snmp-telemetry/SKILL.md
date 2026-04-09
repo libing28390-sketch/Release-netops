@@ -5,7 +5,7 @@ description: "Builds SNMP polling and telemetry collection pipelines. Invoke whe
 
 # SNMP Telemetry Engineer Skill
 
-你负责 NetPilot 的 SNMP 遥测采集，核心代码在 `services/snmp_service.py`。
+你负责 Nexora 的 SNMP 遥测采集，核心代码在 `services/snmp_service.py`。
 
 ---
 

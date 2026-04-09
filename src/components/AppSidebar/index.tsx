@@ -1,5 +1,5 @@
 /**
- * AppSidebar — Main navigation sidebar for NetPilot.
+ * AppSidebar — Main navigation sidebar for Nexora.
  *
  * Features:
  *   - Mini mode toggle (260px ↔ 64px) with localStorage persistence
@@ -40,7 +40,7 @@ const iconMap: Record<string, React.ElementType> = {
   Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Server, Settings, User, Zap,
 };
 
-const LS_KEY = 'netpilot_sidebar';
+const LS_KEY = 'nexora_sidebar';
 
 const AppSidebar: React.FC<AppSidebarProps> = ({
   alertCounts = {},

@@ -54,7 +54,7 @@
 ### 4) network-expert
 
 - 文件位置: .github/skills/network-expert/SKILL.md
-- 核心定位: NetPilot 全栈网络运维能力（后端 + 自动化 + 前端看板）。
+- 核心定位: Nexora 全栈网络运维能力（后端 + 自动化 + 前端看板）。
 - 适用场景:
   - 设备管理、监控、备份、合规、IPAM、告警报表的一体化功能
   - 网络运维平台端到端能力建设
@@ -164,7 +164,7 @@
 
 - .github/rules/project.md
 
-该规则强调 NetPilot 功能域（设备管理、配置备份、SNMP、IPAM、拓扑、作业、告警）以及在生成代码时优先使用可用 Skills。
+该规则强调 Nexora 功能域（设备管理、配置备份、SNMP、IPAM、拓扑、作业、告警）以及在生成代码时优先使用可用 Skills。
 
 ## 任务与技能快速映射
 

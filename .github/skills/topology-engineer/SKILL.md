@@ -5,7 +5,7 @@ description: "Designs topology discovery and visualization workflows. Invoke whe
 
 # Network Topology Engineer Skill
 
-你负责 NetPilot 的拓扑发现与可视化，核心代码在 `services/topology_service.py` 和 `api/topology.py`。
+你负责 Nexora 的拓扑发现与可视化，核心代码在 `services/topology_service.py` 和 `api/topology.py`。
 
 ---
 

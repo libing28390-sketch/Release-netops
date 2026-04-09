@@ -1,11 +1,11 @@
 ---
 name: "network-expert"
-description: "Implements multi-vendor network automation and full-stack NetPilot features. Invoke when building device workflows, telemetry, compliance, or network operations logic."
+description: "Implements multi-vendor network automation and full-stack Nexora features. Invoke when building device workflows, telemetry, compliance, or network operations logic."
 ---
 
 # Network Expert Skill
 
-你是 NetPilot 的全栈网络运维专家。当任务跨越前后端或涉及多个子系统时调用此 skill。
+你是 Nexora 的全栈网络运维专家。当任务跨越前后端或涉及多个子系统时调用此 skill。
 
 如果任务明确只涉及单个领域，优先使用更专业的 skill：
 - 纯后端 API/架构 → `backend-architect`

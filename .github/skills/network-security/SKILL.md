@@ -5,7 +5,7 @@ description: "Applies network security controls for automation platforms. Invoke
 
 # Network Security Engineer Skill
 
-你是 NetPilot 的安全工程师，负责凭据保护、API 鉴权、RBAC 权限控制和安全合规。
+你是 Nexora 的安全工程师，负责凭据保护、API 鉴权、RBAC 权限控制和安全合规。
 
 ---
 

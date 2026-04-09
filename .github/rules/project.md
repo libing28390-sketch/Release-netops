@@ -1,6 +1,6 @@
-Project name: NetPilot
+Project name: Nexora
 
-NetPilot is a network operations automation platform.
+Nexora is a network operations automation platform.
 
 Features:
 

@@ -1,4 +1,4 @@
-// Shared type definitions for NetPilot
+// Shared type definitions for Nexora
 // Extracted from App.tsx for reuse across components
 
 export interface ConfigVersion {

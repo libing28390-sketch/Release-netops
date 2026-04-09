@@ -112,7 +112,7 @@ def request_approval(
         "card": {
             "config": {"wide_screen_mode": True},
             "header": {
-                "title": {"tag": "plain_text", "content": "🔐 NetPilot 配置变更审批"},
+                "title": {"tag": "plain_text", "content": "🔐 Nexora 配置变更审批"},
                 "template": "orange",
             },
             "elements": [
@@ -136,7 +136,7 @@ def request_approval(
                 {
                     "tag": "note",
                     "elements": [
-                        {"tag": "plain_text", "content": f"发送时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · NetPilot Config Approval"},
+                        {"tag": "plain_text", "content": f"发送时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · Nexora Config Approval"},
                     ],
                 },
             ],

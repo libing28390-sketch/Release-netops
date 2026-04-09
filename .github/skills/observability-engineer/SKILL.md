@@ -1,11 +1,11 @@
 ---
 name: "observability-engineer"
-description: "Designs monitoring, metrics, logging, and alerting for NetPilot. Invoke when building observability pipelines, dashboards, or reliability visibility features."
+description: "Designs monitoring, metrics, logging, and alerting for Nexora. Invoke when building observability pipelines, dashboards, or reliability visibility features."
 ---
 
 # Observability Engineer Skill
 
-你负责 NetPilot 的监控、日志、告警和可观测性体系设计。
+你负责 Nexora 的监控、日志、告警和可观测性体系设计。
 
 ---
 
