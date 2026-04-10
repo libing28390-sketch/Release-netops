@@ -59,6 +59,7 @@ const CapacityPlanningTab = lazy(() => import('./pages/CapacityPlanningTab'));
 const IPVlanTab = lazy(() => import('./pages/IPVlanTab'));
 const IPLocatorPage = lazy(() => import('./pages/IPLocatorPage'));
 const AssetManagementTab = lazy(() => import('./pages/AssetManagementTab'));
+const CredentialManagementTab = lazy(() => import('./components/PasswordRotationPanel'));
 const ChangeOrderTab = lazy(() => import('./pages/ChangeOrderTab'));
 const InterfaceMonitoringTab = lazy(() => import('./pages/InterfaceMonitoringTab'));
 const AutomationExecuteTab = lazy(() => import('./pages/AutomationExecuteTab'));
@@ -627,6 +628,7 @@ const App: React.FC = () => {
     if (activeTab === 'ipam') return language === 'zh' ? 'IP/VLAN管理' : 'IP/VLAN Management';
     if (activeTab === 'ip-locator') return language === 'zh' ? 'IP 定位' : 'IP Locator';
     if (activeTab === 'assets') return language === 'zh' ? '资产管理' : 'Asset Management';
+    if (activeTab === 'credentials') return language === 'zh' ? '凭据管理' : 'Credential Management';
     if (activeTab === 'change-orders') return language === 'zh' ? '变更工单' : 'Change Orders';
     if (activeTab === 'compliance') return t('compliance');
     if (activeTab === 'monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
@@ -5192,6 +5194,7 @@ const App: React.FC = () => {
         onNavigate={navTo}
         onOpenSearch={() => setCmdPaletteOpen(true)}
         language={language}
+        userRole={currentUser.role || currentUserRecord?.role || 'Viewer'}
         mobileOpen={isMobile && !sidebarCollapsed}
         onMobileClose={() => setSidebarCollapsed(true)}
       />
@@ -5947,6 +5950,12 @@ const App: React.FC = () => {
           {activeTab === 'assets' && (
             <Suspense fallback={lazyPanelFallback}>
               <AssetManagementTab language={language} t={t} setActiveTab={setActiveTab} />
+            </Suspense>
+          )}
+
+          {activeTab === 'credentials' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <CredentialManagementTab language={language} />
             </Suspense>
           )}
 

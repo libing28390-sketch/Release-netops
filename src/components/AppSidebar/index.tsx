@@ -24,6 +24,7 @@ import {
   Search,
   Server,
   Settings,
+  Shield,
   User,
   X,
   Zap,
@@ -37,8 +38,11 @@ import NavSection from './NavSection';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
-  Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Server, Settings, User, Zap,
+  Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Server, Settings, Shield, User, Zap,
 };
+
+/** RBAC role hierarchy levels */
+const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, Viewer: 1 };
 
 const LS_KEY = 'nexora_sidebar';
 
@@ -49,6 +53,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
   onNavigate,
   onOpenSearch,
   language = 'zh',
+  userRole,
   mobileOpen,
   onMobileClose,
 }) => {
@@ -136,6 +141,18 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
     [zh],
   );
 
+  /* ─────────── RBAC filter ─────────── */
+  const filterByRole = useCallback(
+    (children: NavChild[]): NavChild[] =>
+      children.filter(c => {
+        if (!c.requiredRole) return true;
+        const userLvl = ROLE_LEVEL[userRole ?? ''] ?? 0;
+        const reqLvl = ROLE_LEVEL[c.requiredRole] ?? 99;
+        return userLvl >= reqLvl;
+      }),
+    [userRole],
+  );
+
   /* ═══════════════════════════════════════
      RENDER — Mini mode
      ═══════════════════════════════════════ */
@@ -143,7 +160,9 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
     <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-1">
       {navConfig.map((group, gi) => {
         const GIcon = group.icon ? iconMap[group.icon] : undefined;
-        const hasActive = sectionHasActive(group.children);
+        const visibleChildren = filterByRole(group.children);
+        if (visibleChildren.length === 0) return null;
+        const hasActive = sectionHasActive(visibleChildren);
         const badgeVal = getBadgeCount(group.badge);
 
         return (
@@ -152,7 +171,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
 
             {group.section ? (
               /* Section group: individual child icons */
-              group.children.map(child => {
+              visibleChildren.map(child => {
                 const CIcon = child.icon ? iconMap[child.icon] : undefined;
                 return (
                   <NavItem
@@ -179,7 +198,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
             )}
           </React.Fragment>
         );
-      })}
+      }).filter(Boolean)}
     </div>
   );
 
@@ -191,7 +210,9 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
       {navConfig.map(group => {
         const GIcon = group.icon ? iconMap[group.icon] : undefined;
         const groupLabel = L(group.label, group.labelEn);
-        const hasActive = sectionHasActive(group.children);
+        const visibleChildren = filterByRole(group.children);
+        if (visibleChildren.length === 0) return null;
+        const hasActive = sectionHasActive(visibleChildren);
         const badgeVal = getBadgeCount(group.badge);
         const groupBadge =
           badgeVal > 0
@@ -207,7 +228,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
               defaultOpen
               hasActiveChild={hasActive}
             >
-              {group.children.map(child => {
+              {visibleChildren.map(child => {
                 const CIcon = child.icon ? iconMap[child.icon] : undefined;
                 return (
                   <NavItem
@@ -233,7 +254,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
             hasActiveChild={hasActive}
             badge={groupBadge}
           >
-            {group.children.map(child => (
+            {visibleChildren.map(child => (
               <NavItem
                 key={child.id}
                 label={L(child.label, child.labelEn)}

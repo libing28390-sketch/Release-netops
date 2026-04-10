@@ -5,7 +5,7 @@ import {
   AlertTriangle, Network,
   ExternalLink, Wifi, Building2, Upload,
   FileText, ChevronDown, ChevronUp,
-  Zap, AlertCircle, CheckCircle2, Tag,
+  Zap, AlertCircle, CheckCircle2, Tag, Info,
   Flame, MonitorSpeaker, LayoutList, LayoutGrid,
   Lock, Terminal, Eye, EyeOff,
 } from 'lucide-react';
@@ -161,6 +161,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [showBatchTag, setShowBatchTag] = useState(false);
   const [batchTagValue, setBatchTagValue] = useState('');
   const [showProductionConfirm, setShowProductionConfirm] = useState(false);
+  const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; text: string } | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   /* ─── Data Fetching ─── */
@@ -195,6 +196,13 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [drawerAsset]);
+
+  /* Auto-dismiss feedback toast */
+  useEffect(() => {
+    if (!feedbackMsg) return;
+    const t = setTimeout(() => setFeedbackMsg(null), feedbackMsg.type === 'error' ? 8000 : 5000);
+    return () => clearTimeout(t);
+  }, [feedbackMsg]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const vendorList = useMemo(() => summary?.by_vendor ? Object.keys(summary.by_vendor).sort() : [], [summary]);
@@ -263,15 +271,22 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
         fetchSummary();
         // Report password rotation result
         if (data?.password_rotated) {
-          alert(zh ? '已投产，默认口令已自动修改上收。' : 'Marked as production. Default password has been auto-rotated.');
+          setFeedbackMsg({ type: 'success', text: zh ? '已投产，默认口令已自动修改上收。' : 'Marked as production. Default password has been auto-rotated.' });
+        } else if (data?.lifecycle_reverted && data?.rotation_detail) {
+          setFeedbackMsg({ type: 'warning', text: zh ? `口令自动轮换失败，投产已回滚: ${data.rotation_detail}` : `Auto-rotation failed, production transition reverted: ${data.rotation_detail}` });
+          fetchAssets();
         } else if (data?.rotation_detail) {
-          alert(zh ? `已投产，但口令自动轮换失败: ${data.rotation_detail}` : `Marked as production, but auto-rotation failed: ${data.rotation_detail}`);
+          setFeedbackMsg({ type: 'warning', text: zh ? `已投产，但口令自动轮换失败: ${data.rotation_detail}` : `Marked as production, but auto-rotation failed: ${data.rotation_detail}` });
         }
+      } else if (r.status === 422) {
+        const err = await r.json().catch(() => null);
+        setShowProductionConfirm(false);
+        setFeedbackMsg({ type: 'error', text: zh ? (err?.detail || '前置校验未通过') : (err?.detail || 'Pre-flight check failed') });
       } else {
         const err = await r.json().catch(() => null);
-        alert(zh ? `保存失败: ${err?.detail || r.statusText}` : `Save failed: ${err?.detail || r.statusText}`);
+        setFeedbackMsg({ type: 'error', text: zh ? `保存失败: ${err?.detail || r.statusText}` : `Save failed: ${err?.detail || r.statusText}` });
       }
-    } catch (e) { alert(zh ? `网络错误: ${e}` : `Network error: ${e}`); }
+    } catch (e) { setFeedbackMsg({ type: 'error', text: zh ? `网络错误: ${e}` : `Network error: ${e}` }); }
     setSaving(false);
   };
 
@@ -480,6 +495,33 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     <div className="space-y-2.5">
       {/* Hidden file input for Excel import */}
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
+
+      {/* ══════════════════ FEEDBACK TOAST ══════════════════ */}
+      <AnimatePresence>
+        {feedbackMsg && (
+          <motion.div
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.25 }}
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl border shadow-lg backdrop-blur-sm ${
+              feedbackMsg.type === 'success' ? 'bg-emerald-50/90 border-emerald-200 text-emerald-800' :
+              feedbackMsg.type === 'warning' ? 'bg-amber-50/90 border-amber-200 text-amber-800' :
+              feedbackMsg.type === 'info' ? 'bg-cyan-50/90 border-cyan-200 text-cyan-800' :
+              'bg-red-50/90 border-red-200 text-red-800'
+            }`}
+          >
+            {feedbackMsg.type === 'success' ? <CheckCircle2 size={18} className="text-emerald-500 shrink-0" /> :
+             feedbackMsg.type === 'warning' ? <AlertTriangle size={18} className="text-amber-500 shrink-0" /> :
+             feedbackMsg.type === 'info' ? <Info size={18} className="text-cyan-500 shrink-0" /> :
+             <AlertCircle size={18} className="text-red-500 shrink-0" />}
+            <span className="text-sm font-medium flex-1">{feedbackMsg.text}</span>
+            <button onClick={() => setFeedbackMsg(null)} className="p-0.5 rounded-md hover:bg-black/5 transition-colors">
+              <X size={14} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ══════════════════ SEVERITY CARDS (P1–P4) ══════════════════ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">

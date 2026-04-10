@@ -1642,7 +1642,7 @@ async def status_monitor():
                 if lldp_counter >= lldp_every_cycles:
                     lldp_counter = 0
                     logger.info("[Status Monitor] Triggering periodic LLDP discovery...")
-                    online_devices = _db_quick('SELECT id FROM devices WHERE status = "online"', fetchall=True)
+                    online_devices = _db_quick("SELECT id FROM devices WHERE status = 'online'", fetchall=True)
                     for d in online_devices:
                         asyncio.create_task(discover_lldp_neighbors(d['id']))
 

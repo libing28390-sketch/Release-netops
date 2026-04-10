@@ -4,6 +4,15 @@ import queue
 import logging
 from datetime import datetime, timezone
 
+# Load .env BEFORE reading DATABASE_URL from os.environ
+# (pydantic-settings loads .env into Settings but NOT into os.environ at import time)
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+    load_dotenv(_env_path, override=False)
+except ImportError:
+    pass
+
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 DB_PATH = os.path.join(PROJECT_ROOT, 'data', 'netops.db')

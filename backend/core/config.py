@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(BACKEND_DIR))
 DEFAULT_DATABASE_URL = f"sqlite:///{os.path.join(PROJECT_ROOT, 'data', 'netops.db').replace(os.sep, '/')}"
+_ENV_FILE = os.path.join(PROJECT_ROOT, '.env')
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "NetOps Automation Platform"
@@ -37,7 +38,7 @@ class Settings(BaseSettings):
     PASSWORD_ROTATION_NOTIFY_DAYS: int = 14    # warn N days before expiry
 
     class Config:
-        env_file = ".env"
+        env_file = _ENV_FILE
         extra = "ignore"
 
 settings = Settings()

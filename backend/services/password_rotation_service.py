@@ -31,60 +31,52 @@ from services.vault_service import resolve_device_credentials, write_credentials
 logger = logging.getLogger(__name__)
 
 
+# Characters safe for use in network device CLI (avoid ?, !, #, $, %, ^, &
+# which can trigger special CLI behavior on various platforms)
+_SAFE_SPECIAL = '-_=+@*~'
+_PWD_ALPHABET = string.ascii_letters + string.digits + _SAFE_SPECIAL
+
+
 def _generate_password(length: int = 20) -> str:
-    """生成高强度随机密码（大小写字母 + 数字 + 特殊符号）。"""
-    alphabet = string.ascii_letters + string.digits + '!@#$%^&*-_=+'
-    # 确保至少包含各类字符
+    """生成高强度随机密码（大小写字母 + 数字 + CLI 安全特殊符号）。"""
     while True:
-        pwd = ''.join(secrets.choice(alphabet) for _ in range(length))
+        pwd = ''.join(secrets.choice(_PWD_ALPHABET) for _ in range(length))
         if (any(c.islower() for c in pwd)
                 and any(c.isupper() for c in pwd)
                 and any(c.isdigit() for c in pwd)
-                and any(c in '!@#$%^&*-_=+' for c in pwd)):
+                and any(c in _SAFE_SPECIAL for c in pwd)):
             return pwd
 
 
 # ── 厂商改密命令生成 ──────────────────────────────
 
 def _cisco_change_password_commands(username: str, new_password: str) -> list[str]:
-    return [
-        'configure terminal',
-        f'username {username} secret {new_password}',
-        'end',
-        'write memory',
-    ]
+    """Config-mode commands only. Type 0 forces plaintext interpretation."""
+    return [f'username {username} secret 0 {new_password}']
 
 
 def _huawei_change_password_commands(username: str, new_password: str) -> list[str]:
+    """Config-mode commands only. send_config_set handles system-view entry/exit."""
     return [
-        'system-view',
         'aaa',
         f'local-user {username} password cipher {new_password}',
-        'quit',
-        'quit',
-        'save force',
+        'quit',   # exit AAA sub-context
     ]
 
 
 def _h3c_change_password_commands(username: str, new_password: str) -> list[str]:
+    """Config-mode commands only. send_config_set handles system-view entry/exit."""
     return [
-        'system-view',
         f'local-user {username} class manage',
         f'password simple {new_password}',
         'service-type ssh terminal',
-        'quit',
-        'quit',
-        'save force',
+        'quit',   # exit local-user sub-context
     ]
 
 
 def _arista_change_password_commands(username: str, new_password: str) -> list[str]:
-    return [
-        'configure terminal',
-        f'username {username} secret {new_password}',
-        'end',
-        'write memory',
-    ]
+    """Config-mode commands only. EOS session handler manages session entry/exit."""
+    return [f'username {username} secret {new_password}']
 
 
 _CHANGE_PASSWORD_HANDLERS: dict[str, Any] = {
@@ -93,6 +85,15 @@ _CHANGE_PASSWORD_HANDLERS: dict[str, Any] = {
     'huawei_vrp': _huawei_change_password_commands,
     'h3c_comware': _h3c_change_password_commands,
     'arista_eos': _arista_change_password_commands,
+}
+
+# Exec-mode save commands per platform (run AFTER config mode exit)
+_SAVE_COMMANDS: dict[str, str] = {
+    'cisco_ios': 'write memory',
+    'cisco_nxos': 'copy running-config startup-config',
+    'huawei_vrp': 'save force',
+    'h3c_comware': 'save force',
+    'arista_eos': 'write memory',
 }
 
 
@@ -147,40 +148,93 @@ def rotate_password(device_id: str) -> dict[str, Any]:
         return {'success': False, 'message': 'Device not found'}
 
     device = dict(row)
+
+    # ── Diagnostic: trace credential resolution ──────────────────────
+    raw_pwd = device.get('password') or ''
+    logger.info(
+        "rotate_password diagnostic — device=%s ip=%s raw_pwd_prefix=%s raw_pwd_len=%d",
+        device_id,
+        device.get('ip_address', ''),
+        raw_pwd[:7] if raw_pwd else '(empty)',
+        len(raw_pwd),
+    )
+
     creds = resolve_device_credentials(device)
     platform = (device.get('platform') or 'cisco_ios').lower()
+
+    # Pre-flight: validate credentials before attempting SSH
+    username = creds.get('username', '').strip()
+    password = creds.get('password', '').strip()
+
+    logger.info(
+        "rotate_password diagnostic — resolved username=%s password_len=%d password_is_encrypted=%s platform=%s",
+        username,
+        len(password),
+        password.startswith('enc:v1:'),
+        platform,
+    )
+    if not username or not password:
+        missing = []
+        if not username:
+            missing.append('username')
+        if not password:
+            missing.append('password')
+        return {
+            'success': False,
+            'message': f'设备凭据未配置（缺少 {", ".join(missing)}），请先在口令上手流程中设置凭据',
+        }
+
+    ip_address = (device.get('ip_address') or '').strip()
+    if not ip_address:
+        return {'success': False, 'message': '设备管理 IP 未配置'}
 
     handler = _CHANGE_PASSWORD_HANDLERS.get(platform)
     if not handler:
         return {'success': False, 'message': f'Unsupported platform for rotation: {platform}'}
 
     new_password = _generate_password()
-    username = creds['username']
     commands = handler(username, new_password)
+    save_cmd = _SAVE_COMMANDS.get(platform, 'write memory')
 
-    # Phase 1: Execute change password commands
+    # Phase 1: Execute change password commands + save
     device_info = {
-        'ip_address': device['ip_address'],
+        'ip_address': ip_address,
         'username': username,
-        'password': creds['password'],
+        'password': password,
         'platform': platform,
         'port': device.get('port') or 22,
         'enable_password': creds.get('enable_password', ''),
     }
 
     try:
-        driver = DriverFactory.create(device_info)
-        results = driver.execute_commands(commands)
-        driver.close()
-    except Exception as exc:
-        logger.error("Rotation phase-1 failed for %s: %s", device_id, exc)
-        return {'success': False, 'message': f'Failed to execute change commands: {exc}'}
+        with DriverFactory.get_driver('netmiko', device_info) as driver:
+            result = driver.send_config(commands)
+            if not result.success:
+                raise Exception(result.error or 'send_config failed')
+            # Save config in exec mode (send_config_set already exited config mode)
+            save_result = driver.send_command(save_cmd)
+            if not save_result.success:
+                logger.warning("Save command failed on %s: %s (password may still be changed in running-config)",
+                               device_id, save_result.error)
+    except Exception as exc_netmiko:
+        logger.warning("Rotation phase-1 netmiko failed for %s: %s — trying scrapli", device_id, exc_netmiko)
+        try:
+            with DriverFactory.get_driver('scrapli', device_info) as driver:
+                result = driver.send_config(commands)
+                if not result.success:
+                    raise Exception(result.error or 'send_config failed')
+                save_result = driver.send_command(save_cmd)
+                if not save_result.success:
+                    logger.warning("Save command failed on %s (scrapli): %s", device_id, save_result.error)
+        except Exception as exc_scrapli:
+            logger.error("Rotation phase-1 failed for %s: %s", device_id, exc_scrapli)
+            return {'success': False, 'message': f'Failed to execute change commands: {exc_scrapli}'}
 
     # Phase 2: Verify new credentials by attempting login
     verify_info = {**device_info, 'password': new_password}
     try:
-        verify_driver = DriverFactory.create(verify_info)
-        verify_driver.close()
+        with DriverFactory.get_driver('netmiko', verify_info) as verify_driver:
+            pass  # successful connect = password verified
     except Exception as exc:
         logger.error("Rotation phase-2 verify failed for %s: %s — attempting rollback", device_id, exc)
         # Cannot rollback easily — log critical and keep old password

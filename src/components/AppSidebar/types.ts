@@ -20,6 +20,8 @@ export interface NavChild {
   badgeCritical?: boolean;
   /** Prefix for active route matching (e.g. '/config/' matches /config/backup, /config/diff) */
   activeMatch?: string;
+  /** If set, only users with this role (or higher) can see this item */
+  requiredRole?: string;
 }
 
 /** A top-level navigation group / section */
@@ -56,6 +58,8 @@ export interface AppSidebarProps {
   onOpenSearch?: () => void;
   /** UI language: 'zh' | 'en'. Defaults to 'zh'. */
   language?: string;
+  /** Current user role for RBAC filtering (e.g. 'Administrator', 'Operator', 'Viewer') */
+  userRole?: string;
   /** Mobile drawer open state. Omit for desktop-only usage. */
   mobileOpen?: boolean;
   /** Called when mobile drawer should close */

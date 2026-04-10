@@ -5,6 +5,7 @@ redis
 sqlalchemy
 pydantic
 pydantic-settings
+python-dotenv
 netmiko
 python-multipart
 jinja2

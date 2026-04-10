@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Body, Query
+from fastapi import APIRouter, HTTPException, Body, Query, Depends
 from fastapi.responses import JSONResponse
 import os
 import uuid
@@ -12,6 +12,7 @@ from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health
 from services.operational_data_service import collect_operational_data, collect_custom_command_data
 from core.crypto import encrypt_credential, decrypt_credential
+from core.rbac import require_role
 from services.vault_service import resolve_device_credentials, write_credentials as vault_write, vault_available
 from drivers.ssh_compat import build_ssh_error_guidance, get_ssh_error_code
 from datetime import datetime, timezone
@@ -672,22 +673,22 @@ def update_device_config(device_id: str, payload: dict = Body(...)):
 # ──────────────────────────────────────────────
 
 @router.get("/devices/rotation/status")
-def rotation_status():
-    """密码轮换状态概览。"""
+def rotation_status(user=require_role("Administrator")):
+    """密码轮换状态概览（仅管理员）。"""
     from services.password_rotation_service import get_rotation_status
     return {"success": True, "data": get_rotation_status()}
 
 
 @router.get("/devices/rotation/expiring")
-def rotation_expiring(days: int = Query(default=14)):
-    """即将过期的设备列表。"""
+def rotation_expiring(days: int = Query(default=14), user=require_role("Administrator")):
+    """即将过期的设备列表（仅管理员）。"""
     from services.password_rotation_service import check_expiring
     return {"success": True, "data": check_expiring(days_ahead=days)}
 
 
 @router.post("/devices/{device_id}/rotate-password")
-def rotate_device_password(device_id: str):
-    """手动触发单台设备密码轮换。"""
+def rotate_device_password(device_id: str, user=require_role("Administrator")):
+    """手动触发单台设备密码轮换（仅管理员）。"""
     from services.password_rotation_service import rotate_password
     result = rotate_password(device_id)
     if result['success']:
@@ -697,13 +698,45 @@ def rotate_device_password(device_id: str):
             severity='high',
             status='success',
             summary=result.get('message', ''),
-            actor_username='admin',
-            actor_role='Administrator',
+            actor_username=user.get('username', 'admin'),
+            actor_role=user.get('role', 'Administrator'),
             target_type='device',
             target_id=device_id,
             device_id=device_id,
         )
     return {"success": result['success'], "data": result}
+
+
+@router.get("/devices/{device_id}/reveal-password")
+def reveal_device_password(device_id: str, user=require_role("Administrator")):
+    """解密并返回设备当前密码（仅管理员，审计记录）。"""
+    from core.crypto import decrypt_credential
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT hostname, ip_address, password FROM devices WHERE id = ?',
+            (device_id,),
+        ).fetchone()
+        if not row:
+            return {"success": False, "message": "设备不存在"}
+        decrypted = decrypt_credential(row['password'])
+        if decrypted is None:
+            return {"success": False, "message": "密码解密失败，可能密钥不匹配"}
+        log_audit_event(
+            event_type='PASSWORD_REVEAL',
+            category='security',
+            severity='high',
+            status='success',
+            summary=f"管理员查看了设备 {row['hostname']}({row['ip_address']}) 的明文密码",
+            actor_username=user.get('username', 'admin'),
+            actor_role=user.get('role', 'Administrator'),
+            target_type='device',
+            target_id=device_id,
+            device_id=device_id,
+        )
+        return {"success": True, "data": {"password": decrypted}}
+    finally:
+        conn.close()
 
 
 @router.post("/devices/connect")

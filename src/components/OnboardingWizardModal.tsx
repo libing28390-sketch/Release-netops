@@ -47,7 +47,7 @@ export default function OnboardingWizardModal({ device, language, onClose, onCom
     setLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('auth_token') || '';
+      const token = localStorage.getItem('netops_token') || '';
       const resp = await fetch(`${API_BASE}/api/devices/${device.id}/onboard`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

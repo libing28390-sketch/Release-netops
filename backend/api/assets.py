@@ -118,8 +118,25 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
 
 
 def _delete_linked_device(conn, asset_id: str) -> None:
-    """Cascade-delete the devices row linked to the asset."""
-    conn.execute('DELETE FROM devices WHERE asset_id = ?', (asset_id,))
+    """Cascade-delete the devices row linked to the asset, cleaning up all FK references first."""
+    row = conn.execute('SELECT id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+    if not row:
+        return
+    device_id = row['id'] if isinstance(row, dict) else row[0]
+
+    # Delete from all tables that reference devices(id)
+    conn.execute('DELETE FROM jobs WHERE device_id = ?', (device_id,))
+    conn.execute('DELETE FROM config_snapshots WHERE device_id = ?', (device_id,))
+    conn.execute('DELETE FROM links WHERE source_device_id = ? OR target_device_id = ?', (device_id, device_id))
+    conn.execute('DELETE FROM topology_discovery_run_devices WHERE device_id = ?', (device_id,))
+    conn.execute('DELETE FROM topology_observations WHERE source_device_id = ? OR target_device_id = ?', (device_id, device_id))
+    conn.execute('DELETE FROM compliance_findings WHERE device_id = ?', (device_id,))
+    conn.execute('DELETE FROM device_health_samples WHERE device_id = ?', (device_id,))
+    conn.execute('DELETE FROM config_drift_results WHERE device_id = ?', (device_id,))
+    conn.execute('DELETE FROM capacity_snapshots WHERE device_id = ?', (device_id,))
+    conn.execute('DELETE FROM inspection_results WHERE device_id = ?', (device_id,))
+
+    conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
 
 
 # ── Pydantic Models ──────────────────────────────────────────────────
@@ -365,6 +382,49 @@ def update_asset(asset_id: str, body: AssetUpdate):
         new_lifecycle = body.lifecycle_status if body.lifecycle_status is not None else old_lifecycle
         transitioning_to_production = (new_lifecycle == 'production' and old_lifecycle != 'production')
 
+        # ── Pre-flight: block production transition if onboarding not complete ──
+        if transitioning_to_production and row['asset_type'] == 'network_device':
+            device_row = conn.execute(
+                'SELECT id, onboarding_status, username, password, ip_address FROM devices WHERE asset_id = ?',
+                (asset_id,)
+            ).fetchone()
+            if device_row:
+                ob_status = device_row['onboarding_status'] or 'pending_credentials'
+                if ob_status not in ('verified', 'active'):
+                    status_labels = {
+                        'pending_credentials': '待设置凭据',
+                        'credentials_set': '待验证连通性',
+                    }
+                    hint = status_labels.get(ob_status, ob_status)
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f'投产前请先完成口令上手流程（当前状态: {hint}）。请在设备详情中完成凭据设置与连通性验证。'
+                    )
+                # Also check credentials exist — merge values from request body
+                # (body may carry new username/password that hasn't been persisted yet)
+                from core.crypto import decrypt_credential
+                db_ip = (device_row['ip_address'] or '').strip()
+                db_uname = (device_row['username'] or '').strip()
+                db_pwd = (decrypt_credential(device_row['password']) or '').strip()
+                body_ip = (getattr(body, 'management_ip', None) or '').strip()
+                body_uname = (getattr(body, 'username', None) or '').strip()
+                body_pwd = (getattr(body, 'password', None) or '').strip()
+                ip = body_ip or db_ip
+                uname = body_uname or db_uname
+                pwd = body_pwd or db_pwd
+                missing = []
+                if not uname:
+                    missing.append('用户名')
+                if not pwd:
+                    missing.append('密码')
+                if not ip:
+                    missing.append('管理IP')
+                if missing:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f'投产前请先配置设备凭据（缺少: {", ".join(missing)}）'
+                    )
+
         updates = []
         params = []
         updatable = [
@@ -408,18 +468,45 @@ def update_asset(asset_id: str, body: AssetUpdate):
                     try:
                         from services.password_rotation_service import rotate_password
                         rotation_result = rotate_password(device_row['id'])
-                        logger.info(
-                            'Auto-rotated password for device %s on production transition (asset %s)',
-                            device_row['id'], asset_id
-                        )
+                        if rotation_result and not rotation_result.get('success'):
+                            # Rollback: revert lifecycle to previous state
+                            conn.execute(
+                                'UPDATE physical_assets SET lifecycle_status = ? WHERE id = ?',
+                                (old_lifecycle, asset_id)
+                            )
+                            conn.execute(
+                                'UPDATE devices SET lifecycle_status = ? WHERE asset_id = ?',
+                                (old_lifecycle, asset_id)
+                            )
+                            conn.commit()
+                            logger.warning(
+                                'Auto-rotation failed for asset %s, lifecycle reverted to %s: %s',
+                                asset_id, old_lifecycle, rotation_result.get('message', '')
+                            )
+                        else:
+                            logger.info(
+                                'Auto-rotated password for device %s on production transition (asset %s)',
+                                device_row['id'], asset_id
+                            )
                     except Exception as e:
-                        logger.warning('Auto-rotation failed for asset %s: %s', asset_id, e)
+                        # Rollback lifecycle on unexpected error
+                        conn.execute(
+                            'UPDATE physical_assets SET lifecycle_status = ? WHERE id = ?',
+                            (old_lifecycle, asset_id)
+                        )
+                        conn.execute(
+                            'UPDATE devices SET lifecycle_status = ? WHERE asset_id = ?',
+                            (old_lifecycle, asset_id)
+                        )
+                        conn.commit()
+                        logger.warning('Auto-rotation exception for asset %s, lifecycle reverted: %s', asset_id, e)
                         rotation_result = {'success': False, 'message': str(e)}
 
         return {
             'ok': True,
             'password_rotated': rotation_result is not None and rotation_result.get('success', False),
             'rotation_detail': rotation_result.get('message', '') if rotation_result else None,
+            'lifecycle_reverted': rotation_result is not None and not rotation_result.get('success', False),
         }
     finally:
         conn.close()
