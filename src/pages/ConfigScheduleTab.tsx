@@ -2,7 +2,8 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Database, RotateCcw, Calendar, Server, ChevronDown, Play, Info, Zap,
-  Activity, Timer, TrendingUp, BarChart3,
+  Activity, Timer, TrendingUp, BarChart3, AlertTriangle, RefreshCw,
+  Shield, GitCompareArrows, Hash, Eye,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import type { ConfigSnapshot, Device } from '../types';
@@ -265,8 +266,16 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
   const [devicePage, setDevicePage] = useState(1);
   const [scopeExpanded, setScopeExpanded] = useState(false);
   const SCOPE_PREVIEW_COUNT = 4;
-  const TIMELINE_PREVIEW = 5;
+  const TIMELINE_PREVIEW = 3;
   const [timelineExpanded, setTimelineExpanded] = useState(false);
+
+  // ── Advanced backup options (local state) ──
+  const [backupScope, setBackupScope] = useState<'all' | 'selected'>('all');
+  const [scopeDeviceIds, setScopeDeviceIds] = useState<string[]>([]);
+  const [concurrency, setConcurrency] = useState(50);
+  const [retryCount, setRetryCount] = useState(2);
+  const [diffOnly, setDiffOnly] = useState(false);
+  const [scopePickerOpen, setScopePickerOpen] = useState(false);
   const displayDeviceStats = useMemo(() => {
     const stats = backupStats?.device_stats || [];
     const start = (devicePage - 1) * DEVICE_PAGE_SIZE;
@@ -382,6 +391,72 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
 
                 {/* Cron mode switch */}
                 <div className={`mt-4 transition-opacity ${scheduleEnabled ? '' : 'opacity-35 pointer-events-none'}`}>
+
+                  {/* ── Device Scope Selector ── */}
+                  <div className="mb-4 pb-4 border-b border-black/5">
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-black/30 mb-2">{zh ? '适用设备范围' : 'Device Scope'}</label>
+                    <div className="flex items-center gap-1 rounded-lg bg-black/[0.03] p-0.5 mb-2">
+                      <button onClick={() => { setBackupScope('all'); setScopeDeviceIds([]); }}
+                        className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${backupScope === 'all' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40'}`}>
+                        {zh ? '全部在线设备' : 'All Online'}
+                      </button>
+                      <button onClick={() => setBackupScope('selected')}
+                        className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${backupScope === 'selected' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40'}`}>
+                        {zh ? '指定设备' : 'Selected'}
+                      </button>
+                    </div>
+                    {backupScope === 'all' ? (
+                      <p className="text-[10px] text-black/30 flex items-center gap-1">
+                        <Server size={10} className="text-emerald-500/60" />
+                        {zh ? `将备份全部 ${onlineCount} 台在线设备` : `Will backup all ${onlineCount} online devices`}
+                      </p>
+                    ) : (
+                      <div>
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {scopeDeviceIds.length === 0 ? (
+                            <p className="text-[10px] text-black/25 italic">{zh ? '未选择任何设备' : 'No devices selected'}</p>
+                          ) : (
+                            scopeDeviceIds.map(id => {
+                              const dev = devices.find(d => d.id === id);
+                              return dev ? (
+                                <span key={id} className="inline-flex items-center gap-1 rounded-md bg-[#ecfeff] border border-[#06b6d4]/15 px-1.5 py-0.5 text-[9px] text-[#0891b2] font-medium">
+                                  {dev.hostname}
+                                  <button onClick={() => setScopeDeviceIds(prev => prev.filter(x => x !== id))} className="text-[#06b6d4] hover:text-red-500 transition-colors ml-0.5">&times;</button>
+                                </span>
+                              ) : null;
+                            })
+                          )}
+                        </div>
+                        <div className="relative">
+                          <button onClick={() => setScopePickerOpen(v => !v)}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dashed border-[#06b6d4]/30 px-3 text-[10px] font-semibold text-[#0891b2] hover:bg-[#ecfeff] transition-all">
+                            <Server size={10} /> {zh ? '选择设备' : 'Pick Devices'}
+                            <ChevronDown size={10} className={`transition-transform ${scopePickerOpen ? 'rotate-180' : ''}`} />
+                          </button>
+                          <AnimatePresence>
+                            {scopePickerOpen && (
+                              <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                                className="absolute z-20 mt-1 w-full max-h-40 overflow-y-auto rounded-xl border border-black/8 bg-white shadow-lg">
+                                {devices.filter(d => d.status === 'online').map(d => {
+                                  const checked = scopeDeviceIds.includes(d.id);
+                                  return (
+                                    <button key={d.id} onClick={() => setScopeDeviceIds(prev => checked ? prev.filter(x => x !== d.id) : [...prev, d.id])}
+                                      className={`flex w-full items-center gap-2 px-3 py-2 text-xs transition-colors hover:bg-[#ecfeff] ${checked ? 'bg-[#ecfeff]/50' : ''}`}>
+                                      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[8px] ${checked ? 'bg-[#06b6d4] border-[#06b6d4] text-white' : 'border-black/15'}`}>
+                                        {checked && '✓'}
+                                      </span>
+                                      <span className="font-medium text-[#164e63]">{d.hostname}</span>
+                                      <span className="text-[10px] text-black/25 font-mono">{d.ip_address}</span>
+                                    </button>
+                                  );
+                                })}
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1 rounded-lg bg-black/[0.03] p-0.5">
                     <button
                       onClick={switchToSimple}
@@ -585,6 +660,49 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                   </div>
                 </div>
 
+                {/* ── Advanced Execution Options ── */}
+                <div className={`mt-4 pt-4 border-t border-black/5 transition-opacity ${scheduleEnabled ? '' : 'opacity-35 pointer-events-none'}`}>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-black/30 mb-3">{zh ? '执行参数' : 'Execution Options'}</label>
+                  <div className="space-y-3">
+                    {/* Concurrency */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Hash size={11} className="text-black/25" />
+                        <span className="text-xs text-[#164e63] font-medium">{zh ? '最大并发数' : 'Max Concurrency'}</span>
+                      </div>
+                      <input
+                        type="number" min={1} max={200} value={concurrency}
+                        onChange={e => setConcurrency(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+                        className="w-20 h-8 rounded-lg border border-black/8 bg-[#f8fafc] px-2 text-center font-mono text-sm text-[#164e63] outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
+                      />
+                    </div>
+                    {/* Retry count */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <RefreshCw size={11} className="text-black/25" />
+                        <span className="text-xs text-[#164e63] font-medium">{zh ? '失败重试次数' : 'Retry on Failure'}</span>
+                      </div>
+                      <input
+                        type="number" min={0} max={5} value={retryCount}
+                        onChange={e => setRetryCount(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
+                        className="w-20 h-8 rounded-lg border border-black/8 bg-[#f8fafc] px-2 text-center font-mono text-sm text-[#164e63] outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
+                      />
+                    </div>
+                    {/* Diff-only switch */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 flex-1 pr-3">
+                        <GitCompareArrows size={11} className="text-black/25 flex-shrink-0" />
+                        <span className="text-xs text-[#164e63] font-medium leading-tight">{zh ? '仅变更时保存' : 'Save on Change Only'}</span>
+                      </div>
+                      <button onClick={() => setDiffOnly(v => !v)}
+                        className={`relative w-10 h-[22px] rounded-full transition-colors duration-200 flex-shrink-0 ${diffOnly ? 'bg-[#06b6d4]' : 'bg-black/10'}`}>
+                        <span className={`absolute top-[3px] left-[3px] w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 ${diffOnly ? 'translate-x-[18px]' : ''}`} />
+                      </button>
+                    </div>
+                    <p className="text-[9px] text-black/25 leading-tight">{zh ? '启用后将对比配置变更，仅在检测到差异时保存新版本' : 'Compares configs and only saves when changes are detected'}</p>
+                  </div>
+                </div>
+
                 {/* Save button */}
                 <div className="mt-4">
                   <button
@@ -623,7 +741,34 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                     {backupStats?.device_stats?.filter(d => d.backup_count > 0).length ?? 0}
                     <span className="text-sm font-normal text-black/25">/{backupStats?.device_stats?.length ?? devices.length}</span>
                   </p>
-                  <p className="text-[10px] text-black/30 mt-0.5">{zh ? '台设备已备份' : 'devices backed up'}</p>
+                  {/* Coverage progress bar */}
+                  {(() => {
+                    const total = backupStats?.device_stats?.length ?? devices.length;
+                    const backed = backupStats?.device_stats?.filter(d => d.backup_count > 0).length ?? 0;
+                    const pct = total > 0 ? Math.round((backed / total) * 100) : 0;
+                    return (
+                      <div className="mt-2">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <p className="text-[10px] text-black/30">{zh ? '覆盖率' : 'Coverage'}</p>
+                          <span className={`text-[10px] font-bold tabular-nums ${pct >= 80 ? 'text-emerald-600' : pct >= 50 ? 'text-amber-600' : 'text-red-500'}`}>{pct}%</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-black/[0.04] overflow-hidden">
+                          <div className={`h-full rounded-full transition-all duration-500 ${pct >= 80 ? 'bg-emerald-500' : pct >= 50 ? 'bg-amber-500' : 'bg-red-400'}`}
+                            style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {/* Storage indicator */}
+                  {(() => {
+                    const totalBytes = backupStats?.recent_backups?.reduce((a, b) => a + (b.size || 0), 0) ?? 0;
+                    return totalBytes > 0 ? (
+                      <div className="mt-1.5 flex items-center gap-1">
+                        <Database size={9} className="text-black/20" />
+                        <span className="text-[9px] text-black/25">{zh ? '已用存储' : 'Storage'}: {fmtSize(totalBytes)}</span>
+                      </div>
+                    ) : null;
+                  })()}
                 </motion.div>
 
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
@@ -632,10 +777,29 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                     <span className="text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '今日执行' : 'Today'}</span>
                     <TrendingUp size={13} className="text-amber-500/50" />
                   </div>
-                  <p className="mt-1.5 text-2xl font-bold text-[#164e63] tabular-nums">{backupStats?.today?.total ?? 0}</p>
-                  <p className="text-[10px] text-black/30 mt-0.5">
-                    {zh ? `定时 ${backupStats?.today?.scheduled ?? 0} · 手动 ${backupStats?.today?.manual ?? 0}` : `Sched ${backupStats?.today?.scheduled ?? 0} · Manual ${backupStats?.today?.manual ?? 0}`}
-                  </p>
+                  {/* Success / Failure split */}
+                  {(() => {
+                    const todayTotal = backupStats?.today?.total ?? 0;
+                    const todayFailed = backupStats?.device_stats?.filter(d => d.status === 'online' && d.backup_count === 0).length ?? 0;
+                    const todaySuccess = Math.max(0, todayTotal);
+                    return (
+                      <>
+                        <p className="mt-1.5 text-2xl font-bold text-[#164e63] tabular-nums">{todayTotal}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="inline-flex items-center gap-1 text-[10px]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            <span className="text-emerald-600 font-semibold tabular-nums">{todaySuccess}</span>
+                            <span className="text-black/25">{zh ? '成功' : 'ok'}</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[10px]">
+                            <span className={`w-1.5 h-1.5 rounded-full ${todayFailed > 0 ? 'bg-red-500' : 'bg-black/10'}`} />
+                            <span className={`font-semibold tabular-nums ${todayFailed > 0 ? 'text-red-500' : 'text-black/25'}`}>{todayFailed}</span>
+                            <span className="text-black/25">{zh ? '未覆盖' : 'missed'}</span>
+                          </span>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </motion.div>
 
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
@@ -766,6 +930,58 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                   )}
                 </div>
               </div>
+
+              {/* ── Recent Failures Panel ── */}
+              {(() => {
+                const missedDevices = backupStats?.device_stats?.filter(d => d.status === 'online' && d.backup_count === 0) ?? [];
+                return missedDevices.length > 0 ? (
+                  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
+                    className="rounded-2xl border border-red-100 bg-gradient-to-br from-red-50/60 to-white shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-red-100/60">
+                      <h3 className="text-xs font-bold text-red-600 flex items-center gap-1.5">
+                        <AlertTriangle size={13} className="text-red-500" />
+                        {zh ? '备份异常设备' : 'Missed Devices'}
+                        <span className="ml-1 px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 text-[9px] font-bold tabular-nums">{missedDevices.length}</span>
+                      </h3>
+                      <p className="text-[9px] text-red-400/80">{zh ? '在线但未有任何备份记录' : 'Online but no backup records'}</p>
+                    </div>
+                    <div className="divide-y divide-red-50">
+                      {missedDevices.slice(0, 5).map(dev => (
+                        <div key={dev.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-red-50/30 transition-colors">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-red-100/60 flex items-center justify-center">
+                              <AlertTriangle size={12} className="text-red-400" />
+                            </div>
+                            <div>
+                              <span className="text-xs font-semibold text-[#164e63]">{dev.hostname}</span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[10px] text-black/25 font-mono">{dev.ip_address}</span>
+                                <span className="text-[9px] text-black/20">{getVendorFromPlatform(dev.platform)}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button className="inline-flex h-6 items-center gap-1 rounded-md border border-black/8 bg-white px-2 text-[10px] font-medium text-black/45 hover:border-[#06b6d4]/30 hover:text-[#0891b2] transition-all">
+                              <Eye size={10} />
+                              {zh ? '详情' : 'Detail'}
+                            </button>
+                            <button onClick={() => void handleRunBackup()}
+                              className="inline-flex h-6 items-center gap-1 rounded-md bg-[#06b6d4]/10 px-2 text-[10px] font-semibold text-[#0891b2] hover:bg-[#06b6d4]/20 transition-all">
+                              <RefreshCw size={10} />
+                              {zh ? '重试' : 'Retry'}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {missedDevices.length > 5 && (
+                      <div className="px-4 py-2 border-t border-red-100/60 text-center">
+                        <span className="text-[10px] text-red-400">{zh ? `还有 ${missedDevices.length - 5} 台设备未备份` : `${missedDevices.length - 5} more devices without backups`}</span>
+                      </div>
+                    )}
+                  </motion.div>
+                ) : null;
+              })()}
             </div>
           </div>
 

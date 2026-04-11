@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar, Clock, ChevronLeft, ChevronRight, Check, X } from 'lucide-react';
 
 interface DateTimePickerProps {
@@ -92,8 +93,10 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
 }) => {
   const zh = language === 'zh';
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [dropUp, setDropUp] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
 
   // Parse initial value
   const parseValue = useCallback((v: string) => {
@@ -138,7 +141,11 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        containerRef.current && !containerRef.current.contains(target) &&
+        dropdownRef.current && !dropdownRef.current.contains(target)
+      ) {
         setOpen(false);
       }
     };
@@ -146,13 +153,51 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  // Determine drop direction
+  // Determine drop direction + fixed position for portal
   useEffect(() => {
     if (!open || !containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    setDropUp(spaceBelow < 340);
-  }, [open]);
+    const updatePosition = () => {
+      const rect = containerRef.current!.getBoundingClientRect();
+      const boundaryEl = containerRef.current!.closest('[data-dropdown-boundary="true"]') as HTMLElement | null;
+      const boundaryRect = boundaryEl?.getBoundingClientRect();
+      const dropdownW = mode === 'datetime' ? 380 : 280;
+      const dropdownH = 340;
+
+      const boundaryLeft = boundaryRect ? boundaryRect.left + 8 : 8;
+      const boundaryRight = boundaryRect ? boundaryRect.right - 8 : window.innerWidth - 8;
+      const boundaryTop = boundaryRect ? boundaryRect.top + 8 : 8;
+      const boundaryBottom = boundaryRect ? boundaryRect.bottom - 8 : window.innerHeight - 8;
+
+      const spaceBelow = boundaryBottom - rect.bottom;
+      const spaceAbove = rect.top - boundaryTop;
+      const up = spaceBelow < dropdownH && spaceAbove > dropdownH;
+      setDropUp(up);
+
+      let left = rect.left;
+      const minLeft = Math.max(8, boundaryLeft);
+      const maxLeft = Math.max(minLeft, boundaryRight - dropdownW);
+      if (left > maxLeft) left = maxLeft;
+      if (left < minLeft) left = minLeft;
+
+      let top = up ? rect.top - dropdownH - 4 : rect.bottom + 4;
+      const minTop = Math.max(8, boundaryTop);
+      const maxTop = Math.max(minTop, Math.min(window.innerHeight - dropdownH - 8, boundaryBottom - dropdownH));
+      if (top > maxTop) top = maxTop;
+      if (top < minTop) top = minTop;
+
+      setDropdownPos({
+        top,
+        left,
+      });
+    };
+    updatePosition();
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [open, mode]);
 
   const prevMonth = () => {
     if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
@@ -234,10 +279,11 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
         </span>
       </button>
 
-      {open && (
+      {open && dropdownPos && createPortal(
         <div
-          className={`absolute z-[100] left-0 mt-1 bg-white rounded-xl border border-black/10 shadow-lg ${dropUp ? 'bottom-full mb-1' : ''}`}
-          style={{ width: mode === 'datetime' ? 380 : 280 }}
+          ref={dropdownRef}
+          className="fixed z-[9999] bg-white rounded-xl border border-black/10 shadow-lg"
+          style={{ top: dropdownPos.top, left: dropdownPos.left, width: mode === 'datetime' ? 380 : 280 }}
         >
           {/* Calendar Header */}
           <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
@@ -326,7 +372,8 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
               {zh ? '确认' : 'Confirm'}
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

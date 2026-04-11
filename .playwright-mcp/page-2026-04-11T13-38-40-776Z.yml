@@ -1,0 +1,47 @@
+- generic [ref=e3]:
+  - img
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - heading "Nexora" [level=1] [ref=e10]
+      - paragraph [ref=e11]: Network Automation Platform
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - heading "Welcome back" [level=2] [ref=e16]
+        - paragraph [ref=e17]: Sign in to your operations console
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - generic [ref=e21]: Username
+          - generic [ref=e22]:
+            - img [ref=e24]
+            - textbox "Username" [ref=e27]:
+              - /placeholder: admin
+              - text: admin
+        - generic [ref=e28]:
+          - generic [ref=e29]: Password
+          - generic [ref=e30]:
+            - img [ref=e32]
+            - textbox "Password" [active] [ref=e35]:
+              - /placeholder: ••••••••
+              - text: admin
+            - button "Show password" [ref=e36]:
+              - img [ref=e37]
+        - paragraph [ref=e67]:
+          - img [ref=e68]
+          - text: Invalid credentials
+        - generic [ref=e40] [cursor=pointer]:
+          - checkbox "Remember me" [ref=e42]
+          - generic [ref=e44]: Remember me
+        - button "Forgot password?" [ref=e46]:
+          - img [ref=e47]
+          - text: Forgot password?
+        - button "Login" [ref=e51]:
+          - generic [ref=e53]:
+            - text: Login
+            - img [ref=e72]
+      - generic [ref=e57]:
+        - generic [ref=e60]: System Online
+        - generic [ref=e61]: ·
+        - generic [ref=e62]: Nexora v2.0
+        - generic [ref=e63]: ·
+        - generic [ref=e64]: © 2026 Nexora

@@ -1325,6 +1325,7 @@ def init_db():
         # Migration: password rotation tracking
         ensure_column('devices', 'password_last_rotated', "TEXT DEFAULT ''")
         ensure_column('devices', 'password_expires_at', "TEXT DEFAULT ''")
+        ensure_column('devices', 'rotation_status', "TEXT DEFAULT ''")  # rotating / completed / failed
 
         # Auto-link existing devices to matching assets (one-time migration)
         unlinked = cursor.execute(

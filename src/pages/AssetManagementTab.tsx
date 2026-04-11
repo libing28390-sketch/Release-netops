@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Package, Plus, Trash2, Search, X, RefreshCw, Download, Pencil, Copy,
-  Server, Router, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  AlertTriangle, Network,
+  Server, Router, ChevronLeft, ChevronRight,
+  AlertTriangle, Network, SlidersHorizontal,
   ExternalLink, Wifi, Building2, Upload,
   FileText, ChevronDown, ChevronUp,
   Zap, AlertCircle, CheckCircle2, Tag, Info,
   Flame, MonitorSpeaker, LayoutList, LayoutGrid,
-  Lock, Terminal, Eye, EyeOff,
+  Lock, Terminal, Eye, EyeOff, Loader2, Shield,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
 import DateTimePicker from '../components/DateTimePicker';
+import Pagination from '../components/Pagination';
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
@@ -22,8 +23,10 @@ interface Asset {
   vendor: string; model: string; hostname: string; datacenter: string;
   rack: string; rack_unit: string; management_ip: string; business_ip: string;
   device_role: string; vlan: string; uplink_switch: string; uplink_port: string;
-  status: string; purchase_date: string;
+  status: string; lifecycle_status: string; purchase_date: string;
   warranty_expiry: string; department: string; notes: string;
+  platform: string; connection_method: string; username: string;
+  snmp_community: string; snmp_port: string;
   created_at: string; updated_at: string;
 }
 
@@ -80,8 +83,6 @@ const EMPTY_FORM = {
   snmp_community: 'public', snmp_port: '161',
 };
 
-const PAGE_SIZE = 25;
-
 const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
   Cisco:      [{ value: 'cisco_ios', label: 'Cisco IOS' }, { value: 'cisco_nxos', label: 'Cisco NX-OS' }, { value: 'cisco_xe', label: 'Cisco IOS-XE' }],
   Huawei:     [{ value: 'huawei_vrp', label: 'Huawei VRP' }],
@@ -137,6 +138,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [summary, setSummary]           = useState<AssetSummary | null>(null);
   const [total, setTotal]               = useState(0);
   const [page, setPage]                 = useState(1);
+  const [pageSize, setPageSize]         = useState(20);
   const [loading, setLoading]           = useState(true);
 
   const [search, setSearch]             = useState('');
@@ -146,6 +148,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [dcFilter, setDcFilter]         = useState('all');
   const [deptFilter, setDeptFilter]     = useState('all');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
+  const [lifecycleFilter, setLifecycleFilter] = useState('all');
 
   const [viewMode, setViewMode]         = useState<ViewMode>('table');
   const [groupBy, setGroupBy]           = useState<GroupBy>('datacenter');
@@ -162,7 +165,14 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [batchTagValue, setBatchTagValue] = useState('');
   const [showProductionConfirm, setShowProductionConfirm] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; text: string } | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
+  const [rotatingAssetId, setRotatingAssetId] = useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const rotationPollRef = React.useRef<ReturnType<typeof setInterval>>();
+
+  /* Cleanup rotation polling on unmount */
+  useEffect(() => () => { if (rotationPollRef.current) clearInterval(rotationPollRef.current); }, []);
 
   /* ─── Data Fetching ─── */
   const fetchSummary = useCallback(async () => {
@@ -172,7 +182,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const fetchAssets = useCallback(async () => {
     setLoading(true);
     try {
-      const p = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
+      const p = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
       if (search.trim()) p.set('q', search.trim());
       if (typeFilter !== 'all')   p.set('asset_type', typeFilter);
       if (statusFilter !== 'all') p.set('status', statusFilter);
@@ -183,11 +193,11 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       if (r.ok) { const d = await r.json(); setAssets(d.items); setTotal(d.total); }
     } catch { /* noop */ }
     setLoading(false);
-  }, [page, search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter]);
+  }, [page, pageSize, search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
-  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter]);
+  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, pageSize]);
 
   /* ESC key to close drawer */
   useEffect(() => {
@@ -197,14 +207,15 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     return () => document.removeEventListener('keydown', handler);
   }, [drawerAsset]);
 
-  /* Auto-dismiss feedback toast */
+  /* Auto-dismiss feedback toast (skip while rotation is polling) */
   useEffect(() => {
     if (!feedbackMsg) return;
+    if (rotatingAssetId) return; // Don't auto-dismiss during rotation polling
     const t = setTimeout(() => setFeedbackMsg(null), feedbackMsg.type === 'error' ? 8000 : 5000);
     return () => clearTimeout(t);
-  }, [feedbackMsg]);
+  }, [feedbackMsg, rotatingAssetId]);
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const vendorList = useMemo(() => summary?.by_vendor ? Object.keys(summary.by_vendor).sort() : [], [summary]);
   const dcList     = useMemo(() => summary?.by_datacenter ? Object.keys(summary.by_datacenter).sort() : [], [summary]);
   const deptList   = useMemo(() => summary?.by_department ? Object.keys(summary.by_department).sort() : [], [summary]);
@@ -216,23 +227,26 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     return c;
   }, [assets]);
 
-  /* Filtered assets by severity card click */
+  /* Filtered assets by severity card click + lifecycle filter */
   const displayAssets = useMemo(() => {
-    if (severityFilter === 'all') return assets;
-    return assets.filter(a => severityOf(a) === severityFilter);
-  }, [assets, severityFilter]);
+    let result = assets;
+    if (severityFilter !== 'all') result = result.filter(a => severityOf(a) === severityFilter);
+    if (lifecycleFilter !== 'all') result = result.filter(a => (a.lifecycle_status || 'staging') === lifecycleFilter);
+    return result;
+  }, [assets, severityFilter, lifecycleFilter]);
 
   /* ─── CRUD ─── */
-  const openAdd = () => { setEditingAsset(null); setForm({ ...EMPTY_FORM }); setShowModal(true); };
+  const openAdd = () => { setEditingAsset(null); setForm({ ...EMPTY_FORM }); setModalError(null); setShowModal(true); };
   const openEdit = (a: Asset) => {
     setEditingAsset(a);
+    setModalError(null);
     setForm({
       asset_type: a.asset_type, asset_tag: a.asset_tag, serial_number: a.serial_number,
       vendor: a.vendor, model: a.model, hostname: a.hostname, datacenter: a.datacenter,
       rack: a.rack, rack_unit: a.rack_unit, management_ip: a.management_ip,
       business_ip: a.business_ip, device_role: a.device_role,
       vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
-      status: a.status, lifecycle_status: (a as any).lifecycle_status || 'staging',
+      status: a.status, lifecycle_status: a.lifecycle_status || 'staging',
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
       platform: (a as any).platform || 'cisco_ios',
@@ -249,7 +263,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     if (!form.hostname.trim() && !form.asset_tag.trim()) return;
 
     // Detect production transition → show confirmation first
-    const oldLifecycle = editingAsset ? ((editingAsset as any).lifecycle_status || 'staging') : 'staging';
+    const oldLifecycle = editingAsset ? (editingAsset.lifecycle_status || 'staging') : 'staging';
     if (editingAsset && form.lifecycle_status === 'production' && oldLifecycle !== 'production') {
       setShowProductionConfirm(true);
       return;
@@ -257,6 +271,39 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
 
     await doSave();
   };
+
+  const startRotationPoll = useCallback((assetId: string) => {
+    if (rotationPollRef.current) clearInterval(rotationPollRef.current);
+    setRotatingAssetId(assetId);
+    setFeedbackMsg({ type: 'info', text: zh ? '⏳ 口令上收中，请稍候...' : '⏳ Rotating password, please wait...' });
+    let attempts = 0;
+    rotationPollRef.current = setInterval(async () => {
+      attempts++;
+      try {
+        const r = await fetch(`/api/assets/${assetId}/rotation-status`);
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.rotation_status === 'completed') {
+          clearInterval(rotationPollRef.current);
+          rotationPollRef.current = undefined;
+          setRotatingAssetId(null);
+          setFeedbackMsg({ type: 'success', text: zh ? '✅ 已投产，默认口令已自动修改上收。' : '✅ Marked as production. Password auto-rotated.' });
+          fetchAssets();
+        } else if (d.rotation_status === 'failed') {
+          clearInterval(rotationPollRef.current);
+          rotationPollRef.current = undefined;
+          setRotatingAssetId(null);
+          setFeedbackMsg({ type: 'warning', text: zh ? '⚠️ 口令自动轮换失败，投产已回滚。' : '⚠️ Auto-rotation failed, production reverted.' });
+          fetchAssets();
+        } else if (attempts >= 30) {
+          clearInterval(rotationPollRef.current);
+          rotationPollRef.current = undefined;
+          setRotatingAssetId(null);
+          setFeedbackMsg({ type: 'warning', text: zh ? '口令上收超时，请稍后到凭据管理页面确认。' : 'Rotation timed out. Please check credentials page later.' });
+        }
+      } catch { /* ignore network blips */ }
+    }, 2000);
+  }, [zh, fetchAssets]);
 
   const doSave = async () => {
     setSaving(true);
@@ -269,8 +316,10 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
         setShowProductionConfirm(false);
         fetchAssets();
         fetchSummary();
-        // Report password rotation result
-        if (data?.password_rotated) {
+        // Async rotation → start polling
+        if (data?.rotation_pending && editingAsset) {
+          startRotationPoll(editingAsset.id);
+        } else if (data?.password_rotated) {
           setFeedbackMsg({ type: 'success', text: zh ? '已投产，默认口令已自动修改上收。' : 'Marked as production. Default password has been auto-rotated.' });
         } else if (data?.lifecycle_reverted && data?.rotation_detail) {
           setFeedbackMsg({ type: 'warning', text: zh ? `口令自动轮换失败，投产已回滚: ${data.rotation_detail}` : `Auto-rotation failed, production transition reverted: ${data.rotation_detail}` });
@@ -281,7 +330,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       } else if (r.status === 422) {
         const err = await r.json().catch(() => null);
         setShowProductionConfirm(false);
-        setFeedbackMsg({ type: 'error', text: zh ? (err?.detail || '前置校验未通过') : (err?.detail || 'Pre-flight check failed') });
+        setModalError(zh ? (err?.detail || '前置校验未通过') : (err?.detail || 'Pre-flight check failed'));
       } else {
         const err = await r.json().catch(() => null);
         setFeedbackMsg({ type: 'error', text: zh ? `保存失败: ${err?.detail || r.statusText}` : `Save failed: ${err?.detail || r.statusText}` });
@@ -299,16 +348,17 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       rack: a.rack, rack_unit: '', management_ip: '',
       business_ip: '', device_role: a.device_role,
       vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
-      status: a.status, lifecycle_status: (a as any).lifecycle_status || 'staging',
+      status: a.status, lifecycle_status: 'staging',
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
-      platform: (a as any).platform || 'cisco_ios',
-      connection_method: (a as any).connection_method || 'ssh',
-      username: (a as any).username || '',
+      platform: a.platform || 'cisco_ios',
+      connection_method: a.connection_method || 'ssh',
+      username: '',
       password: '',
-      snmp_community: (a as any).snmp_community || 'public',
-      snmp_port: String((a as any).snmp_port || '161'),
+      snmp_community: a.snmp_community || 'public',
+      snmp_port: String(a.snmp_port || '161'),
     });
+    setModalError(null);
     setShowModal(true);
   };
 
@@ -359,6 +409,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       [zh ? 'U位' : 'Rack Unit']: a.rack_unit,
       [zh ? '部门' : 'Department']: a.department,
       [zh ? '购买日期' : 'Purchase Date']: a.purchase_date,
+      [zh ? '投产状态' : 'Lifecycle']: LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || '',
       [zh ? '保修到期' : 'Warranty Expiry']: a.warranty_expiry,
       [zh ? '备注' : 'Notes']: a.notes,
     }));
@@ -417,16 +468,16 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
             if (obj.hostname || obj.asset_tag) mapped.push(obj);
           }
         }
-        if (!mapped.length) { alert(zh ? '未找到有效数据行（需包含主机名或资产编号列）' : 'No valid rows found (need Hostname or Asset Tag column)'); return; }
+        if (!mapped.length) { setFeedbackMsg({ type: 'error', text: zh ? '未找到有效数据行（需包含主机名或资产编号列）' : 'No valid rows found (need Hostname or Asset Tag column)' }); return; }
         const r = await fetch('/api/assets/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mapped) });
         if (r.ok) {
           const res = await r.json();
-          alert(zh ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条` : `Import done: ${res.created} created, ${res.skipped} skipped`);
+          setFeedbackMsg({ type: 'success', text: zh ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条` : `Import done: ${res.created} created, ${res.skipped} skipped` });
           fetchAssets(); fetchSummary();
         } else {
-          alert(zh ? '导入失败，请检查文件格式' : 'Import failed, please check file format');
+          setFeedbackMsg({ type: 'error', text: zh ? '导入失败，请检查文件格式' : 'Import failed, please check file format' });
         }
-      } catch { alert(zh ? '文件解析失败' : 'Failed to parse file'); }
+      } catch { setFeedbackMsg({ type: 'error', text: zh ? '文件解析失败' : 'Failed to parse file' }); }
     };
     reader.readAsArrayBuffer(file);
     e.target.value = '';
@@ -485,8 +536,9 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     return typeMeta(a.asset_type).label[zh ? 'zh' : 'en'];
   };
 
-  const hasFilters = typeFilter !== 'all' || statusFilter !== 'all' || vendorFilter !== 'all' || dcFilter !== 'all' || deptFilter !== 'all';
-  const clearAllFilters = () => { setTypeFilter('all'); setStatusFilter('all'); setVendorFilter('all'); setDcFilter('all'); setDeptFilter('all'); setSeverityFilter('all'); };
+  const hasFilters = typeFilter !== 'all' || statusFilter !== 'all' || vendorFilter !== 'all' || dcFilter !== 'all' || deptFilter !== 'all' || lifecycleFilter !== 'all';
+  const advancedFilterCount = [vendorFilter, dcFilter, deptFilter, lifecycleFilter].filter(f => f !== 'all').length;
+  const clearAllFilters = () => { setTypeFilter('all'); setStatusFilter('all'); setVendorFilter('all'); setDcFilter('all'); setDeptFilter('all'); setSeverityFilter('all'); setLifecycleFilter('all'); };
 
   /* ═══════════════════════════════════════════════════════════════════
      RENDER
@@ -513,7 +565,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
           >
             {feedbackMsg.type === 'success' ? <CheckCircle2 size={18} className="text-emerald-500 shrink-0" /> :
              feedbackMsg.type === 'warning' ? <AlertTriangle size={18} className="text-amber-500 shrink-0" /> :
-             feedbackMsg.type === 'info' ? <Info size={18} className="text-cyan-500 shrink-0" /> :
+             feedbackMsg.type === 'info' ? (rotatingAssetId ? <Loader2 size={18} className="text-cyan-500 shrink-0 animate-spin" /> : <Info size={18} className="text-cyan-500 shrink-0" />) :
              <AlertCircle size={18} className="text-red-500 shrink-0" />}
             <span className="text-sm font-medium flex-1">{feedbackMsg.text}</span>
             <button onClick={() => setFeedbackMsg(null)} className="p-0.5 rounded-md hover:bg-black/5 transition-colors">
@@ -527,49 +579,42 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
         {([
           { key: 'critical', value: criticalCount, label: zh ? '严重故障' : 'Critical', sub: 'P1', Icon: Flame,
-            bg: 'bg-gradient-to-br from-red-500 to-red-600', ring: 'ring-red-400/30', iconCls: 'text-white/70',
-            valCls: 'text-white', labelCls: 'text-white/70', subCls: 'bg-white/15 text-white/90', barCls: 'bg-white/20',
-            filterVal: 'critical' as string, pulse: criticalCount > 0 },
+            gradient: 'from-red-600 to-red-700', filterVal: 'critical' as string, pulse: true },
           { key: 'major', value: majorCount, label: zh ? '重要问题' : 'Major Issues', sub: 'P2', Icon: AlertTriangle,
-            bg: 'bg-gradient-to-br from-orange-400 to-orange-500', ring: 'ring-orange-400/30', iconCls: 'text-white/70',
-            valCls: 'text-white', labelCls: 'text-white/70', subCls: 'bg-white/15 text-white/90', barCls: 'bg-white/20',
-            filterVal: 'major' as string, pulse: majorCount > 0 },
+            gradient: 'from-orange-600 to-orange-700', filterVal: 'major' as string },
           { key: 'warning', value: warningCount, label: zh ? '需要关注' : 'Warning', sub: 'P3', Icon: AlertCircle,
-            bg: 'bg-gradient-to-br from-amber-400 to-amber-500', ring: 'ring-amber-400/30', iconCls: 'text-white/70',
-            valCls: 'text-white', labelCls: 'text-white/70', subCls: 'bg-white/15 text-white/90', barCls: 'bg-white/20',
-            filterVal: 'warning' as string, pulse: false },
+            gradient: 'from-amber-600 to-amber-700', filterVal: 'warning' as string },
           { key: 'healthy', value: healthyCount, label: zh ? '运行正常' : 'Healthy', sub: zh ? '正常' : 'OK', Icon: CheckCircle2,
-            bg: 'bg-gradient-to-br from-emerald-500 to-emerald-600', ring: 'ring-emerald-400/30', iconCls: 'text-white/70',
-            valCls: 'text-white', labelCls: 'text-white/70', subCls: 'bg-white/15 text-white/90', barCls: 'bg-white/20',
-            filterVal: 'healthy' as string, pulse: false },
+            gradient: 'from-emerald-600 to-emerald-700', filterVal: 'healthy' as string },
         ]).map(c => {
           const isActive = severityFilter === c.filterVal;
+          const isEmpty = c.value === 0;
           return (
             <button
               key={c.key}
               onClick={() => setSeverityFilter(isActive ? 'all' : c.filterVal)}
-              className={`group relative rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-[1.01] active:scale-[0.99] ${c.bg} ${isActive ? `ring-2 ${c.ring} shadow-lg` : ''}`}
+              className={`group relative rounded-xl overflow-hidden transition-all hover:shadow-md hover:scale-[1.01] active:scale-[0.99]
+                bg-gradient-to-br ${c.gradient} ${isEmpty ? 'opacity-60' : ''}
+                ${isActive ? 'ring-2 ring-white/30 shadow-lg' : 'shadow-sm'}`}
             >
-              <div className="px-4 py-3 flex items-center justify-between relative z-10">
-                <div>
+              <div className="px-3 py-2.5 flex items-center justify-between relative z-10">
+                <div className="text-left">
                   <div className="flex items-center gap-1.5 mb-0.5">
-                    <span className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${c.subCls}`}>{c.sub}</span>
-                    <span className={`text-[10px] font-medium ${c.labelCls}`}>{c.label}</span>
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-white/50">{c.sub}</span>
+                    <span className="text-[10px] font-medium text-white/60">{c.label}</span>
                   </div>
-                  <p className={`text-3xl font-black tabular-nums leading-none mt-1 ${c.valCls}`}>{c.value}</p>
-                  {/* impact hint */}
-                  {c.value > 0 && (
-                    <p className={`text-[9px] mt-1 ${c.labelCls}`}>
-                      {totalCount > 0 ? `${Math.round((c.value / totalCount) * 100)}%` : '0%'} {zh ? '资产' : 'of fleet'}
+                  <p className="text-2xl font-black tabular-nums leading-none mt-0.5 text-white">{c.value}</p>
+                  {c.value > 0 && totalCount > 0 && (
+                    <p className="text-[9px] mt-0.5 text-white/30">
+                      {Math.round((c.value / totalCount) * 100)}% {zh ? '资产' : 'of fleet'}
                     </p>
                   )}
                 </div>
-                <div className="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center backdrop-blur-sm">
-                  <c.Icon size={20} className={`${c.iconCls} ${c.pulse ? 'animate-pulse' : ''}`} />
+                <div className="h-8 w-8 rounded-lg flex items-center justify-center bg-white/[0.08]">
+                  <c.Icon size={16} className={`text-white/70 ${!isEmpty && c.pulse ? 'animate-pulse' : ''}`} />
                 </div>
               </div>
-              {/* decorative bar */}
-              {isActive && <div className={`absolute bottom-0 left-0 right-0 h-1 ${c.barCls}`} />}
+              {isActive && <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20" />}
             </button>
           );
         })}
@@ -631,41 +676,89 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
         </div>
 
         {/* ── Filter Bar ── */}
-        <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-black/[0.03]">
-          <div className="relative flex-1 max-w-[280px]">
-            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-black/15" />
-            <input
-              value={search} onChange={e => setSearch(e.target.value)}
-              placeholder={zh ? 'IP / 主机名 / 资产编号 / 序列号...' : 'IP / hostname / tag / serial...'}
-              className="w-full pl-7 pr-6 py-1.5 rounded-md bg-black/[0.015] border border-black/5 text-[11px] text-black/75 placeholder:text-black/15 focus:outline-none focus:border-[#00bceb]/25 focus:ring-1 focus:ring-[#00bceb]/10 focus:bg-white"
-            />
-            {search && <button onClick={() => setSearch('')} title="Clear" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-black/15 hover:text-black/35"><X size={10} /></button>}
+        <div className="border-b border-black/[0.03]">
+          <div className="flex items-center gap-1.5 px-3 py-1.5">
+            <div className="relative flex-1 max-w-[280px]">
+              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-black/15" />
+              <input
+                value={search} onChange={e => setSearch(e.target.value)}
+                placeholder={zh ? 'IP / 主机名 / 资产编号 / 序列号...' : 'IP / hostname / tag / serial...'}
+                className="w-full pl-7 pr-6 py-1.5 rounded-md bg-black/[0.015] border border-black/5 text-[11px] text-black/75 placeholder:text-black/15 focus:outline-none focus:border-[#00bceb]/25 focus:ring-1 focus:ring-[#00bceb]/10 focus:bg-white"
+              />
+              {search && <button onClick={() => setSearch('')} title="Clear" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-black/15 hover:text-black/35"><X size={10} /></button>}
+            </div>
+
+            {([
+              { val: typeFilter,   set: setTypeFilter,   label: zh ? '类型' : 'Type',   opts: TYPES.map(t => ({ v: t.value, l: t.label[zh ? 'zh' : 'en'] })) },
+              { val: statusFilter, set: setStatusFilter, label: zh ? '状态' : 'Status', opts: STATUSES.map(s => ({ v: s.value, l: s.label[zh ? 'zh' : 'en'] })) },
+            ] as const).map(f => (
+              <select
+                key={f.label} value={f.val} onChange={e => f.set(e.target.value)} title={f.label}
+                className={`px-1.5 py-1.5 rounded-md border text-[10px] focus:outline-none cursor-pointer transition-colors ${
+                  f.val !== 'all' ? 'bg-[#00bceb]/5 border-[#00bceb]/15 text-[#0088b0] font-semibold' : 'bg-transparent border-black/5 text-black/30'
+                }`}
+              >
+                <option value="all">{f.label}</option>
+                {f.opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+              </select>
+            ))}
+
+            <button
+              onClick={() => setShowAdvancedFilter(p => !p)}
+              className={`flex items-center gap-1 px-1.5 py-1.5 rounded-md border text-[10px] font-medium transition-colors ${
+                showAdvancedFilter || advancedFilterCount > 0
+                  ? 'bg-[#00bceb]/5 border-[#00bceb]/15 text-[#0088b0]'
+                  : 'bg-transparent border-black/5 text-black/30 hover:text-black/50'
+              }`}
+              title={zh ? '高级筛选' : 'Advanced Filters'}
+            >
+              <SlidersHorizontal size={11} />
+              <span>{zh ? '筛选' : 'Filter'}</span>
+              {advancedFilterCount > 0 && (
+                <span className="ml-0.5 h-3.5 min-w-[14px] inline-flex items-center justify-center rounded-full bg-[#00bceb] text-white text-[8px] font-bold">{advancedFilterCount}</span>
+              )}
+            </button>
+
+            {(hasFilters || severityFilter !== 'all') && (
+              <button onClick={clearAllFilters} className="text-[9px] text-[#00bceb] hover:underline ml-0.5 whitespace-nowrap">{zh ? '清除全部' : 'Clear all'}</button>
+            )}
+
+            <div className="flex-1" />
+            <span className="text-[10px] text-black/20 tabular-nums whitespace-nowrap">{total} {zh ? '条记录' : 'records'}</span>
           </div>
 
-          {([
-            { val: typeFilter,   set: setTypeFilter,   label: zh ? '类型' : 'Type',   opts: TYPES.map(t => ({ v: t.value, l: t.label[zh ? 'zh' : 'en'] })),     hide: false },
-            { val: statusFilter, set: setStatusFilter, label: zh ? '状态' : 'Status', opts: STATUSES.map(s => ({ v: s.value, l: s.label[zh ? 'zh' : 'en'] })),   hide: false },
-            { val: vendorFilter, set: setVendorFilter, label: zh ? '厂商' : 'Vendor', opts: vendorList.map(v => ({ v, l: v })),   hide: !vendorList.length },
-            { val: dcFilter,     set: setDcFilter,     label: zh ? '机房' : 'DC',     opts: dcList.map(d => ({ v: d, l: d })),     hide: !dcList.length },
-            { val: deptFilter,   set: setDeptFilter,   label: zh ? '业务' : 'Service', opts: deptList.map(d => ({ v: d, l: d })),  hide: !deptList.length },
-          ] as const).filter(f => !f.hide).map(f => (
-            <select
-              key={f.label} value={f.val} onChange={e => f.set(e.target.value)} title={f.label}
-              className={`px-1.5 py-1.5 rounded-md border text-[10px] focus:outline-none cursor-pointer transition-colors ${
-                f.val !== 'all' ? 'bg-[#00bceb]/5 border-[#00bceb]/15 text-[#0088b0] font-semibold' : 'bg-transparent border-black/5 text-black/30'
-              }`}
-            >
-              <option value="all">{f.label}</option>
-              {f.opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-            </select>
-          ))}
-
-          {(hasFilters || severityFilter !== 'all') && (
-            <button onClick={clearAllFilters} className="text-[9px] text-[#00bceb] hover:underline ml-0.5 whitespace-nowrap">{zh ? '清除全部' : 'Clear all'}</button>
-          )}
-
-          <div className="flex-1" />
-          <span className="text-[10px] text-black/20 tabular-nums whitespace-nowrap">{total} {zh ? '条记录' : 'records'}</span>
+          {/* ── Advanced Filter Row ── */}
+          <AnimatePresence>
+            {showAdvancedFilter && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="overflow-hidden"
+              >
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-black/[0.008] border-t border-black/[0.02]">
+                  <span className="text-[9px] text-black/20 mr-0.5">{zh ? '高级:' : 'More:'}</span>
+                  {([
+                    { val: vendorFilter, set: setVendorFilter, label: zh ? '厂商' : 'Vendor', opts: vendorList.map(v => ({ v, l: v })),   hide: !vendorList.length },
+                    { val: dcFilter,     set: setDcFilter,     label: zh ? '机房' : 'DC',     opts: dcList.map(d => ({ v: d, l: d })),     hide: !dcList.length },
+                    { val: deptFilter,   set: setDeptFilter,   label: zh ? '业务' : 'Service', opts: deptList.map(d => ({ v: d, l: d })),  hide: !deptList.length },
+                    { val: lifecycleFilter, set: setLifecycleFilter, label: zh ? '投产' : 'Lifecycle', opts: LIFECYCLE_STATUSES.map(s => ({ v: s.value, l: s.label[zh ? 'zh' : 'en'] })), hide: false },
+                  ] as const).filter(f => !f.hide).map(f => (
+                    <select
+                      key={f.label} value={f.val} onChange={e => f.set(e.target.value)} title={f.label}
+                      className={`px-1.5 py-1.5 rounded-md border text-[10px] focus:outline-none cursor-pointer transition-colors ${
+                        f.val !== 'all' ? 'bg-[#00bceb]/5 border-[#00bceb]/15 text-[#0088b0] font-semibold' : 'bg-transparent border-black/5 text-black/30'
+                      }`}
+                    >
+                      <option value="all">{f.label}</option>
+                      {f.opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                    </select>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* ══════════════════ TABLE VIEW ══════════════════ */}
@@ -684,6 +777,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                     { l: zh ? '厂商/型号' : 'Vendor/Model', w: 'min-w-[110px]' },
                     { l: zh ? '管理IP' : 'Mgmt IP',         w: 'w-[110px]' },
                     { l: zh ? '状态'   : 'Status',          w: 'w-[80px]' },
+                    { l: zh ? '投产'   : 'Lifecycle',       w: 'w-[80px]' },
                     { l: zh ? '角色'   : 'Role',            w: 'w-16' },
                     { l: zh ? '机房'   : 'DC',              w: 'w-20' },
                     { l: zh ? '部门'   : 'Dept',            w: 'w-20' },
@@ -696,13 +790,13 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={11} className="text-center py-16 text-black/15">
+                  <tr><td colSpan={12} className="text-center py-16 text-black/15">
                     <RefreshCw size={16} className="mx-auto mb-1.5 animate-spin text-[#00bceb]/25" />
                     <p className="text-[10px]">{zh ? '加载中...' : 'Loading...'}</p>
                   </td></tr>
                 ) : displayAssets.length === 0 ? (
                   /* ── Empty State ── */
-                  <tr><td colSpan={11} className="py-16">
+                  <tr><td colSpan={12} className="py-16">
                     <EmptyState zh={zh} openAdd={openAdd} onImport={() => fileInputRef.current?.click()} />
                   </td></tr>
                 ) : displayAssets.map(a => {
@@ -729,10 +823,10 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                       </td>
                       {/* Type */}
                       <td className="px-1.5 py-1">
-                        <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold ${
-                          a.asset_type === 'server' ? 'bg-violet-50 text-violet-600' : 'bg-cyan-50 text-cyan-600'
+                        <span className={`inline-flex items-center gap-1 text-[10px] ${
+                          a.asset_type === 'server' ? 'text-violet-500' : 'text-cyan-600'
                         }`}>
-                          {a.asset_type === 'server' ? <Server size={8} /> : <Router size={8} />}
+                          {a.asset_type === 'server' ? <Server size={9} /> : <Router size={9} />}
                           {typeDisplay(a)}
                         </span>
                       </td>
@@ -745,10 +839,34 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                       <td className="px-1.5 py-1 font-mono text-[10px] text-black/50">{a.management_ip || '—'}</td>
                       {/* Status */}
                       <td className="px-1.5 py-1">
-                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${sm.badge}`}>
+                        <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${sm.text}`}>
                           <span className={`h-1.5 w-1.5 rounded-full ${sm.dot} ${a.status === 'active' ? 'animate-pulse' : ''}`} />
                           {sm.label[zh ? 'zh' : 'en']}
                         </span>
+                      </td>
+                      {/* Lifecycle */}
+                      <td className="px-1.5 py-1">
+                        {rotatingAssetId === a.id ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-cyan-600">
+                            <Loader2 size={9} className="animate-spin" />
+                            {zh ? '上收中' : 'Rotating'}
+                          </span>
+                        ) : (
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${
+                            a.lifecycle_status === 'production' ? 'text-emerald-600' :
+                            a.lifecycle_status === 'decommissioned' ? 'text-slate-400' :
+                            a.lifecycle_status === 'maintenance' ? 'text-amber-600' :
+                            'text-blue-500'
+                          }`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${
+                              a.lifecycle_status === 'production' ? 'bg-emerald-500' :
+                              a.lifecycle_status === 'decommissioned' ? 'bg-slate-400' :
+                              a.lifecycle_status === 'maintenance' ? 'bg-amber-500' :
+                              'bg-blue-400'
+                            }`} />
+                            {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}
+                          </span>
+                        )}
                       </td>
                       {/* Role */}
                       <td className="px-1.5 py-1 text-[9px] text-black/30 capitalize">{a.device_role || '—'}</td>
@@ -832,6 +950,16 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                                     </span>
                                   </td>
                                   <td className="px-2 py-1.5 text-[9px] text-black/30 capitalize">{a.device_role || '—'}</td>
+                                  <td className="px-2 py-1.5">
+                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
+                                      a.lifecycle_status === 'production' ? 'bg-emerald-50 text-emerald-600' :
+                                      a.lifecycle_status === 'decommissioned' ? 'bg-slate-100 text-slate-400' :
+                                      a.lifecycle_status === 'maintenance' ? 'bg-amber-50 text-amber-600' :
+                                      'bg-blue-50 text-blue-500'
+                                    }`}>
+                                      {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}
+                                    </span>
+                                  </td>
                                   <td className="px-2 py-1.5 text-right">
                                     <button onClick={e => { e.stopPropagation(); openCopy(a); }} title={zh ? '复制' : 'Copy'} className="p-1 rounded text-black/10 hover:text-emerald-500 hover:bg-emerald-50"><Copy size={11} /></button>
                                     <button onClick={e => { e.stopPropagation(); openEdit(a); }} title="Edit" className="p-1 rounded text-black/10 hover:text-[#00bceb] hover:bg-[#00bceb]/5"><Pencil size={11} /></button>
@@ -864,18 +992,16 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
           </div>
         )}
 
-        {/* ── Pagination ── */}
-        {totalPages > 1 && viewMode !== 'topology' && (
-          <div className="flex items-center justify-between px-3 py-1.5 border-t border-black/[0.03]">
-            <span className="text-[10px] text-black/15 tabular-nums">{zh ? `${total} 条` : `${total} total`}</span>
-            <div className="flex items-center gap-0.5">
-              <PgBtn onClick={() => setPage(1)} disabled={page === 1} icon={<ChevronsLeft size={12} />} />
-              <PgBtn onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} icon={<ChevronLeft size={12} />} />
-              <span className="px-2 text-[10px] text-black/30 tabular-nums">{page}/{totalPages}</span>
-              <PgBtn onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} icon={<ChevronRight size={12} />} />
-              <PgBtn onClick={() => setPage(totalPages)} disabled={page === totalPages} icon={<ChevronsRight size={12} />} />
-            </div>
-          </div>
+        {/* ── Pagination / footer ── */}
+        {viewMode !== 'topology' && (
+          <Pagination
+            currentPage={page}
+            totalItems={total}
+            itemsPerPage={pageSize}
+            onItemsPerPageChange={(v) => { setPage(1); setPageSize(v); }}
+            onPageChange={setPage}
+            language={language}
+          />
         )}
       </div>
 
@@ -1044,9 +1170,18 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                 </div>
               </div>
 
+              {/* ─── Inline validation error ─── */}
+              {modalError && (
+                <div className="flex items-center gap-2 mt-4 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700">
+                  <AlertCircle size={14} className="shrink-0 text-red-500" />
+                  <span className="text-xs font-medium">{modalError}</span>
+                  <button onClick={() => setModalError(null)} title="Dismiss" className="ml-auto p-0.5 text-red-400 hover:text-red-600"><X size={12} /></button>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 mt-5">
                 <button onClick={() => setShowModal(false)} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
-                <button onClick={handleSave} disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim())}
+                <button onClick={() => { setModalError(null); handleSave(); }} disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim())}
                   className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20">
                   {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
                 </button>
@@ -1201,13 +1336,22 @@ function DrawerContent({ asset: a, zh, onClose }: {
         <button onClick={onClose} title="Close" className="p-1 text-black/15 hover:text-black/35"><X size={16} /></button>
       </div>
 
-      {/* Type + Status badges */}
-      <div className="flex gap-2 mb-4">
+      {/* Type + Status + Lifecycle badges */}
+      <div className="flex gap-2 mb-4 flex-wrap">
         <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${typeCls}`}>
           <TypeIcon size={13} />{typeLabel}
         </span>
         <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${sm.badge}`}>
           <span className={`h-2 w-2 rounded-full ${sm.dot}`} />{sm.label[zh ? 'zh' : 'en']}
+        </span>
+        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+          a.lifecycle_status === 'production' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
+          a.lifecycle_status === 'decommissioned' ? 'bg-slate-50 text-slate-400 border-slate-200' :
+          a.lifecycle_status === 'maintenance' ? 'bg-amber-50 text-amber-600 border-amber-200' :
+          'bg-blue-50 text-blue-500 border-blue-200'
+        }`}>
+          {a.lifecycle_status === 'production' && <Shield size={12} />}
+          {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}
         </span>
       </div>
 
@@ -1279,11 +1423,6 @@ function PasswordField({ label, value, onChange, placeholder }: {
       </div>
     </div>
   );
-}
-
-/* --- Pagination button --- */
-function PgBtn({ onClick, disabled, icon }: { onClick: () => void; disabled: boolean; icon: React.ReactNode }) {
-  return <button onClick={onClick} disabled={disabled} className="p-0.5 rounded hover:bg-black/[0.02] disabled:opacity-15 text-black/25">{icon}</button>;
 }
 
 /* --- Table action icon button --- */

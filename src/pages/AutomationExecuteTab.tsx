@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -10,6 +11,7 @@ import {
   ExternalLink,
   FileText,
   Filter,
+  FolderTree,
   LayoutGrid,
   List,
   Maximize2,
@@ -22,6 +24,8 @@ import {
   Server,
   Shield,
   Terminal,
+  Ticket,
+  Trash2,
   X,
   XCircle,
   Zap,
@@ -127,8 +131,8 @@ interface AutomationExecuteTabProps {
   onQuickPlaybookVarChange: (key: string, value: string) => void;
   onQuickPlaybookConcurrencyChange: (value: number) => void;
   onQuickRiskConfirmedChange: (value: boolean) => void;
-  onRunValidation: () => void;
-  onRunApply: () => void;
+  onRunValidation: (changeTicket?: string) => void;
+  onRunApply: (changeTicket?: string) => void;
   onRunQuickQuery: (label: string, commands: string, operationalCategory?: string) => void;
   onResetQuickQuery: () => void;
   onQuickQueryViewChange: (view: 'terminal' | 'table') => void;
@@ -216,12 +220,59 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [riskFilter, setRiskFilter] = useState<string>('all');
   const [showQuickQuery, setShowQuickQuery] = useState(false);
-  const [deviceViewMode, setDeviceViewMode] = useState<'grid' | 'list'>('grid');
+  const [deviceViewMode, setDeviceViewMode] = useState<'grid' | 'list'>('list');
   const [devicePage, setDevicePage] = useState(1);
-  const DEVICE_PAGE_SIZE = 18;
+  const DEVICE_PAGE_SIZE = 20;
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'validate' | 'apply'>('validate');
   const logEndRef = useRef<HTMLDivElement>(null);
+  /* ── New states for tree filter, drawer, change ticket ── */
+  const [expandedTreeNodes, setExpandedTreeNodes] = useState<Set<string>>(new Set());
+  const [treeFilterSite, setTreeFilterSite] = useState<string | null>(null);
+  const [treeFilterRole, setTreeFilterRole] = useState<string | null>(null);
+  const [showSelectedDrawer, setShowSelectedDrawer] = useState(false);
+  const [changeTicket, setChangeTicket] = useState<string>('');
+  const [ticketValidation, setTicketValidation] = useState<{
+    loading: boolean;
+    found?: boolean;
+    valid?: boolean;
+    reason?: string;
+    message?: string;
+    title?: string;
+    status?: string;
+    scheduled_start?: string;
+    scheduled_end?: string;
+  }>({ loading: false });
+  const ticketValidateTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  /* Debounced ticket validation */
+  useEffect(() => {
+    if (ticketValidateTimer.current) clearTimeout(ticketValidateTimer.current);
+    const trimmed = changeTicket.trim();
+    if (!trimmed || trimmed.length < 4) {
+      setTicketValidation({ loading: false });
+      return;
+    }
+    setTicketValidation({ loading: true });
+    ticketValidateTimer.current = setTimeout(async () => {
+      try {
+        const token = localStorage.getItem('netops_token') || '';
+        const resp = await fetch(`/api/change-orders/validate-ticket/${encodeURIComponent(trimmed)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json.success) setTicketValidation({ loading: false, ...json.data });
+          else setTicketValidation({ loading: false });
+        } else {
+          setTicketValidation({ loading: false });
+        }
+      } catch {
+        setTicketValidation({ loading: false });
+      }
+    }, 600);
+    return () => { if (ticketValidateTimer.current) clearTimeout(ticketValidateTimer.current); };
+  }, [changeTicket]);
 
   /* ── Derived ── */
   const targetCount = batchMode ? batchDeviceIds.length : (selectedDevice ? 1 : 0);
@@ -232,7 +283,9 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
 
   const canExecute = quickPlaybookScenario && hasQuickTargets && !isQuickPlaybookRunning
     && !quickHasMixedPlatforms && !quickPlatformMismatch && !hasMissingRequired
-    && !(quickPlaybookScenario?.risk === 'high' && !quickRiskConfirmed);
+    && !(quickPlaybookScenario?.risk === 'high' && !quickRiskConfirmed)
+    && !(changeTicket.trim().length >= 4 && ticketValidation.found === true && !ticketValidation.valid)
+    && !(changeTicket.trim().length >= 4 && ticketValidation.found === false);
 
   /* Auto-advance to execution step when running starts */
   useEffect(() => {
@@ -262,17 +315,48 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
         if (vendor !== vendorFilter) return false;
       }
       if (siteFilter !== 'all' && (d.site || '') !== siteFilter) return false;
+      /* Tree filter */
+      if (treeFilterSite) {
+        const dSite = d.site || (isZh ? '未分组' : 'Ungrouped');
+        if (dSite !== treeFilterSite) return false;
+      }
+      if (treeFilterRole) {
+        const dRole = d.role || (isZh ? '未分配' : 'Unassigned');
+        if (dRole !== treeFilterRole) return false;
+      }
       return true;
     });
-  }, [devices, automationSearch, statusFilter, vendorFilter, siteFilter]);
+  }, [devices, automationSearch, statusFilter, vendorFilter, siteFilter, treeFilterSite, treeFilterRole, isZh]);
 
-  /* Auto-switch to list view when many devices */
-  useEffect(() => {
-    if (filteredDevices.length > 12) setDeviceViewMode('list');
-  }, []);
+  /* Device tree structure: site → role → count */
+  const deviceTree = useMemo(() => {
+    const tree: Array<{ site: string; count: number; onlineCount: number; roles: Array<{ role: string; count: number; onlineCount: number }> }> = [];
+    const siteMap = new Map<string, Map<string, { total: number; online: number }>>();
+    for (const d of devices) {
+      const site = d.site || (isZh ? '未分组' : 'Ungrouped');
+      const role = d.role || (isZh ? '未分配' : 'Unassigned');
+      if (!siteMap.has(site)) siteMap.set(site, new Map());
+      const roleMap = siteMap.get(site)!;
+      if (!roleMap.has(role)) roleMap.set(role, { total: 0, online: 0 });
+      const c = roleMap.get(role)!;
+      c.total++;
+      if (d.status === 'online') c.online++;
+    }
+    for (const [site, roleMap] of Array.from(siteMap.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+      const roles: Array<{ role: string; count: number; onlineCount: number }> = [];
+      let siteTotal = 0, siteOnline = 0;
+      for (const [role, c] of Array.from(roleMap.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+        roles.push({ role, count: c.total, onlineCount: c.online });
+        siteTotal += c.total;
+        siteOnline += c.online;
+      }
+      tree.push({ site, count: siteTotal, onlineCount: siteOnline, roles });
+    }
+    return tree;
+  }, [devices, isZh]);
 
   /* Reset page when filters change */
-  useEffect(() => { setDevicePage(1); }, [automationSearch, statusFilter, vendorFilter, siteFilter]);
+  useEffect(() => { setDevicePage(1); }, [automationSearch, statusFilter, vendorFilter, siteFilter, treeFilterSite, treeFilterRole]);
 
   const pagedDevices = useMemo(() => {
     const start = (devicePage - 1) * DEVICE_PAGE_SIZE;
@@ -308,15 +392,22 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   }, [quickPlaybookScenario]);
 
   /* Blocking issues */
+  const needsChangeTicket = quickPlaybookScenario?.risk !== 'low';
   const blockingIssues = useMemo(() => {
     const items: Array<{ message: string; severity: 'critical' | 'high' | 'medium' }> = [];
     if (!hasQuickTargets) items.push({ message: isZh ? '请先选择目标设备' : 'Select target device(s)', severity: 'critical' });
     if (quickHasMixedPlatforms) items.push({ message: isZh ? '检测到多平台设备，请按平台分批执行' : 'Mixed platforms detected', severity: 'critical' });
     if (quickPlatformMismatch) items.push({ message: isZh ? '该场景不支持当前设备平台' : 'Scenario unsupported on platform', severity: 'high' });
     if (hasMissingRequired) items.push({ message: isZh ? `缺少必填字段：${quickMissingRequiredFields.join('、')}` : `Missing: ${quickMissingRequiredFields.join(', ')}`, severity: 'high' });
+    if (needsChangeTicket && changeTicket.trim() && ticketValidation.found === true && !ticketValidation.valid) {
+      items.push({ message: ticketValidation.message || (isZh ? '变更工单不可用' : 'Change ticket invalid'), severity: 'critical' });
+    }
+    if (needsChangeTicket && changeTicket.trim().length >= 4 && ticketValidation.found === false) {
+      items.push({ message: isZh ? '未找到该工单号，请检查输入' : 'Change ticket not found', severity: 'high' });
+    }
     if (riskNeedsConfirm) items.push({ message: isZh ? '请确认高风险执行' : 'Confirm high-risk execution', severity: 'medium' });
     return items;
-  }, [hasQuickTargets, quickHasMixedPlatforms, quickPlatformMismatch, hasMissingRequired, riskNeedsConfirm, isZh, quickMissingRequiredFields]);
+  }, [hasQuickTargets, quickHasMixedPlatforms, quickPlatformMismatch, hasMissingRequired, riskNeedsConfirm, isZh, quickMissingRequiredFields, needsChangeTicket, changeTicket, ticketValidation]);
 
   /* Quick Query helpers */
   const singleDevice = batchMode && batchDeviceIds.length === 1
@@ -369,8 +460,8 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
 
   const handleConfirmExecute = () => {
     setConfirmModalOpen(false);
-    if (confirmAction === 'validate') onRunValidation();
-    else onRunApply();
+    if (confirmAction === 'validate') onRunValidation(changeTicket.trim());
+    else onRunApply(changeTicket.trim());
   };
 
   const handleSelectAllOnline = () => {
@@ -378,6 +469,28 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
     filteredDevices.filter(d => d.status === 'online').forEach(d => {
       if (!batchDeviceIds.includes(d.id)) onToggleBatchDevice(d.id);
     });
+  };
+
+  const handleClearSelection = () => {
+    batchDeviceIds.forEach(id => onToggleBatchDevice(id));
+  };
+
+  const handleToggleTreeNode = (site: string) => {
+    setExpandedTreeNodes(prev => {
+      const next = new Set(prev);
+      if (next.has(site)) next.delete(site); else next.add(site);
+      return next;
+    });
+  };
+
+  const handleTreeFilter = (site: string | null, role: string | null) => {
+    if (treeFilterSite === site && treeFilterRole === role) {
+      setTreeFilterSite(null);
+      setTreeFilterRole(null);
+    } else {
+      setTreeFilterSite(site);
+      setTreeFilterRole(role);
+    }
   };
 
   const varGroupLabel = (group: string) => {
@@ -420,8 +533,8 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
       </div>
 
       {/* ── Stepper ── */}
-      <div className="flex-shrink-0 mb-4">
-        <div className="flex items-center bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 rounded-2xl px-6 py-3 shadow-lg">
+      <div className="flex-shrink-0 mb-3">
+        <div className="flex items-center bg-white rounded-xl border border-gray-100 px-5 py-2.5">
           {STEPS.map((step, idx) => {
             const Icon = step.icon;
             const isActive = currentStep === step.id;
@@ -434,55 +547,50 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
             return (
               <React.Fragment key={step.id}>
                 {idx > 0 && (
-                  <div className="flex-1 mx-3 h-[2px] rounded-full overflow-hidden bg-white/10">
+                  <div className="flex-1 mx-2 h-px bg-gray-200 relative">
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${
-                        isDone || isActive ? 'bg-gradient-to-r from-cyan-400 to-teal-400 w-full' : 'w-0'
+                      className={`absolute inset-y-0 left-0 h-px transition-all duration-500 ${
+                        isDone || isActive ? 'bg-cyan-500 w-full' : 'w-0'
                       }`}
                     />
                   </div>
                 )}
                 <button
                   onClick={() => handleStepClick(step.id)}
-                  className={`flex items-center gap-2.5 px-4 py-2 rounded-xl transition-all ${
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all ${
                     isActive
-                      ? 'bg-gradient-to-r from-cyan-500/20 to-teal-500/20 ring-1 ring-cyan-400/30'
+                      ? 'bg-cyan-50 ring-1 ring-cyan-200'
                       : isDone
-                        ? 'bg-white/5 hover:bg-white/10'
+                        ? 'hover:bg-gray-50'
                         : 'opacity-40 cursor-default'
                   }`}
                 >
-                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold transition-all ${
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${
                     isRunning
-                      ? 'bg-blue-500 text-white animate-pulse'
+                      ? 'bg-blue-500 text-white'
                       : isDone && !isActive
-                        ? 'bg-emerald-500/90 text-white'
+                        ? 'bg-emerald-500 text-white'
                         : isActive
-                          ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/30'
-                          : 'bg-white/10 text-white/40'
+                          ? 'bg-cyan-500 text-white'
+                          : 'bg-gray-100 text-gray-400'
                   }`}>
                     {isRunning ? (
-                      <RotateCcw size={13} className="animate-spin" />
+                      <RotateCcw size={11} className="animate-spin" />
                     ) : isDone && !isActive ? (
-                      <CheckCircle2 size={14} />
+                      <CheckCircle2 size={12} />
                     ) : (
-                      <Icon size={14} />
+                      <span>{step.id}</span>
                     )}
                   </div>
-                  <div className="text-left">
-                    <p className={`text-xs font-bold ${isActive ? 'text-white' : isDone ? 'text-white/70' : 'text-white/35'}`}>
-                      {isZh ? step.label : step.labelEn}
-                    </p>
-                    {isActive && step.id === 1 && targetCount > 0 && (
-                      <p className="text-[10px] text-cyan-300/80">{targetCount} {isZh ? '台已选' : 'selected'}</p>
-                    )}
-                    {isActive && step.id === 2 && quickPlaybookScenario && (
-                      <p className="text-[10px] text-cyan-300/80 truncate max-w-[100px]">{isZh ? quickPlaybookScenario.name_zh : quickPlaybookScenario.name}</p>
-                    )}
-                    {step.id === 4 && isRunning && (
-                      <p className="text-[10px] text-blue-300/80">{isZh ? '执行中...' : 'Running...'}</p>
-                    )}
-                  </div>
+                  <span className={`text-xs font-semibold whitespace-nowrap ${isActive ? 'text-gray-800' : isDone ? 'text-gray-500' : 'text-gray-400'}`}>
+                    {isZh ? step.label : step.labelEn}
+                  </span>
+                  {isActive && step.id === 1 && targetCount > 0 && (
+                    <span className="text-[10px] text-cyan-600 font-bold">{targetCount}</span>
+                  )}
+                  {step.id === 4 && isRunning && (
+                    <span className="text-[10px] text-blue-500 font-bold animate-pulse">{isZh ? '执行中' : 'Running'}</span>
+                  )}
                 </button>
               </React.Fragment>
             );
@@ -501,258 +609,328 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 20 }}
               transition={{ duration: 0.2 }}
-              className="h-full flex flex-col gap-3"
+              className="h-full flex flex-col gap-2"
             >
-              {/* Filter bar */}
-              <div className="flex-shrink-0 flex items-center gap-3 bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3">
-                <div className="flex items-center gap-1.5">
-                  <Filter size={13} className="text-gray-400" />
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{isZh ? '筛选' : 'Filter'}</span>
-                </div>
-                <div className="flex items-center gap-2 flex-1">
-                  <div className="relative flex-1 max-w-[280px]">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300" size={13} />
-                    <input
-                      type="text"
-                      placeholder={isZh ? '搜索主机名或IP...' : 'Search hostname or IP...'}
-                      value={automationSearch}
-                      onChange={e => onAutomationSearchChange(e.target.value)}
-                      className="w-full pl-8 pr-3 py-1.5 bg-gray-50 border border-gray-100 rounded-lg text-xs focus:border-cyan-300 focus:bg-white outline-none transition-all"
-                    />
-                  </div>
-                  <select
-                    value={statusFilter}
-                    onChange={e => setStatusFilter(e.target.value)}
-                    className="px-2.5 py-1.5 border border-gray-100 rounded-lg text-xs bg-gray-50 outline-none focus:border-cyan-300"
-                  >
-                    <option value="all">{isZh ? '全部状态' : 'All Status'}</option>
-                    <option value="online">{isZh ? '🟢 在线' : '🟢 Online'}</option>
-                    <option value="offline">{isZh ? '🔴 离线' : '🔴 Offline'}</option>
-                  </select>
-                  {vendors.length > 1 && (
-                    <select
-                      value={vendorFilter}
-                      onChange={e => setVendorFilter(e.target.value)}
-                      className="px-2.5 py-1.5 border border-gray-100 rounded-lg text-xs bg-gray-50 outline-none focus:border-cyan-300"
-                    >
-                      <option value="all">{isZh ? '全部厂商' : 'All Vendors'}</option>
-                      {vendors.map(v => <option key={v} value={v}>{v}</option>)}
-                    </select>
-                  )}
-                  {sites.length > 1 && (
-                    <select
-                      value={siteFilter}
-                      onChange={e => setSiteFilter(e.target.value)}
-                      className="px-2.5 py-1.5 border border-gray-100 rounded-lg text-xs bg-gray-50 outline-none focus:border-cyan-300"
-                    >
-                      <option value="all">{isZh ? '全部站点' : 'All Sites'}</option>
-                      {sites.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={onToggleBatchMode}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      batchMode
-                        ? 'bg-amber-100 text-amber-700 border border-amber-200 shadow-sm'
-                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                    }`}
-                  >
-                    <Database size={12} />
-                    {isZh ? '批量模式' : 'Batch'}
-                  </button>
-                  {batchMode && (
-                    <button
-                      onClick={handleSelectAllOnline}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 hover:bg-emerald-100 transition-all"
-                    >
-                      <CheckCircle2 size={11} />
-                      {isZh ? '全选在线' : 'Select Online'}
-                    </button>
-                  )}
-                  <div className="w-px h-5 bg-gray-200" />
-                  <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
-                    <button
-                      onClick={() => setDeviceViewMode('grid')}
-                      title={isZh ? '卡片视图' : 'Grid view'}
-                      className={`p-1.5 rounded-md transition-all ${deviceViewMode === 'grid' ? 'bg-white text-gray-700 shadow-sm' : 'text-gray-400 hover:text-gray-500'}`}
-                    >
-                      <LayoutGrid size={13} />
-                    </button>
-                    <button
-                      onClick={() => setDeviceViewMode('list')}
-                      title={isZh ? '列表视图' : 'List view'}
-                      className={`p-1.5 rounded-md transition-all ${deviceViewMode === 'list' ? 'bg-white text-gray-700 shadow-sm' : 'text-gray-400 hover:text-gray-500'}`}
-                    >
-                      <List size={13} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Device grid / list */}
-              <div className="min-h-0 overflow-auto">
-                {deviceViewMode === 'grid' ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2.5">
-                  {pagedDevices.map(device => {
-                    const isSelected = batchMode
-                      ? batchDeviceIds.includes(device.id)
-                      : selectedDevice?.id === device.id;
-                    const vendor = getVendor(device.platform);
-                    return (
-                      <motion.button
-                        key={device.id}
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        onClick={() => {
-                          if (batchMode) onToggleBatchDevice(device.id);
-                          else {
-                            if (selectedDevice?.id !== device.id) onResetQuickQuery();
-                            onSelectDevice(device);
-                          }
-                        }}
-                        className={`relative p-3.5 rounded-xl border-2 text-left transition-all group ${
-                          isSelected
-                            ? 'border-cyan-400 bg-cyan-50/60 shadow-lg shadow-cyan-500/10 ring-1 ring-cyan-200'
-                            : device.status === 'online'
-                              ? 'border-gray-100 bg-white hover:border-cyan-200 hover:shadow-md hover:-translate-y-0.5'
-                              : 'border-gray-100 bg-gray-50/60 opacity-70 hover:opacity-90'
-                        }`}
-                      >
-                        {batchMode && (
-                          <div className={`absolute top-2 right-2 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${
-                            isSelected ? 'bg-cyan-500 border-cyan-500' : 'border-gray-200 bg-white'
-                          }`}>
-                            {isSelected && <CheckCircle2 size={12} className="text-white" />}
-                          </div>
-                        )}
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                            device.status === 'online' ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-gray-300'
-                          }`} />
-                          <span className="text-xs font-bold text-gray-800 truncate">{device.hostname}</span>
-                        </div>
-                        <p className="text-[11px] font-mono text-gray-400 mb-1.5">{device.ip_address}</p>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{vendor}</span>
-                          {device.role && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-400">{device.role}</span>
-                          )}
-                          {device.site && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-400">{device.site}</span>
-                          )}
-                        </div>
-                        {(device.cpu_usage != null || device.memory_usage != null) && (
-                          <div className="mt-2 flex items-center gap-3 text-[9px] text-gray-400">
-                            {device.cpu_usage != null && <span>CPU {device.cpu_usage}%</span>}
-                            {device.memory_usage != null && <span>MEM {device.memory_usage}%</span>}
-                          </div>
-                        )}
-                      </motion.button>
-                    );
-                  })}
-                  {filteredDevices.length === 0 && (
-                    <div className="col-span-full py-16 text-center text-gray-300">
-                      <Server size={32} strokeWidth={1} className="mx-auto mb-3 opacity-50" />
-                      <p className="text-sm">{isZh ? '没有匹配的设备' : 'No matching devices'}</p>
+              {/* Main area: tree sidebar + device table */}
+              <div className="flex-1 min-h-0 flex gap-3 overflow-hidden">
+                {/* ── Left: Tree Filter Sidebar ── */}
+                <div className="w-[200px] flex-shrink-0 bg-white rounded-xl border border-gray-100 overflow-hidden flex flex-col">
+                  <div className="px-3 py-2.5 border-b border-gray-100 flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <FolderTree size={12} className="text-gray-400" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{isZh ? '设备分组' : 'Groups'}</span>
                     </div>
-                  )}
+                    {(treeFilterSite || treeFilterRole) && (
+                      <button
+                        onClick={() => { setTreeFilterSite(null); setTreeFilterRole(null); }}
+                        className="text-[10px] text-cyan-600 hover:text-cyan-700 font-semibold"
+                      >
+                        {isZh ? '清除' : 'Clear'}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-auto p-2 space-y-0.5">
+                    {/* All devices entry */}
+                    <button
+                      onClick={() => handleTreeFilter(null, null)}
+                      className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                        !treeFilterSite && !treeFilterRole
+                          ? 'bg-cyan-50 text-cyan-700 font-bold'
+                          : 'text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <Server size={12} />
+                      <span className="flex-1 text-left">{isZh ? '全部设备' : 'All Devices'}</span>
+                      <span className="text-[10px] text-gray-400 font-mono">{devices.length}</span>
+                    </button>
+                    {/* Tree nodes */}
+                    {deviceTree.map(node => (
+                      <div key={node.site}>
+                        <button
+                          onClick={() => {
+                            handleToggleTreeNode(node.site);
+                            handleTreeFilter(node.site, null);
+                          }}
+                          className={`w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                            treeFilterSite === node.site && !treeFilterRole
+                              ? 'bg-cyan-50 text-cyan-700 font-bold'
+                              : 'text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          <ChevronDown
+                            size={11}
+                            className={`text-gray-400 transition-transform flex-shrink-0 ${expandedTreeNodes.has(node.site) ? '' : '-rotate-90'}`}
+                          />
+                          <span className="flex-1 text-left truncate">{node.site}</span>
+                          <span className="text-[10px] font-mono flex items-center gap-1">
+                            <span className="text-emerald-500">{node.onlineCount}</span>
+                            <span className="text-gray-300">/</span>
+                            <span className="text-gray-400">{node.count}</span>
+                          </span>
+                        </button>
+                        {expandedTreeNodes.has(node.site) && (
+                          <div className="ml-4 space-y-0.5 mt-0.5">
+                            {node.roles.map(r => (
+                              <button
+                                key={r.role}
+                                onClick={() => handleTreeFilter(node.site, r.role)}
+                                className={`w-full flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] transition-all ${
+                                  treeFilterSite === node.site && treeFilterRole === r.role
+                                    ? 'bg-cyan-50 text-cyan-700 font-bold'
+                                    : 'text-gray-500 hover:bg-gray-50'
+                                }`}
+                              >
+                                <span className="w-1 h-1 rounded-full bg-gray-300 flex-shrink-0" />
+                                <span className="flex-1 text-left truncate">{r.role}</span>
+                                <span className="text-[10px] font-mono text-gray-400">{r.count}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                ) : (
-                /* ── Compact List View ── */
-                <div className="rounded-xl border border-gray-100 bg-white overflow-hidden">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="border-b border-gray-100 bg-gray-50/60">
-                        {batchMode && <th className="w-10 px-3 py-2" />}
-                        <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '状态' : 'Status'}</th>
-                        <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '主机名' : 'Hostname'}</th>
-                        <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">IP</th>
-                        <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '厂商' : 'Vendor'}</th>
-                        <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '角色' : 'Role'}</th>
-                        <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '站点' : 'Site'}</th>
-                        <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">CPU</th>
-                        <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">MEM</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+
+                {/* ── Right: Filter + Device Table ── */}
+                <div className="flex-1 min-w-0 flex flex-col gap-2">
+                  {/* Filter bar */}
+                  <div className="flex-shrink-0 flex items-center gap-2 bg-white rounded-xl border border-gray-100 px-3 py-2">
+                    <div className="relative flex-1 max-w-[260px]">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300" size={13} />
+                      <input
+                        type="text"
+                        placeholder={isZh ? '搜索主机名或IP...' : 'Search hostname or IP...'}
+                        value={automationSearch}
+                        onChange={e => onAutomationSearchChange(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 bg-gray-50 border border-gray-100 rounded-lg text-xs focus:border-cyan-300 focus:bg-white outline-none transition-all"
+                      />
+                    </div>
+                    <select
+                      value={statusFilter}
+                      onChange={e => setStatusFilter(e.target.value)}
+                      className="px-2.5 py-1.5 border border-gray-100 rounded-lg text-xs bg-gray-50 outline-none focus:border-cyan-300"
+                    >
+                      <option value="all">{isZh ? '全部状态' : 'All Status'}</option>
+                      <option value="online">{isZh ? '🟢 在线' : '🟢 Online'}</option>
+                      <option value="offline">{isZh ? '🔴 离线' : '🔴 Offline'}</option>
+                    </select>
+                    {vendors.length > 1 && (
+                      <select
+                        value={vendorFilter}
+                        onChange={e => setVendorFilter(e.target.value)}
+                        className="px-2.5 py-1.5 border border-gray-100 rounded-lg text-xs bg-gray-50 outline-none focus:border-cyan-300"
+                      >
+                        <option value="all">{isZh ? '全部厂商' : 'All Vendors'}</option>
+                        {vendors.map(v => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    )}
+                    <div className="flex-1" />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleSelectAllOnline}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 hover:bg-emerald-100 transition-all"
+                      >
+                        <CheckCircle2 size={11} />
+                        {isZh ? '全选在线' : 'Select Online'}
+                      </button>
+                      <div className="w-px h-5 bg-gray-200" />
+                      <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+                        <button
+                          onClick={() => setDeviceViewMode('grid')}
+                          title={isZh ? '卡片视图' : 'Grid view'}
+                          className={`p-1.5 rounded-md transition-all ${deviceViewMode === 'grid' ? 'bg-white text-gray-700 shadow-sm' : 'text-gray-400 hover:text-gray-500'}`}
+                        >
+                          <LayoutGrid size={13} />
+                        </button>
+                        <button
+                          onClick={() => setDeviceViewMode('list')}
+                          title={isZh ? '列表视图' : 'List view'}
+                          className={`p-1.5 rounded-md transition-all ${deviceViewMode === 'list' ? 'bg-white text-gray-700 shadow-sm' : 'text-gray-400 hover:text-gray-500'}`}
+                        >
+                          <List size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Device grid / list */}
+                  <div className="flex-1 min-h-0 overflow-auto">
+                    {deviceViewMode === 'grid' ? (
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
                       {pagedDevices.map(device => {
                         const isSelected = batchMode
                           ? batchDeviceIds.includes(device.id)
                           : selectedDevice?.id === device.id;
                         const vendor = getVendor(device.platform);
+                        const isOffline = device.status !== 'online';
                         return (
-                          <tr
+                          <motion.button
                             key={device.id}
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            disabled={isOffline}
                             onClick={() => {
-                              if (batchMode) onToggleBatchDevice(device.id);
-                              else {
-                                if (selectedDevice?.id !== device.id) onResetQuickQuery();
-                                onSelectDevice(device);
-                              }
+                              if (isOffline) return;
+                              if (!batchMode) onToggleBatchMode();
+                              onToggleBatchDevice(device.id);
                             }}
-                            className={`border-b border-gray-50 cursor-pointer transition-colors ${
-                              isSelected
-                                ? 'bg-cyan-50/70 hover:bg-cyan-50'
-                                : device.status === 'online'
-                                  ? 'hover:bg-gray-50/80'
-                                  : 'opacity-60 hover:opacity-80'
+                            className={`relative p-3 rounded-xl border-2 text-left transition-all group ${
+                              isOffline
+                                ? 'border-gray-100 bg-gray-50/60 opacity-50 cursor-not-allowed'
+                                : isSelected
+                                  ? 'border-cyan-400 bg-cyan-50/60 shadow-md shadow-cyan-500/10 ring-1 ring-cyan-200'
+                                  : 'border-gray-100 bg-white hover:border-cyan-200 hover:shadow-md hover:-translate-y-0.5'
                             }`}
                           >
-                            {batchMode && (
-                              <td className="px-3 py-1.5">
-                                <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
-                                  isSelected ? 'bg-cyan-500 border-cyan-500' : 'border-gray-200 bg-white'
-                                }`}>
-                                  {isSelected && <CheckCircle2 size={10} className="text-white" />}
-                                </div>
-                              </td>
-                            )}
-                            <td className="px-3 py-1.5">
-                              <span className={`w-2 h-2 rounded-full inline-block ${
-                                device.status === 'online' ? 'bg-emerald-500' : 'bg-gray-300'
+                            <div className={`absolute top-2 right-2 w-4 h-4 rounded border-2 flex items-center justify-center transition-all ${
+                              isOffline ? 'border-gray-200 bg-gray-100' : isSelected ? 'bg-cyan-500 border-cyan-500' : 'border-gray-200 bg-white'
+                            }`}>
+                              {isSelected && <CheckCircle2 size={10} className="text-white" />}
+                            </div>
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                device.status === 'online' ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-gray-300'
                               }`} />
-                            </td>
-                            <td className="px-3 py-1.5 text-xs font-bold text-gray-800">{device.hostname}</td>
-                            <td className="px-3 py-1.5 text-[11px] font-mono text-gray-400">{device.ip_address}</td>
-                            <td className="px-3 py-1.5">
+                              <span className="text-xs font-bold text-gray-800 truncate">{device.hostname}</span>
+                            </div>
+                            <p className="text-[11px] font-mono text-gray-400 mb-1.5">{device.ip_address}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{vendor}</span>
-                            </td>
-                            <td className="px-3 py-1.5 text-[10px] text-gray-400">{device.role || '—'}</td>
-                            <td className="px-3 py-1.5 text-[10px] text-blue-400">{device.site || '—'}</td>
-                            <td className="px-3 py-1.5 text-[10px] text-gray-400 tabular-nums">{device.cpu_usage != null ? `${device.cpu_usage}%` : '—'}</td>
-                            <td className="px-3 py-1.5 text-[10px] text-gray-400 tabular-nums">{device.memory_usage != null ? `${device.memory_usage}%` : '—'}</td>
-                          </tr>
+                              {device.role && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-400">{device.role}</span>
+                              )}
+                            </div>
+                          </motion.button>
                         );
                       })}
-                    </tbody>
-                  </table>
-                  {filteredDevices.length === 0 && (
-                    <div className="py-16 text-center text-gray-300">
-                      <Server size={32} strokeWidth={1} className="mx-auto mb-3 opacity-50" />
-                      <p className="text-sm">{isZh ? '没有匹配的设备' : 'No matching devices'}</p>
+                      {filteredDevices.length === 0 && (
+                        <div className="col-span-full py-16 text-center text-gray-300">
+                          <Server size={32} strokeWidth={1} className="mx-auto mb-3 opacity-50" />
+                          <p className="text-sm">{isZh ? '没有匹配的设备' : 'No matching devices'}</p>
+                        </div>
+                      )}
+                    </div>
+                    ) : (
+                    /* ── High-density Table View ── */
+                    <div className="rounded-xl border border-gray-100 bg-white overflow-hidden">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-gray-50/60">
+                            <th className="w-10 px-3 py-2">
+                              <input
+                                type="checkbox"
+                                checked={pagedDevices.filter(d => d.status === 'online').length > 0 && pagedDevices.filter(d => d.status === 'online').every(d => batchDeviceIds.includes(d.id))}
+                                onChange={() => {
+                                  if (!batchMode) onToggleBatchMode();
+                                  const onlineOnPage = pagedDevices.filter(d => d.status === 'online');
+                                  const allSelected = onlineOnPage.every(d => batchDeviceIds.includes(d.id));
+                                  onlineOnPage.forEach(d => {
+                                    if (allSelected) {
+                                      if (batchDeviceIds.includes(d.id)) onToggleBatchDevice(d.id);
+                                    } else {
+                                      if (!batchDeviceIds.includes(d.id)) onToggleBatchDevice(d.id);
+                                    }
+                                  });
+                                }}
+                                title="Select all"
+                                className="w-3.5 h-3.5 rounded accent-cyan-500"
+                              />
+                            </th>
+                            <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '状态' : 'Status'}</th>
+                            <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '主机名' : 'Hostname'}</th>
+                            <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">IP</th>
+                            <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '厂商' : 'Vendor'}</th>
+                            <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '角色' : 'Role'}</th>
+                            <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '站点' : 'Site'}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pagedDevices.map(device => {
+                            const isSelected = batchDeviceIds.includes(device.id);
+                            const vendor = getVendor(device.platform);
+                            const isOffline = device.status !== 'online';
+                            return (
+                              <tr
+                                key={device.id}
+                                onClick={() => {
+                                  if (isOffline) return;
+                                  if (!batchMode) onToggleBatchMode();
+                                  onToggleBatchDevice(device.id);
+                                }}
+                                className={`border-b border-gray-50 transition-colors ${
+                                  isOffline
+                                    ? 'opacity-40 cursor-not-allowed'
+                                    : isSelected
+                                      ? 'bg-cyan-50/70 hover:bg-cyan-50 cursor-pointer'
+                                      : 'hover:bg-gray-50/80 cursor-pointer'
+                                }`}
+                              >
+                                <td className="px-3 py-1.5">
+                                  <input
+                                    title="Select device"
+                                    type="checkbox"
+                                    disabled={isOffline}
+                                    checked={isSelected}
+                                    onChange={e => {
+                                      e.stopPropagation();
+                                      if (isOffline) return;
+                                      if (!batchMode) onToggleBatchMode();
+                                      onToggleBatchDevice(device.id);
+                                    }}
+                                    onClick={e => e.stopPropagation()}
+                                    className="w-3.5 h-3.5 rounded accent-cyan-500 disabled:opacity-30"
+                                  />
+                                </td>
+                                <td className="px-3 py-1.5">
+                                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-semibold ${
+                                    device.status === 'online' ? 'text-emerald-600' : 'text-gray-400'
+                                  }`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${
+                                      device.status === 'online' ? 'bg-emerald-500' : 'bg-gray-300'
+                                    }`} />
+                                    {device.status === 'online' ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline')}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-1.5 text-xs font-bold text-gray-800">{device.hostname}</td>
+                                <td className="px-3 py-1.5 text-[11px] font-mono text-gray-500">{device.ip_address}</td>
+                                <td className="px-3 py-1.5">
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{vendor}</span>
+                                </td>
+                                <td className="px-3 py-1.5 text-[11px] text-gray-500">{device.role || '—'}</td>
+                                <td className="px-3 py-1.5 text-[11px] text-blue-500">{device.site || '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      {filteredDevices.length === 0 && (
+                        <div className="py-16 text-center text-gray-300">
+                          <Server size={32} strokeWidth={1} className="mx-auto mb-3 opacity-50" />
+                          <p className="text-sm">{isZh ? '没有匹配的设备' : 'No matching devices'}</p>
+                        </div>
+                      )}
+                    </div>
+                    )}
+                  </div>
+
+                  {/* Pagination */}
+                  {filteredDevices.length > DEVICE_PAGE_SIZE && (
+                    <div className="flex-shrink-0 px-1">
+                      <Pagination
+                        currentPage={devicePage}
+                        totalItems={filteredDevices.length}
+                        onPageChange={setDevicePage}
+                        itemsPerPage={DEVICE_PAGE_SIZE}
+                        language={language}
+                      />
                     </div>
                   )}
                 </div>
-                )}
               </div>
 
-              {/* Pagination + Count */}
-              {filteredDevices.length > DEVICE_PAGE_SIZE && (
-                <div className="flex-shrink-0 px-1 mt-2">
-                  <Pagination
-                    currentPage={devicePage}
-                    totalItems={filteredDevices.length}
-                    onPageChange={setDevicePage}
-                    itemsPerPage={DEVICE_PAGE_SIZE}
-                    language={language}
-                  />
-                </div>
-              )}
-
-              {/* Bottom action bar — always sticky at bottom */}
-              <div className="mt-auto flex-shrink-0 flex items-center justify-between rounded-2xl border border-gray-100 bg-gradient-to-r from-slate-50 to-gray-50 px-5 py-3.5 shadow-sm">
+              {/* Bottom action bar — enhanced sticky footer */}
+              <div className="flex-shrink-0 flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-2.5 shadow-sm">
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-gray-500">
                     {isZh ? `共 ${filteredDevices.length} 台` : `${filteredDevices.length} devices`}
@@ -763,17 +941,29 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                     )}
                   </span>
                   {targetCount > 0 && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-50 text-cyan-700 text-xs font-bold border border-cyan-100 shadow-sm">
-                      <CheckCircle2 size={12} />
-                      {isZh ? `已选 ${targetCount} 台` : `${targetCount} selected`}
-                    </span>
+                    <>
+                      <button
+                        onClick={() => setShowSelectedDrawer(!showSelectedDrawer)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-50 text-cyan-700 text-xs font-bold border border-cyan-100 shadow-sm hover:bg-cyan-100 transition-all cursor-pointer"
+                      >
+                        <CheckCircle2 size={12} />
+                        {isZh ? `已选 ${targetCount} 台` : `${targetCount} selected`}
+                        <ChevronDown size={10} className={`transition-transform ${showSelectedDrawer ? 'rotate-180' : ''}`} />
+                      </button>
+                      <button
+                        onClick={handleClearSelection}
+                        className="text-[11px] text-gray-400 hover:text-red-500 transition-colors font-semibold"
+                      >
+                        {isZh ? '清空已选' : 'Clear All'}
+                      </button>
+                    </>
                   )}
                 </div>
                 <div className="flex items-center gap-3">
                   {singleDevice && (
                     <button
                       onClick={() => setShowQuickQuery(!showQuickQuery)}
-                      className="px-4 py-2.5 rounded-xl text-xs font-bold border border-gray-200 bg-white hover:bg-gray-50 transition-all flex items-center gap-1.5 shadow-sm"
+                      className="px-3 py-2 rounded-lg text-xs font-bold border border-gray-200 bg-white hover:bg-gray-50 transition-all flex items-center gap-1.5"
                     >
                       <Terminal size={13} />
                       {isZh ? '快捷查询' : 'Quick Query'}
@@ -782,9 +972,9 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                   <button
                     onClick={() => targetCount > 0 && setCurrentStep(2)}
                     disabled={targetCount === 0}
-                    className={`px-7 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${
+                    className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${
                       targetCount > 0
-                        ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-white shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 hover:-translate-y-0.5'
+                        ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-white shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40'
                         : 'bg-gray-100 text-gray-300 cursor-not-allowed'
                     }`}
                   >
@@ -793,6 +983,52 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                   </button>
                 </div>
               </div>
+
+              {/* ── Selected devices drawer ── */}
+              <AnimatePresence>
+                {showSelectedDrawer && targetCount > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="absolute bottom-16 left-4 right-4 z-40 bg-white rounded-xl border border-gray-200 shadow-xl max-h-[240px] overflow-hidden"
+                  >
+                    <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                      <span className="text-xs font-bold text-gray-600">
+                        {isZh ? `已选设备 (${targetCount})` : `Selected Devices (${targetCount})`}
+                      </span>
+                      <button title="Close" onClick={() => setShowSelectedDrawer(false)} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400">
+                        <X size={12} />
+                      </button>
+                    </div>
+                    <div className="overflow-auto max-h-[190px] p-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {(batchMode ? batchDeviceIds : (selectedDevice ? [selectedDevice.id] : [])).map(deviceId => {
+                          const dev = devices.find(d => d.id === deviceId);
+                          if (!dev) return null;
+                          return (
+                            <span
+                              key={deviceId}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-50 border border-gray-100 text-xs group"
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${dev.status === 'online' ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+                              <span className="font-semibold text-gray-700">{dev.hostname}</span>
+                              <span className="text-gray-400 font-mono text-[10px]">{dev.ip_address}</span>
+                              <button
+                                title="Remove"
+                                onClick={() => onToggleBatchDevice(deviceId)}
+                                className="text-gray-300 hover:text-red-500 transition-colors ml-0.5"
+                              >
+                                <X size={10} />
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Quick Query slide-up panel */}
               <AnimatePresence>
@@ -1086,22 +1322,106 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                     </div>
                   )}
 
-                  {/* Options: Concurrency + Dry-run */}
-                  <div className="flex items-center gap-4 pt-2 border-t border-gray-100">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-500">{isZh ? '并发数' : 'Concurrency'}</span>
-                      <select
-                        value={quickPlaybookConcurrency}
-                        onChange={e => onQuickPlaybookConcurrencyChange(Number(e.target.value))}
-                        className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white outline-none"
-                      >
-                        {[1, 2, 3, 5, 10].map(n => <option key={n} value={n}>×{n}</option>)}
-                      </select>
+                  {/* Options: Concurrency + Dry-run + Change Ticket */}
+                  <div className="space-y-3 pt-2 border-t border-gray-100">
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500">{isZh ? '并发数' : 'Concurrency'}</span>
+                        <select
+                          value={quickPlaybookConcurrency}
+                          onChange={e => onQuickPlaybookConcurrencyChange(Number(e.target.value))}
+                          className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white outline-none"
+                        >
+                          {[1, 2, 3, 5, 10].map(n => <option key={n} value={n}>×{n}</option>)}
+                        </select>
+                      </div>
+                      {quickPlaybookConcurrency > 1 && (
+                        <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                          {isZh ? '⚠ 建议先小批量验证' : '⚠ Validate with small batch first'}
+                        </span>
+                      )}
                     </div>
-                    {quickPlaybookConcurrency > 1 && (
-                      <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
-                        {isZh ? '⚠ 建议先小批量验证' : '⚠ Validate with small batch first'}
-                      </span>
+
+                    {/* Change Ticket Number — required for non-read-only (medium/high risk) scenarios */}
+                    {quickPlaybookScenario.risk !== 'low' && (
+                      <div className="flex flex-col gap-2 rounded-xl border border-amber-100 bg-amber-50/50 p-3.5">
+                        <div className="flex items-center gap-2">
+                          <Ticket size={14} className="text-amber-600" />
+                          <label className="text-xs font-semibold text-amber-800">
+                            {isZh ? '变更工单号' : 'Change Ticket Number'}
+                            <span className="text-amber-700/70 ml-1">({isZh ? '可选' : 'Optional'})</span>
+                          </label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={changeTicket}
+                            onChange={e => setChangeTicket(e.target.value)}
+                            placeholder={isZh ? '可选：指定工单号；留空时自动匹配' : 'Optional: specify ticket; leave empty to auto-match'}
+                            className={`w-full max-w-[360px] px-3 py-2 border rounded-lg text-xs outline-none bg-white transition-colors ${
+                              ticketValidation.found === true && ticketValidation.valid ? 'border-emerald-400 focus:border-emerald-500' :
+                              ticketValidation.found === true && !ticketValidation.valid ? 'border-red-400 focus:border-red-500' :
+                              'border-gray-200 focus:border-cyan-400'
+                            }`}
+                          />
+                          {ticketValidation.loading && (
+                            <RotateCcw size={14} className="animate-spin text-black/30 flex-shrink-0" />
+                          )}
+                          {!ticketValidation.loading && ticketValidation.found === true && ticketValidation.valid && (
+                            <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0" />
+                          )}
+                          {!ticketValidation.loading && ticketValidation.found === true && !ticketValidation.valid && (
+                            <XCircle size={14} className="text-red-500 flex-shrink-0" />
+                          )}
+                          {!ticketValidation.loading && ticketValidation.found === false && changeTicket.trim().length >= 4 && (
+                            <XCircle size={14} className="text-black/25 flex-shrink-0" />
+                          )}
+                        </div>
+
+                        {/* Ticket validation feedback */}
+                        {!ticketValidation.loading && changeTicket.trim().length >= 4 && (
+                          <div className={`rounded-lg px-3 py-2 text-[11px] ${
+                            ticketValidation.found === true && ticketValidation.valid
+                              ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+                              : ticketValidation.found === true && !ticketValidation.valid
+                                ? 'bg-red-50 border border-red-200 text-red-700'
+                                : ticketValidation.found === false
+                                  ? 'bg-gray-50 border border-gray-200 text-gray-500'
+                                  : ''
+                          }`}>
+                            {ticketValidation.found === true && ticketValidation.valid && (
+                              <div className="space-y-0.5">
+                                <p className="font-semibold">{ticketValidation.title}</p>
+                                <p className="text-[10px] text-emerald-600/70">
+                                  {isZh ? '工单已审批，当前在变更窗口内' : 'Order approved, within change window'}
+                                  {ticketValidation.scheduled_start && ticketValidation.scheduled_end && (
+                                    <span className="ml-1 font-mono">({ticketValidation.scheduled_start.replace('T', ' ').slice(0, 16)} ~ {ticketValidation.scheduled_end.replace('T', ' ').slice(0, 16)})</span>
+                                  )}
+                                </p>
+                              </div>
+                            )}
+                            {ticketValidation.found === true && !ticketValidation.valid && (
+                              <div className="space-y-0.5">
+                                <p className="font-semibold flex items-center gap-1">
+                                  <AlertTriangle size={11} />
+                                  {ticketValidation.reason === 'expired' ? (isZh ? '变更窗口已超时' : 'Change window expired') :
+                                   ticketValidation.reason === 'not_started' ? (isZh ? '变更窗口尚未开始' : 'Change window not started') :
+                                   ticketValidation.reason === 'invalid_status' ? (isZh ? '工单状态不允许执行' : 'Order status does not allow execution') :
+                                   (isZh ? '工单不可用' : 'Order unavailable')}
+                                </p>
+                                <p className="text-[10px] text-red-600/70">{ticketValidation.message}</p>
+                              </div>
+                            )}
+                            {ticketValidation.found === false && (
+                              <p>{isZh ? '未找到该工单号，请检查输入' : 'Order number not found, please check input'}</p>
+                            )}
+                          </div>
+                        )}
+
+                        <p className="text-[10px] text-amber-600">
+                          {isZh ? '系统会自动匹配该任务对应的有效变更单并校验时间窗；超时将禁止执行。' : 'System auto-matches a valid change order for this scenario and enforces its time window.'}
+                        </p>
+                      </div>
                     )}
                   </div>
 
@@ -1221,7 +1541,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                         setConfirmAction('validate');
                         setConfirmModalOpen(true);
                       } else {
-                        onRunValidation();
+                        onRunValidation(changeTicket.trim());
                       }
                     }}
                     disabled={!canExecute}
@@ -1390,6 +1710,21 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                               <p className="text-xs text-gray-400">{isZh ? '等待设备响应...' : 'Waiting for device response...'}</p>
                             </div>
                           )}
+                          {deviceEntries.length === 0 && !isQuickPlaybookRunning && isDone && (
+                            <div className="flex flex-col items-center justify-center h-32 gap-3 text-gray-400">
+                              <AlertTriangle size={24} className="text-amber-400" />
+                              <p className="text-xs font-semibold">{isZh ? '未接收到设备执行事件' : 'No device events received'}</p>
+                              <p className="text-[10px] text-gray-300 max-w-[200px] text-center">
+                                {isZh ? 'WebSocket 连接可能中断，请查看执行历史获取详细结果。' : 'WebSocket may have disconnected. Check execution history for details.'}
+                              </p>
+                              <button
+                                onClick={() => onNavigate('/automation/history')}
+                                className="text-[11px] text-cyan-600 hover:text-cyan-700 font-semibold mt-1"
+                              >
+                                {isZh ? '查看执行历史 →' : 'View History →'}
+                              </button>
+                            </div>
+                          )}
                           {deviceEntries.map(([deviceId, deviceState]) => (
                             <div
                               key={deviceId}
@@ -1457,7 +1792,11 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                           {deviceEntries.length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-full gap-3 text-white/15">
                               <Terminal size={32} strokeWidth={1} />
-                              <p className="font-sans text-sm">{isZh ? '等待执行输出...' : 'Waiting for output...'}</p>
+                              <p className="font-sans text-sm">
+                                {isQuickPlaybookRunning
+                                  ? (isZh ? '等待执行输出...' : 'Waiting for output...')
+                                  : (isZh ? '未收到执行日志，请查看执行历史' : 'No logs received. Check execution history')}
+                              </p>
                             </div>
                           ) : (
                             deviceEntries.map(([deviceId, ds]) => (
@@ -1605,6 +1944,12 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                   <span className="font-bold text-gray-400 w-16">{isZh ? '并发' : 'Concurrency'}</span>
                   <span>×{quickPlaybookConcurrency}</span>
                 </div>
+                {changeTicket.trim() && (
+                  <div className="flex items-center gap-3 text-xs text-gray-600">
+                    <span className="font-bold text-gray-400 w-16">{isZh ? '工单号' : 'Ticket'}</span>
+                    <span className="font-mono text-cyan-700">{changeTicket.trim()}</span>
+                  </div>
+                )}
                 {confirmAction === 'validate' && (
                   <div className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">
                     <span>ℹ</span>

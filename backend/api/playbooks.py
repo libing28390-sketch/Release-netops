@@ -10,7 +10,7 @@ import json
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from database import get_db_connection
 from services.audit_service import log_audit_event
@@ -3024,6 +3024,111 @@ async def preview_playbook(payload: dict = Body(...)):
         "rollback": _render_phase_commands(phases.get('rollback', []), variables),
     }
 
+
+def _parse_iso_to_utc(value: str | None) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _assert_change_order_executable(row: dict, scenario_id: str, platform: str, now_utc: datetime) -> None:
+    status = row.get('status') or ''
+    if status not in {'approved', 'implementing'}:
+        raise HTTPException(status_code=400, detail=f"工单状态为 {status}，仅已审批/执行中的工单允许执行任务")
+
+    start_dt = _parse_iso_to_utc(row.get('scheduled_start'))
+    end_dt = _parse_iso_to_utc(row.get('scheduled_end'))
+    if start_dt and now_utc < start_dt:
+        raise HTTPException(status_code=400, detail=f"变更窗口尚未开始（计划开始：{row.get('scheduled_start') or ''}）")
+    if end_dt and now_utc > end_dt:
+        raise HTTPException(status_code=400, detail=f"变更窗口已超时（计划结束：{row.get('scheduled_end') or ''}）")
+
+    raw_template = row.get('command_template_json')
+    try:
+        template = json.loads(raw_template or '{}')
+    except (TypeError, json.JSONDecodeError):
+        template = {}
+    ticket_scenario_id = str(template.get('scenario_id') or '').strip()
+    ticket_platform = str(template.get('platform') or '').strip()
+
+    if ticket_scenario_id and scenario_id and ticket_scenario_id != scenario_id:
+        raise HTTPException(status_code=400, detail="工单绑定场景与当前执行任务不匹配，请检查工单号")
+    if ticket_platform and platform and ticket_platform != platform:
+        raise HTTPException(status_code=400, detail="工单绑定平台与当前执行平台不匹配")
+
+
+def _resolve_change_order_for_playbook(
+    conn,
+    *,
+    ticket_number: str,
+    scenario_id: str,
+    platform: str,
+    now_utc: datetime,
+) -> tuple[dict, bool]:
+    """Resolve explicit ticket or auto-match one active change order for scenario execution."""
+    if ticket_number:
+        row = conn.execute(
+            """
+            SELECT id, order_number, title, status, scheduled_start, scheduled_end, command_template_json
+            FROM change_orders WHERE order_number = ?
+            """,
+            (ticket_number,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=400, detail="未找到该变更工单，请检查工单号")
+        order = dict(row)
+        _assert_change_order_executable(order, scenario_id, platform, now_utc)
+        return order, False
+
+    rows = conn.execute(
+        """
+        SELECT id, order_number, title, status, scheduled_start, scheduled_end, command_template_json, updated_at
+        FROM change_orders
+        WHERE status IN ('approved', 'implementing')
+        ORDER BY updated_at DESC
+        LIMIT 200
+        """
+    ).fetchall()
+
+    matched: list[dict] = []
+    for row in rows:
+        order = dict(row)
+        raw_template = order.get('command_template_json')
+        try:
+            template = json.loads(raw_template or '{}')
+        except (TypeError, json.JSONDecodeError):
+            template = {}
+
+        if str(template.get('scenario_id') or '').strip() != scenario_id:
+            continue
+        template_platform = str(template.get('platform') or '').strip()
+        if template_platform and template_platform != platform:
+            continue
+
+        start_dt = _parse_iso_to_utc(order.get('scheduled_start'))
+        end_dt = _parse_iso_to_utc(order.get('scheduled_end'))
+        if start_dt and now_utc < start_dt:
+            continue
+        if end_dt and now_utc > end_dt:
+            continue
+
+        matched.append(order)
+
+    if len(matched) == 1:
+        _assert_change_order_executable(matched[0], scenario_id, platform, now_utc)
+        return matched[0], True
+
+    if len(matched) > 1:
+        raise HTTPException(status_code=400, detail="匹配到多个有效变更工单，请填写工单号后再执行")
+
+    raise HTTPException(status_code=400, detail="未找到当前任务对应的有效变更工单，请先创建并审批工单")
+
 @router.post("/playbooks/execute")
 async def execute_playbook(request: Request, payload: dict = Body(...)):
     """
@@ -3035,6 +3140,7 @@ async def execute_playbook(request: Request, payload: dict = Body(...)):
     variables = payload.get('variables', {})
     dry_run = payload.get('dry_run', False)
     concurrency = payload.get('concurrency', 1)         # Parallel device count
+    change_ticket = str(payload.get('change_ticket') or '').strip()
     author = payload.get('author', 'admin')
     actor_id = payload.get('actor_id')
     actor_role = payload.get('actor_role') or 'Administrator'
@@ -3059,9 +3165,22 @@ async def execute_playbook(request: Request, payload: dict = Body(...)):
     else:
         phases_def = custom_phases
     scenario_name = scenario['name'] if scenario else payload.get('name', 'Custom Playbook')
+    scenario_risk = str((scenario or {}).get('risk') or 'low').lower()
+    now_utc = datetime.now(timezone.utc)
 
     conn = get_db_connection()
     try:
+        resolved_change_order = None
+        auto_matched_change_order = False
+        if scenario and scenario_risk != 'low':
+            resolved_change_order, auto_matched_change_order = _resolve_change_order_for_playbook(
+                conn,
+                ticket_number=change_ticket,
+                scenario_id=scenario_id,
+                platform=platform,
+                now_utc=now_utc,
+            )
+
         conn.execute(
             '''INSERT INTO playbook_executions
                (id, scenario_id, scenario_name, platform, device_ids, variables, status, dry_run, author, concurrency, phases_json, created_at, updated_at)
@@ -3099,10 +3218,17 @@ async def execute_playbook(request: Request, payload: dict = Body(...)):
             'device_count': len(device_ids),
             'dry_run': dry_run,
             'concurrency': concurrency,
+            'change_order_number': (resolved_change_order or {}).get('order_number'),
+            'change_order_auto_matched': auto_matched_change_order,
         },
     )
 
-    return {"execution_id": execution_id, "status": "pending"}
+    return {
+        "execution_id": execution_id,
+        "status": "pending",
+        "change_order_number": (resolved_change_order or {}).get('order_number'),
+        "change_order_auto_matched": auto_matched_change_order,
+    }
 
 # ════════════════════════════════════════════════════════════════════
 # WebSocket: /ws/playbook/{execution_id}

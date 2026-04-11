@@ -8,6 +8,7 @@ the single source of truth (Plan-A).
 
 import uuid
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
@@ -460,53 +461,83 @@ def update_asset(asset_id: str, body: AssetUpdate):
             conn.commit()
 
             # Auto-rotate default password when transitioning to production
+            # Run in background thread to avoid blocking HTTP response (~8-10s SSH)
             if transitioning_to_production:
                 device_row = conn.execute(
                     'SELECT id FROM devices WHERE asset_id = ?', (asset_id,)
                 ).fetchone()
                 if device_row:
-                    try:
-                        from services.password_rotation_service import rotate_password
-                        rotation_result = rotate_password(device_row['id'])
-                        if rotation_result and not rotation_result.get('success'):
-                            # Rollback: revert lifecycle to previous state
-                            conn.execute(
-                                'UPDATE physical_assets SET lifecycle_status = ? WHERE id = ?',
-                                (old_lifecycle, asset_id)
-                            )
-                            conn.execute(
-                                'UPDATE devices SET lifecycle_status = ? WHERE asset_id = ?',
-                                (old_lifecycle, asset_id)
-                            )
-                            conn.commit()
-                            logger.warning(
-                                'Auto-rotation failed for asset %s, lifecycle reverted to %s: %s',
-                                asset_id, old_lifecycle, rotation_result.get('message', '')
-                            )
-                        else:
-                            logger.info(
-                                'Auto-rotated password for device %s on production transition (asset %s)',
-                                device_row['id'], asset_id
-                            )
-                    except Exception as e:
-                        # Rollback lifecycle on unexpected error
-                        conn.execute(
-                            'UPDATE physical_assets SET lifecycle_status = ? WHERE id = ?',
-                            (old_lifecycle, asset_id)
-                        )
-                        conn.execute(
-                            'UPDATE devices SET lifecycle_status = ? WHERE asset_id = ?',
-                            (old_lifecycle, asset_id)
-                        )
-                        conn.commit()
-                        logger.warning('Auto-rotation exception for asset %s, lifecycle reverted: %s', asset_id, e)
-                        rotation_result = {'success': False, 'message': str(e)}
+                    _device_id = device_row['id'] if isinstance(device_row, dict) else device_row[0]
+                    # Mark rotation pending immediately
+                    conn.execute(
+                        "UPDATE devices SET rotation_status = 'rotating' WHERE id = ?",
+                        (_device_id,)
+                    )
+                    conn.commit()
+
+                    def _bg_rotate(dev_id: str, a_id: str, old_lc: str):
+                        try:
+                            from services.password_rotation_service import rotate_password
+                            result = rotate_password(dev_id)
+                            bg_conn = get_db_connection()
+                            try:
+                                if result and result.get('success'):
+                                    bg_conn.execute(
+                                        "UPDATE devices SET rotation_status = 'completed' WHERE id = ?",
+                                        (dev_id,)
+                                    )
+                                    bg_conn.commit()
+                                    logger.info(
+                                        'Auto-rotated password for device %s on production transition (asset %s)',
+                                        dev_id, a_id
+                                    )
+                                else:
+                                    # Rotation failed — revert lifecycle + mark failed
+                                    bg_conn.execute(
+                                        "UPDATE devices SET rotation_status = 'failed', lifecycle_status = ? WHERE id = ?",
+                                        (old_lc, dev_id)
+                                    )
+                                    bg_conn.execute(
+                                        'UPDATE physical_assets SET lifecycle_status = ? WHERE id = ?',
+                                        (old_lc, a_id)
+                                    )
+                                    bg_conn.commit()
+                                    logger.warning(
+                                        'Auto-rotation failed for asset %s, lifecycle reverted to %s: %s',
+                                        a_id, old_lc, result.get('message', '') if result else 'no result'
+                                    )
+                            finally:
+                                bg_conn.close()
+                        except Exception as e:
+                            logger.warning('Auto-rotation exception for asset %s: %s', a_id, e)
+                            try:
+                                bg_conn2 = get_db_connection()
+                                bg_conn2.execute(
+                                    "UPDATE devices SET rotation_status = 'failed', lifecycle_status = ? WHERE id = ?",
+                                    (old_lc, dev_id)
+                                )
+                                bg_conn2.execute(
+                                    'UPDATE physical_assets SET lifecycle_status = ? WHERE id = ?',
+                                    (old_lc, a_id)
+                                )
+                                bg_conn2.commit()
+                                bg_conn2.close()
+                            except Exception:
+                                pass
+
+                    threading.Thread(
+                        target=_bg_rotate,
+                        args=(_device_id, asset_id, old_lifecycle),
+                        daemon=True,
+                    ).start()
+                    rotation_result = {'pending': True}
 
         return {
             'ok': True,
             'password_rotated': rotation_result is not None and rotation_result.get('success', False),
-            'rotation_detail': rotation_result.get('message', '') if rotation_result else None,
-            'lifecycle_reverted': rotation_result is not None and not rotation_result.get('success', False),
+            'rotation_pending': rotation_result is not None and rotation_result.get('pending', False),
+            'rotation_detail': rotation_result.get('message', '') if rotation_result and not rotation_result.get('pending') else None,
+            'lifecycle_reverted': rotation_result is not None and not rotation_result.get('success', False) and not rotation_result.get('pending', False),
         }
     finally:
         conn.close()
@@ -526,6 +557,28 @@ def delete_asset(asset_id: str):
         conn.execute('DELETE FROM physical_assets WHERE id = ?', (asset_id,))
         conn.commit()
         return {'ok': True}
+    finally:
+        conn.close()
+
+
+# ── Rotation status polling ──────────────────────────────────────────
+
+@router.get('/assets/{asset_id}/rotation-status')
+def get_rotation_status(asset_id: str):
+    """Poll rotation progress after async production transition."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT d.rotation_status, d.lifecycle_status, d.password_last_rotated '
+            'FROM devices d WHERE d.asset_id = ?', (asset_id,)
+        ).fetchone()
+        if not row:
+            return {'rotation_status': 'none'}
+        return {
+            'rotation_status': row['rotation_status'] or '',
+            'lifecycle_status': row['lifecycle_status'] or 'staging',
+            'password_last_rotated': row['password_last_rotated'] or '',
+        }
     finally:
         conn.close()
 

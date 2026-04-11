@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
+import Pagination from './Pagination';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   RefreshCw, Shield, AlertTriangle, CheckCircle2, Clock, Loader2, RotateCcw,
@@ -34,12 +35,12 @@ const platformLabel = (p: string): string => {
 };
 
 const platformColor = (p: string): string => {
-  if (p?.startsWith('cisco')) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
-  if (p?.startsWith('huawei')) return 'bg-red-500/10 text-red-400 border-red-500/20';
-  if (p?.startsWith('h3c')) return 'bg-orange-500/10 text-orange-400 border-orange-500/20';
-  if (p?.startsWith('arista')) return 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20';
-  if (p?.startsWith('juniper')) return 'bg-green-500/10 text-green-400 border-green-500/20';
-  return 'bg-slate-500/10 text-slate-400 border-slate-500/20';
+  if (p?.startsWith('cisco')) return 'bg-blue-50 text-blue-600 border-blue-200';
+  if (p?.startsWith('huawei')) return 'bg-red-50 text-red-600 border-red-200';
+  if (p?.startsWith('h3c')) return 'bg-orange-50 text-orange-600 border-orange-200';
+  if (p?.startsWith('arista')) return 'bg-cyan-50 text-cyan-600 border-cyan-200';
+  if (p?.startsWith('juniper')) return 'bg-green-50 text-green-600 border-green-200';
+  return 'bg-slate-50 text-slate-600 border-slate-200';
 };
 
 type StatusFilter = 'all' | 'healthy' | 'expiring' | 'expired' | 'unconfigured';
@@ -56,6 +57,8 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
   const [revealedPwd, setRevealedPwd] = useState<string | null>(null);
   const [revealLoading, setRevealLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
@@ -77,6 +80,7 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
   }, []);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
+  useEffect(() => { setPage(1); }, [search, statusFilter]);
 
   const handleRotate = async (deviceId: string) => {
     setRotating(deviceId);
@@ -157,19 +161,24 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
     return list;
   }, [devices, statusFilter, search]);
 
+  const paginatedFiltered = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page, pageSize]);
+
   /* ── status badge ── */
   const statusBadge = (dev: RotationDevice) => {
     if (!dev.password_expires_at) {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-500/10 text-slate-400 border border-slate-500/15">
-          <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
           {zh ? '未配置' : 'Not Set'}
         </span>
       );
     }
     if (dev.expired) {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/10 text-red-400 border border-red-500/15">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-50 text-red-600 border border-red-200">
           <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
           {zh ? '已过期' : 'Expired'}
         </span>
@@ -177,14 +186,14 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
     }
     if (dev.days_remaining !== null && dev.days_remaining <= 14) {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/15">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-600 border border-amber-200">
           <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
           {zh ? '即将过期' : 'Expiring'}
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/15">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-200">
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
         {zh ? '正常' : 'OK'}
       </span>
@@ -193,9 +202,9 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
 
   /* ── days remaining display ── */
   const daysCell = (dev: RotationDevice) => {
-    if (dev.days_remaining === null) return <span className="text-slate-600">—</span>;
+    if (dev.days_remaining === null) return <span className="text-black/25">—</span>;
     const d = dev.days_remaining;
-    const cls = d < 0 ? 'text-red-400 font-bold' : d <= 7 ? 'text-red-400' : d <= 14 ? 'text-amber-400' : 'text-slate-300';
+    const cls = d < 0 ? 'text-red-600 font-bold' : d <= 7 ? 'text-red-500' : d <= 14 ? 'text-amber-500' : 'text-black/50';
     return (
       <span className={cls}>
         {d < 0 ? `${zh ? '已过期' : 'overdue'} ${Math.abs(d)}${zh ? '天' : 'd'}` : `${d}${zh ? '天' : 'd'}`}
@@ -272,18 +281,18 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
       </div>
 
       {/* ═══ Main Table Card ═══ */}
-      <div className="rounded-xl border border-white/[0.06] bg-[#111827]/80 shadow-xl overflow-hidden">
+      <div className="bg-white rounded-xl border border-black/5 shadow-sm overflow-hidden">
         {/* Header / Toolbar */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06] bg-white/[0.02]">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-black/5 bg-black/[0.008]">
           <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-cyan-500/15 to-cyan-600/5 border border-cyan-500/10 flex items-center justify-center">
-              <Shield size={16} className="text-cyan-400" />
+            <div className="h-8 w-8 rounded-lg bg-cyan-50 border border-cyan-200 flex items-center justify-center">
+              <Shield size={16} className="text-cyan-600" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white/90">{zh ? '凭据轮换明细' : 'Credential Rotation Details'}</h3>
-              <p className="text-[10px] text-white/30 mt-0.5">
+              <h3 className="text-sm font-semibold text-black/80">{zh ? '凭据轮换明细' : 'Credential Rotation Details'}</h3>
+              <p className="text-[10px] text-black/30 mt-0.5">
                 {zh ? `共 ${filtered.length} 条记录` : `${filtered.length} record${filtered.length !== 1 ? 's' : ''}`}
-                {statusFilter !== 'all' && <span className="ml-1 text-cyan-400/60">• {zh ? '已筛选' : 'filtered'}</span>}
+                {statusFilter !== 'all' && <span className="ml-1 text-cyan-600/60">• {zh ? '已筛选' : 'filtered'}</span>}
               </p>
             </div>
           </div>
@@ -291,18 +300,18 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
           <div className="flex items-center gap-2">
             {/* Search */}
             <div className="relative">
-              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/20 pointer-events-none" />
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/25 pointer-events-none" />
               <input
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder={zh ? '搜索主机名 / IP...' : 'Search hostname / IP...'}
-                className="w-48 pl-7 pr-7 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]
-                  text-[11px] text-white/70 placeholder:text-white/20
+                className="w-48 pl-7 pr-7 py-1.5 rounded-lg bg-black/[0.03] border border-black/[0.06]
+                  text-[11px] text-black/70 placeholder:text-black/25
                   focus:outline-none focus:border-cyan-500/30 focus:ring-1 focus:ring-cyan-500/15 transition-colors"
               />
               {search && (
-                <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-white/20 hover:text-white/50">
+                <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-black/25 hover:text-black/50">
                   <X size={10} />
                 </button>
               )}
@@ -325,8 +334,8 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
             <button
               onClick={fetchStatus}
               disabled={loading}
-              className="p-2 rounded-lg border border-white/[0.06] bg-white/[0.03] text-white/40
-                hover:text-white/70 hover:bg-white/[0.06] hover:border-white/[0.1] transition-all disabled:opacity-40"
+              className="p-2 rounded-lg border border-black/[0.06] bg-black/[0.02] text-black/40
+                hover:text-black/70 hover:bg-black/[0.04] hover:border-black/[0.1] transition-all disabled:opacity-40"
               title={zh ? '刷新' : 'Refresh'}
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -343,10 +352,10 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="mx-4 mt-3 flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                <AlertTriangle size={14} className="text-red-400 shrink-0" />
-                <span className="text-xs text-red-300 flex-1">{error}</span>
-                <button onClick={() => setError(null)} className="text-red-400/50 hover:text-red-400"><X size={12} /></button>
+              <div className="mx-4 mt-3 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                <AlertTriangle size={14} className="text-red-500 shrink-0" />
+                <span className="text-xs text-red-600 flex-1">{error}</span>
+                <button onClick={() => setError(null)} className="text-red-400/50 hover:text-red-500"><X size={12} /></button>
               </div>
             </motion.div>
           )}
@@ -356,7 +365,7 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-white/25 border-b border-white/[0.04]">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-black/35 border-b border-black/[0.06]">
                 <th className="px-5 py-2.5 font-semibold">{zh ? '设备' : 'Device'}</th>
                 <th className="px-3 py-2.5 font-semibold">{zh ? '平台' : 'Platform'}</th>
                 <th className="px-3 py-2.5 font-semibold">IP</th>
@@ -367,13 +376,13 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
                 <th className="px-3 py-2.5 font-semibold text-right">{zh ? '操作' : 'Action'}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/[0.03]">
+            <tbody className="divide-y divide-black/[0.04]">
               {/* Loading */}
               {loading && !devices.length && (
                 <tr>
                   <td colSpan={8} className="px-6 py-16 text-center">
                     <div className="inline-block w-6 h-6 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin mb-3" />
-                    <p className="text-sm text-white/30">{zh ? '正在加载凭据状态…' : 'Loading credential status...'}</p>
+                    <p className="text-sm text-black/30">{zh ? '正在加载凭据状态…' : 'Loading credential status...'}</p>
                   </td>
                 </tr>
               )}
@@ -382,15 +391,15 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
               {!loading && filtered.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-6 py-16 text-center">
-                    <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.06] mb-4">
-                      <KeyRound size={24} className="text-white/15" />
+                    <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-black/[0.03] border border-black/[0.06] mb-4">
+                      <KeyRound size={24} className="text-black/15" />
                     </div>
-                    <p className="text-sm text-white/30 mb-1">
+                    <p className="text-sm text-black/30 mb-1">
                       {search || statusFilter !== 'all'
                         ? (zh ? '没有匹配的设备凭据' : 'No credentials match current filters')
                         : (zh ? '暂无纳管设备' : 'No managed devices yet')}
                     </p>
-                    <p className="text-[11px] text-white/15">
+                    <p className="text-[11px] text-black/20">
                       {search || statusFilter !== 'all'
                         ? (zh ? '尝试调整搜索或筛选条件' : 'Try adjusting search or filter criteria')
                         : (zh ? '设备投产后将自动纳入凭据管理' : 'Devices will appear here after going to production')}
@@ -400,20 +409,20 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
               )}
 
               {/* Data rows */}
-              {!loading && filtered.map((dev, i) => (
+              {!loading && paginatedFiltered.map((dev, i) => (
                 <motion.tr
                   key={dev.id}
                   initial={{ opacity: 0, y: 4 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.02 }}
-                  className="group hover:bg-white/[0.02] transition-colors"
+                  className="group hover:bg-black/[0.015] transition-colors"
                 >
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2.5">
-                      <div className="h-7 w-7 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center shrink-0">
-                        <Server size={13} className="text-white/30" />
+                      <div className="h-7 w-7 rounded-lg bg-black/[0.03] border border-black/[0.06] flex items-center justify-center shrink-0">
+                        <Server size={13} className="text-black/30" />
                       </div>
-                      <span className="text-[13px] font-medium text-white/85">{dev.hostname || '—'}</span>
+                      <span className="text-[13px] font-medium text-black/80">{dev.hostname || '—'}</span>
                     </div>
                   </td>
                   <td className="px-3 py-3">
@@ -422,15 +431,15 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
                     </span>
                   </td>
                   <td className="px-3 py-3">
-                    <span className="text-xs font-mono text-white/40">{dev.ip_address}</span>
+                    <span className="text-xs font-mono text-black/45">{dev.ip_address}</span>
                   </td>
                   <td className="px-3 py-3">
-                    <span className="text-xs text-white/35">
+                    <span className="text-xs text-black/40">
                       {dev.password_last_rotated ? new Date(dev.password_last_rotated).toLocaleDateString() : '—'}
                     </span>
                   </td>
                   <td className="px-3 py-3">
-                    <span className="text-xs text-white/35">
+                    <span className="text-xs text-black/40">
                       {dev.password_expires_at ? new Date(dev.password_expires_at).toLocaleDateString() : '—'}
                     </span>
                   </td>
@@ -447,8 +456,8 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
                         onClick={() => handleReveal(dev.id)}
                         disabled={revealLoading && revealId === dev.id}
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium
-                          bg-amber-500/10 border border-amber-500/15 text-amber-400
-                          hover:bg-amber-500/20 hover:border-amber-500/25
+                          bg-amber-50 border border-amber-200 text-amber-600
+                          hover:bg-amber-100 hover:border-amber-300
                           active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                         title={zh ? '查看密码' : 'Reveal password'}
                       >
@@ -461,8 +470,8 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
                         onClick={() => handleRotate(dev.id)}
                         disabled={rotating === dev.id}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium
-                          bg-cyan-500/10 border border-cyan-500/15 text-cyan-400
-                          hover:bg-cyan-500/20 hover:border-cyan-500/25
+                          bg-cyan-50 border border-cyan-200 text-cyan-600
+                          hover:bg-cyan-100 hover:border-cyan-300
                           active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {rotating === dev.id
@@ -480,15 +489,15 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
                           exit={{ opacity: 0, height: 0 }}
                           className="mt-1.5 flex items-center gap-1.5 justify-end"
                         >
-                          <code className="px-2 py-1 rounded bg-slate-800 border border-white/10 text-[11px] font-mono text-amber-300 select-all">
+                          <code className="px-2 py-1 rounded bg-slate-100 border border-black/10 text-[11px] font-mono text-amber-700 select-all">
                             {revealedPwd}
                           </code>
                           <button
                             onClick={handleCopyPwd}
-                            className="p-1 rounded hover:bg-white/10 transition-colors"
+                            className="p-1 rounded hover:bg-black/5 transition-colors"
                             title={zh ? '复制' : 'Copy'}
                           >
-                            {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} className="text-white/40" />}
+                            {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} className="text-black/40" />}
                           </button>
                         </motion.div>
                       )}
@@ -500,18 +509,17 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
           </table>
         </div>
 
-        {/* Footer */}
+        {/* Pagination */}
         {filtered.length > 0 && (
-          <div className="px-5 py-2.5 border-t border-white/[0.04] text-[10px] text-white/20 flex items-center justify-between">
-            <span>
-              {zh
-                ? `显示 ${filtered.length} / ${devices.length} 条`
-                : `Showing ${filtered.length} of ${devices.length}`}
-            </span>
-            <span className="flex items-center gap-1">
-              <CheckCircle2 size={10} className="text-emerald-500/50" />
-              {zh ? '轮换操作需管理员权限' : 'Rotation requires Administrator role'}
-            </span>
+          <div>
+            <Pagination
+              currentPage={page}
+              totalItems={filtered.length}
+              itemsPerPage={pageSize}
+              onItemsPerPageChange={(v) => { setPage(1); setPageSize(v); }}
+              onPageChange={setPage}
+              language={language}
+            />
           </div>
         )}
       </div>

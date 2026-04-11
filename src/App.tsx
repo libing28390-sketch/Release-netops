@@ -894,7 +894,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const runQuickPlaybook = async (dryRunOverride?: boolean) => {
+  const runQuickPlaybook = async (dryRunOverride?: boolean, changeTicket?: string) => {
     if (!quickPlaybookScenario) return;
     const targetDeviceIds = batchMode
       ? batchDeviceIds
@@ -931,6 +931,7 @@ const App: React.FC = () => {
           variables: quickPlaybookVars,
           dry_run: effectiveDryRun,
           concurrency: quickPlaybookConcurrency,
+          change_ticket: (changeTicket || '').trim() || undefined,
           author: currentUser.username || 'admin',
           actor_id: currentUser.id,
           actor_role: currentUser.role || 'Administrator',
@@ -4371,7 +4372,10 @@ const App: React.FC = () => {
 
       const response = await fetch('/api/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
+        },
         body: JSON.stringify({
           device_id: selectedDevice.id,
           script_id: (taskName === 'VLAN Update' || taskName === 'Compliance Audit' || taskName === 'Custom Command') 
@@ -4408,7 +4412,7 @@ const App: React.FC = () => {
         }
         return true;
       } else {
-        showToast(`Task failed: ${data.error}`, 'error');
+        showToast(`Task failed: ${data.error || data.detail || 'Unknown error'}`, 'error');
         return false;
       }
     } catch (error) {
@@ -4675,7 +4679,10 @@ const App: React.FC = () => {
     try {
       const resp = await fetch(`/api/devices/${device.id}/parsed-command`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
+        },
         body: JSON.stringify({ command }),
       });
       const data = await resp.json();
@@ -4729,7 +4736,10 @@ const App: React.FC = () => {
 
         const resp = await fetch('/api/execute', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
+          },
           body: JSON.stringify({
             device_id: device.id,
             command: commandPayload,
@@ -4790,6 +4800,7 @@ const App: React.FC = () => {
   const closeCustomCommandModal = () => {
     setShowCustomCommandModal(false);
     setShowFavorites(false);
+    setCustomCommand('');
     setConfigReason('');
     setApproverUsername('');
     setApprovalCode('');
@@ -5580,8 +5591,8 @@ const App: React.FC = () => {
                 onQuickPlaybookVarChange={(key, value) => setQuickPlaybookVars((current) => ({ ...current, [key]: value }))}
                 onQuickPlaybookConcurrencyChange={setQuickPlaybookConcurrency}
                 onQuickRiskConfirmedChange={setQuickRiskConfirmed}
-                onRunValidation={() => runQuickPlaybook(true)}
-                onRunApply={() => runQuickPlaybook(false)}
+                onRunValidation={(changeTicket?: string) => runQuickPlaybook(true, changeTicket)}
+                onRunApply={(changeTicket?: string) => runQuickPlaybook(false, changeTicket)}
                 onRunQuickQuery={runQuickQuery}
                 onResetQuickQuery={handleResetQuickQuery}
                 onQuickQueryViewChange={setQuickQueryView}

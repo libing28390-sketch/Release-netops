@@ -1874,6 +1874,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
               exit={{ scale: 0.95, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 380, damping: 30 }}
               onClick={(e) => e.stopPropagation()}
+              data-dropdown-boundary="true"
               className="bg-white rounded-2xl shadow-2xl w-[680px] max-h-[85vh] overflow-hidden flex flex-col"
             >
               {/* Modal header */}

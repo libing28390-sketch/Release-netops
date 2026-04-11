@@ -294,7 +294,92 @@ def api_list_change_orders(
         conn.close()
 
 
-# ── Get Single ───────────────────────────────────────────────────────
+# ── Validate ticket for automation execution ─────────────────────────
+
+@router.get('/change-orders/validate-ticket/{order_number}')
+def api_validate_change_ticket(order_number: str, user=require_role("Viewer")):
+    """Validate a change order number for automation execution time window check."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, order_number, title, status, scheduled_start, scheduled_end FROM change_orders WHERE order_number = ?",
+            (order_number.strip(),),
+        ).fetchone()
+        if not row:
+            return {
+                'success': True,
+                'data': {
+                    'found': False,
+                    'valid': False,
+                    'reason': 'not_found',
+                    'message': '未找到该变更工单',
+                },
+            }
+        order = dict(row)
+        status = order.get('status', '')
+        scheduled_start = order.get('scheduled_start', '')
+        scheduled_end = order.get('scheduled_end', '')
+
+        # Check status: only approved/implementing orders allow execution
+        executable_statuses = {'approved', 'implementing'}
+        if status not in executable_statuses:
+            return {
+                'success': True,
+                'data': {
+                    'found': True,
+                    'valid': False,
+                    'reason': 'invalid_status',
+                    'status': status,
+                    'title': order.get('title', ''),
+                    'order_number': order.get('order_number', ''),
+                    'message': f'工单状态为 {status}，仅已审批/执行中的工单允许操作',
+                },
+            }
+
+        # Check time window
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        time_ok = True
+        reason = 'ok'
+        message = ''
+
+        if scheduled_start:
+            try:
+                start_dt = datetime.fromisoformat(scheduled_start.replace('Z', '+00:00'))
+                if now < start_dt:
+                    time_ok = False
+                    reason = 'not_started'
+                    message = f'变更窗口尚未开始（计划开始：{scheduled_start}）'
+            except (ValueError, TypeError):
+                pass
+
+        if time_ok and scheduled_end:
+            try:
+                end_dt = datetime.fromisoformat(scheduled_end.replace('Z', '+00:00'))
+                if now > end_dt:
+                    time_ok = False
+                    reason = 'expired'
+                    message = f'变更窗口已超时（计划结束：{scheduled_end}）'
+            except (ValueError, TypeError):
+                pass
+
+        return {
+            'success': True,
+            'data': {
+                'found': True,
+                'valid': time_ok,
+                'reason': reason,
+                'status': status,
+                'title': order.get('title', ''),
+                'order_number': order.get('order_number', ''),
+                'scheduled_start': scheduled_start,
+                'scheduled_end': scheduled_end,
+                'message': message or '工单有效，可以执行',
+            },
+        }
+    finally:
+        conn.close()
+
 
 @router.get('/change-orders/{order_id}')
 def api_get_change_order(order_id: str, user=require_role("Viewer")):
@@ -306,7 +391,6 @@ def api_get_change_order(order_id: str, user=require_role("Viewer")):
         return {'success': True, 'data': order}
     finally:
         conn.close()
-
 
 @router.get('/change-orders/{order_id}/timeline')
 def api_get_change_order_timeline(order_id: str, user=require_role("Viewer")):
