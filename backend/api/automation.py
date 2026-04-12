@@ -70,6 +70,8 @@ async def request_config_approval(payload: dict = Body(...), user=require_role("
     config_reason = (payload.get('config_reason') or '').strip()
     device_hostname = (payload.get('device_hostname') or '').strip()
     command_preview = (payload.get('command_preview') or '').strip()
+    approval_type = (payload.get('approval_type') or 'config').strip()
+    extra_fields = payload.get('extra_fields') or {}
 
     if not approver_username:
         raise HTTPException(status_code=400, detail="approver_username is required")
@@ -83,6 +85,8 @@ async def request_config_approval(payload: dict = Body(...), user=require_role("
         config_reason=config_reason,
         device_hostname=device_hostname,
         command_preview=command_preview,
+        approval_type=approval_type,
+        extra_fields=extra_fields,
     )
     if err:
         raise HTTPException(status_code=400, detail=err)

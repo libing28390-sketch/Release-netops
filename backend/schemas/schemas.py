@@ -242,3 +242,62 @@ class InspectionScheduleUpdate(BaseModel):
     scope_type: str | None = None
     scope_filter: str | None = None
     enabled: bool | None = None
+
+
+# ─── Tag 标签系统 ─────────────────────────────
+
+_TAG_CATEGORIES = {'device_type', 'vendor', 'os', 'role', 'env', 'function', 'custom'}
+
+class TagDefinitionCreate(BaseModel):
+    category: str
+    value: str
+    label: str
+    label_zh: str = ''
+    color: str = ''
+    icon: str = ''
+    description: str = ''
+    sort_order: int = 0
+
+    @field_validator('category')
+    @classmethod
+    def validate_category(cls, v: str) -> str:
+        if v not in _TAG_CATEGORIES:
+            raise ValueError(f'category must be one of {_TAG_CATEGORIES}')
+        return v
+
+    @field_validator('value')
+    @classmethod
+    def validate_value(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not v or len(v) > 64:
+            raise ValueError('value must be 1-64 characters')
+        if not _re.match(r'^[a-z0-9][a-z0-9._-]*$', v):
+            raise ValueError('value must start with a-z/0-9 and contain only a-z, 0-9, dot, dash, underscore')
+        return v
+
+
+class TagDefinitionUpdate(BaseModel):
+    label: str | None = None
+    label_zh: str | None = None
+    color: str | None = None
+    icon: str | None = None
+    description: str | None = None
+    sort_order: int | None = None
+    category: str | None = None
+    value: str | None = None
+
+    @field_validator('category')
+    @classmethod
+    def validate_category(cls, v: str | None) -> str | None:
+        if v is not None and v not in _TAG_CATEGORIES:
+            raise ValueError(f'category must be one of {_TAG_CATEGORIES}')
+        return v
+
+
+class DeviceTagsUpdate(BaseModel):
+    tag_ids: List[str]
+
+
+class BatchDeviceTagsUpdate(BaseModel):
+    device_ids: List[str]
+    tag_ids: List[str]

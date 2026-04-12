@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { ChevronDown, ChevronRight, Edit2, Eye, EyeOff, Plus, X } from 'lucide-react';
-import type { Device } from '../types';
+import { ChevronDown, ChevronRight, Edit2, Eye, EyeOff, Plus, Search, X } from 'lucide-react';
+import type { Device, TagDefinition } from '../types';
+import { TAG_CATEGORY_LABELS } from '../types';
 
 type DeviceFormMode = 'add' | 'edit';
 
@@ -59,6 +60,40 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   const [showAdvancedCred, setShowAdvancedCred] = useState(
     !!(form.enable_password || form.priv_username || (form.credential_source && form.credential_source !== 'local') || form.vault_path)
   );
+
+  /* ── Tag Selection State ── */
+  const [allTags, setAllTags] = useState<TagDefinition[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>(form.tag_ids || []);
+  const [tagSearch, setTagSearch] = useState('');
+  const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem('netops_token') || '';
+    fetch('/api/tags/definitions', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(json => {
+        if (json?.success) setAllTags(json.data || []);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (form.tag_ids) setSelectedTagIds(form.tag_ids);
+  }, [form.tag_ids]);
+
+  const toggleTag = (tagId: string) => {
+    const next = selectedTagIds.includes(tagId)
+      ? selectedTagIds.filter(id => id !== tagId)
+      : [...selectedTagIds, tagId];
+    setSelectedTagIds(next);
+    onFormChange({ ...form, tag_ids: next });
+  };
+
+  const filteredTags = allTags.filter(tag => {
+    if (!tagSearch) return true;
+    const q = tagSearch.toLowerCase();
+    return tag.label.toLowerCase().includes(q) || tag.label_zh.toLowerCase().includes(q) || tag.value.toLowerCase().includes(q);
+  });
 
   const handleFieldChange = <K extends keyof Device>(key: K, value: Device[K] | string | number | undefined) => {
     onFormChange({ ...form, [key]: value });
@@ -197,6 +232,92 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                 className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
                 placeholder="e.g. SN12345678"
               />
+            </div>
+
+            {/* ── Tag Selection ── */}
+            <div className="col-span-1 sm:col-span-2">
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                {language === 'zh' ? '标签' : 'Tags'}
+              </label>
+              {/* Selected tags display */}
+              <div className="flex flex-wrap gap-1.5 mb-2 min-h-[28px]">
+                {selectedTagIds.map(tagId => {
+                  const tag = allTags.find(t => t.id === tagId);
+                  if (!tag) return null;
+                  return (
+                    <span key={tagId} className="inline-flex items-center gap-1 rounded-full border border-black/8 bg-black/[0.03] px-2 py-0.5 text-[11px]">
+                      <span className="h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color || '#06b6d4' }} />
+                      <span className="font-medium text-black/70">{language === 'zh' ? (tag.label_zh || tag.label) : tag.label}</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleTag(tagId)}
+                        className="ml-0.5 text-black/30 hover:text-black/60"
+                        title={language === 'zh' ? '移除标签' : 'Remove tag'}
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  );
+                })}
+                {selectedTagIds.length === 0 && (
+                  <span className="text-[11px] text-black/30 italic py-0.5">
+                    {language === 'zh' ? '点击下方添加标签…' : 'Click below to add tags…'}
+                  </span>
+                )}
+              </div>
+              {/* Tag dropdown toggle */}
+              <button
+                type="button"
+                onClick={() => setTagDropdownOpen(!tagDropdownOpen)}
+                className="w-full flex items-center justify-between rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2 text-sm text-black/50 hover:border-black/15 transition-colors"
+              >
+                <span>{language === 'zh' ? `已选 ${selectedTagIds.length} 个标签` : `${selectedTagIds.length} tag(s) selected`}</span>
+                <ChevronDown size={14} className={`transition-transform ${tagDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {/* Tag dropdown */}
+              {tagDropdownOpen && (
+                <div className="mt-1 rounded-xl border border-black/8 bg-white shadow-lg shadow-black/5 max-h-52 overflow-hidden flex flex-col">
+                  <div className="relative px-2 pt-2 pb-1 border-b border-black/5">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-black/25 pointer-events-none" size={12} />
+                    <input
+                      type="text"
+                      value={tagSearch}
+                      onChange={e => setTagSearch(e.target.value)}
+                      placeholder={language === 'zh' ? '搜索标签…' : 'Search tags…'}
+                      className="w-full pl-7 pr-2 py-1.5 text-xs bg-black/[0.02] rounded-lg border border-black/5 outline-none focus:border-black/15"
+                    />
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+                    {Object.keys(TAG_CATEGORY_LABELS).map(cat => {
+                      const catTags = filteredTags.filter(t => t.category === cat);
+                      if (catTags.length === 0) return null;
+                      const catLabel = language === 'zh' ? TAG_CATEGORY_LABELS[cat as keyof typeof TAG_CATEGORY_LABELS].zh : TAG_CATEGORY_LABELS[cat as keyof typeof TAG_CATEGORY_LABELS].en;
+                      return (
+                        <div key={cat}>
+                          <div className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-black/25">{catLabel}</div>
+                          {catTags.map(tag => {
+                            const active = selectedTagIds.includes(tag.id);
+                            return (
+                              <button
+                                key={tag.id}
+                                type="button"
+                                onClick={() => toggleTag(tag.id)}
+                                className={`w-full flex items-center gap-2 px-2 py-1 rounded-lg text-xs transition-all ${
+                                  active ? 'bg-cyan-50 text-cyan-800 font-medium' : 'text-black/60 hover:bg-black/[0.03]'
+                                }`}
+                              >
+                                <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color || '#06b6d4' }} />
+                                <span className="flex-1 text-left truncate">{language === 'zh' ? (tag.label_zh || tag.label) : tag.label}</span>
+                                {active && <span className="text-cyan-500 text-[10px]">✓</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Model</label>

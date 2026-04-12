@@ -71,9 +71,15 @@ def request_approval(
     config_reason: str,
     device_hostname: str = '',
     command_preview: str = '',
+    approval_type: str = 'config',
+    extra_fields: dict | None = None,
 ) -> tuple[str | None, str | None]:
     """
     创建审批请求并发送验证码到审批人飞书。
+
+    Args:
+        approval_type: 审批类型 — 'config' (配置变更), 'scheduled_job' (定时作业), 'execution_plan' (执行计划)
+        extra_fields: 额外展示字段，如 {'action_type': '配置备份', 'cron_expr': '0 2 * * *'}
 
     Returns:
         (approval_token, error_message) — 成功时 token 非空, error 为空; 反之亦然
@@ -103,28 +109,58 @@ def request_approval(
     }
 
     # 4. 构建飞书消息并发送
-    cmd_preview_display = command_preview[:120] + ('...' if len(command_preview) > 120 else '')
     feishu_cfg = channels.get('feishu', {})
     webhook_url = feishu_cfg['webhook_url']
+    extra = extra_fields or {}
+
+    # 根据审批类型选择标题和模板颜色
+    type_config = {
+        'config': {'title': '🔐 Nexora 配置变更审批', 'template': 'orange'},
+        'scheduled_job': {'title': '⏰ Nexora 定时作业审批', 'template': 'blue'},
+        'execution_plan': {'title': '📋 Nexora 执行计划审批', 'template': 'turquoise'},
+    }
+    tc = type_config.get(approval_type, type_config['config'])
+
+    # 构建动态字段
+    card_fields = [
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**申请人：**\n{requester_username}"}},
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**目标设备：**\n{device_hostname or '-'}"}},
+    ]
+
+    # 添加作业类型（定时作业/执行计划）
+    if extra.get('action_type'):
+        card_fields.append(
+            {"is_short": True, "text": {"tag": "lark_md", "content": f"**作业类型：**\n{extra['action_type']}"}}
+        )
+
+    # 添加调度信息
+    if extra.get('schedule_desc'):
+        card_fields.append(
+            {"is_short": True, "text": {"tag": "lark_md", "content": f"**执行计划：**\n{extra['schedule_desc']}"}}
+        )
+
+    # 变更原因
+    card_fields.append(
+        {"is_short": False, "text": {"tag": "lark_md", "content": f"**变更原因：**\n{config_reason}"}}
+    )
+
+    # 命令预览（仅在有内容时显示）
+    if command_preview and command_preview.strip():
+        cmd_preview_display = command_preview[:120] + ('...' if len(command_preview) > 120 else '')
+        card_fields.append(
+            {"is_short": False, "text": {"tag": "lark_md", "content": f"**命令预览：**\n```\n{cmd_preview_display}\n```"}}
+        )
 
     card_payload = {
         "msg_type": "interactive",
         "card": {
             "config": {"wide_screen_mode": True},
             "header": {
-                "title": {"tag": "plain_text", "content": "🔐 Nexora 配置变更审批"},
-                "template": "orange",
+                "title": {"tag": "plain_text", "content": tc['title']},
+                "template": tc['template'],
             },
             "elements": [
-                {
-                    "tag": "div",
-                    "fields": [
-                        {"is_short": True, "text": {"tag": "lark_md", "content": f"**申请人：**\n{requester_username}"}},
-                        {"is_short": True, "text": {"tag": "lark_md", "content": f"**目标设备：**\n{device_hostname or '-'}"}},
-                        {"is_short": False, "text": {"tag": "lark_md", "content": f"**变更原因：**\n{config_reason}"}},
-                        {"is_short": False, "text": {"tag": "lark_md", "content": f"**命令预览：**\n```\n{cmd_preview_display}\n```"}},
-                    ],
-                },
+                {"tag": "div", "fields": card_fields},
                 {"tag": "hr"},
                 {
                     "tag": "div",
@@ -143,11 +179,14 @@ def request_approval(
         },
     }
 
-    ok, resp = notification_service._post_json(webhook_url, card_payload)
+    ok, resp = notification_service._post_json(webhook_url, card_payload, timeout=15)
     if not ok:
         # 清理刚创建的记录
         _pending_approvals.pop(approval_token, None)
         logger.warning(f"[ConfigApproval] Feishu send failed: {resp}")
+        # 对前端返回友好提示
+        if 'timed out' in resp.lower() or 'timeout' in resp.lower():
+            return None, "飞书服务连接超时，请检查网络后重试 / Feishu connection timed out, please retry"
         return None, f"Failed to send approval code via Feishu: {resp[:200]}"
 
     # 检查飞书返回 code

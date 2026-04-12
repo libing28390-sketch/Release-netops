@@ -67,7 +67,7 @@ export default defineConfig(({mode}) => {
       },
       proxy: {
         '/api': {
-          target: 'http://127.0.0.1:8003',
+          target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8004',
           changeOrigin: true,
           ws: true,
         },

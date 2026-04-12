@@ -53,7 +53,6 @@ const ReportsTab = lazy(() => import('./pages/ReportsTab'));
 const ConfigDriftTab = lazy(() => import('./pages/ConfigDriftTab'));
 const ConfigBackupTab = lazy(() => import('./pages/ConfigBackupTab'));
 const ConfigDiffViewTab = lazy(() => import('./pages/ConfigDiffViewTab'));
-const ConfigScheduleTab = lazy(() => import('./pages/ConfigScheduleTab'));
 const ConfigSearchTab = lazy(() => import('./pages/ConfigSearchTab'));
 const CapacityPlanningTab = lazy(() => import('./pages/CapacityPlanningTab'));
 const IPVlanTab = lazy(() => import('./pages/IPVlanTab'));
@@ -68,7 +67,9 @@ const AutomationScenariosTab = lazy(() => import('./pages/AutomationScenariosTab
 const AutomationHistoryTab = lazy(() => import('./pages/AutomationHistoryTab'));
 const InspectionTab = lazy(() => import('./pages/InspectionTab'));
 const ExecutionScheduleTab = lazy(() => import('./pages/ExecutionScheduleTab'));
+const ScheduledJobsTab = lazy(() => import('./pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('./pages/PlatformSettingsTab'));
+const TagManagementTab = lazy(() => import('./pages/TagManagementTab'));
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
 
@@ -490,6 +491,7 @@ const App: React.FC = () => {
     if (path === '/topology') return language === 'zh' ? '网络拓扑' : 'Topology';
     if (path === '/automation/inspection') return language === 'zh' ? '设备巡检' : 'Device Inspection';
     if (path === '/automation/schedule') return language === 'zh' ? '执行计划' : 'Execution Schedules';
+    if (path === '/automation/scheduled-jobs') return language === 'zh' ? '定时作业' : 'Scheduled Jobs';
     if (path === '/alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
     if (path === '/alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
     if (path === '/alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
@@ -506,7 +508,6 @@ const App: React.FC = () => {
     if (path === '/config/backup') return t('backupHistory');
     if (path === '/config/diff') return t('diffCompare');
     if (path === '/config/search') return t('configSearchTab');
-    if (path === '/config/schedule') return language === 'zh' ? '备份计划' : 'Backup Schedule';
     if (path === '/config/drift') return language === 'zh' ? '配置漂移' : 'Config Drift';
     if (path === '/compliance') return t('compliance');
     if (path === '/capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
@@ -550,10 +551,10 @@ const App: React.FC = () => {
       { path: '/automation/history', label: t('executionHistory'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/inspection', label: zh ? '设备巡检' : 'Device Inspection', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/schedule', label: zh ? '执行计划' : 'Execution Schedules', group: zh ? '作业自动化' : 'Automation' },
+      { path: '/automation/scheduled-jobs', label: zh ? '定时作业' : 'Scheduled Jobs', group: zh ? '作业自动化' : 'Automation' },
       { path: '/config/backup', label: t('backupHistory'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/diff', label: t('diffCompare'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/search', label: t('configSearchTab'), group: zh ? '配置与合规' : 'Config & Compliance' },
-      { path: '/config/schedule', label: zh ? '备份计划' : 'Backup Schedule', group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/drift', label: zh ? '配置漂移' : 'Config Drift', group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/compliance', label: t('compliance'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/capacity', label: zh ? '容量规划' : 'Capacity Planning', group: zh ? '分析报告' : 'Analytics' },
@@ -595,6 +596,7 @@ const App: React.FC = () => {
         history: t('executionHistory'),
         inspection: language === 'zh' ? '设备巡检' : 'Device Inspection',
         schedule: language === 'zh' ? '执行计划' : 'Execution Schedules',
+        'scheduled-jobs': language === 'zh' ? '定时作业' : 'Scheduled Jobs',
       };
       return map[automationPage] || automationPage;
     }
@@ -603,7 +605,6 @@ const App: React.FC = () => {
         backup: t('backupHistory'),
         diff: t('diffCompare'),
         search: t('configSearchTab'),
-        schedule: language === 'zh' ? '备份计划' : 'Backup Schedule',
         drift: language === 'zh' ? '配置漂移' : 'Config Drift',
       };
       return map[configPage] || configPage;
@@ -628,6 +629,7 @@ const App: React.FC = () => {
     if (activeTab === 'ipam') return language === 'zh' ? 'IP/VLAN管理' : 'IP/VLAN Management';
     if (activeTab === 'ip-locator') return language === 'zh' ? 'IP 定位' : 'IP Locator';
     if (activeTab === 'assets') return language === 'zh' ? '资产管理' : 'Asset Management';
+    if (activeTab === 'tags') return language === 'zh' ? '标签管理' : 'Tag Management';
     if (activeTab === 'credentials') return language === 'zh' ? '凭据管理' : 'Credential Management';
     if (activeTab === 'change-orders') return language === 'zh' ? '变更工单' : 'Change Orders';
     if (activeTab === 'compliance') return t('compliance');
@@ -1513,9 +1515,6 @@ const App: React.FC = () => {
       }
       if (configPage === 'search') {
         loadConfigSnapshots(configCenterDevice?.id);
-      }
-      if (configPage === 'schedule') {
-        loadScheduleConfig();
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3953,6 +3952,15 @@ const App: React.FC = () => {
         body: JSON.stringify(editForm)
       });
       if (response.ok) {
+        // Save tags if tag_ids present in form
+        if (editForm.tag_ids) {
+          const token = localStorage.getItem('netops_token') || '';
+          await fetch(`/api/tags/devices/${editingDevice.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ tag_ids: editForm.tag_ids })
+          }).catch(() => {});
+        }
         setDevices(prev => prev.map(d => d.id === editingDevice.id ? { ...d, ...editForm } as Device : d));
         setInventoryRefreshTick((v) => v + 1);
         setShowEditModal(false);
@@ -3986,6 +3994,15 @@ const App: React.FC = () => {
       });
       const data = await response.json();
       if (response.ok) {
+        // Save tags if tag_ids present in form
+        if (addForm.tag_ids && addForm.tag_ids.length > 0 && data.id) {
+          const token = localStorage.getItem('netops_token') || '';
+          await fetch(`/api/tags/devices/${data.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ tag_ids: addForm.tag_ids })
+          }).catch(() => {});
+        }
         setDevices([...devices, data]);
         setInventoryRefreshTick((v) => v + 1);
         setInventoryPage(1);
@@ -5472,6 +5489,7 @@ const App: React.FC = () => {
                 setEditForm={setEditForm}
                 setSelectedDevice={setSelectedDevice}
                 setActiveTab={setActiveTab}
+                onRefresh={() => setInventoryRefreshTick(v => v + 1)}
                 language={language}
                 t={t}
               />
@@ -5704,6 +5722,11 @@ const App: React.FC = () => {
               <ExecutionScheduleTab t={t} language={language} showToast={showToast} />
             </Suspense>
           )}
+          {activeTab === 'automation' && automationPage === 'scheduled-jobs' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <ScheduledJobsTab t={t} language={language} showToast={showToast} />
+            </Suspense>
+          )}
           {activeTab === 'compliance' && (
             <Suspense fallback={lazyPanelFallback}>
               <ComplianceTab
@@ -5780,28 +5803,6 @@ const App: React.FC = () => {
           {activeTab === 'config' && configPage === 'search' && (
             <Suspense fallback={lazyPanelFallback}>
               <ConfigSearchTab t={t} />
-            </Suspense>
-          )}
-          {activeTab === 'config' && configPage === 'schedule' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ConfigScheduleTab
-                t={t}
-                language={language}
-                devices={devices}
-                configSnapshots={configSnapshots}
-                isTakingSnapshot={isTakingSnapshot}
-                scheduleEnabled={scheduleEnabled}
-                scheduleCron={scheduleCron}
-                scheduleLoading={scheduleLoading}
-                retentionDays={retentionDays}
-                getVendorFromPlatform={getVendorFromPlatform}
-                onToggleScheduleEnabled={() => setScheduleEnabled((prev) => !prev)}
-                onCronChange={setScheduleCron}
-                onRetentionDaysChange={setRetentionDays}
-                onSaveSchedule={saveScheduleConfig}
-                onRunBackupNow={handleRunScheduledBackupNow}
-                showToast={showToast}
-              />
             </Suspense>
           )}
                     {activeTab === 'configuration' && (
@@ -5961,6 +5962,12 @@ const App: React.FC = () => {
           {activeTab === 'assets' && (
             <Suspense fallback={lazyPanelFallback}>
               <AssetManagementTab language={language} t={t} setActiveTab={setActiveTab} />
+            </Suspense>
+          )}
+
+          {activeTab === 'tags' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <TagManagementTab language={language} t={t} />
             </Suspense>
           )}
 

@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Database, RotateCcw, Calendar, Server, ChevronDown, Play, Info, Zap,
   Activity, Timer, TrendingUp, BarChart3, AlertTriangle, RefreshCw,
-  Shield, GitCompareArrows, Hash, Eye,
+  Shield, GitCompareArrows, Hash, Eye, Tag, HardDrive, Layers, CheckCircle2, XCircle,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import type { ConfigSnapshot, Device } from '../types';
@@ -55,9 +55,10 @@ interface RecentBackup {
   timestamp: string; trigger: string; author: string; tag: string; size: number;
 }
 interface BackupStats {
-  today: { total: number; scheduled: number; manual: number };
+  today: { total: number; scheduled: number; manual: number; success?: number; failed?: number };
   daily_history: { date: string; scheduled: number; manual: number; total: number }[];
   total_snapshots: number; total_devices_backed: number;
+  storage_bytes?: number;
   device_stats: DeviceStat[]; recent_backups: RecentBackup[];
 }
 
@@ -266,16 +267,47 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
   const [devicePage, setDevicePage] = useState(1);
   const [scopeExpanded, setScopeExpanded] = useState(false);
   const SCOPE_PREVIEW_COUNT = 4;
-  const TIMELINE_PREVIEW = 3;
+  const TIMELINE_PREVIEW = 2;
   const [timelineExpanded, setTimelineExpanded] = useState(false);
 
   // ── Advanced backup options (local state) ──
   const [backupScope, setBackupScope] = useState<'all' | 'selected'>('all');
   const [scopeDeviceIds, setScopeDeviceIds] = useState<string[]>([]);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
   const [concurrency, setConcurrency] = useState(50);
   const [retryCount, setRetryCount] = useState(2);
   const [diffOnly, setDiffOnly] = useState(false);
   const [scopePickerOpen, setScopePickerOpen] = useState(false);
+
+  // Platform groups derived from online devices
+  const platformGroups = useMemo(() => {
+    const online = devices.filter(d => d.status === 'online');
+    const map = new Map<string, { platform: string; count: number; ids: string[] }>();
+    for (const d of online) {
+      const key = d.platform || 'Unknown';
+      const g = map.get(key) || { platform: key, count: 0, ids: [] };
+      g.count++;
+      g.ids.push(d.id);
+      map.set(key, g);
+    }
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
+  }, [devices]);
+
+  const togglePlatform = useCallback((platform: string) => {
+    setSelectedPlatforms(prev => {
+      const next = prev.includes(platform) ? prev.filter(p => p !== platform) : [...prev, platform];
+      // Sync scopeDeviceIds from selected platforms
+      const allIds = platformGroups.filter(g => next.includes(g.platform)).flatMap(g => g.ids);
+      setScopeDeviceIds(allIds);
+      return next;
+    });
+  }, [platformGroups]);
+
+  const scopeDeviceCount = useMemo(() => {
+    if (backupScope === 'all') return onlineCount;
+    return scopeDeviceIds.length;
+  }, [backupScope, scopeDeviceIds, onlineCount]);
+
   const displayDeviceStats = useMemo(() => {
     const stats = backupStats?.device_stats || [];
     const start = (devicePage - 1) * DEVICE_PAGE_SIZE;
@@ -392,17 +424,20 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                 {/* Cron mode switch */}
                 <div className={`mt-4 transition-opacity ${scheduleEnabled ? '' : 'opacity-35 pointer-events-none'}`}>
 
-                  {/* ── Device Scope Selector ── */}
+                  {/* ── Device Scope Selector (Platform Tag Groups) ── */}
                   <div className="mb-4 pb-4 border-b border-black/5">
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-black/30 mb-2">{zh ? '适用设备范围' : 'Device Scope'}</label>
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-black/30 mb-2">
+                      <Tag size={9} className="inline -mt-px mr-1" />
+                      {zh ? '适用设备范围' : 'Device Scope'}
+                    </label>
                     <div className="flex items-center gap-1 rounded-lg bg-black/[0.03] p-0.5 mb-2">
-                      <button onClick={() => { setBackupScope('all'); setScopeDeviceIds([]); }}
+                      <button onClick={() => { setBackupScope('all'); setScopeDeviceIds([]); setSelectedPlatforms([]); }}
                         className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${backupScope === 'all' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40'}`}>
                         {zh ? '全部在线设备' : 'All Online'}
                       </button>
                       <button onClick={() => setBackupScope('selected')}
                         className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${backupScope === 'selected' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40'}`}>
-                        {zh ? '指定设备' : 'Selected'}
+                        {zh ? '按平台选择' : 'By Platform'}
                       </button>
                     </div>
                     {backupScope === 'all' ? (
@@ -412,48 +447,68 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                       </p>
                     ) : (
                       <div>
-                        <div className="flex flex-wrap gap-1 mb-2">
-                          {scopeDeviceIds.length === 0 ? (
-                            <p className="text-[10px] text-black/25 italic">{zh ? '未选择任何设备' : 'No devices selected'}</p>
-                          ) : (
-                            scopeDeviceIds.map(id => {
-                              const dev = devices.find(d => d.id === id);
-                              return dev ? (
-                                <span key={id} className="inline-flex items-center gap-1 rounded-md bg-[#ecfeff] border border-[#06b6d4]/15 px-1.5 py-0.5 text-[9px] text-[#0891b2] font-medium">
-                                  {dev.hostname}
-                                  <button onClick={() => setScopeDeviceIds(prev => prev.filter(x => x !== id))} className="text-[#06b6d4] hover:text-red-500 transition-colors ml-0.5">&times;</button>
+                        {/* Platform tag chips */}
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {platformGroups.map(g => {
+                            const active = selectedPlatforms.includes(g.platform);
+                            return (
+                              <button key={g.platform} onClick={() => togglePlatform(g.platform)}
+                                className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold border transition-all ${
+                                  active
+                                    ? 'bg-[#ecfeff] border-[#06b6d4]/30 text-[#0891b2] shadow-sm'
+                                    : 'bg-white border-black/8 text-black/40 hover:border-black/15 hover:text-black/55'
+                                }`}>
+                                <Layers size={10} className={active ? 'text-[#06b6d4]' : 'text-black/20'} />
+                                {getVendorFromPlatform(g.platform)}
+                                <span className={`ml-0.5 px-1 py-px rounded text-[8px] font-bold ${active ? 'bg-[#06b6d4]/15 text-[#0891b2]' : 'bg-black/5 text-black/30'}`}>
+                                  {g.count}
                                 </span>
-                              ) : null;
-                            })
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {/* Summary */}
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] text-black/30 flex items-center gap-1">
+                            <Server size={10} className={scopeDeviceIds.length > 0 ? 'text-[#06b6d4]/60' : 'text-black/20'} />
+                            {scopeDeviceIds.length > 0
+                              ? (zh ? `已选择 ${scopeDeviceIds.length} 台设备` : `${scopeDeviceIds.length} devices selected`)
+                              : (zh ? '点击平台标签选择设备组' : 'Click platform tags to select')
+                            }
+                          </p>
+                          {selectedPlatforms.length > 0 && (
+                            <button onClick={() => { setSelectedPlatforms([]); setScopeDeviceIds([]); }}
+                              className="text-[9px] text-red-400 hover:text-red-500 transition-colors">
+                              {zh ? '清空' : 'Clear'}
+                            </button>
                           )}
                         </div>
-                        <div className="relative">
-                          <button onClick={() => setScopePickerOpen(v => !v)}
-                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dashed border-[#06b6d4]/30 px-3 text-[10px] font-semibold text-[#0891b2] hover:bg-[#ecfeff] transition-all">
-                            <Server size={10} /> {zh ? '选择设备' : 'Pick Devices'}
-                            <ChevronDown size={10} className={`transition-transform ${scopePickerOpen ? 'rotate-180' : ''}`} />
-                          </button>
-                          <AnimatePresence>
-                            {scopePickerOpen && (
-                              <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                                className="absolute z-20 mt-1 w-full max-h-40 overflow-y-auto rounded-xl border border-black/8 bg-white shadow-lg">
-                                {devices.filter(d => d.status === 'online').map(d => {
-                                  const checked = scopeDeviceIds.includes(d.id);
-                                  return (
-                                    <button key={d.id} onClick={() => setScopeDeviceIds(prev => checked ? prev.filter(x => x !== d.id) : [...prev, d.id])}
-                                      className={`flex w-full items-center gap-2 px-3 py-2 text-xs transition-colors hover:bg-[#ecfeff] ${checked ? 'bg-[#ecfeff]/50' : ''}`}>
-                                      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[8px] ${checked ? 'bg-[#06b6d4] border-[#06b6d4] text-white' : 'border-black/15'}`}>
-                                        {checked && '✓'}
+                        {/* Expandable individual device list */}
+                        {scopeDeviceIds.length > 0 && (
+                          <div className="mt-2">
+                            <button onClick={() => setScopePickerOpen(v => !v)}
+                              className="inline-flex items-center gap-1 text-[9px] font-medium text-[#0891b2] hover:text-[#06b6d4] transition-colors">
+                              <ChevronDown size={9} className={`transition-transform ${scopePickerOpen ? 'rotate-180' : ''}`} />
+                              {zh ? '查看设备明细' : 'View devices'}
+                            </button>
+                            <AnimatePresence>
+                              {scopePickerOpen && (
+                                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                                  className="mt-1 flex flex-wrap gap-1 overflow-hidden">
+                                  {scopeDeviceIds.map(id => {
+                                    const dev = devices.find(d => d.id === id);
+                                    return dev ? (
+                                      <span key={id} className="inline-flex items-center gap-1 rounded-md bg-black/[0.02] border border-black/[0.04] px-1.5 py-0.5 text-[9px] text-[#164e63]">
+                                        <span className="w-1 h-1 rounded-full bg-emerald-500 flex-shrink-0" />
+                                        {dev.hostname}
                                       </span>
-                                      <span className="font-medium text-[#164e63]">{d.hostname}</span>
-                                      <span className="text-[10px] text-black/25 font-mono">{d.ip_address}</span>
-                                    </button>
-                                  );
-                                })}
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
+                                    ) : null;
+                                  })}
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -630,6 +685,42 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                           ))}
                         </div>
                       </div>
+
+                      {/* ── Execution Options (inside Advanced Mode) ── */}
+                      <div className="pt-3 border-t border-black/5">
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-black/30 mb-2">{zh ? '执行参数' : 'Execution Options'}</label>
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <Hash size={11} className="text-black/25" />
+                            <span className="text-xs text-[#164e63] font-medium">{zh ? '最大并发数' : 'Concurrency'}</span>
+                          </div>
+                          <input type="number" min={1} max={200} value={concurrency}
+                            onChange={e => setConcurrency(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+                            className="w-20 h-8 rounded-lg border border-black/8 bg-[#f8fafc] px-2 text-center font-mono text-sm text-[#164e63] outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all" />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <RefreshCw size={11} className="text-black/25" />
+                            <span className="text-xs text-[#164e63] font-medium">{zh ? '失败重试' : 'Retries'}</span>
+                          </div>
+                          <input type="number" min={0} max={5} value={retryCount}
+                            onChange={e => setRetryCount(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
+                            className="w-20 h-8 rounded-lg border border-black/8 bg-[#f8fafc] px-2 text-center font-mono text-sm text-[#164e63] outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all" />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 flex-1 pr-3">
+                            <GitCompareArrows size={11} className="text-black/25 flex-shrink-0" />
+                            <span className="text-xs text-[#164e63] font-medium leading-tight">{zh ? '变更对比保存' : 'Diff-only Save'}</span>
+                          </div>
+                          <button onClick={() => setDiffOnly(v => !v)}
+                            className={`relative w-10 h-[22px] rounded-full transition-colors duration-200 flex-shrink-0 ${diffOnly ? 'bg-[#06b6d4]' : 'bg-black/10'}`}>
+                            <span className={`absolute top-[3px] left-[3px] w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 ${diffOnly ? 'translate-x-[18px]' : ''}`} />
+                          </button>
+                        </div>
+                        <p className="text-[9px] text-black/25 leading-tight">{zh ? '仅在配置有变更时保存新版本' : 'Only saves when changes are detected'}</p>
+                      </div>
+                      </div>
                     </div>
                   )}
 
@@ -657,49 +748,6 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                       <option value={730}>2 {zh ? '年' : 'years'}</option>
                     </select>
                     <p className="text-[11px] text-black/30">{zh ? '超过期限自动清理' : 'Auto-removed when expired'}</p>
-                  </div>
-                </div>
-
-                {/* ── Advanced Execution Options ── */}
-                <div className={`mt-4 pt-4 border-t border-black/5 transition-opacity ${scheduleEnabled ? '' : 'opacity-35 pointer-events-none'}`}>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-black/30 mb-3">{zh ? '执行参数' : 'Execution Options'}</label>
-                  <div className="space-y-3">
-                    {/* Concurrency */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <Hash size={11} className="text-black/25" />
-                        <span className="text-xs text-[#164e63] font-medium">{zh ? '最大并发数' : 'Max Concurrency'}</span>
-                      </div>
-                      <input
-                        type="number" min={1} max={200} value={concurrency}
-                        onChange={e => setConcurrency(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
-                        className="w-20 h-8 rounded-lg border border-black/8 bg-[#f8fafc] px-2 text-center font-mono text-sm text-[#164e63] outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-                      />
-                    </div>
-                    {/* Retry count */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <RefreshCw size={11} className="text-black/25" />
-                        <span className="text-xs text-[#164e63] font-medium">{zh ? '失败重试次数' : 'Retry on Failure'}</span>
-                      </div>
-                      <input
-                        type="number" min={0} max={5} value={retryCount}
-                        onChange={e => setRetryCount(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-                        className="w-20 h-8 rounded-lg border border-black/8 bg-[#f8fafc] px-2 text-center font-mono text-sm text-[#164e63] outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-                      />
-                    </div>
-                    {/* Diff-only switch */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 flex-1 pr-3">
-                        <GitCompareArrows size={11} className="text-black/25 flex-shrink-0" />
-                        <span className="text-xs text-[#164e63] font-medium leading-tight">{zh ? '仅变更时保存' : 'Save on Change Only'}</span>
-                      </div>
-                      <button onClick={() => setDiffOnly(v => !v)}
-                        className={`relative w-10 h-[22px] rounded-full transition-colors duration-200 flex-shrink-0 ${diffOnly ? 'bg-[#06b6d4]' : 'bg-black/10'}`}>
-                        <span className={`absolute top-[3px] left-[3px] w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 ${diffOnly ? 'translate-x-[18px]' : ''}`} />
-                      </button>
-                    </div>
-                    <p className="text-[9px] text-black/25 leading-tight">{zh ? '启用后将对比配置变更，仅在检测到差异时保存新版本' : 'Compares configs and only saves when changes are detected'}</p>
                   </div>
                 </div>
 
@@ -759,15 +807,30 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                       </div>
                     );
                   })()}
-                  {/* Storage indicator */}
+                  {/* Storage usage bar */}
                   {(() => {
-                    const totalBytes = backupStats?.recent_backups?.reduce((a, b) => a + (b.size || 0), 0) ?? 0;
-                    return totalBytes > 0 ? (
-                      <div className="mt-1.5 flex items-center gap-1">
-                        <Database size={9} className="text-black/20" />
-                        <span className="text-[9px] text-black/25">{zh ? '已用存储' : 'Storage'}: {fmtSize(totalBytes)}</span>
+                    const usedBytes = backupStats?.storage_bytes ?? backupStats?.recent_backups?.reduce((a, b) => a + (b.size || 0), 0) ?? 0;
+                    if (usedBytes <= 0) return null;
+                    // Estimate capacity: avg size per snapshot × retention × device count
+                    const avgSize = backupStats?.total_snapshots ? usedBytes / backupStats.total_snapshots : 2048;
+                    const devCount = backupStats?.device_stats?.length ?? devices.length;
+                    const estimatedCap = Math.max(avgSize * devCount * retentionDays, usedBytes * 1.2);
+                    const pct = Math.min(100, Math.round((usedBytes / estimatedCap) * 100));
+                    return (
+                      <div className="mt-2">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <div className="flex items-center gap-1">
+                            <HardDrive size={9} className="text-black/20" />
+                            <span className="text-[9px] text-black/30">{fmtSize(usedBytes)}</span>
+                          </div>
+                          <span className={`text-[9px] font-bold tabular-nums ${pct >= 85 ? 'text-red-500' : pct >= 60 ? 'text-amber-500' : 'text-black/30'}`}>{pct}%</span>
+                        </div>
+                        <div className="h-1 rounded-full bg-black/[0.04] overflow-hidden">
+                          <div className={`h-full rounded-full transition-all duration-500 ${pct >= 85 ? 'bg-red-400' : pct >= 60 ? 'bg-amber-400' : 'bg-[#06b6d4]/50'}`}
+                            style={{ width: `${pct}%` }} />
+                        </div>
                       </div>
-                    ) : null;
+                    );
                   })()}
                 </motion.div>
 
@@ -777,25 +840,27 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                     <span className="text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '今日执行' : 'Today'}</span>
                     <TrendingUp size={13} className="text-amber-500/50" />
                   </div>
-                  {/* Success / Failure split */}
+                  {/* Success / Failure prominent split */}
                   {(() => {
-                    const todayTotal = backupStats?.today?.total ?? 0;
-                    const todayFailed = backupStats?.device_stats?.filter(d => d.status === 'online' && d.backup_count === 0).length ?? 0;
-                    const todaySuccess = Math.max(0, todayTotal);
+                    const success = backupStats?.today?.success ?? backupStats?.today?.total ?? 0;
+                    const failed = backupStats?.today?.failed ?? 0;
                     return (
                       <>
-                        <p className="mt-1.5 text-2xl font-bold text-[#164e63] tabular-nums">{todayTotal}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="inline-flex items-center gap-1 text-[10px]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            <span className="text-emerald-600 font-semibold tabular-nums">{todaySuccess}</span>
-                            <span className="text-black/25">{zh ? '成功' : 'ok'}</span>
-                          </span>
-                          <span className="inline-flex items-center gap-1 text-[10px]">
-                            <span className={`w-1.5 h-1.5 rounded-full ${todayFailed > 0 ? 'bg-red-500' : 'bg-black/10'}`} />
-                            <span className={`font-semibold tabular-nums ${todayFailed > 0 ? 'text-red-500' : 'text-black/25'}`}>{todayFailed}</span>
-                            <span className="text-black/25">{zh ? '未覆盖' : 'missed'}</span>
-                          </span>
+                        <div className="mt-1.5 flex items-baseline gap-1.5">
+                          <div className="flex items-center gap-1">
+                            <CheckCircle2 size={14} className="text-emerald-500" />
+                            <span className="text-xl font-bold text-emerald-600 tabular-nums">{success}</span>
+                          </div>
+                          <span className="text-black/15 text-sm font-light">/</span>
+                          <div className="flex items-center gap-1">
+                            <XCircle size={14} className={failed > 0 ? 'text-red-500' : 'text-black/15'} />
+                            <span className={`text-xl font-bold tabular-nums ${failed > 0 ? 'text-red-500' : 'text-black/20'}`}>{failed}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[10px] text-emerald-600/60">{zh ? '成功' : 'ok'}</span>
+                          <span className="text-[10px] text-black/15">/</span>
+                          <span className={`text-[10px] ${failed > 0 ? 'text-red-400 font-semibold' : 'text-black/25'}`}>{zh ? '失败' : 'failed'}</span>
                         </div>
                       </>
                     );
@@ -879,7 +944,7 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                           const isFirst = idx === 0;
                           const totalVisible = timelineExpanded ? preview.upcoming.length : Math.min(preview.upcoming.length, TIMELINE_PREVIEW);
                           return (
-                            <div key={idx} className={`flex items-center gap-2 py-1.5 ${idx < totalVisible - 1 ? 'border-b border-black/[0.03]' : ''}`}>
+                            <div key={idx} className={`flex items-center gap-2 py-1 ${idx < totalVisible - 1 ? 'border-b border-black/[0.03]' : ''}`}>
                               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isFirst ? 'bg-[#06b6d4] shadow-[0_0_6px_rgba(6,182,212,0.4)]' : 'bg-black/10'}`} />
                               <span className={`font-mono text-[11px] flex-shrink-0 ${isFirst ? 'text-[#164e63] font-semibold' : 'text-black/55'}`}>{time}</span>
                               <span className="text-[10px] text-black/30 flex-shrink-0">{date}</span>
@@ -930,6 +995,36 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                   )}
                 </div>
               </div>
+
+              {/* ── Recent Execution Log (compact) ── */}
+              {backupStats?.recent_backups && backupStats.recent_backups.length > 0 && (
+                <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2.5 border-b border-black/5">
+                    <h3 className="text-xs font-bold text-[#164e63] flex items-center gap-1.5">
+                      <Activity size={13} className="text-[#06b6d4]" />
+                      {zh ? '最近执行日志' : 'Recent Execution Log'}
+                    </h3>
+                    <span className="text-[9px] text-black/25">{zh ? '最近5条' : 'Last 5'}</span>
+                  </div>
+                  <div className="divide-y divide-black/[0.03]">
+                    {backupStats.recent_backups.slice(0, 5).map(bk => (
+                      <div key={bk.id} className="flex items-center gap-2 px-4 py-1.5 hover:bg-black/[0.01] transition-colors">
+                        <CheckCircle2 size={10} className="text-emerald-500 flex-shrink-0" />
+                        <span className="font-mono text-[10px] text-black/40 flex-shrink-0 w-14 text-right">
+                          {new Date(bk.timestamp).toLocaleTimeString(zh ? 'zh-CN' : 'en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <span className="text-[10px] font-semibold text-[#164e63] truncate max-w-[90px]">{bk.hostname}</span>
+                        <span className="text-[9px] text-black/20 flex-shrink-0">{bk.vendor}</span>
+                        <span className="flex-1" />
+                        <span className={`px-1.5 py-px rounded text-[9px] font-medium ${bk.trigger === 'scheduled' ? 'bg-cyan-50 text-cyan-600' : 'bg-violet-50 text-violet-600'}`}>
+                          {bk.trigger === 'scheduled' ? (zh ? '定时' : 'sched') : (zh ? '手动' : 'manual')}
+                        </span>
+                        <span className="text-[9px] text-black/20 tabular-nums w-12 text-right">{fmtSize(bk.size)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* ── Recent Failures Panel ── */}
               {(() => {

@@ -232,6 +232,25 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 </div>
               </div>
 
+              {/* ── Tags Section ── */}
+              {viewingDevice.tags && viewingDevice.tags.length > 0 && (
+                <div>
+                  <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '标签' : 'Tags'}</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {viewingDevice.tags.map(tag => (
+                      <span
+                        key={tag.id}
+                        className="inline-flex items-center gap-1 rounded-full border border-black/5 bg-black/[0.03] px-2 py-0.5 text-[11px]"
+                        title={tag.description || tag.value}
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tag.color || '#06b6d4' }} />
+                        <span className="font-medium text-black/70">{language === 'zh' ? (tag.label_zh || tag.label) : tag.label}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
                 <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{t('locationRole')}</h4>
                 <div className="space-y-3">

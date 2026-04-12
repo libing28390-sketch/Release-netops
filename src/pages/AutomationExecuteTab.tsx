@@ -31,8 +31,9 @@ import {
   Zap,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import type { Device } from '../types';
+import type { Device, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
+import TagFilterDropdown from '../components/TagFilterDropdown';
 
 /* ─────────── Types ─────────── */
 interface ScenarioVariable {
@@ -222,6 +223,8 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const [showQuickQuery, setShowQuickQuery] = useState(false);
   const [deviceViewMode, setDeviceViewMode] = useState<'grid' | 'list'>('list');
   const [devicePage, setDevicePage] = useState(1);
+  const [allTags, setAllTags] = useState<TagDefinition[]>([]);
+  const [tagFilterIds, setTagFilterIds] = useState<string[]>([]);
   const DEVICE_PAGE_SIZE = 20;
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'validate' | 'apply'>('validate');
@@ -232,6 +235,13 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const [treeFilterRole, setTreeFilterRole] = useState<string | null>(null);
   const [showSelectedDrawer, setShowSelectedDrawer] = useState(false);
   const [changeTicket, setChangeTicket] = useState<string>('');
+
+  useEffect(() => {
+    fetch('/api/tags/definitions')
+      .then(r => r.json())
+      .then(d => { if (d.success && Array.isArray(d.data)) setAllTags(d.data); })
+      .catch(() => {});
+  }, []);
   const [ticketValidation, setTicketValidation] = useState<{
     loading: boolean;
     found?: boolean;
@@ -315,6 +325,10 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
         if (vendor !== vendorFilter) return false;
       }
       if (siteFilter !== 'all' && (d.site || '') !== siteFilter) return false;
+      /* Tag filter */
+      if (tagFilterIds.length > 0) {
+        if (!d.tag_ids || !tagFilterIds.some(tid => d.tag_ids!.includes(tid))) return false;
+      }
       /* Tree filter */
       if (treeFilterSite) {
         const dSite = d.site || (isZh ? '未分组' : 'Ungrouped');
@@ -326,7 +340,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
       }
       return true;
     });
-  }, [devices, automationSearch, statusFilter, vendorFilter, siteFilter, treeFilterSite, treeFilterRole, isZh]);
+  }, [devices, automationSearch, statusFilter, vendorFilter, siteFilter, tagFilterIds, treeFilterSite, treeFilterRole, isZh]);
 
   /* Device tree structure: site → role → count */
   const deviceTree = useMemo(() => {
@@ -725,6 +739,13 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                         {vendors.map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     )}
+                    <TagFilterDropdown
+                      allTags={allTags}
+                      selectedTagIds={tagFilterIds}
+                      onChange={setTagFilterIds}
+                      language={language}
+                      compact={false}
+                    />
                     <div className="flex-1" />
                     <div className="flex items-center gap-2">
                       <button

@@ -84,6 +84,8 @@ export interface Device {
     bw_in_pct?: number; bw_out_pct?: number;
     last_change_secs?: number; flapping?: boolean;
   }[];
+  tags?: TagDefinition[];
+  tag_ids?: string[];
 }
 
 export interface DeviceConnectionCheckSummary {
@@ -615,4 +617,45 @@ export const getVendorFromPlatform = (platform: string) => {
   if (p.includes('h3c') || p.includes('comware')) return 'H3C';
   if (p.includes('arista')) return 'Arista';
   return 'Other';
+};
+
+// ─── Tag System Types ────────────────────────
+
+export type TagCategory = 'device_type' | 'vendor' | 'os' | 'role' | 'env' | 'function' | 'custom';
+
+export interface TagDefinition {
+  id: string;
+  category: TagCategory;
+  value: string;
+  label: string;
+  label_zh: string;
+  color: string;
+  icon: string;
+  description: string;
+  sort_order: number;
+  built_in: number;       // 1=预定义, 0=自定义
+  created_at: string;
+}
+
+export interface DeviceTag extends TagDefinition {
+  assigned_at: string;
+  created_by: string;
+}
+
+export interface TagStatistics {
+  total_definitions: number;
+  total_assignments: number;
+  tagged_devices: number;
+  categories: Record<string, number>;
+  top_used: Array<TagDefinition & { device_count: number }>;
+}
+
+export const TAG_CATEGORY_LABELS: Record<TagCategory, { en: string; zh: string }> = {
+  device_type: { en: 'Device Type', zh: '设备类型' },
+  vendor:      { en: 'Vendor',      zh: '厂商' },
+  os:          { en: 'OS',          zh: '操作系统' },
+  role:        { en: 'Role',        zh: '角色' },
+  env:         { en: 'Environment', zh: '环境' },
+  function:    { en: 'Function',    zh: '功能' },
+  custom:      { en: 'Custom',      zh: '自定义' },
 };

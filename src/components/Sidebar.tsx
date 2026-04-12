@@ -28,6 +28,7 @@ import {
   Wrench,
   X,
   Zap,
+  Tags,
 } from 'lucide-react';
 import type { HostResourceSnapshot } from '../types';
 
@@ -468,15 +469,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => {
                   const next = !inventoryGroupOpen;
                   setInventoryGroupOpen(next);
-                  if (next && !(currentPath.startsWith('/inventory') || activeTab === 'ipam' || activeTab === 'assets')) navTo('/inventory/devices');
+                  if (next && !(currentPath.startsWith('/inventory') || activeTab === 'ipam' || activeTab === 'assets' || activeTab === 'tags')) navTo('/inventory/devices');
                 }}
                 className={`${navButtonGroupClass} ${
-                  activeTab === 'inventory' || activeTab === 'ipam' || activeTab === 'assets'
+                  activeTab === 'inventory' || activeTab === 'ipam' || activeTab === 'assets' || activeTab === 'tags'
                     ? activePrimaryNavClass
                     : inactivePrimaryNavClass
                 }`}
               >
-                <Database size={17} className={activeTab === 'inventory' || activeTab === 'ipam' || activeTab === 'assets' ? 'text-[#5fe6ff]' : 'text-white/72'} />
+                <Database size={17} className={activeTab === 'inventory' || activeTab === 'ipam' || activeTab === 'assets' || activeTab === 'tags' ? 'text-[#5fe6ff]' : 'text-white/72'} />
                 <span className={navLabelClass}>{t('inventory')}</span>
                 <span className={`${groupChevronWrapClass} ${
                   inventoryGroupOpen
@@ -492,12 +493,13 @@ const Sidebar: React.FC<SidebarProps> = ({
                     { path: 'inventory/devices', icon: Server, label: t('deviceList') },
                     { path: 'ipam', icon: Network, label: language === 'zh' ? 'IP/VLAN管理' : 'IP/VLAN Mgmt' },
                     { path: 'assets', icon: HardDrive, label: language === 'zh' ? '资产管理' : 'Assets' },
+                    { path: 'tags', icon: Tags, label: language === 'zh' ? '标签管理' : 'Tags' },
                   ] as const).map((item) => {
-                    const isActive = item.path === 'ipam' ? activeTab === 'ipam' : item.path === 'assets' ? activeTab === 'assets' : currentPath === `/${item.path}`;
+                    const isActive = item.path === 'ipam' ? activeTab === 'ipam' : item.path === 'assets' ? activeTab === 'assets' : item.path === 'tags' ? activeTab === 'tags' : currentPath === `/${item.path}`;
                     return (
                       <button
                         key={item.path}
-                        onClick={() => (item.path === 'ipam' || item.path === 'assets') ? setActiveTab(item.path) : navTo(`/${item.path}`)}
+                        onClick={() => (item.path === 'ipam' || item.path === 'assets' || item.path === 'tags') ? setActiveTab(item.path) : navTo(`/${item.path}`)}
                         className={`${subItemButtonClass} ${
                           isActive
                             ? `${activeSubItemClass} font-semibold`

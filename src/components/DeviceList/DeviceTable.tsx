@@ -29,12 +29,13 @@ const vendorOf = (platform: string): string => {
 };
 
 /* ─── Column Def ─── */
-export type ColumnKey = 'device' | 'platform' | 'site' | 'status' | 'cpuMem' | 'actions';
+export type ColumnKey = 'device' | 'platform' | 'site' | 'tags' | 'status' | 'cpuMem' | 'actions';
 
 export interface ColumnVisibility {
   device: boolean;
   platform: boolean;
   site: boolean;
+  tags: boolean;
   status: boolean;
   cpuMem: boolean;
   actions: boolean;
@@ -44,6 +45,7 @@ export const DEFAULT_COLUMNS: ColumnVisibility = {
   device: true,
   platform: true,
   site: true,
+  tags: true,
   status: true,
   cpuMem: true,
   actions: true,
@@ -159,6 +161,11 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                 {zh ? '位置' : 'Location'}
               </SortHeader>
             )}
+            {columns.tags && (
+              <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">
+                {zh ? '标签' : 'Tags'}
+              </th>
+            )}
             {columns.status && (
               <SortHeader col="status" sortConfig={sortConfig} onSort={onSort}>
                 {zh ? '状态' : 'Status'}
@@ -262,6 +269,28 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                           Rack {device.rack}{device.rack_unit ? ` / U${device.rack_unit}` : ''}
                         </span>
                       )}
+                    </td>
+                  )}
+                  {/* Tags */}
+                  {columns.tags && (
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1 max-w-[200px]">
+                        {(device.tags || []).slice(0, 3).map(tag => (
+                          <span
+                            key={tag.id}
+                            className="inline-flex items-center gap-0.5 rounded-full border border-black/5 dark:border-white/8 bg-black/[0.03] dark:bg-white/[0.06] px-1.5 py-0.5 text-[9px]"
+                            title={tag.description || tag.value}
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color || '#06b6d4' }} />
+                            <span className="text-black/60 dark:text-white/60 truncate max-w-[60px]">{zh ? (tag.label_zh || tag.label) : tag.label}</span>
+                          </span>
+                        ))}
+                        {(device.tags || []).length > 3 && (
+                          <span className="text-[9px] text-black/30 dark:text-white/25 px-1">
+                            +{(device.tags || []).length - 3}
+                          </span>
+                        )}
+                      </div>
                     </td>
                   )}
                   {/* Status */}

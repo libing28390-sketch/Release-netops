@@ -32,6 +32,8 @@ from api.change_orders import router as change_orders_router
 from api.setup import router as setup_router
 from api.ip_locator import router as ip_locator_router
 from api.inspections import router as inspections_router
+from api.tags import router as tags_router
+from api.scheduled_jobs import router as scheduled_jobs_router
 import logging
 import os
 import asyncio
@@ -63,6 +65,13 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting up {settings.PROJECT_NAME} in {settings.ENVIRONMENT} mode...")
     configure_ntc_templates()
     seed_data()
+    # Seed built-in tag definitions
+    from services.tag_service import seed_builtin_tags
+    _tag_conn = get_db_connection()
+    try:
+        seed_builtin_tags(_tag_conn)
+    finally:
+        _tag_conn.close()
     asyncio.create_task(status_monitor())
     record_host_resource_snapshot(sync_alerts=True)
     schedule_cfg = _get_schedule_from_db()
@@ -186,6 +195,8 @@ app.include_router(change_orders_router, prefix="/api")
 app.include_router(setup_router, prefix="/api")
 app.include_router(ip_locator_router, prefix="/api")
 app.include_router(inspections_router, prefix="/api")
+app.include_router(tags_router, prefix="/api")
+app.include_router(scheduled_jobs_router, prefix="/api")
 
 # ── APScheduler ──────────────────────────────────────────────────────
 scheduler = AsyncIOScheduler()

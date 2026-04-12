@@ -200,6 +200,38 @@ def _normalize_device_row(row):
     return _sanitize_device_item(item)
 
 
+def _annotate_devices_with_tags(conn, items: list) -> list:
+    """Attach tag list to each device item."""
+    if not items:
+        return items
+    device_ids = [d['id'] for d in items if d.get('id')]
+    if not device_ids:
+        return items
+    placeholders = ','.join('?' * len(device_ids))
+    rows = conn.execute(
+        f'''SELECT dt.device_id, td.id, td.category, td.value, td.label, td.label_zh,
+                   td.color, td.icon, td.description, td.sort_order, td.built_in
+            FROM device_tags dt
+            JOIN tag_definitions td ON dt.tag_id = td.id
+            WHERE dt.device_id IN ({placeholders})
+            ORDER BY td.sort_order''',
+        tuple(device_ids)
+    ).fetchall()
+    tag_map: dict[str, list] = {}
+    for r in rows:
+        did = r['device_id']
+        tag_map.setdefault(did, []).append({
+            'id': r['id'], 'category': r['category'], 'value': r['value'],
+            'label': r['label'], 'label_zh': r['label_zh'], 'color': r['color'],
+            'icon': r['icon'], 'description': r['description'],
+            'sort_order': r['sort_order'], 'built_in': r['built_in'],
+        })
+    for item in items:
+        item['tags'] = tag_map.get(item['id'], [])
+        item['tag_ids'] = [t['id'] for t in item['tags']]
+    return items
+
+
 @router.get("/devices")
 def read_devices(
     search: Optional[str] = Query(default=None),
@@ -275,7 +307,7 @@ def read_devices(
                 tuple(params)
             ).fetchall()
             items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d) for d in devices]
-            return annotate_devices_with_health(conn, items)
+            return annotate_devices_with_health(conn, _annotate_devices_with_tags(conn, items))
 
         total_row = conn.execute(
             f'SELECT COUNT(*) AS count {from_clause} {where_sql}',
@@ -299,7 +331,7 @@ def read_devices(
         items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d) for d in devices]
 
         return {
-            'items': annotate_devices_with_health(conn, items),
+            'items': annotate_devices_with_health(conn, _annotate_devices_with_tags(conn, items)),
             'total': total,
             'page': page,
             'page_size': page_size,

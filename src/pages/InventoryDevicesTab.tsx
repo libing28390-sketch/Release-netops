@@ -2,11 +2,12 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Upload, Download, Plus, Search, Activity,
   AlertTriangle, CheckCircle2, XCircle, Server,
-  Shield, Trash2, SlidersHorizontal,
+  Shield, Trash2, SlidersHorizontal, Tag,
 } from 'lucide-react';
-import type { Device, DeviceConnectionCheckSummary } from '../types';
+import type { Device, DeviceConnectionCheckSummary, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
 import DeviceTable, { DEFAULT_COLUMNS, type ColumnVisibility, type ColumnKey } from '../components/DeviceList/DeviceTable';
+import TagFilterDropdown from '../components/TagFilterDropdown';
 
 /* ─── Quick Filter Tag ─── */
 const QuickTag: React.FC<{
@@ -30,6 +31,7 @@ const COLUMN_LABELS: Record<ColumnKey, { zh: string; en: string }> = {
   device:   { zh: '设备',   en: 'Device' },
   platform: { zh: '系统',   en: 'System' },
   site:     { zh: '位置',   en: 'Location' },
+  tags:     { zh: '标签',   en: 'Tags' },
   status:   { zh: '状态',   en: 'Status' },
   cpuMem:   { zh: 'CPU/MEM', en: 'CPU/MEM' },
   actions:  { zh: '操作',   en: 'Actions' },
@@ -122,6 +124,7 @@ interface InventoryDevicesTabProps {
   setEditForm: (d: Device) => void;
   setSelectedDevice: (d: Device) => void;
   setActiveTab: (tab: string) => void;
+  onRefresh: () => void;
   language: string;
   t: (key: string) => string;
 }
@@ -141,10 +144,32 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   handleTestConnection,
   deviceConnectionChecks, connectionTestingDeviceId,
   setShowAddModal, setShowEditModal, setEditingDevice, setEditForm,
-  setSelectedDevice, setActiveTab, language, t,
+  setSelectedDevice, setActiveTab, onRefresh, language, t,
 }) => {
   const [quickFilter, setQuickFilter] = useState<'all' | 'offline' | 'warning' | 'healthy'>('all');
   const [columns, setColumns] = useState<ColumnVisibility>({ ...DEFAULT_COLUMNS });
+  const [allTags, setAllTags] = useState<TagDefinition[]>([]);
+  const [tagFilterIds, setTagFilterIds] = useState<string[]>([]);
+  const [batchTagOpen, setBatchTagOpen] = useState(false);
+  const [batchTagIds, setBatchTagIds] = useState<string[]>([]);
+  const [batchTagLoading, setBatchTagLoading] = useState(false);
+  const batchTagRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch('/api/tags/definitions')
+      .then(r => r.json())
+      .then(d => { if (d.success && Array.isArray(d.data)) setAllTags(d.data); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!batchTagOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (batchTagRef.current && !batchTagRef.current.contains(e.target as Node)) setBatchTagOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [batchTagOpen]);
 
   const handleColumnToggle = (key: ColumnKey, val: boolean) => {
     setColumns(prev => ({ ...prev, [key]: val }));
@@ -156,9 +181,13 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   const warningCount = inventoryRows.filter(d => d.health_status === 'warning' || d.health_status === 'critical').length;
   const healthyCount = onlineCount - warningCount;
 
-  const baseRows = (inventoryLifecycleFilter && inventoryLifecycleFilter !== 'all')
+  const lifecycleRows = (inventoryLifecycleFilter && inventoryLifecycleFilter !== 'all')
     ? inventoryRows.filter(d => d.lifecycle_status === inventoryLifecycleFilter)
     : inventoryRows;
+
+  const baseRows = tagFilterIds.length > 0
+    ? lifecycleRows.filter(d => d.tag_ids && tagFilterIds.some(tid => d.tag_ids!.includes(tid)))
+    : lifecycleRows;
 
   const displayRows = quickFilter === 'all' ? baseRows
     : quickFilter === 'offline' ? baseRows.filter(d => d.status === 'offline')
@@ -174,6 +203,25 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   const handleManage = (device: Device) => {
     setSelectedDevice(device);
     setActiveTab('automation');
+  };
+
+  const handleBatchTagApply = async () => {
+    if (batchTagIds.length === 0 || selectedDeviceIds.length === 0) return;
+    setBatchTagLoading(true);
+    try {
+      const token = localStorage.getItem('netops_token');
+      const resp = await fetch('/api/tags/devices/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ device_ids: selectedDeviceIds, tag_ids: batchTagIds }),
+      });
+      if (resp.ok) {
+        setBatchTagOpen(false);
+        setBatchTagIds([]);
+        onRefresh();
+      }
+    } catch { /* ignore */ }
+    setBatchTagLoading(false);
   };
 
   return (
@@ -271,6 +319,12 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             <option value="maintenance">{language === 'zh' ? '维护中' : 'Maintenance'}</option>
             <option value="decommissioned">{language === 'zh' ? '已退役' : 'Decommissioned'}</option>
           </select>
+          <TagFilterDropdown
+            allTags={allTags}
+            selectedTagIds={tagFilterIds}
+            onChange={setTagFilterIds}
+            language={language}
+          />
 
         </div>
       </div>
@@ -326,6 +380,48 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               <Shield size={11} />
               {language === 'zh' ? '批量配置' : 'Batch Config'}
             </button>
+            <div ref={batchTagRef} className="relative">
+              <button
+                onClick={() => setBatchTagOpen(!batchTagOpen)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium
+                  border border-teal-200 dark:border-teal-500/25 bg-teal-500/10 text-teal-600 dark:text-teal-400
+                  hover:bg-teal-500/20 transition-all">
+                <Tag size={11} />
+                {language === 'zh' ? '批量标签' : 'Batch Tags'}
+              </button>
+              {batchTagOpen && (
+                <div className="absolute right-0 top-full mt-1 z-50 w-72 rounded-xl border border-black/8 dark:border-white/12
+                  bg-white dark:bg-[#111b2d] shadow-xl shadow-black/10 dark:shadow-black/40 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-black/5 dark:border-white/8 text-[11px] font-medium text-black/60 dark:text-white/55">
+                    {language === 'zh'
+                      ? `为 ${selectedDeviceIds.length} 台设备添加标签`
+                      : `Add tags to ${selectedDeviceIds.length} devices`}
+                  </div>
+                  <div className="p-2">
+                    <TagFilterDropdown
+                      allTags={allTags}
+                      selectedTagIds={batchTagIds}
+                      onChange={setBatchTagIds}
+                      language={language}
+                    />
+                  </div>
+                  <div className="px-3 py-2 border-t border-black/5 dark:border-white/8 flex justify-end gap-2">
+                    <button onClick={() => setBatchTagOpen(false)}
+                      className="px-2.5 py-1 rounded-md text-[10px] font-medium text-black/50 dark:text-white/40
+                        hover:bg-black/5 dark:hover:bg-white/8 transition-all">
+                      {language === 'zh' ? '取消' : 'Cancel'}
+                    </button>
+                    <button onClick={handleBatchTagApply} disabled={batchTagIds.length === 0 || batchTagLoading}
+                      className="px-2.5 py-1 rounded-md text-[10px] font-medium bg-[#00bceb] text-white
+                        hover:bg-[#0096bd] disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+                      {batchTagLoading
+                        ? (language === 'zh' ? '应用中…' : 'Applying…')
+                        : (language === 'zh' ? '应用' : 'Apply')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               onClick={handleDeleteSelected}
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium

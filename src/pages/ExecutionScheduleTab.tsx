@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, Clock, Plus, X, Trash2, Activity, RotateCcw, Zap,
-  ChevronDown, Play, Info, Database, Server, ExternalLink,
+  ChevronDown, Play, Info, Database, Server, ExternalLink, Shield, CheckCircle2,
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 
@@ -107,6 +107,15 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
 
   const [backupPreview, setBackupPreview] = useState<BackupSchedulePreview | null>(null);
 
+  // Approval states
+  interface EligibleApprover { id: string; username: string; role: string }
+  const [approvers, setApprovers] = useState<EligibleApprover[]>([]);
+  const [approverUsername, setApproverUsername] = useState('');
+  const [approvalToken, setApprovalToken] = useState('');
+  const [approvalCode, setApprovalCode] = useState('');
+  const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
+  const [approvalError, setApprovalError] = useState('');
+
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
@@ -145,12 +154,106 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
     } catch { /* ignore */ }
   }, [authHeaders]);
 
+  const fetchApprovers = useCallback(async () => {
+    try {
+      const r = await fetch('/api/users', { headers: authHeaders });
+      if (r.ok) {
+        const j = await r.json();
+        const users = Array.isArray(j) ? j : (j.data || []);
+        setApprovers(users.filter((u: EligibleApprover) => u.role === 'Administrator' || u.role === 'Operator'));
+      }
+    } catch { /* ignore */ }
+  }, [authHeaders]);
+
+  useEffect(() => {
+    if (showAddInspSchedule) fetchApprovers();
+  }, [showAddInspSchedule, fetchApprovers]);
+
+  const requestApproval = async () => {
+    if (!approverUsername) return;
+    setApprovalStatus('sending');
+    setApprovalError('');
+    try {
+      const r = await fetch('/api/config-approval/request', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          approver_username: approverUsername,
+          config_reason: `${zh ? '创建执行计划' : 'Create execution schedule'}: ${inspForm.name}`,
+          device_hostname: inspForm.scope_type === 'all' ? (zh ? '全部设备' : 'All devices') : inspForm.scope_filter,
+          command_preview: '',
+          approval_type: 'execution_plan',
+          extra_fields: {
+            action_type: zh ? '设备巡检' : 'Device Inspection',
+            schedule_desc: describeCron(inspForm.cron_expr, zh),
+          },
+        }),
+      });
+      const j = await r.json();
+      if (r.ok && j.success) {
+        setApprovalToken(j.approval_token);
+        setApprovalStatus('sent');
+        showToast(zh ? '验证码已发送至审批人' : 'Code sent to approver', 'success');
+      } else {
+        setApprovalStatus('idle');
+        setApprovalError(j.detail || j.message || 'Failed');
+      }
+    } catch {
+      setApprovalStatus('idle');
+      setApprovalError(zh ? '发送验证码失败' : 'Failed to send code');
+    }
+  };
+
+  const verifyApproval = async () => {
+    if (!approvalToken || !approvalCode) return;
+    try {
+      const r = await fetch('/api/config-approval/verify', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode }),
+      });
+      const j = await r.json();
+      if (r.ok && j.success) {
+        setApprovalStatus('verified');
+        showToast(zh ? '审批验证通过' : 'Approval verified', 'success');
+      } else {
+        setApprovalError(j.detail || j.message || 'Invalid code');
+      }
+    } catch {
+      setApprovalError(zh ? '验证失败' : 'Verification failed');
+    }
+  };
+
   /* ═══ ACTIONS ═══ */
   const addInspSchedule = async () => {
     if (!inspForm.name.trim()) return;
+    if (approvalStatus !== 'verified') {
+      showToast(zh ? '请先完成审批验证' : 'Please complete approval verification first', 'error');
+      return;
+    }
     try {
-      const r = await fetch('/api/inspections/schedules', { method: 'POST', headers: authHeaders, body: JSON.stringify(inspForm) });
-      if (r.ok) { setShowAddInspSchedule(false); setInspForm({ name: '', cron_expr: '0 6,18 * * *', scope_type: 'all', scope_filter: '' }); fetchInspSchedules(); showToast(zh ? '执行计划已创建' : 'Execution schedule created', 'success'); }
+      const r = await fetch('/api/inspections/schedules', { 
+        method: 'POST', 
+        headers: authHeaders, 
+        body: JSON.stringify({
+          ...inspForm,
+          approval_token: approvalToken,
+          approval_code: approvalCode,
+        })
+      });
+      if (r.ok) { 
+        setShowAddInspSchedule(false); 
+        setInspForm({ name: '', cron_expr: '0 6,18 * * *', scope_type: 'all', scope_filter: '' }); 
+        setApprovalStatus('idle');
+        setApproverUsername('');
+        setApprovalToken('');
+        setApprovalCode('');
+        fetchInspSchedules(); 
+        showToast(zh ? '执行计划已创建' : 'Execution schedule created', 'success'); 
+      } else {
+        const j = await r.json();
+        showToast(j.detail || j.message || 'Failed', 'error');
+      }
     } catch { /* ignore */ }
   };
   const deleteInspSchedule = async (id: string) => {
@@ -333,16 +436,77 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                     </div>
                   </div>
 
+                  {/* Approval Section */}
+                  <div className="rounded-xl border border-amber-200/60 bg-gradient-to-br from-amber-50/50 to-white p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Shield size={14} className="text-amber-600" />
+                      <h5 className="text-xs font-bold text-amber-900 uppercase tracking-wider">{zh ? '审核授权' : 'Approval Authorization'}</h5>
+                    </div>
+                    {approvalStatus === 'idle' && (
+                      <div className="space-y-3">
+                        <div>
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '审批人' : 'Approver'}</label>
+                          <select
+                            value={approverUsername}
+                            onChange={(e) => setApproverUsername(e.target.value)}
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400 transition-all"
+                          >
+                            <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
+                            {approvers.map(a => (
+                              <option key={a.id} value={a.username}>{a.username} ({a.role})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          onClick={requestApproval}
+                          disabled={!approverUsername}
+                          className="w-full px-4 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 disabled:opacity-40 transition-all"
+                        >
+                          {zh ? '发送验证码' : 'Send Code'}
+                        </button>
+                      </div>
+                    )}
+                    {(approvalStatus === 'sending' || approvalStatus === 'sent') && (
+                      <div className="space-y-3">
+                        <div className="text-xs text-amber-700">
+                          {zh ? '验证码已发送至审批人，请输入收到的验证码' : 'Code sent to approver, enter the code you received'}
+                        </div>
+                        <input
+                          type="text"
+                          value={approvalCode}
+                          onChange={(e) => { setApprovalCode(e.target.value.trim()); setApprovalError(''); }}
+                          placeholder={zh ? '6 位验证码' : '6-digit code'}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white text-center font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400 transition-all"
+                          maxLength={6}
+                        />
+                        {approvalError && <p className="text-[10px] text-red-600">{approvalError}</p>}
+                        <button
+                          onClick={verifyApproval}
+                          disabled={approvalCode.length !== 6}
+                          className="w-full px-4 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 disabled:opacity-40 transition-all"
+                        >
+                          {zh ? '验证' : 'Verify'}
+                        </button>
+                      </div>
+                    )}
+                    {approvalStatus === 'verified' && (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50/60 border border-green-200/80">
+                        <CheckCircle2 size={14} className="text-green-600" />
+                        <span className="text-xs text-green-700 font-medium">{zh ? '已验证' : 'Verified'}</span>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="flex items-center gap-2 pt-1">
                     <button
                       onClick={addInspSchedule}
-                      disabled={!inspForm.name.trim()}
+                      disabled={!inspForm.name.trim() || approvalStatus !== 'verified'}
                       className="px-5 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold hover:bg-cyan-700 disabled:opacity-40 transition-all shadow-sm"
                     >
                       {zh ? '保存计划' : 'Save'}
                     </button>
                     <button
-                      onClick={() => setShowAddInspSchedule(false)}
+                      onClick={() => { setShowAddInspSchedule(false); setApprovalStatus('idle'); setApproverUsername(''); setApprovalToken(''); setApprovalCode(''); setApprovalError(''); }}
                       className="px-5 py-2 rounded-xl border border-black/[0.08] text-xs font-semibold text-black/50 hover:bg-black/[0.02] transition-all"
                     >
                       {zh ? '取消' : 'Cancel'}

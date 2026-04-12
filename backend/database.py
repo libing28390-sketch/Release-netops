@@ -1508,6 +1508,70 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_device_id ON inspection_results(device_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_health_status ON inspection_results(health_status)')
 
+        # ── Scheduled Jobs (定时作业 + 执行计划) ──
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS scheduled_jobs (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            job_type TEXT NOT NULL DEFAULT 'cron',
+            action_type TEXT NOT NULL DEFAULT 'command',
+            cron_expr TEXT DEFAULT '',
+            scheduled_at TEXT DEFAULT '',
+            device_scope TEXT NOT NULL DEFAULT 'all',
+            device_filter TEXT DEFAULT '',
+            commands TEXT DEFAULT '',
+            script_id TEXT DEFAULT '',
+            is_config INTEGER DEFAULT 0,
+            config_reason TEXT DEFAULT '',
+            enabled INTEGER DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'pending',
+            approved_by TEXT DEFAULT '',
+            approved_at TEXT DEFAULT '',
+            last_run_at TEXT DEFAULT '',
+            last_run_status TEXT DEFAULT '',
+            run_count INTEGER DEFAULT 0,
+            created_by TEXT DEFAULT 'system',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_job_type ON scheduled_jobs(job_type)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_status ON scheduled_jobs(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_enabled ON scheduled_jobs(enabled)')
+
+        # ── Tag System: definitions + device-tag junction ──
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tag_definitions (
+            id TEXT PRIMARY KEY,
+            category TEXT NOT NULL,
+            value TEXT NOT NULL,
+            label TEXT NOT NULL,
+            label_zh TEXT DEFAULT '',
+            color TEXT DEFAULT '',
+            icon TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            sort_order INTEGER DEFAULT 0,
+            built_in INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT '',
+            UNIQUE(category, value)
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_definitions_category ON tag_definitions(category)')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS device_tags (
+            device_id TEXT NOT NULL,
+            tag_id TEXT NOT NULL,
+            created_at TEXT DEFAULT '',
+            created_by TEXT DEFAULT '',
+            PRIMARY KEY (device_id, tag_id),
+            FOREIGN KEY (device_id) REFERENCES devices(id),
+            FOREIGN KEY (tag_id) REFERENCES tag_definitions(id)
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_device_id ON device_tags(device_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_tag_id ON device_tags(tag_id)')
+
         conn.commit()
     finally:
         conn.close()

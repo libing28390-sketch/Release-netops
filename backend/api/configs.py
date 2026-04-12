@@ -467,11 +467,24 @@ def get_backup_stats():
             daily_map[d]['total'] += r['cnt']
         daily_history = sorted(daily_map.values(), key=lambda x: x['date'])
 
+        # Today's failures — online devices without today's backup
+        all_device_ids = conn.execute(
+            "SELECT id FROM devices WHERE status = 'online'"
+        ).fetchall()
+        today_backed_ids = conn.execute(
+            "SELECT DISTINCT device_id FROM config_snapshots WHERE timestamp >= ?",
+            (today_start,)
+        ).fetchall()
+        today_backed_set = {r['device_id'] for r in today_backed_ids}
+        today_failed = sum(1 for r in all_device_ids if r['id'] not in today_backed_set)
+
         # Total snapshots & total storage
         total_snapshots = conn.execute("SELECT COUNT(*) as c FROM config_snapshots").fetchone()['c']
         total_devices_backed = conn.execute(
             "SELECT COUNT(DISTINCT device_id) as c FROM config_snapshots"
         ).fetchone()['c']
+        storage_row = conn.execute("SELECT COALESCE(SUM(size), 0) as s FROM config_snapshots").fetchone()
+        storage_bytes = storage_row['s'] if storage_row else 0
 
         # Per-device latest backup & count
         devices = conn.execute(
@@ -515,10 +528,13 @@ def get_backup_stats():
                     'total': today_total,
                     'scheduled': today_scheduled,
                     'manual': today_manual,
+                    'success': today_total,
+                    'failed': today_failed,
                 },
                 'daily_history': daily_history,
                 'total_snapshots': total_snapshots,
                 'total_devices_backed': total_devices_backed,
+                'storage_bytes': storage_bytes,
                 'device_stats': device_stats,
                 'recent_backups': recent_list,
             }
