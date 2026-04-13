@@ -1,31 +1,10 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  CalendarClock, Clock, Plus, X, Trash2, Activity, RotateCcw, Zap,
-  ChevronDown, Play, Info, Database, Server, ExternalLink, Shield, CheckCircle2,
+  CalendarClock, Clock, Plus, X, Trash2, Activity, RotateCcw,
+  Play, Shield, CheckCircle2, CalendarRange, AlertTriangle,
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
-
-/* ═══════════════════════════════════════════════════════ */
-/*  Constants                                              */
-/* ═══════════════════════════════════════════════════════ */
-
-const INSPECTION_CRON_PRESETS = [
-  { label: '每天 06:00 和 18:00', labelEn: 'Daily at 06:00 & 18:00', cron: '0 6,18 * * *' },
-  { label: '每天 08:00', labelEn: 'Daily at 08:00', cron: '0 8 * * *' },
-  { label: '每天 00:00', labelEn: 'Daily at midnight', cron: '0 0 * * *' },
-  { label: '每4小时', labelEn: 'Every 4 hours', cron: '0 */4 * * *' },
-  { label: '每2小时', labelEn: 'Every 2 hours', cron: '0 */2 * * *' },
-  { label: '每30分钟', labelEn: 'Every 30 minutes', cron: '*/30 * * * *' },
-  { label: '工作日 09:00', labelEn: 'Weekdays at 09:00', cron: '0 9 * * 1-5' },
-  { label: '每周一 06:00', labelEn: 'Mon at 06:00', cron: '0 6 * * 1' },
-  { label: '每月1日 06:00', labelEn: '1st of month at 06:00', cron: '0 6 1 * *' },
-];
-
-const CRON_FIELD_LABELS_ZH = ['分钟', '小时', '日', '月', '星期'];
-const CRON_FIELD_LABELS_EN = ['Minute', 'Hour', 'Day', 'Month', 'Weekday'];
-const CRON_FIELD_HINTS_ZH = ['0-59, */5, 0,30', '0-23, */2, 0-6', '1-31, */2', '1-12, */3', '0-6, 1-5'];
-const CRON_FIELD_HINTS_EN = ['0-59, */5, 0,30', '0-23, */2, 0-6', '1-31, */2', '1-12, */3', '0-6 (Sun=0), 1-5'];
 
 /* ═══════════════════════════════════════════════════════ */
 /*  Types                                                  */
@@ -34,6 +13,7 @@ const CRON_FIELD_HINTS_EN = ['0-59, */5, 0,30', '0-23, */2, 0-6', '1-31, */2', '
 interface InspectionSchedule {
   id: string; name: string; cron_expr: string; scope_type: string; scope_filter: string;
   enabled: number; last_run_at?: string; created_by: string; created_at: string;
+  scheduled_at?: string; expires_at?: string;
 }
 interface InspectionRun {
   id: string; schedule_id?: string; trigger_type: string; scope_type: string; scope_filter: string;
@@ -50,38 +30,25 @@ interface ExecutionScheduleTabProps {
   initialTab?: 'schedules' | 'history';
 }
 
-interface BackupSchedulePreview {
-  enabled: boolean;
-  cron: string;
-  upcoming: string[];
-  devices: { id: string; hostname: string; ip_address: string; platform: string; status: string }[];
-  device_count: number;
-}
-
 /* ═══════════════════════════════════════════════════════ */
 /*  Helpers                                                */
 /* ═══════════════════════════════════════════════════════ */
 
-const describeCron = (cron: string, zh: boolean): string => {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length < 5) return cron;
-  const [min, hour, day, month, dow] = parts;
-  const weekDaysZh = ['日', '一', '二', '三', '四', '五', '六'];
-  const weekDaysEn = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const fmtTime = (h: string, m: string) => `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
-  if (min.startsWith('*/') && hour === '*') return zh ? `每 ${min.slice(2)} 分钟` : `Every ${min.slice(2)} minutes`;
-  if (hour === '*' && !min.includes('/') && day === '*' && month === '*') return zh ? `每小时第 ${min} 分钟` : `Hourly at :${min.padStart(2, '0')}`;
-  if (hour.startsWith('*/') && day === '*' && month === '*' && dow === '*') return zh ? `每 ${hour.slice(2)} 小时的第 ${min} 分钟` : `Every ${hour.slice(2)}h at :${min.padStart(2, '0')}`;
-  const timeList = (hour.includes(',') ? hour.split(',') : [hour]).map(h => fmtTime(h, min));
-  const timeStr = timeList.join(zh ? '、' : ', ');
-  if (day === '*' && month === '*' && dow !== '*') {
-    if (dow === '1-5') return zh ? `工作日 ${timeStr}` : `Weekdays at ${timeStr}`;
-    const days = dow.split(',').map(d => { const n = parseInt(d, 10); return isNaN(n) ? d : (zh ? `周${weekDaysZh[n % 7]}` : weekDaysEn[n % 7]); });
-    return zh ? `${days.join('、')} ${timeStr}` : `${days.join(', ')} at ${timeStr}`;
-  }
-  if (day === '*' && month === '*' && dow === '*') return zh ? `每天 ${timeStr}` : `Daily at ${timeStr}`;
-  if (day !== '*' && month === '*') return zh ? `每月 ${day} 日 ${timeStr}` : `Monthly on ${day} at ${timeStr}`;
-  return cron;
+const fmtDateTime = (iso: string | undefined, zh: boolean): string => {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString(zh ? 'zh-CN' : 'en-US', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+};
+
+const getScheduleStatus = (sch: InspectionSchedule, zh: boolean) => {
+  if (!sch.enabled) return { label: zh ? '已停用' : 'Disabled', cls: 'bg-slate-100 text-slate-500', icon: 'disabled' as const };
+  if (sch.last_run_at) return { label: zh ? '已执行' : 'Executed', cls: 'bg-emerald-50 text-emerald-600', icon: 'done' as const };
+  const now = new Date();
+  if (sch.expires_at && new Date(sch.expires_at) < now) return { label: zh ? '已过期' : 'Expired', cls: 'bg-slate-50 text-slate-400', icon: 'expired' as const };
+  if (sch.scheduled_at && new Date(sch.scheduled_at) > now) return { label: zh ? '等待中' : 'Pending', cls: 'bg-cyan-50 text-cyan-600', icon: 'pending' as const };
+  return { label: zh ? '就绪' : 'Ready', cls: 'bg-amber-50 text-amber-600', icon: 'ready' as const };
 };
 
 /* ═══════════════════════════════════════════════════════ */
@@ -94,9 +61,10 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   /* ═══ STATE ═══ */
   const [inspSchedules, setInspSchedules] = useState<InspectionSchedule[]>([]);
   const [inspSchedulesLoading, setInspSchedulesLoading] = useState(false);
+  const [inspSchedulePage, setInspSchedulePage] = useState(1);
+  const [inspSchedulePageSize] = useState(10);
   const [showAddInspSchedule, setShowAddInspSchedule] = useState(false);
-  const [inspForm, setInspForm] = useState({ name: '', cron_expr: '0 6,18 * * *', scope_type: 'all', scope_filter: '' });
-  const [inspPresetOpen, setInspPresetOpen] = useState(false);
+  const [inspForm, setInspForm] = useState({ name: '', scheduled_at: '', expires_at: '', scope_type: 'all', scope_filter: '' });
 
   const [inspRuns, setInspRuns] = useState<InspectionRun[]>([]);
   const [inspRunsLoading, setInspRunsLoading] = useState(false);
@@ -106,7 +74,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   type InspSubTab = 'schedules' | 'history';
   const [inspSubTab, setInspSubTab] = useState<InspSubTab>(initialTab || 'schedules');
 
-  const [backupPreview, setBackupPreview] = useState<BackupSchedulePreview | null>(null);
+  useEffect(() => { if (initialTab) setInspSubTab(initialTab); }, [initialTab]);
 
   // Approval states
   interface EligibleApprover { id: string; username: string; role: string }
@@ -122,11 +90,19 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
     return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
   }, []);
 
+  /* ═══ Paginated schedule slice ═══ */
+  const paginatedSchedules = useMemo(() => {
+    const start = (inspSchedulePage - 1) * inspSchedulePageSize;
+    return inspSchedules.slice(start, start + inspSchedulePageSize);
+  }, [inspSchedules, inspSchedulePage, inspSchedulePageSize]);
+
   /* ═══ FETCHERS ═══ */
   const fetchInspSchedules = useCallback(async () => {
     setInspSchedulesLoading(true);
-    try { const r = await fetch('/api/inspections/schedules', { headers: authHeaders }); if (r.ok) { const j = await r.json(); setInspSchedules(j.data || []); } }
-    finally { setInspSchedulesLoading(false); }
+    try {
+      const r = await fetch('/api/inspections/schedules', { headers: authHeaders });
+      if (r.ok) { const j = await r.json(); setInspSchedules(j.data || []); }
+    } finally { setInspSchedulesLoading(false); }
   }, [authHeaders]);
 
   const fetchInspRuns = useCallback(async () => {
@@ -136,24 +112,21 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
       const r = await fetch(`/api/inspections?limit=${inspRunPageSize}&offset=${offset}`, { headers: authHeaders });
       if (r.ok) {
         const j = await r.json(); const d = j.data;
-        if (d && typeof d === 'object' && !Array.isArray(d)) { setInspRuns(Array.isArray(d.items) ? d.items : []); setInspRunTotal(typeof d.total === 'number' ? d.total : 0); }
-        else { setInspRuns(Array.isArray(d) ? d : []); setInspRunTotal(Array.isArray(d) ? d.length : 0); }
+        if (d && typeof d === 'object' && !Array.isArray(d)) {
+          setInspRuns(Array.isArray(d.items) ? d.items : []);
+          setInspRunTotal(typeof d.total === 'number' ? d.total : 0);
+        } else {
+          setInspRuns(Array.isArray(d) ? d : []);
+          setInspRunTotal(Array.isArray(d) ? d.length : 0);
+        }
       }
     } finally { setInspRunsLoading(false); }
   }, [authHeaders, inspRunPage, inspRunPageSize]);
 
   useEffect(() => {
     fetchInspSchedules();
-    fetchBackupPreview();
     if (inspSubTab === 'history') fetchInspRuns();
   }, [inspSubTab, fetchInspSchedules, fetchInspRuns]);
-
-  const fetchBackupPreview = useCallback(async () => {
-    try {
-      const r = await fetch('/api/configs/schedule/preview?n=3', { headers: authHeaders });
-      if (r.ok) setBackupPreview(await r.json());
-    } catch { /* ignore */ }
-  }, [authHeaders]);
 
   const fetchApprovers = useCallback(async () => {
     try {
@@ -169,6 +142,15 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   useEffect(() => {
     if (showAddInspSchedule) fetchApprovers();
   }, [showAddInspSchedule, fetchApprovers]);
+
+  /* ═══ APPROVAL ═══ */
+  const resetApproval = () => {
+    setApprovalStatus('idle');
+    setApproverUsername('');
+    setApprovalToken('');
+    setApprovalCode('');
+    setApprovalError('');
+  };
 
   const requestApproval = async () => {
     if (!approverUsername) return;
@@ -186,7 +168,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
           approval_type: 'execution_plan',
           extra_fields: {
             action_type: zh ? '设备巡检' : 'Device Inspection',
-            schedule_desc: describeCron(inspForm.cron_expr, zh),
+            schedule_desc: `${fmtDateTime(inspForm.scheduled_at, zh)}${inspForm.expires_at ? ` → ${fmtDateTime(inspForm.expires_at, zh)}` : ''}`,
           },
         }),
       });
@@ -227,48 +209,62 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
 
   /* ═══ ACTIONS ═══ */
   const addInspSchedule = async () => {
-    if (!inspForm.name.trim()) return;
+    if (!inspForm.name.trim() || !inspForm.scheduled_at) {
+      showToast(zh ? '请填写计划名称和执行时间' : 'Name and scheduled time are required', 'error');
+      return;
+    }
+    if (inspForm.expires_at && inspForm.expires_at <= inspForm.scheduled_at) {
+      showToast(zh ? '结束时间必须晚于开始时间' : 'End time must be after start time', 'error');
+      return;
+    }
     if (approvalStatus !== 'verified') {
       showToast(zh ? '请先完成审批验证' : 'Please complete approval verification first', 'error');
       return;
     }
     try {
-      const r = await fetch('/api/inspections/schedules', { 
-        method: 'POST', 
-        headers: authHeaders, 
+      const r = await fetch('/api/inspections/schedules', {
+        method: 'POST',
+        headers: authHeaders,
         body: JSON.stringify({
-          ...inspForm,
+          name: inspForm.name,
+          scheduled_at: inspForm.scheduled_at,
+          expires_at: inspForm.expires_at,
+          cron_expr: '',
+          scope_type: inspForm.scope_type,
+          scope_filter: inspForm.scope_filter,
           approval_token: approvalToken,
           approval_code: approvalCode,
-        })
+        }),
       });
-      if (r.ok) { 
-        setShowAddInspSchedule(false); 
-        setInspForm({ name: '', cron_expr: '0 6,18 * * *', scope_type: 'all', scope_filter: '' }); 
-        setApprovalStatus('idle');
-        setApproverUsername('');
-        setApprovalToken('');
-        setApprovalCode('');
-        fetchInspSchedules(); 
-        showToast(zh ? '执行计划已创建' : 'Execution schedule created', 'success'); 
+      if (r.ok) {
+        setShowAddInspSchedule(false);
+        setInspForm({ name: '', scheduled_at: '', expires_at: '', scope_type: 'all', scope_filter: '' });
+        resetApproval();
+        fetchInspSchedules();
+        showToast(zh ? '执行计划已创建' : 'Execution schedule created', 'success');
       } else {
         const j = await r.json();
         showToast(j.detail || j.message || 'Failed', 'error');
       }
     } catch { /* ignore */ }
   };
+
   const deleteInspSchedule = async (id: string) => {
-    try { await fetch(`/api/inspections/schedules/${id}`, { method: 'DELETE', headers: authHeaders }); fetchInspSchedules(); showToast(zh ? '计划已删除' : 'Schedule deleted', 'success'); } catch { /* ignore */ }
-  };
-  const toggleInspScheduleEnabled = async (sch: InspectionSchedule) => {
-    try { await fetch(`/api/inspections/schedules/${sch.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ enabled: !sch.enabled }) }); fetchInspSchedules(); } catch { /* ignore */ }
+    try {
+      await fetch(`/api/inspections/schedules/${id}`, { method: 'DELETE', headers: authHeaders });
+      fetchInspSchedules();
+      showToast(zh ? '计划已删除' : 'Schedule deleted', 'success');
+    } catch { /* ignore */ }
   };
 
-  const inspCronParts = inspForm.cron_expr.split(/\s+/);
-  const inspCronFields = [inspCronParts[0] ?? '0', inspCronParts[1] ?? '*', inspCronParts[2] ?? '*', inspCronParts[3] ?? '*', inspCronParts[4] ?? '*'];
-  const updateInspCronField = (index: number, value: string) => {
-    const p = [...inspCronFields]; p[index] = value || '*';
-    setInspForm(f => ({ ...f, cron_expr: p.join(' ') }));
+  const toggleInspScheduleEnabled = async (sch: InspectionSchedule) => {
+    try {
+      await fetch(`/api/inspections/schedules/${sch.id}`, {
+        method: 'PUT', headers: authHeaders,
+        body: JSON.stringify({ enabled: !sch.enabled }),
+      });
+      fetchInspSchedules();
+    } catch { /* ignore */ }
   };
 
   /* ═══ RENDER ═══ */
@@ -279,32 +275,25 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
         <div className="flex items-center justify-between px-5 py-3">
           <div>
             <h2 className="text-lg font-semibold text-[#164e63]">{zh ? '执行计划' : 'Execution Schedules'}</h2>
-            <p className="text-[11px] text-black/40">{zh ? '统一查看与管理所有定时执行计划' : 'Unified view of all scheduled execution plans'}</p>
+            <p className="text-[11px] text-black/40">{zh ? '创建指定时间范围内执行的一次性巡检计划' : 'Create one-time inspection plans within a specified time window'}</p>
           </div>
         </div>
       </div>
 
       {/* Sub-tabs + Add button */}
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-1 rounded-xl bg-black/[0.03] p-1">
-          <button
-            onClick={() => setInspSubTab('schedules')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              inspSubTab === 'schedules' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40 hover:text-black/60'
-            }`}
-          >
-            <CalendarClock className="w-3.5 h-3.5" />
-            {zh ? '执行计划' : 'Schedules'}
-          </button>
-          <button
-            onClick={() => setInspSubTab('history')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              inspSubTab === 'history' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40 hover:text-black/60'
-            }`}
-          >
-            <Clock className="w-3.5 h-3.5" />
-            {zh ? '历史任务' : 'History'}
-          </button>
+        <div className="flex items-center gap-1 bg-black/[0.03] rounded-lg p-0.5">
+          {(['schedules', 'history'] as InspSubTab[]).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setInspSubTab(tab)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                inspSubTab === tab ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40 hover:text-black/60'
+              }`}
+            >
+              {tab === 'schedules' ? (zh ? '执行计划' : 'Schedules') : (zh ? '执行历史' : 'History')}
+            </button>
+          ))}
         </div>
         {inspSubTab === 'schedules' && (
           <button
@@ -320,7 +309,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
       {/* ── Schedules sub-tab ── */}
       {inspSubTab === 'schedules' && (
         <div className="space-y-3">
-          {/* Add schedule form */}
+          {/* ── Add schedule form ── */}
           <AnimatePresence>
             {showAddInspSchedule && (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
@@ -344,7 +333,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                           type="text" value={inspForm.name}
                           onChange={e => setInspForm(f => ({ ...f, name: e.target.value }))}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all"
-                          placeholder={zh ? '每日巡检' : 'Daily inspection'}
+                          placeholder={zh ? '例：核心交换机月度巡检' : 'e.g. Core Switch Monthly Check'}
                         />
                       </div>
                       <div>
@@ -372,68 +361,46 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                       )}
                     </div>
 
-                    {/* Right: Cron Editor */}
-                    <div className="space-y-3">
-                      <div className="relative">
-                        <button
-                          onClick={() => setInspPresetOpen(!inspPresetOpen)}
-                          className="inline-flex h-10 w-full items-center justify-between gap-2 rounded-xl border border-black/8 bg-[#f8fafc] px-3.5 text-sm text-[#164e63] transition-all hover:border-cyan-400/30 hover:bg-white"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Zap size={13} className="text-cyan-500" />
-                            <span>{zh ? '快速预设' : 'Quick Presets'}</span>
+                    {/* Right: Time Range Picker */}
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                          <span className="text-red-400 mr-0.5">*</span>
+                          {zh ? '执行开始时间' : 'Start Time'}
+                        </label>
+                        <input
+                          type="datetime-local"
+                          value={inspForm.scheduled_at}
+                          onChange={e => setInspForm(f => ({ ...f, scheduled_at: e.target.value }))}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                          {zh ? '执行结束时间（可选）' : 'End Time (optional)'}
+                        </label>
+                        <input
+                          type="datetime-local"
+                          value={inspForm.expires_at}
+                          onChange={e => setInspForm(f => ({ ...f, expires_at: e.target.value }))}
+                          min={inspForm.scheduled_at || undefined}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all"
+                        />
+                      </div>
+                      {inspForm.scheduled_at && (
+                        <div className="flex items-center gap-3 rounded-xl bg-cyan-500/[0.04] px-3.5 py-2.5">
+                          <CalendarRange size={14} className="text-cyan-500 shrink-0" />
+                          <div className="text-[11px] text-black/50">
+                            <span className="font-semibold text-[#164e63]">{fmtDateTime(inspForm.scheduled_at, zh)}</span>
+                            {inspForm.expires_at && (
+                              <>
+                                <span className="mx-1.5 text-black/20">→</span>
+                                <span className="font-semibold text-[#164e63]">{fmtDateTime(inspForm.expires_at, zh)}</span>
+                              </>
+                            )}
                           </div>
-                          <ChevronDown size={14} className={`text-black/30 transition-transform ${inspPresetOpen ? 'rotate-180' : ''}`} />
-                        </button>
-                        <AnimatePresence>
-                          {inspPresetOpen && (
-                            <motion.div
-                              initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                              className="absolute z-20 mt-1.5 w-full rounded-xl border border-black/8 bg-white shadow-lg overflow-hidden max-h-56 overflow-y-auto"
-                            >
-                              {INSPECTION_CRON_PRESETS.map(p => (
-                                <button
-                                  key={p.cron}
-                                  onClick={() => { setInspForm(f => ({ ...f, cron_expr: p.cron })); setInspPresetOpen(false); }}
-                                  className={`flex w-full items-center justify-between px-3.5 py-2.5 text-sm transition-colors hover:bg-[#ecfeff] ${inspForm.cron_expr === p.cron ? 'bg-[#ecfeff] text-[#0891b2] font-medium' : 'text-black/60'}`}
-                                >
-                                  <span>{zh ? p.label : p.labelEn}</span>
-                                  <code className="text-[10px] font-mono text-black/30">{p.cron}</code>
-                                </button>
-                              ))}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-1.5">
-                          <Info size={11} className="text-black/25" />
-                          <p className="text-[10px] text-black/30">{zh ? '标准 5 段 Cron：分 时 日 月 周' : '5-field Cron: min hour day month weekday'}</p>
                         </div>
-                        <div className="grid grid-cols-5 gap-1.5">
-                          {inspCronFields.map((val, i) => (
-                            <div key={i}>
-                              <label className="block text-[9px] font-bold uppercase tracking-wider text-black/30 mb-0.5">
-                                {zh ? CRON_FIELD_LABELS_ZH[i] : CRON_FIELD_LABELS_EN[i]}
-                              </label>
-                              <input
-                                value={val}
-                                onChange={e => updateInspCronField(i, e.target.value)}
-                                placeholder="*"
-                                className="w-full rounded-lg border border-black/8 bg-[#f8fafc] px-2 py-1.5 text-center font-mono text-sm text-[#164e63] outline-none placeholder:text-black/20 focus:border-cyan-400/40 focus:bg-white focus:ring-2 focus:ring-cyan-500/10 transition-all"
-                              />
-                              <p className="mt-0.5 text-[8px] text-black/20 text-center truncate">
-                                {zh ? CRON_FIELD_HINTS_ZH[i] : CRON_FIELD_HINTS_EN[i]}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="flex items-center gap-3 rounded-lg bg-cyan-500/[0.04] px-3 py-2">
-                          <code className="flex-1 font-mono text-sm text-[#164e63] font-semibold">{inspForm.cron_expr}</code>
-                          <span className="text-[11px] text-black/40">{describeCron(inspForm.cron_expr, zh)}</span>
-                        </div>
-                      </div>
+                      )}
                     </div>
                   </div>
 
@@ -501,13 +468,13 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                   <div className="flex items-center gap-2 pt-1">
                     <button
                       onClick={addInspSchedule}
-                      disabled={!inspForm.name.trim() || approvalStatus !== 'verified'}
+                      disabled={!inspForm.name.trim() || !inspForm.scheduled_at || approvalStatus !== 'verified'}
                       className="px-5 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold hover:bg-cyan-700 disabled:opacity-40 transition-all shadow-sm"
                     >
                       {zh ? '保存计划' : 'Save'}
                     </button>
                     <button
-                      onClick={() => { setShowAddInspSchedule(false); setApprovalStatus('idle'); setApproverUsername(''); setApprovalToken(''); setApprovalCode(''); setApprovalError(''); }}
+                      onClick={() => { setShowAddInspSchedule(false); resetApproval(); }}
                       className="px-5 py-2 rounded-xl border border-black/[0.08] text-xs font-semibold text-black/50 hover:bg-black/[0.02] transition-all"
                     >
                       {zh ? '取消' : 'Cancel'}
@@ -518,113 +485,84 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
             )}
           </AnimatePresence>
 
-          {/* ── Backup Schedule Overview ── */}
-          {backupPreview && (
-            <div className="rounded-2xl border border-black/[0.06] bg-gradient-to-r from-[#0f172a] to-[#1e293b] p-4 shadow-lg">
-              <div className="flex items-center justify-between flex-wrap gap-3">
-                <div className="flex items-center gap-3">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${backupPreview.enabled ? 'bg-emerald-500/15' : 'bg-white/5'}`}>
-                    <Database className={`w-4 h-4 ${backupPreview.enabled ? 'text-emerald-400' : 'text-white/30'}`} />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-bold text-white">{zh ? '配置备份' : 'Config Backup'}</p>
-                      <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${backupPreview.enabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                        {backupPreview.enabled ? (zh ? '运行中' : 'ACTIVE') : (zh ? '已停用' : 'IDLE')}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <code className="text-[11px] text-cyan-400/80 font-mono">{backupPreview.cron}</code>
-                      <span className="text-[10px] text-white/30">{describeCron(backupPreview.cron, zh)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  {backupPreview.enabled && backupPreview.upcoming?.[0] && (
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5">
-                      <Clock size={12} className="text-cyan-400/60" />
-                      <span className="text-[10px] text-white/30">{zh ? '下次执行' : 'Next'}</span>
-                      <span className="text-[11px] text-cyan-400 font-mono font-medium">
-                        {new Date(backupPreview.upcoming[0]).toLocaleString(zh ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5">
-                    <Server size={12} className="text-white/30" />
-                    <span className="text-[11px] text-white/50">{backupPreview.device_count} {zh ? '台设备' : 'devices'}</span>
-                  </div>
-                  <button
-                    onClick={() => { window.history.pushState({}, '', '/config/schedule'); window.dispatchEvent(new PopStateEvent('popstate')); }}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 text-[11px] font-medium text-white/60 hover:bg-white/10 hover:text-white transition-all"
-                  >
-                    {zh ? '管理备份计划' : 'Manage'}
-                    <ExternalLink size={11} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ── Inspection section header ── */}
+          {/* ── Section header ── */}
           <div className="flex items-center gap-2 pt-1">
-            <h3 className="text-xs font-bold text-black/40 uppercase tracking-wider">{zh ? '巡检计划' : 'Inspection Schedules'}</h3>
+            <h3 className="text-xs font-bold text-black/40 uppercase tracking-wider">{zh ? '执行计划列表' : 'Schedule List'}</h3>
             <div className="flex-1 h-px bg-black/[0.06]" />
             <span className="text-[10px] text-black/25 tabular-nums">{inspSchedules.length} {zh ? '个' : ''}</span>
           </div>
 
-          {/* Schedule cards */}
+          {/* ── Schedule cards ── */}
           {inspSchedulesLoading ? (
             <div className="flex items-center justify-center py-12 text-black/30">
               <RotateCcw size={14} className="animate-spin mr-2" />
               <span className="text-xs">{zh ? '加载中...' : 'Loading...'}</span>
             </div>
           ) : inspSchedules.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {inspSchedules.map(sch => (
-                <div key={sch.id} className="rounded-2xl border border-black/[0.06] bg-white shadow-sm p-4 hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${sch.enabled ? 'bg-cyan-50' : 'bg-slate-50'}`}>
-                        <CalendarClock className={`w-4 h-4 ${sch.enabled ? 'text-cyan-600' : 'text-slate-400'}`} />
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {paginatedSchedules.map(sch => {
+                  const st = getScheduleStatus(sch, zh);
+                  return (
+                    <div key={sch.id} className="rounded-2xl border border-black/[0.06] bg-white shadow-sm p-4 hover:shadow-md transition-shadow">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${sch.enabled ? 'bg-cyan-50' : 'bg-slate-50'}`}>
+                            <CalendarClock className={`w-4 h-4 ${sch.enabled ? 'text-cyan-600' : 'text-slate-400'}`} />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-bold text-[#164e63] truncate">{sch.name}</p>
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${st.cls}`}>{st.label}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <Clock size={11} className="text-black/25 shrink-0" />
+                              <span className="text-[11px] text-black/50 font-mono">{fmtDateTime(sch.scheduled_at, zh)}</span>
+                              {sch.expires_at && (
+                                <>
+                                  <span className="text-black/15 text-[10px]">→</span>
+                                  <span className="text-[11px] text-black/50 font-mono">{fmtDateTime(sch.expires_at, zh)}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => toggleInspScheduleEnabled(sch)}
+                            className={`relative w-9 h-5 rounded-full transition-colors ${sch.enabled ? 'bg-cyan-500' : 'bg-slate-200'}`}
+                          >
+                            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${sch.enabled ? 'left-[18px]' : 'left-0.5'}`} />
+                          </button>
+                          <button
+                            onClick={() => deleteInspSchedule(sch.id)}
+                            className="p-1.5 rounded-lg text-black/20 hover:bg-red-50 hover:text-red-500 transition-all"
+                            title={zh ? '删除' : 'Delete'}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-[#164e63] truncate">{sch.name}</p>
-                        <p className="text-[11px] text-black/50 mt-0.5">{describeCron(sch.cron_expr, zh)}</p>
-                        <p className="text-[10px] text-black/25 font-mono mt-0.5">{sch.cron_expr}</p>
+                      <div className="flex items-center gap-3 mt-3 pt-3 border-t border-black/[0.04] text-[11px] text-black/35">
+                        <span>{zh ? '范围' : 'Scope'}: <strong className="text-black/60">{sch.scope_type === 'all' ? (zh ? '全部设备' : 'All') : `${sch.scope_type}${sch.scope_filter ? `: ${sch.scope_filter}` : ''}`}</strong></span>
+                        <span className="text-black/10">|</span>
+                        <span>{zh ? '上次运行' : 'Last'}: <strong className="text-black/60">{sch.last_run_at ? fmtDateTime(sch.last_run_at, zh) : '—'}</strong></span>
+                        <span className="text-black/10">|</span>
+                        <span>{zh ? '创建者' : 'By'}: <strong className="text-black/60">{sch.created_by || '—'}</strong></span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        onClick={() => toggleInspScheduleEnabled(sch)}
-                        className={`relative w-9 h-5 rounded-full transition-colors ${sch.enabled ? 'bg-cyan-500' : 'bg-slate-200'}`}
-                      >
-                        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${sch.enabled ? 'left-[18px]' : 'left-0.5'}`} />
-                      </button>
-                      <button
-                        onClick={() => deleteInspSchedule(sch.id)}
-                        className="p-1.5 rounded-lg text-black/20 hover:bg-red-50 hover:text-red-500 transition-all"
-                        title={zh ? '删除' : 'Delete'}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 mt-3 pt-3 border-t border-black/[0.04] text-[11px] text-black/35">
-                    <span>{zh ? '范围' : 'Scope'}: <strong className="text-black/60">{sch.scope_type === 'all' ? (zh ? '全部设备' : 'All') : `${sch.scope_type}${sch.scope_filter ? `: ${sch.scope_filter}` : ''}`}</strong></span>
-                    <span className="text-black/10">|</span>
-                    <span>{zh ? '上次运行' : 'Last'}: <strong className="text-black/60">{sch.last_run_at ? new Date(sch.last_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '—'}</strong></span>
-                    <span className="text-black/10">|</span>
-                    <span>{zh ? '创建者' : 'By'}: <strong className="text-black/60">{sch.created_by || '—'}</strong></span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+              {inspSchedules.length > inspSchedulePageSize && (
+                <Pagination currentPage={inspSchedulePage} totalItems={inspSchedules.length} itemsPerPage={inspSchedulePageSize} onPageChange={setInspSchedulePage} language={language} />
+              )}
+            </>
           ) : (
             <div className="rounded-2xl border-2 border-dashed border-black/[0.06] p-12 text-center">
               <CalendarClock className="w-8 h-8 text-black/15 mx-auto mb-3" />
               <p className="text-sm text-black/35 font-medium">{zh ? '暂无执行计划' : 'No execution schedules'}</p>
-              <p className="text-[11px] text-black/25 mt-1">{zh ? '点击「新建计划」创建定时执行任务' : 'Click "Add Schedule" to create one'}</p>
+              <p className="text-[11px] text-black/25 mt-1">{zh ? '点击「新建计划」创建一次性执行任务' : 'Click "Add Schedule" to create a one-time task'}</p>
             </div>
           )}
         </div>

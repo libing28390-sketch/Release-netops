@@ -118,9 +118,9 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
     const { pathname } = location;
     if (pathname === item.path) return true;
     if (item.activeMatch) {
-      // Don't match if another sibling has this exact path
-      return pathname.startsWith(item.activeMatch) &&
-        !navConfig.some(g => g.children.some(c => c !== item && c.path === pathname));
+      // Support comma-separated list of prefixes
+      const prefixes = item.activeMatch.split(',');
+      return prefixes.some(p => pathname.startsWith(p));
     }
     return false;
   }, [location]);

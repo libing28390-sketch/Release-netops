@@ -19,7 +19,11 @@ import {
   ClipboardList,
   Clock,
   Cpu,
+  Database,
   FileCode2,
+  HardDrive,
+  MemoryStick,
+  Monitor,
   Plus,
   Play,
   Server,
@@ -47,6 +51,8 @@ interface AppEntry {
   id: string;
   label: string;
   labelEn: string;
+  desc: string;
+  descEn: string;
   icon: React.ElementType;
   path: string;
   accent: string;
@@ -55,14 +61,14 @@ interface AppEntry {
 /* ─────────────── App definitions ─────────────── */
 
 const apps: AppEntry[] = [
-  { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   icon: Activity,          path: '/overview',           accent: '#1677ff' },
-  { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       icon: Bell,              path: '/alerts',             accent: '#fa8c16' },
-  { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       icon: Server,            path: '/assets',             accent: '#1677ff' },
-  { id: 'config',     label: '配置管理',   labelEn: 'Config',       icon: FileCode2,         path: '/config/backup',      accent: '#722ed1' },
-  { id: 'automation', label: '自动化',     labelEn: 'Automation',   icon: Zap,               path: '/automation/execute', accent: '#0891b2' },
-  { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff' },
-  { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      icon: BarChart2,         path: '/capacity',           accent: '#13c2c2' },
-  { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     icon: SlidersHorizontal, path: '/history',            accent: '#8c8c8c' },
+  { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   desc: '设备状态与流量',     descEn: 'Status & traffic',     icon: Activity,          path: '/overview',           accent: '#1677ff' },
+  { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       desc: '告警查看与处置',     descEn: 'View & handle alerts', icon: Bell,              path: '/alerts',             accent: '#fa8c16' },
+  { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       desc: '设备台账与资产',     descEn: 'Inventory & assets',   icon: Server,            path: '/assets',             accent: '#1677ff' },
+  { id: 'config',     label: '配置管理',   labelEn: 'Config',       desc: '备份、差异与合规',   descEn: 'Backup & compliance',  icon: FileCode2,         path: '/config/backup',      accent: '#722ed1' },
+  { id: 'automation', label: '自动化',     labelEn: 'Automation',   desc: '作业执行与编排',     descEn: 'Jobs & orchestration', icon: Zap,               path: '/automation/execute', accent: '#0891b2' },
+  { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      desc: '变更审批与跟踪',     descEn: 'Change & approval',    icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff' },
+  { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      desc: '趋势分析与报表',     descEn: 'Trends & reports',     icon: BarChart2,         path: '/capacity',           accent: '#13c2c2' },
+  { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     desc: '用户、日志与审计',   descEn: 'Users, logs & audit',  icon: SlidersHorizontal, path: '/history',            accent: '#8c8c8c' },
 ];
 
 /* ─────────────── Helpers ─────────────── */
@@ -93,20 +99,47 @@ const HomePage: React.FC<HomePageProps> = ({
 
   const stats = useMemo(() => {
     const online = devices.filter(d => d.status === 'online').length;
+    const offline = devices.filter(d => d.status === 'offline').length;
+    const pending = devices.filter(d => d.status === 'pending').length;
     const now = Date.now();
     const todayJobs = jobs.filter(j => new Date(j.created_at).getTime() > now - 86400000);
     const successJobs = todayJobs.filter(j => j.status === 'success').length;
+    const failedJobs = todayJobs.filter(j => j.status === 'failed').length;
+    const runningJobs = todayJobs.filter(j => j.status === 'running').length;
+    const pendingJobs = todayJobs.filter(j => j.status === 'pending').length;
     const successRate = todayJobs.length > 0 ? Math.round((successJobs / todayJobs.length) * 100) : 100;
     const critical = notifications.filter(n => !n.read && (n.severity === 'critical' || n.severity === 'high')).length;
+
+    // Platform distribution
+    const platformMap: Record<string, number> = {};
+    devices.forEach(d => {
+      const key = d.platform || (zh ? '未知' : 'Unknown');
+      platformMap[key] = (platformMap[key] || 0) + 1;
+    });
+    const platforms = Object.entries(platformMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+
     return {
-      total: devices.length, online,
+      total: devices.length, online, offline, pending,
       onlineRate: devices.length > 0 ? Math.round((online / devices.length) * 100) : 0,
       cpuPercent: hostResources?.cpu_percent ?? null,
-      memPercent: hostResources?.mem_percent ?? null,
+      memPercent: hostResources?.memory_percent ?? null,
+      diskPercent: hostResources?.disk_percent ?? null,
+      memUsedGb: hostResources?.memory_used_gb ?? null,
+      memTotalGb: hostResources?.memory_total_gb ?? null,
+      diskUsedGb: hostResources?.disk_used_gb ?? null,
+      diskTotalGb: hostResources?.disk_total_gb ?? null,
+      uptimeHours: hostResources?.uptime_hours ?? null,
+      dbStatus: hostResources?.database_status ?? null,
+      dbOk: hostResources?.database_ok ?? null,
+      hostname: hostResources?.hostname ?? null,
       critical, successRate, userCount,
       todayJobs: todayJobs.length,
+      successJobs, failedJobs, runningJobs, pendingJobs,
+      platforms,
     };
-  }, [devices, jobs, notifications, hostResources, userCount]);
+  }, [devices, jobs, notifications, hostResources, userCount, zh]);
 
   /* ── Stat blocks data ── */
   const statBlocks = [
@@ -154,7 +187,7 @@ const HomePage: React.FC<HomePageProps> = ({
       className="select-none overflow-y-auto"
       style={{ height: 'calc(100vh - 4rem)', background: 'var(--app-bg)' }}
     >
-      <div className="max-w-[960px] w-full mx-auto px-5 sm:px-8 py-6">
+      <div className="max-w-[960px] xl:max-w-[1200px] 2xl:max-w-[1440px] w-full mx-auto px-5 sm:px-8 py-6">
 
         {/* ════════ 1. Title ════════ */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
@@ -166,36 +199,41 @@ const HomePage: React.FC<HomePageProps> = ({
           </h1>
         </motion.div>
 
-        {/* ════════ 2. Icon Grid — 5 cols ════════ */}
+        {/* ════════ 2. Module Grid — 4 cols card nav ════════ */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.04 }}
-          className="mt-5 grid grid-cols-4 sm:grid-cols-5 lg:grid-cols-8 gap-x-1 gap-y-2"
+          className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3"
         >
           {apps.map((app, idx) => {
             const Icon = app.icon;
             return (
               <motion.button
                 key={app.id}
-                initial={{ opacity: 0, scale: 0.95 }}
+                initial={{ opacity: 0, scale: 0.97 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.2, delay: 0.06 + 0.025 * idx }}
                 onClick={() => navigate(app.path)}
-                className="group flex flex-col items-center text-center rounded-lg py-3 px-1 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/30 transition-colors duration-150"
-                style={{ background: 'transparent' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--app-hover-bg)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                className="group flex items-center gap-3 rounded-lg px-3.5 py-3 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/30 transition-all duration-150 text-left"
+                style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = app.accent + '60'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--card-border)'; }}
               >
                 <div
-                  className="flex items-center justify-center w-9 h-9 rounded-lg mb-1.5 transition-transform duration-150 group-hover:scale-105"
+                  className="flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0 transition-transform duration-150 group-hover:scale-105"
                   style={{ background: `${app.accent}14` }}
                 >
-                  <Icon size={18} strokeWidth={1.5} style={{ color: app.accent }} />
+                  <Icon size={20} strokeWidth={1.6} style={{ color: app.accent }} />
                 </div>
-                <span className="text-[11px] font-medium leading-tight" style={{ color: 'var(--heading-text)' }}>
-                  {zh ? app.label : app.labelEn}
-                </span>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold leading-tight" style={{ color: 'var(--heading-text)' }}>
+                    {zh ? app.label : app.labelEn}
+                  </div>
+                  <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--muted-text)' }}>
+                    {zh ? app.desc : app.descEn}
+                  </div>
+                </div>
               </motion.button>
             );
           })}
@@ -239,7 +277,7 @@ const HomePage: React.FC<HomePageProps> = ({
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.18 }}
-          className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4 pb-4"
+          className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4"
         >
           {/* ── Left: Recent Activity (2/3) ── */}
           <div
@@ -328,6 +366,164 @@ const HomePage: React.FC<HomePageProps> = ({
             </div>
           </div>
         </motion.div>
+
+        {/* ════════ 5. Three-column: Device Status │ Host Resources │ Platform Distribution ════════ */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.24 }}
+          className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4"
+        >
+          {/* ── Left: Device Status Overview ── */}
+          <div
+            className="rounded-lg px-4 py-3.5"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+          >
+            <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
+              {zh ? '设备状态' : 'Device Status'}
+            </span>
+            {stats.total > 0 ? (
+              <>
+                {/* Stacked status bar */}
+                <div className="flex h-2.5 rounded-full overflow-hidden mb-3" style={{ background: 'var(--app-hover-bg)' }}>
+                  {stats.online > 0 && (
+                    <div style={{ width: `${(stats.online / stats.total) * 100}%`, background: '#52c41a' }} />
+                  )}
+                  {stats.pending > 0 && (
+                    <div style={{ width: `${(stats.pending / stats.total) * 100}%`, background: '#fa8c16' }} />
+                  )}
+                  {stats.offline > 0 && (
+                    <div style={{ width: `${(stats.offline / stats.total) * 100}%`, background: '#f5222d' }} />
+                  )}
+                </div>
+                {/* Legend */}
+                <div className="space-y-1.5">
+                  {([
+                    { label: zh ? '在线' : 'Online', count: stats.online, color: '#52c41a' },
+                    { label: zh ? '离线' : 'Offline', count: stats.offline, color: '#f5222d' },
+                    { label: zh ? '待定' : 'Pending', count: stats.pending, color: '#fa8c16' },
+                  ] as const).map(s => (
+                    <div key={s.label} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full" style={{ background: s.color }} />
+                        <span className="text-[12px]" style={{ color: 'var(--body-text)' }}>{s.label}</span>
+                      </div>
+                      <span className="text-[12px] font-medium tabular-nums" style={{ color: 'var(--heading-text)' }}>
+                        {s.count}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="text-[12px] py-4 text-center" style={{ color: 'var(--dim-text)' }}>
+                {zh ? '暂无设备' : 'No devices'}
+              </div>
+            )}
+          </div>
+
+          {/* ── Middle: Host Resources ── */}
+          <div
+            className="rounded-lg px-4 py-3.5"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+          >
+            <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
+              {zh ? '主机资源' : 'Host Resources'}
+            </span>
+            <div className="space-y-3">
+              {([
+                {
+                  label: 'CPU',
+                  icon: Cpu,
+                  percent: stats.cpuPercent,
+                  sub: stats.cpuPercent !== null ? `${stats.cpuPercent}%` : '—',
+                  color: '#722ed1',
+                },
+                {
+                  label: zh ? '内存' : 'Memory',
+                  icon: MemoryStick,
+                  percent: stats.memPercent,
+                  sub: stats.memUsedGb !== null && stats.memTotalGb !== null
+                    ? `${stats.memUsedGb.toFixed(1)} / ${stats.memTotalGb.toFixed(1)} GB`
+                    : '—',
+                  color: '#1677ff',
+                },
+                {
+                  label: zh ? '磁盘' : 'Disk',
+                  icon: HardDrive,
+                  percent: stats.diskPercent,
+                  sub: stats.diskUsedGb !== null && stats.diskTotalGb !== null
+                    ? `${stats.diskUsedGb.toFixed(1)} / ${stats.diskTotalGb.toFixed(1)} GB`
+                    : '—',
+                  color: '#13c2c2',
+                },
+              ] as const).map(r => {
+                const RIcon = r.icon;
+                const pct = r.percent ?? 0;
+                return (
+                  <div key={r.label}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <RIcon size={12} strokeWidth={1.6} style={{ color: r.color }} />
+                        <span className="text-[11px] font-medium" style={{ color: 'var(--body-text)' }}>{r.label}</span>
+                      </div>
+                      <span className="text-[11px] tabular-nums" style={{ color: 'var(--muted-text)' }}>{r.sub}</span>
+                    </div>
+                    <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--app-hover-bg)' }}>
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: r.percent !== null ? `${Math.min(pct, 100)}%` : '0%',
+                          background: pct >= 90 ? '#f5222d' : pct >= 70 ? '#fa8c16' : r.color,
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Right: Platform Distribution ── */}
+          <div
+            className="rounded-lg px-4 py-3.5"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+          >
+            <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
+              {zh ? '平台分布' : 'Platform Distribution'}
+            </span>
+            {stats.platforms.length > 0 ? (
+              <div className="space-y-2">
+                {stats.platforms.map(([platform, count]) => (
+                  <div key={platform}>
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-[11px]" style={{ color: 'var(--body-text)' }}>{platform}</span>
+                      <span className="text-[11px] font-medium tabular-nums" style={{ color: 'var(--heading-text)' }}>
+                        {count}
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--app-hover-bg)' }}>
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${(count / stats.total) * 100}%`,
+                          background: '#0891b2',
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[12px] py-4 text-center" style={{ color: 'var(--dim-text)' }}>
+                {zh ? '暂无数据' : 'No data'}
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        {/* bottom spacer */}
+        <div className="h-4" />
       </div>
     </div>
   );

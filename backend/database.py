@@ -1440,6 +1440,13 @@ def init_db():
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_schedules_enabled ON inspection_schedules(enabled)')
 
+        # Migration: add time-range scheduling columns
+        for col, default in [('scheduled_at', '""'), ('expires_at', '""')]:
+            try:
+                cursor.execute(f'ALTER TABLE inspection_schedules ADD COLUMN {col} TEXT DEFAULT {default}')
+            except Exception:
+                pass  # column already exists
+
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS inspection_runs (
             id TEXT PRIMARY KEY,

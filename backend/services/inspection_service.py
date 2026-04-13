@@ -450,10 +450,12 @@ def list_schedules() -> list[dict[str, Any]]:
 
 def create_schedule(
     name: str,
-    cron_expr: str,
+    cron_expr: str = '',
     scope_type: str = 'all',
     scope_filter: str = '',
     created_by: str = 'system',
+    scheduled_at: str = '',
+    expires_at: str = '',
 ) -> dict[str, Any]:
     conn = get_db_connection()
     try:
@@ -461,12 +463,13 @@ def create_schedule(
         now = _beijing_now_iso()
         conn.execute(
             '''INSERT INTO inspection_schedules
-                (id, name, cron_expr, scope_type, scope_filter, enabled, created_by, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)''',
-            (schedule_id, name, cron_expr, scope_type, scope_filter, created_by, now, now),
+                (id, name, cron_expr, scope_type, scope_filter, enabled, created_by, created_at, updated_at, scheduled_at, expires_at)
+               VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)''',
+            (schedule_id, name, cron_expr, scope_type, scope_filter, created_by, now, now, scheduled_at, expires_at),
         )
         conn.commit()
         return {'id': schedule_id, 'name': name, 'cron_expr': cron_expr,
+                'scheduled_at': scheduled_at, 'expires_at': expires_at,
                 'scope_type': scope_type, 'scope_filter': scope_filter, 'enabled': True}
     finally:
         conn.close()
@@ -478,7 +481,7 @@ def update_schedule(schedule_id: str, updates: dict[str, Any]) -> dict[str, Any]
         row = conn.execute('SELECT * FROM inspection_schedules WHERE id=?', (schedule_id,)).fetchone()
         if not row:
             return None
-        allowed = {'name', 'cron_expr', 'scope_type', 'scope_filter', 'enabled'}
+        allowed = {'name', 'cron_expr', 'scope_type', 'scope_filter', 'enabled', 'scheduled_at', 'expires_at'}
         sets = []
         params = []
         for k, v in updates.items():

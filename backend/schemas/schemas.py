@@ -223,7 +223,9 @@ class InspectionRunRequest(BaseModel):
 
 class InspectionScheduleCreate(BaseModel):
     name: str
-    cron_expr: str
+    scheduled_at: str  # ISO datetime — when to execute
+    expires_at: str = ''  # ISO datetime — execution window end (optional)
+    cron_expr: str = ''  # kept for backward compat, empty for time-range plans
     scope_type: str = 'all'
     scope_filter: str = ''
 
@@ -238,6 +240,8 @@ class InspectionScheduleCreate(BaseModel):
 
 class InspectionScheduleUpdate(BaseModel):
     name: str | None = None
+    scheduled_at: str | None = None
+    expires_at: str | None = None
     cron_expr: str | None = None
     scope_type: str | None = None
     scope_filter: str | None = None

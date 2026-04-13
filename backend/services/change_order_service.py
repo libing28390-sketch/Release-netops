@@ -148,7 +148,14 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
                        my_todo: str = '',
                        group_todo: str = '',
                        my_participated: str = '',
-                       my_drafts: str = '') -> tuple[list[dict], int]:
+                       my_drafts: str = '',
+                       order_type: str = '',
+                       created_from: str = '',
+                       created_to: str = '',
+                       completed_from: str = '',
+                       completed_to: str = '',
+                       scheduled_from: str = '',
+                       scheduled_to: str = '') -> tuple[list[dict], int]:
     conditions = []
     params = []
 
@@ -206,6 +213,27 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
         conditions.append("(order_number LIKE ? OR title LIKE ? OR description LIKE ?)")
         like = f"%{search}%"
         params.extend([like, like, like])
+    if order_type:
+        conditions.append("order_type = ?")
+        params.append(order_type)
+    if created_from:
+        conditions.append("created_at >= ?")
+        params.append(created_from)
+    if created_to:
+        conditions.append("created_at <= ?")
+        params.append(created_to)
+    if completed_from:
+        conditions.append("actual_end >= ?")
+        params.append(completed_from)
+    if completed_to:
+        conditions.append("actual_end <= ?")
+        params.append(completed_to)
+    if scheduled_from:
+        conditions.append("scheduled_start >= ?")
+        params.append(scheduled_from)
+    if scheduled_to:
+        conditions.append("scheduled_end <= ?")
+        params.append(scheduled_to)
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 

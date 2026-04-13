@@ -465,9 +465,21 @@ const App: React.FC = () => {
 
   const activeTab = location.pathname.split('/')[1] || 'dashboard';
   const configPage = location.pathname.split('/')[2] || 'backup';
-  const automationPage = location.pathname.split('/')[2] || 'execute';
+  const automationPage = location.pathname.split('/')[2] || '';
+  // Redirect bare /automation to /automation/execute
+  React.useEffect(() => {
+    if (activeTab === 'automation' && !automationPage) {
+      navigate('/automation/execute', { replace: true });
+    }
+  }, [activeTab, automationPage, navigate]);
   const inventorySubPage = location.pathname.split('/')[2] || 'devices';
   const changeOrderPage = location.pathname.split('/')[2] || '';
+  // Redirect bare /change-orders to /change-orders/all
+  React.useEffect(() => {
+    if (activeTab === 'change-orders' && !changeOrderPage) {
+      navigate('/change-orders/all', { replace: true });
+    }
+  }, [activeTab, changeOrderPage, navigate]);
   const setActiveTab = (tab: string) => {
     navigate(`/${tab}`);
     if (isMobile) setSidebarCollapsed(true);
@@ -492,11 +504,17 @@ const App: React.FC = () => {
     if (path === '/overview') return language === 'zh' ? '运营总览' : 'Overview';
     if (path === '/monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
     if (path === '/topology') return language === 'zh' ? '网络拓扑' : 'Topology';
-    if (path === '/automation/inspection') return language === 'zh' ? '设备巡检' : 'Device Inspection';
+    if (path === '/automation/inspection') return language === 'zh' ? '巡检概览' : 'Inspection Overview';
+    if (path === '/automation/inspection-records') return language === 'zh' ? '巡检记录' : 'Inspection Records';
     if (path === '/automation/schedule') return language === 'zh' ? '执行计划' : 'Execution Schedules';
     if (path === '/automation/schedule-history') return language === 'zh' ? '执行历史' : 'Execution History';
     if (path === '/automation/scheduled-jobs') return language === 'zh' ? '定时作业' : 'Scheduled Jobs';
-    if (path === '/change-orders/my-todo') return language === 'zh' ? '我的待办' : 'My Todo';
+    if (path === '/change-orders/all') return language === 'zh' ? '全部工单' : 'All Orders';
+    if (path === '/change-orders/my-todo') return language === 'zh' ? '个人待办' : 'My Todo';
+    if (path === '/change-orders/group-todo') return language === 'zh' ? '组内待办' : 'Group Todo';
+    if (path === '/change-orders/participated') return language === 'zh' ? '我参与的' : 'My Participated';
+    if (path === '/change-orders/focus') return language === 'zh' ? '我的关注' : 'My Focus';
+    if (path === '/change-orders/drafts') return language === 'zh' ? '草稿箱' : 'Drafts';
     if (path === '/change-orders/new') return language === 'zh' ? '新建工单' : 'New Order';
     if (path === '/alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
     if (path === '/alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
@@ -556,7 +574,8 @@ const App: React.FC = () => {
       { path: '/automation/execute', label: t('directExecution'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scenarios', label: t('scenarioLibrary'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/history', label: t('executionHistory'), group: zh ? '作业自动化' : 'Automation' },
-      { path: '/automation/inspection', label: zh ? '设备巡检' : 'Device Inspection', group: zh ? '作业自动化' : 'Automation' },
+      { path: '/automation/inspection', label: zh ? '巡检概览' : 'Inspection Overview', group: zh ? '作业自动化' : 'Automation' },
+      { path: '/automation/inspection-records', label: zh ? '巡检记录' : 'Inspection Records', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/schedule', label: zh ? '执行计划' : 'Execution Schedules', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/schedule-history', label: zh ? '执行历史' : 'Execution History', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scheduled-jobs', label: zh ? '定时作业' : 'Scheduled Jobs', group: zh ? '作业自动化' : 'Automation' },
@@ -570,8 +589,12 @@ const App: React.FC = () => {
       { path: '/history', label: t('auditLogs'), group: zh ? '平台管理' : 'Management' },
       { path: '/configuration', label: zh ? '平台设置' : 'Platform Settings', group: zh ? '平台管理' : 'Management' },
       { path: '/users', label: t('userManagement'), group: zh ? '平台管理' : 'Management' },
-      { path: '/change-orders', label: zh ? '变更工单' : 'Change Orders', group: zh ? '工单管理' : 'Tickets' },
-      { path: '/change-orders/my-todo', label: zh ? '我的待办' : 'My Todo', group: zh ? '工单管理' : 'Tickets' },
+      { path: '/change-orders/all', label: zh ? '全部工单' : 'All Orders', group: zh ? '工单管理' : 'Tickets' },
+      { path: '/change-orders/group-todo', label: zh ? '组内待办' : 'Group Todo', group: zh ? '工单管理' : 'Tickets' },
+      { path: '/change-orders/my-todo', label: zh ? '个人待办' : 'My Todo', group: zh ? '工单管理' : 'Tickets' },
+      { path: '/change-orders/participated', label: zh ? '我参与的' : 'My Participated', group: zh ? '工单管理' : 'Tickets' },
+      { path: '/change-orders/focus', label: zh ? '我的关注' : 'My Focus', group: zh ? '工单管理' : 'Tickets' },
+      { path: '/change-orders/drafts', label: zh ? '草稿箱' : 'Drafts', group: zh ? '工单管理' : 'Tickets' },
       { path: '/change-orders/new', label: zh ? '新建工单' : 'New Order', group: zh ? '工单管理' : 'Tickets' },
     ];
   }, [language, t]);
@@ -604,7 +627,8 @@ const App: React.FC = () => {
         execute: t('directExecution'),
         scenarios: t('scenarioLibrary'),
         history: t('executionHistory'),
-        inspection: language === 'zh' ? '设备巡检' : 'Device Inspection',
+        inspection: language === 'zh' ? '巡检概览' : 'Inspection Overview',
+        'inspection-records': language === 'zh' ? '巡检记录' : 'Inspection Records',
         schedule: language === 'zh' ? '执行计划' : 'Execution Schedules',
         'schedule-history': language === 'zh' ? '执行历史' : 'Execution History',
         'scheduled-jobs': language === 'zh' ? '定时作业' : 'Scheduled Jobs',
@@ -643,7 +667,12 @@ const App: React.FC = () => {
     if (activeTab === 'tags') return language === 'zh' ? '标签管理' : 'Tag Management';
     if (activeTab === 'credentials') return language === 'zh' ? '凭据管理' : 'Credential Management';
     if (activeTab === 'change-orders') {
-      if (changeOrderPage === 'my-todo') return language === 'zh' ? '我的待办' : 'My Todo';
+      if (changeOrderPage === 'all') return language === 'zh' ? '全部工单' : 'All Orders';
+      if (changeOrderPage === 'my-todo') return language === 'zh' ? '个人待办' : 'My Todo';
+      if (changeOrderPage === 'group-todo') return language === 'zh' ? '组内待办' : 'Group Todo';
+      if (changeOrderPage === 'participated') return language === 'zh' ? '我参与的' : 'My Participated';
+      if (changeOrderPage === 'focus') return language === 'zh' ? '我的关注' : 'My Focus';
+      if (changeOrderPage === 'drafts') return language === 'zh' ? '草稿箱' : 'Drafts';
       if (changeOrderPage === 'new') return language === 'zh' ? '新建工单' : 'New Order';
       return language === 'zh' ? '变更工单' : 'Change Orders';
     }
@@ -5289,15 +5318,15 @@ const App: React.FC = () => {
             if (item.id.startsWith('alert-')) {
               navigate('/alerts');
             } else if (item.id.startsWith('job-')) {
-              navigate('/automation');
+              navigate('/automation/execute');
             } else if (item.id.startsWith('playbook-')) {
-              navigate('/automation');
+              navigate('/automation/execute');
             }
           }}
         />
 
         <div className="flex flex-1 overflow-hidden">
-          {activeTab !== 'dashboard' && (
+          {activeTab !== 'dashboard' && !sidebarCollapsed && (
             <ModuleSubNav language={language} userRole={currentUser.role || currentUserRecord?.role || 'Viewer'} />
           )}
 
@@ -5739,6 +5768,19 @@ const App: React.FC = () => {
                 devices={devices}
                 overview={monitorOverview?.device_health_summary || null}
                 onShowDetails={handleShowDetails}
+                initialView="overview"
+              />
+            </Suspense>
+          )}
+          {activeTab === 'automation' && automationPage === 'inspection-records' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <InspectionTab
+                t={t}
+                language={language}
+                devices={devices}
+                overview={monitorOverview?.device_health_summary || null}
+                onShowDetails={handleShowDetails}
+                initialView="records"
               />
             </Suspense>
           )}
@@ -6009,7 +6051,7 @@ const App: React.FC = () => {
 
           {activeTab === 'change-orders' && (
             <Suspense fallback={lazyPanelFallback}>
-              <ChangeOrderTab language={language} t={t} users={users} scenarios={scenarios} platforms={platforms} currentUser={currentUser} initialView={changeOrderPage === 'my-todo' ? 'my_todo' : changeOrderPage === 'new' ? 'create' : undefined} />
+              <ChangeOrderTab language={language} t={t} users={users} scenarios={scenarios} platforms={platforms} currentUser={currentUser} initialView={changeOrderPage === 'my-todo' ? 'my_todo' : changeOrderPage === 'group-todo' ? 'group_todo' : changeOrderPage === 'participated' ? 'my_participated' : changeOrderPage === 'focus' ? 'my_focus' : changeOrderPage === 'drafts' ? 'my_drafts' : changeOrderPage === 'new' ? 'create' : 'all'} />
             </Suspense>
           )}
         </main>

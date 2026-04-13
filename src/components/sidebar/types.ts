@@ -1,3 +1,4 @@
+import type React from 'react';
 import type { LucideIcon } from 'lucide-react';
 
 /** 权限标识 — 后端驱动菜单时由接口返回 */

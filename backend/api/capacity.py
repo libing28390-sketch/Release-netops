@@ -29,7 +29,7 @@ def capacity_overview():
         # Get devices with CPU/memory info
         devices = conn.execute('''
             SELECT id, hostname, ip_address, platform, status,
-                   cpu_usage, memory_usage, interface_count, interface_up_count,
+                   cpu_usage, memory_usage, interface_data,
                    uptime, model
             FROM devices
             WHERE status = 'online'

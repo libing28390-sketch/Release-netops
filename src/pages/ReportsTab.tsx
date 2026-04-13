@@ -1,10 +1,18 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { BarChart3, TrendingUp, ShieldCheck, AlertTriangle, Activity, Server, RefreshCw, Download } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from 'recharts';
+import {
+  RefreshCw, Download, ChevronUp, ChevronDown,
+} from 'lucide-react';
+import {
+  ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+} from 'recharts';
 import * as XLSX from 'xlsx';
+import { motion } from 'motion/react';
 import type { Device, Job, ComplianceOverview } from '../types';
-import { sectionHeaderRowClass } from '../components/shared';
 import { useChartTheme } from '../hooks/useChartTheme';
+
+/* ═══════════════════════════════════════════════════════════════════
+   Types
+   ═══════════════════════════════════════════════════════════════════ */
 
 interface AlertSummary {
   open_count: number;
@@ -26,16 +34,133 @@ interface ReportsTabProps {
   t: (key: string) => string;
 }
 
-const REFRESH_INTERVAL = 30_000; // 30s
+/* ═══════════════════════════════════════════════════════════════════
+   Mock Data — Actionable Insights
+   ═══════════════════════════════════════════════════════════════════ */
+
+const MOCK_TOP_ALERTING = [
+  { name: 'Core-SW-Datacenter-01', ip: '10.0.1.1', alerts: 14, owner: 'Zhang Wei', spark: [2, 1, 4, 3, 1, 2, 1] },
+  { name: 'Edge-FW-Campus-03', ip: '10.2.3.1', alerts: 11, owner: 'Li Hua', spark: [1, 3, 2, 1, 2, 1, 1] },
+  { name: 'WAN-RTR-Branch-07', ip: '172.16.7.1', alerts: 9, owner: 'Wang Jun', spark: [0, 2, 1, 2, 1, 2, 1] },
+  { name: 'AP-Controller-HQ', ip: '10.1.10.5', alerts: 7, owner: 'Chen Xia', spark: [1, 1, 0, 2, 1, 1, 1] },
+  { name: 'Dist-SW-Floor3-02', ip: '10.3.3.2', alerts: 5, owner: 'Liu Yang', spark: [0, 1, 1, 0, 1, 1, 1] },
+];
+
+const MOCK_TOP_CONSUMERS = [
+  { name: 'DB-Cluster-Master', ip: '10.1.20.10', metric: 'CPU', value: 96, unit: '%' },
+  { name: 'Log-Collector-01', ip: '10.1.20.15', metric: 'MEM', value: 94, unit: '%' },
+  { name: 'Core-SW-Datacenter-01', ip: '10.0.1.1', metric: 'BW', value: 92, unit: '%' },
+  { name: 'Monitor-Server-02', ip: '10.1.20.22', metric: 'CPU', value: 89, unit: '%' },
+  { name: 'Backup-NAS-01', ip: '10.1.30.5', metric: 'DISK', value: 87, unit: '%' },
+];
+
+const METRIC_LABELS: Record<string, { zh: string; en: string }> = {
+  CPU: { zh: 'CPU', en: 'CPU' },
+  MEM: { zh: '内存', en: 'Memory' },
+  BW: { zh: '带宽', en: 'Bandwidth' },
+  DISK: { zh: '存储', en: 'Storage' },
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   Combo Chart — 14 day mock data
+   ═══════════════════════════════════════════════════════════════════ */
+
+function buildComboData(language: string): { name: string; incidents: number; mttr: number }[] {
+  const base = new Date();
+  // Use deterministic pseudo-random based on day of year
+  const seed = base.getFullYear() * 1000 + Math.floor((base.getTime() - new Date(base.getFullYear(), 0, 0).getTime()) / 86400000);
+  const rng = (i: number) => ((seed * 9301 + 49297 + i * 233) % 233280) / 233280;
+  return Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(base);
+    d.setDate(d.getDate() - 13 + i);
+    const dow = d.getDay();
+    const isTuTh = dow === 2 || dow === 4;
+    const incidents = isTuTh ? 5 + Math.floor(rng(i) * 4) : 1 + Math.floor(rng(i + 100) * 3);
+    const mttr = 30 + Math.floor(rng(i + 200) * 20) + (isTuTh ? 5 : 0);
+    const label = language === 'zh'
+      ? `${d.getMonth() + 1}/${d.getDate()}`
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return { name: label, incidents, mttr };
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Sparkline Mini SVG
+   ═══════════════════════════════════════════════════════════════════ */
+
+const Sparkline: React.FC<{ data: number[]; color?: string; width?: number; height?: number }> = ({
+  data, color = '#ef4444', width = 56, height = 20,
+}) => {
+  const max = Math.max(...data, 1);
+  const barW = width / data.length - 1;
+  return (
+    <svg width={width} height={height} className="flex-shrink-0">
+      {data.map((v, i) => {
+        const barH = Math.max((v / max) * height, 1.5);
+        const x = (i / data.length) * width + 0.5;
+        return (
+          <rect
+            key={i}
+            x={x}
+            y={height - barH}
+            width={Math.max(barW, 3)}
+            height={barH}
+            rx={1.5}
+            fill={color}
+            opacity={0.25 + (v / max) * 0.65}
+          />
+        );
+      })}
+    </svg>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   Custom Tooltip
+   ═══════════════════════════════════════════════════════════════════ */
+
+const ComboTooltip: React.FC<{
+  active?: boolean;
+  payload?: Array<{ value: number; dataKey: string }>;
+  label?: string;
+  zh: boolean;
+}> = ({ active, payload, label, zh }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-xl px-4 py-3 shadow-xl border border-black/5 bg-white/95 backdrop-blur-sm">
+      <p className="text-[11px] font-semibold text-black/50 mb-1.5">{label}</p>
+      {payload.map((p, i) => (
+        <div key={i} className="flex items-center gap-2 text-xs">
+          <span className={`w-2 h-2 rounded-full ${p.dataKey === 'incidents' ? 'bg-rose-400' : 'bg-[#00bceb]'}`} />
+          <span className="text-black/50">
+            {p.dataKey === 'incidents' ? (zh ? '严重故障' : 'Critical Incidents') : 'MTTR'}
+          </span>
+          <span className="font-bold monitoring-data text-[#00172D] ml-auto pl-3">
+            {p.value}{p.dataKey === 'mttr' ? 'm' : ''}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   Main Component
+   ═══════════════════════════════════════════════════════════════════ */
+
+const REFRESH_INTERVAL = 30_000;
 
 const ReportsTab: React.FC<ReportsTabProps> = ({
   devices, jobs, complianceOverview, platformData, language, t,
 }) => {
   const ct = useChartTheme();
+  const zh = language === 'zh';
   const [alertSummary, setAlertSummary] = useState<AlertSummary | null>(null);
   const [reportRange, setReportRange] = useState<'7d' | '30d'>('7d');
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
+  const [hoveredAlertRow, setHoveredAlertRow] = useState<number>(-1);
+  const [hoveredConsumerRow, setHoveredConsumerRow] = useState<number>(-1);
 
   const fetchAlertSummary = useCallback(async () => {
     const token = localStorage.getItem('sessionToken') || '';
@@ -49,7 +174,6 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
     setLastRefresh(new Date());
   }, []);
 
-  // Initial fetch + 30s auto-refresh
   useEffect(() => {
     fetchAlertSummary();
     const timer = setInterval(fetchAlertSummary, REFRESH_INTERVAL);
@@ -62,46 +186,10 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
     setRefreshing(false);
   };
 
-  const handleExportReport = () => {
-    const wb = XLSX.utils.book_new();
-    // KPI sheet
-    const kpiSheet = XLSX.utils.json_to_sheet([
-      { Metric: language === 'zh' ? '设备可用率' : 'Device Availability', Value: `${onlinePct}%`, Detail: `${onlineCount}/${devices.length}` },
-      { Metric: language === 'zh' ? '任务成功率' : 'Task Success Rate', Value: `${successRate}%`, Detail: `${successJobsInRange}/${totalJobsInRange}` },
-      { Metric: language === 'zh' ? '合规评分' : 'Compliance Score', Value: `${compScore}`, Detail: `${compOpen} open / ${compResolved} resolved` },
-      { Metric: language === 'zh' ? '活跃告警' : 'Active Alerts', Value: `${alertSummary?.open_count ?? '-'}`, Detail: `Critical: ${alertSummary?.critical_open ?? '-'}` },
-      { Metric: 'MTTR', Value: alertSummary ? `${Math.round(alertSummary.avg_mttr_minutes)}m` : '-', Detail: '' },
-      { Metric: 'MTTA', Value: alertSummary ? `${Math.round(alertSummary.avg_mtta_minutes)}m` : '-', Detail: '' },
-    ]);
-    XLSX.utils.book_append_sheet(wb, kpiSheet, 'KPI');
-    // Job trend sheet
-    const jtSheet = XLSX.utils.json_to_sheet(jobTrend.map(d => ({ Date: d.name, Success: d.success, Failed: d.failed, Total: d.total })));
-    XLSX.utils.book_append_sheet(wb, jtSheet, 'Job Trend');
-    // Compliance trend sheet
-    const ctSheet = XLSX.utils.json_to_sheet(complianceTrend.map(d => ({ Date: d.name, 'Compliance Rate (%)': d.rate })));
-    XLSX.utils.book_append_sheet(wb, ctSheet, 'Compliance Trend');
-    // Device status sheet
-    const dsSheet = XLSX.utils.json_to_sheet(deviceStatusData.map(d => ({ Status: d.name, Count: d.value })));
-    XLSX.utils.book_append_sheet(wb, dsSheet, 'Device Status');
-    // Alert summary sheet
-    if (alertSummary) {
-      const asSheet = XLSX.utils.json_to_sheet([{
-        'Open': alertSummary.open_count, 'Critical': alertSummary.critical_open,
-        'Major': alertSummary.major_open, 'Warning': alertSummary.warning_open,
-        '24h New': alertSummary.alerts_24h, '24h Resolved': alertSummary.resolved_24h,
-      }]);
-      XLSX.utils.book_append_sheet(wb, asSheet, 'Alert Summary');
-    }
-    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-    XLSX.writeFile(wb, `operations_report_${reportRange}_${ts}.xlsx`);
-  };
-
-  // Device availability
+  // ── Computed metrics ──
   const onlineCount = devices.filter(d => d.status === 'online').length;
-  const offlineCount = devices.filter(d => d.status === 'offline').length;
-  const onlinePct = devices.length > 0 ? Math.round((onlineCount / devices.length) * 100) : 0;
+  const onlinePct = devices.length > 0 ? ((onlineCount / devices.length) * 100).toFixed(3) : '0.000';
 
-  // Job success rate by day
   const rangeDays = reportRange === '7d' ? 7 : 30;
   const jobTrend = useMemo(() => {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -118,306 +206,414 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
     });
   }, [jobs, rangeDays]);
 
-  // Compliance trend — computed locally, synced with reportRange
-  const complianceTrend = useMemo(() => {
-    const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return Array.from({ length: rangeDays }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (rangeDays - 1 - i));
-      const dateStr = d.toISOString().slice(0, 10);
-      const dayJobs = jobs.filter(j => j.created_at && j.created_at.startsWith(dateStr));
-      let rate: number;
-      if (dayJobs.length === 0) {
-        const total = devices.length;
-        rate = total > 0 ? Math.round((devices.filter(dv => dv.compliance === 'compliant').length / total) * 100) : 100;
-      } else {
-        const success = dayJobs.filter(j => j.status === 'success').length;
-        rate = Math.round((success / dayJobs.length) * 100);
-      }
-      const label = rangeDays <= 7 ? dayLabels[d.getDay()] : `${monthLabels[d.getMonth()]} ${d.getDate()}`;
-      return { name: label, rate };
-    });
-  }, [jobs, devices, rangeDays]);
-
   const totalJobsInRange = jobTrend.reduce((s, d) => s + d.total, 0);
   const successJobsInRange = jobTrend.reduce((s, d) => s + d.success, 0);
-  const failedJobsInRange = jobTrend.reduce((s, d) => s + d.failed, 0);
-  const successRate = totalJobsInRange > 0 ? Math.round((successJobsInRange / totalJobsInRange) * 100) : 100;
-
-  // Compliance
   const compScore = complianceOverview?.latest_score ?? 0;
-  const compOpen = complianceOverview?.open_findings ?? 0;
-  const compResolved = complianceOverview?.resolved_findings ?? 0;
 
-  // Severity distribution from compliance
-  const severityData = useMemo(() => {
-    if (!complianceOverview?.severity_breakdown) return [];
-    const colors: Record<string, string> = { critical: '#ef4444', high: '#f97316', medium: '#f59e0b', low: '#3b82f6' };
-    return Object.entries(complianceOverview.severity_breakdown)
-      .filter(([, v]) => (v as number) > 0)
-      .map(([k, v]) => ({ name: k.charAt(0).toUpperCase() + k.slice(1), value: v as number, color: colors[k] || '#94a3b8' }));
-  }, [complianceOverview]);
+  // Health Score: weighted composite
+  const healthScore = useMemo(() => {
+    const avail = devices.length > 0 ? onlineCount / devices.length : 1;
+    const taskOk = totalJobsInRange > 0 ? successJobsInRange / totalJobsInRange : 1;
+    const comp = Math.min(compScore / 100, 1);
+    const alertPenalty = Math.max(0, 1 - ((alertSummary?.critical_open ?? 0) * 0.08));
+    return Math.round((avail * 35 + taskOk * 25 + comp * 25 + alertPenalty * 15));
+  }, [devices.length, onlineCount, totalJobsInRange, successJobsInRange, compScore, alertSummary]);
 
-  // Device status distribution for pie
-  const deviceStatusData = useMemo(() => {
-    if (devices.length === 0) return [];
-    return [
-      { name: language === 'zh' ? '在线' : 'Online', value: onlineCount, color: '#10b981' },
-      { name: language === 'zh' ? '离线' : 'Offline', value: offlineCount, color: '#ef4444' },
-      { name: language === 'zh' ? '待定' : 'Pending', value: devices.length - onlineCount - offlineCount, color: '#94a3b8' },
-    ].filter(d => d.value > 0);
-  }, [devices, onlineCount, offlineCount, language]);
+  const mttrValue = alertSummary ? Math.round(alertSummary.avg_mttr_minutes) : 42;
+  const mttaValue = alertSummary ? Math.round(alertSummary.avg_mtta_minutes) : 8;
 
-  const kpiCards = [
-    { label: language === 'zh' ? '设备可用率' : 'Device Availability', value: `${onlinePct}%`, sub: `${onlineCount}/${devices.length}`, color: onlinePct >= 90 ? 'text-emerald-600' : onlinePct >= 60 ? 'text-orange-500' : 'text-red-600', border: onlinePct >= 90 ? '' : onlinePct >= 60 ? 'border-l-[3px] border-l-orange-400' : 'border-l-[3px] border-l-red-500' },
-    { label: language === 'zh' ? '任务成功率' : 'Task Success Rate', value: `${successRate}%`, sub: `${successJobsInRange}/${totalJobsInRange}`, color: successRate >= 90 ? 'text-emerald-600' : successRate >= 60 ? 'text-orange-500' : 'text-red-600', border: successRate >= 90 ? '' : 'border-l-[3px] border-l-orange-400' },
-    { label: language === 'zh' ? '合规评分' : 'Compliance Score', value: `${compScore}`, sub: language === 'zh' ? `${compOpen} 未解决` : `${compOpen} open`, color: compScore >= 80 ? 'text-[#00bceb]' : compScore >= 50 ? 'text-orange-500' : 'text-red-600', border: compScore >= 80 ? '' : 'border-l-[3px] border-l-orange-400' },
-    { label: language === 'zh' ? '活跃告警' : 'Active Alerts', value: `${alertSummary?.open_count ?? '--'}`, sub: alertSummary ? (language === 'zh' ? `严重 ${alertSummary.critical_open}` : `Critical ${alertSummary.critical_open}`) : '', color: (alertSummary?.critical_open ?? 0) > 0 ? 'text-red-600' : 'text-emerald-600', border: (alertSummary?.critical_open ?? 0) > 0 ? 'border-l-[3px] border-l-red-500' : '' },
-    { label: 'MTTR', value: alertSummary ? `${Math.round(alertSummary.avg_mttr_minutes)}m` : '--', sub: language === 'zh' ? '平均修复时间' : 'Mean Time to Repair', color: 'text-[#005073]', border: '' },
-    { label: 'MTTA', value: alertSummary ? `${Math.round(alertSummary.avg_mtta_minutes)}m` : '--', sub: language === 'zh' ? '平均确认时间' : 'Mean Time to Ack', color: 'text-[#005073]', border: '' },
-  ];
+  const comboData = useMemo(() => buildComboData(language), [language]);
+
+  // ── Export ──
+  const handleExportReport = () => {
+    const wb = XLSX.utils.book_new();
+    const kpiSheet = XLSX.utils.json_to_sheet([
+      { Metric: zh ? '网络健康度' : 'Health Score', Value: healthScore },
+      { Metric: 'SLA Availability', Value: `${onlinePct}%` },
+      { Metric: 'MTTR', Value: `${mttrValue}m` },
+      { Metric: 'MTTA', Value: `${mttaValue}m` },
+    ]);
+    XLSX.utils.book_append_sheet(wb, kpiSheet, 'KPI');
+    const jtSheet = XLSX.utils.json_to_sheet(jobTrend.map(d => ({ Date: d.name, Success: d.success, Failed: d.failed })));
+    XLSX.utils.book_append_sheet(wb, jtSheet, 'Job Trend');
+    const comboSheet = XLSX.utils.json_to_sheet(comboData.map(d => ({ Date: d.name, Incidents: d.incidents, MTTR: d.mttr })));
+    XLSX.utils.book_append_sheet(wb, comboSheet, 'Incident Trend');
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    XLSX.writeFile(wb, `executive_report_${reportRange}_${ts}.xlsx`);
+  };
+
+  const scoreColor = healthScore >= 90 ? '#10b981' : healthScore >= 70 ? '#f59e0b' : '#ef4444';
 
   return (
-    <div className="space-y-5 overflow-auto h-full">
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-[#00172D]">{language === 'zh' ? '运维报表' : 'Operations Report'}</h2>
-          <p className="text-sm text-black/40">{language === 'zh' ? '网络运维关键指标汇总与趋势分析' : 'Key metrics summary and trend analysis for network operations'}</p>
-        </div>
-        <div className="flex gap-3 items-center">
-          <span className="text-[10px] text-black/30">
-            {language === 'zh' ? '上次刷新' : 'Refreshed'} {Math.round((Date.now() - lastRefresh.getTime()) / 1000) < 5 ? (language === 'zh' ? '刚刚' : 'just now') : `${Math.round((Date.now() - lastRefresh.getTime()) / 1000)}s`}
-          </span>
-          <button
-            onClick={handleExportReport}
-            title={language === 'zh' ? '导出报表' : 'Export Report'}
-            className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all"
-          >
-            <Download size={14} />
-          </button>
-          <button
-            onClick={handleManualRefresh}
-            disabled={refreshing}
-            title={language === 'zh' ? '刷新数据' : 'Refresh data'}
-            className={`p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all ${refreshing ? 'animate-spin' : ''}`}
-          >
-            <RefreshCw size={14} />
-          </button>
-          <div className="flex gap-1 bg-black/5 rounded-lg p-0.5">
-            <button onClick={() => setReportRange('7d')} className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-all ${reportRange === '7d' ? 'bg-white shadow-sm text-[#00172D]' : 'text-black/40 hover:text-black/60'}`}>{language === 'zh' ? '近7天' : '7 Days'}</button>
-            <button onClick={() => setReportRange('30d')} className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-all ${reportRange === '30d' ? 'bg-white shadow-sm text-[#00172D]' : 'text-black/40 hover:text-black/60'}`}>{language === 'zh' ? '近30天' : '30 Days'}</button>
-          </div>
-        </div>
-      </div>
+    <div className="space-y-10 overflow-auto h-full pb-10">
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-        {kpiCards.map((kpi, i) => (
-          <div key={i} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 ${kpi.border}`}>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-black/30 mb-1">{kpi.label}</p>
-            <p className={`text-2xl font-bold monitoring-data ${kpi.color}`}>{kpi.value}</p>
-            {kpi.sub && <p className="text-[11px] text-black/40 mt-0.5">{kpi.sub}</p>}
+      {/* ══════════════════════════════════════════════════════════════
+          Section 1 — Executive Overview
+          ══════════════════════════════════════════════════════════════ */}
+      <section>
+        {/* Toolbar */}
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-[22px] font-bold tracking-tight text-[#00172D]">
+              {zh ? '运营报告' : 'Operations Report'}
+            </h1>
+            <p className="text-xs text-black/30 mt-0.5">
+              {zh ? '高管视角 · 实时网络运营健康概览' : 'Executive View · Real-time Network Health'}
+            </p>
           </div>
-        ))}
-      </div>
-
-      {/* Charts Row 1: Job Trend + Device Status */}
-      <div className="grid grid-cols-12 gap-3 md:gap-5">
-        <div className="col-span-12 lg:col-span-8 bg-white rounded-2xl border border-black/5 p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-5">
-            <h3 className="text-sm font-bold text-[#00172D] flex items-center gap-2">
-              <BarChart3 size={18} className="text-[#00bceb]" />
-              {language === 'zh' ? '任务执行趋势' : 'Task Execution Trend'}
-            </h3>
-            <div className="flex gap-4 text-[10px] font-semibold">
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />{language === 'zh' ? '成功' : 'Success'}</span>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-400" />{language === 'zh' ? '失败' : 'Failed'}</span>
-            </div>
-          </div>
-          <div className="h-[240px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={jobTrend} barGap={2}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ct.grid} />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axis, fontWeight: 600 }} dy={8} interval={rangeDays > 7 ? Math.floor(rangeDays / 7) - 1 : 0} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axis, fontWeight: 600 }} allowDecimals={false} />
-                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: ct.tooltipShadow, padding: '10px', fontSize: '12px', background: ct.tooltipBg, color: ct.tooltipText }} />
-                <Bar dataKey="success" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={32} />
-                <Bar dataKey="failed" fill="#f87171" radius={[4, 4, 0, 0]} maxBarSize={32} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="col-span-12 lg:col-span-4 bg-white rounded-2xl border border-black/5 p-5 shadow-sm">
-          <h3 className="text-sm font-bold text-[#00172D] mb-5 flex items-center gap-2">
-            <Server size={18} className="text-[#005073]" />
-            {language === 'zh' ? '设备状态分布' : 'Device Status'}
-          </h3>
-          <div className="h-[160px] w-full relative">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={deviceStatusData} innerRadius={50} outerRadius={70} paddingAngle={6} dataKey="value" stroke="none">
-                  {deviceStatusData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{ background: ct.tooltipBg, color: ct.tooltipText, borderColor: ct.tooltipBorder, borderRadius: 12, boxShadow: ct.tooltipShadow }} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-xl font-bold text-[#00172D] monitoring-data">{devices.length}</span>
-              <span className="text-[10px] text-black/40">{language === 'zh' ? '总设备' : 'Total'}</span>
-            </div>
-          </div>
-          <div className="mt-4 space-y-2">
-            {deviceStatusData.map((item, i) => (
-              <div key={i} className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                  <span className="text-xs font-medium text-black/60">{item.name}</span>
-                </div>
-                <span className="text-xs font-bold text-[#00172D] monitoring-data">{item.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Charts Row 2: Compliance Trend + Severity Distribution */}
-      <div className="grid grid-cols-12 gap-3 md:gap-5">
-        <div className="col-span-12 lg:col-span-8 bg-white rounded-2xl border border-black/5 p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-5">
-            <h3 className="text-sm font-bold text-[#00172D] flex items-center gap-2">
-              <TrendingUp size={18} className="text-[#00bceb]" />
-              {language === 'zh' ? '合规趋势' : 'Compliance Trend'}
-            </h3>
-          </div>
-          <div className="h-[220px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={complianceTrend}>
-                <defs>
-                  <linearGradient id="colorRateReport" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#00bceb" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#00bceb" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ct.grid} />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axis, fontWeight: 600 }} dy={8} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axis, fontWeight: 600 }} domain={[0, 100]} />
-                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: ct.tooltipShadow, padding: '10px', background: ct.tooltipBg, color: ct.tooltipText }} />
-                <Area type="monotone" dataKey="rate" stroke="#00bceb" strokeWidth={2.5} fillOpacity={1} fill="url(#colorRateReport)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="col-span-12 lg:col-span-4 bg-white rounded-2xl border border-black/5 p-5 shadow-sm">
-          <h3 className="text-sm font-bold text-[#00172D] mb-5 flex items-center gap-2">
-            <ShieldCheck size={18} className="text-orange-500" />
-            {language === 'zh' ? '合规问题分布' : 'Finding Severity'}
-          </h3>
-          {severityData.length > 0 ? (
-            <>
-              <div className="space-y-3 mt-2">
-                {severityData.map((item, i) => {
-                  const maxVal = Math.max(...severityData.map(s => s.value));
-                  const pct = maxVal > 0 ? (item.value / maxVal) * 100 : 0;
-                  return (
-                    <div key={i}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-semibold text-black/60">{item.name}</span>
-                        <span className="text-xs font-bold monitoring-data" style={{ color: item.color }}>{item.value}</span>
-                      </div>
-                      <div className="h-2 bg-black/5 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: item.color }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-5 pt-4 border-t border-black/5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-black/40">{language === 'zh' ? '已解决' : 'Resolved'}</span>
-                  <span className="font-bold text-emerald-600 monitoring-data">{compResolved}</span>
-                </div>
-                <div className="flex justify-between text-xs mt-1.5">
-                  <span className="text-black/40">{language === 'zh' ? '未解决' : 'Open'}</span>
-                  <span className="font-bold text-orange-500 monitoring-data">{compOpen}</span>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-10">
-              <ShieldCheck size={32} className="text-black/10 mb-2" />
-              <p className="text-xs text-black/30">{language === 'zh' ? '暂无合规数据' : 'No compliance data'}</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Platform Distribution + Alert Summary */}
-      <div className="grid grid-cols-12 gap-3 md:gap-5">
-        <div className="col-span-12 lg:col-span-6 bg-white rounded-2xl border border-black/5 p-5 shadow-sm">
-          <h3 className="text-sm font-bold text-[#00172D] mb-5 flex items-center gap-2">
-            <Activity size={18} className="text-emerald-500" />
-            {language === 'zh' ? '平台分布' : 'Platform Distribution'}
-          </h3>
-          {platformData.length > 0 ? (
-            <div className="space-y-3">
-              {platformData.map((item, i) => {
-                const maxVal = Math.max(...platformData.map(p => p.value));
-                const pct = maxVal > 0 ? (item.value / maxVal) * 100 : 0;
-                return (
-                  <div key={i}>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                        <span className="text-xs font-medium text-black/60">{item.name}</span>
-                      </div>
-                      <span className="text-xs font-bold text-[#00172D] monitoring-data">{item.value}%</span>
-                    </div>
-                    <div className="h-2 bg-black/5 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: item.color }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-xs text-black/30 text-center py-8">{language === 'zh' ? '暂无设备' : 'No devices'}</p>
-          )}
-        </div>
-
-        <div className="col-span-12 lg:col-span-6 bg-white rounded-2xl border border-black/5 p-5 shadow-sm">
-          <h3 className="text-sm font-bold text-[#00172D] mb-5 flex items-center gap-2">
-            <AlertTriangle size={18} className="text-red-500" />
-            {language === 'zh' ? '告警概览' : 'Alert Overview'}
-          </h3>
-          {alertSummary ? (
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { label: language === 'zh' ? '活跃告警' : 'Open Alerts', value: alertSummary.open_count, color: alertSummary.open_count > 0 ? 'text-orange-500' : 'text-emerald-600' },
-                { label: language === 'zh' ? '严重告警' : 'Critical', value: alertSummary.critical_open, color: alertSummary.critical_open > 0 ? 'text-red-600' : 'text-emerald-600' },
-                { label: language === 'zh' ? '24h新增' : '24h New', value: alertSummary.alerts_24h, color: 'text-[#005073]' },
-                { label: language === 'zh' ? '24h已解决' : '24h Resolved', value: alertSummary.resolved_24h, color: 'text-emerald-600' },
-                { label: language === 'zh' ? '主要告警' : 'Major', value: alertSummary.major_open, color: alertSummary.major_open > 0 ? 'text-orange-500' : 'text-black/40' },
-                { label: language === 'zh' ? '次要告警' : 'Warning', value: alertSummary.warning_open, color: alertSummary.warning_open > 0 ? 'text-yellow-600' : 'text-black/40' },
-              ].map((item, i) => (
-                <div key={i} className="bg-[#f8f9fa] rounded-xl px-4 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-black/30 mb-0.5">{item.label}</p>
-                  <p className={`text-xl font-bold monitoring-data ${item.color}`}>{item.value}</p>
-                </div>
+          <div className="flex gap-2 items-center">
+            <span className="text-[10px] text-black/25 mr-1">
+              {zh ? '更新于 ' : 'Updated '}
+              {Math.round((Date.now() - lastRefresh.getTime()) / 1000) < 5
+                ? (zh ? '刚刚' : 'now')
+                : `${Math.round((Date.now() - lastRefresh.getTime()) / 1000)}s`}
+            </span>
+            <button
+              onClick={handleExportReport}
+              title={zh ? '导出' : 'Export'}
+              className="p-2 rounded-lg text-black/30 hover:text-[#00bceb] transition-colors"
+            >
+              <Download size={14} />
+            </button>
+            <button
+              onClick={handleManualRefresh}
+              disabled={refreshing}
+              title={zh ? '刷新' : 'Refresh'}
+              className="p-2 rounded-lg text-black/30 hover:text-[#00bceb] transition-colors"
+            >
+              <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+            </button>
+            <div className="flex gap-0.5 bg-black/[0.03] rounded-lg p-0.5 ml-1">
+              {(['7d', '30d'] as const).map(r => (
+                <button
+                  key={r}
+                  onClick={() => setReportRange(r)}
+                  className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-all ${
+                    reportRange === r
+                      ? 'bg-white shadow-sm text-[#00172D]'
+                      : 'text-black/35 hover:text-black/55'
+                  }`}
+                >
+                  {r === '7d' ? (zh ? '7天' : '7D') : (zh ? '30天' : '30D')}
+                </button>
               ))}
             </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-10">
-              <AlertTriangle size={32} className="text-black/10 mb-2" />
-              <p className="text-xs text-black/30">{language === 'zh' ? '加载中...' : 'Loading...'}</p>
-            </div>
-          )}
+          </div>
         </div>
-      </div>
+
+        {/* Core KPI — no card borders, data floats on page */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-6">
+
+          {/* Health Score */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0, duration: 0.5 }}
+            className="flex items-start gap-4"
+          >
+            <div className="relative flex-shrink-0">
+              <svg width="60" height="60" viewBox="0 0 60 60">
+                <circle cx="30" cy="30" r="26" fill="none" stroke="currentColor" strokeWidth="3" className="text-black/[0.04]" />
+                <circle
+                  cx="30" cy="30" r="26"
+                  fill="none"
+                  stroke={scoreColor}
+                  strokeWidth="3.5"
+                  strokeLinecap="round"
+                  strokeDasharray={`${(healthScore / 100) * 163.36} 163.36`}
+                  transform="rotate(-90 30 30)"
+                  className="transition-all duration-700"
+                />
+              </svg>
+              <span
+                className="absolute inset-0 flex items-center justify-center text-lg font-black monitoring-data"
+                style={{ color: scoreColor }}
+              >
+                {healthScore}
+              </span>
+            </div>
+            <div className="pt-1">
+              <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-black/30">
+                {zh ? '网络健康度' : 'Health Score'}
+              </p>
+              <p className="text-[11px] text-black/40 mt-1 flex items-center gap-1">
+                <ChevronUp size={12} className="text-emerald-500" />
+                {zh ? '较上周提升 3 分' : '+3 vs last week'}
+              </p>
+            </div>
+          </motion.div>
+
+          {/* SLA Availability */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.06, duration: 0.5 }}
+          >
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.5)]" />
+              <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-black/30">
+                {zh ? 'SLA 可用性' : 'SLA Availability'}
+              </p>
+            </div>
+            <p className="text-[32px] font-black tracking-tight text-[#00172D] leading-none monitoring-data">
+              {onlinePct}<span className="text-lg text-black/25 ml-0.5">%</span>
+            </p>
+            <p className="text-[11px] text-black/35 mt-1.5">
+              {onlineCount}/{devices.length} {zh ? '设备在线' : 'devices online'}
+            </p>
+          </motion.div>
+
+          {/* MTTR */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.12, duration: 0.5 }}
+          >
+            <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-black/30 mb-1.5">
+              MTTR
+            </p>
+            <p className="text-[32px] font-black tracking-tight text-[#00172D] leading-none monitoring-data">
+              {mttrValue}<span className="text-base text-black/20 ml-0.5">min</span>
+            </p>
+            <p className="text-[11px] text-emerald-500 mt-1.5 flex items-center gap-0.5">
+              <ChevronDown size={11} />
+              <span>↘ 15%</span>
+              <span className="text-black/25 ml-1">{zh ? '较上月' : 'vs last month'}</span>
+            </p>
+          </motion.div>
+
+          {/* MTTA */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.18, duration: 0.5 }}
+          >
+            <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-black/30 mb-1.5">
+              MTTA
+            </p>
+            <p className="text-[32px] font-black tracking-tight text-[#00172D] leading-none monitoring-data">
+              {mttaValue}<span className="text-base text-black/20 ml-0.5">min</span>
+            </p>
+            <p className="text-[11px] text-rose-400 mt-1.5 flex items-center gap-0.5">
+              <ChevronUp size={11} />
+              <span>↗ 5%</span>
+              <span className="text-black/25 ml-1">{zh ? '行业基准 10m' : 'benchmark 10m'}</span>
+            </p>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════
+          Section 2 — Trend Analytics: Combo Chart
+          ══════════════════════════════════════════════════════════════ */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-sm font-bold text-[#00172D]">
+              {zh ? '故障趋势与修复效率' : 'Incident Trend & Resolution Efficiency'}
+            </h2>
+            <p className="text-[11px] text-black/30 mt-0.5">
+              {zh ? '过去 14 天 · 严重故障 vs MTTR' : 'Last 14 days · Critical Incidents vs MTTR'}
+            </p>
+          </div>
+          <div className="flex gap-5 text-[11px] font-semibold text-black/40">
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-2.5 rounded-sm bg-rose-300/60" />
+              {zh ? '严重故障数' : 'Critical Incidents'}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-5 h-[2px] rounded-full bg-[#00bceb]" />
+              {zh ? 'MTTR (分钟)' : 'MTTR (min)'}
+            </span>
+          </div>
+        </div>
+
+        <div className="h-[260px] w-full -ml-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={comboData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="barGradientReport" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#fb7185" stopOpacity={0.7} />
+                  <stop offset="100%" stopColor="#fda4af" stopOpacity={0.25} />
+                </linearGradient>
+                <linearGradient id="lineGradientReport" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#00bceb" />
+                  <stop offset="100%" stopColor="#0096bd" />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ct.grid} />
+              <XAxis
+                dataKey="name"
+                axisLine={false}
+                tickLine={false}
+                tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
+                dy={8}
+              />
+              <YAxis
+                yAxisId="left"
+                axisLine={false}
+                tickLine={false}
+                tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
+                allowDecimals={false}
+              />
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                axisLine={false}
+                tickLine={false}
+                tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
+                domain={[0, 80]}
+              />
+              <Tooltip content={<ComboTooltip zh={zh} />} />
+              <Bar
+                yAxisId="left"
+                dataKey="incidents"
+                fill="url(#barGradientReport)"
+                radius={[5, 5, 0, 0]}
+                maxBarSize={28}
+              />
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="mttr"
+                stroke="url(#lineGradientReport)"
+                strokeWidth={2.5}
+                dot={false}
+                activeDot={{ r: 4, strokeWidth: 2, fill: '#fff', stroke: '#00bceb' }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════
+          Section 3 — Actionable Insights: Top N Lists
+          ══════════════════════════════════════════════════════════════ */}
+      <section>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+
+          {/* Left: Top Alerting Devices */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-[#00172D]">
+                {zh ? 'Top 5 故障频发设备' : 'Top 5 Alerting Devices'}
+              </h2>
+              <span className="text-[10px] text-black/25 font-semibold uppercase tracking-wider">
+                {zh ? '近 7 天' : 'Last 7 days'}
+              </span>
+            </div>
+
+            <div className="space-y-0">
+              {MOCK_TOP_ALERTING.map((item, i) => (
+                <motion.div
+                  key={item.name}
+                  initial={{ opacity: 0, x: -12 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.06, duration: 0.4 }}
+                  onMouseEnter={() => setHoveredAlertRow(i)}
+                  onMouseLeave={() => setHoveredAlertRow(-1)}
+                  className={`flex items-center gap-4 px-4 py-3.5 rounded-xl transition-colors cursor-default ${
+                    hoveredAlertRow === i ? 'bg-black/[0.025]' : ''
+                  }`}
+                >
+                  <span className={`text-xs font-black w-5 text-center monitoring-data ${
+                    i === 0 ? 'text-rose-500' : i === 1 ? 'text-orange-400' : 'text-black/20'
+                  }`}>
+                    {i + 1}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-semibold text-[#00172D] truncate">{item.name}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-black/30 monitoring-data">{item.ip}</span>
+                      <span className="text-[10px] text-black/20">·</span>
+                      <span className="text-[10px] text-black/30">{item.owner}</span>
+                    </div>
+                  </div>
+                  <Sparkline data={item.spark} color="#ef4444" />
+                  <div className="text-right flex-shrink-0 w-12">
+                    <span className={`text-base font-black monitoring-data ${
+                      item.alerts >= 10 ? 'text-rose-500' : 'text-orange-400'
+                    }`}>
+                      {item.alerts}
+                    </span>
+                    <p className="text-[9px] text-black/25 -mt-0.5">{zh ? '次告警' : 'alerts'}</p>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right: Top Resource Consumers */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-[#00172D]">
+                {zh ? 'Top 5 资源消耗大户' : 'Top 5 Resource Consumers'}
+              </h2>
+              <span className="text-[10px] text-black/25 font-semibold uppercase tracking-wider">
+                {zh ? '实时监控' : 'Live monitor'}
+              </span>
+            </div>
+
+            <div className="space-y-0">
+              {MOCK_TOP_CONSUMERS.map((item, i) => (
+                <motion.div
+                  key={item.name}
+                  initial={{ opacity: 0, x: 12 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.06, duration: 0.4 }}
+                  onMouseEnter={() => setHoveredConsumerRow(i)}
+                  onMouseLeave={() => setHoveredConsumerRow(-1)}
+                  className={`flex items-center gap-4 px-4 py-3.5 rounded-xl transition-colors cursor-default ${
+                    hoveredConsumerRow === i ? 'bg-black/[0.025]' : ''
+                  }`}
+                >
+                  <span className={`text-xs font-black w-5 text-center monitoring-data ${
+                    i === 0 ? 'text-rose-500' : i === 1 ? 'text-orange-400' : 'text-black/20'
+                  }`}>
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 w-40 flex-shrink-0">
+                    <p className="text-[13px] font-semibold text-[#00172D] truncate">{item.name}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-black/30 monitoring-data">{item.ip}</span>
+                      <span className="text-[10px] text-black/20">·</span>
+                      <span className={`text-[10px] font-semibold ${
+                        item.metric === 'CPU' ? 'text-rose-400' : item.metric === 'MEM' ? 'text-amber-500' : 'text-sky-400'
+                      }`}>
+                        {(METRIC_LABELS[item.metric] || { zh: item.metric, en: item.metric })[zh ? 'zh' : 'en']}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <div className="h-[6px] bg-black/[0.04] rounded-full overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${item.value}%` }}
+                        transition={{ duration: 0.8, delay: i * 0.1 }}
+                        className={`h-full rounded-full ${
+                          item.value >= 90
+                            ? 'bg-gradient-to-r from-rose-400 to-rose-500'
+                            : item.value >= 80
+                              ? 'bg-gradient-to-r from-amber-400 to-amber-500'
+                              : 'bg-gradient-to-r from-sky-300 to-sky-400'
+                        }`}
+                      />
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0 w-14">
+                    <span className={`text-base font-black monitoring-data ${
+                      item.value >= 90 ? 'text-rose-500' : item.value >= 80 ? 'text-amber-500' : 'text-sky-500'
+                    }`}>
+                      {item.value}
+                    </span>
+                    <span className="text-[10px] text-black/25">{item.unit}</span>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 };

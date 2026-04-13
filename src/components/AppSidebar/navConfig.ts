@@ -64,8 +64,9 @@ export const navConfig: NavGroup[] = [
     labelEn: 'AUTOMATION',
     icon: 'Zap',
     children: [
-      { id: 'auto-exec',  label: '自动化任务',  labelEn: 'Automation',        path: '/automation/execute', activeMatch: '/automation/' },
-      { id: 'inspection', label: '设备巡检',    labelEn: 'Device Inspection', path: '/automation/inspection' },
+      { id: 'auto-exec',  label: '自动化任务',  labelEn: 'Automation',        path: '/automation/execute', activeMatch: '/automation/execute,/automation/playbooks,/automation/scenarios,/automation/history' },
+      { id: 'inspection', label: '巡检概览',    labelEn: 'Inspection Overview', path: '/automation/inspection' },
+      { id: 'inspection-records', label: '巡检记录', labelEn: 'Inspection Records', path: '/automation/inspection-records' },
       { id: 'exec-schedule', label: '执行计划',  labelEn: 'Execution Schedules', path: '/automation/schedule' },
       { id: 'exec-history', label: '执行历史',   labelEn: 'Execution History', path: '/automation/schedule-history' },
       { id: 'scheduled-jobs', label: '定时作业',  labelEn: 'Scheduled Jobs',    path: '/automation/scheduled-jobs' },
@@ -77,9 +78,13 @@ export const navConfig: NavGroup[] = [
     labelEn: 'TICKETS',
     icon: 'ClipboardList',
     children: [
-      { id: 'change-orders',  label: '变更工单',  labelEn: 'Change Orders',  path: '/change-orders' },
-      { id: 'my-todo',        label: '我的待办',  labelEn: 'My Todo',        path: '/change-orders/my-todo' },
-      { id: 'new-order',      label: '新建工单',  labelEn: 'New Order',      path: '/change-orders/new' },
+      { id: 'new-order',           label: '新建工单',  labelEn: 'New Order',         path: '/change-orders/new' },
+      { id: 'my-todo',             label: '个人待办',  labelEn: 'My Todo',           path: '/change-orders/my-todo' },
+      { id: 'group-todo',          label: '组内待办',  labelEn: 'Group Todo',        path: '/change-orders/group-todo' },
+      { id: 'my-participated',     label: '我参与的',  labelEn: 'My Participated',   path: '/change-orders/participated' },
+      { id: 'my-focus',            label: '我的关注',  labelEn: 'My Focus',          path: '/change-orders/focus' },
+      { id: 'change-orders',       label: '全部工单',  labelEn: 'All Orders',        path: '/change-orders/all' },
+      { id: 'my-drafts',           label: '草稿箱',    labelEn: 'Drafts',            path: '/change-orders/drafts' },
     ],
   },
   {

@@ -277,6 +277,13 @@ def api_list_change_orders(
     group_todo: str = Query('', description='Filter group todo by comma-separated change_groups'),
     my_participated: str = Query('', description='Filter orders where user is involved'),
     my_drafts: str = Query('', description='Filter draft orders by requester username'),
+    order_type: str = Query('', description='Filter by order type'),
+    created_from: str = Query('', description='Filter created_at >= ISO datetime'),
+    created_to: str = Query('', description='Filter created_at <= ISO datetime'),
+    completed_from: str = Query('', description='Filter actual_end >= ISO datetime'),
+    completed_to: str = Query('', description='Filter actual_end <= ISO datetime'),
+    scheduled_from: str = Query('', description='Filter scheduled_start >= ISO datetime'),
+    scheduled_to: str = Query('', description='Filter scheduled_end <= ISO datetime'),
     user=require_role("Viewer"),
 ):
     conn = get_db_connection()
@@ -288,6 +295,10 @@ def api_list_change_orders(
             assignee=assignee, bookmarked_by=bookmarked,
             my_todo=my_todo, group_todo=group_todo,
             my_participated=my_participated, my_drafts=my_drafts,
+            order_type=order_type,
+            created_from=created_from, created_to=created_to,
+            completed_from=completed_from, completed_to=completed_to,
+            scheduled_from=scheduled_from, scheduled_to=scheduled_to,
         )
         return {'success': True, 'data': orders, 'total': total, 'page': page, 'page_size': page_size}
     finally:

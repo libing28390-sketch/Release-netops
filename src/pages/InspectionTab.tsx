@@ -77,6 +77,7 @@ interface InspectionTabProps {
   devices: Device[];
   overview: DeviceHealthOverview | null;
   onShowDetails: (device: Device) => void;
+  initialView?: 'overview' | 'records';
 }
 
 const statusToneMap: Record<string, string> = {
@@ -168,13 +169,18 @@ const isNetworkDevice = (role: string, platform: string): boolean => {
 /* Component                                  */
 /* ────────────────────────────────────────── */
 
-const InspectionTab: React.FC<InspectionTabProps> = ({ t, language, devices, overview, onShowDetails }) => {
+const InspectionTab: React.FC<InspectionTabProps> = ({ t, language, devices, overview, onShowDetails, initialView }) => {
   const ct = useChartTheme();
   const isZh = language === 'zh';
 
   // ── sub-tab ──
   type SubTab = 'overview' | 'records';
-  const [subTab, setSubTab] = useState<SubTab>('overview');
+  const [subTab, setSubTab] = useState<SubTab>(initialView || 'overview');
+
+  // Sync sub-tab when sidebar navigation changes
+  useEffect(() => {
+    if (initialView) setSubTab(initialView);
+  }, [initialView]);
 
   // ── overview state ──
   const [rangeHours, setRangeHours] = useState(24);
@@ -392,24 +398,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ t, language, devices, ove
           <button onClick={() => setRunResult(null)} className="p-1 rounded-md text-black/30 hover:text-black/60 hover:bg-black/5 transition-colors"><X className="w-4 h-4" /></button>
         </div>
       )}
-
-      {/* ═══════ Sub-tab selector ═══════ */}
-      <div className="flex items-center gap-1 rounded-xl bg-black/[0.03] p-1 w-fit">
-        {subTabs.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => { setSubTab(tab.key); setSelectedRunDetail(null); }}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
-              subTab === tab.key
-                ? 'bg-white text-[#0b2340] shadow-sm ring-1 ring-black/5'
-                : 'text-black/45 hover:text-black/70 hover:bg-white/40'
-            }`}
-          >
-            {tab.icon}
-            {tab.label}
-          </button>
-        ))}
-      </div>
 
       {/* ═══════ SUB-TAB: OVERVIEW ═══════ */}
       {subTab === 'overview' && (

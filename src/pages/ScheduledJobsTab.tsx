@@ -380,7 +380,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
   };
 
-  /* === IP validation (supports multiple IPs) === */
+  /* === IP validation (supports multiple IPs, allows non-inventory) === */
   const validateAndAddIps = async (raw: string) => {
     const ips = raw.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
     if (ips.length === 0) return;
@@ -392,12 +392,15 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       for (const ip of ips) {
         if (ipDevices.some(d => d.ip === ip)) { duplicates.push(ip); continue; }
         try {
+          let found = false;
+          // 1) Search devices table
           const r = await fetch(`/api/devices?search=${encodeURIComponent(ip)}&mode=light&page_size=50`, { headers: authHeaders });
           if (r.ok) {
             const j = await r.json();
             const items = j.data?.items || j.data || [];
             const device = items.find((d: { ip_address: string }) => d.ip_address === ip);
             if (device) {
+              found = true;
               setIpDevices(prev => {
                 if (prev.some(d => d.ip === device.ip_address)) return prev;
                 return [...prev, {
@@ -408,20 +411,46 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   })),
                 }];
               });
-            } else {
-              notFound.push(ip);
             }
           }
-        } catch { notFound.push(ip); }
+          // 2) Fallback: search physical_assets table
+          if (!found) {
+            try {
+              const ar = await fetch(`/api/assets?q=${encodeURIComponent(ip)}&page_size=50`, { headers: authHeaders });
+              if (ar.ok) {
+                const aj = await ar.json();
+                const assets = aj.data?.items || aj.data || [];
+                const asset = assets.find((a: { management_ip?: string; business_ip?: string }) =>
+                  a.management_ip === ip || a.business_ip === ip
+                );
+                if (asset) {
+                  found = true;
+                  setIpDevices(prev => {
+                    if (prev.some(d => d.ip === ip)) return prev;
+                    return [...prev, { ip, hostname: asset.hostname || '', tags: [] }];
+                  });
+                }
+              }
+            } catch { /* ignore asset fallback errors */ }
+          }
+          if (!found) {
+            notFound.push(ip);
+            setIpDevices(prev => {
+              if (prev.some(d => d.ip === ip)) return prev;
+              return [...prev, { ip, hostname: '', tags: [] }];
+            });
+          }
+        } catch {
+          notFound.push(ip);
+          setIpDevices(prev => {
+            if (prev.some(d => d.ip === ip)) return prev;
+            return [...prev, { ip, hostname: '', tags: [] }];
+          });
+        }
       }
+      setIpInput('');
       if (notFound.length > 0) {
-        setIpError(zh ? `以下 IP 不存在于设备列表：${notFound.join(', ')}` : `IP not found: ${notFound.join(', ')}`);
-        setIpInput(notFound.join(', '));
-      } else {
-        setIpInput('');
-      }
-      if (duplicates.length > 0 && notFound.length === 0) {
-        setIpInput('');
+        setIpError(zh ? `以下 IP 不存在于设备列表：${notFound.join(', ')}（已添加，执行时将尝试连接）` : `IP not in inventory: ${notFound.join(', ')} (added, will attempt connection at runtime)`);
       }
     } catch {
       setIpError(zh ? '查询设备失败' : 'Device lookup failed');
@@ -705,7 +734,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       )}
 
       {total > pageSize && (
-        <Pagination current={page} total={total} pageSize={pageSize} onPageChange={setPage} />
+        <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} language={language} />
       )}
 
       {/* ═════════════════════════════════════════════ */}
@@ -1014,7 +1043,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                     </div>
 
                     {ipError && (
-                      <p className="text-[10px] text-red-500 mt-1">{ipError}</p>
+                      <p className={`text-[10px] mt-1 ${ipError.includes('已添加') || ipError.includes('added') ? 'text-amber-500' : 'text-red-500'}`}>{ipError}</p>
                     )}
 
                     {ipDevices.length > 0 && (
@@ -1022,14 +1051,18 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                         {ipDevices.map(dev => (
                           <div
                             key={dev.ip}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-black/[0.06] bg-[#f8fafc] group hover:border-cyan-200/60 transition-all"
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border group hover:border-cyan-200/60 transition-all ${
+                              dev.hostname ? 'border-black/[0.06] bg-[#f8fafc]' : 'border-amber-200/60 bg-amber-50/30'
+                            }`}
                           >
                             <span className="text-xs font-mono font-bold text-[#164e63] shrink-0">{dev.ip}</span>
-                            {dev.hostname && (
+                            {dev.hostname ? (
                               <>
                                 <span className="text-black/15 text-[10px]">·</span>
                                 <span className="text-[11px] text-black/40 truncate">{dev.hostname}</span>
                               </>
+                            ) : (
+                              <span className="text-[10px] text-amber-500 italic">{zh ? '手动IP' : 'manual'}</span>
                             )}
                             {dev.tags.length > 0 && (
                               <div className="flex items-center gap-1 flex-1 min-w-0 overflow-hidden">

@@ -19,6 +19,57 @@ from services.inspection_service import (
 router = APIRouter()
 
 
+# ─── 巡检计划（必须在 {run_id} 之前注册，避免路由遮蔽） ───
+
+@router.get('/inspections/schedules')
+def get_schedules(
+    _user=require_role('Viewer'),
+):
+    data = list_schedules()
+    return {'success': True, 'data': data, 'message': ''}
+
+
+@router.post('/inspections/schedules')
+def add_schedule(
+    body: InspectionScheduleCreate,
+    user=require_role('Operator'),
+):
+    data = create_schedule(
+        name=body.name,
+        cron_expr=body.cron_expr,
+        scope_type=body.scope_type,
+        scope_filter=body.scope_filter,
+        created_by=user.get('username', 'unknown'),
+        scheduled_at=body.scheduled_at,
+        expires_at=body.expires_at,
+    )
+    return {'success': True, 'data': data, 'message': '巡检计划已创建'}
+
+
+@router.put('/inspections/schedules/{schedule_id}')
+def modify_schedule(
+    schedule_id: str,
+    body: InspectionScheduleUpdate,
+    _user=require_role('Operator'),
+):
+    updates = body.model_dump(exclude_none=True)
+    result = update_schedule(schedule_id, updates)
+    if not result:
+        raise HTTPException(status_code=404, detail='计划不存在')
+    return {'success': True, 'data': result, 'message': '巡检计划已更新'}
+
+
+@router.delete('/inspections/schedules/{schedule_id}')
+def remove_schedule(
+    schedule_id: str,
+    _user=require_role('Administrator'),
+):
+    deleted = delete_schedule(schedule_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail='计划不存在')
+    return {'success': True, 'data': None, 'message': '巡检计划已删除'}
+
+
 # ─── 巡检执行 ─────────────────────────
 
 @router.post('/inspections/run')
@@ -47,17 +98,6 @@ def list_inspection_runs(
     return {'success': True, 'data': data, 'message': ''}
 
 
-@router.get('/inspections/{run_id}')
-def inspection_run_detail(
-    run_id: str,
-    _user=require_role('Viewer'),
-):
-    detail = get_inspection_run_detail(run_id)
-    if not detail:
-        raise HTTPException(status_code=404, detail='巡检记录不存在')
-    return {'success': True, 'data': detail, 'message': ''}
-
-
 @router.get('/inspections/device/{device_id}/history')
 def device_inspections(
     device_id: str,
@@ -78,50 +118,13 @@ def compare_inspection_runs(
     return {'success': True, 'data': result, 'message': ''}
 
 
-# ─── 巡检计划 ─────────────────────────
-
-@router.get('/inspections/schedules')
-def get_schedules(
+# ⚠️ {run_id} 路径参数路由放最后，避免遮蔽上方字面路由
+@router.get('/inspections/{run_id}')
+def inspection_run_detail(
+    run_id: str,
     _user=require_role('Viewer'),
 ):
-    data = list_schedules()
-    return {'success': True, 'data': data, 'message': ''}
-
-
-@router.post('/inspections/schedules')
-def add_schedule(
-    body: InspectionScheduleCreate,
-    user=require_role('Operator'),
-):
-    data = create_schedule(
-        name=body.name,
-        cron_expr=body.cron_expr,
-        scope_type=body.scope_type,
-        scope_filter=body.scope_filter,
-        created_by=user.get('username', 'unknown'),
-    )
-    return {'success': True, 'data': data, 'message': '巡检计划已创建'}
-
-
-@router.put('/inspections/schedules/{schedule_id}')
-def modify_schedule(
-    schedule_id: str,
-    body: InspectionScheduleUpdate,
-    _user=require_role('Operator'),
-):
-    updates = body.model_dump(exclude_none=True)
-    result = update_schedule(schedule_id, updates)
-    if not result:
-        raise HTTPException(status_code=404, detail='计划不存在')
-    return {'success': True, 'data': result, 'message': '巡检计划已更新'}
-
-
-@router.delete('/inspections/schedules/{schedule_id}')
-def remove_schedule(
-    schedule_id: str,
-    _user=require_role('Administrator'),
-):
-    deleted = delete_schedule(schedule_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail='计划不存在')
-    return {'success': True, 'data': None, 'message': '巡检计划已删除'}
+    detail = get_inspection_run_detail(run_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail='巡检记录不存在')
+    return {'success': True, 'data': detail, 'message': ''}

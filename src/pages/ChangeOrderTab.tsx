@@ -133,7 +133,7 @@ interface Props {
   scenarios: ScenarioTemplate[];
   platforms: Record<string, PlatformMeta>;
   currentUser: SessionUser;
-  initialView?: 'my_todo' | 'create';
+  initialView?: 'all' | 'group_todo' | 'my_todo' | 'my_participated' | 'my_focus' | 'my_drafts' | 'create';
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -457,7 +457,19 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
   const [assigneeFilter, setAssigneeFilter] = useState('');
   const [bookmarkFilter, setBookmarkFilter] = useState(false);
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
-  const [viewTab, setViewTab] = useState<'all' | 'group_todo' | 'my_todo' | 'my_focus' | 'my_participated' | 'my_drafts'>(initialView === 'my_todo' ? 'my_todo' : 'all');
+  const [orderTypeFilter, setOrderTypeFilter] = useState('');
+  const [createdFrom, setCreatedFrom] = useState('');
+  const [createdTo, setCreatedTo] = useState('');
+  const [completedFrom, setCompletedFrom] = useState('');
+  const [completedTo, setCompletedTo] = useState('');
+  const [scheduledFrom, setScheduledFrom] = useState('');
+  const [scheduledTo, setScheduledTo] = useState('');
+  const [viewTab, setViewTab] = useState<'all' | 'group_todo' | 'my_todo' | 'my_focus' | 'my_participated' | 'my_drafts'>(initialView && initialView !== 'create' ? initialView : 'all');
+
+  // Sync viewTab when sidebar navigation changes
+  useEffect(() => {
+    if (initialView && initialView !== 'create') setViewTab(initialView);
+  }, [initialView]);
 
   // ── Bookmarks ──
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
@@ -669,6 +681,13 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
       if (requesterFilter) params.set('requester', requesterFilter);
       if (assigneeFilter) params.set('assignee', assigneeFilter);
       if (bookmarkFilter && currentUser.id) params.set('bookmarked', String(currentUser.id));
+      if (orderTypeFilter) params.set('order_type', orderTypeFilter);
+      if (createdFrom) params.set('created_from', createdFrom);
+      if (createdTo) params.set('created_to', createdTo);
+      if (completedFrom) params.set('completed_from', completedFrom);
+      if (completedTo) params.set('completed_to', completedTo);
+      if (scheduledFrom) params.set('scheduled_from', scheduledFrom);
+      if (scheduledTo) params.set('scheduled_to', scheduledTo);
       // View tab specific filters
       if (viewTab === 'my_todo' && currentUser.username) {
         params.set('my_todo', currentUser.username);
@@ -692,7 +711,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, search, statusFilter, priorityFilter, requesterFilter, assigneeFilter, bookmarkFilter, viewTab, currentUser.id, currentUser.username, currentUser.change_groups, zh, showToast, authHeaders]);
+  }, [page, pageSize, search, statusFilter, priorityFilter, requesterFilter, assigneeFilter, bookmarkFilter, orderTypeFilter, createdFrom, createdTo, completedFrom, completedTo, scheduledFrom, scheduledTo, viewTab, currentUser.id, currentUser.username, currentUser.change_groups, zh, showToast, authHeaders]);
 
   const fetchBookmarks = useCallback(async () => {
     try {
@@ -890,7 +909,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
   };
 
   // ── Advanced search active count ──
-  const advancedFilterCount = [requesterFilter, assigneeFilter, bookmarkFilter].filter(Boolean).length;
+  const advancedFilterCount = [requesterFilter, assigneeFilter, bookmarkFilter, orderTypeFilter, createdFrom, createdTo, completedFrom, completedTo, scheduledFrom, scheduledTo].filter(Boolean).length;
 
   // ── Detail ──
   const openDetail = async (order: ChangeOrder) => {
@@ -1098,38 +1117,6 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
 
       {!selectedOrder ? (
       <>
-      {/* ── Header ── */}
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight flex items-center gap-3">
-            <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-[#00bceb]/12 to-[#0096bd]/8 ring-1 ring-[#00bceb]/15">
-              <ClipboardList size={18} className="text-[#00bceb]" />
-            </span>
-            {zh ? '变更工单管理' : 'Change Orders'}
-          </h2>
-          <p className="text-sm text-black/40 mt-1">{zh ? '创建、跟踪和管理网络变更工单' : 'Create, track and manage network change orders'}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => { fetchOrders(); fetchSummary(); fetchBookmarks(); }}
-            className="p-2.5 rounded-xl border border-black/8 bg-white text-black/50 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all"
-            title={zh ? '刷新' : 'Refresh'}
-          >
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-          </button>
-          <button
-            onClick={() => {
-              resetEditorState();
-              setShowCreateModal(true);
-            }}
-            className="px-4 py-2.5 bg-[#00bceb] text-white rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-[#0096bd] transition-all shadow-lg shadow-[#00bceb]/20"
-          >
-            <Plus size={15} />
-            {zh ? '新建工单' : 'New Order'}
-          </button>
-        </div>
-      </div>
-
       {/* ── Summary Cards ── */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         {summaryCards.map((card, idx) => (
@@ -1149,34 +1136,6 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
             <p className="mt-2 text-xs text-black/45 font-medium">{card.label}</p>
           </motion.div>
         ))}
-      </div>
-
-      {/* ── View Tabs ── */}
-      <div className="flex items-center gap-1 bg-white rounded-2xl border border-black/5 shadow-sm px-1.5 py-1.5">
-        {([
-          { key: 'all', label: zh ? '全部工单' : 'All Orders', icon: ClipboardList },
-          { key: 'group_todo', label: zh ? '组内待办' : 'Group Todo', icon: Users },
-          { key: 'my_todo', label: zh ? '个人待办' : 'My Todo', icon: UserCheck },
-          { key: 'my_participated', label: zh ? '我参与的' : 'My Participated', icon: Star },
-          { key: 'my_focus', label: zh ? '我的关注' : 'My Focus', icon: Heart },
-          { key: 'my_drafts', label: zh ? '草稿箱' : 'Drafts', icon: FileText },
-        ] as const).map(tab => {
-          const active = viewTab === tab.key;
-          return (
-            <button
-              key={tab.key}
-              onClick={() => { setViewTab(tab.key); setPage(1); }}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
-                active
-                  ? 'bg-[#00bceb]/10 text-[#0e7490] shadow-sm ring-1 ring-[#00bceb]/15'
-                  : 'text-black/45 hover:text-black/65 hover:bg-black/[0.03]'
-              }`}
-            >
-              <tab.icon size={13} className={active ? 'text-[#00bceb]' : ''} />
-              {tab.label}
-            </button>
-          );
-        })}
       </div>
 
       {/* ── Filters bar ── */}
@@ -1248,6 +1207,14 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
           >
             {bookmarkFilter ? <BookmarkCheck size={14} /> : <Bookmark size={14} />}
           </button>
+          {/* Refresh */}
+          <button
+            onClick={() => { fetchOrders(); fetchSummary(); fetchBookmarks(); }}
+            className="p-2 rounded-xl border border-black/10 bg-white text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all"
+            title={zh ? '刷新' : 'Refresh'}
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </button>
         </div>
         {/* ── Advanced search panel ── */}
         <AnimatePresence>
@@ -1259,43 +1226,163 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
               transition={{ duration: 0.2 }}
               className="overflow-hidden"
             >
-              <div className="px-4 pb-4 pt-1 border-t border-black/5 flex flex-wrap gap-3 items-end">
-                <div className="min-w-[180px]">
-                  <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '创建人' : 'Creator'}</label>
-                  <select
-                    value={requesterFilter}
-                    onChange={e => { setRequesterFilter(e.target.value); setPage(1); }}
-                    title={zh ? '按创建人筛选' : 'Filter by creator'}
-                    className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
-                  >
-                    <option value="">{zh ? '全部创建人' : 'All Creators'}</option>
-                    {users.map(u => (
-                      <option key={u.id} value={u.username}>{u.username}{u.group_name ? ` · ${u.group_name}` : ''}</option>
-                    ))}
-                  </select>
+              <div className="px-4 pb-4 pt-3 border-t border-black/5 space-y-3">
+                {/* Row 1: Creator / Assignee / Order Type */}
+                <div className="flex flex-wrap gap-3 items-end">
+                  <div className="min-w-[170px]">
+                    <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '创建人' : 'Creator'}</label>
+                    <select
+                      value={requesterFilter}
+                      onChange={e => { setRequesterFilter(e.target.value); setPage(1); }}
+                      title={zh ? '按创建人筛选' : 'Filter by creator'}
+                      className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
+                    >
+                      <option value="">{zh ? '全部创建人' : 'All Creators'}</option>
+                      {users.map(u => (
+                        <option key={u.id} value={u.username}>{u.username}{u.group_name ? ` · ${u.group_name}` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="min-w-[170px]">
+                    <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '处理人' : 'Assignee'}</label>
+                    <select
+                      value={assigneeFilter}
+                      onChange={e => { setAssigneeFilter(e.target.value); setPage(1); }}
+                      title={zh ? '按处理人筛选' : 'Filter by assignee'}
+                      className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
+                    >
+                      <option value="">{zh ? '全部处理人' : 'All Assignees'}</option>
+                      {users.filter(u => u.role !== 'Viewer').map(u => (
+                        <option key={u.id} value={u.username}>{u.username}{u.group_name ? ` · ${u.group_name}` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="min-w-[170px]">
+                    <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '工单类型' : 'Order Type'}</label>
+                    <select
+                      value={orderTypeFilter}
+                      onChange={e => { setOrderTypeFilter(e.target.value); setPage(1); }}
+                      title={zh ? '按类型筛选' : 'Filter by type'}
+                      className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
+                    >
+                      <option value="">{zh ? '全部类型' : 'All Types'}</option>
+                      {Object.entries(ORDER_TYPE_META).map(([k, v]) => (
+                        <option key={k} value={k}>{v.label[zh ? 'zh' : 'en']}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <div className="min-w-[180px]">
-                  <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '处理人' : 'Assignee'}</label>
-                  <select
-                    value={assigneeFilter}
-                    onChange={e => { setAssigneeFilter(e.target.value); setPage(1); }}
-                    title={zh ? '按处理人筛选' : 'Filter by assignee'}
-                    className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
-                  >
-                    <option value="">{zh ? '全部处理人' : 'All Assignees'}</option>
-                    {users.filter(u => u.role !== 'Viewer').map(u => (
-                      <option key={u.id} value={u.username}>{u.username}{u.group_name ? ` · ${u.group_name}` : ''}</option>
-                    ))}
-                  </select>
+                {/* Row 2: Date range filters */}
+                <div className="flex flex-wrap gap-3 items-end">
+                  <div className="min-w-[170px]">
+                    <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '创建时间（从）' : 'Created From'}</label>
+                    <input
+                      type="datetime-local"
+                      value={createdFrom}
+                      onChange={e => { setCreatedFrom(e.target.value); setPage(1); }}
+                      title={zh ? '创建时间（从）' : 'Created From'}
+                      className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
+                    />
+                  </div>
+                  <div className="min-w-[170px]">
+                    <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '创建时间（至）' : 'Created To'}</label>
+                    <input
+                      type="datetime-local"
+                      value={createdTo}
+                      onChange={e => { setCreatedTo(e.target.value); setPage(1); }}
+                      title={zh ? '创建时间（至）' : 'Created To'}
+                      className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
+                    />
+                  </div>
+                  <div className="min-w-[170px]">
+                    <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '完成时间（从）' : 'Completed From'}</label>
+                    <input
+                      type="datetime-local"
+                      value={completedFrom}
+                      onChange={e => { setCompletedFrom(e.target.value); setPage(1); }}
+                      title={zh ? '完成时间（从）' : 'Completed From'}
+                      className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
+                    />
+                  </div>
+                  <div className="min-w-[170px]">
+                    <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '完成时间（至）' : 'Completed To'}</label>
+                    <input
+                      type="datetime-local"
+                      value={completedTo}
+                      onChange={e => { setCompletedTo(e.target.value); setPage(1); }}
+                      title={zh ? '完成时间（至）' : 'Completed To'}
+                      className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
+                    />
+                  </div>
                 </div>
-                {(requesterFilter || assigneeFilter || bookmarkFilter) && (
-                  <button
-                    onClick={() => { setRequesterFilter(''); setAssigneeFilter(''); setBookmarkFilter(false); setPage(1); }}
-                    className="px-3 py-2 rounded-xl text-xs font-medium text-rose-500 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-all"
-                  >
-                    {zh ? '清空高级筛选' : 'Clear advanced'}
-                  </button>
-                )}
+                {/* Row 3: Scheduled range + Quick presets + Clear */}
+                <div className="flex flex-wrap gap-3 items-end">
+                  <div className="min-w-[170px]">
+                    <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '计划开始（从）' : 'Scheduled From'}</label>
+                    <input
+                      type="datetime-local"
+                      value={scheduledFrom}
+                      onChange={e => { setScheduledFrom(e.target.value); setPage(1); }}
+                      title={zh ? '计划开始（从）' : 'Scheduled From'}
+                      className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
+                    />
+                  </div>
+                  <div className="min-w-[170px]">
+                    <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '计划结束（至）' : 'Scheduled To'}</label>
+                    <input
+                      type="datetime-local"
+                      value={scheduledTo}
+                      onChange={e => { setScheduledTo(e.target.value); setPage(1); }}
+                      title={zh ? '计划结束（至）' : 'Scheduled To'}
+                      className="w-full bg-white border border-black/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-[#00bceb]/40"
+                    />
+                  </div>
+                  {/* Quick date presets */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-black/40 mb-1">{zh ? '快捷选择' : 'Quick Range'}</label>
+                    <div className="flex gap-1.5">
+                      {([
+                        { label: zh ? '今天' : 'Today', days: 0 },
+                        { label: zh ? '近7天' : '7d', days: 7 },
+                        { label: zh ? '近30天' : '30d', days: 30 },
+                        { label: zh ? '近90天' : '90d', days: 90 },
+                      ] as const).map(preset => (
+                        <button
+                          key={preset.days}
+                          onClick={() => {
+                            const now = new Date();
+                            const to = now.toISOString().slice(0, 16);
+                            const from = preset.days === 0
+                              ? new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0, 16)
+                              : new Date(now.getTime() - preset.days * 86400000).toISOString().slice(0, 16);
+                            setCreatedFrom(from);
+                            setCreatedTo(to);
+                            setPage(1);
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-black/8 bg-white text-black/50 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all"
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Clear all advanced filters */}
+                  {advancedFilterCount > 0 && (
+                    <button
+                      onClick={() => {
+                        setRequesterFilter(''); setAssigneeFilter(''); setBookmarkFilter(false);
+                        setOrderTypeFilter('');
+                        setCreatedFrom(''); setCreatedTo('');
+                        setCompletedFrom(''); setCompletedTo('');
+                        setScheduledFrom(''); setScheduledTo('');
+                        setPage(1);
+                      }}
+                      className="px-3 py-2 rounded-xl text-xs font-medium text-rose-500 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-all"
+                    >
+                      {zh ? '清空高级筛选' : 'Clear advanced'}
+                    </button>
+                  )}
+                </div>
               </div>
             </motion.div>
           )}

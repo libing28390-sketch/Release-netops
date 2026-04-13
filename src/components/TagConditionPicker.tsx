@@ -120,7 +120,7 @@ const TagDropdown: React.FC<TagDropdownProps> = ({ allTags, excludeIds, onSelect
               {search ? (zh ? '无匹配标签' : 'No match') : (zh ? '无可选标签' : 'No tags available')}
             </div>
           ) : (
-            Object.entries(grouped).map(([cat, tags]) => (
+            (Object.entries(grouped) as [string, TagDefinition[]][]).map(([cat, tags]) => (
               <div key={cat}>
                 <div className="px-2.5 py-0.5 text-[8px] font-bold uppercase tracking-widest text-black/25 bg-black/[0.015] sticky top-0">
                   {zh ? TAG_CATEGORY_LABELS[cat as TagCategory].zh : TAG_CATEGORY_LABELS[cat as TagCategory].en}

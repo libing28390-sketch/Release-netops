@@ -377,13 +377,14 @@ export default function TagManagementTab({ language }: TagManagementTabProps) {
                   ) : (
                     <div className="flex flex-wrap gap-2">
                       {items.map(tag => (
-                        <TagChip
-                          key={tag.id}
-                          tag={tag}
-                          zh={zh}
-                          onEdit={() => openEditModal(tag)}
-                          onDelete={() => setDeleteTarget(tag)}
-                        />
+                        <div key={tag.id} className="contents">
+                          <TagChip
+                            tag={tag}
+                            zh={zh}
+                            onEdit={() => openEditModal(tag)}
+                            onDelete={() => setDeleteTarget(tag)}
+                          />
+                        </div>
                       ))}
                     </div>
                   )}
