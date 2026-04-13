@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Clock,
   Globe,
+  Grid3X3,
   History,
   LayoutDashboard,
   LogOut,
@@ -22,6 +23,7 @@ interface TopHeaderProps {
   resolvedTheme: 'light' | 'dark';
   themeMode: ThemeMode;
   sidebarCollapsed: boolean;
+  isHomePage?: boolean;
   pageTitle: string;
   currentUser: SessionUser;
   currentAvatar: string;
@@ -53,6 +55,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
   resolvedTheme,
   themeMode,
   sidebarCollapsed,
+  isHomePage = false,
   pageTitle,
   currentUser,
   currentAvatar,
@@ -81,21 +84,52 @@ const TopHeader: React.FC<TopHeaderProps> = ({
   return (
     <header className="theme-header h-14 md:h-16 shadow-sm px-3 md:px-8 flex items-center justify-between z-10">
       <div className="flex items-center gap-2 md:gap-4 flex-1 min-w-0">
-        <button
-          onClick={onToggleSidebar}
-          title={language === 'zh' ? (sidebarCollapsed ? '展开侧栏' : '收起侧栏') : (sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar')}
-          className={`p-2 rounded-lg transition-all md:hidden ${resolvedTheme === 'dark' ? 'text-white/55 hover:text-white hover:bg-white/10' : 'text-black/45 hover:text-black hover:bg-black/5'}`}
-        >
-          <Menu size={20} />
-        </button>
-        <div>
-          <h2 className={`text-base md:text-lg font-semibold tracking-tight truncate ${resolvedTheme === 'dark' ? 'text-white/92' : 'text-black/85'}`}>
-            {pageTitle}
-          </h2>
-          <p className={`text-[11px] hidden sm:block ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/40'}`}>
-            {new Date().toLocaleDateString()} · Nexora Control Plane
-          </p>
-        </div>
+        {isHomePage ? (
+          /* Home page: Grid icon + Nexora branding */
+          <div className="flex items-center gap-3">
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ background: 'rgba(6,182,212,0.12)' }}
+            >
+              <Grid3X3 size={19} strokeWidth={1.8} style={{ color: '#06b6d4' }} />
+            </div>
+            <div>
+              <h2 style={{ color: 'var(--heading-text)' }} className="text-base md:text-lg font-bold tracking-tight leading-none">
+                Nexora
+              </h2>
+              <p style={{ color: 'var(--dim-text)' }} className="text-[11px] hidden sm:block mt-0.5 leading-none">
+                {language === 'zh' ? '智能网络中枢' : 'Smart Net Hub'}
+              </p>
+            </div>
+          </div>
+        ) : (
+          /* Normal pages: home grid + sidebar toggle + page title */
+          <div className="flex items-center gap-2 md:gap-3">
+            <button
+              onClick={onOpenDashboard}
+              title={language === 'zh' ? '返回功能中心' : 'Back to Home'}
+              className={`p-2 rounded-lg transition-all ${resolvedTheme === 'dark' ? 'text-cyan-400 hover:bg-white/10' : 'text-cyan-600 hover:bg-cyan-50'}`}
+            >
+              <Grid3X3 size={18} strokeWidth={1.8} />
+            </button>
+            <div className={`w-px h-5 ${resolvedTheme === 'dark' ? 'bg-white/10' : 'bg-black/10'}`} />
+            <button
+              onClick={onToggleSidebar}
+              title={language === 'zh' ? (sidebarCollapsed ? '展开侧栏' : '收起侧栏') : (sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar')}
+              className={`p-2 rounded-lg transition-all md:hidden ${resolvedTheme === 'dark' ? 'text-white/55 hover:text-white hover:bg-white/10' : 'text-black/45 hover:text-black hover:bg-black/5'}`}
+            >
+              <Menu size={20} />
+            </button>
+            <div>
+              <h2 className={`text-base md:text-lg font-semibold tracking-tight truncate ${resolvedTheme === 'dark' ? 'text-white/92' : 'text-black/85'}`}>
+                {pageTitle}
+              </h2>
+              <p className={`text-[11px] hidden sm:block ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/40'}`}>
+                {new Date().toLocaleDateString()} · Nexora Control Plane
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="relative flex items-center gap-3" ref={userMenuRef}>

@@ -47,6 +47,7 @@ interface ExecutionScheduleTabProps {
   t: (key: string) => string;
   language: string;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
+  initialTab?: 'schedules' | 'history';
 }
 
 interface BackupSchedulePreview {
@@ -87,7 +88,7 @@ const describeCron = (cron: string, zh: boolean): string => {
 /*  Component                                              */
 /* ═══════════════════════════════════════════════════════ */
 
-const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, showToast }) => {
+const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, showToast, initialTab }) => {
   const zh = language === 'zh';
 
   /* ═══ STATE ═══ */
@@ -103,7 +104,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   const [inspRunPageSize] = useState(10);
   const [inspRunTotal, setInspRunTotal] = useState(0);
   type InspSubTab = 'schedules' | 'history';
-  const [inspSubTab, setInspSubTab] = useState<InspSubTab>('schedules');
+  const [inspSubTab, setInspSubTab] = useState<InspSubTab>(initialTab || 'schedules');
 
   const [backupPreview, setBackupPreview] = useState<BackupSchedulePreview | null>(null);
 

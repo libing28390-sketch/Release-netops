@@ -15,8 +15,8 @@ import DeviceDetailModal from './components/DeviceDetailModal';
 import CustomCommandModal from './components/CustomCommandModal';
 import AddScenarioModal from './components/AddScenarioModal';
 import CommandPalette from './components/CommandPalette';
-import AppSidebar from './components/AppSidebar';
 import TopHeader from './components/TopHeader';
+import ModuleSubNav from './components/ModuleSubNav';
 import ProfileModal from './components/ProfileModal';
 import CommandPreviewModal from './components/CommandPreviewModal';
 import ImportInventoryModal from './components/ImportInventoryModal';
@@ -39,6 +39,7 @@ import { useConfigDiff } from './hooks/useConfigDiff';
 const MonitoringCenter = lazy(() => import('./components/MonitoringCenter.tsx'));
 const DeviceHealthTab = lazy(() => import('./pages/DeviceHealthTab'));
 const DashboardTab = lazy(() => import('./pages/DashboardTab'));
+const HomePage = lazy(() => import('./pages/HomePage'));
 const ComplianceTab = lazy(() => import('./pages/ComplianceTab'));
 const HistoryTab = lazy(() => import('./pages/HistoryTab'));
 const UsersTab = lazy(() => import('./pages/UsersTab'));
@@ -466,6 +467,7 @@ const App: React.FC = () => {
   const configPage = location.pathname.split('/')[2] || 'backup';
   const automationPage = location.pathname.split('/')[2] || 'execute';
   const inventorySubPage = location.pathname.split('/')[2] || 'devices';
+  const changeOrderPage = location.pathname.split('/')[2] || '';
   const setActiveTab = (tab: string) => {
     navigate(`/${tab}`);
     if (isMobile) setSidebarCollapsed(true);
@@ -486,12 +488,16 @@ const App: React.FC = () => {
   }, []);
 
   const getSidebarRecentLabel = useCallback((path: string): string => {
-    if (path === '/dashboard') return t('dashboard');
+    if (path === '/dashboard') return language === 'zh' ? '功能中心' : 'Home';
+    if (path === '/overview') return language === 'zh' ? '运营总览' : 'Overview';
     if (path === '/monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
     if (path === '/topology') return language === 'zh' ? '网络拓扑' : 'Topology';
     if (path === '/automation/inspection') return language === 'zh' ? '设备巡检' : 'Device Inspection';
     if (path === '/automation/schedule') return language === 'zh' ? '执行计划' : 'Execution Schedules';
+    if (path === '/automation/schedule-history') return language === 'zh' ? '执行历史' : 'Execution History';
     if (path === '/automation/scheduled-jobs') return language === 'zh' ? '定时作业' : 'Scheduled Jobs';
+    if (path === '/change-orders/my-todo') return language === 'zh' ? '我的待办' : 'My Todo';
+    if (path === '/change-orders/new') return language === 'zh' ? '新建工单' : 'New Order';
     if (path === '/alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
     if (path === '/alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
     if (path === '/alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
@@ -533,7 +539,8 @@ const App: React.FC = () => {
   const allNavItems = useMemo<{ path: string; label: string; group: string }[]>(() => {
     const zh = language === 'zh';
     return [
-      { path: '/dashboard', label: t('dashboard'), group: zh ? '实时监控' : 'Real-time' },
+      { path: '/dashboard', label: zh ? '功能中心' : 'Home', group: zh ? '首页' : 'Home' },
+      { path: '/overview', label: zh ? '运营总览' : 'Overview', group: zh ? '实时监控' : 'Real-time' },
       { path: '/monitoring', label: zh ? '监控中心' : 'Monitoring Center', group: zh ? '实时监控' : 'Real-time' },
       { path: '/topology', label: zh ? '网络拓扑' : 'Topology', group: zh ? '实时监控' : 'Real-time' },
       { path: '/inventory/devices', label: t('deviceList'), group: zh ? '设备清单' : 'Inventory' },
@@ -551,6 +558,7 @@ const App: React.FC = () => {
       { path: '/automation/history', label: t('executionHistory'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/inspection', label: zh ? '设备巡检' : 'Device Inspection', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/schedule', label: zh ? '执行计划' : 'Execution Schedules', group: zh ? '作业自动化' : 'Automation' },
+      { path: '/automation/schedule-history', label: zh ? '执行历史' : 'Execution History', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scheduled-jobs', label: zh ? '定时作业' : 'Scheduled Jobs', group: zh ? '作业自动化' : 'Automation' },
       { path: '/config/backup', label: t('backupHistory'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/diff', label: t('diffCompare'), group: zh ? '配置与合规' : 'Config & Compliance' },
@@ -563,6 +571,8 @@ const App: React.FC = () => {
       { path: '/configuration', label: zh ? '平台设置' : 'Platform Settings', group: zh ? '平台管理' : 'Management' },
       { path: '/users', label: t('userManagement'), group: zh ? '平台管理' : 'Management' },
       { path: '/change-orders', label: zh ? '变更工单' : 'Change Orders', group: zh ? '工单管理' : 'Tickets' },
+      { path: '/change-orders/my-todo', label: zh ? '我的待办' : 'My Todo', group: zh ? '工单管理' : 'Tickets' },
+      { path: '/change-orders/new', label: zh ? '新建工单' : 'New Order', group: zh ? '工单管理' : 'Tickets' },
     ];
   }, [language, t]);
 
@@ -596,6 +606,7 @@ const App: React.FC = () => {
         history: t('executionHistory'),
         inspection: language === 'zh' ? '设备巡检' : 'Device Inspection',
         schedule: language === 'zh' ? '执行计划' : 'Execution Schedules',
+        'schedule-history': language === 'zh' ? '执行历史' : 'Execution History',
         'scheduled-jobs': language === 'zh' ? '定时作业' : 'Scheduled Jobs',
       };
       return map[automationPage] || automationPage;
@@ -631,13 +642,17 @@ const App: React.FC = () => {
     if (activeTab === 'assets') return language === 'zh' ? '资产管理' : 'Asset Management';
     if (activeTab === 'tags') return language === 'zh' ? '标签管理' : 'Tag Management';
     if (activeTab === 'credentials') return language === 'zh' ? '凭据管理' : 'Credential Management';
-    if (activeTab === 'change-orders') return language === 'zh' ? '变更工单' : 'Change Orders';
+    if (activeTab === 'change-orders') {
+      if (changeOrderPage === 'my-todo') return language === 'zh' ? '我的待办' : 'My Todo';
+      if (changeOrderPage === 'new') return language === 'zh' ? '新建工单' : 'New Order';
+      return language === 'zh' ? '变更工单' : 'Change Orders';
+    }
     if (activeTab === 'compliance') return t('compliance');
     if (activeTab === 'monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
 
     if (activeTab === 'topology') return language === 'zh' ? '网络拓扑' : 'Topology';
     return t('dashboard');
-  }, [activeTab, automationPage, configPage, inventorySubPage, language, t]);
+  }, [activeTab, automationPage, configPage, inventorySubPage, changeOrderPage, language, t]);
 
   const filteredScenarios = useMemo(() => {
     const q = scenarioSearch.trim().toLowerCase();
@@ -5216,24 +5231,14 @@ const App: React.FC = () => {
   return (
     <AppRuntimeBoundary language={language}>
       <div className="app-shell flex h-screen text-[#141414] font-sans overflow-hidden">
-      <AppSidebar
-        alertCounts={{ monitoring: 0, alerts: unreadNotificationCount }}
-        isP1Critical={unreadNotificationCount > 20}
-        onNavigate={navTo}
-        onOpenSearch={() => setCmdPaletteOpen(true)}
-        language={language}
-        userRole={currentUser.role || currentUserRecord?.role || 'Viewer'}
-        mobileOpen={isMobile && !sidebarCollapsed}
-        onMobileClose={() => setSidebarCollapsed(true)}
-      />
-
-      {/* Main Content Area */}
+      {/* Main Content Area — no sidebar, full width */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <TopHeader
           language={language}
           resolvedTheme={resolvedTheme}
           themeMode={themeMode}
           sidebarCollapsed={sidebarCollapsed}
+          isHomePage={activeTab === 'dashboard'}
           pageTitle={pageTitle}
           currentUser={currentUser}
           currentAvatar={currentAvatar}
@@ -5291,8 +5296,28 @@ const App: React.FC = () => {
           }}
         />
 
-        <main className="flex-1 overflow-auto p-4 pb-8 md:p-8 md:pb-16">
+        <div className="flex flex-1 overflow-hidden">
+          {activeTab !== 'dashboard' && (
+            <ModuleSubNav language={language} userRole={currentUser.role || currentUserRecord?.role || 'Viewer'} />
+          )}
+
+          <main className={`flex-1 overflow-auto ${activeTab === 'dashboard' ? 'p-0' : 'p-4 pb-8 md:p-8 md:pb-16'}`}>
           {activeTab === 'dashboard' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <HomePage
+                language={language}
+                navigate={navigate}
+                userRole={currentUser.role}
+                devices={devices}
+                jobs={jobs}
+                notifications={notifications}
+                hostResources={hostResources}
+                userCount={users.length}
+              />
+            </Suspense>
+          )}
+
+          {activeTab === 'overview' && (
             <Suspense fallback={lazyPanelFallback}>
               <DashboardTab
                 devices={devices}
@@ -5722,6 +5747,11 @@ const App: React.FC = () => {
               <ExecutionScheduleTab t={t} language={language} showToast={showToast} />
             </Suspense>
           )}
+          {activeTab === 'automation' && automationPage === 'schedule-history' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <ExecutionScheduleTab t={t} language={language} showToast={showToast} initialTab="history" />
+            </Suspense>
+          )}
           {activeTab === 'automation' && automationPage === 'scheduled-jobs' && (
             <Suspense fallback={lazyPanelFallback}>
               <ScheduledJobsTab t={t} language={language} showToast={showToast} />
@@ -5979,10 +6009,11 @@ const App: React.FC = () => {
 
           {activeTab === 'change-orders' && (
             <Suspense fallback={lazyPanelFallback}>
-              <ChangeOrderTab language={language} t={t} users={users} scenarios={scenarios} platforms={platforms} currentUser={currentUser} />
+              <ChangeOrderTab language={language} t={t} users={users} scenarios={scenarios} platforms={platforms} currentUser={currentUser} initialView={changeOrderPage === 'my-todo' ? 'my_todo' : changeOrderPage === 'new' ? 'create' : undefined} />
             </Suspense>
           )}
         </main>
+        </div>
         <footer className={`h-10 px-8 border-t flex items-center justify-between text-[11px] ${resolvedTheme === 'dark' ? 'border-white/10 text-white/45 bg-[#0b1320]' : 'border-black/8 text-black/45 bg-white/70'}`}>
           <span>Copyright (c) {new Date().getFullYear()} Nexora. All rights reserved.</span>
           <span className="font-mono">NOC v2.0</span>

@@ -625,84 +625,104 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
               transition={{ duration: 0.2 }}
               className="h-full flex flex-col gap-2"
             >
-              {/* Main area: tree sidebar + device table */}
+              {/* Main area: filter panel + device table */}
               <div className="flex-1 min-h-0 flex gap-3 overflow-hidden">
-                {/* ── Left: Tree Filter Sidebar ── */}
+                {/* ── Left: Quick Filter Panel ── */}
                 <div className="w-[200px] flex-shrink-0 bg-white rounded-xl border border-gray-100 overflow-hidden flex flex-col">
                   <div className="px-3 py-2.5 border-b border-gray-100 flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <FolderTree size={12} className="text-gray-400" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{isZh ? '设备分组' : 'Groups'}</span>
-                    </div>
-                    {(treeFilterSite || treeFilterRole) && (
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{isZh ? '快速筛选' : 'Quick Filter'}</span>
+                    {(treeFilterSite || treeFilterRole || tagFilterIds.length > 0) && (
                       <button
-                        onClick={() => { setTreeFilterSite(null); setTreeFilterRole(null); }}
+                        onClick={() => { setTreeFilterSite(null); setTreeFilterRole(null); setTagFilterIds([]); }}
                         className="text-[10px] text-cyan-600 hover:text-cyan-700 font-semibold"
                       >
                         {isZh ? '清除' : 'Clear'}
                       </button>
                     )}
                   </div>
-                  <div className="flex-1 min-h-0 overflow-auto p-2 space-y-0.5">
-                    {/* All devices entry */}
-                    <button
-                      onClick={() => handleTreeFilter(null, null)}
-                      className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
-                        !treeFilterSite && !treeFilterRole
-                          ? 'bg-cyan-50 text-cyan-700 font-bold'
-                          : 'text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      <Server size={12} />
-                      <span className="flex-1 text-left">{isZh ? '全部设备' : 'All Devices'}</span>
-                      <span className="text-[10px] text-gray-400 font-mono">{devices.length}</span>
-                    </button>
-                    {/* Tree nodes */}
-                    {deviceTree.map(node => (
-                      <div key={node.site}>
-                        <button
-                          onClick={() => {
-                            handleToggleTreeNode(node.site);
-                            handleTreeFilter(node.site, null);
-                          }}
-                          className={`w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
-                            treeFilterSite === node.site && !treeFilterRole
-                              ? 'bg-cyan-50 text-cyan-700 font-bold'
-                              : 'text-gray-600 hover:bg-gray-50'
-                          }`}
-                        >
-                          <ChevronDown
-                            size={11}
-                            className={`text-gray-400 transition-transform flex-shrink-0 ${expandedTreeNodes.has(node.site) ? '' : '-rotate-90'}`}
-                          />
-                          <span className="flex-1 text-left truncate">{node.site}</span>
-                          <span className="text-[10px] font-mono flex items-center gap-1">
-                            <span className="text-emerald-500">{node.onlineCount}</span>
-                            <span className="text-gray-300">/</span>
-                            <span className="text-gray-400">{node.count}</span>
-                          </span>
-                        </button>
-                        {expandedTreeNodes.has(node.site) && (
-                          <div className="ml-4 space-y-0.5 mt-0.5">
-                            {node.roles.map(r => (
-                              <button
-                                key={r.role}
-                                onClick={() => handleTreeFilter(node.site, r.role)}
-                                className={`w-full flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] transition-all ${
-                                  treeFilterSite === node.site && treeFilterRole === r.role
-                                    ? 'bg-cyan-50 text-cyan-700 font-bold'
-                                    : 'text-gray-500 hover:bg-gray-50'
-                                }`}
-                              >
-                                <span className="w-1 h-1 rounded-full bg-gray-300 flex-shrink-0" />
-                                <span className="flex-1 text-left truncate">{r.role}</span>
-                                <span className="text-[10px] font-mono text-gray-400">{r.count}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                  <div className="flex-1 min-h-0 overflow-auto p-2.5 space-y-3">
+                    {/* IP/Hostname search */}
+                    <div>
+                      <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '搜索设备' : 'Search'}</label>
+                      <div className="relative">
+                        <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-300" size={12} />
+                        <input
+                          type="text"
+                          placeholder={isZh ? 'IP / 主机名...' : 'IP / Hostname...'}
+                          value={automationSearch}
+                          onChange={e => onAutomationSearchChange(e.target.value)}
+                          className="w-full pl-7 pr-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-lg text-[11px] focus:border-cyan-300 focus:bg-white outline-none transition-all"
+                        />
                       </div>
-                    ))}
+                    </div>
+                    {/* Site chips */}
+                    <div>
+                      <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '站点' : 'Site'}</label>
+                      <div className="flex flex-wrap gap-1">
+                        {deviceTree.map(node => (
+                          <button
+                            key={node.site}
+                            onClick={() => handleTreeFilter(node.site, null)}
+                            className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all ${
+                              treeFilterSite === node.site
+                                ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
+                                : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                            }`}
+                          >
+                            {node.site}
+                            <span className="ml-1 text-[9px] opacity-60">{node.onlineCount}/{node.count}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Tag chips */}
+                    {allTags.length > 0 && (
+                      <div>
+                        <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '标签' : 'Tags'}</label>
+                        <div className="flex flex-wrap gap-1">
+                          {allTags.slice(0, 20).map(tag => (
+                            <button
+                              key={tag.id}
+                              onClick={() => {
+                                setTagFilterIds(prev =>
+                                  prev.includes(tag.id) ? prev.filter(id => id !== tag.id) : [...prev, tag.id]
+                                );
+                              }}
+                              className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all ${
+                                tagFilterIds.includes(tag.id)
+                                  ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
+                                  : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                              }`}
+                            >
+                              {tag.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Status chips */}
+                    <div>
+                      <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '状态' : 'Status'}</label>
+                      <div className="flex flex-wrap gap-1">
+                        {(['all', 'online', 'offline'] as const).map(s => (
+                          <button
+                            key={s}
+                            onClick={() => setStatusFilter(s)}
+                            className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all ${
+                              statusFilter === s
+                                ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
+                                : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                            }`}
+                          >
+                            {s === 'all' ? (isZh ? '全部' : 'All') : s === 'online' ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Summary */}
+                    <div className="pt-2 border-t border-gray-100 text-[10px] text-gray-400">
+                      {isZh ? '匹配' : 'Found'} <span className="font-semibold text-gray-600">{filteredDevices.length}</span> {isZh ? '台设备' : 'devices'}
+                    </div>
                   </div>
                 </div>
 
@@ -710,25 +730,6 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                 <div className="flex-1 min-w-0 flex flex-col gap-2">
                   {/* Filter bar */}
                   <div className="flex-shrink-0 flex items-center gap-2 bg-white rounded-xl border border-gray-100 px-3 py-2">
-                    <div className="relative flex-1 max-w-[260px]">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300" size={13} />
-                      <input
-                        type="text"
-                        placeholder={isZh ? '搜索主机名或IP...' : 'Search hostname or IP...'}
-                        value={automationSearch}
-                        onChange={e => onAutomationSearchChange(e.target.value)}
-                        className="w-full pl-8 pr-3 py-1.5 bg-gray-50 border border-gray-100 rounded-lg text-xs focus:border-cyan-300 focus:bg-white outline-none transition-all"
-                      />
-                    </div>
-                    <select
-                      value={statusFilter}
-                      onChange={e => setStatusFilter(e.target.value)}
-                      className="px-2.5 py-1.5 border border-gray-100 rounded-lg text-xs bg-gray-50 outline-none focus:border-cyan-300"
-                    >
-                      <option value="all">{isZh ? '全部状态' : 'All Status'}</option>
-                      <option value="online">{isZh ? '🟢 在线' : '🟢 Online'}</option>
-                      <option value="offline">{isZh ? '🔴 离线' : '🔴 Offline'}</option>
-                    </select>
                     {vendors.length > 1 && (
                       <select
                         value={vendorFilter}
@@ -739,13 +740,6 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                         {vendors.map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     )}
-                    <TagFilterDropdown
-                      allTags={allTags}
-                      selectedTagIds={tagFilterIds}
-                      onChange={setTagFilterIds}
-                      language={language}
-                      compact={false}
-                    />
                     <div className="flex-1" />
                     <div className="flex items-center gap-2">
                       <button

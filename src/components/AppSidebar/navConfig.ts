@@ -16,7 +16,7 @@ export const navConfig: NavGroup[] = [
     icon: 'Activity',
     badge: 'monitoring',
     children: [
-      { id: 'dashboard',    label: '仪表盘',   labelEn: 'Dashboard',         path: '/dashboard' },
+      { id: 'dashboard',    label: '运营总览',   labelEn: 'Overview',          path: '/overview' },
       { id: 'monitoring',   label: '监控中心',  labelEn: 'Monitoring',        path: '/monitoring' },
       { id: 'topology',     label: '网络拓扑',  labelEn: 'Topology',          path: '/topology' },
     ],
@@ -67,6 +67,7 @@ export const navConfig: NavGroup[] = [
       { id: 'auto-exec',  label: '自动化任务',  labelEn: 'Automation',        path: '/automation/execute', activeMatch: '/automation/' },
       { id: 'inspection', label: '设备巡检',    labelEn: 'Device Inspection', path: '/automation/inspection' },
       { id: 'exec-schedule', label: '执行计划',  labelEn: 'Execution Schedules', path: '/automation/schedule' },
+      { id: 'exec-history', label: '执行历史',   labelEn: 'Execution History', path: '/automation/schedule-history' },
       { id: 'scheduled-jobs', label: '定时作业',  labelEn: 'Scheduled Jobs',    path: '/automation/scheduled-jobs' },
     ],
   },
@@ -77,6 +78,8 @@ export const navConfig: NavGroup[] = [
     icon: 'ClipboardList',
     children: [
       { id: 'change-orders',  label: '变更工单',  labelEn: 'Change Orders',  path: '/change-orders' },
+      { id: 'my-todo',        label: '我的待办',  labelEn: 'My Todo',        path: '/change-orders/my-todo' },
+      { id: 'new-order',      label: '新建工单',  labelEn: 'New Order',      path: '/change-orders/new' },
     ],
   },
   {

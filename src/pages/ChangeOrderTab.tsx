@@ -133,6 +133,7 @@ interface Props {
   scenarios: ScenarioTemplate[];
   platforms: Record<string, PlatformMeta>;
   currentUser: SessionUser;
+  initialView?: 'my_todo' | 'create';
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -437,7 +438,7 @@ const buildWorkflowPresentation = (order: ChangeOrder, lang: string) => {
    Component
    ═══════════════════════════════════════════════════════════════════ */
 
-const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platforms, currentUser }) => {
+const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platforms, currentUser, initialView }) => {
   const zh = language === 'zh';
 
   // ── Data state ──
@@ -456,7 +457,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
   const [assigneeFilter, setAssigneeFilter] = useState('');
   const [bookmarkFilter, setBookmarkFilter] = useState(false);
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
-  const [viewTab, setViewTab] = useState<'all' | 'group_todo' | 'my_todo' | 'my_focus' | 'my_participated' | 'my_drafts'>('all');
+  const [viewTab, setViewTab] = useState<'all' | 'group_todo' | 'my_todo' | 'my_focus' | 'my_participated' | 'my_drafts'>(initialView === 'my_todo' ? 'my_todo' : 'all');
 
   // ── Bookmarks ──
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
@@ -467,7 +468,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
   const [timelineLoading, setTimelineLoading] = useState(false);
 
   // ── Create/Edit modal ──
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(initialView === 'create');
   const [editingOrder, setEditingOrder] = useState<ChangeOrder | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [saving, setSaving] = useState(false);

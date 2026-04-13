@@ -17,6 +17,8 @@
 	--sub-text: rgba(0, 0, 0, 0.4);
 	--dim-text: rgba(0, 0, 0, 0.3);
 	--body-text: rgba(0, 0, 0, 0.6);
+	--app-hover-bg: rgba(0, 0, 0, 0.04);
+	--icon-surface: rgba(6, 182, 212, 0.08);
 }
 
 :root[data-theme='dark'] {
@@ -34,6 +36,8 @@
 	--sub-text: rgba(226, 232, 240, 0.55);
 	--dim-text: rgba(226, 232, 240, 0.4);
 	--body-text: rgba(226, 232, 240, 0.72);
+	--app-hover-bg: rgba(255, 255, 255, 0.06);
+	--icon-surface: rgba(6, 182, 212, 0.12);
 }
 
 body {

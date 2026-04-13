@@ -19,6 +19,7 @@ import {
   ClipboardList,
   Clock,
   FileText,
+  Home,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
@@ -153,11 +154,39 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
     [userRole],
   );
 
+  /* ─────────── Accordion: only one group open ─────────── */
+  const getActiveGroupId = useCallback((): string | null => {
+    for (const g of navConfig) {
+      if (g.children.some(c => isActive(c))) return g.id;
+    }
+    return null;
+  }, [isActive]);
+
+  const [openGroupId, setOpenGroupId] = useState<string | null>(() => getActiveGroupId());
+
+  // Sync open group when route changes
+  useEffect(() => {
+    const activeId = getActiveGroupId();
+    if (activeId) setOpenGroupId(activeId);
+  }, [location.pathname, getActiveGroupId]);
+
+  const toggleGroup = useCallback((groupId: string) => {
+    setOpenGroupId((prev: string | null) => prev === groupId ? null : groupId);
+  }, []);
+
   /* ═══════════════════════════════════════
      RENDER — Mini mode
      ═══════════════════════════════════════ */
   const renderMini = () => (
     <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-1">
+      <NavItem
+        label={zh ? '首页' : 'Home'}
+        active={location.pathname === '/dashboard'}
+        icon={Home}
+        mini
+        onClick={() => handleNav('/dashboard')}
+      />
+      <div className="border-t border-slate-800/50 my-2" />
       {navConfig.map((group, gi) => {
         const GIcon = group.icon ? iconMap[group.icon] : undefined;
         const visibleChildren = filterByRole(group.children);
@@ -207,6 +236,12 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
      ═══════════════════════════════════════ */
   const renderFull = () => (
     <nav className="flex-1 overflow-y-auto overflow-x-hidden px-2 pb-4" aria-label="Navigation">
+      <NavItem
+        label={zh ? '首页' : 'Home'}
+        active={location.pathname === '/dashboard'}
+        icon={Home}
+        onClick={() => handleNav('/dashboard')}
+      />
       {navConfig.map(group => {
         const GIcon = group.icon ? iconMap[group.icon] : undefined;
         const groupLabel = L(group.label, group.labelEn);
@@ -225,7 +260,8 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
             <NavSection
               key={group.id}
               label={groupLabel}
-              defaultOpen
+              isOpen={openGroupId === group.id}
+              onToggle={() => toggleGroup(group.id)}
               hasActiveChild={hasActive}
             >
               {visibleChildren.map(child => {
@@ -250,7 +286,8 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
             key={group.id}
             label={groupLabel}
             icon={GIcon}
-            defaultOpen
+            isOpen={openGroupId === group.id}
+            onToggle={() => toggleGroup(group.id)}
             hasActiveChild={hasActive}
             badge={groupBadge}
           >

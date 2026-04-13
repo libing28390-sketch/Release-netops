@@ -7,8 +7,12 @@ interface NavSectionProps {
   label: string;
   /** Optional icon component for the header */
   icon?: React.ElementType;
-  /** Whether section starts expanded */
+  /** Whether section starts expanded (uncontrolled mode) */
   defaultOpen?: boolean;
+  /** Controlled open state (overrides defaultOpen when defined) */
+  isOpen?: boolean;
+  /** Callback when section header is clicked (controlled mode) */
+  onToggle?: () => void;
   /** Whether any child in this section is active */
   hasActiveChild?: boolean;
   /** Optional badge element (rendered between label and chevron) */
@@ -32,17 +36,28 @@ const NavSection: React.FC<NavSectionProps> = ({
   label,
   icon: Icon,
   defaultOpen = true,
+  isOpen: controlledOpen,
+  onToggle,
   hasActiveChild = false,
   badge,
   children,
 }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const isOpen = controlledOpen !== undefined ? controlledOpen : internalOpen;
+
+  const handleToggle = () => {
+    if (onToggle) {
+      onToggle();
+    } else {
+      setInternalOpen(v => !v);
+    }
+  };
 
   return (
     <div className="mt-5 first:mt-0">
       {/* Section header */}
       <button
-        onClick={() => setIsOpen(v => !v)}
+        onClick={handleToggle}
         className="w-full flex items-center gap-2 px-3 py-1.5 group/section"
         aria-expanded={isOpen}
         aria-label={label}
