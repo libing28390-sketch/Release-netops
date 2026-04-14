@@ -1,10 +1,13 @@
-import React from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
 import {
   Activity,
+  BarChart2,
   Bell,
   ChevronDown,
+  ClipboardList,
   Clock,
+  FileCode2,
   Globe,
   Grid3X3,
   History,
@@ -14,9 +17,13 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  Search,
+  Server,
   ShieldCheck,
+  SlidersHorizontal,
   Sun,
   User,
+  Zap,
 } from 'lucide-react';
 import type { NotificationItem, SessionUser, ThemeMode } from '../types';
 
@@ -50,6 +57,7 @@ interface TopHeaderProps {
   onMarkAllNotificationsRead: () => void;
   onMarkNotificationRead: (id: string) => void;
   onNotificationClick: (item: NotificationItem) => void;
+  onNavigate?: (path: string) => void;
 }
 
 const TopHeader: React.FC<TopHeaderProps> = ({
@@ -82,7 +90,56 @@ const TopHeader: React.FC<TopHeaderProps> = ({
   onMarkAllNotificationsRead,
   onMarkNotificationRead,
   onNotificationClick,
+  onNavigate,
 }) => {
+  /* ── App switcher dropdown state ── */
+  const [appSwitcherOpen, setAppSwitcherOpen] = useState(false);
+  const [appSearch, setAppSearch] = useState('');
+  const appSwitcherRef = useRef<HTMLDivElement>(null);
+  const appSearchRef = useRef<HTMLInputElement>(null);
+
+  const appEntries = useMemo(() => [
+    { id: 'dashboard',  label: '首页',       labelEn: 'Dashboard',    icon: LayoutDashboard, path: '/dashboard',          accent: '#06b6d4' },
+    { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   icon: Activity,          path: '/overview',           accent: '#1677ff' },
+    { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       icon: Bell,              path: '/alerts',             accent: '#fa8c16' },
+    { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       icon: Server,            path: '/assets',             accent: '#1677ff' },
+    { id: 'config',     label: '配置管理',   labelEn: 'Config',       icon: FileCode2,         path: '/config/backup',      accent: '#722ed1' },
+    { id: 'automation', label: '自动化',     labelEn: 'Automation',   icon: Zap,               path: '/automation/execute', accent: '#0891b2' },
+    { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff' },
+    { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      icon: BarChart2,         path: '/capacity',           accent: '#13c2c2' },
+    { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     icon: SlidersHorizontal, path: '/history',            accent: '#8c8c8c' },
+  ], []);
+
+  const filteredApps = useMemo(() => {
+    const q = appSearch.trim().toLowerCase();
+    if (!q) return appEntries;
+    return appEntries.filter(a =>
+      a.label.toLowerCase().includes(q) ||
+      a.labelEn.toLowerCase().includes(q) ||
+      a.id.toLowerCase().includes(q)
+    );
+  }, [appSearch, appEntries]);
+
+  // Close app switcher on outside click
+  useEffect(() => {
+    if (!appSwitcherOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (appSwitcherRef.current && !appSwitcherRef.current.contains(e.target as Node)) {
+        setAppSwitcherOpen(false);
+        setAppSearch('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [appSwitcherOpen]);
+
+  // Auto-focus search when opened
+  useEffect(() => {
+    if (appSwitcherOpen) {
+      setTimeout(() => appSearchRef.current?.focus(), 60);
+    }
+  }, [appSwitcherOpen]);
+
   return (
     <header className="theme-header h-14 md:h-16 shadow-sm px-3 md:px-8 flex items-center justify-between z-10">
       <div className="flex items-center gap-2 md:gap-4 flex-1 min-w-0">
@@ -123,13 +180,75 @@ const TopHeader: React.FC<TopHeaderProps> = ({
               <span className="md:hidden"><Menu size={20} /></span>
               <span className="hidden md:inline">{sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}</span>
             </button>
-            <div>
-              <h2 className={`text-base md:text-lg font-semibold tracking-tight truncate ${resolvedTheme === 'dark' ? 'text-white/92' : 'text-black/85'}`}>
-                {pageTitle}
-              </h2>
-              <p className={`text-[11px] hidden sm:block ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/40'}`}>
-                {new Date().toLocaleDateString()} · Nexora Control Plane
-              </p>
+            <div className="relative" ref={appSwitcherRef}>
+              <button
+                onClick={() => { setAppSwitcherOpen(v => !v); setAppSearch(''); }}
+                className={`flex items-center gap-1 rounded-lg px-1.5 py-1 transition-all ${resolvedTheme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-black/[0.04]'}`}
+              >
+                <div>
+                  <h2 className={`text-base md:text-lg font-semibold tracking-tight truncate text-left ${resolvedTheme === 'dark' ? 'text-white/92' : 'text-black/85'}`}>
+                    {pageTitle}
+                  </h2>
+                  <p className={`text-[11px] hidden sm:block text-left ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/40'}`}>
+                    {new Date().toLocaleDateString()} · Nexora Control Plane
+                  </p>
+                </div>
+                <ChevronDown size={14} className={`flex-shrink-0 ml-1 transition-transform ${appSwitcherOpen ? 'rotate-180' : ''} ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/35'}`} />
+              </button>
+
+              {appSwitcherOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.15, ease: 'easeOut' }}
+                  className={`absolute top-full left-0 mt-1.5 w-64 rounded-xl shadow-2xl z-50 overflow-hidden ${resolvedTheme === 'dark' ? 'bg-[#121c2d] border border-white/10' : 'bg-white border border-black/10'}`}
+                >
+                  {/* Search */}
+                  <div className={`px-3 py-2.5 border-b ${resolvedTheme === 'dark' ? 'border-white/10' : 'border-black/[0.06]'}`}>
+                    <div className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${resolvedTheme === 'dark' ? 'bg-white/[0.06]' : 'bg-black/[0.03]'}`}>
+                      <Search size={14} className={resolvedTheme === 'dark' ? 'text-white/40' : 'text-black/35'} />
+                      <input
+                        ref={appSearchRef}
+                        value={appSearch}
+                        onChange={e => setAppSearch(e.target.value)}
+                        placeholder={language === 'zh' ? '搜索应用...' : 'Search apps...'}
+                        className={`flex-1 bg-transparent text-[13px] outline-none placeholder:opacity-50 ${resolvedTheme === 'dark' ? 'text-white/90 placeholder:text-white/35' : 'text-black/80 placeholder:text-black/35'}`}
+                      />
+                    </div>
+                  </div>
+                  {/* App list */}
+                  <div className="max-h-72 overflow-auto py-1">
+                    {filteredApps.length === 0 ? (
+                      <p className={`text-center text-xs py-4 ${resolvedTheme === 'dark' ? 'text-white/40' : 'text-black/40'}`}>
+                        {language === 'zh' ? '无匹配结果' : 'No results'}
+                      </p>
+                    ) : filteredApps.map(app => {
+                      const Icon = app.icon;
+                      return (
+                        <button
+                          key={app.id}
+                          onClick={() => {
+                            setAppSwitcherOpen(false);
+                            setAppSearch('');
+                            if (onNavigate) onNavigate(app.path);
+                          }}
+                          className={`w-full flex items-center gap-3 px-3.5 py-2 text-left transition-colors ${resolvedTheme === 'dark' ? 'hover:bg-white/[0.06]' : 'hover:bg-black/[0.03]'}`}
+                        >
+                          <div
+                            className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                            style={{ background: app.accent + '18' }}
+                          >
+                            <Icon size={15} style={{ color: app.accent }} />
+                          </div>
+                          <span className={`text-[13px] font-medium truncate ${resolvedTheme === 'dark' ? 'text-white/85' : 'text-black/75'}`}>
+                            {language === 'zh' ? app.label : app.labelEn}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
             </div>
           </div>
         )}

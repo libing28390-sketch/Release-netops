@@ -70,6 +70,7 @@ const InspectionTab = lazy(() => import('./pages/InspectionTab'));
 const ExecutionScheduleTab = lazy(() => import('./pages/ExecutionScheduleTab'));
 const ScheduledJobsTab = lazy(() => import('./pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('./pages/PlatformSettingsTab'));
+const RackManagementTab = lazy(() => import('./pages/RackManagementTab'));
 const TagManagementTab = lazy(() => import('./pages/TagManagementTab'));
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
@@ -665,6 +666,7 @@ const App: React.FC = () => {
     if (activeTab === 'ip-locator') return language === 'zh' ? 'IP 定位' : 'IP Locator';
     if (activeTab === 'assets') return language === 'zh' ? '资产管理' : 'Asset Management';
     if (activeTab === 'tags') return language === 'zh' ? '标签管理' : 'Tag Management';
+    if (activeTab === 'racks') return language === 'zh' ? '机柜管理' : 'Rack Management';
     if (activeTab === 'credentials') return language === 'zh' ? '凭据管理' : 'Credential Management';
     if (activeTab === 'change-orders') {
       if (changeOrderPage === 'all') return language === 'zh' ? '全部工单' : 'All Orders';
@@ -5323,6 +5325,7 @@ const App: React.FC = () => {
               navigate('/automation/execute');
             }
           }}
+          onNavigate={(path) => navigate(path)}
         />
 
         <div className="flex flex-1 overflow-hidden">
@@ -5330,7 +5333,7 @@ const App: React.FC = () => {
             <ModuleSubNav language={language} userRole={currentUser.role || currentUserRecord?.role || 'Viewer'} />
           )}
 
-          <main className={`flex-1 overflow-auto ${activeTab === 'dashboard' ? 'p-0' : 'p-4 pb-8 md:p-8 md:pb-16'}`}>
+          <main className={`flex-1 ${activeTab === 'racks' ? 'overflow-hidden p-2 md:p-3' : activeTab === 'dashboard' ? 'overflow-auto p-0' : 'overflow-auto p-4 pb-8 md:p-8 md:pb-16'}`}>
           {activeTab === 'dashboard' && (
             <Suspense fallback={lazyPanelFallback}>
               <HomePage
@@ -5567,6 +5570,12 @@ const App: React.FC = () => {
           {activeTab === 'inventory' && inventorySubPage === 'servers' && (
             <Suspense fallback={lazyPanelFallback}>
               <InventoryServersTab language={language} t={t} />
+            </Suspense>
+          )}
+
+          {activeTab === 'racks' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <RackManagementTab language={language} t={t} />
             </Suspense>
           )}
 

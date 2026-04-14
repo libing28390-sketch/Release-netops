@@ -45,6 +45,7 @@ export const navConfig: NavGroup[] = [
       { id: 'ipam',     label: 'IP/VLAN管理',  labelEn: 'IP/VLAN Mgmt',        path: '/ipam' },
       { id: 'ip-locator', label: 'IP 工具箱',  labelEn: 'IP Toolbox',            path: '/ip-locator' },
       { id: 'tags',     label: '标签管理',     labelEn: 'Tags',                 path: '/tags' },
+      { id: 'racks',    label: '机柜管理',     labelEn: 'Rack Layout',          path: '/racks' },
     ],
   },
   {

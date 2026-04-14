@@ -34,6 +34,7 @@ from api.ip_locator import router as ip_locator_router
 from api.inspections import router as inspections_router
 from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
+from api.racks import router as racks_router
 import logging
 import os
 import asyncio
@@ -197,6 +198,7 @@ app.include_router(ip_locator_router, prefix="/api")
 app.include_router(inspections_router, prefix="/api")
 app.include_router(tags_router, prefix="/api")
 app.include_router(scheduled_jobs_router, prefix="/api")
+app.include_router(racks_router, prefix="/api")
 
 # ── APScheduler ──────────────────────────────────────────────────────
 scheduler = AsyncIOScheduler()
@@ -1725,6 +1727,95 @@ def seed_data():
                 (str(uuid.uuid4()), 'VLAN Creation', 'cli', 'switching', 'Arista', 'vlan 10\n name Users\nvlan 20\n name Servers', now)
             ]
             conn.executemany('INSERT INTO templates (id, name, type, category, vendor, content, last_used) VALUES (?, ?, ?, ?, ?, ?, ?)', templates)
+
+        # ── Seed Device Types & Demo Racks ──
+        dt_count = conn.execute('SELECT COUNT(*) as count FROM device_types').fetchone()['count']
+        if dt_count == 0:
+            import uuid
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            device_types = [
+                # id, model, vendor, u_height, device_role, is_full_depth, description, created_at, updated_at
+                (str(uuid.uuid4()), 'Catalyst 9300',     'Cisco',   1, 'switch',   1, '48-port L3 access switch', now, now),
+                (str(uuid.uuid4()), 'Catalyst 9500',     'Cisco',   1, 'switch',   1, '32-port 100G core switch', now, now),
+                (str(uuid.uuid4()), 'Nexus 9332C',       'Cisco',   1, 'switch',   1, '32x100G spine switch', now, now),
+                (str(uuid.uuid4()), 'Nexus 9508',        'Cisco',  13, 'switch',   1, 'Modular chassis switch', now, now),
+                (str(uuid.uuid4()), 'ISR 4451',          'Cisco',   2, 'router',   1, 'Branch router', now, now),
+                (str(uuid.uuid4()), 'ASR 1001-X',        'Cisco',   1, 'router',   1, 'WAN aggregation router', now, now),
+                (str(uuid.uuid4()), 'Firepower 2130',    'Cisco',   1, 'firewall', 1, 'Next-gen firewall', now, now),
+                (str(uuid.uuid4()), 'S5735-L48T4S',      'Huawei',  1, 'switch',   1, '48-port access switch', now, now),
+                (str(uuid.uuid4()), 'CE6881-48S6CQ',     'Huawei',  1, 'switch',   1, '25G datacenter switch', now, now),
+                (str(uuid.uuid4()), 'USG6555E',          'Huawei',  1, 'firewall', 1, 'Enterprise firewall', now, now),
+                (str(uuid.uuid4()), 'S6850-56HF',        'H3C',     1, 'switch',   1, '25G datacenter TOR switch', now, now),
+                (str(uuid.uuid4()), 'PowerEdge R650',    'Dell',    1, 'server',   1, '1U rack server', now, now),
+                (str(uuid.uuid4()), 'PowerEdge R750',    'Dell',    2, 'server',   1, '2U rack server', now, now),
+                (str(uuid.uuid4()), 'ProLiant DL380 G10','HPE',     2, 'server',   1, '2U rack server', now, now),
+                (str(uuid.uuid4()), 'ThinkSystem SR650', 'Lenovo',  2, 'server',   1, '2U rack server', now, now),
+                (str(uuid.uuid4()), 'Patch Panel 24P',   'Generic', 1, 'patch_panel', 0, '24-port Cat6 patch panel', now, now),
+                (str(uuid.uuid4()), 'APC SUA3000RMI2U',  'APC',     2, 'ups',      1, 'Smart-UPS 3000 RM', now, now),
+            ]
+            conn.executemany(
+                'INSERT INTO device_types (id, model, vendor, u_height, device_role, is_full_depth, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                device_types
+            )
+
+        # Seed demo racks if empty
+        rack_count = conn.execute('SELECT COUNT(*) as count FROM racks').fetchone()['count']
+        if rack_count == 0:
+            import uuid
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            demo_racks = [
+                (str(uuid.uuid4()), 'A-01', 'DC-Beijing', 'Server Room 1', 'A', 42, 'Core network rack', 'active', now, now),
+                (str(uuid.uuid4()), 'A-02', 'DC-Beijing', 'Server Room 1', 'A', 42, 'Server rack', 'active', now, now),
+                (str(uuid.uuid4()), 'B-01', 'DC-Shanghai', 'Server Room 2', 'B', 42, 'Distribution rack', 'active', now, now),
+            ]
+            conn.executemany(
+                'INSERT INTO racks (id, name, datacenter, room, row, total_u, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                demo_racks
+            )
+
+            # Seed demo devices into first rack
+            dt_rows = conn.execute("SELECT id, model, u_height FROM device_types").fetchall()
+            dt_map = {r['model'] if hasattr(r, '__getitem__') else r[1]: (r['id'] if hasattr(r, '__getitem__') else r[0], r['u_height'] if hasattr(r, '__getitem__') else r[2]) for r in dt_rows}
+            rack_a01_id = demo_racks[0][0]
+            rack_a02_id = demo_racks[1][0]
+
+            demo_devices = []
+            # Rack A-01: Network rack
+            if 'Patch Panel 24P' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'PP-A01-01', rack_a01_id, dt_map['Patch Panel 24P'][0], 1, 'front', 'active', '', '', now, now))
+            if 'Catalyst 9300' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'Core-SW-01', rack_a01_id, dt_map['Catalyst 9300'][0], 2, 'front', 'active', '', '', now, now))
+                demo_devices.append((str(uuid.uuid4()), 'Core-SW-02', rack_a01_id, dt_map['Catalyst 9300'][0], 3, 'front', 'active', '', '', now, now))
+            if 'Catalyst 9500' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'Dist-SW-01', rack_a01_id, dt_map['Catalyst 9500'][0], 5, 'front', 'active', '', '', now, now))
+            if 'ISR 4451' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'Edge-RTR-01', rack_a01_id, dt_map['ISR 4451'][0], 7, 'front', 'active', '', '', now, now))
+            if 'Firepower 2130' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'FW-01', rack_a01_id, dt_map['Firepower 2130'][0], 10, 'front', 'active', '', '', now, now))
+            if 'APC SUA3000RMI2U' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'UPS-A01', rack_a01_id, dt_map['APC SUA3000RMI2U'][0], 41, 'front', 'active', '', '', now, now))
+
+            # Rack A-02: Server rack
+            if 'Patch Panel 24P' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'PP-A02-01', rack_a02_id, dt_map['Patch Panel 24P'][0], 1, 'front', 'active', '', '', now, now))
+            if 'S5735-L48T4S' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'TOR-SW-01', rack_a02_id, dt_map['S5735-L48T4S'][0], 2, 'front', 'active', '', '', now, now))
+            if 'PowerEdge R650' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'SRV-Web-01', rack_a02_id, dt_map['PowerEdge R650'][0], 4, 'front', 'active', '', '', now, now))
+                demo_devices.append((str(uuid.uuid4()), 'SRV-Web-02', rack_a02_id, dt_map['PowerEdge R650'][0], 5, 'front', 'active', '', '', now, now))
+            if 'PowerEdge R750' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'SRV-DB-01', rack_a02_id, dt_map['PowerEdge R750'][0], 7, 'front', 'active', '', '', now, now))
+            if 'ProLiant DL380 G10' in dt_map:
+                demo_devices.append((str(uuid.uuid4()), 'SRV-App-01', rack_a02_id, dt_map['ProLiant DL380 G10'][0], 10, 'front', 'active', '', '', now, now))
+                demo_devices.append((str(uuid.uuid4()), 'SRV-App-02', rack_a02_id, dt_map['ProLiant DL380 G10'][0], 12, 'front', 'active', '', '', now, now))
+
+            if demo_devices:
+                conn.executemany(
+                    'INSERT INTO rack_devices (id, name, rack_id, device_type_id, start_u, position, status, serial_number, asset_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    demo_devices
+                )
 
         conn.commit()
     finally:

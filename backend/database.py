@@ -1579,6 +1579,58 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_device_id ON device_tags(device_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_tag_id ON device_tags(tag_id)')
 
+        # ── Rack Management (机柜管理) ──
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS racks (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            datacenter TEXT DEFAULT '',
+            room TEXT DEFAULT '',
+            row TEXT DEFAULT '',
+            total_u INTEGER NOT NULL DEFAULT 42,
+            description TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        ''')
+        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_racks_name_dc ON racks(name, datacenter)')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS device_types (
+            id TEXT PRIMARY KEY,
+            model TEXT NOT NULL,
+            vendor TEXT DEFAULT '',
+            u_height INTEGER NOT NULL DEFAULT 1,
+            device_role TEXT NOT NULL DEFAULT 'switch',
+            is_full_depth INTEGER DEFAULT 1,
+            description TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        ''')
+        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_device_types_model_vendor ON device_types(model, vendor)')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS rack_devices (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            rack_id TEXT NOT NULL,
+            device_type_id TEXT NOT NULL,
+            start_u INTEGER NOT NULL,
+            position TEXT NOT NULL DEFAULT 'front',
+            status TEXT NOT NULL DEFAULT 'active',
+            serial_number TEXT DEFAULT '',
+            asset_id TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (rack_id) REFERENCES racks(id),
+            FOREIGN KEY (device_type_id) REFERENCES device_types(id)
+        )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_rack_devices_rack_id ON rack_devices(rack_id)')
+
         conn.commit()
     finally:
         conn.close()

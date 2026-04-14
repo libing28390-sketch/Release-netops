@@ -305,3 +305,137 @@ class DeviceTagsUpdate(BaseModel):
 class BatchDeviceTagsUpdate(BaseModel):
     device_ids: List[str]
     tag_ids: List[str]
+
+
+# ─── Rack Management 机柜管理 ────────────────────────────
+
+_RACK_POSITIONS = {'front', 'rear'}
+_RACK_DEVICE_ROLES = {'switch', 'router', 'firewall', 'server', 'storage', 'pdu', 'ups', 'patch_panel', 'other'}
+_RACK_STATUSES = {'active', 'planned', 'decommissioned'}
+_RACK_DEVICE_STATUSES = {'active', 'offline', 'planned', 'maintenance'}
+
+
+class RackCreate(BaseModel):
+    name: str
+    datacenter: str = ''
+    room: str = ''
+    row: str = ''
+    total_u: int = 42
+    description: str = ''
+    status: str = 'active'
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 64:
+            raise ValueError('name must be 1-64 characters')
+        return v
+
+    @field_validator('total_u')
+    @classmethod
+    def validate_total_u(cls, v: int) -> int:
+        if v < 1 or v > 60:
+            raise ValueError('total_u must be between 1 and 60')
+        return v
+
+    @field_validator('status')
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        if v not in _RACK_STATUSES:
+            raise ValueError(f'status must be one of {_RACK_STATUSES}')
+        return v
+
+
+class RackUpdate(BaseModel):
+    name: Optional[str] = None
+    datacenter: Optional[str] = None
+    room: Optional[str] = None
+    row: Optional[str] = None
+    total_u: Optional[int] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+
+
+class DeviceTypeCreate(BaseModel):
+    model: str
+    vendor: str = ''
+    u_height: int = 1
+    device_role: str = 'switch'
+    is_full_depth: bool = True
+    description: str = ''
+
+    @field_validator('model')
+    @classmethod
+    def validate_model(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 128:
+            raise ValueError('model must be 1-128 characters')
+        return v
+
+    @field_validator('u_height')
+    @classmethod
+    def validate_u_height(cls, v: int) -> int:
+        if v < 1 or v > 20:
+            raise ValueError('u_height must be between 1 and 20')
+        return v
+
+    @field_validator('device_role')
+    @classmethod
+    def validate_device_role(cls, v: str) -> str:
+        if v not in _RACK_DEVICE_ROLES:
+            raise ValueError(f'device_role must be one of {_RACK_DEVICE_ROLES}')
+        return v
+
+
+class DeviceTypeUpdate(BaseModel):
+    model: Optional[str] = None
+    vendor: Optional[str] = None
+    u_height: Optional[int] = None
+    device_role: Optional[str] = None
+    is_full_depth: Optional[bool] = None
+    description: Optional[str] = None
+
+
+class RackDeviceCreate(BaseModel):
+    name: str
+    rack_id: str
+    device_type_id: str
+    start_u: int
+    position: str = 'front'
+    status: str = 'active'
+    serial_number: str = ''
+    asset_id: str = ''
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 128:
+            raise ValueError('name must be 1-128 characters')
+        return v
+
+    @field_validator('start_u')
+    @classmethod
+    def validate_start_u(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError('start_u must be >= 1')
+        return v
+
+    @field_validator('position')
+    @classmethod
+    def validate_position(cls, v: str) -> str:
+        if v not in _RACK_POSITIONS:
+            raise ValueError(f'position must be one of {_RACK_POSITIONS}')
+        return v
+
+
+class RackDeviceUpdate(BaseModel):
+    name: Optional[str] = None
+    rack_id: Optional[str] = None
+    device_type_id: Optional[str] = None
+    start_u: Optional[int] = None
+    position: Optional[str] = None
+    status: Optional[str] = None
+    serial_number: Optional[str] = None
+    asset_id: Optional[str] = None

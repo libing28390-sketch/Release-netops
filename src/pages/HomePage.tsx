@@ -184,8 +184,8 @@ const HomePage: React.FC<HomePageProps> = ({
 
   return (
     <div
-      className="select-none overflow-y-auto"
-      style={{ height: 'calc(100vh - 4rem)', background: 'var(--app-bg)' }}
+      className="select-none h-full"
+      style={{ background: 'var(--app-bg)' }}
     >
       <div className="max-w-[960px] xl:max-w-[1200px] 2xl:max-w-[1440px] w-full mx-auto px-5 sm:px-8 py-6">
 
