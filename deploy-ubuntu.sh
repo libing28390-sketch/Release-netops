@@ -20,12 +20,12 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
 
 # ---------- 配置 ----------
-NODE_MAJOR=20                       # Node.js LTS 大版本
+NODE_MAJOR=22                       # Node.js LTS 大版本
 PYTHON_MIN="3.10"                   # 最低 Python 版本
 GIT_REPO="https://github.com/libing28390-sketch/netsops.git"
 PROJECT_NAME="netops-automation"
 SERVICE_NAME="netops"
-BACKEND_PORT=8003
+BACKEND_PORT=8004
 NGINX_PORT=8080                     # Nginx 监听端口（如 80 被占用可改为 8080 等）
 SERVER_NAME="_"                     # 改为你的域名，如 netops.example.com
 
@@ -61,7 +61,7 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq \
     python3 python3-venv python3-dev \
     build-essential libffi-dev libssl-dev \
-    nginx \
+    nginx libcap2-bin \
     curl git ca-certificates > /dev/null 2>&1
 ok "系统依赖安装完成（含 Nginx、Git）"
 
@@ -234,7 +234,7 @@ info "配置 Nginx 反向代理..."
 
 sudo tee "$NGINX_CONF" > /dev/null <<'NGINXEOF'
 upstream netops_backend {
-    server 127.0.0.1:8003;
+    server 127.0.0.1:8004;
     keepalive 32;
 }
 
@@ -281,7 +281,7 @@ server {
         proxy_send_timeout 300s;
     }
 
-    location /ws {
+    location /api/ws/ {
         proxy_pass http://netops_backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade    $http_upgrade;
@@ -411,7 +411,7 @@ echo -e "  ${GREEN}部署完成！${NC}"
 echo "========================================"
 echo ""
 echo "  访问地址:  http://<服务器IP>  (Nginx 反向代理 → :${BACKEND_PORT})"
-echo "  默认账号:  admin / admin"
+echo "  默认账号:  admin / admin123"
 echo "  (首次登录后请立即修改为强密码)"
 echo ""
 echo "  常用命令:"

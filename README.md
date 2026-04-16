@@ -242,7 +242,7 @@ npm run dev
 默认开发访问地址：
 
 - 前端：http://localhost:4300
-- 后端 API：http://localhost:8003
+- 后端 API：http://localhost:8004
 
 #### 构建
 

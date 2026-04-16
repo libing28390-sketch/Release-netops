@@ -10,7 +10,7 @@
 
 简单说下环境：
 
-- **后端**：FastAPI + PostgreSQL 17，Docker Compose 部署，跑在本地 `http://127.0.0.1:8003`
+- **后端**：FastAPI + PostgreSQL 17，Docker Compose 部署，跑在本地 `http://127.0.0.1:8004`
 - **前端**：React SPA + Vite，TailwindCSS
 - **测试工具**：Playwright（Python），Chromium 无头模式，1920×1080 视口
 - **数据规模**：提前灌了一批模拟数据 —— 503 台网络设备、1002 台服务器、2589 条告警、5077 条审计日志、800 条合规发现

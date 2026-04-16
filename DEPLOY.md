@@ -5,7 +5,7 @@
 | 组件 | 技术栈 | 端口 |
 |------|--------|------|
 | 前端 | React 19 + TypeScript + Vite + TailwindCSS | 4300 (dev) |
-| 后端 | Python FastAPI + Uvicorn | 8003 |
+| 后端 | Python FastAPI + Uvicorn | 8004 |
 | 数据库 | PostgreSQL 17 (默认) / SQLite (fallback) | 5432 |
 | SNMP | pysnmp 7.x | - |
 
@@ -91,7 +91,7 @@ npm run build              # 构建前端
 2. **ping3 权限**：`ping3` 库在 Windows 上通常可直接使用，无需额外权限
 3. **端口占用**：如遇端口被占用，运行 `npm run cleanup` 或手动查看：
    ```powershell
-   netstat -ano | findstr :8003
+   netstat -ano | findstr :8004
    taskkill /PID <pid> /F
    ```
 4. **PowerShell 执行策略**：如果 `\.venv\Scripts\Activate.ps1` 报错，先执行：
@@ -109,7 +109,7 @@ npm run build              # 构建前端
 # 安装 Node.js (通过 nvm，推荐)
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
 source ~/.bashrc
-nvm install 20
+nvm install 22
 
 # 安装 Python 和系统依赖
 sudo apt update
@@ -173,7 +173,7 @@ npm run build
    ```
 3. **端口占用**：查看和清理端口：
    ```bash
-   lsof -i :8003
+   lsof -i :8004
    kill -9 <pid>
    # 或直接
    npm run cleanup
@@ -281,8 +281,8 @@ ALERT_NOTIFY_WEBHOOK_URL=
 
 ### 访问地址
 
-- 开发模式：http://localhost:4300（Vite 代理 API 到 8003）
-- 生产模式（直连后端）：http://localhost:8003（`npm run start` / `python backend/main.py`）
+- 开发模式：http://localhost:4300（Vite 代理 API 到 8004）
+- 生产模式（直连后端）：http://localhost:8004（`npm run start` / `python backend/main.py`）
 - Nginx 反向代理部署：http://localhost:8080（Ubuntu 一键部署默认端口，可通过 `NGINX_PORT` 修改）
 - Docker 模式：http://localhost:8080（Nginx 容器 → netops 容器）
 
@@ -318,7 +318,7 @@ INSTALL_DIR=/opt ./deploy.sh
 
 脚本会自动完成：Git 安装 → 项目克隆 → Python/Node 安装 → 依赖 → 前端构建 → Nginx 反向代理 → systemd 服务注册。
 
-部署完成后通过 `http://<服务器IP>:8080` 访问（Nginx 8080 端口 → 后端 8003）。
+部署完成后通过 `http://<服务器IP>:8080` 访问（Nginx 8080 端口 → 后端 8004）。
 
 > 如需修改 Nginx 监听端口，在运行部署脚本前设置 `NGINX_PORT` 环境变量，如：`NGINX_PORT=80 ./deploy.sh`
 
@@ -359,7 +359,7 @@ docker compose logs -f
 ### 架构说明
 
 ```
-用户 → Nginx (:8080) → FastAPI (:8003)
+用户 → Nginx (:8080) → FastAPI (:8004)
               │
               ├── /assets/  → 本地 dist/ 静态文件（缓存 365 天）
               ├── /api/*    → 反向代理到 netops 容器

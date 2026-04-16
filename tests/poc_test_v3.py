@@ -6,7 +6,7 @@ Nexora POC 详细测试脚本 v3
 import os
 from playwright.sync_api import sync_playwright, Page, expect
 
-BASE_URL = "http://127.0.0.1:8003"
+BASE_URL = "http://127.0.0.1:8004"
 SCREENSHOT_DIR = os.path.join(os.path.dirname(__file__), "poc_screenshots")
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 

@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 # ── Backend Detection ───────────────────────────────────────
 # Priority: DATABASE_URL env > default SQLite
 _DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
+
+# Automatically fix docker compose 'db' host for local execution outside docker
+if not os.path.exists('/.dockerenv') and '@db:' in _DATABASE_URL:
+    _DATABASE_URL = _DATABASE_URL.replace('@db:', '@localhost:')
+    logger.info("Running outside Docker: Auto-replaced 'db' host with 'localhost' in DATABASE_URL")
+
 _USE_PG = _DATABASE_URL.startswith('postgresql')
 
 if _USE_PG:

@@ -2,7 +2,7 @@
 
 > **测试时间**: 2026-04-08  
 > **测试工具**: Playwright 1.58.0 (Chromium Headless)  
-> **目标环境**: http://127.0.0.1:8003 (FastAPI + React SPA)  
+> **目标环境**: http://127.0.0.1:8004 (FastAPI + React SPA)  
 > **脚本**: `tests/poc_test_v3.py`  
 > **截图目录**: `tests/poc_screenshots/`
 

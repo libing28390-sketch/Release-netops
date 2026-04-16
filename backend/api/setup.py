@@ -104,9 +104,17 @@ def setup_change_password(
         if not row:
             raise HTTPException(404, "User not found")
 
-        if not bcrypt.checkpw(
-            body.current_password.encode(), row["password"].encode()
-        ):
+        # Support both bcrypt hash and legacy plaintext passwords
+        stored_pwd = row["password"]
+        is_valid = False
+        if stored_pwd.startswith('$2b$') or stored_pwd.startswith('$2a$'):
+            # Bcrypt hash
+            is_valid = bcrypt.checkpw(body.current_password.encode(), stored_pwd.encode())
+        else:
+            # Legacy plaintext
+            is_valid = body.current_password == stored_pwd
+        
+        if not is_valid:
             raise HTTPException(400, "Current password is incorrect")
 
         # Strength check

@@ -1215,6 +1215,37 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                       {zh ? '后面板' : 'Rear'}
                     </button>
                   </div>
+                  {/* Zoom controls */}
+                  <div className="flex items-center gap-1">
+                    <button onClick={handleFitToScreen} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors hover:bg-cyan-50" style={{ color: 'var(--muted-text)' }} title={zh ? '适应屏幕' : 'Fit to Screen'}>
+                      <Maximize2 size={12} />
+                    </button>
+                    <button onClick={handleResetZoom} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors hover:bg-cyan-50" style={{ color: 'var(--muted-text)' }} title={zh ? '原始大小' : '100%'}>
+                      100%
+                    </button>
+                  </div>
+
+                  {/* Collapse empty & sidebar toggles */}
+                  <div className="flex items-center gap-1 ml-3 pl-3 border-l" style={{ borderColor: 'var(--card-border)' }}>
+                    <button
+                      onClick={() => setCollapseEmpty(!collapseEmpty)}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all ${collapseEmpty ? 'bg-cyan-600/20 text-cyan-600' : 'hover:bg-cyan-50'}`}
+                      style={!collapseEmpty ? { color: 'var(--muted-text)' } : {}}
+                      title={zh ? '折叠空U位' : 'Collapse empty'}
+                    >
+                      {collapseEmpty ? <ChevronsUpDown size={12} /> : <Layers size={12} />}
+                      {collapseEmpty ? (zh ? '已折叠' : 'Collapsed') : (zh ? '全展开' : 'Expand')}
+                    </button>
+                    <button
+                      onClick={() => setShowDeviceList(!showDeviceList)}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all ${showDeviceList ? 'bg-cyan-600/20 text-cyan-600' : 'hover:bg-cyan-50'}`}
+                      style={!showDeviceList ? { color: 'var(--muted-text)' } : {}}
+                      title={zh ? '设备栏' : 'Device list'}
+                    >
+                      {showDeviceList ? <PanelRightOpen size={12} /> : <PanelRightClose size={12} />}
+                      {showDeviceList ? (zh ? '已显示' : 'Shown') : (zh ? '已隐藏' : 'Hidden')}
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-medium" style={{ color: 'var(--muted-text)' }}>
@@ -1230,108 +1261,111 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
               </div>
 
               {/* Content */}
-              <div className="flex-1 min-h-0 flex">
-                {loading ? (
-                  <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--muted-text)' }}>
-                    <RefreshCw size={20} className="animate-spin" />
-                  </div>
-                ) : (
-                  <>
-                    {/* Rack elevation — scrolls independently */}
-                    <div className="flex-shrink-0 overflow-auto p-3 pr-1">
-                      <div className="text-[10px] font-semibold text-center mb-1.5 sticky top-0 z-10 pb-1" style={{ color: 'var(--muted-text)', background: 'var(--card-bg)' }}>
-                        {viewSide === 'front' ? (zh ? '▼ 前面板 · 可拖拽' : '▼ Front · Draggable') : (zh ? '▼ 后面板 · 可拖拽' : '▼ Rear · Draggable')}
-                      </div>
-                      <RackElevation
-                        layout={layout}
-                        viewSide={viewSide}
-                        zh={zh}
-                        onDeviceMove={handleDeviceMove}
-                      />
-                    </div>
-
-                    {/* Device list — scrolls independently */}
-                    <div className="flex-1 min-w-0 overflow-auto p-3 pl-2">
-                      <h4 className="text-[12px] font-semibold mb-2 sticky top-0 z-10 pb-1" style={{ color: 'var(--heading-text)', background: 'var(--card-bg)' }}>
-                        {zh ? '已安装设备' : 'Installed Devices'} ({layout.devices.length})
-                      </h4>
-                      <div className="space-y-1">
-                        {layout.devices.length === 0 && (
-                          <p className="text-xs py-6 text-center" style={{ color: 'var(--muted-text)' }}>
-                            {zh ? '该机柜暂无设备' : 'No devices in this rack'}
-                          </p>
-                        )}
-                        {layout.devices.map(d => {
-                          const rc = ROLE_COLORS[d.device_role] || ROLE_COLORS.other;
-                          return (
-                            <div key={d.id} className="flex items-center gap-3 rounded-lg px-3 py-2 group" style={{ background: 'var(--app-hover-bg)' }}>
-                              <div className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0 relative" style={{ background: rc.bg + '20', color: rc.bg }}>
-                                <DeviceIcon role={d.device_role} size={13} />
-                                <span
-                                  className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-white/20"
-                                  style={{
-                                    background: d.status === 'active' ? '#4ade80' : d.status === 'planned' ? '#fbbf24' : '#ef4444',
-                                    boxShadow: d.status === 'active' ? '0 0 4px #4ade80' : 'none',
-                                  }}
-                                />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[12px] font-semibold truncate" style={{ color: 'var(--heading-text)' }}>{d.name}</p>
-                                <p className="text-[10px]" style={{ color: 'var(--muted-text)' }}>
-                                  {d.vendor} {d.model} · U{d.start_u}-U{d.start_u + d.u_height - 1} · {d.position === 'front' ? (zh ? '前' : 'F') : (zh ? '后' : 'R')}
-                                </p>
-                              </div>
-                              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: rc.bg + '20', color: rc.bg }}>
-                                {zh ? rc.labelZh : rc.label}
-                              </span>
-                              <button onClick={() => handleRemoveDevice(d.id)} className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-600 hover:bg-red-50">
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Legend */}
-                      <div className="mt-3 pt-2.5 border-t space-y-1.5" style={{ borderColor: 'var(--card-border)' }}>
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                          <span className="text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '电源' : 'Power'}:</span>
-                          {[
-                            { color: '#4ade80', glow: true,  label: zh ? '通电' : 'ON' },
-                            { color: '#ef4444', glow: false, label: zh ? '断电' : 'OFF' },
-                            { color: '#fbbf24', glow: false, label: zh ? '规划' : 'Planned' },
-                          ].map(p => (
-                            <div key={p.label} className="flex items-center gap-1">
-                              <span className="w-2 h-2 rounded-full" style={{ background: p.color, boxShadow: p.glow ? `0 0 6px ${p.color}` : 'none' }} />
-                              <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>{p.label}</span>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span className="text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '类型' : 'Roles'}:</span>
-                          {Object.entries(ROLE_COLORS).map(([key, rc]) => (
-                            <div key={key} className="flex items-center gap-1">
-                              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: rc.bg }} />
-                              <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>{zh ? rc.labelZh : rc.label}</span>
-                            </div>
-                          ))}
-                        </div>
-                        <p className="text-[9px] italic" style={{ color: 'var(--muted-text)' }}>
-                          {zh ? '提示：在机柜图中拖拽设备可快速调整U位' : 'Tip: Drag devices in the rack diagram to reposition'}
-                        </p>
-                      </div>
-                    </div>
-                  </>
-                )}
+              <div className="flex-1 min-h-0 overflow-y-auto p-3 pr-1" ref={rackScrollRef}>
+                <div className="text-[10px] font-semibold text-center mb-1.5 sticky top-0 z-10 pb-1" style={{ color: 'var(--muted-text)', background: 'var(--card-bg)' }}>
+                  {viewSide === 'front' ? (zh ? '▼ 前面板 · 可拖拽' : '▼ Front · Draggable') : (zh ? '▼ 后面板 · 可拖拽' : '▼ Rear · Draggable')}
+                </div>
+                <div style={{ transform: `scale(${rackScale})`, transformOrigin: 'top center' }}>
+                  <RackElevation
+                    layout={layout}
+                    viewSide={viewSide}
+                    zh={zh}
+                    collapseEmpty={collapseEmpty}
+                    onDeviceMove={handleDeviceMove}
+                  />
+                </div>
               </div>
             </>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ color: 'var(--muted-text)' }}>
-              <LayoutGrid size={48} strokeWidth={1} />
-              <p className="text-sm">{zh ? '请选择一个机柜或新建机柜' : 'Select a rack or create a new one'}</p>
+            <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--muted-text)' }}>
+              {loading ? <RefreshCw size={20} className="animate-spin" /> : (zh ? '请选择机柜' : 'Select a rack')}
             </div>
           )}
         </div>
+
+        {/* Right: device list */}
+        {showDeviceList && (
+        <div className="w-64 flex-shrink-0 rounded-xl overflow-hidden flex flex-col" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+          <div className="p-3 border-b" style={{ borderColor: 'var(--card-border)' }}>
+            <h4 className="text-[12px] font-semibold" style={{ color: 'var(--heading-text)' }}>
+              {zh ? '已安装设备' : 'Installed Devices'} ({layout?.devices.length || 0})
+            </h4>
+          </div>
+          <div className="flex-1 overflow-y-auto p-3 space-y-1">
+            {!layout ? (
+              <p className="text-xs py-6 text-center" style={{ color: 'var(--muted-text)' }}>
+                {zh ? '请选择机柜' : 'Select a rack'}
+              </p>
+            ) : layout.devices.length === 0 ? (
+              <p className="text-xs py-6 text-center" style={{ color: 'var(--muted-text)' }}>
+                {zh ? '该机柜暂无设备' : 'No devices in this rack'}
+              </p>
+            ) : layout.devices.map(d => {
+              const rc = ROLE_COLORS[d.device_role] || ROLE_COLORS.other;
+              return (
+                <div key={d.id} className="flex items-center gap-3 rounded-lg px-3 py-2 group" style={{ background: 'var(--app-hover-bg)' }}>
+                  <div className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0 relative" style={{ background: rc.bg + '20', color: rc.bg }}>
+                    <DeviceIcon role={d.device_role} size={13} />
+                    <span
+                      className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-white/20"
+                      style={{
+                        background: d.status === 'active' ? '#4ade80' : d.status === 'planned' ? '#fbbf24' : '#ef4444',
+                        boxShadow: d.status === 'active' ? '0 0 4px #4ade80' : 'none',
+                      }}
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[12px] font-semibold truncate" style={{ color: 'var(--heading-text)' }}>{d.name}</p>
+                    <p className="text-[10px]" style={{ color: 'var(--muted-text)' }}>
+                      {d.vendor} {d.model} · U{d.start_u}-U{d.start_u + d.u_height - 1} · {d.position === 'front' ? (zh ? '前' : 'F') : (zh ? '后' : 'R')}
+                    </p>
+                  </div>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: rc.bg + '20', color: rc.bg }}>
+                    {zh ? rc.labelZh : rc.label}
+                  </span>
+                  <button onClick={() => handleRemoveDevice(d.id)} className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-600 hover:bg-red-50">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Legend */}
+          {layout && layout.devices.length > 0 && (
+            <div className="p-3 border-t space-y-1.5" style={{ borderColor: 'var(--card-border)' }}>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '电源' : 'Power'}:</span>
+                {[
+                  { color: '#4ade80', glow: true,  label: zh ? '通电' : 'ON' },
+                  { color: '#ef4444', glow: false, label: zh ? '断电' : 'OFF' },
+                  { color: '#fbbf24', glow: false, label: zh ? '规划' : 'Plan' },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-center gap-1">
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{
+                        background: item.color,
+                        boxShadow: item.glow ? `0 0 4px ${item.color}` : 'none',
+                      }}
+                    />
+                    <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>{item.label}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '设备类型' : 'Device Types'}:</span>
+                {Object.entries(ROLE_COLORS).map(([role, rc]) => (
+                  <div key={role} className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded" style={{ background: rc.bg }} />
+                    <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>{zh ? rc.labelZh : rc.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        )}
       </div>
 
       {/* -- Error toast -- */}
