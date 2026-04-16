@@ -72,17 +72,18 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, showToa
 
   // ── Step 1: Change password ──
   const pwdStrength = (() => {
-    if (!newPwd) return { score: 0, label: '' };
+    if (!newPwd) return { score: 0, label: '', missing: [] };
     let s = 0;
-    if (newPwd.length >= 10) s++;
-    if (/[A-Z]/.test(newPwd)) s++;
-    if (/[a-z]/.test(newPwd)) s++;
-    if (/[0-9]/.test(newPwd)) s++;
-    if (/[^A-Za-z0-9]/.test(newPwd)) s++;
+    const missing = [];
+    if (newPwd.length >= 10) s++; else missing.push(zh ? '至少10个字符' : '10+ chars');
+    if (/[A-Z]/.test(newPwd)) s++; else missing.push(zh ? '大写字母' : 'uppercase');
+    if (/[a-z]/.test(newPwd)) s++; else missing.push(zh ? '小写字母' : 'lowercase');
+    if (/[0-9]/.test(newPwd)) s++; else missing.push(zh ? '数字' : 'digit');
+    if (/[^A-Za-z0-9]/.test(newPwd)) s++; else missing.push(zh ? '特殊字符' : 'special char');
     const labels = zh
       ? ['', '弱', '弱', '中等', '强', '非常强']
       : ['', 'Weak', 'Weak', 'Medium', 'Strong', 'Very Strong'];
-    return { score: s, label: labels[s] };
+    return { score: s, label: labels[s], missing };
   })();
 
   const handleChangePassword = async () => {
@@ -94,8 +95,9 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, showToa
       showToast(zh ? '两次输入的密码不一致' : 'Passwords do not match', 'error');
       return;
     }
-    if (pwdStrength.score < 4) {
-      showToast(zh ? '密码强度不足：需要大写、小写、数字和特殊字符，至少10位' : 'Password too weak: need uppercase, lowercase, digit, special char, 10+ chars', 'error');
+    if (pwdStrength.score < 5) {
+      const missingText = pwdStrength.missing.join(', ');
+      showToast(zh ? `密码强度不足：缺少 ${missingText}` : `Password too weak: missing ${missingText}`, 'error');
       return;
     }
     setPwdLoading(true);
@@ -296,24 +298,31 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, showToa
                           className="w-full rounded-xl border border-black/10 bg-white py-3 px-3 text-sm outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10"
                         />
                         {newPwd && (
-                          <div className="mt-1.5 flex items-center gap-2">
-                            <div className="flex h-1 flex-1 gap-0.5 rounded-full overflow-hidden bg-black/5">
-                              {[1, 2, 3, 4, 5].map(i => (
-                                <div
-                                  key={i}
-                                  className={`flex-1 transition-all duration-300 ${
-                                    i <= pwdStrength.score
-                                      ? pwdStrength.score <= 2 ? 'bg-red-400' : pwdStrength.score <= 3 ? 'bg-amber-400' : 'bg-emerald-400'
-                                      : ''
-                                  }`}
-                                />
-                              ))}
+                          <div className="mt-1.5 space-y-1">
+                            <div className="flex items-center gap-2">
+                              <div className="flex h-1 flex-1 gap-0.5 rounded-full overflow-hidden bg-black/5">
+                                {[1, 2, 3, 4, 5].map(i => (
+                                  <div
+                                    key={i}
+                                    className={`flex-1 transition-all duration-300 ${
+                                      i <= pwdStrength.score
+                                        ? pwdStrength.score <= 2 ? 'bg-red-400' : pwdStrength.score <= 3 ? 'bg-amber-400' : 'bg-emerald-400'
+                                        : ''
+                                    }`}
+                                  />
+                                ))}
+                              </div>
+                              <span className={`text-[10px] font-bold ${
+                                pwdStrength.score <= 2 ? 'text-red-400' : pwdStrength.score <= 3 ? 'text-amber-500' : 'text-emerald-500'
+                              }`}>
+                                {pwdStrength.label}
+                              </span>
                             </div>
-                            <span className={`text-[10px] font-bold ${
-                              pwdStrength.score <= 2 ? 'text-red-400' : pwdStrength.score <= 3 ? 'text-amber-500' : 'text-emerald-500'
-                            }`}>
-                              {pwdStrength.label}
-                            </span>
+                            {pwdStrength.missing.length > 0 && (
+                              <p className="text-xs text-red-400">
+                                {zh ? `缺少: ${pwdStrength.missing.join(', ')}` : `Missing: ${pwdStrength.missing.join(', ')}`}
+                              </p>
+                            )}
                           </div>
                         )}
                       </div>

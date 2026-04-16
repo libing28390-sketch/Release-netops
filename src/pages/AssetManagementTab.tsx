@@ -13,6 +13,7 @@ import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
 import DateTimePicker from '../components/DateTimePicker';
 import Pagination from '../components/Pagination';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
@@ -388,36 +389,49 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   };
 
   /* ─── Export ─── */
-  const handleExport = () => {
-    if (!assets.length) return;
-    const rows = assets.map(a => ({
-      [zh ? '主机名' : 'Hostname']: a.hostname,
-      [zh ? '资产编号' : 'Asset Tag']: a.asset_tag,
-      [zh ? '序列号' : 'Serial Number']: a.serial_number,
-      [zh ? '类型' : 'Type']: a.asset_type,
-      [zh ? '厂商' : 'Vendor']: a.vendor,
-      [zh ? '型号' : 'Model']: a.model,
-      [zh ? '管理IP' : 'Mgmt IP']: a.management_ip,
-      [zh ? '业务IP' : 'Business IP']: a.business_ip,
-      [zh ? '状态' : 'Status']: a.status,
-      [zh ? '角色' : 'Role']: a.device_role,
-      [zh ? 'VLAN' : 'VLAN']: a.vlan,
-      [zh ? '上联交换机' : 'Uplink Switch']: a.uplink_switch,
-      [zh ? '上联端口' : 'Uplink Port']: a.uplink_port,
-      [zh ? '数据中心' : 'Datacenter']: a.datacenter,
-      [zh ? '机柜' : 'Rack']: a.rack,
-      [zh ? 'U位' : 'Rack Unit']: a.rack_unit,
-      [zh ? '部门' : 'Department']: a.department,
-      [zh ? '购买日期' : 'Purchase Date']: a.purchase_date,
-      [zh ? '投产状态' : 'Lifecycle']: LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || '',
-      [zh ? '保修到期' : 'Warranty Expiry']: a.warranty_expiry,
-      [zh ? '备注' : 'Notes']: a.notes,
-    }));
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Assets');
-    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-    XLSX.writeFile(wb, `assets_${ts}.xlsx`);
+  const handleExport = async () => {
+    const params = new URLSearchParams({ page: '1', page_size: '200' });
+    if (search.trim()) params.set('q', search.trim());
+    if (typeFilter !== 'all') params.set('asset_type', typeFilter);
+    if (statusFilter !== 'all') params.set('status', statusFilter);
+    if (vendorFilter !== 'all') params.set('vendor', vendorFilter);
+    if (dcFilter !== 'all') params.set('datacenter', dcFilter);
+    if (deptFilter !== 'all') params.set('department', deptFilter);
+
+    try {
+      const allAssets = await fetchAllPaginatedItems<Asset>('/api/assets', params);
+      if (!allAssets.length) return;
+      const rows = allAssets.map(a => ({
+        [zh ? '主机名' : 'Hostname']: a.hostname,
+        [zh ? '资产编号' : 'Asset Tag']: a.asset_tag,
+        [zh ? '序列号' : 'Serial Number']: a.serial_number,
+        [zh ? '类型' : 'Type']: a.asset_type,
+        [zh ? '厂商' : 'Vendor']: a.vendor,
+        [zh ? '型号' : 'Model']: a.model,
+        [zh ? '管理IP' : 'Mgmt IP']: a.management_ip,
+        [zh ? '业务IP' : 'Business IP']: a.business_ip,
+        [zh ? '状态' : 'Status']: a.status,
+        [zh ? '角色' : 'Role']: a.device_role,
+        [zh ? 'VLAN' : 'VLAN']: a.vlan,
+        [zh ? '上联交换机' : 'Uplink Switch']: a.uplink_switch,
+        [zh ? '上联端口' : 'Uplink Port']: a.uplink_port,
+        [zh ? '数据中心' : 'Datacenter']: a.datacenter,
+        [zh ? '机柜' : 'Rack']: a.rack,
+        [zh ? 'U位' : 'Rack Unit']: a.rack_unit,
+        [zh ? '部门' : 'Department']: a.department,
+        [zh ? '购买日期' : 'Purchase Date']: a.purchase_date,
+        [zh ? '投产状态' : 'Lifecycle']: LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || '',
+        [zh ? '保修到期' : 'Warranty Expiry']: a.warranty_expiry,
+        [zh ? '备注' : 'Notes']: a.notes,
+      }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Assets');
+      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+      XLSX.writeFile(wb, `assets_${ts}.xlsx`);
+    } catch (error) {
+      console.error('Failed to export assets:', error);
+    }
   };
 
   /* ─── Import ─── */
@@ -518,7 +532,9 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const majorCount     = (byStatus['maintenance'] ?? 0);
   const warningCount   = summary?.warranty_expiring_soon ?? 0;
   const healthyCount   = byStatus['active'] ?? 0;
-  const totalCount     = summary?.total ?? 0;
+  const totalCount     = summary
+    ? (summary.by_type?.network_device ?? 0) + (summary.by_type?.server ?? 0)
+    : 0;
 
   const groupedAssets = useMemo<Record<string, Asset[]>>(() => {
     const g: Record<string, Asset[]> = {};

@@ -110,11 +110,14 @@ def setup_change_password(
         if stored_pwd.startswith('$2b$') or stored_pwd.startswith('$2a$'):
             # Bcrypt hash
             is_valid = bcrypt.checkpw(body.current_password.encode(), stored_pwd.encode())
+            logger.info("Password validation: bcrypt check for user %s, result: %s", user["username"], is_valid)
         else:
             # Legacy plaintext
             is_valid = body.current_password == stored_pwd
+            logger.info("Password validation: plaintext check for user %s, result: %s", user["username"], is_valid)
         
         if not is_valid:
+            logger.warning("Password change failed: current password incorrect for user %s", user["username"])
             raise HTTPException(400, "Current password is incorrect")
 
         # Strength check
@@ -125,11 +128,17 @@ def setup_change_password(
             any(c.isdigit() for c in pwd),
             any(not c.isalnum() for c in pwd),
         ]
-        if not all(checks):
-            raise HTTPException(
-                400,
-                "Password must contain uppercase, lowercase, digit, and special character",
-            )
+        missing = []
+        if not checks[0]: missing.append("uppercase letter")
+        if not checks[1]: missing.append("lowercase letter") 
+        if not checks[2]: missing.append("digit")
+        if not checks[3]: missing.append("special character")
+        if len(pwd) < 10: missing.append("minimum 10 characters")
+        
+        if missing:
+            error_msg = f"Password too weak. Missing: {', '.join(missing)}"
+            logger.warning("Password change failed: %s for user %s", error_msg, user["username"])
+            raise HTTPException(400, error_msg)
 
         hashed = bcrypt.hashpw(pwd.encode(), bcrypt.gensalt()).decode()
         conn.execute(

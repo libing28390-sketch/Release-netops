@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import type { AuditEvent } from '../types';
 import { sectionHeaderRowClass, severityBadgeClass, auditStatusBadgeClass } from '../components/shared';
 import Pagination from '../components/Pagination';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 
 interface HistoryTabProps {
   auditRows: AuditEvent[];
@@ -93,24 +94,36 @@ const HistoryTab: React.FC<HistoryTabProps> = ({
     return v;
   };
 
-  const handleExportAudit = () => {
-    if (auditRows.length === 0) return;
-    const exportData = auditRows.map(e => ({
-      [zh ? '时间' : 'Timestamp']: new Date(e.created_at).toLocaleString(),
-      [zh ? '操作' : 'Action']: fmtSummary(e.summary),
-      [zh ? '事件类型' : 'Event Type']: fmtEventType(e.event_type),
-      [zh ? '分类' : 'Category']: fmtCategory(e.category),
-      [zh ? '级别' : 'Severity']: fmtSeverity(e.severity),
-      [zh ? '目标' : 'Target']: e.target_name || e.target_id || e.device_id || '',
-      [zh ? '用户' : 'User']: e.actor_username || 'system',
-      [zh ? '状态' : 'Status']: fmtStatus(e.status),
-      [zh ? '来源IP' : 'Source IP']: e.source_ip || '',
-    }));
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Audit Logs');
-    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-    XLSX.writeFile(wb, `audit_logs_${ts}.xlsx`);
+  const handleExportAudit = async () => {
+    const params = new URLSearchParams({
+      category: auditCategoryFilter,
+      severity: auditSeverityFilter,
+      status: auditStatusFilter,
+      time_range: auditTimeFilter,
+    });
+
+    try {
+      const allRows = await fetchAllPaginatedItems<AuditEvent>('/api/audit/events', params);
+      if (allRows.length === 0) return;
+      const exportData = allRows.map(e => ({
+        [zh ? '时间' : 'Timestamp']: new Date(e.created_at).toLocaleString(),
+        [zh ? '操作' : 'Action']: fmtSummary(e.summary),
+        [zh ? '事件类型' : 'Event Type']: fmtEventType(e.event_type),
+        [zh ? '分类' : 'Category']: fmtCategory(e.category),
+        [zh ? '级别' : 'Severity']: fmtSeverity(e.severity),
+        [zh ? '目标' : 'Target']: e.target_name || e.target_id || e.device_id || '',
+        [zh ? '用户' : 'User']: e.actor_username || 'system',
+        [zh ? '状态' : 'Status']: fmtStatus(e.status),
+        [zh ? '来源IP' : 'Source IP']: e.source_ip || '',
+      }));
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Audit Logs');
+      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+      XLSX.writeFile(wb, `audit_logs_${ts}.xlsx`);
+    } catch (error) {
+      console.error('Failed to export audit logs:', error);
+    }
   };
 
   return (

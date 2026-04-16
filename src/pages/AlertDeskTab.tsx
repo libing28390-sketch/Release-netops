@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import type { AlertDetailResponse, AlertListResponse, AlertRecord } from '../types';
 import Pagination from '../components/Pagination';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 import {
   alertInputClass,
   alertPanelClass,
@@ -183,28 +184,41 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
   const selectedItem = selectedDetail?.item || null;
 
-  const handleExportAlerts = () => {
-    if (rows.length === 0) return;
-    const exportData = rows.map(r => ({
-      Title: r.title,
-      Severity: r.severity,
-      Status: r.workflow_status,
-      Hostname: r.hostname || '',
-      IP: r.ip_address || '',
-      Interface: r.interface_name || '',
-      Site: r.site || '',
-      Assignee: r.assignee || '',
-      'Ack By': r.ack_by || '',
-      Occurrences: r.occurrence_count ?? 1,
-      'Created At': r.created_at ? new Date(r.created_at).toLocaleString() : '',
-      'Resolved At': r.resolved_at ? new Date(r.resolved_at).toLocaleString() : '',
-      Message: r.message,
-    }));
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Alerts');
-    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-    XLSX.writeFile(wb, `alerts_export_${ts}.xlsx`);
+  const handleExportAlerts = async () => {
+    const params = new URLSearchParams({
+      status: statusFilter,
+      severity: severityFilter,
+      site: 'all',
+      assignee: 'all',
+      search,
+    });
+
+    try {
+      const allAlerts = await fetchAllPaginatedItems<AlertRecord>('/api/alerts', params);
+      if (allAlerts.length === 0) return;
+      const exportData = allAlerts.map(r => ({
+        Title: r.title,
+        Severity: r.severity,
+        Status: r.workflow_status,
+        Hostname: r.hostname || '',
+        IP: r.ip_address || '',
+        Interface: r.interface_name || '',
+        Site: r.site || '',
+        Assignee: r.assignee || '',
+        'Ack By': r.ack_by || '',
+        Occurrences: r.occurrence_count ?? 1,
+        'Created At': r.created_at ? new Date(r.created_at).toLocaleString() : '',
+        'Resolved At': r.resolved_at ? new Date(r.resolved_at).toLocaleString() : '',
+        Message: r.message,
+      }));
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Alerts');
+      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+      XLSX.writeFile(wb, `alerts_export_${ts}.xlsx`);
+    } catch (error) {
+      console.error('Failed to export alerts:', error);
+    }
   };
 
   const handleBatchAck = async (nextStatus: 'acknowledged' | 'investigating') => {

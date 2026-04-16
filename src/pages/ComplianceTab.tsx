@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import type { ComplianceFinding, ComplianceOverview } from '../types';
 import { sectionHeaderRowClass, sectionToolbarClass, primaryActionBtnClass, severityBadgeClass, complianceStatusBadgeClass } from '../components/shared';
 import Pagination from '../components/Pagination';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 
 interface ComplianceTabProps {
   complianceOverview: ComplianceOverview | null;
@@ -38,28 +39,39 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({
   runComplianceAudit, openComplianceFindingDetail, updateComplianceFinding,
   language, t,
 }) => {
-  const handleExportCompliance = () => {
-    if (complianceFindings.length === 0) return;
-    const exportData = complianceFindings.map(f => ({
-      Title: f.title,
-      'Rule ID': f.rule_id,
-      Hostname: f.hostname || '',
-      IP: f.ip_address || '',
-      Severity: f.severity,
-      Category: f.category,
-      Status: f.status,
-      Description: f.description,
-      Remediation: f.remediation || '',
-      Owner: f.owner || '',
-      'First Seen': f.first_seen ? new Date(f.first_seen).toLocaleString() : '',
-      'Last Seen': f.last_seen ? new Date(f.last_seen).toLocaleString() : '',
-      'Resolved At': f.resolved_at ? new Date(f.resolved_at).toLocaleString() : '',
-    }));
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Compliance');
-    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-    XLSX.writeFile(wb, `compliance_findings_${ts}.xlsx`);
+  const handleExportCompliance = async () => {
+    const params = new URLSearchParams({
+      severity: complianceSeverityFilter,
+      status: complianceStatusFilter,
+      category: complianceCategoryFilter,
+    });
+
+    try {
+      const allFindings = await fetchAllPaginatedItems<ComplianceFinding>('/api/compliance/findings', params);
+      if (allFindings.length === 0) return;
+      const exportData = allFindings.map(f => ({
+        Title: f.title,
+        'Rule ID': f.rule_id,
+        Hostname: f.hostname || '',
+        IP: f.ip_address || '',
+        Severity: f.severity,
+        Category: f.category,
+        Status: f.status,
+        Description: f.description,
+        Remediation: f.remediation || '',
+        Owner: f.owner || '',
+        'First Seen': f.first_seen ? new Date(f.first_seen).toLocaleString() : '',
+        'Last Seen': f.last_seen ? new Date(f.last_seen).toLocaleString() : '',
+        'Resolved At': f.resolved_at ? new Date(f.resolved_at).toLocaleString() : '',
+      }));
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Compliance');
+      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+      XLSX.writeFile(wb, `compliance_findings_${ts}.xlsx`);
+    } catch (error) {
+      console.error('Failed to export compliance findings:', error);
+    }
   };
 
   return (

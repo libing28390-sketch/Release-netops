@@ -16,7 +16,7 @@
 |---|------|
 | **前端** | React 19 + TypeScript + Vite + TailwindCSS |
 | **后端** | Python 3.10+ / FastAPI / Pydantic |
-| **数据库** | PostgreSQL 17 |
+| **数据库** | SQLite（默认，未配置 `DATABASE_URL` 时启用）/ PostgreSQL 17（可选） |
 | **设备驱动** | Netmiko + Scrapli（工厂模式，自动 fallback） |
 | **监控采集** | SNMPv2/v3 + TextFSM 解析 |
 | **部署** | Docker Compose / Ubuntu 一键脚本 |
@@ -32,6 +32,8 @@
 打开平台先过登录页：
 
 ![登录页](tests/poc_screenshots/TC01_01_login_page.png)
+
+第一次登录时还会触发初始化设置向导，要求修改默认管理员密码并配置平台基础信息，告警通知渠道可以选填。默认管理员账号为 `admin/admin`。如果初次启动机柜模块为空，系统会自动种子演示机柜与示例设备，方便快速查看机柜布局。
 
 输入账号密码进来，第一眼看到的是仪表盘——KPI 卡片、主机资源面板、合规趋势图、平台分布饼图，一屏总览全局：
 
@@ -68,6 +70,7 @@
 |--------|------|
 | 资产管理 | 全网资产概览、分类统计 |
 | 网络设备 | 设备 CRUD、搜索筛选、详情弹窗（含连通性/SNMP 测试）|
+| 机柜管理 | 机柜/机柜设备可视化、U位使用统计、前/后视图、机柜布局管理 |
 | 服务器 | 服务器清单与管理 |
 | IP/VLAN 管理 | IP 地址池与 VLAN 规划 |
 | IP 工具箱 | IP 定位、子网计算、常用网络工具 |
@@ -115,7 +118,10 @@
 ## 其他亮点
 
 - **多厂商适配**：支持 Cisco IOS/NX-OS/IOS-XE、Huawei VRP、H3C Comware、Arista EOS、Juniper JunOS，驱动层工厂模式封装，Netmiko 连不上自动 fallback 到 Scrapli。
+- **密码库集成**：支持 HashiCorp Vault KV v2 作为可选设备凭据存储源，开启 `VAULT_ENABLED=true` 后可把设备凭据写入 Vault，并在失败时回退到本地数据库。
+- **密码轮换**：支持设备密码自动轮换，系统可生成高强度随机密码并更新 Vault/数据库。
 - **凭据加密**：设备密码用 Fernet/AES + PBKDF2 加密存储，数据库里只存 `enc:v1:` 开头的密文。
+- **机柜管理**：可视化机柜布局、42U 前后视图、U位使用/剩余统计、机柜设备拖拽管理。首次初始化为空时，会自动种子演示机柜与设备。
 - **日志脱敏**：`SanitizeFilter` 过滤，密码和密钥不会被打到日志文件里。
 - **国际化**：前端中英文一键切换。
 - **响应式布局**：桌面、平板、手机三端自适应——

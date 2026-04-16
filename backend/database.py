@@ -28,7 +28,13 @@ if not os.path.exists('/.dockerenv') and '@db:' in _DATABASE_URL:
     _DATABASE_URL = _DATABASE_URL.replace('@db:', '@localhost:')
     logger.info("Running outside Docker: Auto-replaced 'db' host with 'localhost' in DATABASE_URL")
 
-_USE_PG = _DATABASE_URL.startswith('postgresql')
+normalized_db_url = _DATABASE_URL.lower()
+_USE_PG = normalized_db_url.startswith('postgresql://') or normalized_db_url.startswith('postgres://')
+
+_safe_db_url = re.sub(r'://[^@]+@', '://***@', _DATABASE_URL)
+logger.info("Database backend selected: %s, DATABASE_URL=%s",
+            "PostgreSQL" if _USE_PG else "SQLite",
+            _safe_db_url or "(unset)")
 
 if _USE_PG:
     import psycopg2

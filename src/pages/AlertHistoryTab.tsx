@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import type { AlertListResponse, AlertRecord, AlertDetailResponse } from '../types';
 import Pagination from '../components/Pagination';
 import { severityBadgeClass, alertWorkflowBadgeClass } from '../components/shared';
+import { fetchAllPaginatedItems } from '../utils/pagination';
 import DateTimePicker from '../components/DateTimePicker';
 import {
   alertInputClass,
@@ -102,26 +103,41 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
     setSelectedDetail(null);
   };
 
-  const handleExport = () => {
-    if (rows.length === 0) return;
-    const data = rows.map(r => ({
-      [zh ? '告警标题' : 'Title']: r.title,
-      [zh ? '设备' : 'Device']: r.hostname || r.ip_address || '--',
-      [zh ? '站点' : 'Site']: r.site || '--',
-      [zh ? '级别' : 'Severity']: severityLabel(r.severity, language),
-      [zh ? '状态' : 'Status']: workflowLabel(r.workflow_status, language),
-      [zh ? '责任人' : 'Assignee']: r.assignee || '--',
-      [zh ? '创建时间' : 'Created']: formatTs(r.created_at),
-      [zh ? '恢复时间' : 'Resolved']: formatTs(r.resolved_at),
-      [zh ? '持续时间' : 'Duration']: formatDuration(r.duration_seconds, language),
-      [zh ? '出现次数' : 'Occurrences']: r.occurrence_count ?? 1,
-      [zh ? '备注' : 'Note']: r.note || '',
-    }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), zh ? '历史告警' : 'Alert History');
-    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-    XLSX.writeFile(wb, `alert_history_${ts}.xlsx`);
-    showToast(zh ? '导出成功' : 'Exported', 'success');
+  const handleExport = async () => {
+    const params = new URLSearchParams({
+      status: 'resolved',
+      severity: severityFilter,
+      site: 'all',
+      assignee: 'all',
+      search,
+    });
+    if (createdFrom) params.set('created_from', createdFrom);
+    if (createdTo) params.set('created_to', createdTo);
+
+    try {
+      const allRows = await fetchAllPaginatedItems<AlertRecord>('/api/alerts', params);
+      if (allRows.length === 0) return;
+      const data = allRows.map(r => ({
+        [zh ? '告警标题' : 'Title']: r.title,
+        [zh ? '设备' : 'Device']: r.hostname || r.ip_address || '--',
+        [zh ? '站点' : 'Site']: r.site || '--',
+        [zh ? '级别' : 'Severity']: severityLabel(r.severity, language),
+        [zh ? '状态' : 'Status']: workflowLabel(r.workflow_status, language),
+        [zh ? '责任人' : 'Assignee']: r.assignee || '--',
+        [zh ? '创建时间' : 'Created']: formatTs(r.created_at),
+        [zh ? '恢复时间' : 'Resolved']: formatTs(r.resolved_at),
+        [zh ? '持续时间' : 'Duration']: formatDuration(r.duration_seconds, language),
+        [zh ? '出现次数' : 'Occurrences']: r.occurrence_count ?? 1,
+        [zh ? '备注' : 'Note']: r.note || '',
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), zh ? '历史告警' : 'Alert History');
+      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+      XLSX.writeFile(wb, `alert_history_${ts}.xlsx`);
+      showToast(zh ? '导出成功' : 'Exported', 'success');
+    } catch (error) {
+      console.error('Failed to export alert history:', error);
+    }
   };
 
   const clearTimeRange = () => {
