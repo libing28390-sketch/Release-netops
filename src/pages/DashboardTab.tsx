@@ -23,12 +23,14 @@ interface DashboardTabProps {
   t: (key: string) => string;
   setActiveTab: (tab: string) => void;
   navigate: (path: string) => void;
+  assetsTotal: number;
 }
 
 const DashboardTab: React.FC<DashboardTabProps> = ({
   devices, jobs, scheduledTasks, trendDays, setTrendDays,
   complianceTrend, platformData, dashBannerCollapsed, setDashBannerCollapsed,
   dashLastRefresh, hostResources, unreadNotificationCount, notifications, language, t, setActiveTab, navigate,
+  assetsTotal,
 }) => {
   const ct = useChartTheme();
   const onlineCount = devices.filter(d => d.status === 'online').length;
@@ -123,7 +125,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         <div onClick={() => setActiveTab('inventory')} className="bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-[#005073]/20 transition-all cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('totalAssets')}</p>
-            <p className="text-3xl font-bold monitoring-data text-[#005073]">{devices.length}</p>
+            <p className="text-3xl font-bold monitoring-data text-[#005073]">{assetsTotal}</p>
           </div>
           <div className="p-3 rounded-xl bg-[#005073]/5 text-[#005073] group-hover:scale-110 transition-transform">
             <Server size={24} />

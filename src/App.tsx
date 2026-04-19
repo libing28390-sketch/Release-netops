@@ -2518,6 +2518,7 @@ const App: React.FC = () => {
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [inventoryRefreshTick, setInventoryRefreshTick] = useState(0);
   const [devicesLastUpdatedAt, setDevicesLastUpdatedAt] = useState<number | null>(null);
+  const [assetsTotal, setAssetsTotal] = useState(0);
   const [hostResources, setHostResources] = useState<HostResourceSnapshot | null>(null);
 
   // Monitoring Center state (search-first, no full device listing)
@@ -2642,6 +2643,23 @@ const App: React.FC = () => {
     inventoryPageSize,
     inventoryRefreshTick,
   ]);
+
+  // Fetch assets total for dashboard
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const fetchAssetsTotal = async () => {
+      try {
+        const resp = await fetch('/api/assets/summary');
+        if (resp.ok) {
+          const data = await resp.json();
+          setAssetsTotal(data.total || 0);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    fetchAssetsTotal();
+  }, [isAuthenticated]);
 
   const fetchMonitoringOverview = useCallback(async (forceRefresh = false, signal?: AbortSignal) => {
     const reqEpoch = monitorRequestEpochRef.current;
@@ -5369,6 +5387,7 @@ const App: React.FC = () => {
                 t={t}
                 setActiveTab={setActiveTab}
                 navigate={navigate}
+                assetsTotal={assetsTotal}
               />
             </Suspense>
           )}
