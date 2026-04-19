@@ -51,14 +51,14 @@ def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str |
         conn.execute('''
             INSERT INTO physical_assets (
                 id, asset_type, asset_tag, serial_number, vendor, model, hostname,
-                datacenter, rack, rack_unit, management_ip, business_ip, device_role,
+                datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
                 status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, 'network_device', '', device.get('sn', ''), vendor,
             device.get('model', ''), device.get('hostname', ''),
-            device.get('site', ''), '', '',
+            device.get('site', ''), '', '', 1, None,
             device.get('ip_address', ''), '', device.get('role', ''),
             '', '', '',
             'active', '', '', '', '', now, now,

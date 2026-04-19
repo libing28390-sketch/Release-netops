@@ -1315,6 +1315,10 @@ def init_db():
         ensure_column('physical_assets', 'uplink_port', "TEXT DEFAULT ''")
         ensure_column('physical_assets', 'lifecycle_status', "TEXT DEFAULT 'staging'")
 
+        # Rack planning on assets: device height (U) and optional planned start RU for DCIM install flow
+        ensure_column('physical_assets', 'u_height', 'INTEGER NOT NULL DEFAULT 1')
+        ensure_column('physical_assets', 'planned_start_u', 'INTEGER')
+
         # Migration: link devices to physical_assets (Plan-A unification)
         ensure_column('devices', 'asset_id', 'TEXT')
         ensure_column('devices', 'vendor', "TEXT DEFAULT ''")

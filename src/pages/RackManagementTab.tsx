@@ -22,6 +22,7 @@ import {
   Package, Layers, Eye, Download, GripVertical,
   Maximize2, Minimize2, ChevronsUpDown, PanelRightClose, PanelRightOpen,
 } from 'lucide-react';
+import { AssetReadonlyDetailInner, normalizeAssetApiRow } from '../components/AssetReadonlyDetail';
 
 /* ================================================================
    Types
@@ -98,28 +99,112 @@ function authHeaders(): Record<string, string> {
    API helpers
    ================================================================ */
 
+function formatErrorDetail(detail: any): string {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((err: any) => {
+      if (typeof err === 'object' && err.msg) {
+        const field = Array.isArray(err.loc) ? err.loc[err.loc.length - 1] : 'field';
+        return `${field}: ${err.msg}`;
+      }
+      return String(err);
+    }).join('; ');
+  }
+  if (typeof detail === 'object') return JSON.stringify(detail);
+  return 'Request failed';
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { headers: authHeaders() });
   const json = await res.json();
-  if (!res.ok || !json.success) throw new Error(json.detail || json.message || 'Request failed');
+  if (!res.ok || !json.success) {
+    const detail = formatErrorDetail(json.detail || json.message || 'Request failed');
+    throw new Error(detail);
+  }
   return json.data;
 }
 async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
   const json = await res.json();
-  if (!res.ok || !json.success) throw new Error(json.detail || json.message || 'Request failed');
+  if (!res.ok || !json.success) {
+    const detail = formatErrorDetail(json.detail || json.message || 'Request failed');
+    throw new Error(detail);
+  }
   return json.data;
 }
 async function putJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(url, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) });
   const json = await res.json();
-  if (!res.ok || !json.success) throw new Error(json.detail || json.message || 'Request failed');
+  if (!res.ok || !json.success) {
+    const detail = formatErrorDetail(json.detail || json.message || 'Request failed');
+    throw new Error(detail);
+  }
   return json.data;
 }
 async function deleteJson(url: string): Promise<void> {
   const res = await fetch(url, { method: 'DELETE', headers: authHeaders() });
   const json = await res.json();
-  if (!res.ok || !json.success) throw new Error(json.detail || json.message || 'Request failed');
+  if (!res.ok || !json.success) {
+    const detail = formatErrorDetail(json.detail || json.message || 'Request failed');
+    throw new Error(detail);
+  }
+}
+
+/** Map a physical asset to a device_types row. Uses vendor/model and optional asset.u_height to disambiguate. */
+function matchDeviceTypeId(
+  asset: { vendor: string; model: string; u_height?: number },
+  types: DeviceType[],
+): string {
+  if (!types.length) return '';
+  const norm = (s: string) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const av = norm(asset.vendor);
+  const am = norm(asset.model);
+  if (!am && !av) return '';
+
+  const exacts = types.filter(dt => norm(dt.vendor) === av && norm(dt.model) === am);
+  if (exacts.length === 1) return exacts[0].id;
+  if (exacts.length > 1 && asset.u_height != null && asset.u_height > 0) {
+    const byH = exacts.find(dt => dt.u_height === asset.u_height);
+    if (byH) return byH.id;
+  }
+  if (exacts.length > 0) return exacts[0].id;
+
+  const modelOnly = types.filter(dt => norm(dt.model) === am);
+  if (modelOnly.length === 1) return modelOnly[0].id;
+
+  const vendorLoose = types.filter(
+    dt => av && norm(dt.vendor) === av && am && (norm(dt.model).includes(am) || am.includes(norm(dt.model))),
+  );
+  if (vendorLoose.length === 1) return vendorLoose[0].id;
+
+  const fuzzy = types.filter(dt => am && (am.includes(norm(dt.model)) || norm(dt.model).includes(am)));
+  if (fuzzy.length === 1) return fuzzy[0].id;
+
+  return '';
+}
+
+/** Prefer planned RU from asset (planned_start_u or numeric rack_unit), else first free slot. */
+function pickStartUForAsset(
+  layout: RackLayout,
+  position: string,
+  uH: number,
+  asset: { planned_start_u?: number | null; rack_unit?: string },
+): number {
+  const side = layout.devices.filter(d => d.position === position);
+  let candidate: number | null = null;
+  if (asset.planned_start_u != null && asset.planned_start_u >= 1) {
+    candidate = asset.planned_start_u;
+  } else {
+    const ru = String(asset.rack_unit || '').trim();
+    if (/^\d+$/.test(ru)) {
+      const n = parseInt(ru, 10);
+      if (n >= 1 && n <= layout.total_u) candidate = n;
+    }
+  }
+  if (candidate != null && !hasConflict(candidate, uH, layout.total_u, side)) {
+    return candidate;
+  }
+  return findFirstFreeStartU(layout.total_u, uH, side) ?? 1;
 }
 
 /* ================================================================
@@ -167,6 +252,21 @@ function hasConflict(
   return false;
 }
 
+/** Lowest start_u that fits uHeight without overlapping others on the same panel (front/rear). */
+function findFirstFreeStartU(
+  totalU: number,
+  uHeight: number,
+  onSideDevices: RackDevice[],
+): number | null {
+  if (uHeight < 1 || totalU < 1) return null;
+  for (let u = 1; u <= totalU - uHeight + 1; u++) {
+    if (!hasConflict(u, uHeight, totalU, onSideDevices)) return u;
+  }
+  return null;
+}
+
+const INSTALL_ASSET_PAGE_SIZE = 500;
+
 /* ================================================================
    PowerLed
    ================================================================ */
@@ -200,7 +300,8 @@ const DraggableDevice: React.FC<{
   totalU: number;
   zh: boolean;
   isDragOverlay?: boolean;
-}> = ({ device, totalU, zh, isDragOverlay = false }) => {
+  onSelect?: (deviceId: string) => void;
+}> = ({ device, totalU, zh, isDragOverlay = false, onSelect }) => {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: device.id,
     data: { device },
@@ -253,6 +354,7 @@ const DraggableDevice: React.FC<{
       }}
       onMouseEnter={isDragOverlay ? undefined : handleMouseEnter}
       onMouseLeave={isDragOverlay ? undefined : handleMouseLeave}
+      onClick={() => !isDragOverlay && onSelect?.(device.id)}
       {...(isDragOverlay ? {} : { ...listeners, ...attributes })}
     >
       {/* Grip handle */}
@@ -357,7 +459,8 @@ const RackElevation: React.FC<{
   zh: boolean;
   collapseEmpty: boolean;
   onDeviceMove: (deviceId: string, newStartU: number) => Promise<void>;
-}> = ({ layout, viewSide, zh, collapseEmpty, onDeviceMove }) => {
+  onDeviceSelect?: (deviceId: string) => void;
+}> = ({ layout, viewSide, zh, collapseEmpty, onDeviceMove, onDeviceSelect }) => {
   const totalU = layout.total_u;
   const sideDevices = useMemo(
     () => layout.devices.filter(d => d.position === viewSide),
@@ -589,7 +692,7 @@ const RackElevation: React.FC<{
 
               {/* Device blocks */}
               {sideDevices.map(d => (
-                <DraggableDevice key={d.id} device={d} totalU={totalU} zh={zh} />
+                <DraggableDevice key={d.id} device={d} totalU={totalU} zh={zh} onSelect={onDeviceSelect} />
               ))}
             </div>
           ) : (
@@ -751,6 +854,10 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [rackScale, setRackScale] = useState(1);
   const [collapseEmpty, setCollapseEmpty] = useState(false);
   const [showDeviceList, setShowDeviceList] = useState(true);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [drawerAssetDetail, setDrawerAssetDetail] = useState<ReturnType<typeof normalizeAssetApiRow> | null>(null);
+  const [drawerAssetLoading, setDrawerAssetLoading] = useState(false);
   const rackScrollRef = useRef<HTMLDivElement>(null);
 
   const [showRackModal, setShowRackModal] = useState(false);
@@ -759,9 +866,21 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [showDeviceTypeModal, setShowDeviceTypeModal] = useState(false);
 
   const [rackForm, setRackForm] = useState({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '' });
-  const [deviceForm, setDeviceForm] = useState({ name: '', device_type_id: '', start_u: 1, position: 'front' as string, status: 'active', serial_number: '' });
+  const [deviceForm, setDeviceForm] = useState({ name: '', device_type_id: '', start_u: 1, position: 'front' as string, status: 'active', serial_number: '', asset_id: '' });
   const [dtForm, setDtForm] = useState({ model: '', vendor: '', u_height: 1, device_role: 'switch', description: '' });
   const [formError, setFormError] = useState('');
+
+  // Asset selection for device installation (fields align with physical_assets / asset API)
+  interface Asset {
+    id: string; asset_tag: string; serial_number: string; vendor: string; model: string; hostname: string; status: string;
+    u_height?: number; planned_start_u?: number | null; rack_unit?: string;
+  }
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [assetsLoading, setAssetsLoading] = useState(false);
+  const [assetTotal, setAssetTotal] = useState(0);
+  const [assetPage, setAssetPage] = useState(1);
+  const [assetSearch, setAssetSearch] = useState('');
+  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
 
   const datacenters = useMemo(() => {
     const dcs = new Set(racks.map(r => r.datacenter).filter(Boolean));
@@ -824,6 +943,38 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
     try { setStats(await fetchJson<RackStats>(`${API}/racks/stats`)); } catch {}
   }, []);
 
+  const fetchInstallAssets = useCallback(async (q: string, page: number, append: boolean) => {
+    try {
+      setAssetsLoading(true);
+      const params = new URLSearchParams({
+        page_size: String(INSTALL_ASSET_PAGE_SIZE),
+        page: String(page),
+      });
+      const t = q.trim();
+      if (t) params.set('q', t);
+      const res = await fetch(`${API}/assets?${params.toString()}`, { headers: authHeaders() });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const items = json.items || [];
+      const total = typeof json.total === 'number' ? json.total : items.length;
+      if (append) {
+        setAssets(prev => [...prev, ...items]);
+      } else {
+        setAssets(items);
+      }
+      setAssetTotal(total);
+      setAssetPage(page);
+    } catch (e: any) {
+      console.error('Failed to load assets:', e.message);
+      if (!append) {
+        setAssets([]);
+        setAssetTotal(0);
+      }
+    } finally {
+      setAssetsLoading(false);
+    }
+  }, []);
+
   const loadLayout = useCallback(async (rackId: string) => {
     if (!rackId) return;
     setLoading(true);
@@ -837,7 +988,84 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
   useEffect(() => { loadRacks(); loadDeviceTypes(); loadStats(); }, []);
   useEffect(() => { if (selectedRackId) loadLayout(selectedRackId); }, [selectedRackId, loadLayout]);
 
+  /** After a rack is deleted, clear invalid selection and pick a remaining rack (avoids 404 layout fetch). */
+  useEffect(() => {
+    if (racks.length === 0) {
+      if (selectedRackId) {
+        setSelectedRackId('');
+        setLayout(null);
+      }
+      return;
+    }
+    if (selectedRackId && !racks.some(r => r.id === selectedRackId)) {
+      setSelectedRackId(racks[0].id);
+    }
+  }, [racks, selectedRackId]);
+
+  useEffect(() => {
+    if (!showDeviceModal) return;
+    const delay = assetSearch.trim().length === 0 ? 0 : 280;
+    const id = window.setTimeout(() => { fetchInstallAssets(assetSearch, 1, false); }, delay);
+    return () => clearTimeout(id);
+  }, [showDeviceModal, assetSearch, fetchInstallAssets]);
+
+  const installAssetsCanLoadMore = assetTotal > 0 && assets.length < assetTotal;
+
   const refresh = () => { loadRacks(); loadStats(); if (selectedRackId) loadLayout(selectedRackId); };
+
+  // Handle device selection - open drawer
+  const handleDeviceSelect = (deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    setDrawerVisible(true);
+  };
+
+  // Handle drawer close
+  const handleDrawerClose = () => {
+    setDrawerVisible(false);
+    setSelectedDeviceId(null);
+    setDrawerAssetDetail(null);
+    setDrawerAssetLoading(false);
+  };
+
+  useEffect(() => {
+    if (!drawerVisible || !selectedDeviceId || !layout) {
+      setDrawerAssetDetail(null);
+      setDrawerAssetLoading(false);
+      return;
+    }
+    const device = layout.devices.find(d => d.id === selectedDeviceId);
+    if (!device?.asset_id) {
+      setDrawerAssetDetail(null);
+      setDrawerAssetLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDrawerAssetLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(`${API}/assets/${device.asset_id}`, { headers: authHeaders() });
+        if (!res.ok) throw new Error('asset fetch failed');
+        const row = await res.json();
+        if (!cancelled) setDrawerAssetDetail(normalizeAssetApiRow(row as Record<string, unknown>));
+      } catch {
+        if (!cancelled) setDrawerAssetDetail(null);
+      } finally {
+        if (!cancelled) setDrawerAssetLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [drawerVisible, selectedDeviceId, layout]);
+
+  // Handle escape key to close drawer
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && drawerVisible) {
+        handleDrawerClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [drawerVisible]);
 
   /* -- Rack CRUD -- */
 
@@ -864,25 +1092,122 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
     } catch (e: any) { setFormError(e.message); }
   };
   const handleDeleteRack = async (rackId: string) => {
+    setError('');
+    try {
+      const lay = await fetchJson<RackLayout>(`${API}/racks/${rackId}/layout`);
+      if (lay.devices.length > 0) {
+        setError(
+          zh
+            ? `该机柜内仍有 ${lay.devices.length} 台设备，请先在机柜图中移除全部设备后再删除机柜。`
+            : `This rack still has ${lay.devices.length} installed device(s). Remove them from the rack first.`,
+        );
+        return;
+      }
+    } catch (e: any) {
+      setError(e.message);
+      return;
+    }
     if (!confirm(zh ? '确认删除该机柜？' : 'Delete this rack?')) return;
     try {
       await deleteJson(`${API}/racks/${rackId}`);
-      if (selectedRackId === rackId) setSelectedRackId('');
-      refresh();
-    } catch (e: any) { setError(e.message); }
+      if (selectedRackId === rackId) {
+        setSelectedRackId('');
+        setLayout(null);
+      }
+      await loadRacks();
+      loadStats();
+    } catch (e: any) {
+      setError(e.message);
+    }
   };
 
   /* -- Device Install -- */
 
-  const openInstallDevice = () => {
-    setDeviceForm({ name: '', device_type_id: deviceTypes[0]?.id || '', start_u: 1, position: 'front', status: 'active', serial_number: '' });
-    setFormError(''); setShowDeviceModal(true);
+  const closeInstallModal = () => {
+    setFormError('');
+    setShowDeviceModal(false);
   };
+
+  const openInstallDevice = () => {
+    setSelectedAsset(null);
+    setAssetSearch('');
+    setAssetTotal(0);
+    setAssetPage(1);
+    setDeviceForm({ name: '', device_type_id: '', start_u: 1, position: 'front', status: 'active', serial_number: '', asset_id: '' });
+    setFormError('');
+    setShowDeviceModal(true);
+  };
+
+  const resolveStartUForInstall = (deviceTypeId: string, position: string): number => {
+    const uH = deviceTypes.find(dt => dt.id === deviceTypeId)?.u_height ?? 1;
+    if (!layout || !selectedRackId) return 1;
+    if (selectedAsset) {
+      return pickStartUForAsset(layout, position, uH, selectedAsset);
+    }
+    const sideDevices = layout.devices.filter(d => d.position === position);
+    return findFirstFreeStartU(layout.total_u, uH, sideDevices) ?? 1;
+  };
+
+  const handleAssetSelect = (asset: Asset) => {
+    setSelectedAsset(asset);
+    const matchedId = matchDeviceTypeId(asset, deviceTypes);
+    const position = 'front';
+    const uH = matchedId
+      ? (deviceTypes.find(dt => dt.id === matchedId)?.u_height ?? 1)
+      : Math.max(1, asset.u_height ?? 1);
+    const startU =
+      layout && selectedRackId ? pickStartUForAsset(layout, position, uH, asset) : 1;
+    setDeviceForm({
+      name: asset.hostname || asset.asset_tag || '',
+      device_type_id: matchedId,
+      start_u: startU,
+      position,
+      status: asset.status === 'in_storage' ? 'offline' : asset.status === 'active' ? 'active' : 'planned',
+      serial_number: asset.serial_number || '',
+      asset_id: asset.id || '',
+    });
+  };
+
   const saveDevice = async () => {
     setFormError('');
+    if (!deviceForm.name.trim()) {
+      setFormError(zh ? '设备名称不能为空' : 'Device name is required');
+      return;
+    }
+    if (!deviceForm.device_type_id) {
+      setFormError(zh ? '请选择设备型号' : 'Please select a device type');
+      return;
+    }
+    if (!selectedRackId) {
+      setFormError(zh ? '请先选择机柜' : 'Please select a rack first');
+      return;
+    }
+    const dt = deviceTypes.find(x => x.id === deviceForm.device_type_id);
+    const uH = dt?.u_height ?? 1;
+    if (layout) {
+      const sideDevices = layout.devices.filter(d => d.position === deviceForm.position);
+      if (hasConflict(deviceForm.start_u, uH, layout.total_u, sideDevices)) {
+        const sugg = findFirstFreeStartU(layout.total_u, uH, sideDevices);
+        setFormError(
+          zh
+            ? `当前${deviceForm.position === 'front' ? '前' : '后'}面板 U${deviceForm.start_u} 已被占用或与现有设备重叠。${sugg != null ? `可尝试起始 U${sugg}。` : '无足够连续空位。'}`
+            : `${deviceForm.position} side: U${deviceForm.start_u} overlaps existing gear.${sugg != null ? ` Try start U${sugg}.` : ' No contiguous space.'}`,
+        );
+        return;
+      }
+    }
     try {
-      await postJson(`${API}/rack-devices`, { ...deviceForm, rack_id: selectedRackId });
-      setShowDeviceModal(false); loadLayout(selectedRackId); loadStats();
+      await postJson(`${API}/rack-devices`, {
+        name: deviceForm.name,
+        rack_id: selectedRackId,
+        device_type_id: deviceForm.device_type_id,
+        start_u: deviceForm.start_u,
+        position: deviceForm.position,
+        status: deviceForm.status,
+        serial_number: deviceForm.serial_number || '',
+        asset_id: deviceForm.asset_id || '',
+      });
+      closeInstallModal(); loadLayout(selectedRackId); loadStats();
     } catch (e: any) { setFormError(e.message); }
   };
   const handleRemoveDevice = async (deviceId: string) => {
@@ -1194,8 +1519,8 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
           </div>
         </div>
 
-        {/* Right: rack elevation */}
-        <div className="flex-1 rounded-xl overflow-hidden flex flex-col" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+        {/* Center: rack elevation */}
+        <div className="flex-1 rounded-xl overflow-hidden flex flex-col relative" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
           {selectedRack && layout ? (
             <>
               {/* Toolbar */}
@@ -1272,9 +1597,102 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                     zh={zh}
                     collapseEmpty={collapseEmpty}
                     onDeviceMove={handleDeviceMove}
+                    onDeviceSelect={handleDeviceSelect}
                   />
                 </div>
               </div>
+
+              {/* Device Detail Drawer Overlay */}
+              {drawerVisible && selectedDeviceId && (() => {
+                const device = layout.devices.find(d => d.id === selectedDeviceId);
+                if (!device) return null;
+                const rc = ROLE_COLORS[device.device_role] || ROLE_COLORS.other;
+                const statusInfo = STATUS_LABEL[device.status] || { zh: device.status, en: device.status };
+                const endU = device.start_u + device.u_height - 1;
+                return (
+                  <AnimatePresence>
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      onClick={handleDrawerClose}
+                      className="absolute inset-0 z-40 bg-black/20"
+                      style={{ borderRadius: 'inherit' }}
+                    />
+                    <motion.div
+                      initial={{ x: '100%' }}
+                      animate={{ x: 0 }}
+                      exit={{ x: '100%' }}
+                      transition={{ duration: 0.3, ease: 'easeOut' }}
+                      className="absolute right-0 top-0 bottom-0 z-50 flex flex-col w-96 rounded-xl overflow-hidden"
+                      style={{ background: 'var(--card-bg)', boxShadow: '-2px 0 12px rgba(0,0,0,0.15)' }}
+                    >
+                      <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--card-border)' }}>
+                        <h3 className="text-sm font-bold" style={{ color: 'var(--heading-text)' }}>{device.name}</h3>
+                        <button onClick={handleDrawerClose} className="p-1 rounded-lg hover:bg-black/5">
+                          <X size={18} style={{ color: 'var(--muted-text)' }} />
+                        </button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                        {/* Type + Status badges */}
+                        <div className="flex gap-2 flex-wrap mb-4">
+                          <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: rc.bg + '20', color: rc.bg }}>
+                            {zh ? rc.labelZh : rc.label}
+                          </span>
+                          <span className="text-xs px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1" style={{ background: device.status === 'active' ? '#4ade80' + '20' : device.status === 'planned' ? '#fbbf24' + '20' : '#ef4444' + '20', color: device.status === 'active' ? '#4ade80' : device.status === 'planned' ? '#fbbf24' : '#ef4444' }}>
+                            <span className="w-2 h-2 rounded-full" style={{ background: 'currentColor' }} />
+                            {zh ? statusInfo.zh : statusInfo.en}
+                          </span>
+                        </div>
+
+                        {/* Fields grid */}
+                        <div className="grid grid-cols-2 gap-x-2.5 gap-y-2 text-[11px]">
+                          <div>
+                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '厂商' : 'Vendor'}</label>
+                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.vendor || '—'}</div>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '型号' : 'Model'}</label>
+                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.model || '—'}</div>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '序列号' : 'Serial No.'}</label>
+                            <div className="px-2.5 py-1.5 rounded border font-mono text-[10px]" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.serial_number || '—'}</div>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '资产ID' : 'Asset ID'}</label>
+                            <div className="px-2.5 py-1.5 rounded border font-mono text-[10px]" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.asset_id || '—'}</div>
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '数据中心' : 'Datacenter'}</label>
+                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>—</div>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '机柜' : 'Rack'}</label>
+                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>—</div>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? 'U位' : 'Unit'}</label>
+                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>U{device.start_u}{endU !== device.start_u ? `-U${endU}` : ''}</div>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '位置' : 'Side'}</label>
+                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.position === 'front' ? (zh ? '前面板' : 'Front') : (zh ? '后面板' : 'Rear')}</div>
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '角色' : 'Role'}</label>
+                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.device_role || '—'}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="p-4 border-t" style={{ borderColor: 'var(--card-border)' }}>
+                        <button onClick={() => handleRemoveDevice(device.id)} className="w-full px-3 py-2 rounded-lg text-[12px] font-medium text-red-500 hover:bg-red-50/80">{zh ? '移除设备' : 'Remove'}</button>
+                      </div>
+                    </motion.div>
+                  </AnimatePresence>
+                );
+              })()}
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--muted-text)' }}>
@@ -1284,53 +1702,50 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
         </div>
 
         {/* Right: device list */}
-        {showDeviceList && (
+        {/* Right: installed device list */}
         <div className="w-64 flex-shrink-0 rounded-xl overflow-hidden flex flex-col" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-          <div className="p-3 border-b" style={{ borderColor: 'var(--card-border)' }}>
-            <h4 className="text-[12px] font-semibold" style={{ color: 'var(--heading-text)' }}>
-              {zh ? '已安装设备' : 'Installed Devices'} ({layout?.devices.length || 0})
-            </h4>
-          </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-1">
-            {!layout ? (
-              <p className="text-xs py-6 text-center" style={{ color: 'var(--muted-text)' }}>
-                {zh ? '请选择机柜' : 'Select a rack'}
-              </p>
-            ) : layout.devices.length === 0 ? (
-              <p className="text-xs py-6 text-center" style={{ color: 'var(--muted-text)' }}>
-                {zh ? '该机柜暂无设备' : 'No devices in this rack'}
-              </p>
-            ) : layout.devices.map(d => {
-              const rc = ROLE_COLORS[d.device_role] || ROLE_COLORS.other;
-              return (
-                <div key={d.id} className="flex items-center gap-3 rounded-lg px-3 py-2 group" style={{ background: 'var(--app-hover-bg)' }}>
-                  <div className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0 relative" style={{ background: rc.bg + '20', color: rc.bg }}>
-                    <DeviceIcon role={d.device_role} size={13} />
-                    <span
-                      className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-white/20"
-                      style={{
-                        background: d.status === 'active' ? '#4ade80' : d.status === 'planned' ? '#fbbf24' : '#ef4444',
-                        boxShadow: d.status === 'active' ? '0 0 4px #4ade80' : 'none',
-                      }}
-                    />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[12px] font-semibold truncate" style={{ color: 'var(--heading-text)' }}>{d.name}</p>
-                    <p className="text-[10px]" style={{ color: 'var(--muted-text)' }}>
-                      {d.vendor} {d.model} · U{d.start_u}-U{d.start_u + d.u_height - 1} · {d.position === 'front' ? (zh ? '前' : 'F') : (zh ? '后' : 'R')}
-                    </p>
-                  </div>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: rc.bg + '20', color: rc.bg }}>
-                    {zh ? rc.labelZh : rc.label}
-                  </span>
-                  <button onClick={() => handleRemoveDevice(d.id)} className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-600 hover:bg-red-50">
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-
+          {!layout ? (
+            <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--muted-text)' }}>
+              {zh ? '请选择机柜' : 'Select a rack'}
+            </div>
+          ) : (
+            <>
+              <div className="p-3 border-b" style={{ borderColor: 'var(--card-border)' }}>
+                <h4 className="text-[12px] font-semibold" style={{ color: 'var(--heading-text)' }}>
+                  {zh ? '已安装设备' : 'Installed Devices'} ({layout?.devices.length || 0})
+                </h4>
+                <p className="text-[10px] mt-1" style={{ color: 'var(--muted-text)' }}>
+                  {zh ? '点击查看详情' : 'Click to view details'}
+                </p>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+                {layout.devices.length === 0 ? (
+                  <p className="text-xs py-6 text-center" style={{ color: 'var(--muted-text)' }}>
+                    {zh ? '暂无设备' : 'No devices'}
+                  </p>
+                ) : layout.devices.map(d => {
+                  const rc = ROLE_COLORS[d.device_role] || ROLE_COLORS.other;
+                  const isSelected = selectedDeviceId === d.id;
+                  return (
+                    <button
+                      key={d.id}
+                      onClick={() => handleDeviceSelect(d.id)}
+                      className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-all text-[12px] ${isSelected ? 'ring-1 ring-cyan-500 bg-cyan-50' : 'hover:bg-black/5 border border-transparent'}`}
+                    >
+                      <div className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0" style={{ background: rc.bg + '20', color: rc.bg }}>
+                        <DeviceIcon role={d.device_role} size={12} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold truncate" style={{ color: 'var(--heading-text)' }}>{d.name}</p>
+                        <p className="text-[10px]" style={{ color: 'var(--muted-text)' }}>U{d.start_u}</p>
+                      </div>
+                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: d.status === 'active' ? '#4ade80' : d.status === 'planned' ? '#fbbf24' : '#ef4444' }} />
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
           {/* Legend */}
           {layout && layout.devices.length > 0 && (
             <div className="p-3 border-t space-y-1.5" style={{ borderColor: 'var(--card-border)' }}>
@@ -1365,7 +1780,6 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
             </div>
           )}
         </div>
-        )}
       </div>
 
       {/* -- Error toast -- */}
@@ -1428,55 +1842,251 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
       {/* ========== MODAL: Install Device ========== */}
       <AnimatePresence>
         {showDeviceModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowDeviceModal(false)}>
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} transition={{ duration: 0.15 }} className="w-full max-w-md rounded-2xl shadow-2xl p-6" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }} onClick={e => e.stopPropagation()}>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={closeInstallModal}>
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} transition={{ duration: 0.15 }} className="w-full max-w-xl rounded-2xl shadow-2xl p-6" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }} onClick={e => e.stopPropagation()}>
               <h3 className="text-base font-bold mb-4" style={{ color: 'var(--heading-text)' }}>
                 {zh ? '安装设备到机柜' : 'Install Device to Rack'}
               </h3>
-              <div className="space-y-3">
+
+              <div className="space-y-4 max-h-[70vh] overflow-y-auto">
+                {/* Search Input */}
                 <div>
-                  <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '设备名称' : 'Device Name'} *</label>
-                  <input value={deviceForm.name} onChange={e => setDeviceForm({ ...deviceForm, name: e.target.value })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} placeholder="Core-SW-01" />
+                  <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '搜索设备（名称或SN号）' : 'Search Device (Name or SN)'} *</label>
+                  <div className="relative mt-1">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--muted-text)' }} />
+                    <input
+                      value={assetSearch}
+                      onChange={e => setAssetSearch(e.target.value)}
+                      placeholder={zh ? '输入设备名称或SN号...' : 'Enter device name or SN...'}
+                      className="w-full pl-9 pr-3 py-2 text-sm rounded-lg outline-none focus:ring-2 ring-cyan-500/30"
+                      style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                      autoComplete="off"
+                    />
+                  </div>
+                  {!assetSearch.trim() && assetTotal > INSTALL_ASSET_PAGE_SIZE && (
+                    <p className="mt-1.5 text-[10px] leading-snug" style={{ color: 'var(--muted-text)' }}>
+                      {zh
+                        ? `资产库共 ${assetTotal} 台，当前每页 ${INSTALL_ASSET_PAGE_SIZE} 条；可点「加载更多」或输入关键字筛选。`
+                        : `${assetTotal} assets; listing ${INSTALL_ASSET_PAGE_SIZE} per page. Use “Load more” or type to filter.`}
+                    </p>
+                  )}
                 </div>
+
+                {/* Device list (server-side search via ?q=) */}
                 <div>
-                  <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '设备型号' : 'Device Type'} *</label>
-                  <select value={deviceForm.device_type_id} onChange={e => setDeviceForm({ ...deviceForm, device_type_id: e.target.value })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}>
-                    <option value="" disabled>{zh ? '选择设备型号' : 'Select device type'}</option>
-                    {deviceTypes.map(dt => (
-                      <option key={dt.id} value={dt.id}>{dt.vendor} {dt.model} ({dt.u_height}U - {dt.device_role})</option>
-                    ))}
-                  </select>
+                  {assetsLoading ? (
+                    <div className="p-3 text-center text-[11px]" style={{ color: 'var(--muted-text)' }}>{zh ? '加载中...' : 'Loading...'}</div>
+                  ) : assets.length === 0 ? (
+                    <div className="p-3 text-center text-[11px]" style={{ color: 'var(--muted-text)' }}>
+                      {assetSearch.trim()
+                        ? (zh ? '未找到匹配的设备' : 'No devices match your search')
+                        : (zh ? '资产库中无可用设备' : 'No devices available in asset library')}
+                    </div>
+                  ) : (
+                    <div className="max-h-56 overflow-y-auto rounded-lg border" style={{ borderColor: 'var(--card-border)', background: 'var(--app-hover-bg)' }}>
+                      {assets.map(a => (
+                        <button
+                          key={a.id}
+                          onClick={() => {
+                            handleAssetSelect(a);
+                            setAssetSearch('');
+                          }}
+                          className={`w-full text-left p-3 border-b transition-colors hover:opacity-80 ${
+                            selectedAsset?.id === a.id ? 'bg-cyan-500/20' : ''
+                          }`}
+                          style={{ borderColor: 'var(--card-border)' }}
+                        >
+                          <div className="font-semibold text-[11px]">{a.hostname || a.asset_tag}</div>
+                          <div className="text-[10px] mt-0.5" style={{ color: 'var(--muted-text)' }}>
+                            {a.vendor} {a.model} • SN: {a.serial_number || '—'}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {assets.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px]" style={{ color: 'var(--muted-text)' }}>
+                      <span>
+                        {zh ? `已加载 ${assets.length} / ${assetTotal} 台` : `Loaded ${assets.length} / ${assetTotal}`}
+                      </span>
+                      {installAssetsCanLoadMore && (
+                        <button
+                          type="button"
+                          disabled={assetsLoading}
+                          onClick={() => fetchInstallAssets(assetSearch, assetPage + 1, true)}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-opacity disabled:opacity-50"
+                          style={{ borderColor: 'var(--card-border)', color: 'var(--body-text)' }}
+                        >
+                          {assetsLoading ? (zh ? '加载中…' : 'Loading…') : (zh ? '加载更多' : 'Load more')}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '起始U位' : 'Start U'} *</label>
-                    <input type="number" min={1} max={60} value={deviceForm.start_u} onChange={e => setDeviceForm({ ...deviceForm, start_u: parseInt(e.target.value) || 1 })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
+
+                {/* Selected Device Details */}
+                {selectedAsset && (
+                  <div className="rounded-lg p-4" style={{ background: 'var(--app-hover-bg)', border: '2px solid var(--card-border)' }}>
+                    <div className="text-sm font-bold mb-3" style={{ color: 'var(--heading-text)' }}>
+                      {zh ? '✓ 已选择设备信息' : '✓ Selected Device Information'}
+                    </div>
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-3 text-[11px]">
+                        <div>
+                          <span style={{ color: 'var(--muted-text)' }}>{zh ? '设备名称' : 'Device Name'}:</span>
+                          <div style={{ color: 'var(--body-text)', fontWeight: 600 }}>{selectedAsset.hostname || selectedAsset.asset_tag}</div>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--muted-text)' }}>{zh ? '序列号' : 'Serial No'}:</span>
+                          <div style={{ color: 'var(--body-text)', fontWeight: 600, fontFamily: 'monospace' }}>{selectedAsset.serial_number || '—'}</div>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--muted-text)' }}>{zh ? '制造商' : 'Vendor'}:</span>
+                          <div style={{ color: 'var(--body-text)', fontWeight: 600 }}>{selectedAsset.vendor}</div>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--muted-text)' }}>{zh ? '型号' : 'Model'}:</span>
+                          <div style={{ color: 'var(--body-text)', fontWeight: 600 }}>{selectedAsset.model}</div>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--muted-text)' }}>{zh ? '状态' : 'Status'}:</span>
+                          <div style={{ color: 'var(--body-text)', fontWeight: 600 }}>
+                            {selectedAsset.status === 'active' ? (zh ? '在用' : 'In Use') :
+                             selectedAsset.status === 'in_storage' ? (zh ? '库存中' : 'In Storage') :
+                             selectedAsset.status === 'maintenance' ? (zh ? '维护中' : 'Maintenance') :
+                             selectedAsset.status === 'inactive' ? (zh ? '闲置' : 'Idle') : selectedAsset.status}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '面板' : 'Side'}</label>
-                    <select value={deviceForm.position} onChange={e => setDeviceForm({ ...deviceForm, position: e.target.value })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}>
-                      <option value="front">{zh ? '前面板' : 'Front'}</option>
-                      <option value="rear">{zh ? '后面板' : 'Rear'}</option>
-                    </select>
+                )}
+
+                {/* Deployment Configuration */}
+                {selectedAsset && (
+                  <div className="space-y-3 pt-2 border-t" style={{ borderColor: 'var(--card-border)' }}>
+                    <div className="text-sm font-bold" style={{ color: 'var(--heading-text)' }}>
+                      {zh ? '部署配置' : 'Deployment Configuration'}
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '设备名称' : 'Device Name'} *</label>
+                      <input
+                        value={deviceForm.name}
+                        onChange={e => setDeviceForm({ ...deviceForm, name: e.target.value })}
+                        className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
+                        style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '设备型号' : 'Device Type'} *</label>
+                      <select
+                        value={deviceForm.device_type_id}
+                        onChange={e => {
+                          const device_type_id = e.target.value;
+                          const start_u = resolveStartUForInstall(device_type_id, deviceForm.position);
+                          setDeviceForm({ ...deviceForm, device_type_id, start_u });
+                        }}
+                        className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
+                        style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                      >
+                        <option value="" disabled>{zh ? '选择设备型号' : 'Select device type'}</option>
+                        {deviceTypes.map(dt => (
+                          <option key={dt.id} value={dt.id}>{dt.vendor} {dt.model} ({dt.u_height}U - {dt.device_role})</option>
+                        ))}
+                      </select>
+                      {selectedAsset && !deviceForm.device_type_id && deviceTypes.length > 0 && (
+                        <p className="mt-1.5 text-[10px] leading-snug text-amber-600 dark:text-amber-400">
+                          {zh
+                            ? '未根据厂商/型号自动匹配机柜设备类型，请手动选择；若列表中无对应型号，请先在「设备型号」中新增。'
+                            : 'No device type matched this asset’s vendor/model — pick one manually, or add a device type first.'}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '起始U位' : 'Start U'} *</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={layout?.total_u || 60}
+                          value={deviceForm.start_u}
+                          onChange={e => setDeviceForm({ ...deviceForm, start_u: parseInt(e.target.value) || 1 })}
+                          className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
+                          style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '面板' : 'Side'}</label>
+                        <select
+                          value={deviceForm.position}
+                          onChange={e => {
+                            const position = e.target.value;
+                            const start_u = resolveStartUForInstall(deviceForm.device_type_id, position);
+                            setDeviceForm({ ...deviceForm, position, start_u });
+                          }}
+                          className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
+                          style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                        >
+                          <option value="front">{zh ? '前面板' : 'Front'}</option>
+                          <option value="rear">{zh ? '后面板' : 'Rear'}</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '状态' : 'Status'}</label>
+                        <select
+                          value={deviceForm.status}
+                          onChange={e => setDeviceForm({ ...deviceForm, status: e.target.value })}
+                          className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
+                          style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                        >
+                          <option value="active">{zh ? '在线' : 'Active'}</option>
+                          <option value="offline">{zh ? '离线' : 'Offline'}</option>
+                          <option value="planned">{zh ? '规划中' : 'Planned'}</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '状态' : 'Status'}</label>
-                    <select value={deviceForm.status} onChange={e => setDeviceForm({ ...deviceForm, status: e.target.value })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}>
-                      <option value="active">{zh ? '在线' : 'Active'}</option>
-                      <option value="offline">{zh ? '离线' : 'Offline'}</option>
-                      <option value="planned">{zh ? '规划中' : 'Planned'}</option>
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '序列号' : 'Serial Number'}</label>
-                  <input value={deviceForm.serial_number} onChange={e => setDeviceForm({ ...deviceForm, serial_number: e.target.value })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
-                </div>
+                )}
+
+                {formError && <p className="text-xs text-red-500 mt-2">{formError}</p>}
               </div>
-              {formError && <p className="text-xs text-red-500 mt-2">{formError}</p>}
-              <div className="flex justify-end gap-2 mt-5">
-                <button onClick={() => setShowDeviceModal(false)} className="px-4 py-1.5 rounded-lg text-xs font-medium" style={{ color: 'var(--muted-text)' }}>{zh ? '取消' : 'Cancel'}</button>
-                <button onClick={saveDevice} className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700">{zh ? '安装' : 'Install'}</button>
+
+              <div className="flex justify-end gap-2 mt-6 pt-4 border-t" style={{ borderColor: 'var(--card-border)' }}>
+                {selectedAsset && (
+                  <button
+                    onClick={() => {
+                      setFormError('');
+                      setSelectedAsset(null);
+                      setAssetSearch('');
+                      setDeviceForm({ name: '', device_type_id: '', start_u: 1, position: 'front', status: 'active', serial_number: '', asset_id: '' });
+                    }}
+                    className="px-4 py-1.5 rounded-lg text-xs font-medium"
+                    style={{ color: 'var(--muted-text)' }}
+                  >
+                    {zh ? '重新选择' : 'Reselect'}
+                  </button>
+                )}
+                <button
+                  onClick={closeInstallModal}
+                  className="px-4 py-1.5 rounded-lg text-xs font-medium"
+                  style={{ color: 'var(--muted-text)' }}
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  onClick={saveDevice}
+                  disabled={!selectedAsset}
+                  className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white"
+                  style={{
+                    background: selectedAsset ? 'rgb(6, 182, 212)' : 'rgb(156, 163, 175)',
+                    cursor: selectedAsset ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  {zh ? '确认安装' : 'Confirm Install'}
+                </button>
               </div>
             </motion.div>
           </motion.div>

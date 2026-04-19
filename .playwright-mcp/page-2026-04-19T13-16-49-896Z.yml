@@ -1,0 +1,216 @@
+- generic [ref=e6]:
+  - banner [ref=e7]:
+    - generic [ref=e9]:
+      - button "返回功能中心" [ref=e289]:
+        - img [ref=e290]
+      - button "收起侧栏" [ref=e292]:
+        - img [ref=e294]
+      - button "资产管理 2026/4/19 · Nexora Control Plane" [ref=e298]:
+        - generic [ref=e299]:
+          - heading "资产管理" [level=2] [ref=e300]
+          - paragraph [ref=e301]: 2026/4/19 · Nexora Control Plane
+        - img [ref=e302]
+    - generic [ref=e16]:
+      - button "Notifications" [ref=e18]:
+        - img [ref=e19]
+      - button "admin" [ref=e23]:
+        - img [ref=e25]
+        - generic [ref=e28]: admin
+        - img [ref=e29]
+  - generic [ref=e31]:
+    - complementary [ref=e304]:
+      - generic [ref=e305]: 资产与配置
+      - navigation [ref=e306]:
+        - button "资产管理" [ref=e307]:
+          - generic [ref=e309]: 资产管理
+        - button "网络设备" [ref=e310]:
+          - generic [ref=e311]: 网络设备
+        - button "服务器" [ref=e312]:
+          - generic [ref=e313]: 服务器
+        - button "IP/VLAN管理" [ref=e314]:
+          - generic [ref=e315]: IP/VLAN管理
+        - button "IP 工具箱" [ref=e316]:
+          - generic [ref=e317]: IP 工具箱
+        - button "标签管理" [ref=e318]:
+          - generic [ref=e319]: 标签管理
+        - button "机柜管理" [ref=e320]:
+          - generic [ref=e321]: 机柜管理
+      - button "收起导航" [ref=e323]:
+        - img [ref=e324]
+    - main [ref=e32]:
+      - generic [ref=e326]:
+        - generic [ref=e327]:
+          - button "P1 严重故障 0" [ref=e328]:
+            - generic [ref=e329]:
+              - generic [ref=e330]:
+                - generic [ref=e331]:
+                  - generic [ref=e332]: P1
+                  - generic [ref=e333]: 严重故障
+                - paragraph [ref=e334]: "0"
+              - img [ref=e336]
+          - button "P2 重要问题 0" [ref=e338]:
+            - generic [ref=e339]:
+              - generic [ref=e340]:
+                - generic [ref=e341]:
+                  - generic [ref=e342]: P2
+                  - generic [ref=e343]: 重要问题
+                - paragraph [ref=e344]: "0"
+              - img [ref=e346]
+          - button "P3 需要关注 2 100% 资产" [ref=e348]:
+            - generic [ref=e349]:
+              - generic [ref=e350]:
+                - generic [ref=e351]:
+                  - generic [ref=e352]: P3
+                  - generic [ref=e353]: 需要关注
+                - paragraph [ref=e354]: "2"
+                - paragraph [ref=e355]: 100% 资产
+              - img [ref=e357]
+          - button "正常 运行正常 2 100% 资产" [ref=e359]:
+            - generic [ref=e360]:
+              - generic [ref=e361]:
+                - generic [ref=e362]:
+                  - generic [ref=e363]: 正常
+                  - generic [ref=e364]: 运行正常
+                - paragraph [ref=e365]: "2"
+                - paragraph [ref=e366]: 100% 资产
+              - img [ref=e368]
+        - generic [ref=e371]:
+          - generic [ref=e372]:
+            - generic [ref=e373]:
+              - button "表格" [ref=e374]:
+                - img [ref=e375]
+                - text: 表格
+              - button "分组" [ref=e378]:
+                - img [ref=e379]
+                - text: 分组
+              - button "拓扑" [ref=e384]:
+                - img [ref=e385]
+                - text: 拓扑
+            - generic [ref=e390]:
+              - button "新增" [ref=e391]:
+                - img [ref=e392]
+                - generic [ref=e393]: 新增
+              - button "刷新" [ref=e394]:
+                - img [ref=e395]
+              - button "下载模板" [ref=e400]:
+                - img [ref=e401]
+              - button "导出" [ref=e404]:
+                - img [ref=e405]
+              - button "导入" [ref=e408]:
+                - img [ref=e409]
+          - generic [ref=e413]:
+            - generic [ref=e414]:
+              - img [ref=e415]
+              - textbox "IP / 主机名 / 资产编号 / 序列号..." [ref=e418]
+            - combobox "类型" [ref=e419] [cursor=pointer]:
+              - option "类型" [selected]
+              - option "服务器"
+              - option "网络设备"
+            - combobox "状态" [ref=e420] [cursor=pointer]:
+              - option "状态" [selected]
+              - option "在用"
+              - option "闲置"
+              - option "库存中"
+              - option "维护中"
+              - option "已退役"
+            - button "筛选" [ref=e421]:
+              - img [ref=e422]
+              - generic [ref=e423]: 筛选
+            - generic [ref=e424]: 2 条记录
+          - table [ref=e426]:
+            - rowgroup [ref=e427]:
+              - row "Select all 主机名 类型 厂商/型号 管理IP 状态 投产 角色 机房 部门 保修到期 操作" [ref=e428]:
+                - columnheader "Select all" [ref=e429]:
+                  - checkbox "Select all" [ref=e430] [cursor=pointer]
+                - columnheader "主机名" [ref=e431]
+                - columnheader "类型" [ref=e432]
+                - columnheader "厂商/型号" [ref=e433]
+                - columnheader "管理IP" [ref=e434]
+                - columnheader "状态" [ref=e435]
+                - columnheader "投产" [ref=e436]
+                - columnheader "角色" [ref=e437]
+                - columnheader "机房" [ref=e438]
+                - columnheader "部门" [ref=e439]
+                - columnheader "保修到期" [ref=e440]
+                - columnheader "操作" [ref=e441]
+            - rowgroup [ref=e442]:
+              - row "Select cisco-acc-sw2 123-wgcp Access Cisco c2960-48 192.168.96.130 在用 待投产 access BJ-DC1 A-01 — 2026-06-30" [ref=e443] [cursor=pointer]:
+                - cell "Select" [ref=e444]:
+                  - checkbox "Select" [ref=e445]
+                - cell "cisco-acc-sw2 123-wgcp" [ref=e446]:
+                  - paragraph [ref=e447]: cisco-acc-sw2
+                  - paragraph [ref=e448]: 123-wgcp
+                - cell "Access" [ref=e449]:
+                  - generic [ref=e450]:
+                    - img [ref=e451]
+                    - text: Access
+                - cell "Cisco c2960-48" [ref=e455]:
+                  - text: Cisco
+                  - generic [ref=e456]: c2960-48
+                - cell "192.168.96.130" [ref=e457]
+                - cell "在用" [ref=e458]:
+                  - generic [ref=e459]: 在用
+                - cell "待投产" [ref=e461]:
+                  - generic [ref=e462]: 待投产
+                - cell "access" [ref=e464]
+                - cell "BJ-DC1 A-01" [ref=e465]:
+                  - text: BJ-DC1
+                  - generic [ref=e466]: A-01
+                - cell "—" [ref=e467]
+                - cell "2026-06-30" [ref=e468]
+                - cell [ref=e469]:
+                  - generic [ref=e470]:
+                    - button "复制" [ref=e471]:
+                      - img [ref=e472]
+                    - button "编辑" [ref=e475]:
+                      - img [ref=e476]
+                    - button "删除" [ref=e479]:
+                      - img [ref=e480]
+              - row "Select cisco-acc-sw1 123 Access cisco c2960-48 192.168.96.129 在用 已投产 access BJ-DC1 A-01 — 2026-05-31" [ref=e483] [cursor=pointer]:
+                - cell "Select" [ref=e484]:
+                  - checkbox "Select" [ref=e485]
+                - cell "cisco-acc-sw1 123" [ref=e486]:
+                  - paragraph [ref=e487]: cisco-acc-sw1
+                  - paragraph [ref=e488]: "123"
+                - cell "Access" [ref=e489]:
+                  - generic [ref=e490]:
+                    - img [ref=e491]
+                    - text: Access
+                - cell "cisco c2960-48" [ref=e495]:
+                  - text: cisco
+                  - generic [ref=e496]: c2960-48
+                - cell "192.168.96.129" [ref=e497]
+                - cell "在用" [ref=e498]:
+                  - generic [ref=e499]: 在用
+                - cell "已投产" [ref=e501]:
+                  - generic [ref=e502]: 已投产
+                - cell "access" [ref=e504]
+                - cell "BJ-DC1 A-01" [ref=e505]:
+                  - text: BJ-DC1
+                  - generic [ref=e506]: A-01
+                - cell "—" [ref=e507]
+                - cell "2026-05-31" [ref=e508]
+                - cell [ref=e509]:
+                  - generic [ref=e510]:
+                    - button "复制" [ref=e511]:
+                      - img [ref=e512]
+                    - button "编辑" [ref=e515]:
+                      - img [ref=e516]
+                    - button "删除" [ref=e519]:
+                      - img [ref=e520]
+          - generic [ref=e523]:
+            - generic [ref=e524]:
+              - generic [ref=e525]:
+                - progressbar [ref=e526]
+                - paragraph [ref=e527]: 第 1-2 条 / 共 2 条
+              - paragraph [ref=e528]: 第 1 页，共 1 页
+            - generic [ref=e530]:
+              - generic [ref=e531]: 每页
+              - generic [ref=e532]:
+                - button "每页 10 条" [ref=e533]: "10"
+                - button "每页 20 条" [ref=e534]: "20"
+                - button "每页 50 条" [ref=e535]: "50"
+                - button "每页 100 条" [ref=e536]: "100"
+  - contentinfo [ref=e286]:
+    - generic [ref=e287]: Copyright (c) 2026 Nexora. All rights reserved.
+    - generic [ref=e288]: NOC v2.0

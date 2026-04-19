@@ -14,6 +14,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import DateTimePicker from '../components/DateTimePicker';
 import Pagination from '../components/Pagination';
 import { fetchAllPaginatedItems } from '../utils/pagination';
+import { AssetReadonlyDetailInner } from '../components/AssetReadonlyDetail';
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
@@ -22,7 +23,10 @@ import { fetchAllPaginatedItems } from '../utils/pagination';
 interface Asset {
   id: string; asset_type: string; asset_tag: string; serial_number: string;
   vendor: string; model: string; hostname: string; datacenter: string;
-  rack: string; rack_unit: string; management_ip: string; business_ip: string;
+  rack: string; rack_unit: string;
+  u_height?: number;
+  planned_start_u?: number | null;
+  management_ip: string; business_ip: string;
   device_role: string; vlan: string; uplink_switch: string; uplink_port: string;
   status: string; lifecycle_status: string; purchase_date: string;
   warranty_expiry: string; department: string; notes: string;
@@ -76,7 +80,7 @@ type GroupBy = 'datacenter' | 'department' | 'vendor';
 
 const EMPTY_FORM = {
   asset_type: 'server', asset_tag: '', serial_number: '', vendor: '', model: '',
-  hostname: '', datacenter: '', rack: '', rack_unit: '', management_ip: '',
+  hostname: '', datacenter: '', rack: '', rack_unit: '', u_height: '1', planned_start_u: '', management_ip: '',
   business_ip: '', device_role: '', vlan: '', uplink_switch: '', uplink_port: '',
   status: 'active', lifecycle_status: 'staging', purchase_date: '', warranty_expiry: '', department: '', notes: '',
   // network_device specific
@@ -244,7 +248,10 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     setForm({
       asset_type: a.asset_type, asset_tag: a.asset_tag, serial_number: a.serial_number,
       vendor: a.vendor, model: a.model, hostname: a.hostname, datacenter: a.datacenter,
-      rack: a.rack, rack_unit: a.rack_unit, management_ip: a.management_ip,
+      rack: a.rack, rack_unit: a.rack_unit,
+      u_height: String(a.u_height ?? 1),
+      planned_start_u: a.planned_start_u != null && a.planned_start_u !== undefined ? String(a.planned_start_u) : '',
+      management_ip: a.management_ip,
       business_ip: a.business_ip, device_role: a.device_role,
       vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
       status: a.status, lifecycle_status: a.lifecycle_status || 'staging',
@@ -310,7 +317,18 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     setSaving(true);
     try {
       const url = editingAsset ? `/api/assets/${editingAsset.id}` : '/api/assets';
-      const r = await fetch(url, { method: editingAsset ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const plannedRaw = String(form.planned_start_u ?? '').trim();
+      let planned_start_u: number | null = null;
+      if (plannedRaw) {
+        const n = parseInt(plannedRaw, 10);
+        if (!Number.isNaN(n) && n >= 1 && n <= 60) planned_start_u = n;
+      }
+      const payload = {
+        ...form,
+        u_height: Math.max(1, Math.min(60, parseInt(String(form.u_height), 10) || 1)),
+        planned_start_u,
+      };
+      const r = await fetch(url, { method: editingAsset ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (r.ok) {
         const data = await r.json().catch(() => null);
         setShowModal(false);
@@ -346,7 +364,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     setForm({
       asset_type: a.asset_type, asset_tag: copyTag, serial_number: '',
       vendor: a.vendor, model: a.model, hostname: '', datacenter: a.datacenter,
-      rack: a.rack, rack_unit: '', management_ip: '',
+      rack: a.rack, rack_unit: '', u_height: String(a.u_height ?? 1), planned_start_u: a.planned_start_u != null ? String(a.planned_start_u) : '', management_ip: '',
       business_ip: '', device_role: a.device_role,
       vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
       status: a.status, lifecycle_status: 'staging',
@@ -1175,7 +1193,9 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
               <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
                 <Field label={zh ? '数据中心' : 'DC'}            value={form.datacenter}    onChange={v => setForm(f => ({ ...f, datacenter: v }))}    placeholder="BJ-DC1" />
                 <Field label={zh ? '机柜' : 'Rack'}             value={form.rack}          onChange={v => setForm(f => ({ ...f, rack: v }))}          placeholder="A-01" />
-                <Field label={zh ? 'U位' : 'Unit'}              value={form.rack_unit}     onChange={v => setForm(f => ({ ...f, rack_unit: v }))}     placeholder="12" />
+                <Field type="number" label={zh ? '设备高度(U)' : 'Height (U)'} value={form.u_height} onChange={v => setForm(f => ({ ...f, u_height: v }))} placeholder="1" />
+                <Field type="number" label={zh ? '计划起始U(选填)' : 'Planned start U'} value={form.planned_start_u} onChange={v => setForm(f => ({ ...f, planned_start_u: v }))} placeholder="" />
+                <Field label={zh ? '机位备注(选填)' : 'Location note'} value={form.rack_unit} onChange={v => setForm(f => ({ ...f, rack_unit: v }))} placeholder={zh ? '文本备注' : 'Optional note'} />
                 <Field label={zh ? '部门/业务' : 'Service'}      value={form.department}    onChange={v => setForm(f => ({ ...f, department: v }))} />
                 <DateTimePicker label={zh ? '购买日期' : 'Purchased'} value={form.purchase_date} onChange={v => setForm(f => ({ ...f, purchase_date: v }))} language={language} mode="date" />
                 <DateTimePicker label={zh ? '保修到期' : 'Warranty'} value={form.warranty_expiry} onChange={v => setForm(f => ({ ...f, warranty_expiry: v }))} language={language} mode="date" />
@@ -1339,73 +1359,13 @@ function ReadonlyField({ label, value, mono, warn }: { label: string; value: str
 function DrawerContent({ asset: a, zh, onClose }: {
   asset: Asset; zh: boolean; onClose: () => void;
 }) {
-  const sm = statusMeta(a.status);
-  const TypeIcon = a.asset_type === 'server' ? Server : Router;
-  const typeLabel = a.asset_type === 'server' ? (zh ? '服务器' : 'Server') : (zh ? '网络设备' : 'Network');
-  const typeCls = a.asset_type === 'server' ? 'bg-violet-50 text-violet-600 border-violet-200' : 'bg-cyan-50 text-cyan-600 border-cyan-200';
-
   return (
     <div className="p-5">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-bold text-black/80">{a.hostname || a.asset_tag || '—'}</h3>
         <button onClick={onClose} title="Close" className="p-1 text-black/15 hover:text-black/35"><X size={16} /></button>
       </div>
-
-      {/* Type + Status + Lifecycle badges */}
-      <div className="flex gap-2 mb-4 flex-wrap">
-        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${typeCls}`}>
-          <TypeIcon size={13} />{typeLabel}
-        </span>
-        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${sm.badge}`}>
-          <span className={`h-2 w-2 rounded-full ${sm.dot}`} />{sm.label[zh ? 'zh' : 'en']}
-        </span>
-        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${
-          a.lifecycle_status === 'production' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
-          a.lifecycle_status === 'decommissioned' ? 'bg-slate-50 text-slate-400 border-slate-200' :
-          a.lifecycle_status === 'maintenance' ? 'bg-amber-50 text-amber-600 border-amber-200' :
-          'bg-blue-50 text-blue-500 border-blue-200'
-        }`}>
-          {a.lifecycle_status === 'production' && <Shield size={12} />}
-          {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}
-        </span>
-      </div>
-
-      {/* Fields grid — same 2-col layout as edit modal */}
-      <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
-        <ReadonlyField label={zh ? '厂商' : 'Vendor'} value={a.vendor || '—'} />
-        <ReadonlyField label={zh ? '型号' : 'Model'} value={a.model || '—'} />
-        <ReadonlyField label={zh ? '资产编号' : 'Asset Tag'} value={a.asset_tag || '—'} />
-        <ReadonlyField label={zh ? '序列号' : 'Serial No.'} value={a.serial_number || '—'} />
-        <ReadonlyField label={zh ? '管理IP' : 'Mgmt IP'} value={a.management_ip || '—'} mono />
-        {a.asset_type === 'server' && (
-          <ReadonlyField label={zh ? '业务IP' : 'Biz IP'} value={a.business_ip || '—'} mono />
-        )}
-        {a.asset_type === 'server' && (
-          <ReadonlyField label="VLAN" value={a.vlan || '—'} />
-        )}
-        {a.asset_type === 'server' && (
-          <ReadonlyField label={zh ? '上联交换机' : 'Uplink Switch'} value={a.uplink_switch || '—'} />
-        )}
-        {a.asset_type === 'server' && (
-          <ReadonlyField label={zh ? '上联端口' : 'Uplink Port'} value={a.uplink_port || '—'} mono />
-        )}
-        <ReadonlyField label={zh ? '数据中心' : 'DC'} value={a.datacenter || '—'} />
-        <ReadonlyField label={zh ? '机柜' : 'Rack'} value={a.rack || '—'} />
-        <ReadonlyField label={zh ? 'U位' : 'Unit'} value={a.rack_unit || '—'} />
-        <ReadonlyField label={zh ? '角色' : 'Role'} value={a.device_role || '—'} />
-        <ReadonlyField label={zh ? '部门/业务' : 'Dept'} value={a.department || '—'} />
-        <ReadonlyField label={zh ? '购买日期' : 'Purchased'} value={a.purchase_date || '—'} />
-        <ReadonlyField label={zh ? '保修到期' : 'Warranty'} value={a.warranty_expiry || '—'} warn={!!(a.warranty_expiry && new Date(a.warranty_expiry) <= new Date(Date.now() + 90 * 86400000))} />
-        <ReadonlyField label={zh ? '最后更新' : 'Updated'} value={ago(a.updated_at)} />
-        {a.notes && (
-          <div className="col-span-2">
-            <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '备注' : 'Notes'}</label>
-            <div className="w-full border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/55 bg-black/[0.01] leading-relaxed">{a.notes}</div>
-          </div>
-        )}
-      </div>
-
+      <AssetReadonlyDetailInner asset={a} zh={zh} />
     </div>
   );
 }

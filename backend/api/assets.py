@@ -12,7 +12,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from database import get_db_connection
 from core.crypto import encrypt_credential
 
@@ -152,6 +152,8 @@ class AssetCreate(BaseModel):
     datacenter: str = ''
     rack: str = ''
     rack_unit: str = ''
+    u_height: int = 1
+    planned_start_u: Optional[int] = None
     management_ip: str = ''
     business_ip: str = ''
     device_role: str = ''  # switch/router/firewall/ap — only for network_device
@@ -172,6 +174,21 @@ class AssetCreate(BaseModel):
     snmp_community: str = 'public'
     snmp_port: int = 161
 
+    @field_validator('u_height')
+    @classmethod
+    def validate_u_height(cls, v: int) -> int:
+        return max(1, min(60, int(v) if v is not None else 1))
+
+    @field_validator('planned_start_u')
+    @classmethod
+    def validate_planned_start_u(cls, v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return None
+        vi = int(v)
+        if vi < 1 or vi > 60:
+            return None
+        return vi
+
 
 class AssetUpdate(BaseModel):
     asset_type: Optional[str] = None
@@ -183,6 +200,8 @@ class AssetUpdate(BaseModel):
     datacenter: Optional[str] = None
     rack: Optional[str] = None
     rack_unit: Optional[str] = None
+    u_height: Optional[int] = None
+    planned_start_u: Optional[int] = None
     management_ip: Optional[str] = None
     business_ip: Optional[str] = None
     device_role: Optional[str] = None
@@ -267,7 +286,7 @@ def list_assets(
     device_role: str = '',
     q: str = '',
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page_size: int = Query(50, ge=1, le=1000),
 ):
     conn = get_db_connection()
     try:
@@ -319,6 +338,19 @@ def list_assets(
         conn.close()
 
 
+@router.get('/assets/{asset_id}')
+def get_asset(asset_id: str):
+    """Single asset row (same fields as list items) for rack drawer / cross-module detail."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute('SELECT * FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Asset not found')
+        return dict(row)
+    finally:
+        conn.close()
+
+
 # ── Create ───────────────────────────────────────────────────────────
 
 @router.post('/assets')
@@ -337,13 +369,14 @@ def create_asset(body: AssetCreate):
         conn.execute('''
             INSERT INTO physical_assets (
                 id, asset_type, asset_tag, serial_number, vendor, model, hostname,
-                datacenter, rack, rack_unit, management_ip, business_ip, device_role,
+                datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
                 status, lifecycle_status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
+            max(1, min(60, body.u_height)), body.planned_start_u,
             body.management_ip, body.business_ip, body.device_role,
             body.vlan, body.uplink_switch, body.uplink_port,
             body.status, body.lifecycle_status,
@@ -430,7 +463,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
         params = []
         updatable = [
             'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
-            'datacenter', 'rack', 'rack_unit', 'management_ip', 'business_ip', 'device_role',
+            'datacenter', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
             'vlan', 'uplink_switch', 'uplink_port',
             'status', 'lifecycle_status', 'purchase_date', 'warranty_expiry', 'department', 'notes'
         ]
@@ -602,13 +635,14 @@ def import_assets(items: list[AssetCreate]):
             conn.execute('''
                 INSERT INTO physical_assets (
                     id, asset_type, asset_tag, serial_number, vendor, model, hostname,
-                    datacenter, rack, rack_unit, management_ip, business_ip, device_role,
+                    datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                     vlan, uplink_switch, uplink_port,
                     status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
                 body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
+                max(1, min(60, body.u_height)), body.planned_start_u,
                 body.management_ip, body.business_ip, body.device_role,
                 body.vlan, body.uplink_switch, body.uplink_port,
                 body.status,

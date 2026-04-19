@@ -1,0 +1,413 @@
+- generic [ref=e6]:
+  - banner [ref=e7]:
+    - generic [ref=e9]:
+      - button "返回功能中心" [ref=e289]:
+        - img [ref=e290]
+      - button "收起侧栏" [ref=e292]:
+        - img [ref=e294]
+      - button "机柜管理 2026/4/19 · Nexora Control Plane" [ref=e537]:
+        - generic [ref=e299]:
+          - heading "机柜管理" [level=2] [ref=e538]
+          - paragraph [ref=e301]: 2026/4/19 · Nexora Control Plane
+        - img [ref=e302]
+    - generic [ref=e16]:
+      - button "Notifications" [ref=e18]:
+        - img [ref=e19]
+      - button "admin" [ref=e23]:
+        - img [ref=e25]
+        - generic [ref=e28]: admin
+        - img [ref=e29]
+  - generic [ref=e31]:
+    - complementary [ref=e304]:
+      - generic [ref=e305]: 资产与配置
+      - navigation [ref=e306]:
+        - button "资产管理" [ref=e307]:
+          - generic [ref=e309]: 资产管理
+        - button "网络设备" [ref=e310]:
+          - generic [ref=e311]: 网络设备
+        - button "服务器" [ref=e312]:
+          - generic [ref=e313]: 服务器
+        - button "IP/VLAN管理" [ref=e314]:
+          - generic [ref=e315]: IP/VLAN管理
+        - button "IP 工具箱" [ref=e316]:
+          - generic [ref=e317]: IP 工具箱
+        - button "标签管理" [ref=e318]:
+          - generic [ref=e319]: 标签管理
+        - button "机柜管理" [active] [ref=e320]:
+          - generic [ref=e321]: 机柜管理
+      - button "收起导航" [ref=e323]:
+        - img [ref=e324]
+    - main [ref=e32]:
+      - generic [ref=e540]:
+        - generic [ref=e541]:
+          - generic [ref=e542]:
+            - generic [ref=e543]:
+              - heading "机柜管理" [level=2] [ref=e544]
+              - paragraph [ref=e545]: 拖拽设备调整U位 · 可视化机柜布局
+            - generic [ref=e546]:
+              - generic [ref=e547]:
+                - img [ref=e549]
+                - generic [ref=e554]: "4"
+                - generic [ref=e555]: 机柜
+              - generic [ref=e556]:
+                - img [ref=e558]
+                - generic [ref=e561]: "14"
+                - generic [ref=e562]: 设备
+              - generic [ref=e563]:
+                - img [ref=e565]
+                - generic [ref=e569]: 19/168
+                - generic [ref=e570]: U位
+              - generic [ref=e571]:
+                - img [ref=e573]
+                - generic [ref=e576]: 11.3%
+                - generic [ref=e577]: 利用率
+          - generic [ref=e578]:
+            - button "设备型号" [ref=e579]:
+              - img [ref=e580]
+              - text: 设备型号
+            - button "新建机柜" [ref=e584]:
+              - img [ref=e585]
+              - text: 新建机柜
+            - button "刷新" [ref=e586]:
+              - img [ref=e587]
+        - generic [ref=e592]:
+          - generic [ref=e593]:
+            - generic [ref=e594]:
+              - generic [ref=e595]:
+                - img [ref=e596]
+                - textbox "搜索机柜/设备..." [ref=e599]
+              - combobox [ref=e600]:
+                - option "全部数据中心" [selected]
+                - option "DC-Beijing"
+                - option "DC-Shanghai"
+                - option "北京"
+            - generic [ref=e601]:
+              - button "A-01 DC-Beijing 42U" [ref=e602]:
+                - generic [ref=e603]:
+                  - generic [ref=e604]: A-01
+                  - generic [ref=e605]:
+                    - button [ref=e606]:
+                      - img [ref=e607]
+                    - button [ref=e610]:
+                      - img [ref=e611]
+                - generic [ref=e614]:
+                  - generic [ref=e615]: DC-Beijing
+                  - generic [ref=e616]: 42U
+              - button "A-02 DC-Beijing 42U" [ref=e617]:
+                - generic [ref=e618]:
+                  - generic [ref=e619]: A-02
+                  - generic [ref=e620]:
+                    - button [ref=e621]:
+                      - img [ref=e622]
+                    - button [ref=e625]:
+                      - img [ref=e626]
+                - generic [ref=e629]:
+                  - generic [ref=e630]: DC-Beijing
+                  - generic [ref=e631]: 42U
+              - button "B-01 DC-Shanghai 42U" [ref=e632]:
+                - generic [ref=e633]:
+                  - generic [ref=e634]: B-01
+                  - generic [ref=e635]:
+                    - button [ref=e636]:
+                      - img [ref=e637]
+                    - button [ref=e640]:
+                      - img [ref=e641]
+                - generic [ref=e644]:
+                  - generic [ref=e645]: DC-Shanghai
+                  - generic [ref=e646]: 42U
+              - button "A-01 北京 42U" [ref=e647]:
+                - generic [ref=e648]:
+                  - generic [ref=e649]: A-01
+                  - generic [ref=e650]:
+                    - button [ref=e651]:
+                      - img [ref=e652]
+                    - button [ref=e655]:
+                      - img [ref=e656]
+                - generic [ref=e659]:
+                  - generic [ref=e660]: 北京
+                  - generic [ref=e661]: 42U
+          - generic [ref=e662]:
+            - generic [ref=e663]:
+              - generic [ref=e664]:
+                - heading "A-01DC-Beijing / Server Room 1" [level=3] [ref=e665]:
+                  - text: A-01
+                  - generic [ref=e666]: DC-Beijing / Server Room 1
+                - generic [ref=e667]:
+                  - button "前面板" [ref=e668]
+                  - button "后面板" [ref=e669]
+                - generic [ref=e670]:
+                  - button "适应屏幕" [ref=e671]:
+                    - img [ref=e672]
+                  - button "100%" [ref=e677]
+                - generic [ref=e678]:
+                  - button "全展开" [ref=e679]:
+                    - img [ref=e680]
+                    - text: 全展开
+                  - button "已显示" [ref=e684]:
+                    - img [ref=e685]
+                    - text: 已显示
+              - generic [ref=e688]:
+                - generic [ref=e689]: 9U / 42U (33U 可用)
+                - button "PNG" [ref=e690]:
+                  - img [ref=e691]
+                  - text: PNG
+                - button "安装" [ref=e694]:
+                  - img [ref=e695]
+                  - text: 安装
+            - generic [ref=e696]:
+              - generic [ref=e697]: ▼ 前面板 · 可拖拽
+              - generic [ref=e698]:
+                - generic [ref=e700]:
+                  - generic [ref=e701]:
+                    - generic [ref=e702]: "42"
+                    - generic [ref=e703]: "41"
+                    - generic [ref=e704]: "40"
+                    - generic [ref=e705]: "39"
+                    - generic [ref=e706]: "38"
+                    - generic [ref=e707]: "37"
+                    - generic [ref=e708]: "36"
+                    - generic [ref=e709]: "35"
+                    - generic [ref=e710]: "34"
+                    - generic [ref=e711]: "33"
+                    - generic [ref=e712]: "32"
+                    - generic [ref=e713]: "31"
+                    - generic [ref=e714]: "30"
+                    - generic [ref=e715]: "29"
+                    - generic [ref=e716]: "28"
+                    - generic [ref=e717]: "27"
+                    - generic [ref=e718]: "26"
+                    - generic [ref=e719]: "25"
+                    - generic [ref=e720]: "24"
+                    - generic [ref=e721]: "23"
+                    - generic [ref=e722]: "22"
+                    - generic [ref=e723]: "21"
+                    - generic [ref=e724]: "20"
+                    - generic [ref=e725]: "19"
+                    - generic [ref=e726]: "18"
+                    - generic [ref=e727]: "17"
+                    - generic [ref=e728]: "16"
+                    - generic [ref=e729]: "15"
+                    - generic [ref=e730]: "14"
+                    - generic [ref=e731]: "13"
+                    - generic [ref=e732]: "12"
+                    - generic [ref=e733]: "11"
+                    - generic [ref=e734]: "10"
+                    - generic [ref=e735]: "9"
+                    - generic [ref=e736]: "8"
+                    - generic [ref=e737]: "7"
+                    - generic [ref=e738]: "6"
+                    - generic [ref=e739]: "5"
+                    - generic [ref=e740]: "4"
+                    - generic [ref=e741]: "3"
+                    - generic [ref=e742]: "2"
+                    - generic [ref=e743]: "1"
+                  - generic [ref=e744]:
+                    - generic [ref=e745]:
+                      - generic: U42
+                    - generic [ref=e747]:
+                      - generic: U41
+                    - generic [ref=e749]:
+                      - generic: U40
+                    - generic [ref=e751]:
+                      - generic: U39
+                    - generic [ref=e753]:
+                      - generic: U38
+                    - generic [ref=e755]:
+                      - generic: U37
+                    - generic [ref=e757]:
+                      - generic: U36
+                    - generic [ref=e759]:
+                      - generic: U35
+                    - generic [ref=e761]:
+                      - generic: U34
+                    - generic [ref=e763]:
+                      - generic: U33
+                    - generic [ref=e765]:
+                      - generic: U32
+                    - generic [ref=e771]:
+                      - generic: U29
+                    - generic [ref=e773]:
+                      - generic: U28
+                    - generic [ref=e775]:
+                      - generic: U27
+                    - generic [ref=e777]:
+                      - generic: U26
+                    - generic [ref=e779]:
+                      - generic: U25
+                    - generic [ref=e781]:
+                      - generic: U24
+                    - generic [ref=e783]:
+                      - generic: U23
+                    - generic [ref=e785]:
+                      - generic: U22
+                    - generic [ref=e787]:
+                      - generic: U21
+                    - generic [ref=e789]:
+                      - generic: U20
+                    - generic [ref=e791]:
+                      - generic: U19
+                    - generic [ref=e793]:
+                      - generic: U18
+                    - generic [ref=e795]:
+                      - generic: U17
+                    - generic [ref=e801]:
+                      - generic: U14
+                    - generic [ref=e803]:
+                      - generic: U13
+                    - generic [ref=e805]:
+                      - generic: U12
+                    - generic [ref=e807]:
+                      - generic: U11
+                    - generic [ref=e811]:
+                      - generic: U9
+                    - generic [ref=e813]:
+                      - generic: U8
+                    - generic [ref=e815]:
+                      - generic: U7
+                    - generic [ref=e817]:
+                      - generic: U6
+                    - generic [ref=e821]:
+                      - generic: U4
+                    - button "PP-A01-01 1U" [ref=e829]:
+                      - img [ref=e831]
+                      - img [ref=e839]
+                      - generic [ref=e844]: PP-A01-01
+                      - generic [ref=e845]: 1U
+                    - button "Core-SW-01 1U" [ref=e846]:
+                      - img [ref=e848]
+                      - img [ref=e856]
+                      - generic [ref=e861]: Core-SW-01
+                      - generic [ref=e862]: 1U
+                    - button "Core-SW-02 1U" [ref=e863]:
+                      - img [ref=e865]
+                      - img [ref=e873]
+                      - generic [ref=e878]: Core-SW-02
+                      - generic [ref=e879]: 1U
+                    - button "Dist-SW-01 1U" [ref=e880]:
+                      - img [ref=e882]
+                      - img [ref=e890]
+                      - generic [ref=e895]: Dist-SW-01
+                      - generic [ref=e896]: 1U
+                    - button "FW-01 1U" [ref=e897]:
+                      - img [ref=e899]
+                      - img [ref=e907]
+                      - generic [ref=e910]: FW-01
+                      - generic [ref=e911]: 1U
+                    - button "Edge-RTR-01 Cisco ISR 4451 2U" [ref=e912]:
+                      - img [ref=e914]
+                      - img [ref=e922]
+                      - generic [ref=e924]:
+                        - generic [ref=e925]: Edge-RTR-01
+                        - generic [ref=e926]: Cisco ISR 4451
+                      - generic [ref=e927]: 2U
+                    - button "UPS-A01 APC APC SUA3000RMI2U 2U" [ref=e928]:
+                      - img [ref=e930]
+                      - img [ref=e938]
+                      - generic [ref=e940]:
+                        - generic [ref=e941]: UPS-A01
+                        - generic [ref=e942]: APC APC SUA3000RMI2U
+                      - generic [ref=e943]: 2U
+                  - generic [ref=e944]:
+                    - generic [ref=e945]: "42"
+                    - generic [ref=e946]: "41"
+                    - generic [ref=e947]: "40"
+                    - generic [ref=e948]: "39"
+                    - generic [ref=e949]: "38"
+                    - generic [ref=e950]: "37"
+                    - generic [ref=e951]: "36"
+                    - generic [ref=e952]: "35"
+                    - generic [ref=e953]: "34"
+                    - generic [ref=e954]: "33"
+                    - generic [ref=e955]: "32"
+                    - generic [ref=e956]: "31"
+                    - generic [ref=e957]: "30"
+                    - generic [ref=e958]: "29"
+                    - generic [ref=e959]: "28"
+                    - generic [ref=e960]: "27"
+                    - generic [ref=e961]: "26"
+                    - generic [ref=e962]: "25"
+                    - generic [ref=e963]: "24"
+                    - generic [ref=e964]: "23"
+                    - generic [ref=e965]: "22"
+                    - generic [ref=e966]: "21"
+                    - generic [ref=e967]: "20"
+                    - generic [ref=e968]: "19"
+                    - generic [ref=e969]: "18"
+                    - generic [ref=e970]: "17"
+                    - generic [ref=e971]: "16"
+                    - generic [ref=e972]: "15"
+                    - generic [ref=e973]: "14"
+                    - generic [ref=e974]: "13"
+                    - generic [ref=e975]: "12"
+                    - generic [ref=e976]: "11"
+                    - generic [ref=e977]: "10"
+                    - generic [ref=e978]: "9"
+                    - generic [ref=e979]: "8"
+                    - generic [ref=e980]: "7"
+                    - generic [ref=e981]: "6"
+                    - generic [ref=e982]: "5"
+                    - generic [ref=e983]: "4"
+                    - generic [ref=e984]: "3"
+                    - generic [ref=e985]: "2"
+                    - generic [ref=e986]: "1"
+                - status [ref=e987]
+          - generic [ref=e988]:
+            - generic [ref=e989]:
+              - heading "已安装设备 (7)" [level=4] [ref=e990]
+              - paragraph [ref=e991]: 点击查看详情
+            - generic [ref=e992]:
+              - button "PP-A01-01 U1" [ref=e993]:
+                - img [ref=e995]
+                - generic [ref=e999]:
+                  - paragraph [ref=e1000]: PP-A01-01
+                  - paragraph [ref=e1001]: U1
+              - button "Core-SW-01 U2" [ref=e1003]:
+                - img [ref=e1005]
+                - generic [ref=e1009]:
+                  - paragraph [ref=e1010]: Core-SW-01
+                  - paragraph [ref=e1011]: U2
+              - button "Core-SW-02 U3" [ref=e1013]:
+                - img [ref=e1015]
+                - generic [ref=e1019]:
+                  - paragraph [ref=e1020]: Core-SW-02
+                  - paragraph [ref=e1021]: U3
+              - button "Dist-SW-01 U5" [ref=e1023]:
+                - img [ref=e1025]
+                - generic [ref=e1029]:
+                  - paragraph [ref=e1030]: Dist-SW-01
+                  - paragraph [ref=e1031]: U5
+              - button "FW-01 U10" [ref=e1033]:
+                - img [ref=e1035]
+                - generic [ref=e1037]:
+                  - paragraph [ref=e1038]: FW-01
+                  - paragraph [ref=e1039]: U10
+              - button "Edge-RTR-01 U15" [ref=e1041]:
+                - img [ref=e1043]
+                - generic [ref=e1045]:
+                  - paragraph [ref=e1046]: Edge-RTR-01
+                  - paragraph [ref=e1047]: U15
+              - button "UPS-A01 U30" [ref=e1049]:
+                - img [ref=e1051]
+                - generic [ref=e1053]:
+                  - paragraph [ref=e1054]: UPS-A01
+                  - paragraph [ref=e1055]: U30
+            - generic [ref=e1057]:
+              - generic [ref=e1058]:
+                - generic [ref=e1059]: "电源:"
+                - generic [ref=e1062]: 通电
+                - generic [ref=e1065]: 断电
+                - generic [ref=e1068]: 规划
+              - generic [ref=e1069]:
+                - generic [ref=e1070]: "设备类型:"
+                - generic [ref=e1073]: 交换机
+                - generic [ref=e1076]: 路由器
+                - generic [ref=e1079]: 防火墙
+                - generic [ref=e1082]: 服务器
+                - generic [ref=e1085]: 存储
+                - generic [ref=e1088]: PDU
+                - generic [ref=e1091]: UPS
+                - generic [ref=e1094]: 配线架
+                - generic [ref=e1097]: 其他
+  - contentinfo [ref=e286]:
+    - generic [ref=e287]: Copyright (c) 2026 Nexora. All rights reserved.
+    - generic [ref=e288]: NOC v2.0

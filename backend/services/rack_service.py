@@ -83,8 +83,11 @@ def delete_rack(conn, rack_id: str) -> None:
     device_count = conn.execute(
         "SELECT COUNT(*) as cnt FROM rack_devices WHERE rack_id = ?", (rack_id,)
     ).fetchone()
-    if device_count and (device_count['cnt'] if hasattr(device_count, '__getitem__') else device_count[0]) > 0:
-        raise ValueError("Cannot delete rack with devices installed. Remove all devices first.")
+    cnt = device_count['cnt'] if hasattr(device_count, '__getitem__') and 'cnt' in device_count.keys() else device_count[0]
+    if cnt and cnt > 0:
+        raise ValueError(
+            "Cannot delete rack: remove all installed devices from this rack first, then try again."
+        )
     conn.execute("DELETE FROM racks WHERE id = ?", (rack_id,))
     conn.commit()
     logger.info(f"[RackService] Deleted rack {rack_id}")
