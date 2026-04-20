@@ -112,7 +112,27 @@ async def verify_config_approval(payload: dict = Body(...), user=require_role("O
 
 @router.post("/execute")
 async def execute_task(request: Request, payload: dict = Body(...), user=require_role("Operator")):
+    # Support both single device_id (backward compat) and batch device_ids
     device_id = payload.get('device_id')
+    device_ids = payload.get('device_ids', [])
+    
+    # Normalize to list of device_ids
+    if isinstance(device_ids, str):
+        try:
+            device_ids = json.loads(device_ids)
+        except (json.JSONDecodeError, TypeError):
+            device_ids = [device_ids] if device_ids else []
+    
+    if not isinstance(device_ids, list):
+        device_ids = [device_ids] if device_ids else []
+    
+    # If device_id is provided, add it to list (backward compat)
+    if device_id and device_id not in device_ids:
+        device_ids.insert(0, device_id)
+    
+    if not device_ids:
+        raise HTTPException(status_code=400, detail="device_id or device_ids is required")
+    
     script_id = payload.get('script_id')
     command = payload.get('command')
     is_config_req = payload.get('isConfig')
@@ -135,13 +155,19 @@ async def execute_task(request: Request, payload: dict = Body(...), user=require
 
     conn = get_db_connection()
     try:
-        device = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
-        if not device:
-            raise HTTPException(status_code=404, detail="Device not found")
+        # Batch execution: collect all devices first
+        devices_data = []
+        for dev_id in device_ids:
+            device = conn.execute('SELECT * FROM devices WHERE id = ?', (dev_id,)).fetchone()
+            if not device:
+                raise HTTPException(status_code=404, detail=f"Device {dev_id} not found")
+            device_dict = dict(device)
+            device_dict['password'] = decrypt_credential(device_dict.get('password')) or ''
+            devices_data.append(device_dict)
         
-        device_dict = dict(device)
-        # Decrypt stored credentials before passing to driver
-        device_dict['password'] = decrypt_credential(device_dict.get('password')) or ''
+        if not devices_data:
+            raise HTTPException(status_code=400, detail="No valid devices provided")
+        
         final_command = command
         task_name = 'Direct Command'
         
@@ -149,7 +175,6 @@ async def execute_task(request: Request, payload: dict = Body(...), user=require
             # Try scripts table first
             script = conn.execute('SELECT * FROM scripts WHERE id = ?', (script_id,)).fetchone()
             if script:
-                # If command is provided, it means the user edited the script content in the UI
                 final_command = command if command else script['content']
                 task_name = f"Script: {script['name']}"
             else:
@@ -162,19 +187,17 @@ async def execute_task(request: Request, payload: dict = Body(...), user=require
         if not final_command:
             raise HTTPException(status_code=400, detail="No command or script provided")
 
-        job_id = str(uuid.uuid4())
+        job_ids = [str(uuid.uuid4()) for _ in devices_data]
         if save_history:
-            conn.execute('INSERT INTO jobs (id, device_id, task_name, status, created_at) VALUES (?, ?, ?, ?, ?)',
-                         (job_id, device_id, task_name, 'running', datetime.now().isoformat()))
+            for job_id, device_dict in zip(job_ids, devices_data):
+                conn.execute('INSERT INTO jobs (id, device_id, task_name, status, created_at) VALUES (?, ?, ?, ?, ?)',
+                             (job_id, device_dict['id'], task_name, 'running', datetime.now().isoformat()))
             conn.commit()
 
         try:
             commands = [c.strip() for c in final_command.split('\n') if c.strip()]
 
-            # 以实际命令内容判断是否进入配置模式：
-            # 1. 只要有任一行是 show/display/ping 类只读命令 → exec 模式（防止误配置）
-            # 2. 否则：若前端明确传了 isConfig，以前端为准
-            # 3. 若前端未传：扫描全部行，出现常见配置关键词则走配置模式
+            # 以实际命令内容判断是否进入配置模式
             _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ')
             _has_show = any(
                 c.lower().startswith(p) for c in commands for p in _show_prefixes
@@ -195,106 +218,143 @@ async def execute_task(request: Request, payload: dict = Body(...), user=require
             # ── Safety check: block dangerous/destructive commands ──
             safety_err = _check_command_safety(commands)
             if safety_err:
-                conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('blocked', safety_err, job_id))
+                for job_id in job_ids:
+                    conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('blocked', safety_err, job_id))
                 conn.commit()
                 log_audit_event(
                     event_type='COMMAND_BLOCKED',
                     category='automation',
                     severity='critical',
                     status='blocked',
-                    summary=f"Blocked dangerous command on {device_dict.get('hostname')}",
+                    summary=f"Blocked dangerous command on {len(devices_data)} device(s)",
                     actor_username=actor_username,
                     actor_role=actor_role,
                     source_ip=request.client.host if request.client else None,
                     target_type='device',
-                    target_id=device_id,
-                    target_name=device_dict.get('hostname'),
-                    device_id=device_id,
-                    job_id=job_id,
-                    details={'blocked_reason': safety_err, 'command_preview': '\n'.join(commands[:8])},
+                    target_id=devices_data[0]['id'] if devices_data else None,
+                    target_name=devices_data[0].get('hostname') if devices_data else None,
+                    device_id=devices_data[0]['id'] if devices_data else None,
+                    job_id=job_ids[0] if job_ids else None,
+                    details={'blocked_reason': safety_err, 'command_preview': '\n'.join(commands[:8]), 'device_count': len(devices_data)},
                 )
                 raise HTTPException(status_code=403, detail=safety_err)
             
-            # 自动选择驱动：如果是测试 IP 则使用 Mock 驱动
-            driver_type = 'mock' if device_dict.get('ip_address') in ['127.0.0.1', '0.0.0.0', 'localhost'] else 'netmiko'
-            
-            # 使用新架构的 Service 执行任务
-            service = AutomationService(driver_type=driver_type)
-            
-            # 在线程池中执行同步驱动任务，避免阻塞 FastAPI 事件循环
-            import time
-            exec_start = time.time()
-            
-            def _execute():
-                exec_begin = time.time()
-                results = service.execute_commands(device_dict, commands, is_config=is_config)
-                exec_elapsed = time.time() - exec_begin
-                logger.info(f"Command execution took {exec_elapsed:.2f}s for device {device_dict.get('hostname')}")
-                
-                # 合并结果回显
-                merge_start = time.time()
-                output = "\n".join([r.output if r.success else f"Error: {r.error}" for r in results])
-                merge_elapsed = time.time() - merge_start
-                logger.info(f"Result merge took {merge_elapsed:.3f}s, output size: {len(output)} chars")
-                
-                return output
+            # Execute on all devices and aggregate results
+            batch_results = {}
+            for job_id, device_dict in zip(job_ids, devices_data):
+                try:
+                    driver_type = 'mock' if device_dict.get('ip_address') in ['127.0.0.1', '0.0.0.0', 'localhost'] else 'netmiko'
+                    service = AutomationService(driver_type=driver_type)
+                    
+                    import time
+                    exec_start = time.time()
+                    
+                    def _execute():
+                        exec_begin = time.time()
+                        results = service.execute_commands(device_dict, commands, is_config=is_config)
+                        exec_elapsed = time.time() - exec_begin
+                        logger.info(f"Command execution took {exec_elapsed:.2f}s for device {device_dict.get('hostname')}")
+                        
+                        merge_start = time.time()
+                        output = "\n".join([r.output if r.success else f"Error: {r.error}" for r in results])
+                        merge_elapsed = time.time() - merge_start
+                        logger.info(f"Result merge took {merge_elapsed:.3f}s, output size: {len(output)} chars")
+                        
+                        return output
 
-            result = await asyncio.get_event_loop().run_in_executor(None, _execute)
-            total_elapsed = time.time() - exec_start
-            logger.info(f"Total execution time: {total_elapsed:.2f}s")
+                    result = await asyncio.get_event_loop().run_in_executor(None, _execute)
+                    total_elapsed = time.time() - exec_start
+                    logger.info(f"Total execution time: {total_elapsed:.2f}s")
+                    
+                    if save_history:
+                        conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('success', result, job_id))
+                        conn.commit()
+                    
+                    batch_results[device_dict['id']] = {'status': 'success', 'output': result}
+                    
+                    log_audit_event(
+                        event_type='DIRECT_EXECUTION',
+                        category='automation',
+                        severity='high' if is_config else 'medium',
+                        status='success',
+                        summary=f"Executed {task_name} on {device_dict.get('hostname')}",
+                        actor_id=str(actor_id) if actor_id is not None else None,
+                        actor_username=actor_username,
+                        actor_role=actor_role,
+                        source_ip=request.client.host if request.client else None,
+                        target_type='device',
+                        target_id=device_dict['id'],
+                        target_name=device_dict.get('hostname'),
+                        device_id=device_dict['id'],
+                        job_id=job_id,
+                        details={
+                            'task_name': task_name,
+                            'command_count': len(commands),
+                            'is_config': is_config,
+                            'script_id': script_id,
+                            'command_preview': '\n'.join(commands[:8]),
+                            'config_reason': config_reason if is_config else None,
+                            'batch_size': len(devices_data),
+                        },
+                    )
+                except Exception as e:
+                    error_msg = str(e)
+                    logger.error(f"Job execution failed for device {device_dict.get('hostname')}: {error_msg}", exc_info=True)
+                    if save_history:
+                        conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('failed', error_msg, job_id))
+                        conn.commit()
+                    batch_results[device_dict['id']] = {'status': 'error', 'output': error_msg}
+                    log_audit_event(
+                        event_type='DIRECT_EXECUTION',
+                        category='automation',
+                        severity='high' if is_config_req else 'medium',
+                        status='failed',
+                        summary=f"Execution failed for {device_dict.get('hostname')}",
+                        actor_id=str(actor_id) if actor_id is not None else None,
+                        actor_username=actor_username,
+                        actor_role=actor_role,
+                        source_ip=request.client.host if request.client else None,
+                        target_type='device',
+                        target_id=device_dict['id'],
+                        target_name=device_dict.get('hostname'),
+                        device_id=device_dict['id'],
+                        job_id=job_id,
+                        details={'task_name': task_name, 'error': error_msg, 'script_id': script_id, 'batch_size': len(devices_data)},
+                    )
             
-            if save_history:
-                conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('success', result, job_id))
-                conn.commit()
-            log_audit_event(
-                event_type='DIRECT_EXECUTION',
-                category='automation',
-                severity='high' if is_config else 'medium',
-                status='success',
-                summary=f"Executed {task_name} on {device_dict.get('hostname')}",
-                actor_id=str(actor_id) if actor_id is not None else None,
-                actor_username=actor_username,
-                actor_role=actor_role,
-                source_ip=request.client.host if request.client else None,
-                target_type='device',
-                target_id=device_id,
-                target_name=device_dict.get('hostname'),
-                device_id=device_id,
-                job_id=job_id,
-                details={
-                    'task_name': task_name,
-                    'command_count': len(commands),
-                    'is_config': is_config,
-                    'script_id': script_id,
-                    'command_preview': '\n'.join(commands[:8]),
-                    'config_reason': config_reason if is_config else None,
-                },
-            )
-            return {"status": "success", "jobId": job_id, "output": result}
+            # Return aggregated result
+            if len(device_ids) == 1:
+                # Single device: backward compatible response
+                first_result = batch_results.get(devices_data[0]['id'], {})
+                return {"status": first_result.get('status', 'unknown'), "jobId": job_ids[0], "output": first_result.get('output', '')}
+            else:
+                # Batch: return map of device_id -> result
+                return {"status": "completed", "jobIds": job_ids, "results": batch_results, "device_count": len(devices_data)}
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Job execution failed: {error_msg}", exc_info=True)
+            logger.error(f"Batch execution failed: {error_msg}", exc_info=True)
             if save_history:
-                conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('failed', error_msg, job_id))
+                for job_id in job_ids:
+                    conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('failed', error_msg, job_id))
                 conn.commit()
             log_audit_event(
                 event_type='DIRECT_EXECUTION',
                 category='automation',
                 severity='high' if is_config_req else 'medium',
                 status='failed',
-                summary=f"Execution failed for {device_dict.get('hostname')}",
+                summary=f"Batch execution failed for {len(devices_data)} device(s)",
                 actor_id=str(actor_id) if actor_id is not None else None,
                 actor_username=actor_username,
                 actor_role=actor_role,
                 source_ip=request.client.host if request.client else None,
                 target_type='device',
-                target_id=device_id,
-                target_name=device_dict.get('hostname'),
-                device_id=device_id,
-                job_id=job_id,
-                details={'task_name': task_name, 'error': error_msg, 'script_id': script_id},
+                target_id=devices_data[0]['id'] if devices_data else None,
+                target_name=devices_data[0].get('hostname') if devices_data else None,
+                device_id=devices_data[0]['id'] if devices_data else None,
+                job_id=job_ids[0] if job_ids else None,
+                details={'error': error_msg, 'batch_size': len(devices_data)},
             )
-            return JSONResponse(status_code=500, content={"status": "error", "error": error_msg, "jobId": job_id})
+            return JSONResponse(status_code=500, content={"status": "error", "error": error_msg, "jobIds": job_ids})
     finally:
         conn.close()
 

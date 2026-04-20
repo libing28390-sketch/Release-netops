@@ -741,6 +741,45 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     }
   }, [selectedScenarioId, commandMode, selectedScenario, selectedScenarioPlatform]);
 
+  // ── Auto-detect scenario from device platform ──
+  useEffect(() => {
+    if (commandMode !== 'template' || selectedScenarioId) return;
+    const deviceWithPlatform = form.target_devices.find((dev) => dev.platform);
+    
+    console.log('[AutoDetect] Mode:', commandMode, 'Has scenario:', !!selectedScenarioId, 'Device platform:', deviceWithPlatform?.platform);
+    console.log('[AutoDetect] Available scenarios:', scenarioOptions.length, scenarioOptions.map(s => ({ id: s.id, name: s.name, platforms: s.supported_platforms?.slice(0, 3) })));
+    
+    if (!deviceWithPlatform?.platform) {
+      console.log('[AutoDetect] No device platform found');
+      return;
+    }
+
+    const matchedScenario = scenarioOptions.find((scenario) => {
+      const supportedPlatforms = scenario.supported_platforms?.length
+        ? scenario.supported_platforms
+        : Object.keys(scenario.platform_phases || {});
+      const isMatch = supportedPlatforms.some((p) => findMatchingPlatform(deviceWithPlatform.platform || '', [p]));
+      console.log('[AutoDetect] Scenario', scenario.name, 'supports', supportedPlatforms.slice(0, 3), '... match?', isMatch);
+      return isMatch;
+    });
+
+    if (matchedScenario) {
+      console.log('[AutoDetect] Matched scenario:', matchedScenario.id, matchedScenario.name);
+      setSelectedScenarioId(matchedScenario.id);
+      const platformsList = matchedScenario.supported_platforms?.length
+        ? matchedScenario.supported_platforms
+        : Object.keys(matchedScenario.platform_phases || {});
+      const matchedPlatform = findMatchingPlatform(deviceWithPlatform.platform || '', platformsList);
+      console.log('[AutoDetect] Matched platform:', matchedPlatform);
+      if (matchedPlatform) {
+        setSelectedScenarioPlatform(matchedPlatform);
+      }
+    } else {
+      console.log('[AutoDetect] No matching scenario found for platform:', deviceWithPlatform.platform);
+    }
+  }, [commandMode, selectedScenarioId, form.target_devices, scenarioOptions]);
+
+
   const normalizePlatformKey = (value: string) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const findMatchingPlatform = (input: string, candidates: string[]) => {
     const normalized = normalizePlatformKey(input);
@@ -799,7 +838,8 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   }, [commandMode, selectedScenario, selectedScenarioPlatform, form.target_devices]);
 
   const fetchTemplatePreview = useCallback(async () => {
-    if (commandMode !== 'template' || !selectedScenarioId || !selectedScenarioPlatform) {
+    const effectiveScenarioPlatform = selectedScenarioPlatform || (selectedScenarioPlatforms.length === 1 ? selectedScenarioPlatforms[0] : '');
+    if (commandMode !== 'template' || !selectedScenarioId || !effectiveScenarioPlatform) {
       setTemplatePreview(null);
       return;
     }
@@ -811,7 +851,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         headers: authHeaders(true),
         body: JSON.stringify({
           scenario_id: selectedScenarioId,
-          platform: selectedScenarioPlatform,
+          platform: effectiveScenarioPlatform,
           variables: templateVariables,
         }),
       });
@@ -845,7 +885,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     } finally {
       setTemplatePreviewLoading(false);
     }
-  }, [authHeaders, commandMode, selectedScenarioId, selectedScenarioPlatform, selectedScenario, selectedScenarioPlatform, templateVariables, zh]);
+  }, [authHeaders, commandMode, selectedScenarioId, selectedScenarioPlatform, selectedScenarioPlatforms, selectedScenario, templateVariables, zh]);
 
   const editorVisible = isCreateView || showCreateModal;
   const hideDraftListWhenEditing = showCreateModal && viewTab === 'my_drafts' && editingOrder !== null;
@@ -935,6 +975,11 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
   // ── Create / Update ──
   const saveOrder = async (closeAfterSave = true, asDraft = false) => {
+    const effectiveScenarioPlatform = selectedScenarioPlatform || (selectedScenarioPlatforms.length === 1 ? selectedScenarioPlatforms[0] : '');
+    // When no scenario selected, use local preview if available
+    const localPreview = selectedScenarioId && selectedScenarioPlatform ? getLocalTemplatePreview() : null;
+    const effectivePreview = templatePreview || localPreview;
+    
     if (!form.title.trim()) {
       showToast(zh ? '请输入工单标题' : 'Title is required', 'error');
       return;
@@ -950,17 +995,28 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         return;
       }
       if (commandMode === 'template') {
-        if (!selectedScenarioId || !selectedScenarioPlatform) {
-          showToast(zh ? '请选择变更模板场景，系统会自动匹配平台' : 'Select a scenario; platform will be auto-detected', 'error');
+        // Auto-match platform from device if not explicitly selected
+        const devicePlatform = form.target_devices.find(d => d.platform)?.platform;
+        const platformToUse = effectiveScenarioPlatform || devicePlatform || '';
+        
+        if (!selectedScenarioId && !platformToUse) {
+          showToast(zh ? '请选择变更模板场景或添加有平台信息的目标设备' : 'Select a scenario or add a device with platform info', 'error');
           return;
         }
-        if (templateMissingRequired.length > 0) {
-          showToast(zh ? `请先填写必填变量：${templateMissingRequired.join('、')}` : `Fill required variables: ${templateMissingRequired.join(', ')}`, 'error');
+        if (selectedScenarioId && !effectiveScenarioPlatform && !platformToUse) {
+          showToast(zh ? '无法确定目标平台' : 'Cannot determine target platform', 'error');
           return;
         }
-        if (!templatePreview || templatePreview.execute.length === 0) {
-          showToast(zh ? '模板尚未生成可执行命令，请检查变量' : 'No executable commands were generated', 'error');
-          return;
+        // Only validate template preview if scenario is selected
+        if (selectedScenarioId) {
+          if (templateMissingRequired.length > 0) {
+            showToast(zh ? `请先填写必填变量：${templateMissingRequired.join('、')}` : `Fill required variables: ${templateMissingRequired.join(', ')}`, 'error');
+            return;
+          }
+          if (!effectivePreview || effectivePreview.execute.length === 0) {
+            showToast(zh ? '模板尚未生成可执行命令，请检查变量或模板配置' : 'No executable commands were generated, check variables or template config', 'error');
+            return;
+          }
         }
       }
     }
@@ -975,16 +1031,29 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         rollback_plan: form.rollback_plan,
       };
 
-      if (commandMode === 'template' && selectedScenarioId && selectedScenarioPlatform) {
+      if (commandMode === 'template' && selectedScenarioId && effectiveScenarioPlatform) {
+        if (!selectedScenarioPlatform && selectedScenarioPlatforms.length === 1) {
+          setSelectedScenarioPlatform(effectiveScenarioPlatform);
+        }
         payload.command_template = {
           scenario_id: selectedScenarioId,
-          platform: selectedScenarioPlatform,
+          platform: effectiveScenarioPlatform,
           variables: templateVariables,
         };
-        if (templatePreview?.execute?.length) {
-          payload.commands = templatePreview.execute;
+        if (effectivePreview?.execute?.length) {
+          payload.commands = effectivePreview.execute;
         }
-        payload.rollback_plan = (templatePreview?.rollback || []).join('\n') || form.rollback_plan;
+        payload.rollback_plan = (effectivePreview?.rollback || []).join('\n') || form.rollback_plan;
+      } else if (commandMode === 'template') {
+        // Template mode but no scenario selected; use device platform
+        const devicePlatform = form.target_devices.find(d => d.platform)?.platform || '';
+        if (devicePlatform) {
+          payload.command_template = {
+            scenario_id: '',
+            platform: devicePlatform,
+            variables: {},
+          };
+        }
       }
 
       const url = editingOrder ? `/api/change-orders/${editingOrder.id}` : '/api/change-orders';
@@ -996,7 +1065,13 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       });
       const data = await resp.json();
       if (data.success) {
-        showToast(data.message || (zh ? (asDraft ? '草稿已保存' : '保存成功') : (asDraft ? 'Draft saved' : 'Saved')));
+        if (asDraft) {
+          showToast(zh ? '草稿已保存' : 'Draft saved');
+        } else if (editingOrder) {
+          showToast(data.message || (zh ? '工单已提交' : 'Order submitted'));
+        } else {
+          showToast(data.message || (zh ? '工单已创建' : 'Order created'));
+        }
         if (editingOrder === null && !asDraft && data.data) {
           setEditingOrder(data.data);
         }
@@ -2543,10 +2618,23 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                             ))}
                           </select>
                         </div>
-                        {selectedScenario && selectedScenarioPlatform && (
+                        {selectedScenario && selectedScenarioPlatforms.length > 0 && (
                           <div className="rounded-2xl border border-black/10 bg-slate-50 px-4 py-3 text-sm text-black/70">
-                            <p className="font-medium text-black/75">{zh ? '已选择平台' : 'Selected platform'}</p>
-                            <p className="mt-1 text-[13px] text-black/55">{platformLabel(selectedScenarioPlatform)}</p>
+                            <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '目标平台' : 'Target platform'}</label>
+                            <select
+                              title={zh ? '选择目标平台' : 'Select target platform'}
+                              value={selectedScenarioPlatform}
+                              onChange={(e) => setSelectedScenarioPlatform(e.target.value)}
+                              className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
+                            >
+                              <option value="">{zh ? '自动匹配目标设备平台' : 'Auto detect target device platform'}</option>
+                              {selectedScenarioPlatforms.map((platform) => (
+                                <option key={platform} value={platform}>{platformLabel(platform)}</option>
+                              ))}
+                            </select>
+                            <p className="mt-2 text-[11px] text-black/40">
+                              {zh ? '如果目标设备已包含平台信息，系统会自动匹配；也可手动指定。' : 'If target devices include platform info, the system will auto-detect; you can also choose manually.'}
+                            </p>
                           </div>
                         )}
                       </div>
@@ -2716,7 +2804,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                   className="px-5 py-2.5 bg-[#00bceb] text-white rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-[#0096bd] transition-all shadow-lg shadow-[#00bceb]/20 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {saving ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                  {editingOrder ? (zh ? '保存修改' : 'Save Changes') : (zh ? '创建工单' : 'Create Order')}
+                  {editingOrder ? (zh ? '提交' : 'Submit') : (zh ? '创建工单' : 'Create Order')}
                 </button>
               </div>
             </motion.div>

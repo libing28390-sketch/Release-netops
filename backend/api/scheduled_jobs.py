@@ -1,21 +1,13 @@
-"""
-定时作业 & 执行计划 API
-
-job_type:
-  - 'once'  → 执行计划（一次性）
-  - 'cron'  → 定时作业（周期性）
-
-两者创建/启用均需审批人验证码。
-"""
-
 from fastapi import APIRouter, HTTPException, Body, Request, Depends
 from typing import Optional
 from datetime import datetime
 import uuid
 import logging
+import os
 
 from database import get_db_connection
 from core.rbac import require_role
+from core.config import settings
 from services.config_approval_service import verify_code, consume_approval
 from services.audit_service import log_audit_event
 
@@ -75,21 +67,43 @@ def create_scheduled_job(
     payload: dict = Body(...),
     user=require_role("Operator"),
 ):
-    """创建定时作业或执行计划，需验证审批码。"""
+    """
+    创建定时作业或执行计划。
+    
+    生产环境需验证审批码；测试环境可通过 skip_approval_verification=true 跳过飞书验证。
+    """
+    is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
+    skip_approval_verification = payload.get("skip_approval_verification", False) if is_test_env else False
+    
     approval_token = (payload.get("approval_token") or "").strip()
     approval_code = (payload.get("approval_code") or "").strip()
 
-    if not approval_token or not approval_code:
-        raise HTTPException(status_code=400, detail="审批令牌和验证码不能为空")
+    # Approval verification logic
+    approval_record = None
+    if not skip_approval_verification:
+        # Production mode or not skipping: require full approval flow
+        if not approval_token or not approval_code:
+            raise HTTPException(
+                status_code=400, 
+                detail="审批令牌和验证码不能为空" if not is_test_env else "审批令牌和验证码不能为空（或在测试环境中使用 skip_approval_verification=true）"
+            )
 
-    ok, err = verify_code(approval_token, approval_code)
-    if not ok:
-        raise HTTPException(status_code=403, detail=err)
+        ok, err = verify_code(approval_token, approval_code)
+        if not ok:
+            raise HTTPException(status_code=403, detail=err)
 
-    # 消费审批令牌
-    record = consume_approval(approval_token)
-    if not record:
-        raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
+        # Consume approval token
+        approval_record = consume_approval(approval_token)
+        if not approval_record:
+            raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
+    else:
+        # Test mode with skip flag: create mock approval record
+        logger.warning(f"Creating scheduled job with approval verification skipped by {user.get('username', 'unknown')}")
+        approval_record = {
+            "approver": "test-system",
+            "verified_at": datetime.now().isoformat(),
+            "test_mode": True,
+        }
 
     name = (payload.get("name") or "").strip()
     job_type = payload.get("job_type", "cron")  # 'cron' | 'once'
@@ -132,7 +146,7 @@ def create_scheduled_job(
                 job_id, name, job_type, action_type, cron_expr, scheduled_at,
                 device_scope, device_filter, commands, script_id,
                 is_config, config_reason,
-                record.get("approver", ""),
+                approval_record.get("approver", ""),
                 now,
                 actor, now, now,
             ),
@@ -154,7 +168,8 @@ def create_scheduled_job(
                 "action_type": action_type,
                 "cron_expr": cron_expr,
                 "scheduled_at": scheduled_at,
-                "approved_by": record.get("approver", ""),
+                "approved_by": approval_record.get("approver", ""),
+                "approval_skipped": skip_approval_verification,
             },
         )
 
@@ -176,7 +191,14 @@ def toggle_scheduled_job(
     payload: dict = Body(...),
     user=require_role("Operator"),
 ):
-    """启用/禁用定时作业，启用时需要审批码。"""
+    """
+    启用/禁用定时作业。
+    
+    启用时需要审批验证，生产环境需飞书验证码；测试环境可通过 skip_approval_verification=true 跳过。
+    """
+    is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
+    skip_approval_verification = payload.get("skip_approval_verification", False) if is_test_env else False
+    
     enabled = payload.get("enabled", True)
 
     conn = get_db_connection()
@@ -187,14 +209,20 @@ def toggle_scheduled_job(
 
         # 启用时要求审批验证
         if enabled:
-            approval_token = (payload.get("approval_token") or "").strip()
-            approval_code = (payload.get("approval_code") or "").strip()
-            if not approval_token or not approval_code:
-                raise HTTPException(status_code=400, detail="启用作业需要审批验证码")
-            ok, err = verify_code(approval_token, approval_code)
-            if not ok:
-                raise HTTPException(status_code=403, detail=err)
-            consume_approval(approval_token)
+            if not skip_approval_verification:
+                approval_token = (payload.get("approval_token") or "").strip()
+                approval_code = (payload.get("approval_code") or "").strip()
+                if not approval_token or not approval_code:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="启用作业需要审批验证码" if not is_test_env else "启用作业需要审批验证码（或在测试环境中使用 skip_approval_verification=true）"
+                    )
+                ok, err = verify_code(approval_token, approval_code)
+                if not ok:
+                    raise HTTPException(status_code=403, detail=err)
+                consume_approval(approval_token)
+            else:
+                logger.warning(f"Enabling scheduled job {job_id} with approval verification skipped by {user.get('username', 'unknown')}")
 
         now = datetime.now().isoformat()
         conn.execute(

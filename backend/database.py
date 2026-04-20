@@ -1399,6 +1399,13 @@ def init_db():
         ensure_column('change_orders', 'assigned_final_approver_id', "TEXT DEFAULT ''")
         ensure_column('change_orders', 'assigned_final_approver_username', "TEXT DEFAULT ''")
         ensure_column('change_orders', 'command_template_json', "TEXT DEFAULT '{}' ")
+        ensure_column('change_orders', 'initial_reviewer_id', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'initial_reviewer_username', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'final_approver_id', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'final_approver_username', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'authorization_exempt', "INTEGER DEFAULT 0")
+        ensure_column('change_orders', 'approval_token', "TEXT DEFAULT ''")
+        ensure_column('change_orders', 'rejected_reason', "TEXT DEFAULT ''")
 
         # ── Change Order Bookmarks ──
         cursor.execute('''
