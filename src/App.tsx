@@ -6079,7 +6079,7 @@ const App: React.FC = () => {
 
           {activeTab === 'change-orders' && (
             <Suspense fallback={lazyPanelFallback}>
-              <ChangeOrderTab language={language} t={t} users={users} scenarios={scenarios} platforms={platforms} currentUser={currentUser} initialView={changeOrderPage === 'my-todo' ? 'my_todo' : changeOrderPage === 'group-todo' ? 'group_todo' : changeOrderPage === 'participated' ? 'my_participated' : changeOrderPage === 'focus' ? 'my_focus' : changeOrderPage === 'drafts' ? 'my_drafts' : changeOrderPage === 'new' ? 'create' : 'all'} />
+              <ChangeOrderTab language={language} t={t} users={users} scenarios={scenarios} configTemplates={configTemplates} platforms={platforms} currentUser={currentUser} initialView={changeOrderPage === 'my-todo' ? 'my_todo' : changeOrderPage === 'group-todo' ? 'group_todo' : changeOrderPage === 'participated' ? 'my_participated' : changeOrderPage === 'focus' ? 'my_focus' : changeOrderPage === 'drafts' ? 'my_drafts' : changeOrderPage === 'new' ? 'create' : 'all'} />
             </Suspense>
           )}
         </main>

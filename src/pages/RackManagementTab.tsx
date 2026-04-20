@@ -860,6 +860,10 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [drawerAssetLoading, setDrawerAssetLoading] = useState(false);
   const rackScrollRef = useRef<HTMLDivElement>(null);
 
+  const [confirmDeleteRack, setConfirmDeleteRack] = useState<{ rackId: string; rackName: string } | null>(null);
+  const [blockedDeleteRack, setBlockedDeleteRack] = useState<{ rackName: string; deviceCount: number } | null>(null);
+  const [confirmRemoveDevice, setConfirmRemoveDevice] = useState<{ deviceId: string; deviceName: string } | null>(null);
+
   const [showRackModal, setShowRackModal] = useState(false);
   const [editingRack, setEditingRack] = useState<Rack | null>(null);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
@@ -1096,18 +1100,23 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
     try {
       const lay = await fetchJson<RackLayout>(`${API}/racks/${rackId}/layout`);
       if (lay.devices.length > 0) {
-        setError(
-          zh
-            ? `该机柜内仍有 ${lay.devices.length} 台设备，请先在机柜图中移除全部设备后再删除机柜。`
-            : `This rack still has ${lay.devices.length} installed device(s). Remove them from the rack first.`,
-        );
+        const rack = racks.find(r => r.id === rackId);
+        setBlockedDeleteRack({ rackName: rack?.name || '', deviceCount: lay.devices.length });
         return;
       }
+      const rack = racks.find(r => r.id === rackId);
+      setConfirmDeleteRack({ rackId, rackName: rack?.name || '' });
     } catch (e: any) {
       setError(e.message);
       return;
     }
-    if (!confirm(zh ? '确认删除该机柜？' : 'Delete this rack?')) return;
+  };
+
+  const confirmDeleteRackAction = async () => {
+    if (!confirmDeleteRack) return;
+    const { rackId } = confirmDeleteRack;
+    setConfirmDeleteRack(null);
+    setError('');
     try {
       await deleteJson(`${API}/racks/${rackId}`);
       if (selectedRackId === rackId) {
@@ -1210,10 +1219,28 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
       closeInstallModal(); loadLayout(selectedRackId); loadStats();
     } catch (e: any) { setFormError(e.message); }
   };
-  const handleRemoveDevice = async (deviceId: string) => {
-    if (!confirm(zh ? '确认移除该设备？' : 'Remove this device?')) return;
-    try { await deleteJson(`${API}/rack-devices/${deviceId}`); loadLayout(selectedRackId); loadStats(); }
-    catch (e: any) { setError(e.message); }
+  const handleRemoveDevice = async (deviceId: string, deviceName: string) => {
+    setConfirmRemoveDevice({ deviceId, deviceName });
+  };
+
+  const confirmRemoveDeviceAction = async () => {
+    if (!confirmRemoveDevice) return;
+    const { deviceId } = confirmRemoveDevice;
+    setConfirmRemoveDevice(null);
+    setError('');
+    try {
+      await deleteJson(`${API}/rack-devices/${deviceId}`);
+      if (selectedDeviceId === deviceId) {
+        setSelectedDeviceId(null);
+        setDrawerVisible(false);
+        setDrawerAssetDetail(null);
+        setDrawerAssetLoading(false);
+      }
+      loadLayout(selectedRackId);
+      loadStats();
+    } catch (e: any) {
+      setError(e.message);
+    }
   };
 
   /* -- Device Type -- */
@@ -1586,7 +1613,7 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
               </div>
 
               {/* Content */}
-              <div className="flex-1 min-h-0 overflow-y-auto p-3 pr-1" ref={rackScrollRef}>
+              <div className="flex-1 min-h-0 overflow-y-auto p-3" ref={rackScrollRef} style={{ paddingRight: drawerVisible ? 396 : undefined }}>
                 <div className="text-[10px] font-semibold text-center mb-1.5 sticky top-0 z-10 pb-1" style={{ color: 'var(--muted-text)', background: 'var(--card-bg)' }}>
                   {viewSide === 'front' ? (zh ? '▼ 前面板 · 可拖拽' : '▼ Front · Draggable') : (zh ? '▼ 后面板 · 可拖拽' : '▼ Rear · Draggable')}
                 </div>
@@ -1687,7 +1714,7 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                         </div>
                       </div>
                       <div className="p-4 border-t" style={{ borderColor: 'var(--card-border)' }}>
-                        <button onClick={() => handleRemoveDevice(device.id)} className="w-full px-3 py-2 rounded-lg text-[12px] font-medium text-red-500 hover:bg-red-50/80">{zh ? '移除设备' : 'Remove'}</button>
+                        <button onClick={() => handleRemoveDevice(device.id, device.name)} className="w-full px-3 py-2 rounded-lg text-[12px] font-medium text-red-500 hover:bg-red-50/80">{zh ? '移除设备' : 'Remove'}</button>
                       </div>
                     </motion.div>
                   </AnimatePresence>
@@ -1790,6 +1817,83 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
           <button onClick={() => setError('')}><X size={14} /></button>
         </div>
       )}
+
+      <AnimatePresence>
+        {blockedDeleteRack && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setBlockedDeleteRack(null)}>
+            <motion.div initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.97, opacity: 0 }} transition={{ duration: 0.15 }} className="w-full max-w-lg rounded-3xl bg-white shadow-2xl border border-black/5 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start gap-3 p-5 border-b border-black/5 bg-red-50">
+                <div className="rounded-2xl bg-red-100 p-3 text-red-700"><AlertTriangle size={22} /></div>
+                <div>
+                  <h3 className="text-lg font-semibold text-red-900">{zh ? '无法删除机柜' : 'Cannot Delete Rack'}</h3>
+                  <p className="mt-2 text-sm text-black/70">
+                    {zh
+                      ? `机柜 ${blockedDeleteRack.rackName || ''} 当前还有 ${blockedDeleteRack.deviceCount} 台已安装设备。请先移除机柜中的设备，然后再删除机柜。`
+                      : `Rack ${blockedDeleteRack.rackName || ''} still contains ${blockedDeleteRack.deviceCount} installed devices. Remove those devices before deleting the rack.`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 p-5 bg-black/[0.02]">
+                <button onClick={() => setBlockedDeleteRack(null)} className="px-4 py-2 rounded-xl border border-black/10 text-sm font-medium text-black/70 hover:bg-black/5 transition-all">
+                  {zh ? '知道了' : 'Got it'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {confirmDeleteRack && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setConfirmDeleteRack(null)}>
+            <motion.div initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.97, opacity: 0 }} transition={{ duration: 0.15 }} className="w-full max-w-lg rounded-3xl bg-white shadow-2xl border border-black/5 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start gap-3 p-5 border-b border-black/5 bg-red-50">
+                <div className="rounded-2xl bg-red-100 p-3 text-red-700"><AlertTriangle size={22} /></div>
+                <div>
+                  <h3 className="text-lg font-semibold text-red-900">{zh ? '确认删除机柜' : 'Confirm Delete Rack'}</h3>
+                  <p className="mt-2 text-sm text-black/70">
+                    {zh
+                      ? `确认要删除机柜 ${confirmDeleteRack.rackName || ''} 吗？此操作会永久删除该空机柜，无法撤销。`
+                      : `Are you sure you want to delete rack ${confirmDeleteRack.rackName || ''}? This will permanently remove the empty rack.`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 p-5 bg-black/[0.02]">
+                <button onClick={() => setConfirmDeleteRack(null)} className="px-4 py-2 rounded-xl border border-black/10 text-sm font-medium text-black/70 hover:bg-black/5 transition-all">
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button onClick={confirmDeleteRackAction} className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-all">
+                  {zh ? '删除机柜' : 'Delete Rack'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {confirmRemoveDevice && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setConfirmRemoveDevice(null)}>
+            <motion.div initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.97, opacity: 0 }} transition={{ duration: 0.15 }} className="w-full max-w-lg rounded-3xl bg-white shadow-2xl border border-black/5 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start gap-3 p-5 border-b border-black/5 bg-amber-50">
+                <div className="rounded-2xl bg-amber-100 p-3 text-amber-700"><AlertTriangle size={22} /></div>
+                <div>
+                  <h3 className="text-lg font-semibold text-amber-900">{zh ? '确认移除设备' : 'Confirm Remove Device'}</h3>
+                  <p className="mt-2 text-sm text-black/70">
+                    {zh
+                      ? `确认要将设备 ${confirmRemoveDevice.deviceName} 从机柜中移除吗？该设备记录将保留。`
+                      : `Remove ${confirmRemoveDevice.deviceName} from the rack? The asset record will remain intact.`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 p-5 bg-black/[0.02]">
+                <button onClick={() => setConfirmRemoveDevice(null)} className="px-4 py-2 rounded-xl border border-black/10 text-sm font-medium text-black/70 hover:bg-black/5 transition-all">
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button onClick={confirmRemoveDeviceAction} className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-all">
+                  {zh ? '移除设备' : 'Remove Device'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ========== MODAL: Create/Edit Rack ========== */}
       <AnimatePresence>

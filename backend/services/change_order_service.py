@@ -35,6 +35,7 @@ def generate_order_number(conn) -> str:
 
 def create_change_order(conn, *, title: str, description: str = '',
                         order_type: str = 'config_change', priority: str = 'medium',
+                        status: str = 'draft',
                         requester_id: str = '', requester_username: str = '',
                         assigned_initial_reviewer_id: str = '',
                         assigned_initial_reviewer_username: str = '',
@@ -61,10 +62,10 @@ def create_change_order(conn, *, title: str, description: str = '',
             target_devices_json, commands_json, rollback_plan, risk_level,
             scheduled_start, scheduled_end,
             created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
-            order_id, order_number, title, description, order_type, priority,
+            order_id, order_number, title, description, order_type, priority, status,
             requester_id, requester_username,
             assigned_initial_reviewer_id, assigned_initial_reviewer_username,
             assigned_final_approver_id, assigned_final_approver_username,
@@ -96,6 +97,7 @@ def update_change_order(conn, order_id: str, updates: dict) -> dict | None:
         'target_devices_json', 'commands_json',
         'rollback_plan', 'risk_level',
         'scheduled_start', 'scheduled_end',
+        'authorization_exempt',
         'actual_start', 'actual_end',
         'result_summary', 'result_detail_json',
         'approval_token', 'rejected_reason',
@@ -385,4 +387,6 @@ def _row_to_dict(row) -> dict:
             d[json_field.replace('_json', '')] = parsed
         except (json.JSONDecodeError, TypeError):
             d[json_field.replace('_json', '')] = [] if json_field in ('target_devices_json', 'commands_json') else {}
+    if 'authorization_exempt' in d:
+        d['authorization_exempt'] = bool(d.get('authorization_exempt'))
     return d

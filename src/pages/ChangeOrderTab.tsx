@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ClipboardList, Plus, Search, X, RefreshCw, ChevronRight,
   Clock, CheckCircle2, XCircle, AlertTriangle, Send,
@@ -12,7 +13,7 @@ import DateTimePicker from '../components/DateTimePicker';
 import { AnimatePresence, motion } from 'motion/react';
 import { sectionHeaderRowClass } from '../components/shared';
 import Pagination from '../components/Pagination';
-import type { User as UserOption, SessionUser } from '../types';
+import type { User as UserOption, SessionUser, ConfigTemplate } from '../types';
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
@@ -38,7 +39,7 @@ interface ChangeOrder {
   final_approver_username: string;
   approver_id: string;
   approver_username: string;
-  target_devices: { hostname: string; ip_address: string }[];
+  target_devices: { hostname: string; ip_address: string; username?: string; platform?: string }[];
   commands: string[];
   command_template?: unknown;
   rollback_plan: string;
@@ -49,6 +50,7 @@ interface ChangeOrder {
   actual_end: string;
   result_summary: string;
   result_detail: Record<string, unknown>;
+  authorization_exempt?: boolean;
   rejected_reason: string;
   created_at: string;
   updated_at: string;
@@ -74,6 +76,7 @@ interface DeviceOption {
   hostname: string;
   ip_address: string;
   platform?: string;
+  asset_tag?: string;
 }
 
 interface ScenarioPhasePreview {
@@ -131,6 +134,7 @@ interface Props {
   t: (key: string) => string;
   users: UserOption[];
   scenarios: ScenarioTemplate[];
+  configTemplates: ConfigTemplate[];
   platforms: Record<string, PlatformMeta>;
   currentUser: SessionUser;
   initialView?: 'all' | 'group_todo' | 'my_todo' | 'my_participated' | 'my_focus' | 'my_drafts' | 'create';
@@ -191,7 +195,7 @@ const EMPTY_FORM = {
   assigned_initial_reviewer_username: '',
   assigned_final_approver_id: '',
   assigned_final_approver_username: '',
-  target_devices: [] as { hostname: string; ip_address: string }[],
+  target_devices: [] as { hostname: string; ip_address: string; username?: string; platform?: string }[],
   commands: [] as string[],
 };
 
@@ -438,8 +442,10 @@ const buildWorkflowPresentation = (order: ChangeOrder, lang: string) => {
    Component
    ═══════════════════════════════════════════════════════════════════ */
 
-const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platforms, currentUser, initialView }) => {
+const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, configTemplates, platforms, currentUser, initialView }) => {
   const zh = language === 'zh';
+  const isCreateView = initialView === 'create';
+  const navigate = useNavigate();
 
   // ── Data state ──
   const [orders, setOrders] = useState<ChangeOrder[]>([]);
@@ -482,7 +488,13 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
   // ── Create/Edit modal ──
   const [showCreateModal, setShowCreateModal] = useState(initialView === 'create');
   const [editingOrder, setEditingOrder] = useState<ChangeOrder | null>(null);
-  const [form, setForm] = useState({ ...EMPTY_FORM });
+
+  useEffect(() => {
+    if (initialView !== 'create') {
+      setShowCreateModal(false);
+    }
+  }, [initialView]);
+  const [form, setForm] = useState(() => ({ ...EMPTY_FORM, authorization_exempt: currentUser.role === 'Administrator' }));
   const [saving, setSaving] = useState(false);
   const [commandInput, setCommandInput] = useState('');
   const [deviceInput, setDeviceInput] = useState({ hostname: '', ip_address: '' });
@@ -496,6 +508,10 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
   const [templatePreview, setTemplatePreview] = useState<ScenarioPhasePreview | null>(null);
   const [templatePreviewLoading, setTemplatePreviewLoading] = useState(false);
   const [templatePreviewError, setTemplatePreviewError] = useState('');
+  const [showDevicePicker, setShowDevicePicker] = useState(false);
+  const [selectedInventoryDevice, setSelectedInventoryDevice] = useState<DeviceOption | null>(null);
+
+  const isPrivilegedDefault = currentUser.role === 'Administrator';
 
   // ── Toast ──
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
@@ -525,22 +541,96 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
 
   const resetEditorState = useCallback(() => {
     setEditingOrder(null);
-    setForm({ ...EMPTY_FORM });
+    setForm({ ...EMPTY_FORM, authorization_exempt: isPrivilegedDefault });
     setCommandInput('');
     setDeviceInput({ hostname: '', ip_address: '' });
     setDeviceKeyword('');
+    setDeviceOptions([]);
+    setShowDevicePicker(false);
+    setSelectedInventoryDevice(null);
     resetTemplateComposer();
-  }, [resetTemplateComposer]);
+  }, [isPrivilegedDefault, resetTemplateComposer]);
 
   const closeEditor = useCallback(() => {
-    setShowCreateModal(false);
     resetEditorState();
-  }, [resetEditorState]);
+    setShowCreateModal(false);
+    if (isCreateView) {
+      navigate('/change-orders/all');
+      return;
+    }
+  }, [isCreateView, navigate, resetEditorState]);
 
-  const scenarioOptions = useMemo(
-    () => scenarios.filter((item) => item && item.id && item.platform_phases && Object.keys(item.platform_phases).length > 0),
-    [scenarios],
-  );
+  const getDefaultPrePostCheck = (platformKey: string): { pre_check: string[]; post_check: string[] } => {
+    const prePostMap: Record<string, { pre_check: string[]; post_check: string[] }> = {
+      'cisco_ios': { 
+        pre_check: ['show version', 'show running-config | include interface'], 
+        post_check: ['show running-config | include interface', 'show interfaces status'] 
+      },
+      'cisco_nxos': { 
+        pre_check: ['show version', 'show running-config | include interface'], 
+        post_check: ['show running-config | include interface', 'show interface status'] 
+      },
+      'cisco_iosxr': { 
+        pre_check: ['show version', 'show running-config | include interface'], 
+        post_check: ['show running-config | include interface', 'show interfaces'] 
+      },
+      'huawei_vrp': { 
+        pre_check: ['display version', 'display current-configuration | include interface'], 
+        post_check: ['display current-configuration | include interface', 'display interface'] 
+      },
+      'h3c_comware': { 
+        pre_check: ['display version', 'display current-configuration | include interface'], 
+        post_check: ['display current-configuration | include interface', 'display interface'] 
+      },
+      'arista_eos': { 
+        pre_check: ['show version', 'show running-config | include interface'], 
+        post_check: ['show running-config | include interface', 'show interfaces status'] 
+      },
+      'juniper_junos': { 
+        pre_check: ['show version', 'show configuration | display set | grep interface'], 
+        post_check: ['show configuration | display set | grep interface', 'show interfaces'] 
+      },
+    };
+    return prePostMap[platformKey] || { pre_check: [], post_check: [] };
+  };
+
+  const scenarioOptions = useMemo(() => {
+    if (configTemplates && configTemplates.length > 0) {
+      return configTemplates
+        .filter((item) => item && item.id && item.name)
+        .map((template) => {
+          const matchedPlatforms = Object.entries(platforms)
+            .filter(([, meta]) => !template.vendor || meta.vendor === template.vendor)
+            .map(([key]) => key);
+          const supportedPlatforms = matchedPlatforms.length > 0 ? matchedPlatforms : Object.keys(platforms);
+          const phases: Record<string, Partial<ScenarioPhasePreview>> = {};
+          supportedPlatforms.forEach((platformKey) => {
+            const { pre_check, post_check } = getDefaultPrePostCheck(platformKey);
+            phases[platformKey] = {
+              pre_check,
+              execute: template.content ? [template.content] : [],
+              post_check,
+              rollback: [],
+            };
+          });
+          return {
+            id: template.id,
+            name: template.name,
+            name_zh: template.name,
+            description: template.category || '',
+            description_zh: template.category || '',
+            category: template.category,
+            icon: '📄',
+            risk: 'medium',
+            supported_platforms: supportedPlatforms,
+            default_platform: supportedPlatforms[0] || '',
+            variables: [],
+            platform_phases: phases,
+          } as ScenarioTemplate;
+        });
+    }
+    return scenarios.filter((item) => item && item.id && item.platform_phases && Object.keys(item.platform_phases).length > 0);
+  }, [configTemplates, platforms, scenarios]);
 
   const selectedScenario = useMemo(
     () => scenarioOptions.find((item) => item.id === selectedScenarioId) || null,
@@ -582,32 +672,46 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
   }, []);
 
   const initialReviewerOptions = useMemo(() => {
-    const grouped = users.filter((item) => item.role !== 'Viewer' && hasChangeGroup(item, 'initial_reviewer'));
-    return grouped.length > 0 ? grouped : users.filter((item) => item.role !== 'Viewer');
-  }, [users]);
+    const grouped = users.filter((item) => item.role !== 'Viewer' && hasChangeGroup(item, 'initial_reviewer') && String(item.id) !== String(currentUser.id));
+    const fallback = users.filter((item) => item.role !== 'Viewer' && String(item.id) !== String(currentUser.id));
+    return grouped.length > 0 ? grouped : fallback;
+  }, [users, currentUser.id]);
 
   const finalApproverOptions = useMemo(() => {
-    const grouped = users.filter((item) => item.role === 'Administrator' && hasChangeGroup(item, 'final_approver'));
-    return grouped.length > 0 ? grouped : users.filter((item) => item.role === 'Administrator');
-  }, [users]);
+    const grouped = users.filter((item) => item.role === 'Administrator' && hasChangeGroup(item, 'final_approver') && String(item.id) !== String(currentUser.id));
+    const fallback = users.filter((item) => item.role === 'Administrator' && String(item.id) !== String(currentUser.id));
+    return grouped.length > 0 ? grouped : fallback;
+  }, [users, currentUser.id]);
 
   const assignReviewer = useCallback((stage: 'initial' | 'final', reviewerId: string) => {
     const source = stage === 'initial' ? initialReviewerOptions : finalApproverOptions;
     const reviewer = source.find((item) => String(item.id) === reviewerId);
     if (stage === 'initial') {
-      setForm((current) => ({
-        ...current,
-        assigned_initial_reviewer_id: reviewerId,
-        assigned_initial_reviewer_username: reviewer?.username || '',
-      }));
+      setForm((current) => {
+        if (current.assigned_final_approver_id && current.assigned_final_approver_id === reviewerId) {
+          showToast(zh ? '初审人不能与终审人相同' : 'Initial reviewer cannot be the same as final approver', 'error');
+          return current;
+        }
+        return {
+          ...current,
+          assigned_initial_reviewer_id: reviewerId,
+          assigned_initial_reviewer_username: reviewer?.username || '',
+        };
+      });
       return;
     }
-    setForm((current) => ({
-      ...current,
-      assigned_final_approver_id: reviewerId,
-      assigned_final_approver_username: reviewer?.username || '',
-    }));
-  }, [finalApproverOptions, initialReviewerOptions]);
+    setForm((current) => {
+      if (current.assigned_initial_reviewer_id && current.assigned_initial_reviewer_id === reviewerId) {
+        showToast(zh ? '终审人不能与初审人相同' : 'Final approver cannot be the same as initial reviewer', 'error');
+        return current;
+      }
+      return {
+        ...current,
+        assigned_final_approver_id: reviewerId,
+        assigned_final_approver_username: reviewer?.username || '',
+      };
+    });
+  }, [finalApproverOptions, initialReviewerOptions, zh, showToast]);
 
   useEffect(() => {
     if (commandMode !== 'template') return;
@@ -628,6 +732,71 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
       return next;
     });
   }, [commandMode, selectedScenario, selectedScenarioPlatforms, selectedScenarioVariables]);
+
+  useEffect(() => {
+    if (commandMode !== 'template' || !selectedScenario) return;
+    const defaultPlatform = selectedScenario.default_platform || selectedScenario.supported_platforms?.[0];
+    if (defaultPlatform && !selectedScenarioPlatform) {
+      setSelectedScenarioPlatform(defaultPlatform);
+    }
+  }, [selectedScenarioId, commandMode, selectedScenario, selectedScenarioPlatform]);
+
+  const normalizePlatformKey = (value: string) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const findMatchingPlatform = (input: string, candidates: string[]) => {
+    const normalized = normalizePlatformKey(input);
+    if (!normalized) return '';
+    const exact = candidates.find((candidate) => normalizePlatformKey(candidate) === normalized);
+    if (exact) return exact;
+    return candidates.find((candidate) => normalizePlatformKey(candidate).includes(normalized) || normalized.includes(normalizePlatformKey(candidate))) || '';
+  };
+
+  const renderTemplateText = (templateText: string, vars: Record<string, string>) => {
+    let text = templateText;
+    Object.entries(vars).forEach(([key, value]) => {
+      text = text.replace(new RegExp(`{{\\s*${key}\\s*}}`, 'g'), String(value));
+    });
+    text = text.replace(/\{\%.*?\%\}/g, '');
+    text = text.replace(/\{\{.*?\}\}/g, '');
+    return text.trim();
+  };
+
+  const renderPhaseCommands = (phaseTemplates: string[] = [], vars: Record<string, string>) => {
+    const commands: string[] = [];
+    phaseTemplates.forEach((tmpl) => {
+      const rendered = renderTemplateText(tmpl, vars);
+      rendered.split('\n').forEach((line) => {
+        const trimmed = line.trimEnd();
+        if (trimmed) {
+          commands.push(trimmed);
+        }
+      });
+    });
+    return commands;
+  };
+
+  const getLocalTemplatePreview = () => {
+    if (!selectedScenario || !selectedScenarioPlatform) return null;
+    const phases = selectedScenario.platform_phases?.[selectedScenarioPlatform] || {};
+    return {
+      pre_check: renderPhaseCommands(phases.pre_check || [], templateVariables),
+      execute: renderPhaseCommands(phases.execute || [], templateVariables),
+      post_check: renderPhaseCommands(phases.post_check || [], templateVariables),
+      rollback: renderPhaseCommands(phases.rollback || [], templateVariables),
+    };
+  };
+
+  useEffect(() => {
+    if (commandMode !== 'template' || !selectedScenario || selectedScenarioPlatform) return;
+    const deviceWithPlatform = form.target_devices.find((dev) => dev.platform);
+    if (!deviceWithPlatform?.platform) return;
+    const platformsList = selectedScenario.supported_platforms?.length
+      ? selectedScenario.supported_platforms
+      : Object.keys(selectedScenario.platform_phases || {});
+    const matchedPlatform = findMatchingPlatform(deviceWithPlatform.platform, platformsList);
+    if (matchedPlatform) {
+      setSelectedScenarioPlatform(matchedPlatform);
+    }
+  }, [commandMode, selectedScenario, selectedScenarioPlatform, form.target_devices]);
 
   const fetchTemplatePreview = useCallback(async () => {
     if (commandMode !== 'template' || !selectedScenarioId || !selectedScenarioPlatform) {
@@ -650,25 +819,42 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
       if (!resp.ok) {
         throw new Error(String(data.detail || resp.statusText || 'Preview failed'));
       }
-      setTemplatePreview({
+      const preview = {
         pre_check: Array.isArray(data.pre_check) ? data.pre_check : [],
         execute: Array.isArray(data.execute) ? data.execute : [],
         post_check: Array.isArray(data.post_check) ? data.post_check : [],
         rollback: Array.isArray(data.rollback) ? data.rollback : [],
-      });
+      };
+      if (preview.execute.length === 0 && selectedScenario?.platform_phases) {
+        const fallback = getLocalTemplatePreview();
+        if (fallback) {
+          setTemplatePreview(fallback);
+          return;
+        }
+      }
+      setTemplatePreview(preview);
     } catch (error) {
-      setTemplatePreview(null);
-      setTemplatePreviewError(error instanceof Error ? error.message : (zh ? '模板预览失败' : 'Template preview failed'));
+      const fallback = getLocalTemplatePreview();
+      if (fallback) {
+        setTemplatePreview(fallback);
+        setTemplatePreviewError('');
+      } else {
+        setTemplatePreview(null);
+        setTemplatePreviewError(error instanceof Error ? error.message : (zh ? '模板预览失败' : 'Template preview failed'));
+      }
     } finally {
       setTemplatePreviewLoading(false);
     }
-  }, [authHeaders, commandMode, selectedScenarioId, selectedScenarioPlatform, templateVariables, zh]);
+  }, [authHeaders, commandMode, selectedScenarioId, selectedScenarioPlatform, selectedScenario, selectedScenarioPlatform, templateVariables, zh]);
+
+  const editorVisible = isCreateView || showCreateModal;
+  const hideDraftListWhenEditing = showCreateModal && viewTab === 'my_drafts' && editingOrder !== null;
 
   useEffect(() => {
-    if (!showCreateModal || commandMode !== 'template' || !selectedScenarioId) return;
+    if (!editorVisible || commandMode !== 'template' || !selectedScenarioId) return;
     const timer = setTimeout(() => { fetchTemplatePreview(); }, 220);
     return () => clearTimeout(timer);
-  }, [showCreateModal, commandMode, selectedScenarioId, selectedScenarioPlatform, templateVariables, fetchTemplatePreview]);
+  }, [editorVisible, commandMode, selectedScenarioId, selectedScenarioPlatform, templateVariables, fetchTemplatePreview]);
 
   // ── Fetch ──
   const fetchOrders = useCallback(async () => {
@@ -748,62 +934,101 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
   useEffect(() => { fetchBookmarks(); }, [fetchBookmarks]);
 
   // ── Create / Update ──
-  const handleSave = async () => {
+  const saveOrder = async (closeAfterSave = true, asDraft = false) => {
     if (!form.title.trim()) {
       showToast(zh ? '请输入工单标题' : 'Title is required', 'error');
       return;
     }
-    if (commandMode === 'manual' && form.commands.length === 0) {
-      showToast(zh ? '请至少添加一条执行命令' : 'Add at least one command', 'error');
-      return;
+
+    if (!asDraft) {
+      if (!form.assigned_initial_reviewer_id) {
+        showToast(zh ? '请指定初审人' : 'Assign an initial reviewer', 'error');
+        return;
+      }
+      if (commandMode === 'manual' && form.commands.length === 0) {
+        showToast(zh ? '请至少添加一条执行命令' : 'Add at least one command', 'error');
+        return;
+      }
+      if (commandMode === 'template') {
+        if (!selectedScenarioId || !selectedScenarioPlatform) {
+          showToast(zh ? '请选择变更模板场景，系统会自动匹配平台' : 'Select a scenario; platform will be auto-detected', 'error');
+          return;
+        }
+        if (templateMissingRequired.length > 0) {
+          showToast(zh ? `请先填写必填变量：${templateMissingRequired.join('、')}` : `Fill required variables: ${templateMissingRequired.join(', ')}`, 'error');
+          return;
+        }
+        if (!templatePreview || templatePreview.execute.length === 0) {
+          showToast(zh ? '模板尚未生成可执行命令，请检查变量' : 'No executable commands were generated', 'error');
+          return;
+        }
+      }
     }
-    if (commandMode === 'template') {
-      if (!selectedScenarioId || !selectedScenarioPlatform) {
-        showToast(zh ? '请选择变更模板场景和平台' : 'Select a scenario and platform', 'error');
-        return;
-      }
-      if (templateMissingRequired.length > 0) {
-        showToast(zh ? `请先填写必填变量：${templateMissingRequired.join('、')}` : `Fill required variables: ${templateMissingRequired.join(', ')}`, 'error');
-        return;
-      }
-      if (!templatePreview || templatePreview.execute.length === 0) {
-        showToast(zh ? '模板尚未生成可执行命令，请检查变量' : 'No executable commands were generated', 'error');
-        return;
-      }
-    }
+
     setSaving(true);
     try {
-      const body = {
+      const payload: any = {
         ...form,
-        command_template: commandMode === 'template'
-          ? {
-            scenario_id: selectedScenarioId,
-            platform: selectedScenarioPlatform,
-            variables: templateVariables,
-          }
-          : {},
-        commands: commandMode === 'template' ? (templatePreview?.execute || []) : form.commands,
-        rollback_plan: commandMode === 'template' ? (templatePreview?.rollback || []).join('\n') : form.rollback_plan,
+        status: asDraft ? 'draft' : 'initial_review',
+        command_template: {},
+        commands: form.commands,
+        rollback_plan: form.rollback_plan,
       };
+
+      if (commandMode === 'template' && selectedScenarioId && selectedScenarioPlatform) {
+        payload.command_template = {
+          scenario_id: selectedScenarioId,
+          platform: selectedScenarioPlatform,
+          variables: templateVariables,
+        };
+        if (templatePreview?.execute?.length) {
+          payload.commands = templatePreview.execute;
+        }
+        payload.rollback_plan = (templatePreview?.rollback || []).join('\n') || form.rollback_plan;
+      }
+
       const url = editingOrder ? `/api/change-orders/${editingOrder.id}` : '/api/change-orders';
       const method = editingOrder ? 'PUT' : 'POST';
       const resp = await fetch(url, {
         method,
         headers: authHeaders(true),
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
       });
       const data = await resp.json();
       if (data.success) {
-        showToast(data.message || (zh ? '保存成功' : 'Saved'));
-        closeEditor();
+        showToast(data.message || (zh ? (asDraft ? '草稿已保存' : '保存成功') : (asDraft ? 'Draft saved' : 'Saved')));
+        if (editingOrder === null && !asDraft && data.data) {
+          setEditingOrder(data.data);
+        }
+        if (editingOrder === null && asDraft && data.data) {
+          setEditingOrder(data.data);
+        }
+        if (closeAfterSave && !asDraft) {
+          closeEditor();
+        }
         fetchOrders();
         fetchSummary();
+        if (asDraft) {
+          if (!isCreateView) {
+            closeEditor();
+          } else {
+            setShowCreateModal(false);
+            resetEditorState();
+          }
+          navigate('/change-orders/drafts');
+        }
       } else {
         showToast(data.detail || data.message || 'Error', 'error');
       }
-    } catch { showToast(zh ? '保存失败' : 'Save failed', 'error'); }
-    finally { setSaving(false); }
+    } catch {
+      showToast(zh ? '保存失败' : 'Save failed', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const handleSave = () => saveOrder(true, false);
+  const handleSaveDraft = () => saveOrder(true, true);
 
   // ── Status Transition ──
   const handleTransition = async (orderId: string, status: string, extra?: Record<string, unknown>) => {
@@ -930,6 +1155,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
   // ── Edit ──
   const openEdit = (order: ChangeOrder) => {
     const templateSnapshot = isCommandTemplateSnapshot(order.command_template) ? order.command_template : null;
+    setSelectedOrder(null);
     setEditingOrder(order);
     setForm({
       title: order.title,
@@ -944,14 +1170,17 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
       assigned_initial_reviewer_username: order.assigned_initial_reviewer_username || '',
       assigned_final_approver_id: order.assigned_final_approver_id || '',
       assigned_final_approver_username: order.assigned_final_approver_username || '',
+      authorization_exempt: order.authorization_exempt ?? false,
       target_devices: order.target_devices || [],
       commands: order.commands || [],
     });
     if (templateSnapshot) {
       setCommandMode('template');
-      setSelectedScenarioId(templateSnapshot.scenario_id);
-      setSelectedScenarioPlatform(templateSnapshot.platform);
-      setTemplateVariables({ ...(templateSnapshot.variables || {}) });
+      setSelectedScenarioId(String(templateSnapshot.scenario_id || ''));
+      setSelectedScenarioPlatform(String(templateSnapshot.platform || ''));
+      setTemplateVariables(Object.fromEntries(
+        Object.entries(templateSnapshot.variables || {}).map(([key, value]) => [key, String(value ?? '')]),
+      ));
       setTemplatePreview(templateSnapshot.preview || EMPTY_TEMPLATE_PREVIEW);
       setTemplatePreviewError('');
     } else {
@@ -962,7 +1191,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
 
   // ── Inventory device search for selectable target IP/device ──
   const fetchDeviceOptions = useCallback(async (keyword: string) => {
-    if (!showCreateModal) return;
+    if (!showDevicePicker) return;
     setDeviceLoading(true);
     try {
       const params = new URLSearchParams({ mode: 'light' });
@@ -976,6 +1205,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
           hostname: String(d.hostname || ''),
           ip_address: String(d.ip_address || ''),
           platform: String(d.platform || ''),
+          asset_tag: String(d.asset_tag || ''),
         }))
         .filter((d: DeviceOption) => d.hostname || d.ip_address)
         .slice(0, 12);
@@ -985,16 +1215,16 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
     } finally {
       setDeviceLoading(false);
     }
-  }, [showCreateModal, authHeaders]);
+  }, [showDevicePicker, authHeaders]);
 
   useEffect(() => {
-    if (!showCreateModal) return;
+    if (!editorVisible || !showDevicePicker) return;
     const timer = setTimeout(() => { fetchDeviceOptions(deviceKeyword); }, 250);
     return () => clearTimeout(timer);
-  }, [deviceKeyword, showCreateModal, fetchDeviceOptions]);
+  }, [deviceKeyword, editorVisible, showDevicePicker, fetchDeviceOptions]);
 
   const addDeviceFromInventory = (dev: DeviceOption) => {
-    const next = { hostname: dev.hostname || '', ip_address: dev.ip_address || '' };
+    const next = { hostname: dev.hostname || '', ip_address: dev.ip_address || '', platform: dev.platform || '' };
     setForm((f) => {
       const exists = f.target_devices.some(
         (x) => (x.ip_address && next.ip_address && x.ip_address === next.ip_address)
@@ -1003,6 +1233,26 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
       if (exists) return f;
       return { ...f, target_devices: [...f.target_devices, next] };
     });
+  };
+
+  const confirmSelectedDevice = () => {
+    if (!selectedInventoryDevice) return;
+    addDeviceFromInventory(selectedInventoryDevice);
+    
+    if (commandMode === 'template' && selectedScenario && selectedInventoryDevice.platform) {
+      const platformsList = selectedScenario.supported_platforms?.length 
+        ? selectedScenario.supported_platforms 
+        : Object.keys(selectedScenario.platform_phases || {});
+      const matchedPlatform = findMatchingPlatform(selectedInventoryDevice.platform, platformsList);
+      if (matchedPlatform) {
+        setSelectedScenarioPlatform(matchedPlatform);
+      }
+    }
+    
+    setSelectedInventoryDevice(null);
+    setShowDevicePicker(false);
+    setDeviceKeyword('');
+    setDeviceOptions([]);
   };
 
   // ── Add command ──
@@ -1096,7 +1346,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
      ═════════════════════════════════════════════════════════════════ */
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       {/* ── Toast ── */}
       <AnimatePresence>
         {toast && (
@@ -1117,10 +1367,12 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
 
       {!selectedOrder ? (
       <>
-      {/* ── Summary Cards ── */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        {summaryCards.map((card, idx) => (
-          <motion.div
+      {!isCreateView && !hideDraftListWhenEditing && (
+        <>
+          {/* ── Summary Cards ── */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {summaryCards.map((card, idx) => (
+              <motion.div
             key={card.key}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1136,10 +1388,10 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
             <p className="mt-2 text-xs text-black/45 font-medium">{card.label}</p>
           </motion.div>
         ))}
-      </div>
+          </div>
 
-      {/* ── Filters bar ── */}
-      <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
+          {/* ── Filters bar ── */}
+          <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
         <div className="flex flex-wrap gap-3 items-center p-4">
           <div className="relative flex-1 min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
@@ -1388,9 +1640,12 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
           )}
         </AnimatePresence>
       </div>
+        </>
+      )}
 
       {/* ── Table ── */}
-      <div className="min-w-0">
+      {!isCreateView && !hideDraftListWhenEditing && (
+        <div className="min-w-0">
           <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
             {loading && orders.length === 0 ? (
               <div className="flex items-center justify-center py-24 text-black/30">
@@ -1512,6 +1767,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
             )}
           </div>
         </div>
+      )}
       </>
       ) : (
       /* ═══════════════════════════════════════════════════════════════════
@@ -1948,22 +2204,19 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
          Create / Edit Modal
          ════════════════════════════════════════════════════════════ */}
       <AnimatePresence>
-        {showCreateModal && (
+        {editorVisible && (
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[9000] flex items-center justify-center bg-black/40 backdrop-blur-sm"
-            onClick={closeEditor}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="order-first w-full"
           >
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
+              initial={{ scale: 0.98, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
+              exit={{ scale: 0.98, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-              onClick={(e) => e.stopPropagation()}
-              data-dropdown-boundary="true"
-              className="bg-white rounded-2xl shadow-2xl w-[680px] max-h-[85vh] overflow-hidden flex flex-col"
+              className="bg-white rounded-3xl border border-black/5 shadow-sm overflow-hidden flex flex-col"
             >
               {/* Modal header */}
               <div className="px-6 py-5 border-b border-black/5 bg-gradient-to-r from-[#00bceb]/[0.04] to-transparent flex items-center justify-between">
@@ -1973,7 +2226,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
                   </span>
                   {editingOrder ? (zh ? '编辑工单' : 'Edit Order') : (zh ? '新建变更工单' : 'New Change Order')}
                 </h3>
-                <button title={zh ? '关闭弹窗' : 'Close modal'} onClick={closeEditor} className="p-2 rounded-lg text-black/30 hover:text-black/60 hover:bg-black/5 transition-all">
+                <button title={zh ? '关闭编辑器' : 'Close editor'} onClick={closeEditor} className="p-2 rounded-lg text-black/30 hover:text-black/60 hover:bg-black/5 transition-all">
                   <X size={18} />
                 </button>
               </div>
@@ -2062,7 +2315,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4">
                   <div>
                     <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '指定初审人' : 'Assigned Reviewer'}</label>
                     <select
@@ -2071,63 +2324,53 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
                       onChange={(e) => assignReviewer('initial', e.target.value)}
                       className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
                     >
-                      <option value="">{zh ? '不指定，按现有流程人工处理' : 'Unassigned, use manual review flow'}</option>
+                      <option value="" disabled>{zh ? '请选择初审人' : 'Select initial reviewer'}</option>
                       {initialReviewerOptions.map((item) => (
-                        <option key={item.id} value={String(item.id)}>{buildUserOptionLabel(item)}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '指定终审人' : 'Assigned Approver'}</label>
-                    <select
-                      title={zh ? '指定终审人' : 'Assigned approver'}
-                      value={form.assigned_final_approver_id}
-                      onChange={(e) => assignReviewer('final', e.target.value)}
-                      className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
-                    >
-                      <option value="">{zh ? '不指定，按现有流程人工处理' : 'Unassigned, use manual approval flow'}</option>
-                      {finalApproverOptions.map((item) => (
                         <option key={item.id} value={String(item.id)}>{buildUserOptionLabel(item)}</option>
                       ))}
                     </select>
                   </div>
                 </div>
                 <p className="-mt-2 text-[11px] text-black/40">
-                  {zh ? '审核候选人来自用户管理中的职责组配置；未指定时，仍可沿用现有的人工审核流转。' : 'Reviewer candidates come from the user duty groups. Leave blank to keep the existing manual review flow.'}
+                  {zh ? '只需指定初审人，终审阶段由终审组成员处理。' : 'Only assign an initial reviewer now; final approval will be handled by the approver group later.'}
                 </p>
 
-                {/* Target Devices */}
-                <div>
-                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '目标设备' : 'Target Devices'}</label>
-                  <div className="mb-2">
-                    <input
-                      title={zh ? '搜索设备清单' : 'Search inventory devices'}
-                      value={deviceKeyword}
-                      onChange={e => setDeviceKeyword(e.target.value)}
-                      placeholder={zh ? '从设备清单搜索主机名/IP 并点击添加' : 'Search inventory by hostname/IP and click to add'}
-                      className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40"
-                    />
-                    <div className="mt-2 max-h-32 overflow-y-auto border border-black/8 rounded-xl bg-white">
-                      {deviceLoading ? (
-                        <div className="px-3 py-2 text-xs text-black/40">{zh ? '搜索中...' : 'Searching...'}</div>
-                      ) : deviceOptions.length === 0 ? (
-                        <div className="px-3 py-2 text-xs text-black/35">{zh ? '未找到匹配设备，可手动输入' : 'No match found, use manual input below'}</div>
-                      ) : (
-                        deviceOptions.map((dev) => (
-                          <button
-                            type="button"
-                            key={`${dev.id}-${dev.ip_address}`}
-                            onClick={() => addDeviceFromInventory(dev)}
-                            className="w-full px-3 py-2 text-left text-xs hover:bg-[#00bceb]/8 border-b last:border-b-0 border-black/5"
-                          >
-                            <span className="font-medium text-black/75">{dev.hostname || (zh ? '未命名设备' : 'Unnamed')}</span>
-                            <span className="ml-2 text-black/45">{dev.ip_address || '—'}</span>
-                          </button>
-                        ))
-                      )}
+                <div className="mt-4 rounded-2xl border border-black/8 bg-black/[0.015] p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold text-black/70">{zh ? '设备登录免授权' : 'Device Login Auth Exempt'}</p>
+                      <p className="text-[11px] text-black/40 mt-1">
+                        {zh ? '开启后变更执行时可跳过设备登录时的额外授权检查，与工单审批流程无关。' : 'Enable to exempt device login authorization during execution; this does not skip the change order approval workflow.'}
+                      </p>
                     </div>
+                    <label className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={form.authorization_exempt}
+                        onChange={(e) => setForm(f => ({
+                          ...f,
+                          authorization_exempt: e.target.checked,
+                        }))}
+                        className="h-4 w-4 rounded border border-black/10 text-[#06b6d4] focus:ring-[#06b6d4]"
+                      />
+                      <span>{form.authorization_exempt ? (zh ? '已启用' : 'Enabled') : (zh ? '未启用' : 'Disabled')}</span>
+                    </label>
                   </div>
-                  <div className="flex gap-2">
+                </div>
+
+                {/* Target Devices */}
+                <div className="mt-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                    <label className="block text-xs font-semibold text-black/50">{zh ? '目标设备' : 'Target Devices'}</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowDevicePicker(true)}
+                      className="rounded-xl bg-[#06b6d4] px-3 py-2 text-xs font-semibold text-white hover:bg-[#0891b2] transition-all"
+                    >
+                      {zh ? '从设备库选择' : 'Pick from inventory'}
+                    </button>
+                  </div>
+                  <div className="flex gap-2 mb-2">
                     <input
                       title={zh ? '目标设备主机名' : 'Target device hostname'}
                       value={deviceInput.hostname}
@@ -2147,18 +2390,115 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
                     </button>
                   </div>
                   {form.target_devices.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {form.target_devices.map((dev, i) => (
-                        <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-50 text-cyan-700 text-xs font-medium ring-1 ring-cyan-200/60">
-                          {dev.hostname || dev.ip_address}
-                          <button title={zh ? '移除目标设备' : 'Remove target device'} onClick={() => setForm(f => ({ ...f, target_devices: f.target_devices.filter((_, j) => j !== i) }))} className="text-cyan-400 hover:text-cyan-700">
-                            <X size={11} />
-                          </button>
-                        </span>
-                      ))}
+                    <div className="mt-2 overflow-x-auto rounded-3xl border border-black/10 bg-slate-50">
+                      <table className="min-w-full text-sm text-left">
+                        <thead>
+                          <tr className="text-xs text-black/50 uppercase tracking-[0.04em]">
+                            <th className="px-3 py-3">{zh ? 'IP地址' : 'IP Address'}</th>
+                            <th className="px-3 py-3">{zh ? '设备名称' : 'Device Name'}</th>
+                            <th className="px-3 py-3">{zh ? '用户名' : 'Username'}</th>
+                            <th className="px-3 py-3">{zh ? '开始/结束' : 'Start / End'}</th>
+                            <th className="px-3 py-3">{zh ? '执行人' : 'Executor'}</th>
+                            <th className="px-3 py-3">{zh ? '操作' : 'Actions'}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {form.target_devices.map((dev, i) => (
+                            <tr key={i} className="border-t border-black/10">
+                              <td className="px-3 py-3 text-black/80">{dev.ip_address || '—'}</td>
+                              <td className="px-3 py-3 text-black/80">{dev.hostname || '—'}</td>
+                              <td className="px-3 py-3 text-black/80">{dev.username || currentUser.username || '—'}</td>
+                              <td className="px-3 py-3 text-black/80">{fmtTime(form.scheduled_start)} / {fmtTime(form.scheduled_end)}</td>
+                              <td className="px-3 py-3 text-black/80">{currentUser.username || '—'}</td>
+                              <td className="px-3 py-3">
+                                <button
+                                  title={zh ? '移除目标设备' : 'Remove target device'}
+                                  onClick={() => setForm(f => ({ ...f, target_devices: f.target_devices.filter((_, j) => j !== i) }))}
+                                  className="text-cyan-400 hover:text-cyan-700"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
+
+                {showDevicePicker && (
+                  <div className="mt-4 rounded-3xl border border-black/10 bg-white p-5 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                      <div>
+                        <p className="text-sm font-semibold text-black/75">{zh ? '选择目标设备' : 'Select target devices'}</p>
+                        <p className="text-[11px] text-black/40 mt-1">
+                          {zh ? '搜索设备库（支持主机名/IP/管理IP/资产标签），选择设备后点击确认添加。' : 'Search inventory by hostname, IP, management IP or asset tag. Select a device and confirm to add.'}
+                        </p>
+                      </div>
+                      <button type="button" title={zh ? '关闭设备选择器' : 'Close device picker'} onClick={() => { setShowDevicePicker(false); setDeviceKeyword(''); setSelectedInventoryDevice(null); }} className="text-black/50 hover:text-black">
+                        <X size={18} />
+                      </button>
+                    </div>
+                    <input
+                      title={zh ? '搜索设备清单' : 'Search inventory devices'}
+                      value={deviceKeyword}
+                      onChange={e => setDeviceKeyword(e.target.value)}
+                      placeholder={zh ? '搜索主机名 / IP / 管理IP / 资产标签' : 'Search hostname / IP / management IP / asset tag'}
+                      className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40"
+                    />
+                    <div className="mt-3 grid gap-4 xl:grid-cols-[1fr_250px]">
+                      <div className="max-h-72 overflow-y-auto border border-black/10 rounded-3xl bg-slate-50">
+                        {deviceLoading ? (
+                          <div className="px-3 py-3 text-sm text-black/50">{zh ? '搜索中...' : 'Searching...'}</div>
+                        ) : deviceOptions.length === 0 ? (
+                          <div className="px-3 py-3 text-sm text-black/40">{zh ? '未找到匹配设备，请修改关键词或直接输入目标设备。' : 'No devices found, change search term or add manually.'}</div>
+                        ) : (
+                          deviceOptions.map((dev) => (
+                            <button
+                              type="button"
+                              key={`${dev.id}-${dev.ip_address}`}
+                              onClick={() => setSelectedInventoryDevice(dev)}
+                              className={`w-full px-4 py-3 text-left text-sm text-black/80 hover:bg-[#00bceb]/8 border-b last:border-b-0 border-black/10 transition-all ${selectedInventoryDevice?.id === dev.id ? 'bg-[#00bceb]/15' : ''}`}
+                            >
+                              <div className="font-medium">{dev.hostname || (zh ? '未命名设备' : 'Unnamed')}</div>
+                              <div className="text-[11px] text-black/45">
+                                {dev.asset_tag ? `${dev.asset_tag} · ` : ''}{dev.ip_address || '—'}
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                      <div className="rounded-3xl border border-black/10 bg-slate-50 p-4">
+                        <p className="text-xs font-semibold text-black/50 mb-2">{zh ? '已选设备' : 'Selected device'}</p>
+                        {selectedInventoryDevice ? (
+                          <div className="space-y-3">
+                            <div className="rounded-2xl border border-black/10 bg-white p-3">
+                              <div className="font-medium text-black/80">{selectedInventoryDevice.hostname || (zh ? '未命名设备' : 'Unnamed device')}</div>
+                              <div className="text-[11px] text-black/45">
+                                {selectedInventoryDevice.asset_tag ? `${selectedInventoryDevice.asset_tag} · ` : ''}{selectedInventoryDevice.ip_address || '—'}
+                              </div>
+                              {selectedInventoryDevice.platform && (
+                                <div className="text-[11px] text-black/40">{platformLabel(selectedInventoryDevice.platform)}</div>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={confirmSelectedDevice}
+                              className="w-full rounded-xl bg-[#06b6d4] px-3 py-2 text-sm font-semibold text-white hover:bg-[#0891b2] transition-all"
+                            >
+                              {zh ? '确认添加设备' : 'Confirm add device'}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 p-4 text-[11px] text-black/45">
+                            {zh ? '请选择一个设备以确认添加到工单。' : 'Select a device to confirm adding it to the order.'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="rounded-2xl border border-black/8 bg-black/[0.015] p-4">
                   <div className="flex items-center justify-between gap-3 mb-3">
@@ -2186,7 +2526,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
 
                   {commandMode === 'template' ? (
                     <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 gap-4">
                         <div>
                           <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '变更模板场景' : 'Scenario Template'}</label>
                           <select
@@ -2195,7 +2535,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
                             onChange={(e) => setSelectedScenarioId(e.target.value)}
                             className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
                           >
-                            <option value="">{zh ? '请选择一个自动化场景' : 'Select an automation scenario'}</option>
+                            <option value="">{zh ? '请选择一个配置模板' : 'Select a config template'}</option>
                             {scenarioOptions.map((scenario) => (
                               <option key={scenario.id} value={scenario.id}>
                                 {scenario.icon ? `${scenario.icon} ` : ''}{zh ? (scenario.name_zh || scenario.name) : scenario.name}
@@ -2203,21 +2543,12 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
                             ))}
                           </select>
                         </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '目标平台' : 'Platform'}</label>
-                          <select
-                            title={zh ? '目标平台' : 'Platform'}
-                            value={selectedScenarioPlatform}
-                            onChange={(e) => setSelectedScenarioPlatform(e.target.value)}
-                            disabled={!selectedScenario}
-                            className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white disabled:bg-black/[0.03] disabled:text-black/35"
-                          >
-                            {!selectedScenario && <option value="">{zh ? '先选择场景' : 'Select scenario first'}</option>}
-                            {selectedScenarioPlatforms.map((platformKey) => (
-                              <option key={platformKey} value={platformKey}>{platformLabel(platformKey)}</option>
-                            ))}
-                          </select>
-                        </div>
+                        {selectedScenario && selectedScenarioPlatform && (
+                          <div className="rounded-2xl border border-black/10 bg-slate-50 px-4 py-3 text-sm text-black/70">
+                            <p className="font-medium text-black/75">{zh ? '已选择平台' : 'Selected platform'}</p>
+                            <p className="mt-1 text-[13px] text-black/55">{platformLabel(selectedScenarioPlatform)}</p>
+                          </div>
+                        )}
                       </div>
 
                       {selectedScenario && (
@@ -2367,9 +2698,17 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, platfo
               </div>
 
               {/* Modal footer */}
-              <div className="px-6 py-4 border-t border-black/5 bg-black/[0.01] flex items-center justify-end gap-3">
+              <div className="px-6 py-4 border-t border-black/5 bg-black/[0.01] flex flex-wrap items-center justify-end gap-3">
                 <button onClick={closeEditor} className="px-4 py-2.5 rounded-xl text-sm font-medium text-black/50 hover:bg-black/5 transition-all">
                   {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  onClick={handleSaveDraft}
+                  disabled={saving || !form.title.trim()}
+                  className="px-4 py-2.5 rounded-xl bg-white text-black/70 border border-black/10 text-sm font-medium hover:bg-black/5 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Save size={14} />
+                  {zh ? '保存草稿' : 'Save Draft'}
                 </button>
                 <button
                   onClick={handleSave}

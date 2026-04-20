@@ -1,13 +1,36 @@
 from fastapi import APIRouter, HTTPException, Body
 import os
 import uuid
+import json
+from urllib.request import urlopen
+from urllib.error import URLError
 from database import get_db_connection
 from services.audit_service import log_audit_event
+from core.config import settings
 
 router = APIRouter()
 
 @router.get("/templates")
 def read_templates():
+    """读取配置管理模板，从外部 API 或本地数据库"""
+    # 尝试从外部配置管理 API 获取
+    external_url = settings.CONFIG_MANAGEMENT_URL
+    try:
+        response = urlopen(external_url, timeout=5)
+        if response.status == 200:
+            templates = json.loads(response.read().decode('utf-8'))
+            # 确保模板格式一致
+            if isinstance(templates, list):
+                return templates
+            elif isinstance(templates, dict) and 'data' in templates:
+                return templates.get('data', [])
+            else:
+                return templates
+    except (URLError, json.JSONDecodeError, Exception) as e:
+        # 外部 API 失败时回退到本地数据库
+        pass
+    
+    # 回退：从本地数据库读取
     conn = get_db_connection()
     try:
         templates = conn.execute('SELECT id, name, type, category, vendor, content, last_used as lastUsed FROM templates').fetchall()

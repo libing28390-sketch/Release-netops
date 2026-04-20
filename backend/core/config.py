@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     ALERT_NOTIFY_WEBHOOK_URL: str = ""
     # 「前往平台处理」按钮跳转地址，留空则不显示按钮
     PLATFORM_URL: str = ""
+    # 外部配置管理 API
+    CONFIG_MANAGEMENT_URL: str = "http://192.168.42.1:4300/configuration"
 
     # HashiCorp Vault integration
     VAULT_ENABLED: bool = False

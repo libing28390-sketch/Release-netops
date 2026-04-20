@@ -211,6 +211,7 @@ class ChangeOrderCreate(BaseModel):
     description: str = ''
     order_type: str = 'config_change'
     priority: str = 'medium'
+    status: str = 'draft'
     assigned_initial_reviewer_id: str = ''
     assigned_initial_reviewer_username: str = ''
     assigned_final_approver_id: str = ''
@@ -222,6 +223,7 @@ class ChangeOrderCreate(BaseModel):
     risk_level: str = 'low'
     scheduled_start: str = ''
     scheduled_end: str = ''
+    authorization_exempt: bool = False
 
 
 class ChangeOrderUpdate(BaseModel):
@@ -243,6 +245,7 @@ class ChangeOrderUpdate(BaseModel):
     risk_level: Optional[str] = None
     scheduled_start: Optional[str] = None
     scheduled_end: Optional[str] = None
+    authorization_exempt: Optional[bool] = None
     actual_start: Optional[str] = None
     actual_end: Optional[str] = None
     result_summary: Optional[str] = None
@@ -452,6 +455,7 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
             description=payload['description'],
             order_type=payload['order_type'],
             priority=payload['priority'],
+            status=payload.get('status', 'draft'),
             requester_id=user.get('user_id', ''),
             requester_username=user.get('username', ''),
             assigned_initial_reviewer_id=payload.get('assigned_initial_reviewer_id', ''),

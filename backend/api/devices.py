@@ -251,8 +251,12 @@ def read_devices(
 
         if search and search.strip():
             q = f"%{search.strip()}%"
-            where_clauses.append('(d.hostname LIKE ? OR d.ip_address LIKE ? OR d.sn LIKE ?)')
-            params.extend([q, q, q])
+            where_clauses.append('('
+                'd.hostname LIKE ? OR d.ip_address LIKE ? OR d.sn LIKE ? OR '
+                'pa.asset_tag LIKE ? OR pa.management_ip LIKE ? OR pa.business_ip LIKE ? OR '
+                'pa.datacenter LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ?'
+                ')')
+            params.extend([q, q, q, q, q, q, q, q, q])
 
         if platform and platform != 'all':
             where_clauses.append('d.platform = ?')

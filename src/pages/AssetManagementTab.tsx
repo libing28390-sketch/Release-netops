@@ -406,6 +406,18 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     fetchAssets();
   };
 
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(zh ? '确定删除选中的资产吗？' : 'Delete selected assets?')) return;
+    const promises = Array.from(selectedIds).map(id =>
+      fetch(`/api/assets/${id}`, { method: 'DELETE' })
+    );
+    await Promise.allSettled(promises);
+    clearSel();
+    fetchAssets();
+    fetchSummary();
+  };
+
   /* ─── Export ─── */
   const handleExport = async () => {
     const params = new URLSearchParams({ page: '1', page_size: '200' });
@@ -695,7 +707,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                 <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} className="flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-black/8">
                   <span className="text-[10px] font-bold text-[#00bceb] tabular-nums mr-1">{selectedIds.size}</span>
                   <BatchBtn icon={Tag}       label={zh ? '标签' : 'Tag'}     onClick={() => setShowBatchTag(true)} hoverCls="hover:bg-blue-50 hover:text-blue-600" />
-                  <BatchBtn icon={Trash2}    label={zh ? '删除' : 'Delete'}  onClick={() => { /* batch delete handled via individual */ }} hoverCls="hover:bg-red-50 hover:text-red-600" />
+                  <BatchBtn icon={Trash2}    label={zh ? '删除' : 'Delete'}  onClick={handleBatchDelete} hoverCls="hover:bg-red-50 hover:text-red-600" />
                   <button onClick={clearSel} className="p-0.5 ml-0.5 text-black/20 hover:text-black/45" title="Clear"><X size={10} /></button>
                 </motion.div>
               )}

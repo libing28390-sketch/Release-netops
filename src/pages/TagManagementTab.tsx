@@ -23,7 +23,7 @@ const CATEGORY_META: Record<string, { icon: typeof Tags; color: string; bg: stri
   custom:      { icon: Hash,     color: 'text-slate-600',   bg: 'bg-slate-50 border-slate-200' },
 };
 
-const CATEGORIES: TagCategory[] = ['device_type', 'vendor', 'os', 'role', 'env', 'function', 'custom'];
+const CATEGORIES: TagCategory[] = ['device_type', 'vendor', 'os', 'role', 'env'];
 
 /* ─── Helper ─── */
 function getToken() {

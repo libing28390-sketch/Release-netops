@@ -1375,6 +1375,7 @@ def init_db():
             risk_level TEXT DEFAULT 'low',
             scheduled_start TEXT DEFAULT '',
             scheduled_end TEXT DEFAULT '',
+            authorization_exempt INTEGER NOT NULL DEFAULT 0,
             actual_start TEXT DEFAULT '',
             actual_end TEXT DEFAULT '',
             result_summary TEXT DEFAULT '',
