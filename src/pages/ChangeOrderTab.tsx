@@ -602,15 +602,61 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   };
 
   const scenarioOptions = useMemo(() => {
-    // Only use built-in scenarios from /api/playbooks/scenarios.
-    // Config templates from /api/templates do not have parameterized {{var}} variables
-    // and belong to the Config Automation module, not the Change Order template system.
     const scenarioItems = scenarios
       .filter((item) => item && item.id && item.platform_phases && Object.keys(item.platform_phases).length > 0)
       .map((item) => ({ ...item, source_kind: 'scenario' as const }));
 
-    return Array.from(new Map(scenarioItems.map((item) => [item.id, item])).values());
-  }, [scenarios]);
+    const configTemplateItems = (configTemplates || [])
+      .filter((item) => item && item.id && item.name)
+      .map((template) => {
+        const matchedPlatforms = Object.entries(platforms)
+          .filter(([, meta]) => !template.vendor || (meta as PlatformMeta)?.vendor === template.vendor)
+          .map(([key]) => key);
+        const fallbackPlatforms = ['cisco_ios', 'huawei_vrp', 'h3c_comware', 'linux'];
+        const supportedPlatforms = matchedPlatforms.length > 0 
+          ? matchedPlatforms 
+          : (Object.keys(platforms).length > 0 ? Object.keys(platforms) : fallbackPlatforms);
+        const phases: Record<string, Partial<ScenarioPhasePreview>> = {};
+        supportedPlatforms.forEach((platformKey) => {
+          const { pre_check, post_check } = getDefaultPrePostCheck(platformKey);
+          phases[platformKey] = {
+            pre_check,
+            execute: template.content ? [template.content] : [],
+            post_check,
+            rollback: [],
+          };
+        });
+        const varMatches = [...(template.content || '').matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)];
+        const uniqueVars = [...new Set(varMatches.map(m => m[1]))];
+        const templateVariables: ScenarioVariable[] = uniqueVars.map(key => ({
+          key,
+          label: key,
+          label_zh: key,
+          type: 'text',
+          required: true,
+        }));
+
+        return {
+          id: toConfigTemplateScenarioId(template.id),
+          source_kind: 'config_template' as const,
+          source_template_id: template.id,
+          name: template.name,
+          name_zh: template.name,
+          description: template.category || '',
+          description_zh: template.category || '',
+          category: template.category,
+          icon: '📄',
+          risk: 'medium',
+          supported_platforms: supportedPlatforms,
+          default_platform: supportedPlatforms[0] || '',
+          variables: templateVariables,
+          platform_phases: phases,
+        } as ScenarioTemplate;
+      });
+
+    const allItems = [...scenarioItems, ...configTemplateItems];
+    return Array.from(new Map(allItems.map((item) => [item.id, item])).values());
+  }, [configTemplates, platforms, scenarios]);
 
   const selectedScenario = useMemo(
     () => scenarioOptions.find((item) => item.id === selectedScenarioId) || null,
