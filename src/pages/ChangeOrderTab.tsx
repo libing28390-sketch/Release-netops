@@ -602,50 +602,15 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   };
 
   const scenarioOptions = useMemo(() => {
+    // Only use built-in scenarios from /api/playbooks/scenarios.
+    // Config templates from /api/templates do not have parameterized {{var}} variables
+    // and belong to the Config Automation module, not the Change Order template system.
     const scenarioItems = scenarios
       .filter((item) => item && item.id && item.platform_phases && Object.keys(item.platform_phases).length > 0)
       .map((item) => ({ ...item, source_kind: 'scenario' as const }));
 
-    const configTemplateItems = (configTemplates || [])
-      .filter((item) => item && item.id && item.name)
-      .map((template) => {
-        const matchedPlatforms = Object.entries(platforms)
-          .filter(([, meta]) => !template.vendor || (meta as PlatformMeta)?.vendor === template.vendor)
-          .map(([key]) => key);
-        const fallbackPlatforms = ['cisco_ios', 'huawei_vrp', 'h3c_comware', 'linux'];
-        const supportedPlatforms = matchedPlatforms.length > 0 
-          ? matchedPlatforms 
-          : (Object.keys(platforms).length > 0 ? Object.keys(platforms) : fallbackPlatforms);
-        const phases: Record<string, Partial<ScenarioPhasePreview>> = {};
-        supportedPlatforms.forEach((platformKey) => {
-          const { pre_check, post_check } = getDefaultPrePostCheck(platformKey);
-          phases[platformKey] = {
-            pre_check,
-            execute: template.content ? [template.content] : [],
-            post_check,
-            rollback: [],
-          };
-        });
-        return {
-          id: toConfigTemplateScenarioId(template.id),
-          source_kind: 'config_template' as const,
-          source_template_id: template.id,
-          name: template.name,
-          name_zh: template.name,
-          description: template.category || '',
-          description_zh: template.category || '',
-          category: template.category,
-          icon: '📄',
-          risk: 'medium',
-          supported_platforms: supportedPlatforms,
-          default_platform: supportedPlatforms[0] || '',
-          variables: [],
-          platform_phases: phases,
-        } as ScenarioTemplate;
-      });
-
-    return [...scenarioItems, ...configTemplateItems];
-  }, [configTemplates, platforms, scenarios]);
+    return Array.from(new Map(scenarioItems.map((item) => [item.id, item])).values());
+  }, [scenarios]);
 
   const selectedScenario = useMemo(
     () => scenarioOptions.find((item) => item.id === selectedScenarioId) || null,
@@ -1326,7 +1291,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         ? snapshotScenarioId
         : existsAsConfigTemplate
           ? asConfigTemplateScenarioId
-          : snapshotScenarioId;
+          : scenarioOptions.find((item) => (templateSnapshot.scenario_name && item.name === templateSnapshot.scenario_name) || (templateSnapshot.scenario_name_zh && item.name_zh === templateSnapshot.scenario_name_zh))?.id || '';
       setSelectedScenarioId(preferredId);
       setSelectedScenarioPlatform(String(templateSnapshot.platform || ''));
       setTemplateVariables(Object.fromEntries(
@@ -2697,25 +2662,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                             ))}
                           </select>
                         </div>
-                        {selectedScenario && selectedScenarioPlatforms.length > 0 && (
-                          <div className="rounded-2xl border border-black/10 bg-slate-50 px-4 py-3 text-sm text-black/70">
-                            <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '目标平台' : 'Target platform'}</label>
-                            <select
-                              title={zh ? '选择目标平台' : 'Select target platform'}
-                              value={selectedScenarioPlatform}
-                              onChange={(e) => setSelectedScenarioPlatform(e.target.value)}
-                              className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
-                            >
-                              <option value="">{zh ? '自动匹配目标设备平台' : 'Auto detect target device platform'}</option>
-                              {selectedScenarioPlatforms.map((platform) => (
-                                <option key={platform} value={platform}>{platformLabel(platform)}</option>
-                              ))}
-                            </select>
-                            <p className="mt-2 text-[11px] text-black/40">
-                              {zh ? '如果目标设备已包含平台信息，系统会自动匹配；也可手动指定。' : 'If target devices include platform info, the system will auto-detect; you can also choose manually.'}
-                            </p>
-                          </div>
-                        )}
+                        {/* Platform selection is now handled automatically when adding target devices */}
                       </div>
 
                       {selectedScenario && (
