@@ -1,0 +1,214 @@
+- generic [ref=e6]:
+  - banner [ref=e7]:
+    - generic [ref=e9]:
+      - button "返回功能中心" [ref=e10]:
+        - img [ref=e11]
+      - button "收起侧栏" [ref=e14]:
+        - img [ref=e16]
+      - button "新建工单 2026/4/21 · Nexora Control Plane" [ref=e20]:
+        - generic [ref=e21]:
+          - heading "新建工单" [level=2] [ref=e22]
+          - paragraph [ref=e23]: 2026/4/21 · Nexora Control Plane
+        - img [ref=e24]
+    - generic [ref=e26]:
+      - button "Notifications" [ref=e28]:
+        - img [ref=e29]
+      - button "admin" [ref=e33]:
+        - img [ref=e35]
+        - generic [ref=e38]: admin
+        - img [ref=e39]
+  - generic [ref=e41]:
+    - complementary [ref=e42]:
+      - generic [ref=e43]: 工单管理
+      - navigation [ref=e44]:
+        - button "新建工单" [ref=e45]:
+          - generic [ref=e47]: 新建工单
+        - button "个人待办" [ref=e48]:
+          - generic [ref=e49]: 个人待办
+        - button "组内待办" [ref=e50]:
+          - generic [ref=e51]: 组内待办
+        - button "我参与的" [ref=e52]:
+          - generic [ref=e53]: 我参与的
+        - button "我的关注" [ref=e54]:
+          - generic [ref=e55]: 我的关注
+        - button "全部工单" [ref=e56]:
+          - generic [ref=e57]: 全部工单
+        - button "草稿箱" [ref=e58]:
+          - generic [ref=e59]: 草稿箱
+      - button "收起导航" [ref=e61]:
+        - img [ref=e62]
+    - main [ref=e64]:
+      - generic [ref=e67]:
+        - generic [ref=e68]:
+          - heading "新建变更工单" [level=3] [ref=e69]:
+            - img [ref=e71]
+            - text: 新建变更工单
+          - button "关闭编辑器" [ref=e74]:
+            - img [ref=e75]
+        - generic [ref=e78]:
+          - generic [ref=e79]:
+            - generic [ref=e80]: 工单标题 *
+            - 'textbox "例如: 核心交换机VLAN调整" [ref=e81]': 测试变更 - 预览命令验证
+          - generic [ref=e82]:
+            - generic [ref=e83]: 描述
+            - textbox "详细描述变更内容、影响范围..." [ref=e84]
+          - generic [ref=e85]:
+            - generic [ref=e86]:
+              - generic [ref=e87]: 变更类型
+              - combobox "变更类型" [ref=e88]:
+                - option "配置变更" [selected]
+                - option "固件升级"
+                - option "维护操作"
+                - option "紧急变更"
+                - option "其他"
+            - generic [ref=e89]:
+              - generic [ref=e90]: 优先级
+              - combobox "优先级" [ref=e91]:
+                - option "紧急"
+                - option "高"
+                - option "中" [selected]
+                - option "低"
+            - generic [ref=e92]:
+              - generic [ref=e93]: 风险等级
+              - combobox "风险等级" [ref=e94]:
+                - option "低风险" [selected]
+                - option "中风险"
+                - option "高风险"
+          - generic [ref=e95]:
+            - generic [ref=e96]:
+              - generic [ref=e97]: 计划开始时间
+              - button "选择时间..." [ref=e98]:
+                - img [ref=e99]
+                - generic [ref=e101]: 选择时间...
+            - generic [ref=e102]:
+              - generic [ref=e103]: 计划结束时间
+              - button "选择时间..." [ref=e104]:
+                - img [ref=e105]
+                - generic [ref=e107]: 选择时间...
+          - generic [ref=e109]:
+            - generic [ref=e110]: 指定初审人
+            - combobox "指定初审人" [ref=e111]:
+              - option "请选择初审人" [disabled] [selected]
+              - option "libing"
+          - paragraph [ref=e112]: 只需指定初审人，终审阶段由终审组成员处理。
+          - generic [ref=e114]:
+            - generic [ref=e115]:
+              - paragraph [ref=e116]: 设备登录免授权
+              - paragraph [ref=e117]: 开启后变更执行时可跳过设备登录时的额外授权检查，与工单审批流程无关。
+            - generic [ref=e118] [cursor=pointer]:
+              - checkbox "已启用" [checked] [ref=e119]
+              - generic [ref=e120]: 已启用
+          - generic [ref=e121]:
+            - generic [ref=e122]:
+              - generic [ref=e123]: 目标设备
+              - button "从设备库选择" [ref=e124]
+            - generic [ref=e125]:
+              - textbox "目标设备主机名" [ref=e126]:
+                - /placeholder: 主机名
+              - textbox "目标设备IP地址" [ref=e127]:
+                - /placeholder: IP 地址
+              - button "添加目标设备" [ref=e128]:
+                - img [ref=e129]
+          - generic [ref=e192]:
+            - generic [ref=e193]:
+              - generic [ref=e194]:
+                - paragraph [ref=e195]: 选择目标设备
+                - paragraph [ref=e196]: 搜索设备库（支持主机名/IP/管理IP/资产标签），选择设备后点击确认添加。
+              - button "关闭设备选择器" [ref=e197]:
+                - img [ref=e198]
+            - textbox "搜索设备清单" [ref=e201]:
+              - /placeholder: 搜索主机名 / IP / 管理IP / 资产标签
+            - generic [ref=e202]:
+              - generic [ref=e203]:
+                - button "cisco-acc-sw1 123 · 192.168.96.129" [active] [ref=e204]:
+                  - generic [ref=e205]: cisco-acc-sw1
+                  - generic [ref=e206]: 123 · 192.168.96.129
+                - button "cisco-acc-sw2 123-wgcp · 192.168.96.130" [ref=e207]:
+                  - generic [ref=e208]: cisco-acc-sw2
+                  - generic [ref=e209]: 123-wgcp · 192.168.96.130
+              - generic [ref=e210]:
+                - paragraph [ref=e211]: 已选设备
+                - generic [ref=e212]:
+                  - generic [ref=e213]:
+                    - generic [ref=e214]: cisco-acc-sw1
+                    - generic [ref=e215]: 123 · 192.168.96.129
+                    - generic [ref=e216]: cisco_ios
+                  - button "确认添加设备" [ref=e217]
+          - generic [ref=e130]:
+            - generic [ref=e131]:
+              - generic [ref=e132]:
+                - generic [ref=e133]: 命令来源
+                - paragraph [ref=e134]: 可继续使用手工输入，也可以切换为可参数化的变更模板。
+              - generic [ref=e135]:
+                - button "手工命令" [ref=e136]
+                - button "模板场景" [ref=e137]
+            - generic [ref=e138]:
+              - generic [ref=e162]:
+                - generic [ref=e163]: 变更模板场景
+                - combobox "变更模板场景" [ref=e164]:
+                  - option "请选择一个配置模板"
+                  - option "📄 Basic SSH Setup"
+                  - option "📄 Standard ACL"
+                  - option "📄 BGP Configuration"
+                  - option "📄 OSPF Single Area"
+                  - option "📄 VLAN Creation" [selected]
+                  - option "📄 Basic SSH Setup"
+                  - option "📄 Firewall Filter (ACL)"
+                  - option "📄 BGP Configuration"
+                  - option "📄 OSPF Single Area"
+                  - option "📄 VLAN Creation"
+                  - option "📄 Basic SSH Setup"
+                  - option "📄 Basic ACL"
+                  - option "📄 BGP Configuration"
+                  - option "📄 OSPF Single Area"
+                  - option "📄 VLAN Creation"
+                  - option "📄 Basic SSH Setup"
+                  - option "📄 Standard ACL"
+                  - option "📄 BGP Configuration"
+                  - option "📄 OSPF Single Area"
+                  - option "📄 VLAN Creation"
+                  - option "📄 t1"
+                  - option "📄 test-tpl-011ff626"
+                  - option "📄 tpl-update-7611eada"
+                  - option "📄 t1"
+                  - option "📄 test-tpl-5aa17ebb"
+                  - option "📄 tpl-update-4a77be09"
+                  - option "📄 test-tpl-5e2829f4"
+                  - option "📄 tpl-update-72e78bb6"
+                  - option "📄 test-tpl-8433df29"
+                  - option "📄 tpl-update-8b413fcc"
+                  - option "📄 test-tpl-69f17a12"
+                  - option "📄 tpl-update-2aa1aae0"
+                  - option "📄 test-tpl-6a7a8e9e"
+                  - option "📄 tpl-update-2fb0a314"
+                  - option "📄 test-tpl-463dd45f"
+                  - option "📄 tpl-update-a1dfb61d"
+              - generic [ref=e187]:
+                - generic [ref=e188]:
+                  - paragraph [ref=e189]: VLAN Creation
+                  - paragraph [ref=e190]: switching
+                - generic [ref=e191]: 中风险
+              - generic [ref=e165]:
+                - generic [ref=e166]:
+                  - paragraph [ref=e168]: 实施前检查
+                  - generic [ref=e170]: 暂无内容
+                - generic [ref=e171]:
+                  - paragraph [ref=e173]: 执行命令
+                  - generic [ref=e175]: 暂无内容
+                - generic [ref=e176]:
+                  - paragraph [ref=e178]: 实施后检查
+                  - generic [ref=e180]: 暂无内容
+                - generic [ref=e181]:
+                  - paragraph [ref=e183]: 回退命令
+                  - generic [ref=e185]: 暂无内容
+        - generic [ref=e148]:
+          - button "取消" [ref=e149]
+          - button "保存草稿" [ref=e150]:
+            - img [ref=e151]
+            - text: 保存草稿
+          - button "创建工单" [ref=e155]:
+            - img [ref=e156]
+            - text: 创建工单
+  - contentinfo [ref=e159]:
+    - generic [ref=e160]: Copyright (c) 2026 Nexora. All rights reserved.
+    - generic [ref=e161]: NOC v2.0

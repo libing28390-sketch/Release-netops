@@ -131,12 +131,80 @@ def _build_command_template_snapshot(template_payload: dict) -> dict:
     scenario_id = str(template_payload.get('scenario_id') or '').strip()
     if not scenario_id:
         raise HTTPException(status_code=400, detail='command_template.scenario_id is required')
+    source_kind = str(template_payload.get('source_kind') or 'scenario').strip().lower()
 
     from api.playbooks import _all_scenarios, _render_phase_commands
 
-    scenario = next((item for item in _all_scenarios() if item.get('id') == scenario_id), None)
-    if not scenario:
-        raise HTTPException(status_code=400, detail='Selected scenario does not exist')
+    def _default_checks_for_platform(platform_key: str) -> tuple[list[str], list[str]]:
+        pre_post_map: dict[str, tuple[list[str], list[str]]] = {
+            'cisco_ios': (
+                ['show version', 'show running-config | include interface'],
+                ['show running-config | include interface', 'show interfaces status'],
+            ),
+            'cisco_nxos': (
+                ['show version', 'show running-config | include interface'],
+                ['show running-config | include interface', 'show interface status'],
+            ),
+            'cisco_iosxr': (
+                ['show version', 'show running-config | include interface'],
+                ['show running-config | include interface', 'show interfaces'],
+            ),
+            'huawei_vrp': (
+                ['display version', 'display current-configuration | include interface'],
+                ['display current-configuration | include interface', 'display interface'],
+            ),
+            'h3c_comware': (
+                ['display version', 'display current-configuration | include interface'],
+                ['display current-configuration | include interface', 'display interface'],
+            ),
+            'arista_eos': (
+                ['show version', 'show running-config | include interface'],
+                ['show running-config | include interface', 'show interfaces status'],
+            ),
+            'juniper_junos': (
+                ['show version', 'show configuration | display set | grep interface'],
+                ['show configuration | display set | grep interface', 'show interfaces'],
+            ),
+        }
+        return pre_post_map.get(platform_key, ([], []))
+
+    scenario = None
+    if source_kind == 'config_template':
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                'SELECT id, name, vendor, content FROM templates WHERE id = ?',
+                (scenario_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            raise HTTPException(status_code=400, detail='Selected configuration template does not exist')
+        template = dict(row)
+        platform = str(template_payload.get('platform') or '').strip()
+        if not platform:
+            raise HTTPException(status_code=400, detail='command_template.platform is required for config template mode')
+        pre_check, post_check = _default_checks_for_platform(platform)
+        scenario = {
+            'id': template['id'],
+            'name': template.get('name') or '',
+            'name_zh': template.get('name') or '',
+            'variables': [],
+            'platform_phases': {
+                platform: {
+                    'pre_check': pre_check,
+                    'execute': [str(template.get('content') or '')] if str(template.get('content') or '').strip() else [],
+                    'post_check': post_check,
+                    'rollback': [],
+                }
+            },
+            'default_platform': platform,
+            'supported_platforms': [platform],
+        }
+    else:
+        scenario = next((item for item in _all_scenarios() if item.get('id') == scenario_id), None)
+        if not scenario:
+            raise HTTPException(status_code=400, detail='Selected scenario does not exist')
 
     supported_platforms = scenario.get('supported_platforms') or []
     default_platform = str(scenario.get('default_platform') or (supported_platforms[0] if supported_platforms else '')).strip()
@@ -177,6 +245,7 @@ def _build_command_template_snapshot(template_payload: dict) -> dict:
 
     return {
         'mode': 'template',
+        'source_kind': source_kind,
         'scenario_id': scenario_id,
         'scenario_name': str(scenario.get('name') or ''),
         'scenario_name_zh': str(scenario.get('name_zh') or scenario.get('name') or ''),

@@ -1,0 +1,64 @@
+- generic [ref=e3]:
+  - img
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - heading "Nexora" [level=1] [ref=e10]
+      - paragraph [ref=e11]: Network Automation Platform
+      - paragraph [ref=e12]: 统一网络运维管理平台 —— 设备管理、自动化编排、合规审计、实时监控，一站式掌控全网。
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - img [ref=e16]
+        - paragraph [ref=e19]: "2"
+        - paragraph [ref=e20]: Devices
+      - generic [ref=e22]:
+        - img [ref=e24]
+        - paragraph [ref=e26]: Healthy
+        - paragraph [ref=e27]: Status
+      - generic [ref=e29]:
+        - img [ref=e31]
+        - paragraph [ref=e35]: 2/2
+        - paragraph [ref=e36]: Online
+    - generic [ref=e37]:
+      - paragraph [ref=e38]: 21:21:25
+      - paragraph [ref=e39]: 2026/04/21周二
+  - generic [ref=e44]:
+    - generic [ref=e45]:
+      - heading "Welcome back" [level=2] [ref=e46]
+      - paragraph [ref=e47]: Sign in to your operations console
+    - generic [ref=e49]:
+      - generic [ref=e50]:
+        - generic [ref=e51]: Username
+        - generic [ref=e52]:
+          - img [ref=e54]
+          - textbox "Username" [ref=e57]:
+            - /placeholder: admin
+            - text: dmini
+      - generic [ref=e58]:
+        - generic [ref=e59]: Password
+        - generic [ref=e60]:
+          - img [ref=e62]
+          - textbox "Password" [active] [ref=e65]:
+            - /placeholder: ••••••••
+            - text: lI198609
+          - button "Show password" [ref=e66]:
+            - img [ref=e67]
+      - paragraph [ref=e98]:
+        - img [ref=e99]
+        - text: Invalid credentials
+      - generic [ref=e70] [cursor=pointer]:
+        - checkbox "Remember me" [ref=e72]
+        - generic [ref=e74]: Remember me
+      - button "Forgot password?" [ref=e76]:
+        - img [ref=e77]
+        - text: Forgot password?
+      - button "Login" [ref=e81]:
+        - generic [ref=e83]:
+          - text: Login
+          - img [ref=e103]
+    - generic [ref=e87]:
+      - generic [ref=e90]: System Online
+      - generic [ref=e91]: ·
+      - generic [ref=e92]: Nexora v2.0
+      - generic [ref=e93]: ·
+      - generic [ref=e94]: © 2026 Nexora

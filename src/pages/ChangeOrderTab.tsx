@@ -99,6 +99,8 @@ interface ScenarioVariable {
 
 interface ScenarioTemplate {
   id: string;
+  source_kind?: 'scenario' | 'config_template';
+  source_template_id?: string;
   name: string;
   name_zh?: string;
   description?: string;
@@ -206,6 +208,11 @@ const EMPTY_TEMPLATE_PREVIEW: ScenarioPhasePreview = {
   post_check: [],
   rollback: [],
 };
+
+const CONFIG_TEMPLATE_SCENARIO_PREFIX = 'cfgtpl:';
+const toConfigTemplateScenarioId = (templateId: string) => `${CONFIG_TEMPLATE_SCENARIO_PREFIX}${templateId}`;
+const isConfigTemplateScenarioId = (scenarioId: string) => scenarioId.startsWith(CONFIG_TEMPLATE_SCENARIO_PREFIX);
+const fromConfigTemplateScenarioId = (scenarioId: string) => scenarioId.replace(CONFIG_TEMPLATE_SCENARIO_PREFIX, '');
 
 /* ═══════════════════════════════════════════════════════════════════
    Helpers
@@ -595,41 +602,49 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   };
 
   const scenarioOptions = useMemo(() => {
-    if (configTemplates && configTemplates.length > 0) {
-      return configTemplates
-        .filter((item) => item && item.id && item.name)
-        .map((template) => {
-          const matchedPlatforms = Object.entries(platforms)
-            .filter(([, meta]) => !template.vendor || meta.vendor === template.vendor)
-            .map(([key]) => key);
-          const supportedPlatforms = matchedPlatforms.length > 0 ? matchedPlatforms : Object.keys(platforms);
-          const phases: Record<string, Partial<ScenarioPhasePreview>> = {};
-          supportedPlatforms.forEach((platformKey) => {
-            const { pre_check, post_check } = getDefaultPrePostCheck(platformKey);
-            phases[platformKey] = {
-              pre_check,
-              execute: template.content ? [template.content] : [],
-              post_check,
-              rollback: [],
-            };
-          });
-          return {
-            id: template.id,
-            name: template.name,
-            name_zh: template.name,
-            description: template.category || '',
-            description_zh: template.category || '',
-            category: template.category,
-            icon: '📄',
-            risk: 'medium',
-            supported_platforms: supportedPlatforms,
-            default_platform: supportedPlatforms[0] || '',
-            variables: [],
-            platform_phases: phases,
-          } as ScenarioTemplate;
+    const scenarioItems = scenarios
+      .filter((item) => item && item.id && item.platform_phases && Object.keys(item.platform_phases).length > 0)
+      .map((item) => ({ ...item, source_kind: 'scenario' as const }));
+
+    const configTemplateItems = (configTemplates || [])
+      .filter((item) => item && item.id && item.name)
+      .map((template) => {
+        const matchedPlatforms = Object.entries(platforms)
+          .filter(([, meta]) => !template.vendor || (meta as PlatformMeta)?.vendor === template.vendor)
+          .map(([key]) => key);
+        const fallbackPlatforms = ['cisco_ios', 'huawei_vrp', 'h3c_comware', 'linux'];
+        const supportedPlatforms = matchedPlatforms.length > 0 
+          ? matchedPlatforms 
+          : (Object.keys(platforms).length > 0 ? Object.keys(platforms) : fallbackPlatforms);
+        const phases: Record<string, Partial<ScenarioPhasePreview>> = {};
+        supportedPlatforms.forEach((platformKey) => {
+          const { pre_check, post_check } = getDefaultPrePostCheck(platformKey);
+          phases[platformKey] = {
+            pre_check,
+            execute: template.content ? [template.content] : [],
+            post_check,
+            rollback: [],
+          };
         });
-    }
-    return scenarios.filter((item) => item && item.id && item.platform_phases && Object.keys(item.platform_phases).length > 0);
+        return {
+          id: toConfigTemplateScenarioId(template.id),
+          source_kind: 'config_template' as const,
+          source_template_id: template.id,
+          name: template.name,
+          name_zh: template.name,
+          description: template.category || '',
+          description_zh: template.category || '',
+          category: template.category,
+          icon: '📄',
+          risk: 'medium',
+          supported_platforms: supportedPlatforms,
+          default_platform: supportedPlatforms[0] || '',
+          variables: [],
+          platform_phases: phases,
+        } as ScenarioTemplate;
+      });
+
+    return [...scenarioItems, ...configTemplateItems];
   }, [configTemplates, platforms, scenarios]);
 
   const selectedScenario = useMemo(
@@ -813,9 +828,10 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     return commands;
   };
 
-  const getLocalTemplatePreview = () => {
-    if (!selectedScenario || !selectedScenarioPlatform) return null;
-    const phases = selectedScenario.platform_phases?.[selectedScenarioPlatform] || {};
+  const getLocalTemplatePreview = (platformOverride?: string) => {
+    const platformToUse = platformOverride || selectedScenarioPlatform;
+    if (!selectedScenario || !platformToUse) return null;
+    const phases = selectedScenario.platform_phases?.[platformToUse] || {};
     return {
       pre_check: renderPhaseCommands(phases.pre_check || [], templateVariables),
       execute: renderPhaseCommands(phases.execute || [], templateVariables),
@@ -826,21 +842,50 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
   useEffect(() => {
     if (commandMode !== 'template' || !selectedScenario || selectedScenarioPlatform) return;
-    const deviceWithPlatform = form.target_devices.find((dev) => dev.platform);
-    if (!deviceWithPlatform?.platform) return;
+    
     const platformsList = selectedScenario.supported_platforms?.length
       ? selectedScenario.supported_platforms
       : Object.keys(selectedScenario.platform_phases || {});
-    const matchedPlatform = findMatchingPlatform(deviceWithPlatform.platform, platformsList);
-    if (matchedPlatform) {
-      setSelectedScenarioPlatform(matchedPlatform);
+    
+    // Try to match platform from device, or use first supported platform as default
+    const deviceWithPlatform = form.target_devices.find((dev) => dev.platform);
+    if (deviceWithPlatform?.platform) {
+      const matchedPlatform = findMatchingPlatform(deviceWithPlatform.platform, platformsList);
+      if (matchedPlatform) {
+        setSelectedScenarioPlatform(matchedPlatform);
+      }
+    } else if (platformsList.length > 0) {
+      // Default to the first supported platform if no device platform is available
+      setSelectedScenarioPlatform(platformsList[0]);
     }
   }, [commandMode, selectedScenario, selectedScenarioPlatform, form.target_devices]);
 
-  const fetchTemplatePreview = useCallback(async () => {
-    const effectiveScenarioPlatform = selectedScenarioPlatform || (selectedScenarioPlatforms.length === 1 ? selectedScenarioPlatforms[0] : '');
-    if (commandMode !== 'template' || !selectedScenarioId || !effectiveScenarioPlatform) {
+  const fetchTemplatePreview = useCallback(async (platformArg?: string, scenarioArg?: ScenarioTemplate | null) => {
+    const scenario = scenarioArg !== undefined ? scenarioArg : selectedScenario;
+    const scenarioId = scenario?.id || selectedScenarioId;
+    // Compute the effective platform: prefer explicit arg, then state, then first from scenario
+    const scenarioPlatforms = scenario
+      ? (scenario.supported_platforms?.length ? scenario.supported_platforms : Object.keys(scenario.platform_phases || {}))
+      : selectedScenarioPlatforms;
+    const effectiveScenarioPlatform = platformArg || selectedScenarioPlatform || scenarioPlatforms[0] || '';
+    if (commandMode !== 'template' || !scenarioId || !effectiveScenarioPlatform) {
+      console.log('[Preview] Skipping — missing required fields. scenarioId:', scenarioId, 'platform:', effectiveScenarioPlatform, 'commandMode:', commandMode);
       setTemplatePreview(null);
+      return;
+    }
+    // Local configuration templates do not exist in /api/playbooks/scenarios.
+    // Render preview from local phase mapping directly.
+    if (isConfigTemplateScenarioId(scenarioId)) {
+      const phases = scenario?.platform_phases?.[effectiveScenarioPlatform] || {};
+      const localPreview = {
+        pre_check: renderPhaseCommands(phases.pre_check || [], templateVariables),
+        execute: renderPhaseCommands(phases.execute || [], templateVariables),
+        post_check: renderPhaseCommands(phases.post_check || [], templateVariables),
+        rollback: renderPhaseCommands(phases.rollback || [], templateVariables),
+      };
+      setTemplatePreview(localPreview.execute.length > 0 ? localPreview : EMPTY_TEMPLATE_PREVIEW);
+      setTemplatePreviewError('');
+      setTemplatePreviewLoading(false);
       return;
     }
     setTemplatePreviewLoading(true);
@@ -850,7 +895,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         method: 'POST',
         headers: authHeaders(true),
         body: JSON.stringify({
-          scenario_id: selectedScenarioId,
+          scenario_id: scenarioId,
           platform: effectiveScenarioPlatform,
           variables: templateVariables,
         }),
@@ -865,36 +910,57 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         post_check: Array.isArray(data.post_check) ? data.post_check : [],
         rollback: Array.isArray(data.rollback) ? data.rollback : [],
       };
-      if (preview.execute.length === 0 && selectedScenario?.platform_phases) {
-        const fallback = getLocalTemplatePreview();
-        if (fallback) {
-          setTemplatePreview(fallback);
+      if (preview.execute.length === 0 && scenario?.platform_phases) {
+        const phases = scenario.platform_phases[effectiveScenarioPlatform] || {};
+        const localFallback = {
+          pre_check: renderPhaseCommands(phases.pre_check || [], templateVariables),
+          execute: renderPhaseCommands(phases.execute || [], templateVariables),
+          post_check: renderPhaseCommands(phases.post_check || [], templateVariables),
+          rollback: renderPhaseCommands(phases.rollback || [], templateVariables),
+        };
+        if (localFallback.execute.length > 0) {
+          setTemplatePreview(localFallback);
           return;
         }
       }
       setTemplatePreview(preview);
     } catch (error) {
-      const fallback = getLocalTemplatePreview();
-      if (fallback) {
-        setTemplatePreview(fallback);
-        setTemplatePreviewError('');
-      } else {
-        setTemplatePreview(null);
-        setTemplatePreviewError(error instanceof Error ? error.message : (zh ? '模板预览失败' : 'Template preview failed'));
+      // On error, try to render locally from platform_phases
+      if (scenario?.platform_phases?.[effectiveScenarioPlatform]) {
+        const phases = scenario.platform_phases[effectiveScenarioPlatform];
+        const localFallback = {
+          pre_check: renderPhaseCommands(phases.pre_check || [], templateVariables),
+          execute: renderPhaseCommands(phases.execute || [], templateVariables),
+          post_check: renderPhaseCommands(phases.post_check || [], templateVariables),
+          rollback: renderPhaseCommands(phases.rollback || [], templateVariables),
+        };
+        if (localFallback.execute.length > 0 || localFallback.pre_check.length > 0) {
+          setTemplatePreview(localFallback);
+          setTemplatePreviewError('');
+          return;
+        }
       }
+      setTemplatePreview(null);
+      setTemplatePreviewError(error instanceof Error ? error.message : (zh ? '模板预览失败' : 'Template preview failed'));
     } finally {
       setTemplatePreviewLoading(false);
     }
-  }, [authHeaders, commandMode, selectedScenarioId, selectedScenarioPlatform, selectedScenarioPlatforms, selectedScenario, templateVariables, zh]);
+  }, [authHeaders, commandMode, selectedScenarioId, selectedScenarioPlatform, selectedScenarioPlatforms, selectedScenario, templateVariables, renderPhaseCommands, zh]);
 
   const editorVisible = isCreateView || showCreateModal;
   const hideDraftListWhenEditing = showCreateModal && viewTab === 'my_drafts' && editingOrder !== null;
 
   useEffect(() => {
     if (!editorVisible || commandMode !== 'template' || !selectedScenarioId) return;
-    const timer = setTimeout(() => { fetchTemplatePreview(); }, 220);
+    // Compute the platform synchronously here, so even on the first render after scenario selection
+    // we pass a valid platform to fetchTemplatePreview instead of relying on stale state.
+    const scenarioPlatformsList = selectedScenario
+      ? (selectedScenario.supported_platforms?.length ? selectedScenario.supported_platforms : Object.keys(selectedScenario.platform_phases || {}))
+      : [];
+    const resolvedPlatform = selectedScenarioPlatform || scenarioPlatformsList[0] || '';
+    const timer = setTimeout(() => { fetchTemplatePreview(resolvedPlatform, selectedScenario); }, 220);
     return () => clearTimeout(timer);
-  }, [editorVisible, commandMode, selectedScenarioId, selectedScenarioPlatform, templateVariables, fetchTemplatePreview]);
+  }, [editorVisible, commandMode, selectedScenarioId, selectedScenarioPlatform, selectedScenario, templateVariables, fetchTemplatePreview]);
 
   // ── Fetch ──
   const fetchOrders = useCallback(async () => {
@@ -975,9 +1041,9 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
   // ── Create / Update ──
   const saveOrder = async (closeAfterSave = true, asDraft = false) => {
-    const effectiveScenarioPlatform = selectedScenarioPlatform || (selectedScenarioPlatforms.length === 1 ? selectedScenarioPlatforms[0] : '');
+    const effectiveScenarioPlatform = selectedScenarioPlatform || selectedScenarioPlatforms[0] || '';
     // When no scenario selected, use local preview if available
-    const localPreview = selectedScenarioId && selectedScenarioPlatform ? getLocalTemplatePreview() : null;
+    const localPreview = selectedScenarioId && effectiveScenarioPlatform ? getLocalTemplatePreview(effectiveScenarioPlatform) : null;
     const effectivePreview = templatePreview || localPreview;
     
     if (!form.title.trim()) {
@@ -1036,7 +1102,8 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           setSelectedScenarioPlatform(effectiveScenarioPlatform);
         }
         payload.command_template = {
-          scenario_id: selectedScenarioId,
+          scenario_id: isConfigTemplateScenarioId(selectedScenarioId) ? fromConfigTemplateScenarioId(selectedScenarioId) : selectedScenarioId,
+          source_kind: selectedScenario?.source_kind || 'scenario',
           platform: effectiveScenarioPlatform,
           variables: templateVariables,
         };
@@ -1251,7 +1318,16 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     });
     if (templateSnapshot) {
       setCommandMode('template');
-      setSelectedScenarioId(String(templateSnapshot.scenario_id || ''));
+      const snapshotScenarioId = String(templateSnapshot.scenario_id || '');
+      const asConfigTemplateScenarioId = toConfigTemplateScenarioId(snapshotScenarioId);
+      const existsAsScenario = scenarioOptions.some((item) => item.id === snapshotScenarioId);
+      const existsAsConfigTemplate = scenarioOptions.some((item) => item.id === asConfigTemplateScenarioId);
+      const preferredId = existsAsScenario
+        ? snapshotScenarioId
+        : existsAsConfigTemplate
+          ? asConfigTemplateScenarioId
+          : snapshotScenarioId;
+      setSelectedScenarioId(preferredId);
       setSelectedScenarioPlatform(String(templateSnapshot.platform || ''));
       setTemplateVariables(Object.fromEntries(
         Object.entries(templateSnapshot.variables || {}).map(([key, value]) => [key, String(value ?? '')]),
@@ -1426,6 +1502,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       <AnimatePresence>
         {toast && (
           <motion.div
+            key="global-toast"
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
@@ -1442,7 +1519,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
       {!selectedOrder ? (
       <>
-      {!isCreateView && !hideDraftListWhenEditing && (
+      {!editorVisible && (
         <>
           {/* ── Summary Cards ── */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -1547,6 +1624,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         <AnimatePresence>
           {showAdvancedSearch && (
             <motion.div
+              key="advanced-search-panel"
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
@@ -1719,7 +1797,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       )}
 
       {/* ── Table ── */}
-      {!isCreateView && !hideDraftListWhenEditing && (
+      {!editorVisible && (
         <div className="min-w-0">
           <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
             {loading && orders.length === 0 ? (
@@ -2281,6 +2359,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       <AnimatePresence>
         {editorVisible && (
           <motion.div
+            key="change-order-editor-modal"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 10 }}

@@ -1662,56 +1662,55 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                         </button>
                       </div>
                       <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                        {/* Type + Status badges */}
-                        <div className="flex gap-2 flex-wrap mb-4">
-                          <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: rc.bg + '20', color: rc.bg }}>
-                            {zh ? rc.labelZh : rc.label}
-                          </span>
-                          <span className="text-xs px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1" style={{ background: device.status === 'active' ? '#4ade80' + '20' : device.status === 'planned' ? '#fbbf24' + '20' : '#ef4444' + '20', color: device.status === 'active' ? '#4ade80' : device.status === 'planned' ? '#fbbf24' : '#ef4444' }}>
-                            <span className="w-2 h-2 rounded-full" style={{ background: 'currentColor' }} />
-                            {zh ? statusInfo.zh : statusInfo.en}
-                          </span>
-                        </div>
-
-                        {/* Fields grid */}
-                        <div className="grid grid-cols-2 gap-x-2.5 gap-y-2 text-[11px]">
-                          <div>
-                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '厂商' : 'Vendor'}</label>
-                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.vendor || '—'}</div>
+                        {drawerAssetLoading && (
+                          <div className="text-xs flex items-center gap-2 mb-3" style={{ color: 'var(--muted-text)' }}>
+                            <RefreshCw size={12} className="animate-spin" />
+                            {zh ? '正在加载资产详情…' : 'Loading asset details...'}
                           </div>
-                          <div>
-                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '型号' : 'Model'}</label>
-                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.model || '—'}</div>
+                        )}
+                        {drawerAssetDetail ? (
+                          <div className="rounded-xl border border-black/10 bg-white p-3">
+                            <AssetReadonlyDetailInner asset={drawerAssetDetail} zh={zh} />
                           </div>
-                          <div>
-                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '序列号' : 'Serial No.'}</label>
-                            <div className="px-2.5 py-1.5 rounded border font-mono text-[10px]" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.serial_number || '—'}</div>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '资产ID' : 'Asset ID'}</label>
-                            <div className="px-2.5 py-1.5 rounded border font-mono text-[10px]" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.asset_id || '—'}</div>
-                          </div>
-                          <div className="col-span-2">
-                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '数据中心' : 'Datacenter'}</label>
-                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>—</div>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '机柜' : 'Rack'}</label>
-                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>—</div>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? 'U位' : 'Unit'}</label>
-                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>U{device.start_u}{endU !== device.start_u ? `-U${endU}` : ''}</div>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '位置' : 'Side'}</label>
-                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.position === 'front' ? (zh ? '前面板' : 'Front') : (zh ? '后面板' : 'Rear')}</div>
-                          </div>
-                          <div className="col-span-2">
-                            <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '角色' : 'Role'}</label>
-                            <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.device_role || '—'}</div>
-                          </div>
-                        </div>
+                        ) : (
+                          <>
+                            <div className="flex gap-2 flex-wrap mb-4">
+                              <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: rc.bg + '20', color: rc.bg }}>
+                                {zh ? rc.labelZh : rc.label}
+                              </span>
+                              <span className="text-xs px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1" style={{ background: device.status === 'active' ? '#4ade80' + '20' : device.status === 'planned' ? '#fbbf24' + '20' : '#ef4444' + '20', color: device.status === 'active' ? '#4ade80' : device.status === 'planned' ? '#fbbf24' : '#ef4444' }}>
+                                <span className="w-2 h-2 rounded-full" style={{ background: 'currentColor' }} />
+                                {zh ? statusInfo.zh : statusInfo.en}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-2.5 gap-y-2 text-[11px]">
+                              <div>
+                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '厂商' : 'Vendor'}</label>
+                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.vendor || '—'}</div>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '型号' : 'Model'}</label>
+                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.model || '—'}</div>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '序列号' : 'Serial No.'}</label>
+                                <div className="px-2.5 py-1.5 rounded border font-mono text-[10px]" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.serial_number || '—'}</div>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '资产ID' : 'Asset ID'}</label>
+                                <div className="px-2.5 py-1.5 rounded border font-mono text-[10px]" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.asset_id || '—'}</div>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? 'U位' : 'Unit'}</label>
+                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>U{device.start_u}{endU !== device.start_u ? `-U${endU}` : ''}</div>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '位置' : 'Side'}</label>
+                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.position === 'front' ? (zh ? '前面板' : 'Front') : (zh ? '后面板' : 'Rear')}</div>
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
                       <div className="p-4 border-t" style={{ borderColor: 'var(--card-border)' }}>
                         <button onClick={() => handleRemoveDevice(device.id, device.name)} className="w-full px-3 py-2 rounded-lg text-[12px] font-medium text-red-500 hover:bg-red-50/80">{zh ? '移除设备' : 'Remove'}</button>
