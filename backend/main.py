@@ -156,8 +156,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS — restrict to known origins in production; permissive in dev
 _cors_origins = ["*"] if os.environ.get("NODE_ENV") == "development" else [
-    f"http://localhost:{os.environ.get('PORT', '8004')}",
-    f"http://127.0.0.1:{os.environ.get('PORT', '8004')}",
+    f"http://localhost:{os.environ.get('PORT', '8003')}",
+    f"http://127.0.0.1:{os.environ.get('PORT', '8003')}",
 ]
 # In production, set CORS_ORIGINS env var to a comma-separated list of allowed origins
 _env_origins = os.environ.get("CORS_ORIGINS", "").strip()
@@ -1823,7 +1823,7 @@ def seed_data():
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", "8004"))
+    port = int(os.environ.get("PORT", "8003"))
     workers = int(os.environ.get("WORKERS", "1"))
     if workers > 1:
         # Multi-worker: pass app as import string so each worker can import it

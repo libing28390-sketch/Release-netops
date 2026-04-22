@@ -25,7 +25,7 @@ PYTHON_MIN="3.10"                   # 最低 Python 版本
 GIT_REPO="https://github.com/libing28390-sketch/netsops.git"
 PROJECT_NAME="netops-automation"
 SERVICE_NAME="netops"
-BACKEND_PORT=8004
+BACKEND_PORT=8003
 NGINX_PORT=8080                     # Nginx 监听端口（如 80 被占用可改为 8080 等）
 SERVER_NAME="_"                     # 改为你的域名，如 netops.example.com
 
@@ -234,7 +234,7 @@ info "配置 Nginx 反向代理..."
 
 sudo tee "$NGINX_CONF" > /dev/null <<'NGINXEOF'
 upstream netops_backend {
-    server 127.0.0.1:8004;
+    server 127.0.0.1:8003;
     keepalive 32;
 }
 

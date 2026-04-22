@@ -189,9 +189,12 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
         groups = [g.strip() for g in group_todo.split(',') if g.strip()]
         gconds = []
         if 'initial_reviewer' in groups:
-            gconds.append("status = 'initial_review'")
+            # Show initial_review orders that either have no specific assignee,
+            # or are assigned to the current user (my_todo handles the personal case,
+            # group_todo shows unassigned ones for anyone in the group to pick up)
+            gconds.append("(status = 'initial_review' AND (assigned_initial_reviewer_id IS NULL OR assigned_initial_reviewer_id = ''))")
         if 'final_approver' in groups:
-            gconds.append("status = 'final_review'")
+            gconds.append("(status = 'final_review' AND (assigned_final_approver_id IS NULL OR assigned_final_approver_id = ''))")
         if gconds:
             conditions.append(f"({' OR '.join(gconds)})")
         else:

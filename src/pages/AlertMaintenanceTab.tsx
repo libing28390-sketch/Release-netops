@@ -532,7 +532,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
   return (
     <div className="space-y-4">
       <div className={alertPanelClass}>
-        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
               {language === 'zh' ? '告警中心 / 维护期' : 'Alert Center / Maintenance'}
@@ -541,7 +541,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
               {language === 'zh' ? '当前维护期' : 'Current Maintenance Windows'}
             </h2>
             <p className="mt-2 text-sm text-black/50">
-              {language === 'zh' ? '维护期支持按条件定义或按资源对象批量覆盖。' : 'Maintenance windows can now target alerts by conditions or by multiple resource objects.'}
+              {language === 'zh' ? '通过灵活的规则组合设定告警静默窗口，避免计划内变更引发告警风暴。' : 'Define suppression windows via flexible rule logic to prevent alert storms during planned maintenance.'}
             </p>
           </div>
           <div className="flex items-center gap-2">

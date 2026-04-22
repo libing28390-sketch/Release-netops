@@ -1,4 +1,4 @@
-﻿import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import * as htmlToImage from 'html-to-image';
@@ -68,6 +68,7 @@ const AutomationScenariosTab = lazy(() => import('./pages/AutomationScenariosTab
 const AutomationHistoryTab = lazy(() => import('./pages/AutomationHistoryTab'));
 const InspectionTab = lazy(() => import('./pages/InspectionTab'));
 const ExecutionScheduleTab = lazy(() => import('./pages/ExecutionScheduleTab'));
+const InspectionItemsTab = lazy(() => import('./pages/InspectionItemsTab'));
 const ScheduledJobsTab = lazy(() => import('./pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('./pages/PlatformSettingsTab'));
 const RackManagementTab = lazy(() => import('./pages/RackManagementTab'));
@@ -481,6 +482,13 @@ const App: React.FC = () => {
       navigate('/change-orders/all', { replace: true });
     }
   }, [activeTab, changeOrderPage, navigate]);
+  // Load playbook scenarios & platforms once when entering change-orders tab
+  React.useEffect(() => {
+    if (activeTab === 'change-orders') {
+      loadScenarios();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
   const setActiveTab = (tab: string) => {
     navigate(`/${tab}`);
     if (isMobile) setSidebarCollapsed(true);
@@ -510,6 +518,7 @@ const App: React.FC = () => {
     if (path === '/automation/schedule') return language === 'zh' ? '执行计划' : 'Execution Schedules';
     if (path === '/automation/schedule-history') return language === 'zh' ? '执行历史' : 'Execution History';
     if (path === '/automation/scheduled-jobs') return language === 'zh' ? '定时作业' : 'Scheduled Jobs';
+    if (path === '/automation/metrics') return language === 'zh' ? '巡检指标项' : 'Inspection Metrics';
     if (path === '/change-orders/all') return language === 'zh' ? '全部工单' : 'All Orders';
     if (path === '/change-orders/my-todo') return language === 'zh' ? '个人待办' : 'My Todo';
     if (path === '/change-orders/group-todo') return language === 'zh' ? '组内待办' : 'Group Todo';
@@ -580,6 +589,7 @@ const App: React.FC = () => {
       { path: '/automation/schedule', label: zh ? '执行计划' : 'Execution Schedules', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/schedule-history', label: zh ? '执行历史' : 'Execution History', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scheduled-jobs', label: zh ? '定时作业' : 'Scheduled Jobs', group: zh ? '作业自动化' : 'Automation' },
+      { path: '/automation/metrics', label: zh ? '巡检指标项' : 'Inspection Metrics', group: zh ? '作业自动化' : 'Automation' },
       { path: '/config/backup', label: t('backupHistory'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/diff', label: t('diffCompare'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/search', label: t('configSearchTab'), group: zh ? '配置与合规' : 'Config & Compliance' },
@@ -5814,7 +5824,7 @@ const App: React.FC = () => {
           )}
           {activeTab === 'automation' && automationPage === 'schedule' && (
             <Suspense fallback={lazyPanelFallback}>
-              <ExecutionScheduleTab t={t} language={language} showToast={showToast} />
+              <ExecutionScheduleTab t={t} language={language} showToast={showToast} initialTab="schedules" />
             </Suspense>
           )}
           {activeTab === 'automation' && automationPage === 'schedule-history' && (
@@ -5825,6 +5835,11 @@ const App: React.FC = () => {
           {activeTab === 'automation' && automationPage === 'scheduled-jobs' && (
             <Suspense fallback={lazyPanelFallback}>
               <ScheduledJobsTab t={t} language={language} showToast={showToast} />
+            </Suspense>
+          )}
+          {activeTab === 'automation' && automationPage === 'metrics' && (
+            <Suspense fallback={lazyPanelFallback}>
+              <InspectionItemsTab t={t} language={language} showToast={showToast} />
             </Suspense>
           )}
           {activeTab === 'compliance' && (

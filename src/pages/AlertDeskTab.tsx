@@ -321,7 +321,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   return (
     <div className="space-y-4">
       <div className={alertPanelClass}>
-        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
               {language === 'zh' ? '告警中心 / 告警信息' : 'Alert Center / Alert Desk'}
@@ -330,7 +330,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               {language === 'zh' ? '当前告警' : 'Current Alerts'}
             </h2>
             <p className="mt-2 text-sm text-black/50">
-              {language === 'zh' ? '只保留筛选、列表、分页和必要操作。' : 'A simple page with filters, list, pagination, and essential actions.'}
+              {language === 'zh' ? '实时监控全网设备与业务异常，快速进行故障确认、分派和处置。' : 'Real-time monitoring of network anomalies, facilitating quick triage and response.'}
             </p>
           </div>
           <div className="flex gap-2">

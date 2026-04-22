@@ -159,7 +159,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
     <div className="space-y-4">
       <div className={alertPanelClass}>
         {/* Header */}
-        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
               {zh ? '告警中心 / 历史告警' : 'Alert Center / Alert History'}
@@ -168,7 +168,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
               {zh ? '历史告警' : 'Alert History'}
             </h2>
             <p className="mt-2 text-sm text-black/50">
-              {zh ? '查看已恢复和已关闭的告警记录，支持按时间范围检索。' : 'Browse resolved and closed alerts with time-range search.'}
+              {zh ? '查询并溯源历史告警，复盘故障处理生命周期与时长记录。' : 'Trace historical alerts and review incident lifecycles and resolution metrics.'}
             </p>
           </div>
           <div className="flex gap-2">

@@ -215,7 +215,7 @@ class InspectionRunRequest(BaseModel):
     @field_validator('scope_type')
     @classmethod
     def validate_scope_type(cls, v: str) -> str:
-        allowed = {'all', 'site', 'role', 'device', 'devices'}
+        allowed = {'all', 'site', 'role', 'device', 'devices', 'ip', 'tags'}
         if v not in allowed:
             raise ValueError(f'scope_type must be one of {allowed}')
         return v
@@ -228,11 +228,13 @@ class InspectionScheduleCreate(BaseModel):
     cron_expr: str = ''  # kept for backward compat, empty for time-range plans
     scope_type: str = 'all'
     scope_filter: str = ''
+    description: str = ''
+    check_items: list[str] = []
 
     @field_validator('scope_type')
     @classmethod
     def validate_scope_type(cls, v: str) -> str:
-        allowed = {'all', 'site', 'role', 'device', 'devices'}
+        allowed = {'all', 'site', 'role', 'device', 'devices', 'ip', 'tags'}
         if v not in allowed:
             raise ValueError(f'scope_type must be one of {allowed}')
         return v
@@ -246,6 +248,25 @@ class InspectionScheduleUpdate(BaseModel):
     scope_type: str | None = None
     scope_filter: str | None = None
     enabled: bool | None = None
+    description: str | None = None
+    check_items: list[str] | None = None
+
+
+# ─── Inspection Items (指标管理) ────────────────
+class InspectionItemBase(BaseModel):
+    name: str
+    name_zh: str
+    category: str
+    check_key: str
+    description: str = ''
+
+class InspectionItemCreate(InspectionItemBase):
+    pass
+
+class InspectionItem(InspectionItemBase):
+    id: str
+    created_at: str
+    updated_at: str
 
 
 # ─── Tag 标签系统 ─────────────────────────────

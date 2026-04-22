@@ -357,7 +357,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   return (
     <div className="space-y-4">
       <div className={alertPanelClass}>
-        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
               {language === 'zh' ? '告警中心 / 告警规则' : 'Alert Center / Alert Rules'}
@@ -366,7 +366,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
               {language === 'zh' ? '当前规则' : 'Current Rules'}
             </h2>
             <p className="mt-2 text-sm text-black/50">
-              {language === 'zh' ? '管理告警触发条件与通知策略' : 'Manage alert trigger conditions and notification policies'}
+              {language === 'zh' ? '灵活配置多维度监控指标的触发阈值，精细管理全生命周期的告警策略。' : 'Configure multi-dimensional trigger thresholds and manage full-lifecycle alerting policies.'}
             </p>
           </div>
           <div className="flex items-center gap-2">

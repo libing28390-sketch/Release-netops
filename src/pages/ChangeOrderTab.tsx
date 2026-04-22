@@ -491,6 +491,13 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const [detailLoading, setDetailLoading] = useState(false);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const [actionPrompt, setActionPrompt] = useState<{
+    title: string;
+    placeholder: string;
+    value: string;
+    required: boolean;
+    onConfirm: (val: string) => void;
+  } | null>(null);
 
   // ── Create/Edit modal ──
   const [showCreateModal, setShowCreateModal] = useState(initialView === 'create');
@@ -655,8 +662,26 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       });
 
     const allItems = [...scenarioItems, ...configTemplateItems];
-    return Array.from(new Map(allItems.map((item) => [item.id, item])).values());
-  }, [configTemplates, platforms, scenarios]);
+    // De-duplicate by name to prevent confusing the user with multiple versions of the same template
+    const uniqueByName = new Map<string, ScenarioTemplate>();
+    allItems.forEach(item => {
+      // Use localized name for grouping
+      const nameKey = zh ? (item.name_zh || item.name) : item.name;
+      // Also include category to distinguish between different types with same name
+      const groupingKey = `${item.category || ''}:${nameKey}`;
+      
+      const existing = uniqueByName.get(groupingKey);
+      // Priority: Built-in Scenario > Config Template
+      if (!existing || (existing.source_kind === 'config_template' && item.source_kind === 'scenario')) {
+        uniqueByName.set(groupingKey, item);
+      }
+    });
+    return Array.from(uniqueByName.values()).sort((a, b) => {
+      const nameA = zh ? (a.name_zh || a.name) : a.name;
+      const nameB = zh ? (b.name_zh || b.name) : b.name;
+      return nameA.localeCompare(nameB);
+    });
+  }, [configTemplates, platforms, scenarios, zh]);
 
   const selectedScenario = useMemo(
     () => scenarioOptions.find((item) => item.id === selectedScenarioId) || null,
@@ -771,12 +796,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   useEffect(() => {
     if (commandMode !== 'template' || selectedScenarioId) return;
     const deviceWithPlatform = form.target_devices.find((dev) => dev.platform);
-    
-    console.log('[AutoDetect] Mode:', commandMode, 'Has scenario:', !!selectedScenarioId, 'Device platform:', deviceWithPlatform?.platform);
-    console.log('[AutoDetect] Available scenarios:', scenarioOptions.length, scenarioOptions.map(s => ({ id: s.id, name: s.name, platforms: s.supported_platforms?.slice(0, 3) })));
-    
     if (!deviceWithPlatform?.platform) {
-      console.log('[AutoDetect] No device platform found');
       return;
     }
 
@@ -785,23 +805,19 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         ? scenario.supported_platforms
         : Object.keys(scenario.platform_phases || {});
       const isMatch = supportedPlatforms.some((p) => findMatchingPlatform(deviceWithPlatform.platform || '', [p]));
-      console.log('[AutoDetect] Scenario', scenario.name, 'supports', supportedPlatforms.slice(0, 3), '... match?', isMatch);
       return isMatch;
     });
 
     if (matchedScenario) {
-      console.log('[AutoDetect] Matched scenario:', matchedScenario.id, matchedScenario.name);
       setSelectedScenarioId(matchedScenario.id);
       const platformsList = matchedScenario.supported_platforms?.length
         ? matchedScenario.supported_platforms
         : Object.keys(matchedScenario.platform_phases || {});
       const matchedPlatform = findMatchingPlatform(deviceWithPlatform.platform || '', platformsList);
-      console.log('[AutoDetect] Matched platform:', matchedPlatform);
       if (matchedPlatform) {
         setSelectedScenarioPlatform(matchedPlatform);
       }
     } else {
-      console.log('[AutoDetect] No matching scenario found for platform:', deviceWithPlatform.platform);
     }
   }, [commandMode, selectedScenarioId, form.target_devices, scenarioOptions]);
 
@@ -880,7 +896,6 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       : selectedScenarioPlatforms;
     const effectiveScenarioPlatform = platformArg || selectedScenarioPlatform || scenarioPlatforms[0] || '';
     if (commandMode !== 'template' || !scenarioId || !effectiveScenarioPlatform) {
-      console.log('[Preview] Skipping — missing required fields. scenarioId:', scenarioId, 'platform:', effectiveScenarioPlatform, 'commandMode:', commandMode);
       setTemplatePreview(null);
       return;
     }
@@ -961,17 +976,33 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const editorVisible = isCreateView || showCreateModal;
   const hideDraftListWhenEditing = showCreateModal && viewTab === 'my_drafts' && editingOrder !== null;
 
+  // ── Local template preview computation (no API calls) ──
+  // All scenario data including platform_phases is already loaded in memory.
+  // We compute the preview locally to avoid unnecessary network calls.
   useEffect(() => {
-    if (!editorVisible || commandMode !== 'template' || !selectedScenarioId) return;
-    // Compute the platform synchronously here, so even on the first render after scenario selection
-    // we pass a valid platform to fetchTemplatePreview instead of relying on stale state.
+    if (!editorVisible || commandMode !== 'template' || !selectedScenarioId) {
+      return;
+    }
     const scenarioPlatformsList = selectedScenario
       ? (selectedScenario.supported_platforms?.length ? selectedScenario.supported_platforms : Object.keys(selectedScenario.platform_phases || {}))
       : [];
     const resolvedPlatform = selectedScenarioPlatform || scenarioPlatformsList[0] || '';
-    const timer = setTimeout(() => { fetchTemplatePreview(resolvedPlatform, selectedScenario); }, 220);
-    return () => clearTimeout(timer);
-  }, [editorVisible, commandMode, selectedScenarioId, selectedScenarioPlatform, selectedScenario, templateVariables, fetchTemplatePreview]);
+    if (!selectedScenario || !resolvedPlatform) {
+      setTemplatePreview(null);
+      return;
+    }
+    const phases = selectedScenario.platform_phases?.[resolvedPlatform] || {};
+    const localPreview = {
+      pre_check: renderPhaseCommands(phases.pre_check || [], templateVariables),
+      execute: renderPhaseCommands(phases.execute || [], templateVariables),
+      post_check: renderPhaseCommands(phases.post_check || [], templateVariables),
+      rollback: renderPhaseCommands(phases.rollback || [], templateVariables),
+    };
+    setTemplatePreview(localPreview);
+    setTemplatePreviewError('');
+    setTemplatePreviewLoading(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorVisible, commandMode, selectedScenarioId, selectedScenarioPlatform, templateVariables]);
 
   // ── Fetch ──
   const fetchOrders = useCallback(async () => {
@@ -1532,7 +1563,8 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       <>
       {!editorVisible && (
         <>
-          {/* ── Summary Cards ── */}
+          {/* ── Summary Cards (only on "all" view) ── */}
+          {viewTab === 'all' && (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {summaryCards.map((card, idx) => (
               <motion.div
@@ -1552,6 +1584,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           </motion.div>
         ))}
           </div>
+          )}
 
           {/* ── Filters bar ── */}
           <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
@@ -2000,21 +2033,45 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                 key={action.status}
                 onClick={() => {
                   if (action.status === 'rejected') {
-                    const reason = prompt(zh ? '请输入驳回原因' : 'Rejection reason:');
-                    if (reason === null) return;
-                    handleTransition(selectedOrder.id, action.status, { rejected_reason: reason });
+                    setActionPrompt({
+                      title: zh ? '请输入驳回原因' : 'Rejection reason',
+                      placeholder: zh ? '必填项，说明驳回的具体原因' : 'Required. Reason for rejection',
+                      value: '',
+                      required: true,
+                      onConfirm: (val) => handleTransition(selectedOrder.id, action.status, { rejected_reason: val })
+                    });
                   } else if (action.status === 'completed') {
-                    const summaryText = prompt(zh ? '请输入实施结果说明' : 'Result summary:') || '';
-                    handleTransition(selectedOrder.id, action.status, { result_summary: summaryText });
+                    setActionPrompt({
+                      title: zh ? '请输入实施结果说明' : 'Result summary',
+                      placeholder: zh ? '可选填，实施结果的补充说明' : 'Optional result summary',
+                      value: '',
+                      required: false,
+                      onConfirm: (val) => handleTransition(selectedOrder.id, action.status, { result_summary: val })
+                    });
                   } else if (action.status === 'failed') {
-                    const failedReason = prompt(zh ? '请输入失败原因' : 'Failure reason:') || '';
-                    handleTransition(selectedOrder.id, action.status, { result_summary: failedReason });
+                    setActionPrompt({
+                      title: zh ? '请输入失败原因' : 'Failure reason',
+                      placeholder: zh ? '必填项，说明失败的具体原因' : 'Required. Reason for failure',
+                      value: '',
+                      required: true,
+                      onConfirm: (val) => handleTransition(selectedOrder.id, action.status, { result_summary: val })
+                    });
                   } else if (action.status === 'rollback_in_progress') {
-                    const rollbackReason = prompt(zh ? '请输入回溯原因' : 'Rollback reason:') || '';
-                    handleTransition(selectedOrder.id, action.status, { rollback_reason: rollbackReason });
+                    setActionPrompt({
+                      title: zh ? '请输入回溯原因' : 'Rollback reason',
+                      placeholder: zh ? '必填项，说明触发回溯的原因' : 'Required. Reason for rollback',
+                      value: '',
+                      required: true,
+                      onConfirm: (val) => handleTransition(selectedOrder.id, action.status, { rollback_reason: val })
+                    });
                   } else if (action.status === 'rolled_back') {
-                    const rollbackSummary = prompt(zh ? '请输入回溯结果说明' : 'Rollback summary:') || '';
-                    handleTransition(selectedOrder.id, action.status, { result_summary: rollbackSummary });
+                    setActionPrompt({
+                      title: zh ? '请输入回溯结果说明' : 'Rollback summary',
+                      placeholder: zh ? '可选填，回溯结果的补充说明' : 'Optional rollback summary',
+                      value: '',
+                      required: false,
+                      onConfirm: (val) => handleTransition(selectedOrder.id, action.status, { result_summary: val })
+                    });
                   } else {
                     handleTransition(selectedOrder.id, action.status);
                   }
@@ -2124,80 +2181,83 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                     );
                   })()}
 
-                  {/* ── Two-Column Content ── */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  {/* ── Content — consistent with creation form ── */}
+                  <div className="space-y-4">
                     {/* ── Left Column: Meta + Description ── */}
                     <div className="space-y-3">
                       {/* Description */}
                       {selectedOrder.description && (
-                        <div className="bg-black/[0.015] rounded-xl p-3">
-                          <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1">{zh ? '描述' : 'Description'}</p>
-                          <p className="text-xs text-black/65 leading-relaxed whitespace-pre-wrap">{selectedOrder.description}</p>
+                        <div className="rounded-2xl border border-black/8 bg-black/[0.015] p-4">
+                          <p className="text-xs font-semibold text-black/50 mb-1.5">{zh ? '描述' : 'Description'}</p>
+                          <p className="text-sm text-black/65 leading-relaxed whitespace-pre-wrap">{selectedOrder.description}</p>
                         </div>
                       )}
 
                       {/* Meta info — compact 2-col grid */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="bg-black/[0.015] rounded-lg px-3 py-2">
-                          <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider">{zh ? '类型' : 'Type'}</p>
-                          <p className="mt-0.5 text-xs font-medium text-black/70">{typeLabel(selectedOrder.order_type, language)}</p>
+                      <div className="rounded-2xl border border-black/8 bg-black/[0.015] p-4">
+                        <p className="text-xs font-semibold text-black/50 mb-3">{zh ? '工单信息' : 'Order Info'}</p>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-black/5">
+                          <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider">{zh ? '类型' : 'Type'}</p>
+                          <p className="mt-1 text-sm font-medium text-black/70">{typeLabel(selectedOrder.order_type, language)}</p>
                         </div>
-                        <div className="bg-black/[0.015] rounded-lg px-3 py-2">
-                          <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider">{zh ? '申请人' : 'Requester'}</p>
-                          <p className="mt-0.5 text-xs font-medium text-black/70 flex items-center gap-1">
-                            <User size={10} className="text-black/25" />
+                        <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-black/5">
+                          <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider">{zh ? '申请人' : 'Requester'}</p>
+                          <p className="mt-1 text-sm font-medium text-black/70 flex items-center gap-1.5">
+                            <User size={12} className="text-black/25" />
                             {selectedOrder.requester_username || '—'}
                           </p>
                         </div>
                         {selectedOrder.assigned_initial_reviewer_username && (
-                          <div className="bg-black/[0.015] rounded-lg px-3 py-2">
-                            <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider">{zh ? '指定初审人' : 'Assigned Reviewer'}</p>
-                            <p className="mt-0.5 text-xs font-medium text-black/70 flex items-center gap-1">
-                              <User size={10} className="text-black/25" />
+                          <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-black/5">
+                            <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider">{zh ? '指定初审人' : 'Assigned Reviewer'}</p>
+                            <p className="mt-1 text-sm font-medium text-black/70 flex items-center gap-1.5">
+                              <User size={12} className="text-black/25" />
                               {selectedOrder.assigned_initial_reviewer_username}
                             </p>
                           </div>
                         )}
                         {selectedOrder.initial_reviewer_username && (
-                          <div className="bg-black/[0.015] rounded-lg px-3 py-2">
-                            <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider">{zh ? '实际初审人' : 'Actual Reviewer'}</p>
-                            <p className="mt-0.5 text-xs font-medium text-black/70 flex items-center gap-1">
-                              <User size={10} className="text-black/25" />
+                          <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-black/5">
+                            <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider">{zh ? '实际初审人' : 'Actual Reviewer'}</p>
+                            <p className="mt-1 text-sm font-medium text-black/70 flex items-center gap-1.5">
+                              <User size={12} className="text-black/25" />
                               {selectedOrder.initial_reviewer_username}
                             </p>
                           </div>
                         )}
                         {selectedOrder.assigned_final_approver_username && (
-                          <div className="bg-black/[0.015] rounded-lg px-3 py-2">
-                            <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider">{zh ? '指定终审人' : 'Assigned Approver'}</p>
-                            <p className="mt-0.5 text-xs font-medium text-black/70 flex items-center gap-1">
-                              <User size={10} className="text-black/25" />
+                          <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-black/5">
+                            <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider">{zh ? '指定终审人' : 'Assigned Approver'}</p>
+                            <p className="mt-1 text-sm font-medium text-black/70 flex items-center gap-1.5">
+                              <User size={12} className="text-black/25" />
                               {selectedOrder.assigned_final_approver_username}
                             </p>
                           </div>
                         )}
                         {(selectedOrder.final_approver_username || selectedOrder.approver_username) && (
-                          <div className="bg-black/[0.015] rounded-lg px-3 py-2">
-                            <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider">{zh ? '实际终审人' : 'Actual Approver'}</p>
-                            <p className="mt-0.5 text-xs font-medium text-black/70 flex items-center gap-1">
-                              <User size={10} className="text-black/25" />
+                          <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-black/5">
+                            <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider">{zh ? '实际终审人' : 'Actual Approver'}</p>
+                            <p className="mt-1 text-sm font-medium text-black/70 flex items-center gap-1.5">
+                              <User size={12} className="text-black/25" />
                               {selectedOrder.final_approver_username || selectedOrder.approver_username}
                             </p>
                           </div>
                         )}
-                        <div className="bg-black/[0.015] rounded-lg px-3 py-2">
-                          <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider">{zh ? '创建时间' : 'Created'}</p>
-                          <p className="mt-0.5 text-[11px] font-medium text-black/55 tabular-nums">{fmtDate(selectedOrder.created_at)}</p>
+                        <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-black/5">
+                          <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider">{zh ? '创建时间' : 'Created'}</p>
+                          <p className="mt-1 text-sm font-medium text-black/55 tabular-nums">{fmtDate(selectedOrder.created_at)}</p>
+                        </div>
                         </div>
                       </div>
 
                       {/* Schedule */}
                       {(selectedOrder.scheduled_start || selectedOrder.scheduled_end) && (
-                        <div className="bg-blue-50/60 rounded-lg px-3 py-2 ring-1 ring-blue-100">
-                          <p className="text-[9px] font-semibold text-blue-500 uppercase tracking-wider flex items-center gap-1">
-                            <Calendar size={9} /> {zh ? '计划时间窗口' : 'Scheduled Window'}
+                        <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                          <p className="text-xs font-semibold text-blue-600 flex items-center gap-1.5 mb-1">
+                            <Calendar size={12} /> {zh ? '计划时间窗口' : 'Scheduled Window'}
                           </p>
-                          <p className="mt-0.5 text-xs text-blue-700 tabular-nums">
+                          <p className="text-sm text-blue-700 tabular-nums">
                             {fmtDate(selectedOrder.scheduled_start)} — {fmtDate(selectedOrder.scheduled_end)}
                           </p>
                         </div>
@@ -2205,29 +2265,29 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
                       {/* Result Summary */}
                       {selectedOrder.result_summary && (
-                        <div className="bg-emerald-50/60 rounded-lg px-3 py-2 ring-1 ring-emerald-100">
-                          <p className="text-[9px] font-semibold text-emerald-600 uppercase tracking-wider mb-0.5">{zh ? '执行结果' : 'Result'}</p>
-                          <p className="text-xs text-black/60 leading-relaxed whitespace-pre-wrap">{selectedOrder.result_summary}</p>
+                        <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
+                          <p className="text-xs font-semibold text-emerald-600 mb-1.5">{zh ? '执行结果' : 'Result'}</p>
+                          <p className="text-sm text-black/60 leading-relaxed whitespace-pre-wrap">{selectedOrder.result_summary}</p>
                         </div>
                       )}
 
                       {/* Rejected Reason */}
                       {selectedOrder.rejected_reason && (
-                        <div className="bg-rose-50 rounded-lg px-3 py-2 ring-1 ring-rose-200">
-                          <p className="text-[9px] font-semibold text-rose-500 uppercase tracking-wider flex items-center gap-1">
-                            <AlertTriangle size={9} /> {zh ? '驳回原因' : 'Rejection Reason'}
+                        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                          <p className="text-xs font-semibold text-rose-500 flex items-center gap-1.5 mb-1">
+                            <AlertTriangle size={12} /> {zh ? '驳回原因' : 'Rejection Reason'}
                           </p>
-                          <p className="mt-0.5 text-xs text-rose-700">{selectedOrder.rejected_reason}</p>
+                          <p className="text-sm text-rose-700">{selectedOrder.rejected_reason}</p>
                         </div>
                       )}
 
                       {/* Rollback Reason */}
                       {typeof selectedOrder.result_detail?.rollback_reason === 'string' && selectedOrder.result_detail.rollback_reason && (
-                        <div className="bg-violet-50 rounded-lg px-3 py-2 ring-1 ring-violet-200">
-                          <p className="text-[9px] font-semibold text-violet-600 uppercase tracking-wider flex items-center gap-1">
-                            <AlertTriangle size={9} /> {zh ? '回溯原因' : 'Rollback Reason'}
+                        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+                          <p className="text-xs font-semibold text-violet-600 flex items-center gap-1.5 mb-1">
+                            <AlertTriangle size={12} /> {zh ? '回溯原因' : 'Rollback Reason'}
                           </p>
-                          <p className="mt-0.5 text-xs text-violet-700">{selectedOrder.result_detail.rollback_reason}</p>
+                          <p className="text-sm text-violet-700">{selectedOrder.result_detail.rollback_reason}</p>
                         </div>
                       )}
                     </div>
@@ -2240,49 +2300,49 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                         if (!templateSnapshot) return null;
                         const preview = templateSnapshot.preview || EMPTY_TEMPLATE_PREVIEW;
                         return (
-                          <div className="rounded-xl border border-[#00bceb]/15 bg-gradient-to-br from-[#00bceb]/[0.04] to-white p-3">
+                          <div className="rounded-2xl border border-[#00bceb]/15 bg-gradient-to-br from-[#00bceb]/[0.04] to-white p-4">
                             <div className="flex items-start justify-between gap-2">
                               <div>
-                                <p className="text-[9px] font-semibold uppercase tracking-wider text-[#0e7490]">{zh ? '命令模板快照' : 'Template Snapshot'}</p>
-                                <h4 className="mt-0.5 text-xs font-semibold text-black/80">
+                                <p className="text-xs font-semibold text-[#0e7490]">{zh ? '命令模板快照' : 'Template Snapshot'}</p>
+                                <h4 className="mt-1 text-sm font-semibold text-black/80">
                                   {zh ? (templateSnapshot.scenario_name_zh || templateSnapshot.scenario_name || templateSnapshot.scenario_id) : (templateSnapshot.scenario_name || templateSnapshot.scenario_id)}
                                 </h4>
                               </div>
-                              <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-semibold text-[#0e7490] ring-1 ring-[#00bceb]/20">
+                              <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-[#0e7490] ring-1 ring-[#00bceb]/20">
                                 {platformLabel(templateSnapshot.platform)}
                               </span>
                             </div>
                             {Object.keys(templateSnapshot.variables || {}).length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-1">
+                              <div className="mt-3 flex flex-wrap gap-1.5">
                                 {Object.entries(templateSnapshot.variables || {}).map(([key, value]) => (
-                                  <span key={key} className="inline-flex items-center gap-0.5 rounded-full bg-white px-1.5 py-0.5 text-[9px] text-black/60 ring-1 ring-black/8">
+                                  <span key={key} className="inline-flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-xs text-black/60 ring-1 ring-black/8">
                                     <span className="font-semibold text-black/45">{key}</span>
                                     <span>{value || '—'}</span>
                                   </span>
                                 ))}
                               </div>
                             )}
-                            <div className="mt-2 grid grid-cols-1 gap-2">
+                            <div className="mt-3 grid grid-cols-1 gap-3">
                               {preview.pre_check.length > 0 && (
                                 <div>
-                                  <p className="text-[9px] font-semibold uppercase tracking-wider text-black/30 mb-1">{zh ? '实施前检查' : 'Pre-check'}</p>
-                                  <div className="rounded-lg bg-slate-900 p-2 font-mono text-[11px] text-cyan-300 whitespace-pre-wrap break-all leading-relaxed">
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '实施前检查' : 'Pre-check'}</p>
+                                  <div className="rounded-xl bg-slate-900 p-3 font-mono text-xs text-cyan-300 whitespace-pre-wrap break-all leading-relaxed">
                                     {preview.pre_check.map((cmd, index) => <div key={`${cmd}-${index}`}>{index + 1}. {cmd}</div>)}
                                   </div>
                                 </div>
                               )}
                               {preview.post_check.length > 0 && (
                                 <div>
-                                  <p className="text-[9px] font-semibold uppercase tracking-wider text-black/30 mb-1">{zh ? '实施后检查' : 'Post-check'}</p>
-                                  <div className="rounded-lg bg-slate-900 p-2 font-mono text-[11px] text-amber-300 whitespace-pre-wrap break-all leading-relaxed">
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '实施后检查' : 'Post-check'}</p>
+                                  <div className="rounded-xl bg-slate-900 p-3 font-mono text-xs text-amber-300 whitespace-pre-wrap break-all leading-relaxed">
                                     {preview.post_check.map((cmd, index) => <div key={`${cmd}-${index}`}>{index + 1}. {cmd}</div>)}
                                   </div>
                                 </div>
                               )}
                               {preview.rollback.length > 0 && (
                                 <div>
-                                  <p className="text-[9px] font-semibold uppercase tracking-wider text-black/30 mb-1">{zh ? '模板回退命令' : 'Template Rollback'}</p>
-                                  <div className="rounded-lg bg-slate-900 p-2 font-mono text-[11px] text-rose-300 whitespace-pre-wrap break-all leading-relaxed">
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '模板回退命令' : 'Template Rollback'}</p>
+                                  <div className="rounded-xl bg-slate-900 p-3 font-mono text-xs text-rose-300 whitespace-pre-wrap break-all leading-relaxed">
                                     {preview.rollback.map((cmd, index) => <div key={`${cmd}-${index}`}>{index + 1}. {cmd}</div>)}
                                   </div>
                                 </div>
@@ -2294,13 +2354,13 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
                       {/* Target Devices */}
                       {selectedOrder.target_devices?.length > 0 && (
-                        <div>
-                          <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider mb-1.5">{zh ? '目标设备' : 'Target Devices'}</p>
-                          <div className="flex flex-wrap gap-1.5">
+                        <div className="rounded-2xl border border-black/8 bg-black/[0.015] p-4">
+                          <p className="text-xs font-semibold text-black/50 mb-2">{zh ? '目标设备' : 'Target Devices'}</p>
+                          <div className="flex flex-wrap gap-2">
                             {selectedOrder.target_devices.map((dev, i) => (
-                              <span key={i} className="inline-flex items-center gap-1 rounded-lg bg-cyan-50/80 px-2.5 py-1.5 text-[11px] font-medium text-cyan-800 ring-1 ring-cyan-200/70">
+                              <span key={i} className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-50/80 px-3 py-2 text-xs font-medium text-cyan-800 ring-1 ring-cyan-200/70">
                                 {dev.hostname || (zh ? '未命名' : 'Unnamed')}
-                                {dev.ip_address && <span className="font-mono text-[10px] text-cyan-600/80">{dev.ip_address}</span>}
+                                {dev.ip_address && <span className="font-mono text-[11px] text-cyan-600/80">{dev.ip_address}</span>}
                               </span>
                             ))}
                           </div>
@@ -2309,12 +2369,12 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
                       {/* Commands */}
                       {selectedOrder.commands?.length > 0 && (
-                        <div>
-                          <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider mb-1.5">{zh ? '执行命令' : 'Commands'}</p>
-                          <div className="bg-slate-900 rounded-lg p-2.5 font-mono text-[11px] text-emerald-400 leading-relaxed whitespace-pre-wrap break-all">
+                        <div className="rounded-2xl border border-black/8 bg-black/[0.015] p-4">
+                          <p className="text-xs font-semibold text-black/50 mb-2">{zh ? '执行命令' : 'Commands'}</p>
+                          <div className="bg-slate-900 rounded-xl p-3 font-mono text-xs text-emerald-400 leading-relaxed whitespace-pre-wrap break-all">
                             {selectedOrder.commands.map((cmd, i) => (
                               <div key={i} className="flex">
-                                <span className="text-slate-500 select-none mr-2 w-4 text-right">{i + 1}</span>
+                                <span className="text-slate-500 select-none mr-2 w-5 text-right">{i + 1}</span>
                                 {cmd}
                               </div>
                             ))}
@@ -2324,21 +2384,21 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
                       {/* Rollback Plan */}
                       {selectedOrder.rollback_plan && (
-                        <div>
-                          <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider mb-1">{zh ? '回退方案' : 'Rollback Plan'}</p>
-                          <p className="text-xs text-black/60 leading-relaxed whitespace-pre-wrap bg-amber-50/50 rounded-lg p-2.5 ring-1 ring-amber-100">
+                        <div className="rounded-2xl border border-amber-100 bg-amber-50/50 p-4">
+                          <p className="text-xs font-semibold text-black/50 mb-1.5">{zh ? '回退方案' : 'Rollback Plan'}</p>
+                          <p className="text-sm text-black/60 leading-relaxed whitespace-pre-wrap">
                             {selectedOrder.rollback_plan}
                           </p>
                         </div>
                       )}
                     </div>
-                  </div>
+                    </div>
 
                   {/* ── Timeline (full width) ── */}
-                  <div>
-                    <p className="text-[9px] font-semibold text-black/30 uppercase tracking-wider mb-1.5">{zh ? '流程时间线' : 'Timeline'}</p>
+                  <div className="rounded-2xl border border-black/8 bg-black/[0.015] p-4">
+                    <p className="text-xs font-semibold text-black/50 mb-2">{zh ? '流程时间线' : 'Timeline'}</p>
                     {timelineLoading ? (
-                      <div className="text-xs text-black/40 py-2">{zh ? '加载时间线中...' : 'Loading timeline...'}</div>
+                      <div className="text-sm text-black/40 py-2">{zh ? '加载时间线中...' : 'Loading timeline...'}</div>
                     ) : timeline.length === 0 ? (
                       <div className="text-xs text-black/35 py-2">{zh ? '暂无流程记录' : 'No timeline events'}</div>
                     ) : (
@@ -2708,7 +2768,24 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                             ))}
                           </select>
                         </div>
-                        {/* Platform selection is now handled automatically when adding target devices */}
+                        
+                        {selectedScenario && selectedScenarioPlatforms.length > 1 && (
+                          <div>
+                            <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '适配平台' : 'Target Platform'}</label>
+                            <div className="flex flex-wrap gap-2">
+                              {selectedScenarioPlatforms.map((p) => (
+                                <button
+                                  key={p}
+                                  type="button"
+                                  onClick={() => setSelectedScenarioPlatform(p)}
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${selectedScenarioPlatform === p ? 'bg-[#00bceb] text-white shadow-sm' : 'bg-white text-black/55 ring-1 ring-black/8 hover:bg-black/[0.02]'}`}
+                                >
+                                  {platformLabel(p)}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {selectedScenario && (
@@ -2725,51 +2802,67 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                         </div>
                       )}
 
-                      {selectedScenarioVariables.length > 0 && (
-                        <div className="grid grid-cols-2 gap-3">
-                          {selectedScenarioVariables.map((variable) => {
-                            const hint = variable.platform_hints?.[selectedScenarioPlatform] || variable.placeholder || '';
-                            const commonClass = 'w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40';
-                            return (
-                              <div key={variable.key} className={variable.type === 'textarea' ? 'col-span-2' : ''}>
-                                <label className="block text-xs font-semibold text-black/50 mb-1.5">
-                                  {variableLabel(variable)}
-                                  {variable.required && <span className="text-rose-500 ml-1">*</span>}
-                                </label>
-                                {variable.type === 'textarea' ? (
-                                  <textarea
-                                    title={variableLabel(variable)}
-                                    value={templateVariables[variable.key] || ''}
-                                    onChange={(e) => assignTemplateVariable(variable.key, e.target.value)}
-                                    placeholder={hint}
-                                    rows={3}
-                                    className={`${commonClass} resize-none font-mono text-xs`}
-                                  />
-                                ) : variable.type === 'select' ? (
-                                  <select
-                                    title={variableLabel(variable)}
-                                    value={templateVariables[variable.key] || ''}
-                                    onChange={(e) => assignTemplateVariable(variable.key, e.target.value)}
-                                    className={`${commonClass} bg-white`}
-                                  >
-                                    <option value="">{zh ? '请选择' : 'Select'}</option>
-                                    {(variable.options || []).map((option) => (
-                                      <option key={option} value={option}>{option}</option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <input
-                                    type={variable.type === 'number' ? 'number' : 'text'}
-                                    title={variableLabel(variable)}
-                                    value={templateVariables[variable.key] || ''}
-                                    onChange={(e) => assignTemplateVariable(variable.key, e.target.value)}
-                                    placeholder={hint}
-                                    className={commonClass}
-                                  />
-                                )}
+                      {selectedScenario && (
+                        <div className="space-y-4">
+                          {selectedScenarioVariables.length > 0 ? (
+                            <div className="grid grid-cols-2 gap-3">
+                              {selectedScenarioVariables.map((variable) => {
+                                const hint = variable.platform_hints?.[selectedScenarioPlatform] || variable.placeholder || '';
+                                const commonClass = 'w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40';
+                                return (
+                                  <div key={variable.key} className={variable.type === 'textarea' ? 'col-span-2' : ''}>
+                                    <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                                      {variableLabel(variable)}
+                                      {variable.required && <span className="text-rose-500 ml-1">*</span>}
+                                    </label>
+                                    {variable.type === 'textarea' ? (
+                                      <textarea
+                                        title={variableLabel(variable)}
+                                        value={templateVariables[variable.key] || ''}
+                                        onChange={(e) => assignTemplateVariable(variable.key, e.target.value)}
+                                        placeholder={hint}
+                                        rows={3}
+                                        className={`${commonClass} resize-none font-mono text-xs`}
+                                      />
+                                    ) : variable.type === 'select' ? (
+                                      <select
+                                        title={variableLabel(variable)}
+                                        value={templateVariables[variable.key] || ''}
+                                        onChange={(e) => assignTemplateVariable(variable.key, e.target.value)}
+                                        className={`${commonClass} bg-white`}
+                                      >
+                                        <option value="">{zh ? '请选择' : 'Select'}</option>
+                                        {(variable.options || []).map((option) => (
+                                          <option key={option} value={option}>{option}</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <input
+                                        type={variable.type === 'number' ? 'number' : 'text'}
+                                        title={variableLabel(variable)}
+                                        value={templateVariables[variable.key] || ''}
+                                        onChange={(e) => assignTemplateVariable(variable.key, e.target.value)}
+                                        placeholder={hint}
+                                        className={commonClass}
+                                      />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : selectedScenario.source_kind === 'config_template' && (
+                            <div className="px-4 py-3 bg-blue-50/50 border border-blue-100 rounded-xl text-xs text-blue-600 flex items-start gap-2">
+                              <AlertTriangle className="w-3.5 h-3.5 mt-0.5" />
+                              <div>
+                                <p className="font-medium mb-1">{zh ? '未检测到变量' : 'No variables detected'}</p>
+                                <p className="opacity-80 leading-relaxed">
+                                  {zh 
+                                    ? '该模板目前为静态配置。如需添加交互入参，请在模板中使用 {{ 变量名 }} 语法。' 
+                                    : 'This template is currently static. Use {{ variable_name }} syntax in the template to add dynamic parameters.'}
+                                </p>
                               </div>
-                            );
-                          })}
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -2877,6 +2970,114 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                 >
                   {saving ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
                   {editingOrder ? (zh ? '提交' : 'Submit') : (zh ? '创建工单' : 'Create Order')}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Single Input Prompt Modal */}
+      <AnimatePresence>
+        {actionPrompt && (
+          <motion.div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onMouseDown={(e) => e.target === e.currentTarget && setActionPrompt(null)}
+          >
+            <motion.div
+              className="w-full max-w-sm rounded-3xl bg-white shadow-2xl overflow-hidden"
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+            >
+              <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)]">
+                <h3 className="text-lg font-bold text-[#164e63]">{actionPrompt.title}</h3>
+              </div>
+              <div className="p-6">
+                <textarea
+                  autoFocus
+                  rows={3}
+                  value={actionPrompt.value}
+                  onChange={(e) => setActionPrompt({ ...actionPrompt, value: e.target.value })}
+                  placeholder={actionPrompt.placeholder}
+                  className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm text-[#164e63] focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all resize-none"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
+                <button
+                  onClick={() => setActionPrompt(null)}
+                  className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  disabled={actionPrompt.required && !actionPrompt.value.trim()}
+                  onClick={() => {
+                    actionPrompt.onConfirm(actionPrompt.value.trim());
+                    setActionPrompt(null);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-cyan-600 text-white text-sm font-bold shadow-sm hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {zh ? '确认提交' : 'Confirm'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Single Input Prompt Modal */}
+      <AnimatePresence>
+        {actionPrompt && (
+          <motion.div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onMouseDown={(e) => e.target === e.currentTarget && setActionPrompt(null)}
+          >
+            <motion.div
+              className="w-full max-w-sm rounded-3xl bg-white shadow-2xl overflow-hidden"
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+            >
+              <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)]">
+                <h3 className="text-lg font-bold text-[#164e63]">{actionPrompt.title}</h3>
+              </div>
+              <div className="p-6">
+                <textarea
+                  autoFocus
+                  rows={3}
+                  value={actionPrompt.value}
+                  onChange={(e) => setActionPrompt({ ...actionPrompt, value: e.target.value })}
+                  placeholder={actionPrompt.placeholder}
+                  className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm text-[#164e63] focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all resize-none"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
+                <button
+                  onClick={() => setActionPrompt(null)}
+                  className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  disabled={actionPrompt.required && !actionPrompt.value.trim()}
+                  onClick={() => {
+                    actionPrompt.onConfirm(actionPrompt.value.trim());
+                    setActionPrompt(null);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-cyan-600 text-white text-sm font-bold shadow-sm hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {zh ? '确认提交' : 'Confirm'}
                 </button>
               </div>
             </motion.div>

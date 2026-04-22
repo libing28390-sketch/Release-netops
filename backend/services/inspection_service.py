@@ -90,7 +90,10 @@ def _check_ssh(ip: str, port: int = 22, timeout: int = 3) -> dict[str, Any]:
 # 单台设备巡检
 # ──────────────────────────────────────────────
 
-def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int]) -> dict[str, Any]:
+def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], check_items: list[str] | None = None) -> dict[str, Any]:
+    # If check_items is provided but empty, default to all for backward compatibility or explicit selection
+    # But if we want to support 'none selected', we should handle it. Let's say None or empty means 'All' for safety.
+    has_checks = bool(check_items and len(check_items) > 0)
     device_id = str(device.get('id') or '')
     ip = device.get('ip_address') or ''
     hostname = device.get('hostname') or ip
@@ -132,64 +135,73 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int]) 
     findings: list[dict[str, str]] = []
 
     # 1) Ping
-    ping_result = _ping_device(ip)
-    result['ping_ok'] = 1 if ping_result['success'] else 0
-    result['ping_latency_ms'] = ping_result.get('latency_ms')
-    if not ping_result['success']:
-        findings.append({'severity': 'critical', 'message': f'ICMP 不可达 (丢包 {ping_result["loss_percent"]}%)'})
+    if not has_checks or 'connectivity' in check_items:
+        ping_result = _ping_device(ip)
+        result['ping_ok'] = 1 if ping_result['success'] else 0
+        result['ping_latency_ms'] = ping_result.get('latency_ms')
+        if not ping_result['success']:
+            findings.append({'severity': 'critical', 'message': f'ICMP 不可达 (丢包 {ping_result["loss_percent"]}%)'})
+    else:
+        result['ping_ok'] = 1
 
     # 2) SSH
-    ssh_result = _check_ssh(ip)
-    result['ssh_ok'] = 1 if ssh_result['success'] else 0
-    result['ssh_error'] = ssh_result.get('error') or ''
-    if not ssh_result['success']:
-        findings.append({'severity': 'major', 'message': f'SSH 端口不可达: {ssh_result.get("error", "")}'})
+    if not has_checks or 'connectivity' in check_items:
+        ssh_result = _check_ssh(ip)
+        result['ssh_ok'] = 1 if ssh_result['success'] else 0
+        result['ssh_error'] = ssh_result.get('error') or ''
+        if not ssh_result['success']:
+            findings.append({'severity': 'major', 'message': f'SSH 端口不可达: {ssh_result.get("error", "")}'})
+    else:
+        result['ssh_ok'] = 1
 
     # 3) 健康评估 (基于已有的 devices 表数据)
-    health = evaluate_device_health(device, alert_stats)
-    result['health_score'] = health.get('health_score', 0)
-    result['health_status'] = health.get('health_status', 'unknown')
-    result['open_alerts'] = health.get('open_alert_count', 0)
-    result['critical_alerts'] = health.get('critical_open_alerts', 0)
-
-    # 将健康评估的具体原因记入 findings
-    for hf in health.get('health_findings', []):
-        findings.append({'severity': hf.get('severity', 'warning'), 'message': hf.get('message', '')})
+    if not has_checks or 'health' in check_items:
+        health = evaluate_device_health(device, alert_stats)
+        result['health_score'] = health.get('health_score', 0)
+        result['health_status'] = health.get('health_status', 'unknown')
+        result['open_alerts'] = health.get('open_alert_count', 0)
+        result['critical_alerts'] = health.get('critical_open_alerts', 0)
+        for hf in health.get('health_findings', []):
+            findings.append({'severity': hf.get('severity', 'warning'), 'message': hf.get('message', '')})
 
     # 4) 硬件指标
-    from services.device_health_service import _as_float, _parse_json_list
-    result['cpu_usage'] = _as_float(device.get('cpu_usage'))
-    result['memory_usage'] = _as_float(device.get('memory_usage'))
-    result['temperature'] = _as_float(device.get('temp'))
-    result['fan_status'] = str(device.get('fan_status') or '')
-    result['psu_status'] = str(device.get('psu_status') or '')
+    if not has_checks or 'hardware' in check_items:
+        from services.device_health_service import _as_float, _parse_json_list
+        result['cpu_usage'] = _as_float(device.get('cpu_usage'))
+        result['memory_usage'] = _as_float(device.get('memory_usage'))
+        result['temperature'] = _as_float(device.get('temp'))
+        result['fan_status'] = str(device.get('fan_status') or '')
+        result['psu_status'] = str(device.get('psu_status') or '')
 
-    interfaces = _parse_json_list(device.get('interface_data'))
-    result['interface_total'] = len(interfaces)
-    for intf in interfaces:
-        intf_status = str(intf.get('status') or '').lower()
-        if intf_status == 'up':
-            result['interface_up'] += 1
-        elif intf_status == 'down':
-            result['interface_down'] += 1
-        if bool(intf.get('flapping')):
-            result['interface_flapping'] += 1
-        max_util = max(_as_float(intf.get('bw_in_pct')), _as_float(intf.get('bw_out_pct')))
-        if max_util >= 85:
-            result['interface_high_util'] += 1
-        if (_as_float(intf.get('in_errors')) + _as_float(intf.get('out_errors')) +
-                _as_float(intf.get('in_discards')) + _as_float(intf.get('out_discards'))) > 0:
-            result['interface_errors'] += 1
+    # 5) 接口统计
+    if not has_checks or 'interfaces' in check_items:
+        from services.device_health_service import _as_float, _parse_json_list
+        interfaces = _parse_json_list(device.get('interface_data'))
+        result['interface_total'] = len(interfaces)
+        for intf in interfaces:
+            intf_status = str(intf.get('status') or '').lower()
+            if intf_status == 'up':
+                result['interface_up'] += 1
+            elif intf_status == 'down':
+                result['interface_down'] += 1
+            if bool(intf.get('flapping')):
+                result['interface_flapping'] += 1
+            max_util = max(_as_float(intf.get('bw_in_pct')), _as_float(intf.get('bw_out_pct')))
+            if max_util >= 85:
+                result['interface_high_util'] += 1
+            if (_as_float(intf.get('in_errors')) + _as_float(intf.get('out_errors')) +
+                    _as_float(intf.get('in_discards')) + _as_float(intf.get('out_discards'))) > 0:
+                result['interface_errors'] += 1
 
-    # 指标异常已通过 health_findings 记入 findings，此处仅补充接口统计等信息字段
-    if result['interface_flapping'] > 0 and not any(f['message'].endswith('are flapping') for f in findings):
-        findings.append({'severity': 'warning', 'message': f'{result["interface_flapping"]} 个接口 Flapping'})
+        if result['interface_flapping'] > 0 and not any(f['message'].endswith('are flapping') for f in findings):
+            findings.append({'severity': 'warning', 'message': f'{result["interface_flapping"]} 个接口 Flapping'})
 
-    # 5) 合规检查
-    compliance_status = str(device.get('compliance') or 'unknown').lower()
-    result['compliance_status'] = compliance_status
-    if compliance_status == 'non-compliant':
-        findings.append({'severity': 'warning', 'message': '合规检查不通过'})
+    # 6) 合规检查
+    if not has_checks or 'compliance' in check_items:
+        compliance_status = str(device.get('compliance') or 'unknown').lower()
+        result['compliance_status'] = compliance_status
+        if compliance_status == 'non-compliant':
+            findings.append({'severity': 'warning', 'message': '合规检查不通过'})
 
     result['findings_json'] = json.dumps(findings, ensure_ascii=False)
 
@@ -211,6 +223,7 @@ def run_inspection(
     trigger_type: str = 'manual',
     schedule_id: str | None = None,
     created_by: str = 'system',
+    check_items: list[str] | None = None,
 ) -> dict[str, Any]:
     conn = get_db_connection()
     try:
@@ -242,7 +255,7 @@ def run_inspection(
         with ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENT, len(devices))) as executor:
             futures = {
                 executor.submit(
-                    _inspect_single_device, dict(d), alert_stats_map.get(str(d.get('id') or ''), {})
+                    _inspect_single_device, dict(d), alert_stats_map.get(str(d.get('id') or ''), {}), check_items
                 ): d
                 for d in devices
             }
@@ -381,6 +394,33 @@ def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, An
         rows = conn.execute(f'SELECT {select} FROM devices WHERE id IN ({placeholders}) ORDER BY hostname', tuple(ids)).fetchall()
     elif scope_type == 'role':
         rows = conn.execute(f'SELECT {select} FROM devices WHERE role=? ORDER BY hostname', (scope_filter,)).fetchall()
+    elif scope_type == 'ip':
+        ips = [x.strip() for x in scope_filter.split(',') if x.strip()]
+        if not ips:
+            return []
+        placeholders = ','.join('?' for _ in ips)
+        rows = conn.execute(f'SELECT {select} FROM devices WHERE ip_address IN ({placeholders}) ORDER BY hostname', tuple(ips)).fetchall()
+    elif scope_type == 'tags':
+        tags = [x.strip() for x in scope_filter.split(',') if x.strip()]
+        if not tags:
+            return []
+        from services.tag_service import find_devices_by_tags
+        # In tag_service, find_devices_by_tags takes tag_ids. If tags in filter are just tag values, we might need a custom query
+        placeholders = ','.join('?' for _ in tags)
+        
+        # We try to match tags by td.value or td.id
+        device_ids = conn.execute(f'''
+            SELECT DISTINCT dt.device_id
+            FROM device_tags dt
+            JOIN tag_definitions td ON td.id = dt.tag_id
+            WHERE td.value IN ({placeholders}) OR td.id IN ({placeholders})
+        ''', tuple(tags) * 2).fetchall()
+        
+        ids = [str(r['device_id']) for r in device_ids]
+        if not ids:
+            return []
+        id_placeholders = ','.join('?' for _ in ids)
+        rows = conn.execute(f'SELECT {select} FROM devices WHERE id IN ({id_placeholders}) ORDER BY hostname', tuple(ids)).fetchall()
     else:
         rows = conn.execute(f'SELECT {select} FROM devices ORDER BY hostname').fetchall()
     return [dict(r) for r in rows]
@@ -439,11 +479,18 @@ def get_device_inspection_history(device_id: str, limit: int = 10) -> list[dict[
 # 巡检计划管理
 # ──────────────────────────────────────────────
 
-def list_schedules() -> list[dict[str, Any]]:
+def list_schedules(limit: int = 100, offset: int = 0) -> dict[str, Any]:
     conn = get_db_connection()
     try:
-        rows = conn.execute('SELECT * FROM inspection_schedules ORDER BY created_at DESC').fetchall()
-        return [dict(r) for r in rows]
+        total = conn.execute('SELECT COUNT(*) FROM inspection_schedules').fetchone()[0]
+        rows = conn.execute(
+            'SELECT * FROM inspection_schedules ORDER BY created_at DESC LIMIT ? OFFSET ?',
+            (limit, offset)
+        ).fetchall()
+        return {
+            'total': total,
+            'items': [dict(r) for r in rows]
+        }
     finally:
         conn.close()
 
@@ -456,6 +503,8 @@ def create_schedule(
     created_by: str = 'system',
     scheduled_at: str = '',
     expires_at: str = '',
+    description: str = '',
+    check_items: list[str] = [],
 ) -> dict[str, Any]:
     conn = get_db_connection()
     try:
@@ -463,14 +512,14 @@ def create_schedule(
         now = _beijing_now_iso()
         conn.execute(
             '''INSERT INTO inspection_schedules
-                (id, name, cron_expr, scope_type, scope_filter, enabled, created_by, created_at, updated_at, scheduled_at, expires_at)
-               VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)''',
-            (schedule_id, name, cron_expr, scope_type, scope_filter, created_by, now, now, scheduled_at, expires_at),
+                (id, name, cron_expr, scope_type, scope_filter, enabled, created_by, created_at, updated_at, scheduled_at, expires_at, description, check_items)
+               VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)''',
+            (schedule_id, name, cron_expr, scope_type, scope_filter, created_by, now, now, scheduled_at, expires_at, description, json.dumps(check_items)),
         )
         conn.commit()
         return {'id': schedule_id, 'name': name, 'cron_expr': cron_expr,
                 'scheduled_at': scheduled_at, 'expires_at': expires_at,
-                'scope_type': scope_type, 'scope_filter': scope_filter, 'enabled': True}
+                'scope_type': scope_type, 'scope_filter': scope_filter, 'enabled': True, 'description': description, 'check_items': check_items}
     finally:
         conn.close()
 
@@ -481,13 +530,13 @@ def update_schedule(schedule_id: str, updates: dict[str, Any]) -> dict[str, Any]
         row = conn.execute('SELECT * FROM inspection_schedules WHERE id=?', (schedule_id,)).fetchone()
         if not row:
             return None
-        allowed = {'name', 'cron_expr', 'scope_type', 'scope_filter', 'enabled', 'scheduled_at', 'expires_at'}
+        allowed = {'name', 'cron_expr', 'scope_type', 'scope_filter', 'enabled', 'scheduled_at', 'expires_at', 'description', 'check_items'}
         sets = []
         params = []
         for k, v in updates.items():
             if k in allowed:
                 sets.append(f'{k}=?')
-                params.append(v)
+                params.append(json.dumps(v) if k == 'check_items' else v)
         if not sets:
             return dict(row)
         sets.append('updated_at=?')
@@ -530,12 +579,20 @@ def run_scheduled_inspections():
         schedule_id = schedule['id']
         logger.info(f"[Inspection] Running scheduled inspection: {schedule.get('name')} ({schedule_id})")
         try:
+            check_items_raw = schedule.get('check_items')
+            check_items = None
+            try:
+                if check_items_raw:
+                    check_items = json.loads(check_items_raw)
+            except Exception:
+                pass
             run_inspection(
                 scope_type=schedule.get('scope_type') or 'all',
                 scope_filter=schedule.get('scope_filter') or '',
                 trigger_type='scheduled',
                 schedule_id=schedule_id,
                 created_by='scheduler',
+                check_items=check_items,
             )
         except Exception as exc:
             logger.error(f"[Inspection] Scheduled inspection {schedule_id} failed: {exc}")
@@ -593,5 +650,69 @@ def compare_runs(run_id_a: str, run_id_b: str) -> dict[str, Any]:
             'total_devices_b': len(map_b),
             'changes': changes,
         }
+    finally:
+        conn.close()
+
+
+# ──────────────────────────────────────────────
+# 巡检指标项管理 (Inspection Items)
+# ──────────────────────────────────────────────
+
+def list_inspection_items() -> list[dict[str, Any]]:
+    conn = get_db_connection()
+    try:
+        rows = conn.execute('SELECT * FROM inspection_items ORDER BY category ASC, name ASC').fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+def create_inspection_item(item_data: dict[str, Any]) -> dict[str, Any]:
+    conn = get_db_connection()
+    try:
+        item_id = str(uuid.uuid4())
+        now = _beijing_now_iso()
+        conn.execute(
+            '''INSERT INTO inspection_items
+                (id, name, name_zh, category, check_key, description, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+            (item_id, item_data['name'], item_data['name_zh'], item_data['category'],
+             item_data['check_key'], item_data.get('description', ''), now, now)
+        )
+        conn.commit()
+        item_data['id'] = item_id
+        item_data['created_at'] = now
+        item_data['updated_at'] = now
+        return item_data
+    finally:
+        conn.close()
+
+def update_inspection_item(item_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+    conn = get_db_connection()
+    try:
+        allowed = {'name', 'name_zh', 'category', 'check_key', 'description'}
+        sets = []
+        params = []
+        for k, v in updates.items():
+            if k in allowed:
+                sets.append(f"{k}=?")
+                params.append(v)
+        if not sets:
+            return None
+        sets.append('updated_at=?')
+        params.append(_beijing_now_iso())
+        params.append(item_id)
+        conn.execute(f'UPDATE inspection_items SET {", ".join(sets)} WHERE id=?', tuple(params))
+        conn.commit()
+        row = conn.execute('SELECT * FROM inspection_items WHERE id=?', (item_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+def delete_inspection_item(item_id: str) -> bool:
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('DELETE FROM inspection_items WHERE id=?', (item_id,))
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()

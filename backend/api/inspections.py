@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from core.rbac import require_role
-from schemas.schemas import InspectionRunRequest, InspectionScheduleCreate, InspectionScheduleUpdate
+from schemas.schemas import InspectionRunRequest, InspectionScheduleCreate, InspectionScheduleUpdate, InspectionItemCreate
 from services.inspection_service import (
     compare_runs,
     create_schedule,
@@ -14,6 +14,10 @@ from services.inspection_service import (
     list_schedules,
     run_inspection,
     update_schedule,
+    list_inspection_items,
+    create_inspection_item,
+    update_inspection_item,
+    delete_inspection_item,
 )
 
 router = APIRouter()
@@ -23,9 +27,11 @@ router = APIRouter()
 
 @router.get('/inspections/schedules')
 def get_schedules(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     _user=require_role('Viewer'),
 ):
-    data = list_schedules()
+    data = list_schedules(limit=limit, offset=offset)
     return {'success': True, 'data': data, 'message': ''}
 
 
@@ -42,6 +48,7 @@ def add_schedule(
         created_by=user.get('username', 'unknown'),
         scheduled_at=body.scheduled_at,
         expires_at=body.expires_at,
+        description=body.description,
     )
     return {'success': True, 'data': data, 'message': '巡检计划已创建'}
 
@@ -116,6 +123,45 @@ def compare_inspection_runs(
 ):
     result = compare_runs(run_a, run_b)
     return {'success': True, 'data': result, 'message': ''}
+
+
+# ──────────────────────────────────────────────
+# 巡检指标管理 (Inspection Items)
+# ──────────────────────────────────────────────
+
+@router.get('/inspections/items/all')
+def get_all_inspection_items(
+    _user=require_role('Viewer'),
+):
+    items = list_inspection_items()
+    return {'success': True, 'data': items, 'message': ''}
+
+@router.post('/inspections/items')
+def add_inspection_item(
+    body: InspectionItemCreate,
+    _user=require_role('Operator'),
+):
+    item = create_inspection_item(body.model_dump())
+    return {'success': True, 'data': item, 'message': '巡检指标已创建'}
+
+@router.put('/inspections/items/{item_id}')
+def update_item(
+    item_id: str,
+    body: dict,
+    _user=require_role('Operator'),
+):
+    item = update_inspection_item(item_id, body)
+    if not item:
+        raise HTTPException(status_code=404, detail='指标不存在')
+    return {'success': True, 'data': item, 'message': '指标已更新'}
+
+@router.delete('/inspections/items/{item_id}')
+def remove_item(
+    item_id: str,
+    _user=require_role('Operator'),
+):
+    ok = delete_inspection_item(item_id)
+    return {'success': ok, 'message': '指标已删除' if ok else '删除失败'}
 
 
 # ⚠️ {run_id} 路径参数路由放最后，避免遮蔽上方字面路由
