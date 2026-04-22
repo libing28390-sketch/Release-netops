@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity, Plus, X, Trash2, Edit3, Save, RotateCcw,
-  Shield, CheckCircle2, Search, Filter, Info, ListFilter
+  Shield, CheckCircle2, Search, Filter, Info, ListFilter, Copy, Check
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 
@@ -15,9 +15,22 @@ interface InspectionItem {
   description: string;
   method: string;
   command: string;
+  vendor: string;
+  oid: string;
   created_at: string;
   updated_at: string;
 }
+
+
+const VENDORS = ['Generic', 'Cisco', 'Huawei', 'H3C', 'Juniper', 'Arista', 'Linux', 'Windows', 'VMware', 'Dell', 'HP', 'F5', 'PaloAlto', 'Fortinet', 'Checkpoint'];
+const CATEGORIES = [
+  { id: 'Network', en: 'Network Device', zh: '网络设备' },
+  { id: 'Server', en: 'Server / Host', zh: '服务器/主机' },
+  { id: 'Connectivity', en: 'Connectivity', zh: '基础连通性' },
+  { id: 'Interface', en: 'Interface', zh: '接口统计' },
+  { id: 'Health', en: 'Health', zh: '业务健康度' },
+  { id: 'Compliance', en: 'Compliance', zh: '合规性检查' }
+];
 
 interface InspectionItemsTabProps {
   t: (key: string) => string;
@@ -36,13 +49,43 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   
   const [form, setForm] = useState({
     name: '', name_zh: '', category: 'Network', check_key: '', description: '',
-    method: 'SNMP', command: ''
+    method: 'SNMP', command: '', vendor: '', oid: ''
   });
 
-  // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(12);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, id: string) => {
+    try {
+      // Primary method
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for non-HTTPS/older browsers
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        textArea.style.top = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+      showToast(zh ? '已成功复制到剪贴板' : 'Copied to clipboard successfully', 'success');
+    } catch (err) {
+      console.error('Failed to copy: ', err);
+      showToast(zh ? '复制失败' : 'Failed to copy', 'error');
+    }
+  };
+
 
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('netops_token');
@@ -78,7 +121,10 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
       if (r.ok) {
         showToast(zh ? '指标创建成功' : 'Item created', 'success');
         setShowAdd(false);
-        setForm({ name: '', name_zh: '', category: 'Hardware', check_key: '', description: '' });
+        setForm({ 
+          name: '', name_zh: '', category: 'Network', check_key: '', 
+          description: '', method: 'SNMP', command: '', vendor: '', oid: '' 
+        });
         fetchItems();
       }
     } catch {
@@ -121,9 +167,16 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
 
   const filteredItems = useMemo(() => {
     let result = items;
+    
+    // Category Filter
+    if (categoryFilter !== 'All') {
+      result = result.filter(i => i.category === categoryFilter);
+    }
+
+    // Search Query
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      result = items.filter(i => 
+      result = result.filter(i => 
         i.name.toLowerCase().includes(q) || 
         i.name_zh.toLowerCase().includes(q) || 
         i.category.toLowerCase().includes(q) ||
@@ -131,9 +184,8 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
       );
     }
     return result;
-  }, [items, searchQuery]);
+  }, [items, searchQuery, categoryFilter]);
 
-  const totalPages = Math.ceil(filteredItems.length / pageSize);
   const paginatedItems = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filteredItems.slice(start, start + pageSize);
@@ -143,10 +195,47 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     setCurrentPage(1);
   }, [searchQuery]);
 
+  const groupedItems = useMemo(() => {
+    const groups: Record<string, Record<string, InspectionItem[]>> = {};
+    filteredItems.forEach(item => {
+      const cat = item.category || 'Other';
+      const ven = item.vendor || (zh ? '未分类' : 'Uncategorized');
+      if (!groups[cat]) groups[cat] = {};
+      if (!groups[cat][ven]) groups[cat][ven] = [];
+      groups[cat][ven].push(item);
+    });
+    return groups;
+  }, [filteredItems, zh]);
+
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+          <button
+            onClick={() => setCategoryFilter('All')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              categoryFilter === 'All' 
+              ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/20' 
+              : 'bg-black/5 text-black/40 hover:bg-black/10'
+            }`}
+          >
+            {zh ? '全部' : 'All'}
+          </button>
+          {CATEGORIES.map(cat => (
+            <button
+              key={cat.id}
+              onClick={() => setCategoryFilter(cat.id)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                categoryFilter === cat.id 
+                ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/20' 
+                : 'bg-black/5 text-black/40 hover:bg-black/10'
+              }`}
+            >
+              {zh ? cat.zh : cat.en}
+            </button>
+          ))}
+        </div>
+
         <div>
           <h2 className="text-xl font-bold text-[#164e63] flex items-center gap-2">
             <ListFilter className="w-6 h-6 text-cyan-500" />
@@ -195,21 +284,21 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                   <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '英文名称' : 'Name (EN)'}</label>
                   <input
                     type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/10 focus:border-cyan-400"
+                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none"
                   />
                 </div>
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '中文名称' : 'Name (ZH)'}</label>
                   <input
                     type="text" value={form.name_zh} onChange={e => setForm({ ...form, name_zh: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/10 focus:border-cyan-400"
+                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none"
                   />
                 </div>
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '分类' : 'Category'}</label>
                   <select
                     value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/10 focus:border-cyan-400 bg-white"
+                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none bg-white"
                   >
                     <option value="Network">{zh ? '网络设备' : 'Network Device'}</option>
                     <option value="Server">{zh ? '服务器/主机' : 'Server / Host'}</option>
@@ -220,23 +309,57 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '检查 Key (唯一标识)' : 'Check Key (Unique)'}</label>
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '检查 Key' : 'Check Key'}</label>
                   <input
                     type="text" value={form.check_key} onChange={e => setForm({ ...form, check_key: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/10 focus:border-cyan-400"
+                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '采集方式' : 'Method'}</label>
+                  <select
+                    value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none bg-white"
+                  >
+                    <option value="SNMP">SNMP</option>
+                    <option value="SSH">SSH</option>
+                    <option value="Shell">Shell</option>
+                    <option value="ICMP">ICMP</option>
+                    <option value="TCP">TCP</option>
+                    <option value="Agent">Agent</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '厂商' : 'Vendor'}</label>
+                  <select
+                    value={form.vendor} onChange={e => setForm({ ...form, vendor: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none bg-white"
+                  >
+                    <option value="">{zh ? '请选择厂商' : 'Select Vendor'}</option>
+                    {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+                {form.method === 'SNMP' && (
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? 'OID' : 'OID'}</label>
+                    <input
+                      type="text" value={form.oid} onChange={e => setForm({ ...form, oid: e.target.value })}
+                      className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none"
+                      placeholder={zh ? "请输入 OID" : "1.3.6.1..."}
+                    />
+                  </div>
+                )}
+                <div className="lg:col-span-2">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '采集指令' : 'Command'}</label>
+                  <input
+                    type="text" value={form.command} onChange={e => setForm({ ...form, command: e.target.value })}
+                    className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none"
                   />
                 </div>
               </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '详细说明' : 'Description'}</label>
-                <textarea
-                  rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/10 focus:border-cyan-400"
-                />
-              </div>
               <div className="flex justify-end gap-2">
                 <button onClick={() => setShowAdd(false)} className="px-4 py-2 text-xs font-semibold text-black/40">{zh ? '取消' : 'Cancel'}</button>
-                <button onClick={handleAdd} className="px-6 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold shadow-sm">{zh ? '保存' : 'Save'}</button>
+                <button onClick={handleAdd} className="px-6 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold">{zh ? '保存' : 'Save'}</button>
               </div>
             </div>
           </motion.div>
@@ -249,13 +372,13 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             <thead>
               <tr className="bg-black/[0.01] border-b border-black/[0.05]">
                 <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{zh ? '名称' : 'Name'}</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{zh ? '分类' : 'Category'}</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{zh ? '分类 / 厂商' : 'Category / Vendor'}</th>
                 <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{zh ? '检查 Key' : 'Check Key'}</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{zh ? '描述' : 'Description'}</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{zh ? '描述 与 指令' : 'Desc & Command'}</th>
                 <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40 text-right">{zh ? '操作' : 'Actions'}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-black/[0.03]">
+            <tbody>
               {loading ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-12 text-center text-black/20 italic">
@@ -265,180 +388,267 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                     </div>
                   </td>
                 </tr>
-              ) : paginatedItems.length === 0 ? (
+              ) : Object.keys(groupedItems).length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-12 text-center text-black/20 italic">
                     {zh ? '暂无匹配的指标项' : 'No items found'}
                   </td>
                 </tr>
-              ) : paginatedItems.map(item => {
-                const isEditing = editingId === item.id;
-                const isExpanded = expandedId === item.id;
-                return (
-                  <React.Fragment key={item.id}>
-                    <tr 
-                      className={`hover:bg-black/[0.01] transition-colors group cursor-pointer ${isExpanded ? 'bg-cyan-50/30' : ''}`}
-                      onClick={() => !isEditing && setExpandedId(isExpanded ? null : item.id)}
-                    >
-                      <td className="px-6 py-4">
-                        {isEditing ? (
-                          <div className="space-y-2">
-                            <input
-                              type="text" value={form.name_zh} onChange={e => setForm({ ...form, name_zh: e.target.value })}
-                              className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none focus:ring-1 focus:ring-cyan-500"
-                              placeholder={zh ? '中文名' : 'Name (ZH)'}
-                            />
-                            <input
-                              type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                              className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] text-black/40 focus:outline-none"
-                              placeholder={zh ? '英文名' : 'Name (EN)'}
-                            />
+              ) : (
+                Object.entries(groupedItems).map(([category, vendors]) => {
+                  return (
+                    <React.Fragment key={category}>
+                      <tr className="bg-[#164e63]/[0.02]">
+                        <td colSpan={5} className="px-6 py-2 border-y border-black/[0.05]">
+                          <div className="flex items-center gap-2">
+                            <Activity className="w-3.5 h-3.5 text-cyan-500" />
+                            <span className="text-[11px] font-black uppercase tracking-[0.2em] text-[#164e63]">
+                              {zh ? (CATEGORIES.find(c => c.id === category)?.zh || category) : category}
+                            </span>
                           </div>
-                        ) : (
-                          <div className="flex items-center gap-3">
-                            <div className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${isExpanded ? 'bg-cyan-500 scale-[1.5] shadow-[0_0_8px_rgba(6,182,212,0.6)]' : 'bg-black/10'}`} />
-                            <div className="flex flex-col">
-                              <span className="font-bold text-[#164e63]">{zh ? item.name_zh : item.name}</span>
-                              <span className="text-[10px] text-black/30 font-mono">{zh ? item.name : item.name_zh}</span>
-                            </div>
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        {isEditing ? (
-                          <select
-                            value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-                            className="px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none focus:ring-1 focus:ring-cyan-500 bg-white"
-                          >
-                            <option value="Network">{zh ? '网络设备' : 'Network Device'}</option>
-                            <option value="Server">{zh ? '服务器/主机' : 'Server / Host'}</option>
-                            <option value="Connectivity">{zh ? '基础连通性' : 'Connectivity'}</option>
-                            <option value="Interface">{zh ? '接口统计' : 'Interface'}</option>
-                            <option value="Health">{zh ? '业务健康度' : 'Health'}</option>
-                            <option value="Compliance">{zh ? '合规性检查' : 'Compliance'}</option>
-                          </select>
-                        ) : (
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                            item.category === 'Network' ? 'bg-indigo-50 text-indigo-600' :
-                            item.category === 'Server' ? 'bg-amber-50 text-amber-600' :
-                            item.category === 'Connectivity' ? 'bg-blue-50 text-blue-600' :
-                            item.category === 'Interface' ? 'bg-emerald-50 text-emerald-600' :
-                            'bg-purple-50 text-purple-600'
-                          }`}>
-                            {item.category}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 font-mono text-xs text-black/50">
-                        {isEditing ? (
-                          <input
-                            type="text" value={form.check_key} onChange={e => setForm({ ...form, check_key: e.target.value })}
-                            className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none focus:ring-1 focus:ring-cyan-500"
-                            placeholder="Key"
-                          />
-                        ) : item.check_key}
-                      </td>
-                      <td className="px-6 py-4 text-xs text-black/60 italic max-w-xs truncate">
-                        {isEditing ? (
-                          <div className="space-y-1">
-                            <input
-                              type="text" value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}
-                              className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none focus:ring-1 focus:ring-cyan-500"
-                              placeholder="Method"
-                            />
-                            <input
-                              type="text" value={form.command} onChange={e => setForm({ ...form, command: e.target.value })}
-                              className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none focus:ring-1 focus:ring-cyan-500"
-                              placeholder="Command"
-                            />
-                          </div>
-                        ) : item.description}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {isEditing ? (
-                            <>
-                              <button onClick={(e) => { e.stopPropagation(); handleUpdate(item.id); }} className="p-1.5 rounded-lg hover:bg-cyan-50 text-cyan-600" title="Save">
-                                <Save className="w-4 h-4" />
-                              </button>
-                              <button onClick={(e) => { e.stopPropagation(); setEditingId(null); }} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400" title="Cancel">
-                                <X className="w-4 h-4" />
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }} 
-                                className="p-1.5 rounded-lg hover:bg-black/5 text-black/40 hover:text-black"
-                              >
-                                <Edit3 className="w-4 h-4" />
-                              </button>
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }} 
-                                className="p-1.5 rounded-lg hover:bg-red-50 text-red-400"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                    <AnimatePresence>
-                      {isExpanded && !isEditing && (
-                        <tr>
-                          <td colSpan={5} className="px-6 py-0 border-none">
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              className="overflow-hidden"
-                            >
-                              <div className="py-4 px-8 bg-black/[0.02] rounded-xl mb-4 mt-1 border border-black/[0.04] grid grid-cols-1 md:grid-cols-2 gap-8 relative">
-                                <div className="absolute top-4 left-4 w-1 h-12 bg-cyan-500/20 rounded-full" />
-                                <div className="space-y-4">
-                                  <div>
-                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-2">{zh ? '详细描述' : 'DETAILED DESCRIPTION'}</h4>
-                                    <p className="text-xs text-black/70 leading-relaxed font-medium">{item.description || '-'}</p>
-                                  </div>
-                                  <div className="flex gap-8">
-                                    <div>
-                                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '更新时间' : 'UPDATED AT'}</h4>
-                                      <p className="text-[10px] font-mono text-black/40">{item.updated_at}</p>
-                                    </div>
-                                    <div>
-                                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '指标 ID' : 'METRIC ID'}</h4>
-                                      <p className="text-[10px] font-mono text-black/40 uppercase">{item.id}</p>
-                                    </div>
-                                  </div>
+                        </td>
+                      </tr>
+                      {Object.entries(vendors).map(([vendor, vendorItems]) => {
+                        return (
+                          <React.Fragment key={`${category}-${vendor}`}>
+                            <tr className="bg-white">
+                              <td colSpan={5} className="px-10 py-1.5">
+                                <div className="flex items-center gap-2 opacity-50">
+                                  <Shield className="w-3 h-3 text-cyan-400" />
+                                  <span className="text-[10px] font-bold text-black/40 uppercase tracking-widest">
+                                    {vendor}
+                                  </span>
                                 </div>
-                                <div className="bg-white/40 backdrop-blur-sm p-5 rounded-2xl border border-black/[0.03] space-y-4 shadow-sm">
-                                  <div className="flex items-center justify-between">
-                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/30">{zh ? '采集方式与指令' : 'ACQUISITION & COMMAND'}</h4>
-                                    <span className="px-2.5 py-1 rounded-lg bg-cyan-500 text-white text-[10px] font-black shadow-lg shadow-cyan-500/20">{item.method}</span>
-                                  </div>
-                                  <div className="bg-[#00172d] p-4 rounded-xl border border-white/5 relative group/code overflow-hidden">
-                                    <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
-                                    <code className="text-[11px] text-cyan-300 font-mono whitespace-pre relative z-10 block">
-                                      {item.command || (zh ? '# 暂无指令定义' : '# No command defined')}
-                                    </code>
-                                  </div>
-                                </div>
-                              </div>
-                            </motion.div>
-                          </td>
-                        </tr>
-                      )}
-                    </AnimatePresence>
-                  </React.Fragment>
-                );
-              })}
+                              </td>
+                            </tr>
+                            {vendorItems.map((item) => {
+                              const isEditing = editingId === item.id;
+                              const isExpanded = expandedId === item.id;
+                              return (
+                                <React.Fragment key={item.id}>
+                                  <tr 
+                                    className={`hover:bg-black/[0.01] transition-colors group cursor-pointer ${isExpanded ? 'bg-cyan-50/30' : ''}`}
+                                    onClick={() => !isEditing && setExpandedId(isExpanded ? null : item.id)}
+                                  >
+                                    <td className="px-6 py-4 pl-12">
+                                      {isEditing ? (
+                                        <div className="space-y-2">
+                                          <input
+                                            type="text" value={form.name_zh} onChange={e => setForm({ ...form, name_zh: e.target.value })}
+                                            className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
+                                            placeholder="Name (ZH)"
+                                          />
+                                          <input
+                                            type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+                                            className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] text-black/40 focus:outline-none"
+                                            placeholder="Name (EN)"
+                                          />
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-3">
+                                          <div className={`w-1.5 h-1.5 rounded-full ${isExpanded ? 'bg-cyan-500 scale-150 shadow-lg' : 'bg-black/10'}`} />
+                                          <div className="flex flex-col">
+                                            <span className="font-bold text-[#164e63]">{zh ? item.name_zh : item.name}</span>
+                                            <span className="text-[10px] text-black/30 font-mono">{item.name}</span>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="px-6 py-4">
+                                      {isEditing ? (
+                                        <div className="space-y-2">
+                                          <select
+                                            value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
+                                            className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none bg-white"
+                                          >
+                                            <option value="Network">Network</option>
+                                            <option value="Server">Server</option>
+                                            <option value="Connectivity">Connectivity</option>
+                                            <option value="Interface">Interface</option>
+                                            <option value="Health">Health</option>
+                                            <option value="Compliance">Compliance</option>
+                                          </select>
+                                          <select
+                                            value={form.vendor} onChange={e => setForm({ ...form, vendor: e.target.value })}
+                                            className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] focus:outline-none bg-white"
+                                          >
+                                            <option value="">{zh ? '选择厂商' : 'Vendor'}</option>
+                                            {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
+                                          </select>
+                                        </div>
+                                      ) : (
+                                        <div className="flex flex-col gap-1">
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-cyan-50 text-cyan-600 w-fit">
+                                            {zh ? (CATEGORIES.find(c => c.id === item.category)?.zh || item.category) : item.category}
+                                          </span>
+                                          {item.vendor && (
+                                            <span className="text-[10px] text-black/30 font-bold px-2">{item.vendor}</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="px-6 py-4 font-mono text-xs text-black/50">
+                                      {isEditing ? (
+                                        <input
+                                          type="text" value={form.check_key} onChange={e => setForm({ ...form, check_key: e.target.value })}
+                                          className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
+                                        />
+                                      ) : item.check_key}
+                                    </td>
+                                    <td className="px-6 py-4 text-xs text-black/60 italic">
+                                      {isEditing ? (
+                                        <div className="space-y-2">
+                                          <textarea
+                                            value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
+                                            className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                            rows={1}
+                                            placeholder={zh ? "指标描述" : "Description"}
+                                          />
+                                          <div className="flex gap-2">
+                                            <select
+                                              value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}
+                                              className="flex-1 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none bg-white"
+                                            >
+                                              <option value="SNMP">SNMP</option>
+                                              <option value="SSH">SSH</option>
+                                              <option value="Shell">Shell</option>
+                                              <option value="ICMP">ICMP</option>
+                                              <option value="TCP">TCP</option>
+                                              <option value="Agent">Agent</option>
+                                            </select>
+                                            {form.method === 'SNMP' && (
+                                              <input
+                                                type="text" value={form.oid} onChange={e => setForm({ ...form, oid: e.target.value })}
+                                                className="flex-1 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                                placeholder="OID"
+                                              />
+                                            )}
+                                          </div>
+                                          <textarea
+                                            value={form.command} onChange={e => setForm({ ...form, command: e.target.value })}
+                                            className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none font-mono"
+                                            rows={2}
+                                            placeholder={zh ? "采集指令" : "Command"}
+                                          />
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-1">
+                                          <div className="line-clamp-1 max-w-[200px] break-all text-black/40" title={item.description}>
+                                            {item.description || zh ? "暂无描述" : "No description"}
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            <span className="px-1.5 py-0.5 rounded bg-black/5 text-[9px] font-bold text-black/40 uppercase">{item.method}</span>
+                                            {item.oid && (
+                                              <div className="flex items-center gap-1 group/copy relative">
+                                                <span className="text-[9px] font-mono text-indigo-500 font-bold truncate max-w-[120px]">{item.oid}</span>
+                                                <button 
+                                                  onClick={(e) => { e.stopPropagation(); copyToClipboard(item.oid, `${item.id}-oid`); }}
+                                                  className="opacity-0 group-hover/copy:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/5"
+                                                  title={zh ? '复制 OID' : 'Copy OID'}
+                                                >
+                                                  {copiedId === `${item.id}-oid` ? <Check className="w-2.5 h-2.5 text-green-500" /> : <Copy className="w-2.5 h-2.5 text-black/30" />}
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="px-6 py-4 text-right">
+                                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        {isEditing ? (
+                                          <>
+                                            <button onClick={(e) => { e.stopPropagation(); handleUpdate(item.id, form); }} className="p-1.5 rounded-lg hover:bg-cyan-50 text-cyan-600"><Save className="w-4 h-4" /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); setEditingId(null); }} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400"><X className="w-4 h-4" /></button>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <button onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }} className="p-1.5 rounded-lg hover:bg-black/5 text-black/40 hover:text-black"><Edit3 className="w-4 h-4" /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400"><Trash2 className="w-4 h-4" /></button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                  <AnimatePresence>
+                                    {isExpanded && !isEditing && (
+                                      <tr>
+                                        <td colSpan={5} className="px-6 py-0 border-none">
+                                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                                            <div className="py-4 px-8 bg-black/[0.02] rounded-xl mb-4 mt-1 border border-black/[0.04] grid grid-cols-1 md:grid-cols-2 gap-8 relative">
+                                              <div className="absolute top-4 left-4 w-1 h-12 bg-cyan-500/20 rounded-full" />
+                                              <div className="space-y-4">
+                                                <div>
+                                                  <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-2">{zh ? '详细描述' : 'DETAILED DESCRIPTION'}</h4>
+                                                  <p className="text-xs text-black/70 leading-relaxed font-medium break-all">{item.description || '-'}</p>
+                                                </div>
+                                                <div className="flex gap-8">
+                                                  <div>
+                                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '更新时间' : 'UPDATED AT'}</h4>
+                                                    <p className="text-[10px] font-mono text-black/40">{item.updated_at}</p>
+                                                  </div>
+                                                  <div>
+                                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '指标 ID' : 'METRIC ID'}</h4>
+                                                    <p className="text-[10px] font-mono text-black/40 uppercase">{item.id}</p>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                              <div className="bg-white/40 backdrop-blur-sm p-5 rounded-2xl border border-black/[0.03] space-y-4 shadow-sm">
+                                                <div className="flex items-center justify-between">
+                                                  <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/30">{zh ? '数据采集与指令' : 'ACQUISITION & COMMAND'}</h4>
+                                                  <div className="flex gap-2">
+                                                    {item.oid && <span className="px-2.5 py-1 rounded-lg bg-indigo-500 text-white text-[10px] font-black shadow-lg shadow-indigo-500/20">OID: {item.oid}</span>}
+                                                    <span className="px-2.5 py-1 rounded-lg bg-cyan-500 text-white text-[10px] font-black shadow-lg shadow-cyan-500/20">{item.method}</span>
+                                                  </div>
+                                                </div>
+                                                <div className="bg-[#00172d] p-4 rounded-xl border border-white/5 relative group/code overflow-hidden">
+                                                  <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
+                                                  <div className="relative group/copy-cmd">
+                                                    <code className="text-[11px] text-cyan-300 font-mono whitespace-pre-wrap break-all relative z-10 block pr-8">
+                                                      {item.command || '# No command defined'}
+                                                    </code>
+                                                    <button 
+                                                      onClick={(e) => { e.stopPropagation(); copyToClipboard(item.command, `${item.id}-cmd`); }}
+                                                      className={`absolute top-0 right-0 z-20 p-1.5 rounded-lg transition-all ${
+                                                        copiedId === `${item.id}-cmd` 
+                                                        ? 'bg-green-500/20 text-green-400 opacity-100' 
+                                                        : 'bg-white/5 hover:bg-white/10 text-cyan-300/50 hover:text-cyan-300 opacity-0 group-hover/copy-cmd:opacity-100'
+                                                      }`}
+                                                      title={zh ? '复制指令' : 'Copy Command'}
+                                                    >
+                                                      {copiedId === `${item.id}-cmd` ? (
+                                                        <div className="flex items-center gap-1">
+                                                          <Check className="w-3 h-3 animate-in zoom-in duration-200" />
+                                                          <span className="text-[9px] font-bold">{zh ? '已复制' : 'Copied'}</span>
+                                                        </div>
+                                                      ) : (
+                                                        <Copy className="w-3 h-3" />
+                                                      )}
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </motion.div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </AnimatePresence>
+                                </React.Fragment>
+                              );
+                            })}
+                          </React.Fragment>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Pagination */}
       <div className="mt-4">
         <Pagination
           currentPage={currentPage}

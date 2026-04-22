@@ -695,9 +695,21 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
   const selectedScenarioPlatforms = useMemo(() => {
     if (!selectedScenario) return [] as string[];
-    if (selectedScenario.supported_platforms?.length) return selectedScenario.supported_platforms;
-    return Object.keys(selectedScenario.platform_phases || {});
-  }, [selectedScenario]);
+    const allPlatforms = selectedScenario.supported_platforms?.length
+      ? selectedScenario.supported_platforms
+      : Object.keys(selectedScenario.platform_phases || {});
+    
+    // Filter by target devices if any have platforms
+    const devicePlatforms = [...new Set(form.target_devices.map(d => d.platform).filter(Boolean))];
+    if (devicePlatforms.length > 0) {
+      const filtered = allPlatforms.filter(p => 
+        devicePlatforms.some(dp => findMatchingPlatform(dp || '', [p]))
+      );
+      if (filtered.length > 0) return filtered;
+    }
+    
+    return allPlatforms;
+  }, [selectedScenario, form.target_devices, findMatchingPlatform]);
 
   const platformLabel = useCallback((platformKey: string) => {
     if (!platformKey) return zh ? '未指定平台' : 'Unknown platform';
@@ -786,11 +798,24 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
   useEffect(() => {
     if (commandMode !== 'template' || !selectedScenario) return;
-    const defaultPlatform = selectedScenario.default_platform || selectedScenario.supported_platforms?.[0];
-    if (defaultPlatform && !selectedScenarioPlatform) {
-      setSelectedScenarioPlatform(defaultPlatform);
+    
+    const devicePlatforms = [...new Set(form.target_devices.map(d => d.platform).filter(Boolean))];
+    
+    // If only one platform is available in the filtered list, auto-select it
+    if (selectedScenarioPlatforms.length === 1 && selectedScenarioPlatform !== selectedScenarioPlatforms[0]) {
+      setSelectedScenarioPlatform(selectedScenarioPlatforms[0]);
+    } else if (devicePlatforms.length > 0 && !selectedScenarioPlatform) {
+      // If we have devices but no platform selected, try to find a match
+      const matched = selectedScenarioPlatforms.find(p => 
+        devicePlatforms.some(dp => findMatchingPlatform(dp || '', [p]))
+      );
+      if (matched) setSelectedScenarioPlatform(matched);
+    } else if (!selectedScenarioPlatform) {
+      // Default fallback
+      const defaultPlatform = selectedScenario.default_platform || selectedScenarioPlatforms[0];
+      if (defaultPlatform) setSelectedScenarioPlatform(defaultPlatform);
     }
-  }, [selectedScenarioId, commandMode, selectedScenario, selectedScenarioPlatform]);
+  }, [selectedScenarioId, commandMode, selectedScenario, selectedScenarioPlatform, selectedScenarioPlatforms, form.target_devices, findMatchingPlatform]);
 
   // ── Auto-detect scenario from device platform ──
   useEffect(() => {
@@ -817,19 +842,9 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       if (matchedPlatform) {
         setSelectedScenarioPlatform(matchedPlatform);
       }
-    } else {
     }
   }, [commandMode, selectedScenarioId, form.target_devices, scenarioOptions]);
 
-
-  const normalizePlatformKey = (value: string) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-  const findMatchingPlatform = (input: string, candidates: string[]) => {
-    const normalized = normalizePlatformKey(input);
-    if (!normalized) return '';
-    const exact = candidates.find((candidate) => normalizePlatformKey(candidate) === normalized);
-    if (exact) return exact;
-    return candidates.find((candidate) => normalizePlatformKey(candidate).includes(normalized) || normalized.includes(normalizePlatformKey(candidate))) || '';
-  };
 
   const renderTemplateText = (templateText: string, vars: Record<string, string>) => {
     let text = templateText;

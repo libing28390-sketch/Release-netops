@@ -1287,13 +1287,13 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
     const side = viewSide;
     const devices = layout.devices.filter(d => d.position === side);
 
-    const scale = 2;
-    const uH = 28;
-    const lw = 32;
-    const rw = 420;
+    const scale = 4;
+    const uH = 32; 
+    const lw = 44; 
+    const rw = 520; 
     const totalW = lw + rw + lw;
-    const headerH = 48;
-    const footerH = 60;
+    const headerH = 64;
+    const footerH = 80;
     const totalH = headerH + totalU * uH + footerH;
 
     const canvas = document.createElement('canvas');
@@ -1301,22 +1301,45 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
     canvas.height = totalH * scale;
     const ctx = canvas.getContext('2d')!;
     ctx.scale(scale, scale);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
 
-    ctx.fillStyle = '#0f172a';
+    // 1. Background
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, totalH);
+    bgGrad.addColorStop(0, '#0f172a');
+    bgGrad.addColorStop(1, '#020617');
+    ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, totalW, totalH);
 
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 14px system-ui, sans-serif';
+    // 2. Title & Header
+    ctx.textBaseline = 'middle';
     ctx.textAlign = 'center';
-    ctx.fillText(`${layout.name} - ${side === 'front' ? (zh ? '前视图' : 'Front') : (zh ? '后视图' : 'Rear')}`, totalW / 2, 20);
-    ctx.font = '10px system-ui, sans-serif';
-    ctx.fillStyle = '#64748b';
-    ctx.fillText(`${layout.datacenter}${layout.room ? ' / ' + layout.room : ''} | ${layout.total_used}U / ${totalU}U`, totalW / 2, 36);
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 20px system-ui, sans-serif';
+    ctx.fillText(`${layout.name} - ${side === 'front' ? (zh ? '前视图' : 'Front') : (zh ? '后视图' : 'Rear')}`, totalW / 2, 24);
+    
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(`${layout.datacenter}${layout.room ? ' / ' + layout.room : ''} | ${layout.total_used}U / ${totalU}U`, totalW / 2, 44);
 
-    ctx.strokeStyle = '#334155';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(lw, headerH, rw, totalU * uH);
+    // 3. Rack Frame (Cabinet)
+    const frameColor = '#334155';
+    const innerColor = '#020617';
+    
+    // Draw outer frame
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(lw - 6, headerH - 6, rw + 12, totalU * uH + 12);
+    
+    // Draw inner rack area
+    ctx.fillStyle = innerColor;
+    ctx.fillRect(lw, headerH, rw, totalU * uH);
+    
+    // Draw side rails
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(lw, headerH, 18, totalU * uH);
+    ctx.fillRect(lw + rw - 18, headerH, 18, totalU * uH);
 
+    // 4. Slot Markings & Rails Detail
     const devMap = new Map<number, (typeof devices)[0]>();
     const spanned = new Set<number>();
     for (const d of devices) {
@@ -1326,86 +1349,163 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
 
     for (let i = 0; i < totalU; i++) {
       const uNumber = totalU - i;
-      if (spanned.has(uNumber)) continue;
       const y = headerH + i * uH;
-      const device = devMap.get(uNumber);
-      const h = device ? device.u_height * uH : uH;
+      
+      // Horizontal slot separator
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(lw, y);
+      ctx.lineTo(lw + rw, y);
+      ctx.stroke();
 
-      ctx.fillStyle = '#64748b';
-      ctx.font = '9px monospace';
+      // Rail "screw holes"
+      ctx.fillStyle = '#334155';
+      [lw + 9, lw + rw - 9].forEach(hx => {
+        [y + uH*0.25, y + uH*0.75].forEach(hy => {
+          ctx.beginPath();
+          ctx.arc(hx, hy, 1.2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      });
+
+      // U-Numbers (Engraved feel)
       ctx.textAlign = 'center';
-      ctx.fillText(String(uNumber), lw / 2, y + h / 2 + 3);
-      ctx.fillText(String(uNumber), lw + rw + lw / 2, y + h / 2 + 3);
+      ctx.font = 'bold 10px monospace';
+      ctx.fillStyle = '#475569';
+      ctx.fillText(String(uNumber), lw / 2, y + uH / 2);
+      ctx.fillText(String(uNumber), lw + rw + lw / 2, y + uH / 2);
 
+      const device = devMap.get(uNumber);
       if (device) {
+        const h = device.u_height * uH;
         const rc = ROLE_COLORS[device.device_role] || ROLE_COLORS.other;
-        ctx.fillStyle = rc.bg;
-        ctx.globalAlpha = 0.85;
+        
+        // Device Panel Gradient
+        const devGrad = ctx.createLinearGradient(lw + 2, y + 1, lw + 2, y + h - 1);
+        devGrad.addColorStop(0, rc.bg);
+        devGrad.addColorStop(1, rc.border);
+        ctx.fillStyle = devGrad;
+        
         ctx.beginPath();
-        ctx.roundRect(lw + 2, y + 1, rw - 4, h - 2, 3);
+        ctx.roundRect(lw + 2, y + 1, rw - 4, h - 2, 2);
         ctx.fill();
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = rc.border;
+        
+        // Top highlight line
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
         ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(lw + 4, y + 2);
+        ctx.lineTo(lw + rw - 4, y + 2);
         ctx.stroke();
 
-        const ledX = lw + 12;
+        // Power Status Indicator
+        const ledX = lw + 32;
         const ledY = y + h / 2;
+        const ledColor = device.status === 'active' ? '#4ade80' : device.status === 'planned' ? '#fbbf24' : '#ef4444';
+        
+        ctx.shadowBlur = device.status === 'active' ? 8 : 0;
+        ctx.shadowColor = ledColor;
         ctx.beginPath();
         ctx.arc(ledX, ledY, 4, 0, Math.PI * 2);
-        ctx.fillStyle = device.status === 'active' ? '#4ade80' : device.status === 'planned' ? '#fbbf24' : '#ef4444';
+        ctx.fillStyle = ledColor;
         ctx.fill();
+        ctx.shadowBlur = 0;
 
-        ctx.fillStyle = rc.text;
-        ctx.font = 'bold 11px system-ui, sans-serif';
+        // Text Labels
+        ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'left';
-        ctx.fillText(device.name, lw + 24, y + h / 2 + 4);
-        ctx.font = '9px system-ui, sans-serif';
+        
+        // Hostname
+        ctx.font = 'bold 13px system-ui, sans-serif';
+        ctx.fillText(device.name, lw + 48, y + h / 2);
+        const nameW = ctx.measureText(device.name).width;
+
+        // Model
+        ctx.font = '11px system-ui, sans-serif';
         ctx.globalAlpha = 0.7;
-        ctx.fillText(`${device.vendor} ${device.model}`, lw + 24 + ctx.measureText(device.name).width + 8, y + h / 2 + 4);
+        const modelStr = `${device.vendor} ${device.model}`;
+        ctx.fillText(modelStr, lw + 48 + nameW + 24, y + h / 2);
+        const modelW = ctx.measureText(modelStr).width;
+
+        // SN/Asset Tag
+        const sn = device.serial_number || device.asset_id;
+        if (sn && (lw + 48 + nameW + 24 + modelW + 40 < lw + rw - 60)) {
+          ctx.font = 'italic 10px monospace';
+          ctx.globalAlpha = 0.5;
+          ctx.fillText(`[${sn}]`, lw + 48 + nameW + 24 + modelW + 16, y + h / 2);
+        }
+
+        // Height Badge
         ctx.globalAlpha = 1;
         ctx.textAlign = 'right';
-        ctx.font = '9px monospace';
-        ctx.fillStyle = rc.text;
-        ctx.globalAlpha = 0.7;
-        ctx.fillText(`${device.u_height}U`, lw + rw - 10, y + h / 2 + 3);
-        ctx.globalAlpha = 1;
+        ctx.font = 'bold 10px monospace';
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fillText(`${device.u_height}U`, lw + rw - 24, y + h / 2);
       } else {
-        ctx.strokeStyle = '#1e293b';
-        ctx.lineWidth = 0.5;
-        ctx.setLineDash([4, 3]);
-        ctx.strokeRect(lw + 2, y + 1, rw - 4, uH - 2);
+        // Empty slot faint border
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 4]);
+        ctx.strokeRect(lw + 20, y + 4, rw - 40, uH - 8);
         ctx.setLineDash([]);
       }
     }
 
-    const legendY = headerH + totalU * uH + 16;
-    ctx.font = '9px system-ui, sans-serif';
+    // 5. Legend & Footer
+    const legendY = headerH + totalU * uH + 28;
     ctx.textAlign = 'left';
-    let lx = 10;
-    for (const [label, color] of [
+    ctx.globalAlpha = 1;
+    let lx = 20;
+    
+    // Status legend
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText(zh ? '状态:' : 'Status:', lx, legendY);
+    lx += 40;
+
+    [
       [zh ? '通电' : 'ON', '#4ade80'],
       [zh ? '断电' : 'OFF', '#ef4444'],
       [zh ? '规划' : 'Plan', '#fbbf24'],
-    ] as const) {
+    ].forEach(([label, color]) => {
       ctx.beginPath();
-      ctx.arc(lx + 4, legendY, 3, 0, Math.PI * 2);
+      ctx.arc(lx + 4, legendY, 3.5, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
       ctx.fillStyle = '#94a3b8';
-      ctx.fillText(label, lx + 10, legendY + 3);
-      lx += ctx.measureText(label).width + 22;
-    }
-    lx += 10;
-    for (const [, rc] of Object.entries(ROLE_COLORS)) {
-      ctx.fillStyle = rc.bg;
-      ctx.fillRect(lx, legendY - 5, 10, 10);
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillText(zh ? rc.labelZh : rc.label, lx + 14, legendY + 3);
-      lx += ctx.measureText(zh ? rc.labelZh : rc.label).width + 22;
-      if (lx > totalW - 30) break;
-    }
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.fillText(label, lx + 12, legendY);
+      lx += ctx.measureText(label).width + 32;
+    });
 
+    lx += 20;
+    ctx.fillStyle = '#64748b';
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.fillText(zh ? '角色:' : 'Role:', lx, legendY);
+    lx += 40;
+
+    const visibleRoles = Object.entries(ROLE_COLORS).slice(0, 7);
+    visibleRoles.forEach(([, rc]) => {
+      ctx.fillStyle = rc.bg;
+      ctx.beginPath();
+      ctx.roundRect(lx, legendY - 5, 10, 10, 2);
+      ctx.fill();
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '10px system-ui, sans-serif';
+      const rLabel = zh ? rc.labelZh : rc.label;
+      ctx.fillText(rLabel, lx + 14, legendY);
+      lx += ctx.measureText(rLabel).width + 28;
+    });
+
+    // 6. Final Timestamp
+    const nowStr = new Date().toLocaleString(zh ? 'zh-CN' : 'en-US');
+    ctx.textAlign = 'right';
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.fillStyle = '#475569';
+    ctx.fillText(`${zh ? '生成于' : 'Generated at'}: ${nowStr}`, totalW - 20, totalH - 16);
+
+    // Download
     const link = document.createElement('a');
     link.download = `rack-${layout.name}-${side}-${new Date().toISOString().slice(0, 10)}.png`;
     link.href = canvas.toDataURL('image/png');

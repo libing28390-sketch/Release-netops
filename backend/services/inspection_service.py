@@ -673,10 +673,12 @@ def create_inspection_item(item_data: dict[str, Any]) -> dict[str, Any]:
         now = _beijing_now_iso()
         conn.execute(
             '''INSERT INTO inspection_items
-                (id, name, name_zh, category, check_key, description, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                (id, name, name_zh, category, check_key, description, method, command, vendor, oid, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (item_id, item_data['name'], item_data['name_zh'], item_data['category'],
-             item_data['check_key'], item_data.get('description', ''), now, now)
+             item_data['check_key'], item_data.get('description', ''), 
+             item_data.get('method', 'SNMP'), item_data.get('command', ''),
+             item_data.get('vendor', ''), item_data.get('oid', ''), now, now)
         )
         conn.commit()
         item_data['id'] = item_id
@@ -689,7 +691,7 @@ def create_inspection_item(item_data: dict[str, Any]) -> dict[str, Any]:
 def update_inspection_item(item_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
-        allowed = {'name', 'name_zh', 'category', 'check_key', 'description'}
+        allowed = {'name', 'name_zh', 'category', 'check_key', 'description', 'method', 'command', 'vendor', 'oid'}
         sets = []
         params = []
         for k, v in updates.items():

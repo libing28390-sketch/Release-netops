@@ -1672,6 +1672,8 @@ def init_db():
             description TEXT DEFAULT '',
             method TEXT DEFAULT 'SNMP', -- SNMP, SSH, Agent
             command TEXT DEFAULT '',     -- Specific command or OID
+            vendor TEXT DEFAULT '',
+            oid TEXT DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -1684,38 +1686,46 @@ def init_db():
         try:
             cursor.execute('ALTER TABLE inspection_items ADD COLUMN command TEXT DEFAULT ""')
         except: pass
+        try:
+            cursor.execute('ALTER TABLE inspection_items ADD COLUMN vendor TEXT DEFAULT ""')
+        except: pass
+        try:
+            cursor.execute('ALTER TABLE inspection_items ADD COLUMN oid TEXT DEFAULT ""')
+        except: pass
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_items_cat ON inspection_items(category)')
 
         # Seed/Update default items
         now = _beijing_now_iso()
         default_items = [
             # --- Network Device (SNMP based) ---
-            ('net_ping', 'Connectivity (Ping)', '网络连通性 (Ping)', 'Network', 'ping', '检查设备 ICMP 响应时间与丢包率 (阈值: >100ms 告警)', 'ICMP', 'ping -c 3 {ip}', now, now),
-            ('net_ssh', 'SSH Accessibility', '管理通道 (SSH)', 'Network', 'ssh', '检查 22 端口可用性与响应速度', 'TCP', 'socket.connect({ip}, 22)', now, now),
-            ('net_cpu', 'CPU Utilization', 'CPU 利用率 (SNMP)', 'Network', 'cpu', '监控网络设备 CPU 负载 (阈值: >85% 告警)', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.109.1.1.1.1.7', now, now),
-            ('net_mem', 'Memory Utilization', '内存利用率 (SNMP)', 'Network', 'memory', '监控网络设备内存消耗 (阈值: >90% 告警)', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.48.1.1.1.5.1', now, now),
-            ('net_temp', 'Chassis Temperature', '机箱温度', 'Network', 'temp', '监控设备环境温度与过热告警', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.13.1.3.1.3', now, now),
-            ('net_intf_err', 'Interface Error Rate', '端口错误率', 'Network', 'interface_error', '检查接口 CRC/Input Errors (阈值: >0.1% 告警)', 'SNMP', 'OID: 1.3.6.1.2.1.2.2.1.14', now, now),
-            ('net_intf_util', 'Interface Utilization', '端口带宽利用率', 'Network', 'interface_util', '检查接口入/出带宽占用 (阈值: >85% 告警)', 'SNMP', 'OID: 1.3.6.1.2.1.2.2.1.10 / 1.16', now, now),
-            ('net_bgp', 'BGP Peer Status', 'BGP 邻居状态', 'Network', 'bgp_neighbor', '监控 BGP 状态机 (非 Established 即告警)', 'SSH', 'show ip bgp summary', now, now),
-            ('net_fan', 'Fan Tray Status', '风扇组件状态', 'Network', 'fan_status', '监控风扇转速与运行健康度', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.13.1.4.1.3', now, now),
-            ('net_psu', 'PSU Redundancy', '电源冗余状态', 'Network', 'psu_status', '监控电源在位与供电状态', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.13.1.5.1.3', now, now),
+            ('net_ping', 'Connectivity (Ping)', '网络连通性 (Ping)', 'Network', 'ping', '检查设备 ICMP 响应时间与丢包率 (阈值: >100ms 告警)', 'ICMP', 'ping -c 3 {ip}', 'Generic', '', now, now),
+            ('net_ssh', 'SSH Accessibility', '管理通道 (SSH)', 'Network', 'ssh', '检查 22 端口可用性与响应速度', 'TCP', 'socket.connect({ip}, 22)', 'Generic', '', now, now),
+            ('net_cpu', 'CPU Utilization', 'CPU 利用率 (SNMP)', 'Network', 'cpu', '监控网络设备 CPU 负载 (阈值: >85% 告警)', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.109.1.1.1.1.7', 'Cisco', '1.3.6.1.4.1.9.9.109.1.1.1.1.7', now, now),
+            ('net_mem', 'Memory Utilization', '内存利用率 (SNMP)', 'Network', 'memory', '监控网络设备内存消耗 (阈值: >90% 告警)', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.48.1.1.1.5.1', 'Cisco', '1.3.6.1.4.1.9.9.48.1.1.1.5.1', now, now),
+            ('net_temp', 'Chassis Temperature', '机箱温度', 'Network', 'temp', '监控设备环境温度与过热告警', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.13.1.3.1.3', 'Cisco', '1.3.6.1.4.1.9.9.13.1.3.1.3', now, now),
+            ('net_intf_err', 'Interface Error Rate', '端口错误率', 'Network', 'interface_error', '检查接口 CRC/Input Errors (阈值: >0.1% 告警)', 'SNMP', 'OID: 1.3.6.1.2.1.2.2.1.14', 'Generic', '1.3.6.1.2.1.2.2.1.14', now, now),
+            ('net_intf_util', 'Interface Utilization', '端口带宽利用率', 'Network', 'interface_util', '检查接口入/出带宽占用 (阈值: >85% 告警)', 'SNMP', 'OID: 1.3.6.1.2.1.2.2.1.10 / 1.16', 'Generic', '1.3.6.1.2.1.2.2.1.10', now, now),
+            ('net_bgp', 'BGP Peer Status', 'BGP 邻居状态', 'Network', 'bgp_neighbor', '监控 BGP 状态机 (非 Established 即告警)', 'SSH', 'show ip bgp summary', 'Generic', '', now, now),
+            ('net_fan', 'Fan Tray Status', '风扇组件状态', 'Network', 'fan_status', '监控风扇转速与运行健康度', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.13.1.4.1.3', 'Cisco', '1.3.6.1.4.1.9.9.13.1.4.1.3', now, now),
+            ('net_psu', 'PSU Redundancy', '电源冗余状态', 'Network', 'psu_status', '监控电源在位与供电状态', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.13.1.5.1.3', 'Cisco', '1.3.6.1.4.1.9.9.13.1.5.1.3', now, now),
 
             # --- Server / Host (Agent based) ---
-            ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min/5min/15min 负载 (阈值: >核心数*2 告警)', 'Shell', 'uptime | awk "{print $10}"', now, now),
-            ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (阈值: >90% 告警)', 'Shell', 'top -bn1 | grep "Cpu(s)"', now, now),
-            ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'iostat -c 1 2', now, now),
-            ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统实际可用内存 (阈值: <10% 告警)', 'Shell', 'free -m | grep Mem', now, now),
-            ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控 Swap 活动状态 (阈值: >50% 告警)', 'Shell', 'free -m | grep Swap', now, now),
-            ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控各个挂载点空间占用 (阈值: >90% 告警)', 'Shell', 'df -h', now, now),
-            ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控文件系统 Inode 占用 (阈值: >90% 告警)', 'Shell', 'df -i', now, now),
-            ('srv_disk_latency', 'Disk IO Latency', '磁盘 IO 延迟', 'Server', 'io_latency', '监控平均读写响应时间 (阈值: >20ms 告警)', 'Shell', 'iostat -dx 1 2', now, now),
-            ('srv_net_retrans', 'TCP Retransmission', 'TCP 重传率', 'Server', 'tcp_retrans', '监控网络重传比例 (阈值: >1% 告警)', 'Shell', 'netstat -s | grep retransmitted', now, now),
-            ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'netstat -ant | grep ESTABLISHED | wc -l', now, now),
-            ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定系统/应用进程是否存在', 'Shell', 'ps aux | grep {process_name}', now, now),
+            ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min/5min/15min 负载 (阈值: >核心数*2 告警)', 'Shell', 'uptime | awk "{print $10}"', 'Linux', '', now, now),
+            ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (阈值: >90% 告警)', 'Shell', 'top -bn1 | grep "Cpu(s)"', 'Linux', '', now, now),
+            ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'iostat -c 1 2', 'Linux', '', now, now),
+            ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统实际可用内存 (阈值: <10% 告警)', 'Shell', 'free -m | grep Mem', 'Linux', '', now, now),
+            ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控 Swap 活动状态 (阈值: >50% 告警)', 'Shell', 'free -m | grep Swap', 'Linux', '', now, now),
+            ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控各个挂载点空间占用 (阈值: >90% 告警)', 'Shell', 'df -h', 'Linux', '', now, now),
+            ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控文件系统 Inode 占用 (阈值: >90% 告警)', 'Shell', 'df -i', 'Linux', '', now, now),
+            ('srv_disk_latency', 'Disk IO Latency', '磁盘 IO 延迟', 'Server', 'io_latency', '监控平均读写响应时间 (阈值: >20ms 告警)', 'Shell', 'iostat -dx 1 2', 'Linux', '', now, now),
+            ('srv_net_retrans', 'TCP Retransmission', 'TCP 重传率', 'Server', 'tcp_retrans', '监控网络重传比例 (阈值: >1% 告警)', 'Shell', 'netstat -s | grep retransmitted', 'Linux', '', now, now),
+            ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'netstat -ant | grep ESTABLISHED | wc -l', 'Linux', '', now, now),
+            ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定系统/应用进程是否存在', 'Shell', 'ps aux | grep {process_name}', 'Linux', '', now, now),
         ]
         cursor.executemany(
-            'INSERT OR REPLACE INTO inspection_items VALUES (?,?,?,?,?,?,?,?,?,?)',
+            '''INSERT OR REPLACE INTO inspection_items 
+               (id, name, name_zh, category, check_key, description, method, command, vendor, oid, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
             default_items
         )
 

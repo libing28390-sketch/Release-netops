@@ -643,6 +643,7 @@ const App: React.FC = () => {
         schedule: language === 'zh' ? '执行计划' : 'Execution Schedules',
         'schedule-history': language === 'zh' ? '执行历史' : 'Execution History',
         'scheduled-jobs': language === 'zh' ? '定时作业' : 'Scheduled Jobs',
+        'metrics': language === 'zh' ? '巡检指标' : 'Inspection Metrics',
       };
       return map[automationPage] || automationPage;
     }

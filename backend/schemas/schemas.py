@@ -259,6 +259,10 @@ class InspectionItemBase(BaseModel):
     category: str
     check_key: str
     description: str = ''
+    method: str = 'SNMP'
+    command: str = ''
+    vendor: str = ''
+    oid: str = ''
 
 class InspectionItemCreate(InspectionItemBase):
     pass
