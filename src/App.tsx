@@ -35,6 +35,11 @@ import TestConnectionResultModal from './components/TestConnectionResultModal';
 import SnmpTestResultModal from './components/SnmpTestResultModal';
 import { buildConnectionTestMessage, buildConnectionTestHint, buildConnectionCheckStatus, connectionCheckBadgeMeta, formatConnectionCheckTime } from './utils/connectionHelpers';
 import { useConfigDiff } from './hooks/useConfigDiff';
+import { useTheme } from './hooks/useTheme';
+import { useNotifications } from './hooks/useNotifications';
+import { useAuth } from './hooks/useAuth';
+import { useInventory } from './hooks/useInventory';
+import { useAutomation } from './hooks/useAutomation';
 
 const MonitoringCenter = lazy(() => import('./components/MonitoringCenter.tsx'));
 const DeviceHealthTab = lazy(() => import('./pages/DeviceHealthTab'));
@@ -139,6 +144,8 @@ class AppRuntimeBoundary extends React.Component<AppRuntimeBoundaryProps, AppRun
 
 const App: React.FC = () => {
   const { t, language, setLanguage } = useI18n();
+  const location = useLocation();
+  const navigate = useNavigate();
   const avatarPresets = [
     { id: 'preset:fox', emoji: '🦊', label: 'Fox', bgClass: 'bg-gradient-to-br from-orange-400 to-amber-600' },
     { id: 'preset:panda', emoji: '🐼', label: 'Panda', bgClass: 'bg-gradient-to-br from-slate-500 to-slate-700' },
@@ -172,78 +179,125 @@ const App: React.FC = () => {
     }
     return <User size={fallbackIconSize} />;
   };
-  const getResolvedTheme = (mode: ThemeMode): 'light' | 'dark' => {
-    return mode;
-  };
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const saved = localStorage.getItem('netops_theme_mode') as ThemeMode | null;
-    if (!saved || (saved !== 'light' && saved !== 'dark')) {
-      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    }
-    return saved;
-  });
-  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>(() => getResolvedTheme(((localStorage.getItem('netops_theme_mode') as ThemeMode | null) || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) as ThemeMode));
-  const [currentUser, setCurrentUser] = useState<SessionUser>({ username: 'admin' });
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const userMenuRef = React.useRef<HTMLDivElement | null>(null);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [notificationReadMap, setNotificationReadMap] = useState<Record<string, boolean>>(() => {
-    try {
-      const raw = localStorage.getItem('netops_notification_reads');
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
-  });
-  const [profileAvatarPreview, setProfileAvatarPreview] = useState('');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [authChecking, setAuthChecking] = useState(true);
+  const { themeMode, setThemeMode, resolvedTheme } = useTheme();
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ message, type });
+  }, []);
+
   const [showSetupWizard, setShowSetupWizard] = useState(false);
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
-  const [loginForm, setLoginForm] = useState(() => {
-    const saved = localStorage.getItem('netops_user');
-    return { username: saved || '', password: '' };
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const userMenuRef = React.useRef<HTMLDivElement | null>(null);
+  
+  const {
+    isAuthenticated,
+    setIsAuthenticated,
+    authChecking,
+    currentUser,
+    setCurrentUser,
+    isAuthenticating,
+    loginError,
+    setLoginError,
+    loginForm,
+    setLoginForm,
+    handleLogin,
+    handleLogout,
+    handleLanguagePreferenceChange,
+    rememberMe,
+    setRememberMe,
+    showLoginPwd,
+    setShowLoginPwd,
+  } = useAuth({
+    language,
+    setLanguage,
+    showToast,
+    setShowSetupWizard,
+    setShowUserMenu,
+    setShowNotifications,
   });
-  const [isAuthenticating, setIsAuthenticating] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
+
+  const activeTab = location.pathname.split('/')[1] || 'dashboard';
+  const configPage = location.pathname.split('/')[2] || 'backup';
+  const automationPage = location.pathname.split('/')[2] || '';
+  const inventorySubPage = location.pathname.split('/')[2] || 'devices';
+  const changeOrderPage = location.pathname.split('/')[2] || '';
+
+  const deviceFetchMode = useMemo<'light' | 'full'>(() => {
+    if (activeTab === 'inventory') return 'full';
+    if (activeTab === 'automation') return 'full';
+    if (activeTab === 'config') return 'full';
+    if (activeTab === 'topology') return 'full';
+    return 'light';
+  }, [activeTab]);
+
+  const {
+    devices,
+    setDevices,
+    selectedDevice,
+    setSelectedDevice,
+    devicesLastUpdatedAt,
+    fetchDevicesData,
+    normalizeDeviceRecord
+  } = useInventory(deviceFetchMode);
+
+  const { 
+    notifications, 
+    unreadNotifications,
+    unreadCount: unreadNotificationCount, 
+    markNotificationsAsRead, 
+    markAllNotificationsRead 
+  } = useNotifications({ currentUser, language, isAuthenticated });
+
+  const {
+    jobs, setJobs, scheduledTasks, setScheduledTasks, scenarios, platforms, playbookExecutions,
+    scripts, setScripts, selectedScript, setSelectedScript, selectedAutomationTemplate, setSelectedAutomationTemplate, editedScriptContent, setEditedScriptContent,
+    customCommand, setCustomCommand, customCommandMode, setCustomCommandMode, configReason, setConfigReason,
+    approverUsername, setApproverUsername, approvalCode, setApprovalCode, approvalToken, setApprovalToken,
+    approvalStatus, setApprovalStatus, approvalError, setApprovalError, approvalCountdown, setApprovalCountdown,
+    scriptParams, setScriptParams, commandFavorites, setCommandFavorites, showFavorites, setShowFavorites,
+    scriptVars, setScriptVars, batchMode, setBatchMode, batchDeviceIds, setBatchDeviceIds,
+    batchResults, setBatchResults, isBatchRunning, setIsBatchRunning, dryRun, setDryRun,
+    quickQueryOutput, setQuickQueryOutput, quickQueryRunning, setQuickQueryRunning, quickQueryLabel, setQuickQueryLabel,
+    quickQueryStructured, setQuickQueryStructured, quickQueryView, setQuickQueryView, quickQueryMaximized, setQuickQueryMaximized,
+    quickQueryCommands, setQuickQueryCommands,
+    selectedJob, setSelectedJob, showCustomCommandModal, setShowCustomCommandModal, showCmdPreviewModal, setShowCmdPreviewModal,
+    isAutomationTaskRunning, setIsAutomationTaskRunning, showDiff, setShowDiff, currentDiff, setCurrentDiff, customCommandVars,
+    applyScriptVars, formatQuickQueryRawOutput, getQuickQueryCommands, runTask, runParsedCustomCommand, rollback, runBatchTask,
+    saveFavorite, isFavorited, closeCustomCommandModal, handleRequestApproval, handleVerifyApproval, submitCustomCommand,
+    handleSelectPlaybookScenario, handlePlaybookPlatformChange, handlePlaybookVariableChange, handleTogglePlaybookDevice,
+    selectedScenario, setSelectedScenario, playbookVars, setPlaybookVars, playbookDeviceIds, setPlaybookDeviceIds,
+    playbookPlatform, setPlaybookPlatform, playbookDryRun, setPlaybookDryRun, playbookConcurrency, setPlaybookConcurrency,
+    playbookPreview, setPlaybookPreview, quickPlaybookScenario, setQuickPlaybookScenario, quickPlaybookVars, setQuickPlaybookVars,
+    quickPlaybookPlatform, setQuickPlaybookPlatform, quickPlaybookDryRun, setQuickPlaybookDryRun, quickPlaybookConcurrency, setQuickPlaybookConcurrency,
+    quickPlaybookPreview, setQuickPlaybookPreview, quickRiskConfirmed, setQuickRiskConfirmed, isQuickPlaybookRunning, setIsQuickPlaybookRunning,
+    quickExecutionResult, setQuickExecutionResult, wsMessages, setWsMessages, deviceStatusMap, setDeviceStatusMap,
+    wsCompleteMsg, setWsCompleteMsg, activeExecutionId, setActiveExecutionId, quickQueryTable, executionStatus, setExecutionStatus,
+    quickTargetDevices, quickDetectedPlatforms, quickHasMixedPlatforms, quickDetectedPlatform, quickScenarioSupportsDetectedPlatform,
+    quickAutoPlatform, quickPlatformMismatch, hasQuickTargets, quickMissingRequiredFields,
+    automationSearch, setAutomationSearch, scenarioSearch, setScenarioSearch, filteredScenarios,
+    loadScenarios, loadPlaybookHistory, loadJobs, runPlaybook, openQuickPlaybookModal, loadQuickPlaybookPreview, previewPlaybook, executePlaybook, resetAutomationSubmenuState,
+    runQuickPlaybook, runQuickQuery, handleResetQuickQuery, handleToggleBatchMode, handleToggleBatchDevice, handleSelectAutomationDevice, handleClearQuickScenario, handleResetQuickExecutionState, exportQuickQueryTable,
+    extractVars, splitLines
+  } = useAutomation({ currentUser, language, showToast, navigate, setSelectedDevice, devices, selectedDevice, activeTab, automationPage });
+
   const [globalVars, setGlobalVars] = useState<{id?: string, key: string, value: string}[]>([]);
   const [configTemplates, setConfigTemplates] = useState<ConfigTemplate[]>([]);
+
+  const findMatchingPlatform = useCallback((devicePlatform: string, platforms: string[] | Record<string, any>) => {
+    if (!devicePlatform) return undefined;
+    const pList = Array.isArray(platforms) ? platforms : Object.keys(platforms);
+    const dp = devicePlatform.toLowerCase();
+    return pList.find(p => {
+      const target = p.toLowerCase();
+      return dp === target || dp.includes(target) || target.includes(dp);
+    });
+  }, []);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [editorContent, setEditorContent] = useState<string>('');
 
-  // Check session token on mount
-  useEffect(() => {
-    const token = localStorage.getItem('netops_token');
-    if (!token) { setAuthChecking(false); return; }
-    fetch('/api/session', { headers: { 'Authorization': `Bearer ${token}` } })
-      .then(async r => {
-        if (r.ok) {
-          const data = await r.json();
-          setIsAuthenticated(true);
-          if (data?.user?.username) {
-            setCurrentUser(data.user);
-            if (data.user.preferred_language === 'en' || data.user.preferred_language === 'zh') {
-              setLanguage(data.user.preferred_language);
-            }
-          }
-          // Check if setup wizard is needed
-          try {
-            const sr = await fetch('/api/setup/status', { headers: { 'Authorization': `Bearer ${token}` } });
-            if (sr.ok) {
-              const sd = await sr.json();
-              if (!sd.setup_completed && data?.user?.role === 'Administrator') {
-                setShowSetupWizard(true);
-              }
-            }
-          } catch { /* ignore */ }
-        } else {
-          localStorage.removeItem('netops_token');
-        }
-      })
-      .catch(() => { localStorage.removeItem('netops_token'); })
-      .finally(() => setAuthChecking(false));
-  }, []);
+  const [profileAvatarPreview, setProfileAvatarPreview] = useState('');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
 
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
@@ -256,9 +310,6 @@ const App: React.FC = () => {
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem('netops_notification_reads', JSON.stringify(notificationReadMap));
-  }, [notificationReadMap]);
 
   useEffect(() => {
     const tpl = configTemplates.find(t => t.id === selectedTemplateId);
@@ -268,44 +319,7 @@ const App: React.FC = () => {
   }, [selectedTemplateId, configTemplates]);
   // getVendorFromPlatform, PLATFORM_LABELS, getPlatformLabel imported from ./types
 
-  const [scripts, setScripts] = useState<Script[]>([]);
-  const [selectedScript, setSelectedScript] = useState<Script | null>(null);
-  const [selectedAutomationTemplate, setSelectedAutomationTemplate] = useState<ConfigTemplate | null>(null);
-  const [editedScriptContent, setEditedScriptContent] = useState<string>('');
-  const [customCommand, setCustomCommand] = useState('');
-  const [customCommandMode, setCustomCommandMode] = useState<'query' | 'config'>('query');
-  const [configReason, setConfigReason] = useState('');
-  // Config approval flow
-  const [approverUsername, setApproverUsername] = useState('');
-  const [approvalCode, setApprovalCode] = useState('');
-  const [approvalToken, setApprovalToken] = useState('');
-  const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified' | 'error'>('idle');
-  const [approvalError, setApprovalError] = useState('');
-  const [approvalCountdown, setApprovalCountdown] = useState(0);
-  const [scriptParams, setScriptParams] = useState<Record<string, string>>({});
-  // Batch execution
-  const [batchMode, setBatchMode] = useState(false);
-  const [batchDeviceIds, setBatchDeviceIds] = useState<string[]>([]);
-  const [batchResults, setBatchResults] = useState<{deviceId: string; hostname: string; status: 'pending'|'running'|'success'|'failed'; output?: string}[]>([]);
-  const [isBatchRunning, setIsBatchRunning] = useState(false);
-  // Dry-run mode
-  const [dryRun, setDryRun] = useState(false);
-  // Command favorites
-  const [commandFavorites, setCommandFavorites] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('cmdFavorites') || '[]'); } catch { return []; }
-  });
-  const [showFavorites, setShowFavorites] = useState(false);
-  // Script variable substitution 閳?parsed from {{VAR}} in script content
-  const [scriptVars, setScriptVars] = useState<Record<string, string>>({});
-
   // Quick Query (read-only commands, no history saved)
-  const [quickQueryOutput, setQuickQueryOutput] = useState<string>('');
-  const [quickQueryRunning, setQuickQueryRunning] = useState(false);
-  const [quickQueryLabel, setQuickQueryLabel] = useState('');
-  const [quickQueryStructured, setQuickQueryStructured] = useState<any | null>(null);
-  const [quickQueryView, setQuickQueryView] = useState<'terminal' | 'table'>('terminal');
-  const [quickQueryMaximized, setQuickQueryMaximized] = useState(false);
-  const [quickQueryCommands, setQuickQueryCommands] = useState<string[]>([]);
 
   // ---------- Config Center ----------
   const [retentionDays, setRetentionDays] = useState<number>(365);
@@ -323,8 +337,6 @@ const App: React.FC = () => {
   const [scheduleEnabled, setScheduleEnabled] = useState(true);
   const [scheduleCron, setScheduleCron] = useState('0 2 * * *');
   const [scheduleLoading, setScheduleLoading] = useState(false);
-  const location = useLocation();
-  const navigate = useNavigate();
   const [configGroupOpen, setConfigGroupOpen] = useState(() => location.pathname.startsWith('/config'));
   const [automationGroupOpen, setAutomationGroupOpen] = useState(() => location.pathname.startsWith('/automation'));
   const [inventoryGroupOpen, setInventoryGroupOpen] = useState(() => location.pathname.startsWith('/inventory'));
@@ -345,29 +357,8 @@ const App: React.FC = () => {
   });
   const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
   const [cmdPaletteQuery, setCmdPaletteQuery] = useState('');
-  // Playbook state
-  const [scenarios, setScenarios] = useState<any[]>([]);
-  const [platforms, setPlatforms] = useState<Record<string, any>>({});
-  const [playbookPlatform, setPlaybookPlatform] = useState<string>('cisco_ios');
-  const [playbookExecutions, setPlaybookExecutions] = useState<any[]>([]);
-  const [selectedScenario, setSelectedScenario] = useState<any>(null);
-  const [playbookVars, setPlaybookVars] = useState<Record<string, string>>({});
-  const [playbookDeviceIds, setPlaybookDeviceIds] = useState<string[]>([]);
-  const [playbookDryRun, setPlaybookDryRun] = useState(true);
-  const [playbookConcurrency, setPlaybookConcurrency] = useState(1);
-  const [playbookPreview, setPlaybookPreview] = useState<any>(null);
-  const [quickPlaybookScenario, setQuickPlaybookScenario] = useState<any>(null);
-  const [quickPlaybookVars, setQuickPlaybookVars] = useState<Record<string, string>>({});
-  const [quickPlaybookPlatform, setQuickPlaybookPlatform] = useState<string>('cisco_ios');
-  const [quickPlaybookDryRun, setQuickPlaybookDryRun] = useState(true);
-  const [quickPlaybookConcurrency, setQuickPlaybookConcurrency] = useState(1);
-  const [quickPlaybookPreview, setQuickPlaybookPreview] = useState<any>(null);
-  const [quickRiskConfirmed, setQuickRiskConfirmed] = useState(false);
-  const [isQuickPlaybookRunning, setIsQuickPlaybookRunning] = useState(false);
-  const [quickExecutionResult, setQuickExecutionResult] = useState<{ executionId: string; deviceCount: number; dryRun: boolean; scenarioName: string; scenarioNameZh: string; timestamp: number } | null>(null);
-  const [showCustomCommandModal, setShowCustomCommandModal] = useState(false);
-  const [showCmdPreviewModal, setShowCmdPreviewModal] = useState(false);
-  const [scenarioSearch, setScenarioSearch] = useState('');
+  // showCustomCommandModal moved to useAutomation
+  // showCmdPreviewModal moved to useAutomation
   const [showAddScenarioModal, setShowAddScenarioModal] = useState(false);
   const [newScenarioForm, setNewScenarioForm] = useState({
     name: '',
@@ -389,13 +380,8 @@ const App: React.FC = () => {
     variableKeys: [],
   });
   const [isSavingScenario, setIsSavingScenario] = useState(false);
-  const [wsMessages, setWsMessages] = useState<any[]>([]);
-  const [deviceStatusMap, setDeviceStatusMap] = useState<Record<string, { hostname: string; status: string; currentPhase?: string; phases: Record<string, { success: boolean; output?: string }>; error?: string }>>({});
-  const [wsCompleteMsg, setWsCompleteMsg] = useState<any>(null);
-  const [activeExecutionId, setActiveExecutionId] = useState<string | null>(null);
   const [selectedExecutionDetail, setSelectedExecutionDetail] = useState<any | null>(null);
   const [selectedExecutionLoading, setSelectedExecutionLoading] = useState(false);
-  const [executionStatus, setExecutionStatus] = useState<string>('idle');
   // History pagination & lazy device loading
   const [playbookHistoryPage, setPlaybookHistoryPage] = useState(1);
   const [playbookHistoryTotal, setPlaybookHistoryTotal] = useState(0);
@@ -409,11 +395,7 @@ const App: React.FC = () => {
   const [selectedDeviceDetail, setSelectedDeviceDetail] = useState<any | null>(null);
   const [selectedDeviceDetailLoading, setSelectedDeviceDetailLoading] = useState(false);
   const wsRef = React.useRef<WebSocket | null>(null);
-  const [devices, setDevices] = useState<Device[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
-  const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  // selectedJob moved to useAutomation
   const [topologyLinks, setTopologyLinks] = useState<any[]>([]);
   const [topologyUnmanagedNodes, setTopologyUnmanagedNodes] = useState<any[]>([]);
   const [topologyUnmanagedLinks, setTopologyUnmanagedLinks] = useState<any[]>([]);
@@ -465,17 +447,12 @@ const App: React.FC = () => {
     target_interface_snapshot: TopologyInterfaceSnapshot | null;
   };
 
-  const activeTab = location.pathname.split('/')[1] || 'dashboard';
-  const configPage = location.pathname.split('/')[2] || 'backup';
-  const automationPage = location.pathname.split('/')[2] || '';
   // Redirect bare /automation to /automation/execute
   React.useEffect(() => {
     if (activeTab === 'automation' && !automationPage) {
       navigate('/automation/execute', { replace: true });
     }
   }, [activeTab, automationPage, navigate]);
-  const inventorySubPage = location.pathname.split('/')[2] || 'devices';
-  const changeOrderPage = location.pathname.split('/')[2] || '';
   // Redirect bare /change-orders to /change-orders/all
   React.useEffect(() => {
     if (activeTab === 'change-orders' && !changeOrderPage) {
@@ -696,35 +673,6 @@ const App: React.FC = () => {
     return t('dashboard');
   }, [activeTab, automationPage, configPage, inventorySubPage, changeOrderPage, language, t]);
 
-  const filteredScenarios = useMemo(() => {
-    const q = scenarioSearch.trim().toLowerCase();
-    if (!q) return scenarios;
-
-    return scenarios.filter((sc: any) => {
-      const textParts: string[] = [
-        sc.id,
-        sc.name,
-        sc.name_zh,
-        sc.description,
-        sc.description_zh,
-        sc.category,
-        sc.risk,
-      ].filter(Boolean);
-
-      (sc.variables || []).forEach((v: any) => {
-        textParts.push(v.key || '', v.label || '', v.placeholder || '');
-      });
-
-      Object.values(sc.platform_phases || {}).forEach((phase: any) => {
-        ['pre_check', 'execute', 'post_check', 'rollback'].forEach((key) => {
-          (phase?.[key] || []).forEach((cmd: string) => textParts.push(cmd));
-        });
-      });
-
-      const blob = textParts.join(' ').toLowerCase();
-      return blob.includes(q);
-    });
-  }, [scenarios, scenarioSearch]);
 
   useEffect(() => {
     const onResize = () => {
@@ -822,293 +770,6 @@ const App: React.FC = () => {
     } catch { /* ignore */ }
   };
 
-  // 閳光偓閳光偓 Playbook helpers 閳光偓閳光偓
-  const loadScenarios = async () => {
-    try {
-      const [scenResp, platResp] = await Promise.all([
-        fetch('/api/playbooks/scenarios'),
-        fetch('/api/playbooks/platforms'),
-      ]);
-      if (scenResp.ok) setScenarios(await scenResp.json());
-      if (platResp.ok) setPlatforms(await platResp.json());
-    } catch { /* ignore */ }
-  };
-
-  const loadPlaybookHistory = async (
-    page = playbookHistoryPage,
-    statusFilter = playbookHistoryStatusFilter,
-    scenarioFilter = playbookHistoryScenarioSearch,
-  ) => {
-    try {
-      const params = new URLSearchParams({
-        page: String(page),
-        page_size: '20',
-        status: statusFilter,
-        scenario: scenarioFilter,
-      });
-      const playbookResp = await fetch(`/api/playbooks?${params}`);
-      let playbookItems: any[] = [];
-      let playbookTotal = 0;
-      if (playbookResp.ok) {
-        const d = await playbookResp.json();
-        playbookItems = (d.items || []).map((e: any) => ({ ...e, _type: 'playbook' }));
-        playbookTotal = d.total || 0;
-      }
-      setPlaybookExecutions(playbookItems);
-      setPlaybookHistoryTotal(playbookTotal);
-    } catch { /* ignore */ }
-  };
-
-  const loadExecDevices = async (
-    execId: string,
-    page = 1,
-    statusFilter = 'all',
-    search = '',
-  ) => {
-    setSelectedExecDevicesLoading(true);
-    try {
-      const params = new URLSearchParams({
-        page: String(page),
-        page_size: '20',
-        status: statusFilter,
-        search,
-      });
-      const r = await fetch(`/api/playbooks/${execId}/devices?${params}`);
-      if (r.ok) {
-        const data = await r.json();
-        setSelectedExecDevices(data.items || []);
-        setSelectedExecDevicesTotal(data.total || 0);
-      }
-    } finally {
-      setSelectedExecDevicesLoading(false);
-    }
-  };
-
-  const loadNotifications = useCallback(async () => {
-    try {
-      const userId = currentUser.id ? encodeURIComponent(String(currentUser.id)) : '';
-      const url = userId ? `/api/notifications?limit=40&user_id=${userId}` : '/api/notifications?limit=40';
-      const resp = await fetch(url);
-      if (!resp.ok) return;
-      const data = await resp.json();
-      setNotifications((data || []).map((n: any) => ({
-        id: String(n.id),
-        title: n.source === 'system_resource'
-          ? (language === 'zh' ? `平台资源告警: ${n.title}` : `Platform Resource Alert: ${n.title}`)
-          : n.title,
-        message: n.message,
-        time: n.time,
-        source: n.source,
-        severity: n.severity,
-        read: !!n.read || !!notificationReadMap[String(n.id)],
-      })));
-    } catch {
-      // ignore polling errors
-    }
-  }, [currentUser.id, language, notificationReadMap]);
-
-  const markNotificationsAsRead = useCallback(async (ids: string[]) => {
-    if (!ids.length || !currentUser.id) return;
-    try {
-      await fetch('/api/notifications/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: String(currentUser.id), notification_ids: ids }),
-      });
-    } catch {
-      // keep optimistic local UI state even on transient API errors
-    }
-  }, [currentUser.id]);
-
-  const openQuickPlaybookModal = (scenario: any) => {
-    const platform = scenario.default_platform || scenario.supported_platforms?.[0] || 'cisco_ios';
-    setQuickPlaybookScenario(scenario);
-    setQuickPlaybookPlatform(platform);
-    setQuickPlaybookVars({});
-    setQuickPlaybookDryRun(true);
-    setQuickPlaybookConcurrency(1);
-    setQuickPlaybookPreview(null);
-    setQuickRiskConfirmed(false);
-    setQuickExecutionResult(null);
-  };
-
-  const loadQuickPlaybookPreview = useCallback(async (scenario: any, platform: string, variables: Record<string, string>) => {
-    if (!scenario?.id || !platform) {
-      setQuickPlaybookPreview(null);
-      return;
-    }
-    try {
-      const resp = await fetch('/api/playbooks/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario_id: scenario.id, platform, variables }),
-      });
-      if (!resp.ok) {
-        setQuickPlaybookPreview(null);
-        return;
-      }
-      setQuickPlaybookPreview(await resp.json());
-    } catch {
-      setQuickPlaybookPreview(null);
-    }
-  }, []);
-
-  const runQuickPlaybook = async (dryRunOverride?: boolean, changeTicket?: string) => {
-    if (!quickPlaybookScenario) return;
-    const targetDeviceIds = batchMode
-      ? batchDeviceIds
-      : (selectedDevice?.id ? [selectedDevice.id] : []);
-
-    if (targetDeviceIds.length === 0) {
-      showToast('Select target device(s) first in Direct Execution', 'error');
-      return;
-    }
-    if (quickHasMixedPlatforms) {
-      showToast(language === 'zh' ? '批量目标包含多个平台，请按平台分组执行。' : 'Batch targets contain multiple platforms. Execute one platform group at a time.', 'error');
-      return;
-    }
-    if (quickPlatformMismatch) {
-      showToast(language === 'zh' ? '当前场景不支持所选设备平台。' : 'Current scenario does not support selected device platform.', 'error');
-      return;
-    }
-
-    const effectiveDryRun = dryRunOverride !== undefined ? dryRunOverride : quickPlaybookDryRun;
-    if (dryRunOverride !== undefined) setQuickPlaybookDryRun(dryRunOverride);
-
-    setWsMessages([]);
-    setDeviceStatusMap({});
-    setWsCompleteMsg(null);
-    setIsQuickPlaybookRunning(true);
-    try {
-      const resp = await fetch('/api/playbooks/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scenario_id: quickPlaybookScenario.id,
-          platform: quickPlaybookPlatform,
-          device_ids: targetDeviceIds,
-          variables: quickPlaybookVars,
-          dry_run: effectiveDryRun,
-          concurrency: quickPlaybookConcurrency,
-          change_ticket: (changeTicket || '').trim() || undefined,
-          author: currentUser.username || 'admin',
-          actor_id: currentUser.id,
-          actor_role: currentUser.role || 'Administrator',
-        }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        showToast(`Execution failed: ${data.detail || resp.statusText}`, 'error');
-        setIsQuickPlaybookRunning(false);
-        return;
-      }
-
-      showToast(language === 'zh' ? `执行任务已提交，目标设备 ${targetDeviceIds.length} 台` : `Execution submitted for ${targetDeviceIds.length} device(s)`, 'success');
-      setSelectedScenario(quickPlaybookScenario);
-      setPlaybookPlatform(quickPlaybookPlatform);
-      setPlaybookVars(quickPlaybookVars);
-      setPlaybookDryRun(effectiveDryRun);
-      setPlaybookConcurrency(quickPlaybookConcurrency);
-      setPlaybookDeviceIds(targetDeviceIds);
-      setActiveExecutionId(data.execution_id || null);
-      setExecutionStatus('running');
-      setQuickExecutionResult({
-        executionId: data.execution_id || '',
-        deviceCount: targetDeviceIds.length,
-        dryRun: effectiveDryRun,
-        scenarioName: quickPlaybookScenario.name,
-        scenarioNameZh: quickPlaybookScenario.name_zh,
-        timestamp: Date.now(),
-      });
-      // Open WebSocket for live per-device output in Panel 3
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const wsUrl = `${wsProtocol}://${window.location.host}/api/ws/playbook/${data.execution_id}`;
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          setWsMessages(prev => [...prev, msg]);
-          // Aggregate into deviceStatusMap for Panel 3
-          if (msg.type === 'device_start') {
-            setDeviceStatusMap(prev => ({ ...prev, [msg.device_id]: { hostname: msg.hostname || String(msg.device_id), status: 'running', phases: {} } }));
-          } else if (msg.type === 'phase_done') {
-            setDeviceStatusMap(prev => {
-              const dev = prev[msg.device_id];
-              if (!dev) return prev;
-              return { ...prev, [msg.device_id]: { ...dev, phases: { ...dev.phases, [msg.phase]: { success: msg.output?.success ?? true, output: msg.output?.output } } } };
-            });
-          } else if (msg.type === 'device_done') {
-            setDeviceStatusMap(prev => {
-              const dev = prev[msg.device_id];
-              return dev ? { ...prev, [msg.device_id]: { ...dev, status: msg.status || 'success', currentPhase: undefined } } : prev;
-            });
-          } else if (msg.type === 'device_error') {
-            setDeviceStatusMap(prev => ({ ...prev, [msg.device_id]: { hostname: String(msg.device_id), status: 'error', phases: {}, error: msg.error || 'Unknown error' } }));
-          } else if (msg.type === 'complete') {
-            setWsCompleteMsg(msg);
-            setExecutionStatus(msg.status);
-            setIsQuickPlaybookRunning(false);
-            ws.close();
-            loadPlaybookHistory();
-          }
-        } catch { /* ignore */ }
-      };
-      ws.onerror = () => { setExecutionStatus('ws_error'); setIsQuickPlaybookRunning(false); };
-      ws.onclose = () => { wsRef.current = null; };
-      loadPlaybookHistory();
-    } catch {
-      showToast('Connection error', 'error');
-      setIsQuickPlaybookRunning(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!quickPlaybookScenario) return;
-    const timer = window.setTimeout(() => {
-      loadQuickPlaybookPreview(quickPlaybookScenario, quickPlaybookPlatform, quickPlaybookVars);
-    }, 220);
-    return () => window.clearTimeout(timer);
-  }, [quickPlaybookScenario, quickPlaybookPlatform, quickPlaybookVars, loadQuickPlaybookPreview]);
-
-  const splitLines = (text: string) => text.split('\n').map(s => s.trim()).filter(Boolean);
-
-  const quickTargetDevices = useMemo(() => {
-    if (batchMode) {
-      const selectedIds = new Set(batchDeviceIds);
-      return devices.filter((d) => selectedIds.has(d.id));
-    }
-    return selectedDevice ? [selectedDevice] : [];
-  }, [batchMode, batchDeviceIds, devices, selectedDevice]);
-
-  const quickDetectedPlatforms = useMemo(() => {
-    return Array.from(new Set(quickTargetDevices.map((d) => d.platform).filter(Boolean)));
-  }, [quickTargetDevices]);
-
-  const quickHasMixedPlatforms = quickDetectedPlatforms.length > 1;
-  const quickDetectedPlatform = quickDetectedPlatforms.length === 1 ? quickDetectedPlatforms[0] : '';
-  const quickScenarioSupportsDetectedPlatform = !!(
-    quickPlaybookScenario &&
-    quickDetectedPlatform &&
-    (quickPlaybookScenario.supported_platforms || []).includes(quickDetectedPlatform)
-  );
-  const quickAutoPlatform = quickDetectedPlatform
-    || quickPlaybookScenario?.default_platform
-    || quickPlaybookScenario?.supported_platforms?.[0]
-    || 'cisco_ios';
-
-  const quickPlatformMismatch = !!(
-    quickPlaybookScenario &&
-    quickDetectedPlatform &&
-    !quickScenarioSupportsDetectedPlatform
-  );
-
-  useEffect(() => {
-    if (!quickPlaybookScenario) return;
-    if (quickPlaybookPlatform !== quickAutoPlatform) {
-      setQuickPlaybookPlatform(quickAutoPlatform);
-    }
-  }, [quickPlaybookScenario, quickAutoPlatform, quickPlaybookPlatform]);
   const resetScenarioDraft = useCallback(() => {
     setShowAddScenarioModal(false);
     setNewScenarioForm({
@@ -1258,217 +919,9 @@ const App: React.FC = () => {
     }
   };
 
-  const previewPlaybook = async () => {
-    if (!selectedScenario) {
-        showToast(language === 'zh' ? '请先选择场景' : 'Please select a scenario first', 'error');
-      return;
-    }
-    const missingRequired = (selectedScenario.variables || [])
-      .filter((v: any) => v.required && !String(playbookVars[v.key] ?? '').trim())
-      .map((v: any) => v.label || v.key);
-    if (missingRequired.length > 0) {
-      showToast(
-        language === 'zh'
-          ? `缂傚搫鐨箛鍛綖鐎涙顔? ${missingRequired.join(', ')}`
-          : `Missing required fields: ${missingRequired.join(', ')}`,
-        'error'
-      );
-      setPlaybookPreview(null);
-      return;
-    }
-    try {
-      const resp = await fetch('/api/playbooks/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario_id: selectedScenario.id, platform: playbookPlatform, variables: playbookVars }),
-      });
-      if (resp.ok) {
-        setPlaybookPreview(await resp.json());
-        showToast(language === 'zh' ? '命令预览已生成' : 'Command preview generated', 'success');
-      } else {
-        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-        showToast(`Preview failed: ${err.detail || 'Unknown error'}`, 'error');
-      }
-    } catch {
-        showToast(language === 'zh' ? '预览请求失败，请检查网络连接' : 'Preview request failed. Please check your network.', 'error');
-    }
-  };
 
-  const executePlaybook = async (dryRunOverride?: boolean) => {
-    if (!selectedScenario) {
-        showToast(language === 'zh' ? '请先选择场景' : 'Please select a scenario first', 'error');
-      return;
-    }
-    if (playbookDeviceIds.length === 0) {
-      showToast(language === 'zh' ? '请先选择目标设备' : 'Please select target devices first', 'error');
-      return;
-    }
-    const missingRequired = (selectedScenario.variables || [])
-      .filter((v: any) => v.required && !String(playbookVars[v.key] ?? '').trim())
-      .map((v: any) => v.label || v.key);
-    if (missingRequired.length > 0) {
-      showToast(
-        language === 'zh'
-          ? `缂傚搫鐨箛鍛綖鐎涙顔? ${missingRequired.join(', ')}`
-          : `Missing required fields: ${missingRequired.join(', ')}`,
-        'error'
-      );
-      return;
-    }
-    const effectiveDryRun = dryRunOverride !== undefined ? dryRunOverride : playbookDryRun;
-    setPlaybookDryRun(effectiveDryRun);
-    setExecutionStatus('starting');
-    setWsMessages([]);
-    setDeviceStatusMap({});
-    setWsCompleteMsg(null);
-    try {
-      const resp = await fetch('/api/playbooks/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scenario_id: selectedScenario.id,
-          platform: playbookPlatform,
-          device_ids: playbookDeviceIds,
-          variables: playbookVars,
-          dry_run: effectiveDryRun,
-          concurrency: playbookConcurrency,
-          author: currentUser.username || 'admin',
-          actor_id: currentUser.id,
-          actor_role: currentUser.role || 'Administrator',
-        }),
-      });
-      if (!resp.ok) {
-        const errData = await resp.json().catch(() => ({}));
-        showToast(`閹笛嗩攽婢惰精瑙? ${errData.detail || resp.statusText}`, 'error');
-        setExecutionStatus('idle');
-        return;
-      }
-      if (resp.ok) {
-        const { execution_id } = await resp.json();
-        setActiveExecutionId(execution_id);
-        setExecutionStatus('running');
-          showToast(effectiveDryRun ? (language === 'zh' ? 'Dry-Run 已启动' : 'Dry-Run started') : (language === 'zh' ? '执行已启动' : 'Execution started'), 'success');
-        // Optimistic: add new execution to the list immediately
-        setPlaybookExecutions(prev => [{
-          id: execution_id,
-          scenario_id: selectedScenario.id,
-          scenario_name: selectedScenario.name,
-          platform: playbookPlatform,
-          device_ids: JSON.stringify(playbookDeviceIds),
-          variables: JSON.stringify(playbookVars),
-          status: 'running',
-          dry_run: effectiveDryRun ? 1 : 0,
-          author: 'admin',
-          concurrency: playbookConcurrency,
-          results_json: '{}',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }, ...prev]);
-        // Connect WebSocket via Vite proxy (same origin)
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const wsUrl = `${wsProtocol}://${window.location.host}/api/ws/playbook/${execution_id}`;
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
-        ws.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(ev.data);
-            setWsMessages(prev => [...prev, msg]);
-            // Aggregate into deviceStatusMap
-            if (msg.type === 'device_start') {
-              setDeviceStatusMap(prev => ({ ...prev, [msg.device_id]: { hostname: msg.hostname || String(msg.device_id), status: 'running', phases: {} } }));
-            } else if (msg.type === 'phase_done') {
-              setDeviceStatusMap(prev => {
-                const dev = prev[msg.device_id];
-                if (!dev) return prev;
-                return { ...prev, [msg.device_id]: { ...dev, phases: { ...dev.phases, [msg.phase]: { success: msg.output?.success ?? true, output: msg.output?.output } } } };
-              });
-            } else if (msg.type === 'device_done') {
-              setDeviceStatusMap(prev => {
-                const dev = prev[msg.device_id];
-                return dev ? { ...prev, [msg.device_id]: { ...dev, status: msg.status || 'success', currentPhase: undefined } } : prev;
-              });
-            } else if (msg.type === 'device_error') {
-              setDeviceStatusMap(prev => ({ ...prev, [msg.device_id]: { hostname: String(msg.device_id), status: 'error', phases: {}, error: msg.error || 'Unknown error' } }));
-            } else if (msg.type === 'complete') {
-              setWsCompleteMsg(msg);
-              setExecutionStatus(msg.status);
-              ws.close();
-              // Refresh to get final results
-              loadPlaybookHistory();
-            }
-          } catch { /* ignore */ }
-        };
-        ws.onerror = () => setExecutionStatus('ws_error');
-        ws.onclose = () => { wsRef.current = null; };
-        // Navigate to history to watch
-        navigate('/automation/history');
-      } else {
-        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-        showToast(`Execution failed: ${err.detail || 'Unknown error'}`, 'error');
-        setExecutionStatus('idle');
-      }
-    } catch (e: any) {
-      showToast(`Execution error: ${e.message || 'Network error'}`, 'error');
-      setExecutionStatus('idle');
-    }
-  };
 
-  useEffect(() => {
-    if (activeTab === 'automation') {
-      if (automationPage === 'playbooks') { navigate('/automation/execute'); return; }
-      loadScenarios();
-      if (automationPage === 'execute' || automationPage === 'scenarios' || automationPage === 'history') {
-        loadPlaybookHistory();
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, automationPage]);
 
-  const resetAutomationSubmenuState = useCallback((page: string) => {
-    if (page === 'execute') {
-      setAutomationSearch('');
-      setBatchMode(false);
-      setBatchDeviceIds([]);
-      setSelectedDevice(null);
-      setQuickPlaybookScenario(null);
-      setQuickPlaybookVars({});
-      setQuickPlaybookPlatform('cisco_ios');
-      setQuickPlaybookDryRun(true);
-      setQuickPlaybookConcurrency(1);
-      setQuickPlaybookPreview(null);
-      setQuickRiskConfirmed(false);
-      setShowCustomCommandModal(false);
-      setShowCmdPreviewModal(false);
-      setQuickQueryOutput('');
-      setQuickQueryLabel('');
-      setQuickQueryStructured(null);
-      setQuickQueryView('terminal');
-      setQuickQueryMaximized(false);
-      setQuickQueryCommands([]);
-      return;
-    }
-
-    if (page === 'playbooks') {
-      setSelectedScenario(null);
-      setPlaybookVars({});
-      setPlaybookDeviceIds([]);
-      setPlaybookDryRun(true);
-      setPlaybookConcurrency(1);
-      setPlaybookPreview(null);
-      return;
-    }
-
-    if (page === 'scenarios') {
-      setShowAddScenarioModal(false);
-      setScenarioSearch('');
-    }
-
-    if (page === 'history') {
-      setPlaybookHistoryPage(1);
-      setPlaybookHistoryStatusFilter('');
-      setPlaybookHistoryScenarioSearch('');
-    }
-  }, []);
 
   const resetConfigSubmenuState = useCallback((page: string) => {
     if (page === 'backup') {
@@ -1516,7 +969,6 @@ const App: React.FC = () => {
       setInventoryPage(1);
       return;
     }
-
     if (page === 'interfaces') {
       return;
     }
@@ -1529,7 +981,6 @@ const App: React.FC = () => {
     config: configPage,
     inventory: inventorySubPage,
   }), [automationPage, configPage, inventorySubPage]);
-
   const submenuResetByTab = useMemo<Record<SubmenuTab, (page: string) => void>>(() => ({
     automation: resetAutomationSubmenuState,
     config: resetConfigSubmenuState,
@@ -1554,12 +1005,6 @@ const App: React.FC = () => {
     prevSubmenuPageRef.current[tab] = currentPage;
   }, [activeTab, submenuPageByTab, submenuResetByTab]);
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    loadNotifications();
-    const timer = window.setInterval(loadNotifications, 15000);
-    return () => window.clearInterval(timer);
-  }, [isAuthenticated, loadNotifications]);
 
   // When entering config_center tab, refresh snapshots + schedule
   useEffect(() => {
@@ -1608,9 +1053,6 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<UserType[]>([]);
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showEditUserModal, setShowEditUserModal] = useState(false);
-  // 密码显示/隐藏 state
-  const [showLoginPwd, setShowLoginPwd] = useState(false);
-  const [rememberMe, setRememberMe] = useState(() => localStorage.getItem('netops_remember') === 'true');
   const [trendDays, setTrendDays] = useState<7 | 30>(7);
   const [dashBannerCollapsed, setDashBannerCollapsed] = useState(false);
   const [dashLastRefresh, setDashLastRefresh] = useState<Date>(new Date());
@@ -1644,8 +1086,6 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const currentUserRecord = users.find(u => u.username === currentUser.username);
   const currentUserLastLogin = currentUserRecord?.lastLogin || 'Never';
-  const unreadNotifications = notifications.filter(n => !n.read);
-  const unreadNotificationCount = notifications.filter(n => !n.read).length;
   const currentAvatar = currentUser.avatar_url || currentUserRecord?.avatar_url || '';
   const automationBridgeState = (location.state as { configAutomationBridge?: {
     source?: string;
@@ -1750,14 +1190,7 @@ const App: React.FC = () => {
     score -= Math.min(20, configScopedDevices.filter((device) => device.status !== 'online').length * 5);
     return Math.max(0, score);
   }, [editorContent, configMissingVariables, configScopedDevices]);
-  const hasQuickTargets = batchMode ? batchDeviceIds.length > 0 : !!selectedDevice;
-  const quickMissingRequiredFields = useMemo(() => {
-    const vars = quickPlaybookScenario?.variables || [];
-    return vars
-      .filter((v: any) => v.required && !String(quickPlaybookVars[v.key] ?? '').trim())
-      .map((v: any) => (language === 'zh' ? (v.label_zh || v.label || v.key) : (v.label || v.key)));
-  }, [quickPlaybookScenario, quickPlaybookVars, language]);
-  const customCommandVars = useMemo(() => extractVars(customCommand), [customCommand]);
+  // customCommandVars moved to useAutomation
 
   useEffect(() => {
     setConfigWorkspaceView('source');
@@ -1816,79 +1249,6 @@ const App: React.FC = () => {
     navigate('/automation/execute', { replace: true, state: null });
   }, [activeTab, automationPage, automationBridgeState, devices, navigate]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('netops_token');
-    setShowUserMenu(false);
-    setShowNotifications(false);
-    setIsAuthenticated(false);
-  };
-
-  const handleLanguagePreferenceChange = useCallback((nextLanguage: 'en' | 'zh') => {
-    setLanguage(nextLanguage as never);
-    if (currentUser.id) {
-      const token = localStorage.getItem('netops_token');
-      fetch(`/api/users/${currentUser.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ preferred_language: nextLanguage }),
-      }).catch(() => {});
-    }
-  }, [currentUser.id, setLanguage]);
-
-  const handleLogin = async () => {
-    if (!loginForm.username.trim() || !loginForm.password.trim()) {
-      setLoginError(language === 'zh' ? '请输入用户名和密码' : 'Enter username and password');
-      return;
-    }
-
-    setIsAuthenticating(true);
-    setLoginError(null);
-    try {
-      const response = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: loginForm.username.trim(),
-          password: loginForm.password,
-        }),
-      });
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        setLoginError(data.detail || (language === 'zh' ? '登录失败' : 'Login failed'));
-        return;
-      }
-
-      localStorage.setItem('netops_token', data.token);
-      if (rememberMe) {
-        localStorage.setItem('netops_user', data.user?.username || loginForm.username.trim());
-        localStorage.setItem('netops_remember', 'true');
-      } else {
-        localStorage.removeItem('netops_user');
-        localStorage.setItem('netops_remember', 'false');
-      }
-
-      setCurrentUser(data.user || { username: loginForm.username.trim() });
-      setIsAuthenticated(true);
-      setLoginForm((prev) => ({ ...prev, password: '' }));
-      showToast(language === 'zh' ? '登录成功' : 'Login successful', 'success');
-
-      // Check setup wizard after login
-      try {
-        const sr = await fetch('/api/setup/status', { headers: { 'Authorization': `Bearer ${data.token}` } });
-        if (sr.ok) {
-          const sd = await sr.json();
-          if (!sd.setup_completed && (data.user?.role === 'Administrator')) {
-            setShowSetupWizard(true);
-          }
-        }
-      } catch { /* ignore */ }
-    } catch {
-      setLoginError(language === 'zh' ? '连接失败，请稍后重试' : 'Connection failed, please try again later');
-    } finally {
-      setIsAuthenticating(false);
-    }
-  };
 
   const handleAddUser = async () => {
     if (!newUserForm.username.trim() || !newUserForm.password.trim()) {
@@ -2008,17 +1368,6 @@ const App: React.FC = () => {
     e.target.value = '';
   };
 
-  const markAllNotificationsRead = () => {
-    const ids = unreadNotifications.map(n => n.id);
-    if (ids.length === 0) return;
-    setNotificationReadMap(prev => {
-      const next = { ...prev };
-      unreadNotifications.forEach(item => { next[item.id] = true; });
-      return next;
-    });
-    setNotifications(prev => prev.map(item => ({ ...item, read: true })));
-    markNotificationsAsRead(ids);
-  };
 
   const handleSaveProfile = async () => {
     const profileUserId = currentUser.id ?? currentUserRecord?.id;
@@ -2063,12 +1412,6 @@ const App: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    localStorage.setItem('netops_theme_mode', themeMode);
-    const next = getResolvedTheme(themeMode);
-    setResolvedTheme(next);
-    document.documentElement.setAttribute('data-theme', next);
-  }, [themeMode]);
 
   const fetchSharedData = useCallback(async () => {
     try {
@@ -2329,86 +1672,7 @@ const App: React.FC = () => {
     });
   };
 
-  const deviceFetchMode = useMemo<'light' | 'full'>(() => {
-    // Keep full payload where deep device fields are actively used.
-    if (activeTab === 'inventory') return 'full';
-    if (activeTab === 'automation') return 'full';
-    if (activeTab === 'config') return 'full';
-    if (activeTab === 'topology') return 'full';
-    return 'light';
-  }, [activeTab]);
 
-  const safeJsonArray = (value: any) => {
-    if (Array.isArray(value)) return value;
-    if (typeof value !== 'string' || !value.trim()) return [];
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const normalizeDeviceRecord = (raw: any): Device => {
-    const hostname = typeof raw?.hostname === 'string' && raw.hostname.trim()
-      ? raw.hostname
-      : (typeof raw?.id === 'string' ? raw.id : 'Unknown');
-
-    return {
-      ...raw,
-      id: String(raw?.id || ''),
-      hostname,
-      ip_address: typeof raw?.ip_address === 'string' ? raw.ip_address : '',
-      platform: typeof raw?.platform === 'string' ? raw.platform : 'unknown',
-      status: (raw?.status === 'online' || raw?.status === 'offline' || raw?.status === 'pending') ? raw.status : 'offline',
-      compliance: (raw?.compliance === 'compliant' || raw?.compliance === 'non-compliant' || raw?.compliance === 'unknown') ? raw.compliance : 'unknown',
-      role: typeof raw?.role === 'string' ? raw.role : '',
-      site: typeof raw?.site === 'string' ? raw.site : '',
-      model: typeof raw?.model === 'string' ? raw.model : '',
-      version: typeof raw?.version === 'string' ? raw.version : '',
-      sn: typeof raw?.sn === 'string' ? raw.sn : '',
-      uptime: typeof raw?.uptime === 'string' ? raw.uptime : '',
-      connection_method: raw?.connection_method === 'netconf' ? 'netconf' : 'ssh',
-      config_history: safeJsonArray(raw?.config_history),
-      interface_data: safeJsonArray(raw?.interface_data),
-      cpu_history: safeJsonArray(raw?.cpu_history),
-      memory_history: safeJsonArray(raw?.memory_history),
-      health_status: ['healthy', 'warning', 'critical', 'unknown'].includes(String(raw?.health_status)) ? raw.health_status : 'unknown',
-      health_score: typeof raw?.health_score === 'number' ? raw.health_score : Number(raw?.health_score || 0),
-      health_summary: typeof raw?.health_summary === 'string' ? raw.health_summary : '',
-      health_reasons: Array.isArray(raw?.health_reasons) ? raw.health_reasons : [],
-      open_alert_count: typeof raw?.open_alert_count === 'number' ? raw.open_alert_count : Number(raw?.open_alert_count || 0),
-      critical_open_alerts: typeof raw?.critical_open_alerts === 'number' ? raw.critical_open_alerts : Number(raw?.critical_open_alerts || 0),
-      major_open_alerts: typeof raw?.major_open_alerts === 'number' ? raw.major_open_alerts : Number(raw?.major_open_alerts || 0),
-      warning_open_alerts: typeof raw?.warning_open_alerts === 'number' ? raw.warning_open_alerts : Number(raw?.warning_open_alerts || 0),
-      interface_down_count: typeof raw?.interface_down_count === 'number' ? raw.interface_down_count : Number(raw?.interface_down_count || 0),
-      interface_flap_count: typeof raw?.interface_flap_count === 'number' ? raw.interface_flap_count : Number(raw?.interface_flap_count || 0),
-      high_util_interface_count: typeof raw?.high_util_interface_count === 'number' ? raw.high_util_interface_count : Number(raw?.high_util_interface_count || 0),
-      interface_error_count: typeof raw?.interface_error_count === 'number' ? raw.interface_error_count : Number(raw?.interface_error_count || 0),
-    } as Device;
-  };
-
-  const fetchDevicesData = useCallback(async () => {
-    try {
-      const params = new URLSearchParams({ mode: deviceFetchMode });
-      const devicesRes = await fetch(`/api/devices?${params.toString()}`);
-      if (!devicesRes.ok) return;
-      const devs = await devicesRes.json();
-      setDevices((Array.isArray(devs) ? devs : []).map((d: any) => {
-        const normalized = normalizeDeviceRecord(d);
-        if (deviceFetchMode === 'light') {
-          return {
-            ...normalized,
-            config_history: [],
-          };
-        }
-        return normalized;
-      }));
-      setDevicesLastUpdatedAt(Date.now());
-    } catch (error) {
-      console.error('Failed to fetch devices data:', error);
-    }
-  }, [deviceFetchMode]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -2486,8 +1750,7 @@ const App: React.FC = () => {
     }));
   }, [devices]);
 
-  const [showDiff, setShowDiff] = useState(false);
-  const [currentDiff, setCurrentDiff] = useState({ before: '', after: '' });
+  // showDiff and currentDiff moved to useAutomation
   const [showImportModal, setShowImportModal] = useState(false);
   
   // Pagination State
@@ -2528,7 +1791,6 @@ const App: React.FC = () => {
   const [inventoryStatusCounts, setInventoryStatusCounts] = useState<Record<string, number>>({});
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [inventoryRefreshTick, setInventoryRefreshTick] = useState(0);
-  const [devicesLastUpdatedAt, setDevicesLastUpdatedAt] = useState<number | null>(null);
   const [assetsTotal, setAssetsTotal] = useState(0);
   const [hostResources, setHostResources] = useState<HostResourceSnapshot | null>(null);
 
@@ -3627,7 +2889,6 @@ const App: React.FC = () => {
     setInventorySortConfig({ key, direction });
   };
 
-  const [automationSearch, setAutomationSearch] = useState('');
   const [automationPlatformFilter, setAutomationPlatformFilter] = useState('all');
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionTestDevice, setConnectionTestDevice] = useState<Device | null>(null);
@@ -3680,12 +2941,6 @@ const App: React.FC = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deviceToDelete, setDeviceToDelete] = useState<string | null>(null);
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
-  const [toast, setToast] = useState<ToastState | null>(null);
-
-  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
 
   const copyTextWithFallback = async (text: string): Promise<boolean> => {
     try {
@@ -4446,568 +3701,12 @@ const App: React.FC = () => {
     setShowDiff(true);
   };
 
-  const runTask = async (taskName: string) => {
-    if (!selectedDevice) return false;
-    
-    setShowDiff(false);
-    setIsTestingConnection(true); // Reuse testing state for loading
-    
-    try {
-      let commandPayload = undefined;
-      if (taskName === 'Compliance Audit') {
-        commandPayload = 'show version';
-      } else if (taskName === 'VLAN Update') {
-        commandPayload = 'system-view\nvlan 100\ndescription Added by NetOps\nquit\ninterface Vlan-interface100\nip address 10.100.0.1 255.255.255.0\nquit';
-      } else if (taskName === 'Custom Command') {
-        commandPayload = customCommand;
-      }
+  // runTask moved to useAutomation
 
-      const response = await fetch('/api/execute', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
-        },
-        body: JSON.stringify({
-          device_id: selectedDevice.id,
-          script_id: (taskName === 'VLAN Update' || taskName === 'Compliance Audit' || taskName === 'Custom Command') 
-            ? undefined 
-            : (selectedScript?.id || selectedAutomationTemplate?.id),
-          command: (taskName === 'VLAN Update' || taskName === 'Compliance Audit' || taskName === 'Custom Command') ? commandPayload : editedScriptContent,
-          // Custom Command 的 isConfig 由后端按命令内容自动判断，前端不强制设定
-          isConfig: taskName === 'VLAN Update'
-            ? true
-            : taskName === 'Custom Command'
-              ? customCommandMode === 'config'
-              : (!!selectedScript || !!selectedAutomationTemplate),
-          config_reason: (taskName === 'Custom Command' && customCommandMode === 'config') ? configReason : undefined,
-          approval_token: (taskName === 'Custom Command' && customCommandMode === 'config') ? approvalToken : undefined,
-          author: currentUser.username || 'admin',
-          actor_id: currentUser.id,
-          actor_role: currentUser.role || 'Administrator',
-        })
-      });
-      
-      const data = await response.json();
-      if (response.ok) {
-        showToast(`Task "${taskName}" completed on ${selectedDevice.hostname}`, 'success');
-        // 执行成功后清空 Custom Command 输入框
-        if (taskName === 'Custom Command') setCustomCommand('');
-        // Fetch updated jobs
-        const jobsRes = await fetch('/api/jobs');
-        if (jobsRes.ok) {
-          const updatedJobs = await jobsRes.json();
-          setJobs(updatedJobs);
-          // Automatically show the output of the new job
-          const newJob = updatedJobs.find((j: any) => j.id === data.jobId);
-          if (newJob) setSelectedJob(newJob);
-        }
-        return true;
-      } else {
-        showToast(`Task failed: ${data.error || data.detail || 'Unknown error'}`, 'error');
-        return false;
-      }
-    } catch (error) {
-      showToast(`Execution error: ${error}`, 'error');
-      return false;
-    } finally {
-      setIsTestingConnection(false);
-    }
-  };
-
-  const formatQuickQueryRawOutput = (payload: any, language: string) => {
-    const category = Array.isArray(payload?.categories) ? payload.categories[0] : null;
-    if (!category) {
-      return language === 'zh' ? '没有返回可展示的数据。' : 'No displayable data returned.';
-    }
-
-    if (category?.error) {
-      return `Error: ${category.error}`;
-    }
-
-    const rawOutputs = Array.isArray(category?.raw_outputs) ? category.raw_outputs : [];
-    if (rawOutputs.length > 0) {
-      const lines: string[] = [];
-      for (const item of rawOutputs) {
-        lines.push(`[${item.command}]`);
-        lines.push(String(item.output || ''));
-        lines.push('');
-      }
-      return lines.join('\n').trim();
-    }
-
-    return language === 'zh' ? '命令已执行，但没有返回原始回显。' : 'Command executed, but no raw output was returned.';
-  };
-
-  const sanitizeExportName = (value: string, fallback: string) => {
-    const normalized = String(value || fallback)
-      .trim()
-      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-    return normalized || fallback;
-  };
-
-  const getQuickQueryCommands = (payload: any, fallbackCommands?: string): string[] => {
-    const category = Array.isArray(payload?.categories) ? payload.categories[0] : null;
-    const payloadCommands = Array.isArray(category?.commands)
-      ? category.commands.map((command: any) => String(command || '').trim()).filter(Boolean)
-      : [];
-    if (payloadCommands.length > 0) {
-      return payloadCommands;
-    }
-    return String(fallbackCommands || '')
-      .split('\n')
-      .map((command) => command.trim())
-      .filter(Boolean);
-  };
-
-  const getQuickQueryStructuredTable = (payload: any): {
-    category: any;
-    records: Record<string, any>[];
-    columns: string[];
-  } => {
-    const category = Array.isArray(payload?.categories) ? payload.categories[0] : null;
-    const records: Record<string, any>[] = Array.isArray(category?.records) ? category.records : [];
-    const columnSet = new Set<string>();
-    records.forEach((item) => {
-      Object.keys(item || {}).forEach((key) => columnSet.add(key));
-    });
-    const columns: string[] = Array.from(columnSet.values());
-    return { category, records, columns };
-  };
-
-  const quickQueryTable = getQuickQueryStructuredTable(quickQueryStructured);
-
-  const exportQuickQueryTable = (commands: string[]) => {
-    if (!quickQueryTable.records.length) {
-      showToast(language === 'zh' ? '当前没有可导出的表格记录' : 'No structured records to export', 'error');
-      return;
-    }
-
-    const dataSheet = XLSX.utils.json_to_sheet(quickQueryTable.records, { header: quickQueryTable.columns });
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, dataSheet, 'Data');
-
-    const metaRows = [
-      { key: language === 'zh' ? '查询名称' : 'Query', value: quickQueryLabel },
-      { key: language === 'zh' ? '设备' : 'Device', value: quickQueryStructured?.device?.hostname || '' },
-      { key: language === 'zh' ? '平台' : 'Platform', value: quickQueryStructured?.device?.platform || '' },
-      { key: language === 'zh' ? '采集时间' : 'Collected At', value: quickQueryStructured?.collected_at || '' },
-      { key: language === 'zh' ? '解析器' : 'Parser', value: quickQueryTable.category?.parser || 'ntc-templates' },
-      { key: language === 'zh' ? '记录数' : 'Records', value: String(quickQueryTable.records.length) },
-      { key: language === 'zh' ? '实际执行命令' : 'Executed Commands', value: commands.join('\n') },
-    ];
-    const metaSheet = XLSX.utils.json_to_sheet(metaRows);
-    XLSX.utils.book_append_sheet(workbook, metaSheet, 'Meta');
-
-    const deviceName = sanitizeExportName(quickQueryStructured?.device?.hostname || 'device', 'device');
-    const queryName = sanitizeExportName(quickQueryLabel || 'quick-query', 'quick-query');
-    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-    XLSX.writeFile(workbook, `${deviceName}_${queryName}_${timestamp}.xlsx`);
-    showToast(language === 'zh' ? '已导出 Excel' : 'Excel exported', 'success');
-  };
+  // Quick query helpers moved to useAutomation
 
   // Quick query — read-only command, no history saved
-  const runQuickQuery = async (label: string, commands: string, operationalCategory?: string) => {
-    const device = selectedDevice || (batchMode && batchDeviceIds.length === 1 ? devices.find(d => d.id === batchDeviceIds[0]) : null);
-    if (!device) {
-      showToast(language === 'zh' ? '请先选择一台设备' : 'Select a device first', 'error');
-      return;
-    }
-    const fallbackCommands = commands
-      .split('\n')
-      .map((command) => command.trim())
-      .filter(Boolean);
-    setQuickQueryLabel(label);
-    setQuickQueryOutput('');
-    setQuickQueryStructured(null);
-    setQuickQueryView('terminal');
-    setQuickQueryCommands(fallbackCommands);
-    setQuickQueryRunning(true);
-    try {
-      if (operationalCategory) {
-        const resp = await fetch(`/api/devices/${device.id}/operational-data`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
-          },
-          body: JSON.stringify({ categories: [operationalCategory] }),
-        });
-        const data = await resp.json();
-        if (resp.ok) {
-          const firstCategory = Array.isArray(data?.categories) ? data.categories[0] : null;
-          const hasStructuredRecords = Array.isArray(firstCategory?.records) && firstCategory.records.length > 0;
-          setQuickQueryCommands(getQuickQueryCommands(data, commands));
-          setQuickQueryStructured(data);
-          setQuickQueryOutput(formatQuickQueryRawOutput(data, language));
-          setQuickQueryView(hasStructuredRecords ? 'table' : 'terminal');
-        } else {
-          setQuickQueryOutput(`Error: ${data.detail || data.error || 'Unknown error'}`);
-        }
-        return;
-      }
-
-      const resp = await fetch('/api/execute', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
-        },
-        body: JSON.stringify({
-          device_id: device.id,
-          command: commands,
-          isConfig: false,
-          save_history: false,
-          author: currentUser.username || 'admin',
-          actor_id: currentUser.id,
-          actor_role: currentUser.role || 'Administrator',
-        }),
-      });
-      const data = await resp.json();
-      if (resp.ok) {
-        setQuickQueryStructured(null);
-        setQuickQueryOutput(data.output || 'No output');
-      } else {
-        setQuickQueryOutput(`Error: ${data.error || data.detail || 'Unknown error'}`);
-      }
-    } catch (e: any) {
-      setQuickQueryOutput(`Error: ${e.message || e}`);
-    } finally {
-      setQuickQueryRunning(false);
-    }
-  };
-
-  const handleToggleBatchMode = () => {
-    setBatchMode((current) => !current);
-    setBatchDeviceIds([]);
-  };
-
-  const handleToggleBatchDevice = (deviceId: string) => {
-    setBatchDeviceIds((current) => (
-      current.includes(deviceId)
-        ? current.filter((id) => id !== deviceId)
-        : [...current, deviceId]
-    ));
-  };
-
-  const handleResetQuickQuery = () => {
-    setQuickQueryOutput('');
-    setQuickQueryLabel('');
-    setQuickQueryStructured(null);
-    setQuickQueryView('terminal');
-    setQuickQueryMaximized(false);
-    setQuickQueryCommands([]);
-  };
-
-  const handleSelectAutomationDevice = (device: Device) => {
-    if (selectedDevice?.id !== device.id) {
-      handleResetQuickQuery();
-    }
-    setSelectedDevice(device);
-  };
-
-  const handleClearQuickScenario = () => {
-    setQuickPlaybookScenario(null);
-    setQuickPlaybookPreview(null);
-    setQuickPlaybookVars({});
-    setQuickRiskConfirmed(false);
-  };
-
-  const handleResetQuickExecutionState = () => {
-    setWsMessages([]);
-    setDeviceStatusMap({});
-    setWsCompleteMsg(null);
-    setQuickExecutionResult(null);
-    setExecutionStatus('idle');
-    setQuickPlaybookScenario(null);
-  };
-
-  const handleSelectPlaybookScenario = (scenario: any) => {
-    setSelectedScenario(scenario);
-    setPlaybookVars({});
-    setPlaybookPreview(null);
-    setPlaybookPlatform(scenario.default_platform || scenario.supported_platforms?.[0] || 'cisco_ios');
-  };
-
-  const handlePlaybookPlatformChange = (platform: string) => {
-    setPlaybookPlatform(platform);
-    setPlaybookPreview(null);
-  };
-
-  const handlePlaybookVariableChange = (key: string, value: string) => {
-    setPlaybookVars((current) => ({ ...current, [key]: value }));
-  };
-
-  const handleTogglePlaybookDevice = (deviceId: string) => {
-    setPlaybookDeviceIds((current) => (
-      current.includes(deviceId)
-        ? current.filter((id) => id !== deviceId)
-        : [...current, deviceId]
-    ));
-  };
-
-  const runParsedCustomCommand = async (label: string, command: string) => {
-    const device = selectedDevice || (batchMode && batchDeviceIds.length === 1 ? devices.find((item) => item.id === batchDeviceIds[0]) : null);
-    if (!device) {
-      showToast(language === 'zh' ? '请先选择一台设备' : 'Select a device first', 'error');
-      return false;
-    }
-
-    const commandList = command
-      .split('\n')
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    setQuickQueryLabel(label);
-    setQuickQueryOutput('');
-    setQuickQueryStructured(null);
-    setQuickQueryView('terminal');
-    setQuickQueryCommands(commandList);
-    setQuickQueryRunning(true);
-
-    try {
-      const resp = await fetch(`/api/devices/${device.id}/parsed-command`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
-        },
-        body: JSON.stringify({ command }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        showToast(data.detail || data.error || (language === 'zh' ? '执行失败' : 'Execution failed'), 'error');
-        return false;
-      }
-
-      const firstCategory = Array.isArray(data?.categories) ? data.categories[0] : null;
-      const hasStructuredRecords = Array.isArray(firstCategory?.records) && firstCategory.records.length > 0;
-      setQuickQueryCommands(getQuickQueryCommands(data, command));
-      setQuickQueryStructured(data);
-      setQuickQueryOutput(formatQuickQueryRawOutput(data, language));
-      setQuickQueryView(hasStructuredRecords ? 'table' : 'terminal');
-      return true;
-    } catch (error: any) {
-      showToast(error?.message || String(error), 'error');
-      return false;
-    } finally {
-      setQuickQueryRunning(false);
-    }
-  };
-
-  const rollback = (jobId: string) => {
-    setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'rolled_back' } : j));
-  };
-
-  // ---------- Batch execution ----------
-  const runBatchTask = async (taskName: string) => {
-    const targets = devices.filter(d => batchDeviceIds.includes(d.id));
-    if (targets.length === 0) return false;
-    setIsBatchRunning(true);
-    setBatchResults(targets.map(d => ({ deviceId: d.id, hostname: d.hostname, status: 'pending' })));
-    let failedCount = 0;
-
-    for (const device of targets) {
-      setBatchResults(prev => prev.map(r => r.deviceId === device.id ? { ...r, status: 'running' } : r));
-      try {
-        let commandPayload: string | undefined;
-        if (taskName === 'Custom Command') commandPayload = applyScriptVars(customCommand);
-        else if (taskName === 'Compliance Audit') commandPayload = 'show version';
-        else commandPayload = applyScriptVars(editedScriptContent);
-
-        if (dryRun) {
-          await new Promise(r => setTimeout(r, 500));
-          setBatchResults(prev => prev.map(r => r.deviceId === device.id
-            ? { ...r, status: 'success', output: `[DRY-RUN] Would execute on ${device.hostname}:\n${commandPayload}` }
-            : r));
-          continue;
-        }
-
-        const resp = await fetch('/api/execute', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
-          },
-          body: JSON.stringify({
-            device_id: device.id,
-            command: commandPayload,
-            isConfig: taskName === 'Custom Command'
-              ? customCommandMode === 'config'
-              : taskName !== 'Compliance Audit',
-            config_reason: (taskName === 'Custom Command' && customCommandMode === 'config') ? configReason : undefined,
-            approval_token: (taskName === 'Custom Command' && customCommandMode === 'config') ? approvalToken : undefined,
-            author: currentUser.username || 'admin',
-            actor_id: currentUser.id,
-            actor_role: currentUser.role || 'Administrator',
-          })
-        });
-        const data = await resp.json();
-        if (!resp.ok) failedCount += 1;
-        setBatchResults(prev => prev.map(r => r.deviceId === device.id
-          ? { ...r, status: resp.ok ? 'success' : 'failed', output: data.output || data.error }
-          : r));
-      } catch (e) {
-        failedCount += 1;
-        setBatchResults(prev => prev.map(r => r.deviceId === device.id
-          ? { ...r, status: 'failed', output: String(e) }
-          : r));
-      }
-    }
-    const jobsRes = await fetch('/api/jobs');
-    if (jobsRes.ok) setJobs(await jobsRes.json());
-    setIsBatchRunning(false);
-    if (failedCount > 0) {
-      showToast(`Batch task "${taskName}" finished with ${failedCount} failure(s)`, 'error');
-      return false;
-    }
-    showToast(`Batch task "${taskName}" completed on ${targets.length} devices`, 'success');
-    return true;
-  };
-
-  // Apply {{VAR}} substitution to a command/script string
-  function applyScriptVars(text: string) {
-    return text.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, key) => scriptVars[key] ?? `{{${key}}}`);
-  }
-
-  // Extract variable names from {{VAR}} in a given text
-  function extractVars(text: string): string[] {
-    const matches = [...text.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)];
-    return [...new Set(matches.map(m => m[1]))];
-  }
-
-  // Save / remove a command favorite
-  const saveFavorite = (cmd: string) => {
-    if (!cmd.trim()) return;
-    const updated = commandFavorites.includes(cmd) ? commandFavorites.filter(c => c !== cmd) : [cmd, ...commandFavorites].slice(0, 20);
-    setCommandFavorites(updated);
-    localStorage.setItem('cmdFavorites', JSON.stringify(updated));
-  };
-
-  const isFavorited = (cmd: string) => commandFavorites.includes(cmd);
-
-  const closeCustomCommandModal = () => {
-    setShowCustomCommandModal(false);
-    setShowFavorites(false);
-    setCustomCommand('');
-    setConfigReason('');
-    setApproverUsername('');
-    setApprovalCode('');
-    setApprovalToken('');
-    setApprovalStatus('idle');
-    setApprovalError('');
-    setApprovalCountdown(0);
-  };
-
-  // ── Config approval: request code via Feishu ──
-  const handleRequestApproval = async () => {
-    if (!approverUsername.trim() || configReason.trim().length < 2) return;
-    setApprovalStatus('sending');
-    setApprovalError('');
-    try {
-      const deviceName = batchMode
-        ? `${batchDeviceIds.length} devices (batch)`
-        : selectedDevice?.hostname || '';
-      const resp = await fetch('/api/config-approval/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('netops_token') || ''}` },
-        body: JSON.stringify({
-          approver_username: approverUsername.trim(),
-          config_reason: configReason.trim(),
-          device_hostname: deviceName,
-          command_preview: customCommand.trim(),
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        setApprovalStatus('error');
-        setApprovalError(data.detail || 'Failed to send approval code');
-        return;
-      }
-      setApprovalToken(data.approval_token);
-      setApprovalStatus('sent');
-      showToast(language === 'zh' ? '验证码已发送至审批人飞书' : 'Code sent to approver via Feishu', 'success');
-      // Countdown 60s before allowing resend
-      let sec = 60;
-      setApprovalCountdown(sec);
-      const timer = setInterval(() => {
-        sec -= 1;
-        setApprovalCountdown(sec);
-        if (sec <= 0) clearInterval(timer);
-      }, 1000);
-    } catch {
-      setApprovalStatus('error');
-      setApprovalError(language === 'zh' ? '网络错误，请重试' : 'Network error, please retry');
-    }
-  };
-
-  // ── Config approval: verify code ──
-  const handleVerifyApproval = async () => {
-    if (approvalCode.length !== 6 || !approvalToken) return;
-    try {
-      const resp = await fetch('/api/config-approval/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('netops_token') || ''}` },
-        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        setApprovalError(data.detail || 'Verification failed');
-        return;
-      }
-      setApprovalStatus('verified');
-      setApprovalError('');
-      showToast(language === 'zh' ? '审批验证通过 ✓' : 'Approval verified ✓', 'success');
-    } catch {
-      setApprovalError(language === 'zh' ? '网络错误，请重试' : 'Network error, please retry');
-    }
-  };
-
-  const submitCustomCommand = async () => {
-    const resolvedCommand = applyScriptVars(customCommand).trim();
-    if (!resolvedCommand) {
-      showToast(language === 'zh' ? '请先输入命令内容' : 'Enter command content first', 'error');
-      return;
-    }
-
-    const missingVars = customCommandVars.filter((key) => !String(scriptVars[key] ?? '').trim());
-    if (missingVars.length > 0) {
-      showToast(
-        language === 'zh'
-          ? `请先填写变量: ${missingVars.join('、')}`
-          : `Fill variable values first: ${missingVars.join(', ')}`,
-        'error'
-      );
-      return;
-    }
-
-    if (batchMode) {
-      if (batchDeviceIds.length === 0) {
-        showToast(language === 'zh' ? '请先选择目标设备' : 'Select target devices first', 'error');
-        return;
-      }
-      const ok = await runBatchTask('Custom Command');
-      if (ok) closeCustomCommandModal();
-      return;
-    }
-
-    if (!selectedDevice) {
-      showToast(language === 'zh' ? '请先选择目标设备' : 'Select a target device first', 'error');
-      return;
-    }
-
-    if (customCommandMode === 'query') {
-      const ok = await runParsedCustomCommand(language === 'zh' ? '自定义查询' : 'Custom Query', resolvedCommand);
-      if (ok) closeCustomCommandModal();
-      return;
-    }
-
-    const ok = await runTask('Custom Command');
-    if (ok) closeCustomCommandModal();
-  };
+  // Automation handlers moved to useAutomation
 
   // ---------- Config Center helpers ----------
   const takeConfigSnapshot = async (device: Device, trigger: ConfigSnapshot['trigger'] = 'manual') => {
@@ -6095,7 +4794,17 @@ const App: React.FC = () => {
 
           {activeTab === 'change-orders' && (
             <Suspense fallback={lazyPanelFallback}>
-              <ChangeOrderTab language={language} t={t} users={users} scenarios={scenarios} configTemplates={configTemplates} platforms={platforms} currentUser={currentUser} initialView={changeOrderPage === 'my-todo' ? 'my_todo' : changeOrderPage === 'group-todo' ? 'group_todo' : changeOrderPage === 'participated' ? 'my_participated' : changeOrderPage === 'focus' ? 'my_focus' : changeOrderPage === 'drafts' ? 'my_drafts' : changeOrderPage === 'new' ? 'create' : 'all'} />
+              <ChangeOrderTab 
+                language={language} 
+                t={t} 
+                users={users} 
+                scenarios={scenarios} 
+                configTemplates={configTemplates} 
+                platforms={platforms} 
+                currentUser={currentUser} 
+                findMatchingPlatform={findMatchingPlatform}
+                initialView={changeOrderPage === 'my-todo' ? 'my_todo' : changeOrderPage === 'group-todo' ? 'group_todo' : changeOrderPage === 'participated' ? 'my_participated' : changeOrderPage === 'focus' ? 'my_focus' : changeOrderPage === 'drafts' ? 'my_drafts' : changeOrderPage === 'new' ? 'create' : 'all'} 
+              />
             </Suspense>
           )}
         </main>
@@ -6119,7 +4828,7 @@ const App: React.FC = () => {
           batchDeviceIds={batchDeviceIds}
           selectedDevice={selectedDevice}
           isBatchRunning={isBatchRunning}
-          isTestingConnection={isTestingConnection}
+          isTestingConnection={isAutomationTaskRunning}
           showFavorites={showFavorites}
           commandFavorites={commandFavorites}
           onClose={closeCustomCommandModal}

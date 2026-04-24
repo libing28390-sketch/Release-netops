@@ -140,6 +140,7 @@ interface Props {
   platforms: Record<string, PlatformMeta>;
   currentUser: SessionUser;
   initialView?: 'all' | 'group_todo' | 'my_todo' | 'my_participated' | 'my_focus' | 'my_drafts' | 'create';
+  findMatchingPlatform: (devicePlatform: string, platforms: string[] | Record<string, any>) => string | undefined;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -449,7 +450,7 @@ const buildWorkflowPresentation = (order: ChangeOrder, lang: string) => {
    Component
    ═══════════════════════════════════════════════════════════════════ */
 
-const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, configTemplates, platforms, currentUser, initialView }) => {
+const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, configTemplates, platforms, currentUser, initialView, findMatchingPlatform }) => {
   const zh = language === 'zh';
   const isCreateView = initialView === 'create';
   const navigate = useNavigate();
