@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev:backend\" \"npm run wait:backend && npm run dev:frontend\"",
+    "dev": "node scripts/startup_logger.cjs",
     "wait:backend": "wait-on tcp:127.0.0.1:8003 --interval 500 --timeout 120000",
     "dev:backend:win": "cross-env NODE_ENV=development PORT=8003 PYTHONPATH=backend .venv/Scripts/python.exe backend/main.py",
     "dev:backend:linux": "cross-env NODE_ENV=development PORT=8003 PYTHONPATH=backend .venv/bin/python backend/main.py",
@@ -12,11 +12,13 @@
     "dev:frontend": "vite",
     "start:win": "npm run build && cross-env NODE_ENV=production .venv/Scripts/python.exe backend/main.py",
     "start:linux": "npm run build && cross-env NODE_ENV=production .venv/bin/python backend/main.py",
-    "start": "node -e \"const p=process.platform==='win32'?'.venv/Scripts/python.exe':'.venv/bin/python';require('child_process').execSync('cross-env NODE_ENV=production '+p+' backend/main.py',{stdio:'inherit'})\"",
+    "start": "node scripts/startup_logger.cjs --prod",
     "build": "cross-env NODE_OPTIONS=\"--max-old-space-size=4096\" vite build",
     "preview": "vite preview",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "dev:internal": "concurrently \"npm run dev:backend\" \"npm run wait:backend && npm run dev:frontend\"",
+    "start:internal": "node -e \"const p=process.platform==='win32'?'.venv/Scripts/python.exe':'.venv/bin/python';require('child_process').execSync('cross-env NODE_ENV=production '+p+' backend/main.py',{stdio:'inherit'})\""
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -1,3 +1,5 @@
+import gzip
+import shutil
 import logging
 import sys
 import os
@@ -55,14 +57,26 @@ def setup_logging():
     console.setFormatter(fmt)
     root.addHandler(console)
 
-    # 按天轮转：每天午夜切割，保留 30 天，旧日志自动 gzip 压缩
+    # 按天轮转：每天午夜切割，保留 90 天，旧日志自动 gzip 压缩
     file_handler = TimedRotatingFileHandler(
         log_file,
         when="midnight",
         interval=1,
-        backupCount=30,
+        backupCount=90,
         encoding="utf-8",
     )
+    
+    def namer(name):
+        return name + ".gz"
+
+    def rotator(source, dest):
+        with open(source, 'rb') as f_in:
+            with gzip.open(dest, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        os.remove(source)
+
+    file_handler.namer = namer
+    file_handler.rotator = rotator
     file_handler.suffix = "%Y-%m-%d"      # netops.log.2026-03-07
     file_handler.setFormatter(fmt)
     root.addHandler(file_handler)
