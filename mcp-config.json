@@ -8,25 +8,25 @@
       },
       "description": "Browser automation and snapshot testing"
     },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/tools/netops"],
+      "description": "Project workspace filesystem access"
+    },
     "postgres": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://user:pass@localhost:5432/netops"],
-      "description": "Direct PostgreSQL 17 database access and analysis"
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "d:/netsops"],
-      "description": "Enhanced file system access for deep analysis"
+      "description": "Direct PostgreSQL access for operational queries"
     },
     "git": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-git"],
-      "description": "Advanced version control and history analysis"
+      "description": "Git history and repository analysis"
     },
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
-      "description": "Integration with GitHub for issue tracking and PR analysis"
+      "description": "GitHub issue and PR analysis"
     }
   }
 }

@@ -43,14 +43,14 @@ def capacity_overview():
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         hot_interfaces = conn.execute('''
             SELECT device_id, interface_name,
-                   AVG(in_util) as avg_in_util, AVG(out_util) as avg_out_util,
-                   MAX(in_util) as peak_in_util, MAX(out_util) as peak_out_util,
+                   AVG(bw_in_pct) as avg_in_util, AVG(bw_out_pct) as avg_out_util,
+                   MAX(bw_in_pct) as peak_in_util, MAX(bw_out_pct) as peak_out_util,
                    MAX(speed_mbps) as bandwidth_mbps
             FROM interface_telemetry_raw
             WHERE ts >= ?
             GROUP BY device_id, interface_name
             HAVING avg_in_util > 50 OR avg_out_util > 50
-            ORDER BY MAX(COALESCE(in_util, 0), COALESCE(out_util, 0)) DESC
+            ORDER BY MAX(MAX(COALESCE(bw_in_pct, 0)), MAX(COALESCE(bw_out_pct, 0))) DESC
             LIMIT 20
         ''', (cutoff,)).fetchall()
 
@@ -100,12 +100,12 @@ def device_capacity_trend(device_id: str, days: int = Query(default=30, ge=1, le
 
         # From interface telemetry (1m rollup)
         intf_rows = conn.execute('''
-            SELECT DATE(bucket) as day, interface_name,
-                   AVG(avg_in_util) as avg_in, AVG(avg_out_util) as avg_out,
-                   MAX(max_in_util) as peak_in, MAX(max_out_util) as peak_out
+            SELECT DATE(ts_minute) as day, interface_name,
+                   AVG(avg_bw_in_pct) as avg_in, AVG(avg_bw_out_pct) as avg_out,
+                   MAX(max_bw_in_pct) as peak_in, MAX(max_bw_out_pct) as peak_out
             FROM interface_telemetry_1m
-            WHERE device_id = ? AND bucket >= ?
-            GROUP BY DATE(bucket), interface_name
+            WHERE device_id = ? AND ts_minute >= ?
+            GROUP BY DATE(ts_minute), interface_name
             ORDER BY day
         ''', (device_id, cutoff)).fetchall()
 
@@ -200,10 +200,10 @@ def capacity_forecast_all():
         for dev in devices:
             # Get recent peak interface utilization
             intf_data = conn.execute('''
-                SELECT AVG(COALESCE(avg_in_util, 0)) as avg_util,
-                       MAX(COALESCE(max_in_util, 0)) as peak_util
+                SELECT AVG(COALESCE(avg_bw_in_pct, 0)) as avg_util,
+                       MAX(COALESCE(max_bw_in_pct, 0)) as peak_util
                 FROM interface_telemetry_1m
-                WHERE device_id = ? AND bucket >= ?
+                WHERE device_id = ? AND ts_minute >= ?
             ''', (dev['id'], cutoff)).fetchone()
 
             cpu = dev['cpu_usage'] or 0

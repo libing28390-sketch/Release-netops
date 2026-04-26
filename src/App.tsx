@@ -40,6 +40,24 @@ import { useNotifications } from './hooks/useNotifications';
 import { useAuth } from './hooks/useAuth';
 import { useInventory } from './hooks/useInventory';
 import { useAutomation } from './hooks/useAutomation';
+import { useMonitoring } from './hooks/useMonitoring';
+import { useUserManagement } from './hooks/useUserManagement';
+import { useHistoryAuditCompliance } from './hooks/useHistoryAuditCompliance';
+import { useInventoryPageData } from './hooks/useInventoryPageData';
+import { useInventoryUiState } from './hooks/useInventoryUiState';
+import { useTopologyVisibleDevices } from './hooks/useTopologyVisibleDevices';
+import { useTopologySelectionSync } from './hooks/useTopologySelectionSync';
+import { useResourceSignals } from './hooks/useResourceSignals';
+import { useInventoryDeleteActions } from './hooks/useInventoryDeleteActions';
+import { exportInventoryToExcel } from './utils/inventoryExport';
+import { normalizeTopologyPort, getTopologyOperationalTone, type TopologyOperationalState } from './utils/topologyCore';
+import { formatResourcePercent, formatCompactResourcePercent } from './utils/resourceFormatters';
+import {
+  formatTopologyPort as formatTopologyPortValue,
+  formatTopologyEvidenceLabel as formatTopologyEvidenceLabelValue,
+  formatTopologyOperationalState as formatTopologyOperationalStateValue,
+  formatTopologyLastSeen as formatTopologyLastSeenValue,
+} from './utils/topologyFormatters';
 
 const MonitoringCenter = lazy(() => import('./components/MonitoringCenter.tsx'));
 const DeviceHealthTab = lazy(() => import('./pages/DeviceHealthTab'));
@@ -243,6 +261,9 @@ const App: React.FC = () => {
 
   const { 
     notifications, 
+    setNotifications,
+    notificationReadMap,
+    setNotificationReadMap,
     unreadNotifications,
     unreadCount: unreadNotificationCount, 
     markNotificationsAsRead, 
@@ -394,6 +415,28 @@ const App: React.FC = () => {
   const [selectedExecDevicesLoading, setSelectedExecDevicesLoading] = useState(false);
   const [selectedDeviceDetail, setSelectedDeviceDetail] = useState<any | null>(null);
   const [selectedDeviceDetailLoading, setSelectedDeviceDetailLoading] = useState(false);
+
+  const loadExecDevices = useCallback(async (executionId: string, page = 1, statusFilter = 'all', search = '') => {
+    setSelectedExecDevicesLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: '20',
+        status: statusFilter,
+        ...(search ? { search } : {}),
+      });
+      const resp = await fetch(`/api/playbooks/${executionId}/devices?${params}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setSelectedExecDevices(data.items || []);
+        setSelectedExecDevicesTotal(data.total || 0);
+      }
+    } catch (e) {
+      console.error('Failed to load exec devices:', e);
+    } finally {
+      setSelectedExecDevicesLoading(false);
+    }
+  }, []);
   const wsRef = React.useRef<WebSocket | null>(null);
   // selectedJob moved to useAutomation
   const [topologyLinks, setTopologyLinks] = useState<any[]>([]);
@@ -407,8 +450,6 @@ const App: React.FC = () => {
   const [selectedTopologyLinkKey, setSelectedTopologyLinkKey] = useState<string | null>(null);
   const [topologyDiscoveryRunning, setTopologyDiscoveryRunning] = useState(false);
   const topologyRef = React.useRef<HTMLDivElement>(null);
-
-  type TopologyOperationalState = 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
 
   type TopologyInterfaceSnapshot = {
     name: string;
@@ -1050,14 +1091,21 @@ const App: React.FC = () => {
     }
   };
 
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [showAddUserModal, setShowAddUserModal] = useState(false);
-  const [showEditUserModal, setShowEditUserModal] = useState(false);
+  const {
+    users, setUsers,
+    showAddUserModal, setShowAddUserModal,
+    showEditUserModal, setShowEditUserModal,
+    showNewUserPwd, setShowNewUserPwd,
+    showEditUserPwd, setShowEditUserPwd,
+    editingUser, setEditingUser,
+    editUserForm, setEditUserForm,
+    newUserForm, setNewUserForm,
+    createEmptyUserForm,
+    handleAddUser, handleEditUser,
+  } = useUserManagement({ currentUser, setCurrentUser, language, showToast });
   const [trendDays, setTrendDays] = useState<7 | 30>(7);
   const [dashBannerCollapsed, setDashBannerCollapsed] = useState(false);
   const [dashLastRefresh, setDashLastRefresh] = useState<Date>(new Date());
-  const [showNewUserPwd, setShowNewUserPwd] = useState(false);
-  const [showEditUserPwd, setShowEditUserPwd] = useState(false);
   const [showAddDevicePwd, setShowAddDevicePwd] = useState(false);
   const [showEditDevicePwd, setShowEditDevicePwd] = useState(false);
   const [showLifecycleConfirm, setShowLifecycleConfirm] = useState<'add' | 'edit' | null>(null);
@@ -1074,15 +1122,11 @@ const App: React.FC = () => {
     dingtalk: { webhook_url: '', enabled: false, secret: '' },
     wechat:   { webhook_url: '', enabled: false },
   });
-  const [notifyTestLoading, setNotifyTestLoading] = useState<string>(''); // platform name being tested
-  const createEmptyUserForm = () => ({ username: '', password: '', role: 'Operator', group_name: '', change_groups: [] as string[] });
-  const [editingUser, setEditingUser] = useState<UserType | null>(null);
-  const [editUserForm, setEditUserForm] = useState(createEmptyUserForm);
+  const [notifyTestLoading, setNotifyTestLoading] = useState<string>('');
   const [configWorkspaceView, setConfigWorkspaceView] = useState<'source' | 'rendered' | 'checks'>('source');
   const [configScopePlatform, setConfigScopePlatform] = useState<string>('all');
   const [configScopeRole, setConfigScopeRole] = useState<string>('all');
   const [configScopeSite, setConfigScopeSite] = useState<string>('all');
-  const [newUserForm, setNewUserForm] = useState(createEmptyUserForm);
   const [isLoading, setIsLoading] = useState(true);
   const currentUserRecord = users.find(u => u.username === currentUser.username);
   const currentUserLastLogin = currentUserRecord?.lastLogin || 'Never';
@@ -1249,81 +1293,8 @@ const App: React.FC = () => {
     navigate('/automation/execute', { replace: true, state: null });
   }, [activeTab, automationPage, automationBridgeState, devices, navigate]);
 
+  // handleAddUser and handleEditUser moved to useUserManagement hook
 
-  const handleAddUser = async () => {
-    if (!newUserForm.username.trim() || !newUserForm.password.trim()) {
-      showToast(language === 'zh' ? '请填写用户名和密码' : 'Username and password are required', 'error');
-      return;
-    }
-
-    try {
-      const token = localStorage.getItem('netops_token');
-      const response = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({
-          ...newUserForm,
-          actor_username: currentUser.username || 'admin',
-          actor_role: currentUser.role || 'Administrator',
-        }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data.detail || response.statusText);
-      }
-
-      setUsers((prev) => [...prev, data]);
-      setShowAddUserModal(false);
-      setNewUserForm(createEmptyUserForm());
-      setShowNewUserPwd(false);
-      showToast(language === 'zh' ? '用户已创建' : 'User created', 'success');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      showToast(language === 'zh' ? `创建用户失败: ${message}` : `Failed to create user: ${message}`, 'error');
-    }
-  };
-
-  const handleEditUser = async () => {
-    if (!editingUser) return;
-    if (!editUserForm.username.trim()) {
-      showToast(language === 'zh' ? '请输入用户名' : 'Username is required', 'error');
-      return;
-    }
-
-    try {
-      const token = localStorage.getItem('netops_token');
-      const response = await fetch(`/api/users/${editingUser.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({
-          username: editUserForm.username.trim(),
-          password: editUserForm.password,
-          role: editUserForm.role,
-          group_name: editUserForm.group_name,
-          change_groups: editUserForm.change_groups,
-          actor_username: currentUser.username || 'admin',
-          actor_role: currentUser.role || 'Administrator',
-        }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data.detail || response.statusText);
-      }
-
-      setUsers((prev) => prev.map((user) => (String(user.id) === String(editingUser.id) ? { ...user, ...data } : user)));
-      if (String(currentUser.id) === String(editingUser.id)) {
-        setCurrentUser((prev) => ({ ...prev, ...data }));
-      }
-      setShowEditUserModal(false);
-      setEditingUser(null);
-      setEditUserForm(createEmptyUserForm());
-      setShowEditUserPwd(false);
-      showToast(language === 'zh' ? '用户已更新' : 'User updated', 'success');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      showToast(language === 'zh' ? `更新用户失败: ${message}` : `Failed to update user: ${message}`, 'error');
-    }
-  };
 
   const openProfileModal = () => {
     setProfileForm({
@@ -1754,101 +1725,95 @@ const App: React.FC = () => {
   const [showImportModal, setShowImportModal] = useState(false);
   
   // Pagination State
-  const [inventoryPage, setInventoryPage] = useState(1);
-  const [historyPage, setHistoryPage] = useState(1);
   const [automationListPage, setAutomationListPage] = useState(1);
-  const [compliancePage, setCompliancePage] = useState(1);
-  const [inventoryPageSize, setInventoryPageSize] = useState(10);
-  const [historyPageSize, setHistoryPageSize] = useState(10);
-  const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | Job['status']>('all');
-  const [historyTimeFilter, setHistoryTimeFilter] = useState<'all' | '24h' | '7d' | '30d'>('all');
-  const [historyRows, setHistoryRows] = useState<Job[]>([]);
-  const [historyTotal, setHistoryTotal] = useState(0);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [auditPage, setAuditPage] = useState(1);
-  const [auditPageSize, setAuditPageSize] = useState(10);
-  const [auditRows, setAuditRows] = useState<AuditEvent[]>([]);
-  const [auditTotal, setAuditTotal] = useState(0);
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [auditCategoryFilter, setAuditCategoryFilter] = useState('all');
-  const [auditSeverityFilter, setAuditSeverityFilter] = useState('all');
-  const [auditStatusFilter, setAuditStatusFilter] = useState('all');
-  const [auditTimeFilter, setAuditTimeFilter] = useState<'all' | '24h' | '7d' | '30d'>('7d');
-  const [selectedAuditEvent, setSelectedAuditEvent] = useState<AuditEvent | null>(null);
-  const [complianceOverview, setComplianceOverview] = useState<ComplianceOverview | null>(null);
-  const [complianceFindings, setComplianceFindings] = useState<ComplianceFinding[]>([]);
-  const [complianceFindingTotal, setComplianceFindingTotal] = useState(0);
-  const [complianceLoading, setComplianceLoading] = useState(false);
-  const [complianceRunLoading, setComplianceRunLoading] = useState(false);
-  const [complianceSeverityFilter, setComplianceSeverityFilter] = useState('all');
-  const [complianceStatusFilter, setComplianceStatusFilter] = useState('open');
-  const [complianceCategoryFilter, setComplianceCategoryFilter] = useState('all');
-  const [compliancePageSize, setCompliancePageSize] = useState(10);
-  const [complianceRefreshTick, setComplianceRefreshTick] = useState(0);
-  const [selectedFinding, setSelectedFinding] = useState<ComplianceFinding | null>(null);
-  const [inventoryRows, setInventoryRows] = useState<Device[]>([]);
-  const [inventoryTotal, setInventoryTotal] = useState(0);
-  const [inventoryStatusCounts, setInventoryStatusCounts] = useState<Record<string, number>>({});
-  const [inventoryLoading, setInventoryLoading] = useState(false);
-  const [inventoryRefreshTick, setInventoryRefreshTick] = useState(0);
-  const [assetsTotal, setAssetsTotal] = useState(0);
-  const [hostResources, setHostResources] = useState<HostResourceSnapshot | null>(null);
+  // Monitoring Center hook
+  const {
+    monitorSearch, setMonitorSearch,
+    monitorSearchResults, monitorSearching,
+    monitorSelectedDevice, setMonitorSelectedDevice,
+    monitorOverview,
+    monitorRealtime, setMonitorRealtime,
+    monitorTrend,
+    monitorTrendInterface, setMonitorTrendInterface,
+    monitorTrendResolution, setMonitorTrendResolution,
+    monitorTrendStartInput, setMonitorTrendStartInput,
+    monitorTrendEndInput, setMonitorTrendEndInput,
+    monitorTrendRange, setMonitorTrendRange,
+    monitorTrendZoom, setMonitorTrendZoom,
+    monitorTrendDragStart, setMonitorTrendDragStart,
+    monitorTrendDragEnd, setMonitorTrendDragEnd,
+    monitorTrendMetrics, setMonitorTrendMetrics,
+    monitorTrendUiMode, setMonitorTrendUiMode,
+    monitorAlerts, monitorAlertTotal,
+    monitorAlertsPage, setMonitorAlertsPage,
+    monitorAlertsPageSize,
+    monitorAlertsSeverity, setMonitorAlertsSeverity,
+    monitorAlertsPhase, setMonitorAlertsPhase,
+    monitorLoading, monitorPageVisible,
+    monitorDashboardSiteFilter, setMonitorDashboardSiteFilter,
+    monitorDashboardAlertFilter, setMonitorDashboardAlertFilter,
+    hostResources,
+    fetchMonitoringOverview, fetchMonitoringAlerts,
+    fetchMonitoringRealtime, fetchHostResources,
+  } = useMonitoring({ isAuthenticated, activeTab, language });
 
-  // Monitoring Center state (search-first, no full device listing)
-  const [monitorSearch, setMonitorSearch] = useState('');
-  const [monitorSearchResults, setMonitorSearchResults] = useState<any[]>([]);
-  const [monitorSearching, setMonitorSearching] = useState(false);
-  const [monitorSelectedDevice, setMonitorSelectedDevice] = useState<any | null>(null);
-  const [monitorOverview, setMonitorOverview] = useState<any | null>(null);
-  const [monitorRealtime, setMonitorRealtime] = useState<any | null>(null);
-  const [monitorTrend, setMonitorTrend] = useState<any | null>(null);
-  const [monitorTrendInterface, setMonitorTrendInterface] = useState('');
-  const [monitorTrendResolution, setMonitorTrendResolution] = useState<'1m' | '5m'>('1m');
-  const [monitorTrendStartInput, setMonitorTrendStartInput] = useState('');
-  const [monitorTrendEndInput, setMonitorTrendEndInput] = useState('');
-  const [monitorTrendRange, setMonitorTrendRange] = useState<{ start_time?: string; end_time?: string }>({});
-  const [monitorTrendZoom, setMonitorTrendZoom] = useState<{ startIndex: number; endIndex: number } | null>(null);
-  const [monitorTrendDragStart, setMonitorTrendDragStart] = useState<number | null>(null);
-  const [monitorTrendDragEnd, setMonitorTrendDragEnd] = useState<number | null>(null);
-  const [monitorTrendMetrics, setMonitorTrendMetrics] = useState<string[]>(['in_bps', 'out_bps']);
-  const [monitorTrendUiMode, setMonitorTrendUiMode] = useState<'pro' | 'compact'>(() => {
-    const saved = localStorage.getItem('netops_monitor_trend_ui_mode');
-    return saved === 'pro' ? 'pro' : 'compact';
-  });
-  const [monitorAlerts, setMonitorAlerts] = useState<any[]>([]);
-  const [monitorAlertTotal, setMonitorAlertTotal] = useState(0);
-  const [monitorAlertsPage, setMonitorAlertsPage] = useState(1);
-  const [monitorAlertsPageSize] = useState(10);
-  const [monitorAlertsSeverity, setMonitorAlertsSeverity] = useState('all');
-  const [monitorAlertsPhase, setMonitorAlertsPhase] = useState('all');
-  const [monitorLoading, setMonitorLoading] = useState(false);
-  const [monitorPageVisible, setMonitorPageVisible] = useState(() => typeof document === 'undefined' ? true : document.visibilityState === 'visible');
-  const [monitorDashboardSiteFilter, setMonitorDashboardSiteFilter] = useState('all');
-  const [monitorDashboardAlertFilter, setMonitorDashboardAlertFilter] = useState<'all' | 'critical' | 'major' | 'warning'>('all');
-  const monitorRequestEpochRef = React.useRef(0);
-
-  const isAbortError = (error: unknown) => {
-    if (!error) return false;
-    if (error instanceof DOMException && error.name === 'AbortError') return true;
-    return typeof error === 'object' && (error as { name?: string }).name === 'AbortError';
-  };
+  const {
+    historyRows, historyTotal, historyPage, setHistoryPage, historyPageSize, setHistoryPageSize,
+    historyStatusFilter, setHistoryStatusFilter, historyTimeFilter, setHistoryTimeFilter, historyLoading,
+    auditRows, auditTotal, auditPage, setAuditPage, auditPageSize, setAuditPageSize,
+    auditCategoryFilter, setAuditCategoryFilter, auditSeverityFilter, setAuditSeverityFilter,
+    auditStatusFilter, setAuditStatusFilter, auditTimeFilter, setAuditTimeFilter, auditLoading,
+    selectedAuditEvent, setSelectedAuditEvent,
+    complianceOverview, complianceFindings, complianceFindingTotal,
+    compliancePage, setCompliancePage, compliancePageSize, setCompliancePageSize,
+    complianceSeverityFilter, setComplianceSeverityFilter, complianceStatusFilter, setComplianceStatusFilter,
+    complianceCategoryFilter, setComplianceCategoryFilter, complianceLoading, complianceRunLoading,
+    selectedFinding, setSelectedFinding,
+    runComplianceAudit, updateComplianceFinding, openAuditEventDetail, openComplianceFindingDetail,
+  } = useHistoryAuditCompliance({ isAuthenticated, activeTab, language, currentUser, showToast });
 
   // Inventory Filters & Sorting
-  const [inventorySearch, setInventorySearch] = useState('');
-  const [inventoryPlatformFilter, setInventoryPlatformFilter] = useState('all');
-  const [inventoryRoleFilter, setInventoryRoleFilter] = useState('all');
-  const [inventoryStatusFilter, setInventoryStatusFilter] = useState('all');
-  const [inventoryLifecycleFilter, setInventoryLifecycleFilter] = useState('all');
-  const [inventorySortConfig, setInventorySortConfig] = useState<{ key: keyof Device, direction: 'asc' | 'desc' } | null>(null);
-  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
-
-  useEffect(() => {
-    setInventoryPage(1);
-  }, [inventorySearch, inventoryPlatformFilter, inventoryRoleFilter, inventoryStatusFilter, inventoryPageSize]);
-
-  useEffect(() => {
-    setSelectedDeviceIds([]);
-  }, [inventorySearch, inventoryPlatformFilter, inventoryRoleFilter, inventoryStatusFilter, inventorySortConfig, inventoryPage]);
+  const {
+    inventoryPage,
+    setInventoryPage,
+    inventoryPageSize,
+    setInventoryPageSize,
+    inventorySearch,
+    setInventorySearch,
+    inventoryPlatformFilter,
+    setInventoryPlatformFilter,
+    inventoryRoleFilter,
+    setInventoryRoleFilter,
+    inventoryStatusFilter,
+    setInventoryStatusFilter,
+    inventoryLifecycleFilter,
+    setInventoryLifecycleFilter,
+    inventorySortConfig,
+    setInventorySortConfig,
+    selectedDeviceIds,
+    setSelectedDeviceIds,
+  } = useInventoryUiState();
+  const {
+    inventoryRefreshTick,
+    setInventoryRefreshTick,
+    inventoryRows,
+    inventoryTotal,
+    inventoryStatusCounts,
+    inventoryLoading,
+    assetsTotal,
+  } = useInventoryPageData({
+    isAuthenticated,
+    activeTab,
+    inventorySubPage,
+    inventorySearch,
+    inventoryPlatformFilter,
+    inventoryRoleFilter,
+    inventoryStatusFilter,
+    inventoryPage,
+    inventoryPageSize,
+    inventorySortConfig,
+    normalizeDeviceRecord,
+  });
 
   useEffect(() => {
     const totalInventoryPages = Math.max(1, Math.ceil(inventoryTotal / inventoryPageSize));
@@ -1857,280 +1822,34 @@ const App: React.FC = () => {
     }
   }, [inventoryTotal, inventoryPage, inventoryPageSize]);
 
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'inventory' || inventorySubPage !== 'devices') return;
+  // Monitoring functions/effects moved to useMonitoring hook
 
-    let cancelled = false;
-    const fetchInventoryPage = async () => {
-      setInventoryLoading(true);
-      try {
-        const params = new URLSearchParams({
-          search: inventorySearch,
-          platform: inventoryPlatformFilter,
-          role: inventoryRoleFilter,
-          status: inventoryStatusFilter,
-          page: String(inventoryPage),
-          page_size: String(inventoryPageSize),
-          sort_key: inventorySortConfig?.key || 'hostname',
-          sort_direction: inventorySortConfig?.direction || 'asc',
-        });
-
-        const resp = await fetch(`/api/devices?${params.toString()}`);
-        if (!resp.ok) throw new Error('Failed to fetch inventory data');
-        const data = await resp.json();
-        if (cancelled) return;
-
-        if (Array.isArray(data)) {
-          setInventoryRows(data.map((item: any) => normalizeDeviceRecord(item)));
-          setInventoryTotal(data.length);
-          setInventoryStatusCounts({});
-        } else {
-          setInventoryRows(Array.isArray(data.items) ? data.items.map((item: any) => normalizeDeviceRecord(item)) : []);
-          setInventoryTotal(typeof data.total === 'number' ? data.total : 0);
-          setInventoryStatusCounts(data.status_counts && typeof data.status_counts === 'object' ? data.status_counts : {});
-        }
-      } catch {
-        if (cancelled) return;
-        setInventoryRows([]);
-        setInventoryTotal(0);
-        setInventoryStatusCounts({});
-      } finally {
-        if (!cancelled) setInventoryLoading(false);
-      }
-    };
-
-    fetchInventoryPage();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    isAuthenticated,
-    activeTab,
-    inventorySubPage,
-    inventorySearch,
-    inventoryPlatformFilter,
-    inventoryRoleFilter,
-    inventoryStatusFilter,
-    inventorySortConfig,
-    inventoryPage,
-    inventoryPageSize,
-    inventoryRefreshTick,
-  ]);
-
-  // Fetch assets total for dashboard
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    const fetchAssetsTotal = async () => {
-      try {
-        const resp = await fetch('/api/assets/summary');
-        if (resp.ok) {
-          const data = await resp.json();
-          setAssetsTotal(data.total || 0);
-        }
-      } catch {
-        // ignore
-      }
-    };
-    fetchAssetsTotal();
-  }, [isAuthenticated]);
-
-  const fetchMonitoringOverview = useCallback(async (forceRefresh = false, signal?: AbortSignal) => {
-    const reqEpoch = monitorRequestEpochRef.current;
-    try {
-      const suffix = forceRefresh ? '?force_refresh=1' : '';
-      const resp = await fetch(`/api/monitoring/overview${suffix}`, { signal });
-      if (!resp.ok) return;
-      const payload = await resp.json();
-      if (reqEpoch !== monitorRequestEpochRef.current) return;
-      setMonitorOverview(payload);
-    } catch (error) {
-      if (isAbortError(error)) return;
-      // ignore transient errors
-    }
-  }, []);
-
-  const fetchHostResources = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const resp = await fetch('/api/health/resources', { signal });
-      if (!resp.ok) return;
-      const payload = await resp.json() as HostResourceSnapshot;
-      setHostResources(payload);
-    } catch (error) {
-      if (isAbortError(error)) return;
-      // ignore transient errors
-    }
-  }, []);
-
-  const fetchMonitoringAlerts = useCallback(async (signal?: AbortSignal) => {
-    const reqEpoch = monitorRequestEpochRef.current;
-    try {
-      const params = new URLSearchParams({
-        page: String(monitorAlertsPage),
-        page_size: String(monitorAlertsPageSize),
-        severity: monitorAlertsSeverity,
-        phase: monitorAlertsPhase,
-      });
-      if (monitorSelectedDevice?.id) params.set('device_id', monitorSelectedDevice.id);
-      const resp = await fetch(`/api/monitoring/alerts?${params.toString()}`, { signal });
-      if (!resp.ok) return;
-      const data = await resp.json();
-      if (reqEpoch !== monitorRequestEpochRef.current) return;
-      setMonitorAlerts(Array.isArray(data.items) ? data.items : []);
-      setMonitorAlertTotal(typeof data.total === 'number' ? data.total : 0);
-    } catch (error) {
-      if (isAbortError(error)) return;
-      // ignore transient errors
-    }
-  }, [monitorAlertsPage, monitorAlertsPageSize, monitorAlertsSeverity, monitorAlertsPhase, monitorSelectedDevice?.id]);
-
-  const fetchMonitoringRealtime = useCallback(async (deviceId: string, signal?: AbortSignal) => {
-    const reqEpoch = monitorRequestEpochRef.current;
-    const resp = await fetch(`/api/monitoring/device/${deviceId}/realtime?window_minutes=15&limit=1000`, { signal });
-    if (!resp.ok) throw new Error('realtime fetch failed');
-    const payload = await resp.json();
-    if (reqEpoch !== monitorRequestEpochRef.current) throw new Error('stale monitoring realtime response');
-    return payload;
-  }, []);
-
-  const fetchMonitoringTrend = useCallback(async (
-    deviceId: string,
-    interfaceName?: string,
-    resolution: '1m' | '5m' = '1m',
-    range?: { start_time?: string; end_time?: string },
-    signal?: AbortSignal,
-  ) => {
-    const reqEpoch = monitorRequestEpochRef.current;
-    const params = new URLSearchParams({ range_hours: '24', resolution });
-    const name = (interfaceName || '').trim();
-    if (name) params.set('interface_name', name);
-    if (range?.start_time) params.set('start_time', range.start_time);
-    if (range?.end_time) params.set('end_time', range.end_time);
-    const resp = await fetch(`/api/monitoring/device/${deviceId}/trend?${params.toString()}`, { signal });
-    if (!resp.ok) throw new Error('trend fetch failed');
-    const payload = await resp.json();
-    if (reqEpoch !== monitorRequestEpochRef.current) throw new Error('stale monitoring trend response');
-    return payload;
-  }, []);
-
-  useEffect(() => {
-    monitorRequestEpochRef.current += 1;
-    if (activeTab === 'monitoring' || activeTab === 'health') return;
-    setMonitorSearch('');
-    setMonitorSearchResults([]);
-    setMonitorSearching(false);
-    setMonitorSelectedDevice(null);
-    setMonitorOverview(null);
-    setMonitorRealtime(null);
-    setMonitorTrend(null);
-    setMonitorTrendInterface('');
-    setMonitorTrendResolution('1m');
-    setMonitorTrendStartInput('');
-    setMonitorTrendEndInput('');
-    setMonitorTrendRange({});
-    setMonitorTrendZoom(null);
-    setMonitorTrendDragStart(null);
-    setMonitorTrendDragEnd(null);
-    setMonitorTrendMetrics(['in_bps', 'out_bps']);
-    setMonitorAlerts([]);
-    setMonitorAlertTotal(0);
-    setMonitorAlertsPage(1);
-    setMonitorAlertsSeverity('all');
-    setMonitorAlertsPhase('all');
-    setMonitorLoading(false);
-    setMonitorDashboardSiteFilter('all');
-    setMonitorDashboardAlertFilter('all');
-  }, [activeTab]);
-
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      setMonitorPageVisible(document.visibilityState === 'visible');
-    };
-
-    handleVisibilityChange();
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    let currentController: AbortController | null = null;
-    const runResources = () => {
-      if (currentController) currentController.abort();
-      currentController = new AbortController();
-      fetchHostResources(currentController.signal);
-    };
-
-    runResources();
-    if (!monitorPageVisible) return;
-    const timer = window.setInterval(runResources, 30000);
-    return () => {
-      window.clearInterval(timer);
-      if (currentController) currentController.abort();
-    };
-  }, [isAuthenticated, fetchHostResources, monitorPageVisible]);
-
-  useEffect(() => {
-    if (!isAuthenticated || !['monitoring', 'health'].includes(activeTab)) return;
-    let currentController: AbortController | null = null;
-    const runOverview = (forceRefresh = false) => {
-      if (currentController) currentController.abort();
-      currentController = new AbortController();
-      fetchMonitoringOverview(forceRefresh, currentController.signal);
-    };
-
-    runOverview(true);
-    if (!monitorPageVisible) return;
-    const timer = window.setInterval(() => runOverview(false), 5000);
-    return () => {
-      window.clearInterval(timer);
-      if (currentController) currentController.abort();
-    };
-  }, [isAuthenticated, activeTab, fetchMonitoringOverview, monitorPageVisible]);
-
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'monitoring') return;
-    let currentController: AbortController | null = null;
-    const runAlerts = () => {
-      if (currentController) currentController.abort();
-      currentController = new AbortController();
-      fetchMonitoringAlerts(currentController.signal);
-    };
-
-    runAlerts();
-    if (!monitorPageVisible) return;
-    const timer = window.setInterval(runAlerts, 10000);
-    return () => {
-      window.clearInterval(timer);
-      if (currentController) currentController.abort();
-    };
-  }, [isAuthenticated, activeTab, fetchMonitoringAlerts, monitorPageVisible]);
-
-  const formatResourcePercent = (value: number | null | undefined) => {
-    if (value == null || !Number.isFinite(value)) return '--';
-    return `${Math.round(value)}%`;
-  };
-
-  const formatCompactResourcePercent = (value: number | null | undefined) => {
-    if (value == null || !Number.isFinite(value)) return '--';
-    return String(Math.round(value));
-  };
-
-  const hostResourceTone = hostResources?.status === 'critical'
+  const legacyHostResourceTone = hostResources?.status === 'critical'
     ? 'bg-red-500/15 text-red-200 border-red-400/25'
     : hostResources?.status === 'degraded'
       ? 'bg-amber-500/15 text-amber-100 border-amber-300/25'
       : 'bg-emerald-500/15 text-emerald-100 border-emerald-300/25';
 
-  const hostResourceSummary = hostResources
+  const legacyHostResourceSummary = hostResources
     ? `CPU ${formatResourcePercent(hostResources.cpu_percent)} · MEM ${formatResourcePercent(hostResources.memory_percent)} · DISK ${formatResourcePercent(hostResources.disk_percent)}`
     : (language === 'zh' ? '等待资源数据' : 'Waiting for resource data');
-  const alertNavTone = unreadNotificationCount > 20
+  const legacyAlertNavTone = unreadNotificationCount > 20
     ? 'bg-red-500/15 text-red-200 border-red-400/25'
     : unreadNotificationCount > 0
       ? 'bg-amber-500/15 text-amber-100 border-amber-300/25'
       : 'bg-emerald-500/15 text-emerald-100 border-emerald-300/25';
 
-  const formatTopologyPort = (value?: string) => {
+  const {
+    hostResourceTone,
+    hostResourceSummary,
+    alertNavTone,
+  } = useResourceSignals({
+    hostResources,
+    unreadNotificationCount,
+    language,
+  });
+
+  const legacyFormatTopologyPort = (value?: string) => {
     const raw = String(value || '').trim();
     if (!raw) return language === 'zh' ? '未识别接口' : 'Unknown Port';
     return raw
@@ -2144,20 +1863,7 @@ const App: React.FC = () => {
       .replace(/^Loopback/i, 'Lo');
   };
 
-  const normalizeTopologyPort = (value?: string) => String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '')
-    .replace(/^gigabitethernet/, 'gi')
-    .replace(/^tengigabitethernet/, 'te')
-    .replace(/^twentyfivegige/, 'tw')
-    .replace(/^fortygigabitethernet/, 'fo')
-    .replace(/^hundredgigabitethernet/, 'hu')
-    .replace(/^ethernet/, 'eth')
-    .replace(/^port-channel/, 'po')
-    .replace(/^loopback/, 'lo');
-
-  const formatTopologyEvidenceLabel = (value: string) => {
+  const legacyFormatTopologyEvidenceLabel = (value: string) => {
     const normalized = String(value || '').trim().toLowerCase();
     if (!normalized) return language === 'zh' ? '未知来源' : 'Unknown Source';
     if (normalized === 'lldp') return 'LLDP';
@@ -2168,42 +1874,7 @@ const App: React.FC = () => {
     return normalized.toUpperCase();
   };
 
-  const getTopologyOperationalTone = (state?: TopologyOperationalState) => {
-    switch (state) {
-      case 'up':
-        return {
-          badge: 'border-emerald-200 bg-emerald-100 text-emerald-700',
-          panel: 'border-emerald-200/70 bg-emerald-50',
-          dot: 'bg-emerald-500',
-        };
-      case 'degraded':
-        return {
-          badge: 'border-amber-200 bg-amber-100 text-amber-700',
-          panel: 'border-amber-200/70 bg-amber-50',
-          dot: 'bg-amber-500',
-        };
-      case 'down':
-        return {
-          badge: 'border-rose-200 bg-rose-100 text-rose-700',
-          panel: 'border-rose-200/70 bg-rose-50',
-          dot: 'bg-rose-500',
-        };
-      case 'stale':
-        return {
-          badge: 'border-sky-200 bg-sky-100 text-sky-700',
-          panel: 'border-sky-200/70 bg-sky-50',
-          dot: 'bg-sky-500',
-        };
-      default:
-        return {
-          badge: 'border-slate-200 bg-slate-100 text-slate-700',
-          panel: 'border-slate-200/70 bg-slate-50',
-          dot: 'bg-slate-400',
-        };
-    }
-  };
-
-  const formatTopologyOperationalState = (state?: TopologyOperationalState) => {
+  const legacyFormatTopologyOperationalState = (state?: TopologyOperationalState) => {
     if (language === 'zh') {
       if (state === 'up') return '正常';
       if (state === 'degraded') return '退化';
@@ -2218,12 +1889,17 @@ const App: React.FC = () => {
     return 'Unknown';
   };
 
-  const formatTopologyLastSeen = (value?: string) => {
+  const legacyFormatTopologyLastSeen = (value?: string) => {
     if (!value) return language === 'zh' ? '未知' : 'Unknown';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return language === 'zh' ? '未知' : 'Unknown';
     return date.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false });
   };
+
+  const formatTopologyPort = (value?: string) => formatTopologyPortValue(value, language);
+  const formatTopologyEvidenceLabel = (value: string) => formatTopologyEvidenceLabelValue(value, language);
+  const formatTopologyOperationalState = (state?: TopologyOperationalState) => formatTopologyOperationalStateValue(state, language);
+  const formatTopologyLastSeen = (value?: string) => formatTopologyLastSeenValue(value, language);
 
   const evaluateTopologyInterfaceSnapshot = (device: Device | null | undefined, port?: string): TopologyInterfaceSnapshot | null => {
     if (!device || !port) return null;
@@ -2335,64 +2011,18 @@ const App: React.FC = () => {
     return segments.join(' · ') || (language === 'zh' ? '暂无接口遥测' : 'No interface telemetry');
   };
 
-  const topologySiteOptions = useMemo(() => {
-    const siteValues: string[] = devices
-      .map((device) => String(device.site || '').trim())
-      .filter((value): value is string => Boolean(value));
-    const uniqueSites: string[] = [...new Set<string>(siteValues)];
-    uniqueSites.sort((left: string, right: string) => left.localeCompare(right));
-    return uniqueSites;
-  }, [devices]);
-
-  const topologyRoleOptions = useMemo(() => {
-    const roleValues: string[] = devices
-      .map((device) => String(device.role || '').trim())
-      .filter((value): value is string => Boolean(value));
-    const uniqueRoles: string[] = [...new Set<string>(roleValues)];
-    uniqueRoles.sort((left: string, right: string) => left.localeCompare(right));
-    return uniqueRoles;
-  }, [devices]);
-
-  const topologyVisibleDevices = useMemo(() => {
-    const query = topologySearch.trim().toLowerCase();
-    const managed = devices.filter((device) => {
-      const matchesQuery = !query || [device.hostname, device.ip_address, device.site, device.role].some((value) => String(value || '').toLowerCase().includes(query));
-      const matchesStatus = topologyStatusFilter === 'all' || device.status === topologyStatusFilter;
-      const matchesRole = topologyRoleFilter === 'all' || String(device.role || '') === topologyRoleFilter;
-      const matchesSite = topologySiteFilter === 'all' || String(device.site || '') === topologySiteFilter;
-      return matchesQuery && matchesStatus && matchesRole && matchesSite;
-    });
-
-    // Include unmanaged neighbors as pseudo-Device entries
-    const managedIds = new Set(managed.map((d) => d.id));
-    const unmanagedPseudo: Device[] = topologyUnmanagedNodes
-      .filter((n: any) => {
-        // Only include if at least one connected managed device is visible
-        const connectedIds: string[] = n.connected_device_ids || [];
-        return connectedIds.some((id: string) => managedIds.has(id));
-      })
-      .filter((n: any) => {
-        if (!query) return true;
-        return [n.hostname, n.ip_address].some((v: string) => String(v || '').toLowerCase().includes(query));
-      })
-      .map((n: any) => ({
-        id: n.id,
-        hostname: n.hostname || 'Unknown',
-        ip_address: n.ip_address || '',
-        platform: '',
-        status: 'unmanaged' as unknown as Device['status'],
-        compliance: 'unknown' as const,
-        sn: '', model: '', version: '',
-        role: '',
-        site: '',
-        uptime: '',
-        connection_method: 'ssh' as const,
-        config_history: [],
-        is_unmanaged: true,
-      } satisfies Device & { is_unmanaged: boolean } as Device));
-
-    return [...managed, ...unmanagedPseudo];
-  }, [devices, topologyRoleFilter, topologySearch, topologySiteFilter, topologyStatusFilter, topologyUnmanagedNodes]);
+  const {
+    topologySiteOptions,
+    topologyRoleOptions,
+    topologyVisibleDevices,
+  } = useTopologyVisibleDevices({
+    devices,
+    topologySearch,
+    topologyStatusFilter,
+    topologyRoleFilter,
+    topologySiteFilter,
+    topologyUnmanagedNodes,
+  });
 
   const topologyVisibleDeviceIds = useMemo(
     () => new Set(topologyVisibleDevices.map((device) => device.id)),
@@ -2502,384 +2132,18 @@ const App: React.FC = () => {
     [topologyVisibleDevices],
   );
 
-  useEffect(() => {
-    if (topologyVisibleDevices.length === 0) {
-      if (selectedTopologyDeviceId !== null) setSelectedTopologyDeviceId(null);
-      if (selectedTopologyLinkKey !== null) setSelectedTopologyLinkKey(null);
-      return;
-    }
+  useTopologySelectionSync({
+    selectedTopologyDeviceId,
+    setSelectedTopologyDeviceId,
+    selectedTopologyLinkKey,
+    setSelectedTopologyLinkKey,
+    topologyVisibleDevices,
+    topologyDeviceLinks,
+  });
 
-    if (!selectedTopologyDeviceId || !topologyVisibleDevices.some((device) => device.id === selectedTopologyDeviceId)) {
-      setSelectedTopologyDeviceId(topologyVisibleDevices[0].id);
-    }
-  }, [selectedTopologyDeviceId, selectedTopologyLinkKey, topologyVisibleDevices]);
 
-  useEffect(() => {
-    if (!selectedTopologyDeviceId) {
-      if (selectedTopologyLinkKey !== null) setSelectedTopologyLinkKey(null);
-      return;
-    }
+  // History, Audit, Compliance effects/handlers moved to useHistoryAuditCompliance hook
 
-    if (topologyDeviceLinks.length === 0) {
-      if (selectedTopologyLinkKey !== null) setSelectedTopologyLinkKey(null);
-      return;
-    }
-
-    if (!selectedTopologyLinkKey || !topologyDeviceLinks.some((link) => (link.link_key || link.id) === selectedTopologyLinkKey)) {
-      setSelectedTopologyLinkKey(topologyDeviceLinks[0].link_key || topologyDeviceLinks[0].id || null);
-    }
-  }, [selectedTopologyDeviceId, selectedTopologyLinkKey, topologyDeviceLinks]);
-
-  useEffect(() => {
-    setMonitorAlertsPage(1);
-  }, [monitorAlertsSeverity, monitorAlertsPhase, monitorSelectedDevice?.id]);
-
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'monitoring') return;
-    const q = monitorSearch.trim();
-    if (!q) {
-      setMonitorSearchResults([]);
-      setMonitorSearching(false);
-      return;
-    }
-
-    let cancelled = false;
-    let searchController: AbortController | null = null;
-    setMonitorSearching(true);
-    const timer = window.setTimeout(async () => {
-      try {
-        searchController = new AbortController();
-        const resp = await fetch(`/api/monitoring/search-devices?q=${encodeURIComponent(q)}&limit=20`, { signal: searchController.signal });
-        if (!resp.ok) return;
-        const data = await resp.json();
-        if (!cancelled) {
-          setMonitorSearchResults(Array.isArray(data.items) ? data.items : []);
-        }
-      } catch (error) {
-        if (isAbortError(error)) return;
-        if (!cancelled) setMonitorSearchResults([]);
-      } finally {
-        if (!cancelled) setMonitorSearching(false);
-      }
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-      if (searchController) searchController.abort();
-    };
-  }, [isAuthenticated, activeTab, monitorSearch]);
-
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'monitoring' || !monitorSelectedDevice?.id) {
-      setMonitorRealtime(null);
-      setMonitorTrend(null);
-      return;
-    }
-
-    let cancelled = false;
-    let realtimeController: AbortController | null = null;
-    let trendController: AbortController | null = null;
-
-    const loadRealtime = async () => {
-      if (realtimeController) realtimeController.abort();
-      realtimeController = new AbortController();
-      return fetchMonitoringRealtime(monitorSelectedDevice.id, realtimeController.signal);
-    };
-
-    const loadTrend = async () => {
-      if (trendController) trendController.abort();
-      trendController = new AbortController();
-      return fetchMonitoringTrend(
-        monitorSelectedDevice.id,
-        monitorTrendInterface,
-        monitorTrendResolution,
-        monitorTrendRange,
-        trendController.signal,
-      );
-    };
-
-    const load = async () => {
-      setMonitorLoading(true);
-      try {
-        const [rt, tr] = await Promise.all([
-          loadRealtime(),
-          loadTrend(),
-        ]);
-        if (!cancelled) {
-          setMonitorRealtime(rt);
-          setMonitorTrend(tr);
-        }
-      } catch (error) {
-        if (isAbortError(error)) return;
-        if (!cancelled) {
-          setMonitorRealtime(null);
-          setMonitorTrend(null);
-        }
-      } finally {
-        if (!cancelled) setMonitorLoading(false);
-      }
-    };
-
-    load();
-    if (!monitorPageVisible) {
-      return () => {
-        cancelled = true;
-        if (realtimeController) realtimeController.abort();
-        if (trendController) trendController.abort();
-      };
-    }
-    const realtimeTimer = window.setInterval(async () => {
-      try {
-        const rt = await loadRealtime();
-        if (!cancelled) setMonitorRealtime(rt);
-      } catch (error) {
-        if (isAbortError(error)) return;
-        // ignore transient errors
-      }
-    }, 5000);
-    const trendTimer = window.setInterval(async () => {
-      try {
-        const tr = await loadTrend();
-        if (!cancelled) setMonitorTrend(tr);
-      } catch (error) {
-        if (isAbortError(error)) return;
-        // ignore transient errors
-      }
-    }, 60000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(realtimeTimer);
-      window.clearInterval(trendTimer);
-      if (realtimeController) realtimeController.abort();
-      if (trendController) trendController.abort();
-    };
-  }, [isAuthenticated, activeTab, monitorSelectedDevice?.id, monitorTrendInterface, monitorTrendResolution, monitorTrendRange.start_time, monitorTrendRange.end_time, fetchMonitoringRealtime, fetchMonitoringTrend, monitorPageVisible]);
-
-  useEffect(() => {
-    setMonitorTrendInterface('');
-    setMonitorTrendStartInput('');
-    setMonitorTrendEndInput('');
-    setMonitorTrendRange({});
-  }, [monitorSelectedDevice?.id]);
-
-  useEffect(() => {
-    setMonitorTrendZoom(null);
-    setMonitorTrendDragStart(null);
-    setMonitorTrendDragEnd(null);
-  }, [monitorSelectedDevice?.id, monitorTrendInterface, monitorTrendResolution]);
-
-  useEffect(() => {
-    localStorage.setItem('netops_monitor_trend_ui_mode', monitorTrendUiMode);
-  }, [monitorTrendUiMode]);
-
-  useEffect(() => {
-    setHistoryPage(1);
-  }, [historyStatusFilter, historyTimeFilter, historyPageSize]);
-
-  useEffect(() => {
-    const totalHistoryPages = Math.max(1, Math.ceil(historyTotal / historyPageSize));
-    if (historyPage > totalHistoryPages) {
-      setHistoryPage(totalHistoryPages);
-    }
-  }, [historyTotal, historyPage, historyPageSize]);
-
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'history') return;
-
-    let cancelled = false;
-    const fetchHistoryPage = async () => {
-      setHistoryLoading(true);
-      try {
-        const params = new URLSearchParams({
-          status: historyStatusFilter,
-          time_range: historyTimeFilter,
-          page: String(historyPage),
-          page_size: String(historyPageSize),
-        });
-        const resp = await fetch(`/api/jobs?${params.toString()}`);
-        if (!resp.ok) throw new Error('Failed to fetch history data');
-
-        const data = await resp.json();
-        if (cancelled) return;
-
-        if (Array.isArray(data)) {
-          setHistoryRows(data);
-          setHistoryTotal(data.length);
-        } else {
-          setHistoryRows(Array.isArray(data.items) ? data.items : []);
-          setHistoryTotal(typeof data.total === 'number' ? data.total : 0);
-        }
-      } catch {
-        if (cancelled) return;
-        setHistoryRows([]);
-        setHistoryTotal(0);
-      } finally {
-        if (!cancelled) setHistoryLoading(false);
-      }
-    };
-
-    fetchHistoryPage();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated, activeTab, historyStatusFilter, historyTimeFilter, historyPage, historyPageSize]);
-
-  useEffect(() => {
-    setAuditPage(1);
-  }, [auditCategoryFilter, auditSeverityFilter, auditStatusFilter, auditTimeFilter, auditPageSize]);
-
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'history') return;
-
-    let cancelled = false;
-    const loadAuditEvents = async () => {
-      setAuditLoading(true);
-      try {
-        const params = new URLSearchParams({
-          category: auditCategoryFilter,
-          severity: auditSeverityFilter,
-          status: auditStatusFilter,
-          time_range: auditTimeFilter,
-          page: String(auditPage),
-          page_size: String(auditPageSize),
-        });
-        const resp = await fetch(`/api/audit/events?${params.toString()}`);
-        if (!resp.ok) throw new Error('Failed to fetch audit events');
-        const data = await resp.json();
-        if (cancelled) return;
-        setAuditRows(Array.isArray(data.items) ? data.items : []);
-        setAuditTotal(typeof data.total === 'number' ? data.total : 0);
-      } catch {
-        if (cancelled) return;
-        setAuditRows([]);
-        setAuditTotal(0);
-      } finally {
-        if (!cancelled) setAuditLoading(false);
-      }
-    };
-
-    loadAuditEvents();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated, activeTab, auditCategoryFilter, auditSeverityFilter, auditStatusFilter, auditTimeFilter, auditPage, auditPageSize]);
-
-  useEffect(() => {
-    setCompliancePage(1);
-  }, [complianceSeverityFilter, complianceStatusFilter, complianceCategoryFilter, compliancePageSize]);
-
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'compliance') return;
-
-    let cancelled = false;
-    const loadCompliance = async () => {
-      setComplianceLoading(true);
-      try {
-        const params = new URLSearchParams({
-          severity: complianceSeverityFilter,
-          status: complianceStatusFilter,
-          category: complianceCategoryFilter,
-          page: String(compliancePage),
-          page_size: String(compliancePageSize),
-        });
-        const [overviewResp, findingsResp] = await Promise.all([
-          fetch('/api/compliance/overview'),
-          fetch(`/api/compliance/findings?${params.toString()}`),
-        ]);
-        if (!overviewResp.ok || !findingsResp.ok) throw new Error('Failed to fetch compliance data');
-        const overviewData = await overviewResp.json();
-        const findingsData = await findingsResp.json();
-        if (cancelled) return;
-        setComplianceOverview(overviewData);
-        setComplianceFindings(Array.isArray(findingsData.items) ? findingsData.items : []);
-        setComplianceFindingTotal(typeof findingsData.total === 'number' ? findingsData.total : 0);
-      } catch {
-        if (cancelled) return;
-        setComplianceOverview(null);
-        setComplianceFindings([]);
-        setComplianceFindingTotal(0);
-      } finally {
-        if (!cancelled) setComplianceLoading(false);
-      }
-    };
-
-    loadCompliance();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated, activeTab, complianceSeverityFilter, complianceStatusFilter, complianceCategoryFilter, compliancePage, compliancePageSize, complianceRefreshTick]);
-
-  const runComplianceAudit = async () => {
-    setComplianceRunLoading(true);
-    try {
-      const resp = await fetch('/api/compliance/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          author: currentUser.username || 'admin',
-          actor_id: currentUser.id,
-          actor_role: currentUser.role || 'Administrator',
-        }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        showToast(`Compliance audit failed: ${data.detail || resp.statusText}`, 'error');
-        return;
-      }
-      showToast(language === 'zh' ? `审计完成，合规得分 ${data.score}%` : `Audit completed. Score ${data.score}%`, 'success');
-      setComplianceRefreshTick((v) => v + 1);
-    } catch {
-      showToast(language === 'zh' ? '审计执行失败' : 'Compliance audit request failed', 'error');
-    } finally {
-      setComplianceRunLoading(false);
-    }
-  };
-
-  const updateComplianceFinding = async (findingId: string, patch: { status?: string; owner?: string; note?: string }) => {
-    try {
-      const resp = await fetch(`/api/compliance/findings/${findingId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        showToast(`Update failed: ${data.detail || resp.statusText}`, 'error');
-        return;
-      }
-      setSelectedFinding(data);
-      setComplianceRefreshTick((v) => v + 1);
-      showToast(language === 'zh' ? '审计问题已更新' : 'Finding updated', 'success');
-    } catch {
-      showToast(language === 'zh' ? '更新失败' : 'Update failed', 'error');
-    }
-  };
-
-  const openAuditEventDetail = async (event: AuditEvent) => {
-    try {
-      const resp = await fetch(`/api/audit/events/${event.id}`);
-      const data = await resp.json().catch(() => event);
-      if (!resp.ok) throw new Error('Failed to fetch audit event detail');
-      setSelectedAuditEvent(data);
-    } catch {
-      setSelectedAuditEvent(event);
-      showToast(language === 'zh' ? '无法加载完整审计详情，已显示当前记录。' : 'Unable to load full audit details, showing current row.', 'info');
-    }
-  };
-
-  const openComplianceFindingDetail = async (finding: ComplianceFinding) => {
-    try {
-      const resp = await fetch(`/api/compliance/findings/${finding.id}`);
-      const data = await resp.json().catch(() => finding);
-      if (!resp.ok) throw new Error('Failed to fetch compliance finding detail');
-      setSelectedFinding(data);
-    } catch {
-      setSelectedFinding(finding);
-      showToast(language === 'zh' ? '无法加载完整问题详情，已显示当前记录。' : 'Unable to load full finding details, showing current row.', 'info');
-    }
-  };
 
   const handleSort = (key: keyof Device) => {
     let direction: 'asc' | 'desc' = 'asc';
@@ -3213,57 +2477,18 @@ const App: React.FC = () => {
     }
   };
 
-  const confirmDeleteDevice = async () => {
-    if (!deviceToDelete && !isDeletingSelected) return;
-    
-    if (isDeletingSelected) {
-      if (selectedDeviceIds.length === 0) return;
-      
-      let successCount = 0;
-      let failCount = 0;
-      
-      for (const id of selectedDeviceIds) {
-        try {
-          const response = await fetch(`/api/devices/${id}`, { method: 'DELETE' });
-          if (response.ok) {
-            successCount++;
-            setDevices(prev => prev.filter(d => d.id !== id));
-          } else {
-            failCount++;
-          }
-        } catch (error) {
-          failCount++;
-        }
-      }
-      
-      setSelectedDeviceIds([]);
-      setInventoryRefreshTick((v) => v + 1);
-      if (failCount === 0) {
-        showToast(`Successfully deleted ${successCount} devices`, 'success');
-      } else {
-        showToast(`Deleted ${successCount} devices, failed to delete ${failCount} devices`, 'error');
-      }
-    } else if (deviceToDelete) {
-      try {
-        const response = await fetch(`/api/devices/${deviceToDelete}`, { method: 'DELETE' });
-        if (response.ok) {
-          setDevices(prev => prev.filter(d => d.id !== deviceToDelete));
-          setSelectedDeviceIds(prev => prev.filter(selectedId => selectedId !== deviceToDelete));
-          setInventoryRefreshTick((v) => v + 1);
-          showToast('Device deleted successfully', 'success');
-        } else {
-          const data = await response.json();
-          showToast(`Failed to delete device: ${data.error}`, 'error');
-        }
-      } catch (error) {
-        showToast(`Error deleting device: ${error}`, 'error');
-      }
-    }
-    
-    setShowDeleteModal(false);
-    setDeviceToDelete(null);
-    setIsDeletingSelected(false);
-  };
+  const { confirmDeleteDevice } = useInventoryDeleteActions({
+    deviceToDelete,
+    isDeletingSelected,
+    selectedDeviceIds,
+    setDevices,
+    setSelectedDeviceIds,
+    setInventoryRefreshTick,
+    showToast,
+    setShowDeleteModal,
+    setDeviceToDelete,
+    setIsDeletingSelected,
+  });
 
   const handleSaveEdit = async () => {
     if (!editingDevice) return;
@@ -3520,13 +2745,7 @@ const App: React.FC = () => {
   };
 
   const handleExport = () => {
-    // Exclude current_config and config_history for a cleaner export
-    const exportData = devices.map(({ current_config, config_history, ...rest }) => rest);
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Inventory");
-    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-    XLSX.writeFile(workbook, `network_inventory_${ts}.xlsx`);
+    exportInventoryToExcel(devices);
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
