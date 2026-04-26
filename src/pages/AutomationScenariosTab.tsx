@@ -103,8 +103,12 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
   const [sortKey, setSortKey] = useState<SortKey>('risk');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [favorites, setFavorites] = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('netops_scenario_favs') || '[]')); }
-    catch { return new Set(); }
+    try {
+      const val = JSON.parse(localStorage.getItem('netops_scenario_favs') || '[]');
+      return new Set(Array.isArray(val) ? val : []);
+    } catch {
+      return new Set();
+    }
   });
   const [showFilters, setShowFilters] = useState(false);
 

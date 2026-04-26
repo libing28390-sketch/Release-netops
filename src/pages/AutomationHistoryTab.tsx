@@ -16,6 +16,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import type { Device } from '../types';
+import Pagination from '../components/Pagination';
 
 type WsMessage = {
   type?: string;
@@ -215,7 +216,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
               ))}
             </div>
           </div>
-          <div className="flex-1 overflow-auto">
+          <div className="flex-1 overflow-auto custom-scrollbar">
             {playbookExecutions.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-black/20 p-8">
                 <History size={28} strokeWidth={1} />
@@ -282,36 +283,18 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                     </div>
                   </div>
                 </button>
-              );
-            })}
-          </div>
-          {playbookHistoryTotal > 20 && (
-            <div className="p-3 border-t border-black/5 flex items-center justify-center gap-2">
-              <button
-                disabled={playbookHistoryPage <= 1}
-                onClick={() => {
-                  const nextPage = playbookHistoryPage - 1;
-                  onHistoryPageChange(nextPage);
-                  void onRefreshHistory(nextPage);
-                }}
-                title={language === 'zh' ? '上一页' : 'Previous page'}
-                className="px-2 py-1 text-[10px] rounded border border-black/10 disabled:opacity-30"
-              >
-                <ChevronLeft size={10} />
-              </button>
-              <span className="text-[10px] text-black/40">{playbookHistoryPage} / {Math.ceil(playbookHistoryTotal / 20)}</span>
-              <button
-                disabled={playbookHistoryPage * 20 >= playbookHistoryTotal}
-                onClick={() => {
-                  const nextPage = playbookHistoryPage + 1;
-                  onHistoryPageChange(nextPage);
-                  void onRefreshHistory(nextPage);
-                }}
-                title={language === 'zh' ? '下一页' : 'Next page'}
-                className="px-2 py-1 text-[10px] rounded border border-black/10 disabled:opacity-30"
-              >
-                <ChevronRight size={10} />
-              </button>
+            );
+          })}
+        </div>
+        {playbookHistoryTotal > 20 && (
+            <div className="px-3 py-2.5 border-t border-black/5 bg-black/[0.01]">
+              <Pagination
+                currentPage={playbookHistoryPage}
+                totalItems={playbookHistoryTotal}
+                itemsPerPage={20}
+                onPageChange={onHistoryPageChange}
+                language={language}
+              />
             </div>
           )}
         </div>
@@ -476,8 +459,9 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                         {statusItem.key === 'all' ? `${statusItem.label} (${selectedExecDevicesTotal})` : statusItem.label}
                       </button>
                     ))}
+                    </div>
                   </div>
-                  <div className="flex-1 overflow-auto p-4 space-y-3">
+                  <div className="flex-1 overflow-auto p-4 space-y-3 custom-scrollbar">
                     {selectedExecDevicesLoading ? (
                       <div className="flex items-center justify-center py-8">
                         <RotateCcw size={16} className="animate-spin text-black/30" />
@@ -531,28 +515,18 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                         </button>
                       );
                     })}
-                    {selectedExecDevicesTotal > 20 && (
-                      <div className="flex justify-center gap-2 pt-2">
-                        <button
-                          disabled={selectedExecDevicesPage <= 1}
-                          onClick={() => void onExecDevicesPageChange(selectedExecDevicesPage - 1)}
-                          title={language === 'zh' ? '上一页' : 'Previous page'}
-                          className="px-2 py-1 text-xs rounded border border-black/10 disabled:opacity-30"
-                        >
-                          <ChevronLeft size={12} />
-                        </button>
-                        <span className="text-xs text-black/40 px-2 py-1">{selectedExecDevicesPage} / {Math.ceil(selectedExecDevicesTotal / 20)}</span>
-                        <button
-                          disabled={selectedExecDevicesPage * 20 >= selectedExecDevicesTotal}
-                          onClick={() => void onExecDevicesPageChange(selectedExecDevicesPage + 1)}
-                          title={language === 'zh' ? '下一页' : 'Next page'}
-                          className="px-2 py-1 text-xs rounded border border-black/10 disabled:opacity-30"
-                        >
-                          <ChevronRight size={12} />
-                        </button>
-                      </div>
-                    )}
                   </div>
+                  {selectedExecDevicesTotal > 20 && (
+                    <div className="px-4 py-3 border-t border-black/5 bg-black/[0.01]">
+                      <Pagination
+                        currentPage={selectedExecDevicesPage}
+                        totalItems={selectedExecDevicesTotal}
+                        itemsPerPage={20}
+                        onPageChange={onExecDevicesPageChange}
+                        language={language}
+                      />
+                    </div>
+                  )}
                   {(selectedDeviceDetail || selectedDeviceDetailLoading) && (
                     <div className="absolute inset-0 bg-white z-10 flex flex-col rounded-2xl">
                       <div className="p-4 border-b border-black/5 flex items-center gap-3 bg-gradient-to-r from-black/[0.015] to-transparent">

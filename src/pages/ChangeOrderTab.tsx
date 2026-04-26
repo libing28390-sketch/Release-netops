@@ -1871,10 +1871,10 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
               </div>
             ) : (
               <>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto max-h-[calc(100vh-380px)] overflow-y-auto custom-scrollbar">
                   <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-black/[0.02] border-b border-black/5 text-black/50 text-xs">
+                    <thead className="sticky top-0 z-10 bg-[#f8fafc] border-b border-black/5">
+                      <tr className="text-black/50 text-xs">
                         <th className="text-left px-4 py-3 font-semibold">{zh ? '工单号' : 'Order #'}</th>
                         <th className="text-left px-4 py-3 font-semibold">{zh ? '标题' : 'Title'}</th>
                         <th className="text-left px-4 py-3 font-semibold">{zh ? '类型' : 'Type'}</th>

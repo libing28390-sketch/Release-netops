@@ -1,15 +1,6 @@
 import { useState, useCallback } from 'react';
 
-interface UserType {
-  id?: string;
-  username: string;
-  role: string;
-  group_name?: string;
-  change_groups?: string[];
-  lastLogin?: string;
-  avatar_url?: string;
-  notification_channels?: any;
-}
+import type { User } from '../types';
 
 interface UseUserManagementProps {
   currentUser: { id?: string; username?: string; role?: string; avatar_url?: string };
@@ -21,12 +12,12 @@ interface UseUserManagementProps {
 const createEmptyUserForm = () => ({ username: '', password: '', role: 'Operator', group_name: '', change_groups: [] as string[] });
 
 export const useUserManagement = ({ currentUser, setCurrentUser, language, showToast }: UseUserManagementProps) => {
-  const [users, setUsers] = useState<UserType[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showEditUserModal, setShowEditUserModal] = useState(false);
   const [showNewUserPwd, setShowNewUserPwd] = useState(false);
   const [showEditUserPwd, setShowEditUserPwd] = useState(false);
-  const [editingUser, setEditingUser] = useState<UserType | null>(null);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
   const [editUserForm, setEditUserForm] = useState(createEmptyUserForm);
   const [newUserForm, setNewUserForm] = useState(createEmptyUserForm);
 

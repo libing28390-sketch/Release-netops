@@ -40,9 +40,9 @@ const TagFilterDropdown: React.FC<TagFilterDropdownProps> = ({
   const filtered = allTags.filter(t => {
     if (!search) return true;
     const q = search.toLowerCase();
-    return t.label.toLowerCase().includes(q)
-      || t.label_zh.toLowerCase().includes(q)
-      || t.value.toLowerCase().includes(q);
+    return String(t.label || '').toLowerCase().includes(q)
+      || String(t.label_zh || '').toLowerCase().includes(q)
+      || String(t.value || '').toLowerCase().includes(q);
   });
 
   const grouped = (Object.keys(TAG_CATEGORY_LABELS) as TagCategory[]).reduce<Record<string, TagDefinition[]>>((acc, cat) => {

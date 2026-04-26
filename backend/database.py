@@ -266,7 +266,18 @@ def _table_columns(cursor, table_name: str) -> set[str]:
 
 def init_db():
     conn = get_db_connection()
+    _pg_raw = None
+    _pg_prev_autocommit = None
     try:
+        if _USE_PG:
+            # Run bootstrap DDL in autocommit mode so tolerated migration errors
+            # (e.g. duplicate columns) won't poison the whole transaction.
+            try:
+                _pg_raw = conn._conn._conn
+                _pg_prev_autocommit = _pg_raw.autocommit
+                _pg_raw.autocommit = True
+            except Exception:
+                _pg_raw = None
         cursor = conn.cursor()
 
         def ensure_column(table_name: str, column_name: str, definition: str):
@@ -1722,15 +1733,39 @@ def init_db():
             ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'netstat -ant | grep ESTABLISHED | wc -l', 'Linux', '', now, now),
             ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定系统/应用进程是否存在', 'Shell', 'ps aux | grep {process_name}', 'Linux', '', now, now),
         ]
-        cursor.executemany(
-            '''INSERT OR REPLACE INTO inspection_items 
-               (id, name, name_zh, category, check_key, description, method, command, vendor, oid, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
-            default_items
-        )
+        if _USE_PG:
+            cursor.executemany(
+                '''INSERT INTO inspection_items
+                   (id, name, name_zh, category, check_key, description, method, command, vendor, oid, created_at, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (id) DO UPDATE SET
+                     name = EXCLUDED.name,
+                     name_zh = EXCLUDED.name_zh,
+                     category = EXCLUDED.category,
+                     check_key = EXCLUDED.check_key,
+                     description = EXCLUDED.description,
+                     method = EXCLUDED.method,
+                     command = EXCLUDED.command,
+                     vendor = EXCLUDED.vendor,
+                     oid = EXCLUDED.oid,
+                     updated_at = EXCLUDED.updated_at''',
+                default_items
+            )
+        else:
+            cursor.executemany(
+                '''INSERT OR REPLACE INTO inspection_items 
+                   (id, name, name_zh, category, check_key, description, method, command, vendor, oid, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+                default_items
+            )
 
         conn.commit()
     finally:
+        if _USE_PG and _pg_raw is not None and _pg_prev_autocommit is not None:
+            try:
+                _pg_raw.autocommit = _pg_prev_autocommit
+            except Exception:
+                pass
         conn.close()
 
 if __name__ == "__main__":

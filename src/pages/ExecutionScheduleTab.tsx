@@ -641,7 +641,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                   </div>
 
                   {/* Table Body */}
-                  <div className="flex-1 overflow-x-auto">
+                  <div className="flex-1 overflow-y-auto max-h-[calc(100vh-420px)] custom-scrollbar">
                     {inspSchedulesLoading ? (
                       <div className="h-full flex flex-col items-center justify-center py-24 text-black/20 gap-3">
                         <RotateCcw size={32} className="animate-spin opacity-20" />
@@ -649,8 +649,8 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                       </div>
                     ) : inspSchedules.length > 0 ? (
                       <table className="w-full text-left border-collapse min-w-[900px]">
-                        <thead>
-                          <tr className="bg-black/[0.01] border-b border-black/5">
+                        <thead className="sticky top-0 bg-slate-50 border-b border-black/5 z-10">
+                          <tr className="bg-black/[0.01]">
                             <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '计划名称' : 'Plan Name'}</th>
                             <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '执行窗口' : 'Execution window'}</th>
                             <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '范围 / 指标' : 'Scope / Metrics'}</th>
@@ -782,7 +782,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
               </div>
             </div>
 
-            <div className="flex-1 overflow-x-auto">
+            <div className="flex-1 overflow-y-auto max-h-[calc(100vh-380px)] custom-scrollbar">
               {inspRunsLoading ? (
                 <div className="h-full flex flex-col items-center justify-center py-24 text-black/20 gap-3">
                   <RotateCcw size={32} className="animate-spin opacity-20" />
@@ -790,8 +790,8 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                 </div>
               ) : inspRuns.length > 0 ? (
                 <table className="w-full text-left border-collapse min-w-[1000px]">
-                  <thead>
-                    <tr className="bg-black/[0.01] border-b border-black/5">
+                  <thead className="sticky top-0 bg-slate-50 border-b border-black/5 z-10">
+                    <tr className="bg-black/[0.01]">
                       <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '触发时间' : 'Triggered At'}</th>
                       <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '类型' : 'Type'}</th>
                       <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '状态' : 'Status'}</th>

@@ -248,7 +248,7 @@ export interface User {
 export type ThemeMode = 'light' | 'dark';
 
 export interface SessionUser {
-  id?: string | number;
+  id?: string;
   username: string;
   role?: string;
   avatar_url?: string;
@@ -610,6 +610,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
 export const getPlatformLabel = (platform: string) => PLATFORM_LABELS[platform] || platform;
 
 export const getVendorFromPlatform = (platform: string) => {
+  if (!platform) return 'Other';
   const p = platform.toLowerCase();
   if (p.includes('cisco')) return 'Cisco';
   if (p.includes('juniper')) return 'Juniper';

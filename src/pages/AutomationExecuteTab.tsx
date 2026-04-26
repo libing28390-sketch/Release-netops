@@ -317,7 +317,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
     return devices.filter(d => {
       if (automationSearch) {
         const q = automationSearch.toLowerCase();
-        if (!d.hostname.toLowerCase().includes(q) && !d.ip_address.includes(q)) return false;
+        if (!String(d.hostname || '').toLowerCase().includes(q) && !String(d.ip_address || '').includes(q)) return false;
       }
       if (statusFilter !== 'all' && d.status !== statusFilter) return false;
       if (vendorFilter !== 'all') {
@@ -327,7 +327,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
       if (siteFilter !== 'all' && (d.site || '') !== siteFilter) return false;
       /* Tag filter */
       if (tagFilterIds.length > 0) {
-        if (!d.tag_ids || !tagFilterIds.some(tid => d.tag_ids!.includes(tid))) return false;
+        if (!Array.isArray(d.tag_ids) || !tagFilterIds.some(tid => (d.tag_ids || []).includes(tid))) return false;
       }
       /* Tree filter */
       if (treeFilterSite) {

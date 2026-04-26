@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 
-interface AuditEvent { id: string; [key: string]: any; }
-interface ComplianceFinding { id: string; status?: string; owner?: string; note?: string; [key: string]: any; }
+import { AuditEvent, ComplianceFinding } from '../types';
 
 interface UseHistoryAuditComplianceProps {
   isAuthenticated: boolean;

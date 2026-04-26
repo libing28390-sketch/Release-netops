@@ -49,8 +49,8 @@ def capacity_overview():
             FROM interface_telemetry_raw
             WHERE ts >= ?
             GROUP BY device_id, interface_name
-            HAVING avg_in_util > 50 OR avg_out_util > 50
-            ORDER BY MAX(MAX(COALESCE(bw_in_pct, 0)), MAX(COALESCE(bw_out_pct, 0))) DESC
+            HAVING AVG(bw_in_pct) > 50 OR AVG(bw_out_pct) > 50
+            ORDER BY GREATEST(MAX(COALESCE(bw_in_pct, 0)), MAX(COALESCE(bw_out_pct, 0))) DESC
             LIMIT 20
         ''', (cutoff,)).fetchall()
 

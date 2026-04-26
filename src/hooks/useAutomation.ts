@@ -46,7 +46,12 @@ export const useAutomation = ({
 
   // Command favorites
   const [commandFavorites, setCommandFavorites] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('cmdFavorites') || '[]'); } catch { return []; }
+    try {
+      const val = JSON.parse(localStorage.getItem('cmdFavorites') || '[]');
+      return Array.isArray(val) ? val : [];
+    } catch {
+      return [];
+    }
   });
   const [showFavorites, setShowFavorites] = useState(false);
   
@@ -99,6 +104,15 @@ export const useAutomation = ({
   const [executionStatus, setExecutionStatus] = useState<string>('idle');
   const [automationSearch, setAutomationSearch] = useState('');
   const [scenarioSearch, setScenarioSearch] = useState('');
+
+  const handleAutomationSearch = useCallback((value: string) => {
+    setAutomationSearch(value);
+  }, []);
+
+  const handleScenarioSearch = useCallback((value: string) => {
+    setScenarioSearch(value);
+  }, []);
+
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [showCustomCommandModal, setShowCustomCommandModal] = useState(false);
   const [showCmdPreviewModal, setShowCmdPreviewModal] = useState(false);
@@ -1047,7 +1061,7 @@ export const useAutomation = ({
     wsCompleteMsg, setWsCompleteMsg, activeExecutionId, setActiveExecutionId, quickQueryTable, executionStatus,
     setExecutionStatus, quickTargetDevices, quickDetectedPlatforms, quickHasMixedPlatforms, quickDetectedPlatform,
     quickScenarioSupportsDetectedPlatform, quickAutoPlatform, quickPlatformMismatch, hasQuickTargets,
-    quickMissingRequiredFields, automationSearch, setAutomationSearch, scenarioSearch, setScenarioSearch,
+    quickMissingRequiredFields, automationSearch, setAutomationSearch, handleAutomationSearch, scenarioSearch, setScenarioSearch, handleScenarioSearch,
     filteredScenarios, loadScenarios, loadPlaybookHistory, loadJobs, runPlaybook, openQuickPlaybookModal,
     loadQuickPlaybookPreview, previewPlaybook, resetAutomationSubmenuState, executePlaybook,
     runQuickPlaybook,

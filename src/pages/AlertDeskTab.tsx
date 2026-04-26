@@ -319,8 +319,9 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   ];
 
   return (
-    <div className="space-y-4">
-      <div className={alertPanelClass}>
+    <>
+    <div className="h-full flex flex-col overflow-hidden space-y-4">
+      <div className={`${alertPanelClass} flex-1 flex flex-col overflow-hidden`}>
         <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
@@ -425,9 +426,9 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
           </div>
         )}
 
-        <div className="overflow-x-auto">
+        <div className="flex-1 overflow-y-auto custom-scrollbar border-b border-black/5">
           <table className="min-w-full border-collapse text-left">
-            <thead>
+            <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="w-10 px-3 py-3">
                   <button onClick={toggleSelectAll} className="text-black/40 hover:text-black/70" title={language === 'zh' ? '全选' : 'Select all'}>
@@ -569,18 +570,22 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
           </table>
         </div>
 
-        <Pagination
-          currentPage={page}
-          totalItems={total}
-          itemsPerPage={pageSize}
-          onItemsPerPageChange={(value) => {
-            setPage(1);
-            setPageSize(value);
-          }}
-          onPageChange={setPage}
-          language={language}
-        />
+        <div className="mt-auto border-t border-black/5 bg-white">
+          <Pagination
+            currentPage={page}
+            totalItems={total}
+            itemsPerPage={pageSize}
+            onItemsPerPageChange={(value) => {
+              setPage(1);
+              setPageSize(value);
+            }}
+            onPageChange={setPage}
+            language={language}
+          />
+        </div>
+
       </div>
+    </div>
 
       <AnimatePresence>
         {selectedAlertId ? (
@@ -867,7 +872,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
           </motion.div>
         ) : null}
       </AnimatePresence>
-    </div>
+    </>
   );
 };
 

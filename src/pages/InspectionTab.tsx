@@ -198,6 +198,10 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ t, language, devices, ove
   const [recordPageSize, setRecordPageSize] = useState(15);
   const [recordTotal, setRecordTotal] = useState(0);
 
+  // ── internal pagination for run details ──
+  const [detailPage, setDetailPage] = useState(1);
+  const [detailPageSize, setDetailPageSize] = useState(20);
+
   // ── run inspection ──
   const [isRunning, setIsRunning] = useState(false);
   const [runResult, setRunResult] = useState<Record<string, unknown> | null>(null);
@@ -265,6 +269,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ t, language, devices, ove
       }
     } finally {
       setDetailLoading(false);
+      setDetailPage(1); // Reset page when opening detail
     }
   }, [authHeaders]);
 
@@ -581,10 +586,10 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ t, language, devices, ove
           </div>
 
           {/* Table */}
-          <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
+          <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden min-h-[500px] flex flex-col">
+            <div className="overflow-y-auto max-h-[calc(100vh-380px)] custom-scrollbar">
               <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50/80 border-b border-black/[0.05]">
+                <thead className="sticky top-0 bg-slate-50 border-b border-black/[0.05] z-10">
                   <tr>
                     <Th>{isZh ? '时间' : 'Time'}</Th>
                     <Th>{isZh ? '类型' : 'Type'}</Th>
@@ -646,7 +651,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ t, language, devices, ove
               </table>
             </div>
             {/* Pagination */}
-            <div className="px-4 py-3 border-t border-black/[0.04]">
+            <div className="mt-auto px-4 py-3 border-t border-black/[0.04]">
               <Pagination
                 currentPage={recordPage}
                 totalItems={recordTotal}
@@ -797,9 +802,21 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ t, language, devices, ove
                           <h4 className="text-sm font-bold text-[#0b2340]">{g.label}</h4>
                           <span className="text-[11px] text-black/30 font-semibold tabular-nums">{g.items.length} {isZh ? '台' : ''}</span>
                         </div>
-                        <div className="max-h-[500px] overflow-y-auto">
-                          {renderResultTable(g.items)}
+                        <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
+                          {renderResultTable(g.items.slice((detailPage - 1) * detailPageSize, detailPage * detailPageSize))}
                         </div>
+                        {g.items.length > detailPageSize && (
+                          <div className="px-4 py-3 border-t border-black/[0.04]">
+                            <Pagination
+                              currentPage={detailPage}
+                              totalItems={g.items.length}
+                              itemsPerPage={detailPageSize}
+                              onPageChange={setDetailPage}
+                              onItemsPerPageChange={setDetailPageSize}
+                              language={language}
+                            />
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

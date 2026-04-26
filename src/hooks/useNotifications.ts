@@ -12,7 +12,9 @@ export const useNotifications = ({ currentUser, language, isAuthenticated }: Use
   const [notificationReadMap, setNotificationReadMap] = useState<Record<string, boolean>>(() => {
     try {
       const raw = localStorage.getItem('netops_notification_reads');
-      return raw ? JSON.parse(raw) : {};
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
     } catch {
       return {};
     }

@@ -177,10 +177,10 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(i => 
-        i.name.toLowerCase().includes(q) || 
-        i.name_zh.toLowerCase().includes(q) || 
-        i.category.toLowerCase().includes(q) ||
-        i.check_key.toLowerCase().includes(q)
+        (i.name || '').toLowerCase().includes(q) || 
+        (i.name_zh || '').toLowerCase().includes(q) || 
+        (i.category || '').toLowerCase().includes(q) ||
+        (i.check_key || '').toLowerCase().includes(q)
       );
     }
     return result;
@@ -193,11 +193,11 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery]);
+  }, [searchQuery, categoryFilter]);
 
   const groupedItems = useMemo(() => {
     const groups: Record<string, Record<string, InspectionItem[]>> = {};
-    filteredItems.forEach(item => {
+    paginatedItems.forEach(item => {
       const cat = item.category || 'Other';
       const ven = item.vendor || (zh ? '未分类' : 'Uncategorized');
       if (!groups[cat]) groups[cat] = {};
@@ -205,7 +205,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
       groups[cat][ven].push(item);
     });
     return groups;
-  }, [filteredItems, zh]);
+  }, [paginatedItems, zh]);
 
   return (
     <div className="space-y-6">
@@ -220,20 +220,25 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             }`}
           >
             {zh ? '全部' : 'All'}
+            <span className="ml-1 opacity-50 font-normal">({items.length})</span>
           </button>
-          {CATEGORIES.map(cat => (
-            <button
-              key={cat.id}
-              onClick={() => setCategoryFilter(cat.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                categoryFilter === cat.id 
-                ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/20' 
-                : 'bg-black/5 text-black/40 hover:bg-black/10'
-              }`}
-            >
-              {zh ? cat.zh : cat.en}
-            </button>
-          ))}
+          {CATEGORIES.map(cat => {
+            const count = items.filter(i => i.category === cat.id).length;
+            return (
+              <button
+                key={cat.id}
+                onClick={() => setCategoryFilter(cat.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                  categoryFilter === cat.id 
+                  ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/20' 
+                  : 'bg-black/5 text-black/40 hover:bg-black/10'
+                }`}
+              >
+                {zh ? cat.zh : cat.en}
+                <span className="ml-1 opacity-50 font-normal">({count})</span>
+              </button>
+            );
+          })}
         </div>
 
         <div>
@@ -367,7 +372,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
       </AnimatePresence>
 
       <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[calc(100vh-320px)] overflow-y-auto">
           <table className="w-full text-left text-sm border-collapse">
             <thead>
               <tr className="bg-black/[0.01] border-b border-black/[0.05]">

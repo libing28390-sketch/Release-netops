@@ -1091,10 +1091,10 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                   <span className="text-[10px] font-normal text-black/30">({backupStats?.device_stats?.length ?? 0})</span>
                 </h3>
               </div>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto max-h-[calc(100vh-380px)] overflow-y-auto custom-scrollbar">
                 <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-black/5 bg-black/[0.015]">
+                  <thead className="sticky top-0 z-10 bg-slate-50 border-b border-black/5">
+                    <tr className="bg-black/[0.015]">
                       <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '设备' : 'Device'}</th>
                       <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '状态' : 'Status'}</th>
                       <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '平台' : 'Platform'}</th>

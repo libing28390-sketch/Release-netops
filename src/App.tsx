@@ -1,8 +1,8 @@
-import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import * as htmlToImage from 'html-to-image';
-import { Plus, Server, CheckCircle, CheckCircle2, XCircle, RotateCcw, Play, Activity, LayoutDashboard, Database, Zap, ShieldCheck, History, LogOut, Search, Bell, Settings, Download, Upload, FileText, ChevronLeft, ChevronRight, Filter, Globe, TrendingUp, PieChart as PieChartIcon, Clock, Edit2, AlertCircle, FolderOpen, Eye, EyeOff, Sun, Moon, User, ChevronDown, Copy, Menu, PanelLeftClose, Monitor, ExternalLink, Trash2, Wrench, Maximize2, Minimize2, BarChart3, GitCompareArrows, Cpu, Network, Pin, AlertTriangle, X } from 'lucide-react';
+import { Plus, Server, CheckCircle, CheckCircle2, XCircle, RotateCcw, Play, Activity, LayoutDashboard, Database, Zap, ShieldCheck, History, LogOut, Search, Bell, Settings, Download, Upload, FileText, ChevronLeft, ChevronRight, Filter, Globe, TrendingUp, PieChart as PieChartIcon, Clock, Edit2, AlertCircle, FolderOpen, Eye, EyeOff, Sun, Moon, User as UserIcon, ChevronDown, Copy, Menu, PanelLeftClose, Monitor, ExternalLink, Trash2, Wrench, Maximize2, Minimize2, BarChart3, GitCompareArrows, Cpu, Network, Pin, AlertTriangle, X } from 'lucide-react';
 import { useI18n } from './i18n.tsx';
 import * as XLSX from 'xlsx';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from 'recharts';
@@ -14,9 +14,10 @@ import DeviceFormModal from './components/DeviceFormModal';
 import DeviceDetailModal from './components/DeviceDetailModal';
 import CustomCommandModal from './components/CustomCommandModal';
 import AddScenarioModal from './components/AddScenarioModal';
-import CommandPalette from './components/CommandPalette';
-import TopHeader from './components/TopHeader';
-import ModuleSubNav from './components/ModuleSubNav';
+import AppLayout from './components/AppLayout';
+import AppMainContent from './components/AppMainContent';
+import { AppRuntimeBoundary } from './components/AppRuntimeBoundary';
+import type { ToastState } from './components/ToastNotification';
 import ProfileModal from './components/ProfileModal';
 import CommandPreviewModal from './components/CommandPreviewModal';
 import ImportInventoryModal from './components/ImportInventoryModal';
@@ -28,7 +29,6 @@ import AuditEventDetailModal from './components/AuditEventDetailModal';
 import ComplianceFindingDetailModal from './components/ComplianceFindingDetailModal';
 import JobOutputModal from './components/JobOutputModal';
 import ConfigDiffModal from './components/ConfigDiffModal';
-import ToastNotification, { type ToastState } from './components/ToastNotification';
 import LoginScreen from './components/LoginScreen';
 import SetupWizard from './components/SetupWizard';
 import TestConnectionResultModal from './components/TestConnectionResultModal';
@@ -49,6 +49,8 @@ import { useTopologyVisibleDevices } from './hooks/useTopologyVisibleDevices';
 import { useTopologySelectionSync } from './hooks/useTopologySelectionSync';
 import { useResourceSignals } from './hooks/useResourceSignals';
 import { useInventoryDeleteActions } from './hooks/useInventoryDeleteActions';
+import { useInventoryTableActions } from './hooks/useInventoryTableActions';
+import { useConfigRollbackAction } from './hooks/useConfigRollbackAction';
 import { exportInventoryToExcel } from './utils/inventoryExport';
 import { normalizeTopologyPort, getTopologyOperationalTone, type TopologyOperationalState } from './utils/topologyCore';
 import { formatResourcePercent, formatCompactResourcePercent } from './utils/resourceFormatters';
@@ -58,105 +60,10 @@ import {
   formatTopologyOperationalState as formatTopologyOperationalStateValue,
   formatTopologyLastSeen as formatTopologyLastSeenValue,
 } from './utils/topologyFormatters';
-
-const MonitoringCenter = lazy(() => import('./components/MonitoringCenter.tsx'));
-const DeviceHealthTab = lazy(() => import('./pages/DeviceHealthTab'));
-const DashboardTab = lazy(() => import('./pages/DashboardTab'));
-const HomePage = lazy(() => import('./pages/HomePage'));
-const ComplianceTab = lazy(() => import('./pages/ComplianceTab'));
-const HistoryTab = lazy(() => import('./pages/HistoryTab'));
-const UsersTab = lazy(() => import('./pages/UsersTab'));
-const TopologyPage = lazy(() => import('./pages/TopologyPage'));
-const InventoryDevicesTab = lazy(() => import('./pages/InventoryDevicesTab'));
-const InventoryServersTab = lazy(() => import('./pages/InventoryServersTab'));
-const AlertDeskTab = lazy(() => import('./pages/AlertDeskTab'));
-const AlertRulesTab = lazy(() => import('./pages/AlertRulesTab'));
-const AlertMaintenanceTab = lazy(() => import('./pages/AlertMaintenanceTab'));
-const AlertHistoryTab = lazy(() => import('./pages/AlertHistoryTab'));
-const ReportsTab = lazy(() => import('./pages/ReportsTab'));
-const ConfigDriftTab = lazy(() => import('./pages/ConfigDriftTab'));
-const ConfigBackupTab = lazy(() => import('./pages/ConfigBackupTab'));
-const ConfigDiffViewTab = lazy(() => import('./pages/ConfigDiffViewTab'));
-const ConfigSearchTab = lazy(() => import('./pages/ConfigSearchTab'));
-const CapacityPlanningTab = lazy(() => import('./pages/CapacityPlanningTab'));
-const IPVlanTab = lazy(() => import('./pages/IPVlanTab'));
-const IPLocatorPage = lazy(() => import('./pages/IPLocatorPage'));
-const AssetManagementTab = lazy(() => import('./pages/AssetManagementTab'));
-const CredentialManagementTab = lazy(() => import('./components/PasswordRotationPanel'));
-const ChangeOrderTab = lazy(() => import('./pages/ChangeOrderTab'));
-const InterfaceMonitoringTab = lazy(() => import('./pages/InterfaceMonitoringTab'));
-const AutomationExecuteTab = lazy(() => import('./pages/AutomationExecuteTab'));
-const AutomationPlaybooksTab = lazy(() => import('./pages/AutomationPlaybooksTab'));
-const AutomationScenariosTab = lazy(() => import('./pages/AutomationScenariosTab'));
-const AutomationHistoryTab = lazy(() => import('./pages/AutomationHistoryTab'));
-const InspectionTab = lazy(() => import('./pages/InspectionTab'));
-const ExecutionScheduleTab = lazy(() => import('./pages/ExecutionScheduleTab'));
-const InspectionItemsTab = lazy(() => import('./pages/InspectionItemsTab'));
-const ScheduledJobsTab = lazy(() => import('./pages/ScheduledJobsTab'));
-const PlatformSettingsTab = lazy(() => import('./pages/PlatformSettingsTab'));
-const RackManagementTab = lazy(() => import('./pages/RackManagementTab'));
-const TagManagementTab = lazy(() => import('./pages/TagManagementTab'));
+import { getRouteContext } from './utils/routeContext';
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
 
-interface AppRuntimeBoundaryProps {
-  children: React.ReactNode;
-  language: string;
-}
-
-interface AppRuntimeBoundaryState {
-  hasError: boolean;
-  errorMessage: string;
-}
-
-class AppRuntimeBoundary extends React.Component<AppRuntimeBoundaryProps, AppRuntimeBoundaryState> {
-  declare props: Readonly<AppRuntimeBoundaryProps>;
-  state: AppRuntimeBoundaryState = { hasError: false, errorMessage: '' };
-
-  static getDerivedStateFromError(error: Error): AppRuntimeBoundaryState {
-    return { hasError: true, errorMessage: error?.message || 'Unknown runtime error' };
-  }
-
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
-    // Keep details in console for fast diagnosis while avoiding a blank screen for users.
-    console.error('Runtime error in authenticated app shell:', error, errorInfo);
-  }
-
-  handleReload = (): void => {
-    window.location.reload();
-  };
-
-  render() {
-    if (!this.state.hasError) return this.props.children;
-
-    const isZh = this.props.language === 'zh';
-    return (
-      <div className="min-h-screen bg-[#061324] text-white flex items-center justify-center p-6">
-        <div className="max-w-xl w-full rounded-2xl border border-white/15 bg-white/5 backdrop-blur-sm p-6">
-          <h2 className="text-xl font-bold">
-            {isZh ? '页面运行异常，已阻止白屏' : 'Runtime issue detected, white screen prevented'}
-          </h2>
-          <p className="mt-3 text-sm text-white/75">
-            {isZh
-              ? '应用捕获到前端运行时错误。请点击“重新加载”恢复；若仍复现，请把此错误信息发给我继续定位。'
-              : 'The app caught a frontend runtime error. Click Reload to recover. If it happens again, share this message for quick diagnosis.'}
-          </p>
-          <pre className="mt-4 rounded-xl bg-black/35 border border-white/10 p-3 text-xs text-red-200 whitespace-pre-wrap break-all">
-            {this.state.errorMessage}
-          </pre>
-          <div className="mt-5 flex items-center gap-2">
-            <button
-              onClick={this.handleReload}
-              className="px-4 py-2 rounded-lg bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#0096bd] transition-colors"
-            >
-              {isZh ? '重新加载' : 'Reload'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-}
 
 // Sparkline imported from ./components/Sparkline
 
@@ -190,12 +97,12 @@ const App: React.FC = () => {
       );
     }
     if (avatarValue?.startsWith('preset:')) {
-      return <User size={fallbackIconSize} />;
+      return <UserIcon size={fallbackIconSize} />;
     }
     if (avatarValue) {
       return <img src={avatarValue} alt="avatar" className="w-full h-full object-cover" />;
     }
-    return <User size={fallbackIconSize} />;
+    return <UserIcon size={fallbackIconSize} />;
   };
   const { themeMode, setThemeMode, resolvedTheme } = useTheme();
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -235,11 +142,8 @@ const App: React.FC = () => {
     setShowNotifications,
   });
 
-  const activeTab = location.pathname.split('/')[1] || 'dashboard';
-  const configPage = location.pathname.split('/')[2] || 'backup';
-  const automationPage = location.pathname.split('/')[2] || '';
-  const inventorySubPage = location.pathname.split('/')[2] || 'devices';
-  const changeOrderPage = location.pathname.split('/')[2] || '';
+  const routeContext = useMemo(() => getRouteContext(location.pathname), [location.pathname]);
+  const { activeTab, configPage, automationPage, inventorySubPage, changeOrderPage } = routeContext;
 
   const deviceFetchMode = useMemo<'light' | 'full'>(() => {
     if (activeTab === 'inventory') return 'full';
@@ -296,7 +200,7 @@ const App: React.FC = () => {
     wsCompleteMsg, setWsCompleteMsg, activeExecutionId, setActiveExecutionId, quickQueryTable, executionStatus, setExecutionStatus,
     quickTargetDevices, quickDetectedPlatforms, quickHasMixedPlatforms, quickDetectedPlatform, quickScenarioSupportsDetectedPlatform,
     quickAutoPlatform, quickPlatformMismatch, hasQuickTargets, quickMissingRequiredFields,
-    automationSearch, setAutomationSearch, scenarioSearch, setScenarioSearch, filteredScenarios,
+    automationSearch, setAutomationSearch, handleAutomationSearch, scenarioSearch, setScenarioSearch, handleScenarioSearch, filteredScenarios,
     loadScenarios, loadPlaybookHistory, loadJobs, runPlaybook, openQuickPlaybookModal, loadQuickPlaybookPreview, previewPlaybook, executePlaybook, resetAutomationSubmenuState,
     runQuickPlaybook, runQuickQuery, handleResetQuickQuery, handleToggleBatchMode, handleToggleBatchDevice, handleSelectAutomationDevice, handleClearQuickScenario, handleResetQuickExecutionState, exportQuickQueryTable,
     extractVars, splitLines
@@ -304,6 +208,21 @@ const App: React.FC = () => {
 
   const [globalVars, setGlobalVars] = useState<{id?: string, key: string, value: string}[]>([]);
   const [configTemplates, setConfigTemplates] = useState<ConfigTemplate[]>([]);
+
+  const handleRefreshHistory = useCallback(async (
+    page = playbookHistoryPage,
+    statusFilter = playbookHistoryStatusFilter,
+    scenarioFilter = playbookHistoryScenarioSearch,
+  ) => {
+    await loadPlaybookHistory(page, statusFilter, scenarioFilter);
+  }, [playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch, loadPlaybookHistory]);
+
+  useEffect(() => {
+    if (isAuthenticated && activeTab === 'automation' && automationPage === 'history') {
+      handleRefreshHistory(playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch);
+    }
+  }, [isAuthenticated, activeTab, automationPage, playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch, handleRefreshHistory]);
+
 
   const findMatchingPlatform = useCallback((devicePlatform: string, platforms: string[] | Record<string, any>) => {
     if (!devicePlatform) return undefined;
@@ -374,7 +293,12 @@ const App: React.FC = () => {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
   const [recentSidebarPaths, setRecentSidebarPaths] = useState<string[]>([]);
   const [pinnedPaths, setPinnedPaths] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('netops_pinned_nav') || '[]'); } catch { return []; }
+    try {
+      const val = JSON.parse(localStorage.getItem('netops_pinned_nav') || '[]');
+      return Array.isArray(val) ? val : [];
+    } catch {
+      return [];
+    }
   });
   const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
   const [cmdPaletteQuery, setCmdPaletteQuery] = useState('');
@@ -2144,14 +2068,22 @@ const App: React.FC = () => {
 
   // History, Audit, Compliance effects/handlers moved to useHistoryAuditCompliance hook
 
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deviceToDelete, setDeviceToDelete] = useState<string | null>(null);
+  const [isDeletingSelected, setIsDeletingSelected] = useState(false);
 
-  const handleSort = (key: keyof Device) => {
-    let direction: 'asc' | 'desc' = 'asc';
-    if (inventorySortConfig && inventorySortConfig.key === key && inventorySortConfig.direction === 'asc') {
-      direction = 'desc';
-    }
-    setInventorySortConfig({ key, direction });
-  };
+  const {
+    handleSort,
+    handleDeleteDevice,
+    handleDeleteSelected,
+  } = useInventoryTableActions({
+    selectedDeviceIds,
+    inventorySortConfig,
+    setInventorySortConfig,
+    setDeviceToDelete,
+    setIsDeletingSelected,
+    setShowDeleteModal,
+  });
 
   const [automationPlatformFilter, setAutomationPlatformFilter] = useState('all');
   const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -2202,9 +2134,6 @@ const App: React.FC = () => {
     snmp_port: 161,
     lifecycle_status: 'staging'
   });
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deviceToDelete, setDeviceToDelete] = useState<string | null>(null);
-  const [isDeletingSelected, setIsDeletingSelected] = useState(false);
 
   const copyTextWithFallback = async (text: string): Promise<boolean> => {
     try {
@@ -2416,66 +2345,14 @@ const App: React.FC = () => {
     reader.readAsText(file);
   };
 
-  const handleRollbackConfig = async (device: Device, version: ConfigVersion) => {
-    const newVersion: ConfigVersion = {
-      id: `v${Date.now()}`,
-      timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
-      content: device.current_config || '',
-      author: 'admin',
-      description: `Rollback to ${version.id}`
-    };
-
-    const updatedHistory = [newVersion, ...device.config_history];
-    
-    try {
-      // 1. Execute the rollback on the device
-      const execRes = await fetch('/api/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_id: device.id,
-          command: version.content
-        })
-      });
-
-      if (!execRes.ok) {
-        showToast('Failed to execute rollback on device', 'error');
-        return;
-      }
-
-      // 2. Persist the new state in the DB
-      const dbRes = await fetch(`/api/devices/${device.id}/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          current_config: version.content,
-          config_history: updatedHistory
-        })
-      });
-
-      if (dbRes.ok) {
-        const updatedDevice = {
-          ...device,
-          current_config: version.content,
-          config_history: updatedHistory
-        };
-
-        setDevices(prev => prev.map(d => d.id === device.id ? updatedDevice : d));
-        
-        if (selectedDevice?.id === device.id) {
-          setSelectedDevice(updatedDevice);
-        }
-        
-        setViewingConfig(null);
-        setShowConfigModal(false);
-        showToast(`Rolled back to version ${version.id}`, 'success');
-      } else {
-        showToast('Failed to update configuration history', 'error');
-      }
-    } catch (error) {
-      showToast('Connection error during rollback', 'error');
-    }
-  };
+  const { handleRollbackConfig } = useConfigRollbackAction({
+    selectedDevice,
+    setSelectedDevice,
+    setDevices,
+    setViewingConfig,
+    setShowConfigModal,
+    showToast,
+  });
 
   const { confirmDeleteDevice } = useInventoryDeleteActions({
     deviceToDelete,
@@ -2583,19 +2460,6 @@ const App: React.FC = () => {
     } catch (error) {
       showToast(`Error adding device: ${error}`, 'error');
     }
-  };
-
-  const handleDeleteDevice = (id: string) => {
-    setDeviceToDelete(id);
-    setIsDeletingSelected(false);
-    setShowDeleteModal(true);
-  };
-
-  const handleDeleteSelected = () => {
-    if (selectedDeviceIds.length === 0) return;
-    setIsDeletingSelected(true);
-    setDeviceToDelete(null);
-    setShowDeleteModal(true);
   };
 
   const [showTestResult, setShowTestResult] = useState(false);
@@ -3108,14 +2972,6 @@ const App: React.FC = () => {
     await loadConfigSnapshots();
   };
 
-  const handleRefreshHistory = async (
-    page = playbookHistoryPage,
-    statusFilter = playbookHistoryStatusFilter,
-    scenarioFilter = playbookHistoryScenarioSearch,
-  ) => {
-    await loadPlaybookHistory(page, statusFilter, scenarioFilter);
-  };
-
   const handleSelectExecution = async (execution: any) => {
     setActiveExecutionId(execution.id);
     setSelectedExecutionDetail(null);
@@ -3206,833 +3062,436 @@ const App: React.FC = () => {
     </div>
   );
 
+  const mainContentProps = {
+    activeTab,
+    inventorySubPage,
+    configPage,
+    automationPage,
+    changeOrderPage,
+    language,
+    t,
+    navigate,
+    navTo,
+    showToast,
+    currentUser,
+    devices,
+    jobs,
+    notifications,
+    hostResources,
+    users,
+    trendDays,
+    setTrendDays,
+    complianceTrend,
+    platformData,
+    dashBannerCollapsed,
+    setDashBannerCollapsed,
+    dashLastRefresh,
+    monitorSearch,
+    setMonitorSearch,
+    monitorSearchResults,
+    monitorSearching,
+    monitorSelectedDevice,
+    setMonitorSelectedDevice,
+    monitorOverview,
+    monitorRealtime,
+    monitorTrend,
+    monitorTrendInterface,
+    setMonitorTrendInterface,
+    monitorTrendResolution,
+    setMonitorTrendResolution,
+    monitorTrendStartInput,
+    setMonitorTrendStartInput,
+    monitorTrendEndInput,
+    setMonitorTrendEndInput,
+    monitorTrendRange,
+    setMonitorTrendRange,
+    monitorTrendZoom,
+    setMonitorTrendZoom,
+    monitorTrendDragStart,
+    setMonitorTrendDragStart,
+    monitorTrendDragEnd,
+    setMonitorTrendDragEnd,
+    monitorTrendMetrics,
+    setMonitorTrendMetrics,
+    monitorTrendUiMode,
+    setMonitorTrendUiMode,
+    monitorAlerts,
+    monitorAlertTotal,
+    monitorAlertsPage,
+    setMonitorAlertsPage,
+    monitorAlertsPageSize,
+    monitorAlertsSeverity,
+    setMonitorAlertsSeverity,
+    monitorAlertsPhase,
+    setMonitorAlertsPhase,
+    monitorLoading,
+    monitorPageVisible,
+    monitorDashboardSiteFilter,
+    setMonitorDashboardSiteFilter,
+    monitorDashboardAlertFilter,
+    setMonitorDashboardAlertFilter,
+    inventoryRows,
+    inventoryTotal,
+    inventoryStatusCounts,
+    inventoryPage,
+    setInventoryPage,
+    inventoryPageSize,
+    setInventoryPageSize,
+    inventorySearch,
+    setInventorySearch,
+    inventoryPlatformFilter,
+    setInventoryPlatformFilter,
+    inventoryRoleFilter,
+    setInventoryRoleFilter,
+    inventoryStatusFilter,
+    setInventoryStatusFilter,
+    inventoryLifecycleFilter,
+    setInventoryLifecycleFilter,
+    inventorySortConfig,
+    inventoryLoading,
+    selectedDeviceIds,
+    setSelectedDeviceIds,
+    handleSort,
+    handleImport,
+    handleExport,
+    handleDeleteDevice,
+    handleDeleteSelected,
+    handleShowDetails,
+    handleTestConnection,
+    deviceConnectionChecks,
+    connectionTestingDeviceId,
+    setShowAddModal,
+    setShowEditModal,
+    setEditingDevice,
+    setEditForm,
+    setSelectedDevice,
+    setActiveTab,
+    devicesLastUpdatedAt,
+    snmpTestingId,
+    snmpSyncingId,
+    handleSnmpTest,
+    handleSnmpSyncNow,
+    sectionHeaderRowClass,
+    scenarios,
+    platforms,
+    selectedScenario,
+    scenarioSearch,
+    playbookVars,
+    playbookPreview,
+    playbookPlatform,
+    playbookDeviceIds,
+    playbookConcurrency,
+    playbookDryRun,
+    executionStatus,
+    quickPlaybookScenario,
+    quickPlaybookVars,
+    quickPlaybookPlatform,
+    quickPlaybookDryRun,
+    quickPlaybookConcurrency,
+    quickPlaybookPreview,
+    quickRiskConfirmed,
+    filteredScenarios,
+    quickMissingRequiredFields,
+    quickHasMixedPlatforms,
+    quickPlatformMismatch,
+    isQuickPlaybookRunning,
+    quickExecutionResult,
+    wsCompleteMsg,
+    deviceStatusMap,
+    quickQueryRunning,
+    quickQueryOutput,
+    quickQueryLabel,
+    quickQueryStructured,
+    quickQueryView,
+    quickQueryMaximized,
+    quickQueryCommands,
+    quickQueryTable,
+    handleAutomationSearch,
+    handleScenarioSearch,
+    handleToggleBatchMode,
+    handleToggleBatchDevice,
+    handleSelectAutomationDevice,
+    batchMode,
+    batchDeviceIds,
+    automationSearch,
+    hasQuickTargets,
+    openQuickPlaybookModal,
+    handleClearQuickScenario,
+    runQuickPlaybook,
+    runQuickQuery,
+    handleResetQuickQuery,
+    setQuickQueryView,
+    setQuickQueryMaximized,
+    exportQuickQueryTable,
+    copyTextWithFallback,
+    handleResetQuickExecutionState,
+    handlePlaybookPlatformChange,
+    handlePlaybookVariableChange,
+    handleSelectPlaybookScenario,
+    openManualScenarioDraft,
+    executePlaybook,
+    complianceOverview,
+    complianceFindings,
+    complianceFindingTotal,
+    complianceSeverityFilter,
+    setComplianceSeverityFilter,
+    complianceStatusFilter,
+    setComplianceStatusFilter,
+    complianceCategoryFilter,
+    setComplianceCategoryFilter,
+    compliancePage,
+    setCompliancePage,
+    compliancePageSize,
+    setCompliancePageSize,
+    complianceLoading,
+    complianceRunLoading,
+    runComplianceAudit,
+    openComplianceFindingDetail,
+    updateComplianceFinding,
+    isTakingSnapshot,
+    handleRunBackupAllOnline,
+    handleBackupSingleDevice,
+    handleNavigateToConfigDiff,
+    diffPreSelectedDeviceId,
+    activeDiffLines,
+    activeChangeLineIndexes,
+    diffFocusChangeIdx,
+    diffOnlyChanges,
+    diffShowFullBoth,
+    renderedDiffLines,
+    fullSideBySideRows,
+    diffChangeBlocks,
+    filteredDiffChangeBlocks,
+    diffBlockQuery,
+    diffLineRefs,
+    focusDiffChangeAt,
+    configDiffLeft,
+    configDiffRight,
+    handleResetDiffView,
+    handleSelectSnapshotPair,
+    jumpToDiff,
+    setDiffOnlyChanges,
+    setDiffShowFullBoth,
+    setDiffBlockQuery,
+    configTemplates,
+    configVariableKeys,
+    configMissingVariables,
+    configScopedDevices,
+    configScopedOnlineCount,
+    configReadinessScore,
+    configValidationIssues,
+    configValidationWarnings,
+    configWorkspaceView,
+    selectedTemplateId,
+    selectedConfigTemplate,
+    globalVars,
+    editorContent,
+    configRenderedPreview,
+    configScopePlatform,
+    configScopeRole,
+    configScopeSite,
+    configPlatformOptions,
+    configRoleOptions,
+    configSiteOptions,
+    extractVars,
+    getPlatformLabel,
+    handleImportVars,
+    handleNewTemplate,
+    handleAddVar,
+    handleDeleteVar,
+    handleDiscardChanges,
+    setConfigWorkspaceView,
+    setSelectedTemplateId,
+    setEditorContent,
+    setConfigTemplates,
+    showAddUserModal,
+    setShowAddUserModal,
+    showEditUserModal,
+    setShowEditUserModal,
+    editingUser,
+    setEditingUser,
+    newUserForm,
+    setNewUserForm,
+    editUserForm,
+    setEditUserForm,
+    showNewUserPwd,
+    setShowNewUserPwd,
+    showEditUserPwd,
+    setShowEditUserPwd,
+    handleAddUser,
+    handleEditUser,
+    auditRows,
+    auditTotal,
+    auditPage,
+    setAuditPage,
+    auditPageSize,
+    setAuditPageSize,
+    auditLoading,
+    auditCategoryFilter,
+    setAuditCategoryFilter,
+    auditSeverityFilter,
+    setAuditSeverityFilter,
+    auditStatusFilter,
+    setAuditStatusFilter,
+    auditTimeFilter,
+    setAuditTimeFilter,
+    assetsTotal,
+    scheduledTasks,
+    unreadNotificationCount,
+    fetchMonitoringOverview,
+    fetchMonitoringAlerts,
+    fetchMonitoringRealtime,
+    fetchHostResources,
+    setMonitorRealtime,
+    setSelectedTopologyDeviceId,
+    setSelectedTopologyLinkKey,
+    setInventoryRefreshTick,
+    topologyDiscoveryRunning,
+    topologyStats,
+    topologyLinkStats,
+    topologySearch,
+    topologySiteFilter,
+    topologyRoleFilter,
+    topologyStatusFilter,
+    topologySiteOptions,
+    topologyRoleOptions,
+    topologyVisibleDevices,
+    topologyVisibleLinks,
+    selectedTopologyDeviceId,
+    selectedTopologyLinkKey,
+    selectedTopologyDevice,
+    selectedTopologyLink,
+    topologyNeighborDevices,
+    topologyDeviceLinks,
+    topologyPriorityDevices,
+    topologyOrphanDevices,
+    topologyRef,
+    handleTriggerDiscovery,
+    handleExportMap,
+    setTopologySearch,
+    setTopologySiteFilter,
+    setTopologyRoleFilter,
+    setTopologyStatusFilter,
+    formatTopologyPort,
+    formatTopologyInterfaceTelemetry,
+    formatTopologyLastSeen,
+    formatTopologyOperationalState,
+    formatTopologyEvidenceLabel,
+    getTopologyOperationalTone,
+    setShowCustomCommandModal,
+    setQuickPlaybookVars,
+    setQuickPlaybookConcurrency,
+    setQuickRiskConfirmed,
+    setShowCmdPreviewModal,
+    handleTogglePlaybookDevice,
+    setPlaybookConcurrency,
+    previewPlaybook,
+    playbookExecutions,
+    playbookHistoryTotal,
+    playbookHistoryPage,
+    playbookHistoryStatusFilter,
+    playbookHistoryScenarioSearch,
+    activeExecutionId,
+    wsMessages,
+    selectedExecutionLoading,
+    selectedExecutionDetail,
+    selectedDeviceDetail,
+    selectedDeviceDetailLoading,
+    selectedExecDevices,
+    selectedExecDevicesTotal,
+    selectedExecDevicesPage,
+    selectedExecDevicesStatusFilter,
+    selectedExecDevicesLoading,
+    handleRefreshHistory,
+    setPlaybookHistoryScenarioSearch,
+    setPlaybookHistoryPage,
+    setPlaybookHistoryStatusFilter,
+    handleSelectExecution,
+    handleDeleteExecution,
+    handleExecDevicesStatusFilterChange,
+    handleExecDevicesPageChange,
+    handleSelectExecDevice,
+    handleValidateTemplateWorkspace,
+    openAuditEventDetail,
+    findMatchingPlatform,
+  };
+
   return (
     <AppRuntimeBoundary language={language}>
-      <div className="app-shell flex h-screen text-[#141414] font-sans overflow-hidden">
-      {/* Main Content Area — no sidebar, full width */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <TopHeader
-          language={language}
-          resolvedTheme={resolvedTheme}
-          themeMode={themeMode}
-          sidebarCollapsed={sidebarCollapsed}
-          isHomePage={activeTab === 'dashboard'}
-          pageTitle={pageTitle}
-          currentUser={currentUser}
-          currentAvatar={currentAvatar}
-          currentUserLastLogin={currentUserLastLogin}
-          unreadNotificationCount={unreadNotificationCount}
-          unreadNotifications={unreadNotifications}
-          showNotifications={showNotifications}
-          showUserMenu={showUserMenu}
-          userMenuRef={userMenuRef}
-          renderAvatarContent={renderAvatarContent}
-          onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
-          onToggleNotifications={() => {
-            setShowUserMenu(false);
-            setShowNotifications((value) => !value);
-          }}
-          onToggleUserMenu={() => {
-            setShowNotifications(false);
-            setShowUserMenu((value) => !value);
-          }}
-          onOpenProfile={openProfileModal}
-          onOpenDashboard={() => {
-            setActiveTab('dashboard');
-            setShowUserMenu(false);
-          }}
-          onOpenMonitoring={() => {
-            setActiveTab('monitoring');
-            setShowUserMenu(false);
-          }}
-          onOpenHealth={() => {
-            setActiveTab('health');
-            setShowUserMenu(false);
-          }}
-          onOpenHistory={() => {
-            setActiveTab('history');
-            setShowUserMenu(false);
-          }}
-          onThemeModeChange={setThemeMode}
-          onLanguageChange={handleLanguagePreferenceChange}
-          onLogout={handleLogout}
-          onMarkAllNotificationsRead={markAllNotificationsRead}
-          onMarkNotificationRead={(id) => {
-            setNotificationReadMap((prev) => ({ ...prev, [id]: true }));
-            setNotifications((prev) => prev.map((item) => item.id === id ? { ...item, read: true } : item));
-            markNotificationsAsRead([id]);
-          }}
-          onNotificationClick={(item) => {
-            setShowNotifications(false);
-            if (item.id.startsWith('alert-')) {
-              navigate('/alerts');
-            } else if (item.id.startsWith('job-')) {
-              navigate('/automation/execute');
-            } else if (item.id.startsWith('playbook-')) {
-              navigate('/automation/execute');
-            }
-          }}
-          onNavigate={(path) => navigate(path)}
-        />
+      <AppLayout
+        language={language}
+        resolvedTheme={resolvedTheme}
+        themeMode={themeMode}
+        sidebarCollapsed={sidebarCollapsed}
+        activeTab={activeTab}
+        pageTitle={pageTitle}
+        currentUser={currentUser}
+        currentUserRole={currentUser.role || currentUserRecord?.role || 'Viewer'}
+        currentAvatar={currentAvatar}
+        currentUserLastLogin={currentUserLastLogin}
+        unreadNotificationCount={unreadNotificationCount}
+        unreadNotifications={unreadNotifications}
+        showNotifications={showNotifications}
+        showUserMenu={showUserMenu}
+        userMenuRef={userMenuRef}
+        renderAvatarContent={renderAvatarContent}
+        onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+        onToggleNotifications={() => {
+          setShowUserMenu(false);
+          setShowNotifications((value) => !value);
+        }}
+        onToggleUserMenu={() => {
+          setShowNotifications(false);
+          setShowUserMenu((value) => !value);
+        }}
+        onOpenProfile={openProfileModal}
+        onOpenDashboard={() => {
+          setActiveTab('dashboard');
+          setShowUserMenu(false);
+        }}
+        onOpenMonitoring={() => {
+          setActiveTab('monitoring');
+          setShowUserMenu(false);
+        }}
+        onOpenHealth={() => {
+          setActiveTab('health');
+          setShowUserMenu(false);
+        }}
+        onOpenHistory={() => {
+          setActiveTab('history');
+          setShowUserMenu(false);
+        }}
+        onThemeModeChange={setThemeMode}
+        onLanguageChange={handleLanguagePreferenceChange}
+        onLogout={handleLogout}
+        onMarkAllNotificationsRead={markAllNotificationsRead}
+        onMarkNotificationRead={(id) => {
+          setNotificationReadMap((prev) => ({ ...prev, [id]: true }));
+          setNotifications((prev) => prev.map((item) => item.id === id ? { ...item, read: true } : item));
+          markNotificationsAsRead([id]);
+        }}
+        onNotificationClick={(item) => {
+          setShowNotifications(false);
+          if (item.id.startsWith('alert-')) {
+            navigate('/alerts');
+          } else if (item.id.startsWith('job-')) {
+            navigate('/automation/execute');
+          } else if (item.id.startsWith('playbook-')) {
+            navigate('/automation/execute');
+          }
+        }}
+        onNavigate={(path) => navigate(path)}
+        cmdPaletteOpen={cmdPaletteOpen}
+        cmdPaletteQuery={cmdPaletteQuery}
+        cmdPaletteFiltered={cmdPaletteFiltered}
+        pinnedPaths={pinnedPaths}
+        setCmdPaletteOpen={setCmdPaletteOpen}
+        setCmdPaletteQuery={setCmdPaletteQuery}
+        togglePin={togglePin}
+        toast={toast}
+      >
 
-        <div className="flex flex-1 overflow-hidden">
-          {activeTab !== 'dashboard' && !sidebarCollapsed && (
-            <ModuleSubNav language={language} userRole={currentUser.role || currentUserRecord?.role || 'Viewer'} />
-          )}
-
-          <main className={`flex-1 ${activeTab === 'racks' ? 'overflow-hidden p-2 md:p-3' : activeTab === 'dashboard' ? 'overflow-auto p-0' : 'overflow-auto p-4 pb-8 md:p-8 md:pb-16'}`}>
-          {activeTab === 'dashboard' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <HomePage
-                language={language}
-                navigate={navigate}
-                userRole={currentUser.role}
-                devices={devices}
-                jobs={jobs}
-                notifications={notifications}
-                hostResources={hostResources}
-                userCount={users.length}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'overview' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <DashboardTab
-                devices={devices}
-                jobs={jobs}
-                scheduledTasks={scheduledTasks}
-                trendDays={trendDays}
-                setTrendDays={setTrendDays}
-                complianceTrend={complianceTrend}
-                platformData={platformData}
-                dashBannerCollapsed={dashBannerCollapsed}
-                setDashBannerCollapsed={setDashBannerCollapsed}
-                dashLastRefresh={dashLastRefresh}
-                hostResources={hostResources}
-                unreadNotificationCount={unreadNotificationCount}
-                notifications={notifications}
-                language={language}
-                t={t}
-                setActiveTab={setActiveTab}
-                navigate={navigate}
-                assetsTotal={assetsTotal}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'monitoring' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <MonitoringCenter
-                devices={devices}
-                language={language}
-                monitorSearch={monitorSearch}
-                setMonitorSearch={setMonitorSearch}
-                monitorSearchResults={monitorSearchResults}
-                monitorSearching={monitorSearching}
-                monitorSelectedDevice={monitorSelectedDevice}
-                setMonitorSelectedDevice={setMonitorSelectedDevice}
-                monitorOverview={monitorOverview}
-                monitorRealtime={monitorRealtime}
-                monitorTrend={monitorTrend}
-                monitorTrendInterface={monitorTrendInterface}
-                setMonitorTrendInterface={setMonitorTrendInterface}
-                monitorTrendResolution={monitorTrendResolution}
-                setMonitorTrendResolution={setMonitorTrendResolution}
-                monitorTrendStartInput={monitorTrendStartInput}
-                setMonitorTrendStartInput={setMonitorTrendStartInput}
-                monitorTrendEndInput={monitorTrendEndInput}
-                setMonitorTrendEndInput={setMonitorTrendEndInput}
-                monitorTrendRange={monitorTrendRange}
-                setMonitorTrendRange={setMonitorTrendRange}
-                monitorTrendZoom={monitorTrendZoom}
-                setMonitorTrendZoom={setMonitorTrendZoom}
-                monitorTrendDragStart={monitorTrendDragStart}
-                setMonitorTrendDragStart={setMonitorTrendDragStart}
-                monitorTrendDragEnd={monitorTrendDragEnd}
-                setMonitorTrendDragEnd={setMonitorTrendDragEnd}
-                monitorTrendMetrics={monitorTrendMetrics}
-                setMonitorTrendMetrics={setMonitorTrendMetrics}
-                monitorTrendUiMode={monitorTrendUiMode}
-                setMonitorTrendUiMode={setMonitorTrendUiMode}
-                monitorAlerts={monitorAlerts}
-                monitorAlertTotal={monitorAlertTotal}
-                monitorAlertsPage={monitorAlertsPage}
-                setMonitorAlertsPage={setMonitorAlertsPage}
-                monitorAlertsPageSize={monitorAlertsPageSize}
-                monitorAlertsSeverity={monitorAlertsSeverity}
-                setMonitorAlertsSeverity={setMonitorAlertsSeverity}
-                monitorAlertsPhase={monitorAlertsPhase}
-                setMonitorAlertsPhase={setMonitorAlertsPhase}
-                monitorLoading={monitorLoading}
-                monitorPageVisible={monitorPageVisible}
-                monitorDashboardSiteFilter={monitorDashboardSiteFilter}
-                setMonitorDashboardSiteFilter={setMonitorDashboardSiteFilter}
-                monitorDashboardAlertFilter={monitorDashboardAlertFilter}
-                setMonitorDashboardAlertFilter={setMonitorDashboardAlertFilter}
-                hostResources={hostResources}
-                fetchMonitoringOverview={() => fetchMonitoringOverview(true)}
-                fetchMonitoringAlerts={fetchMonitoringAlerts}
-                fetchMonitoringRealtime={fetchMonitoringRealtime}
-                fetchHostResources={fetchHostResources}
-                setMonitorRealtime={setMonitorRealtime}
-                showToast={showToast}
-              />
-            </Suspense>
-          )}
-
-
-
-          {activeTab === 'alerts' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <AlertDeskTab
-                language={language}
-                currentUsername={currentUser.username}
-                showToast={showToast}
-                activeAlertSection="alerts"
-                onNavigateAlertSection={(section) => setActiveTab(section)}
-                onOpenMaintenanceForAlert={(alert) => {
-                  const params = new URLSearchParams({
-                    open: '1',
-                    name: alert ? `${alert.hostname || alert.ip_address || 'Alert'} Maintenance` : '',
-                    target_ip: alert?.ip_address || '',
-                  });
-                  navigate(`/maintenance?${params.toString()}`);
-                }}
-                onNavigateToDevice={(deviceId) => {
-                  const device = devices.find(d => d.id === deviceId);
-                  if (device) handleShowDetails(device);
-                }}
-                onNavigateToTopology={(deviceId) => {
-                  setSelectedTopologyDeviceId(deviceId);
-                  setActiveTab('topology');
-                }}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'alert-rules' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <AlertRulesTab
-                language={language}
-                currentUsername={currentUser.username}
-                showToast={showToast}
-                activeAlertSection="alert-rules"
-                onNavigateAlertSection={(section) => setActiveTab(section)}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'alert-history' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <AlertHistoryTab
-                language={language}
-                currentUsername={currentUser.username}
-                showToast={showToast}
-                activeAlertSection="alert-history"
-                onNavigateAlertSection={(section) => setActiveTab(section)}
-                onNavigateToDevice={(deviceId) => {
-                  const device = devices.find(d => d.id === deviceId);
-                  if (device) handleShowDetails(device);
-                }}
-                onNavigateToTopology={(deviceId) => {
-                  setSelectedTopologyDeviceId(deviceId);
-                  setActiveTab('topology');
-                }}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'maintenance' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <AlertMaintenanceTab
-                language={language}
-                currentUsername={currentUser.username}
-                showToast={showToast}
-                activeAlertSection="maintenance"
-                onNavigateAlertSection={(section) => setActiveTab(section)}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'inventory' && inventorySubPage === 'devices' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <InventoryDevicesTab
-                inventoryRows={inventoryRows}
-                inventoryTotal={inventoryTotal}
-                inventoryStatusCounts={inventoryStatusCounts}
-                inventoryPage={inventoryPage}
-                setInventoryPage={setInventoryPage}
-                inventoryPageSize={inventoryPageSize}
-                setInventoryPageSize={setInventoryPageSize}
-                inventorySearch={inventorySearch}
-                setInventorySearch={setInventorySearch}
-                inventoryPlatformFilter={inventoryPlatformFilter}
-                setInventoryPlatformFilter={setInventoryPlatformFilter}
-                inventoryRoleFilter={inventoryRoleFilter}
-                setInventoryRoleFilter={setInventoryRoleFilter}
-                inventoryStatusFilter={inventoryStatusFilter}
-                setInventoryStatusFilter={setInventoryStatusFilter}
-                inventoryLifecycleFilter={inventoryLifecycleFilter}
-                setInventoryLifecycleFilter={setInventoryLifecycleFilter}
-                inventorySortConfig={inventorySortConfig}
-                inventoryLoading={inventoryLoading}
-                selectedDeviceIds={selectedDeviceIds}
-                setSelectedDeviceIds={setSelectedDeviceIds}
-                handleSort={handleSort}
-                handleImport={handleImport}
-                handleExport={handleExport}
-                handleDeleteDevice={handleDeleteDevice}
-                handleDeleteSelected={handleDeleteSelected}
-                handleShowDetails={handleShowDetails}
-                handleTestConnection={handleTestConnection}
-                deviceConnectionChecks={deviceConnectionChecks}
-                connectionTestingDeviceId={connectionTestingDeviceId}
-                setShowAddModal={setShowAddModal}
-                setShowEditModal={setShowEditModal}
-                setEditingDevice={setEditingDevice}
-                setEditForm={setEditForm}
-                setSelectedDevice={setSelectedDevice}
-                setActiveTab={setActiveTab}
-                onRefresh={() => setInventoryRefreshTick(v => v + 1)}
-                language={language}
-                t={t}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'inventory' && inventorySubPage === 'interfaces' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <InterfaceMonitoringTab
-                devices={devices}
-                devicesLastUpdatedAt={devicesLastUpdatedAt}
-                language={language}
-                snmpTestingId={snmpTestingId}
-                snmpSyncingId={snmpSyncingId}
-                onSnmpTest={handleSnmpTest}
-                onSnmpSyncNow={handleSnmpSyncNow}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'inventory' && inventorySubPage === 'servers' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <InventoryServersTab language={language} t={t} />
-            </Suspense>
-          )}
-
-          {activeTab === 'racks' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <RackManagementTab language={language} t={t} />
-            </Suspense>
-          )}
-
-          {activeTab === 'topology' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <TopologyPage
-                language={language}
-                topologyDiscoveryRunning={topologyDiscoveryRunning}
-                topologyStats={topologyStats}
-                topologyLinkStats={topologyLinkStats}
-                topologySearch={topologySearch}
-                topologySiteFilter={topologySiteFilter}
-                topologyRoleFilter={topologyRoleFilter}
-                topologyStatusFilter={topologyStatusFilter}
-                topologySiteOptions={topologySiteOptions}
-                topologyRoleOptions={topologyRoleOptions}
-                topologyVisibleDevices={topologyVisibleDevices}
-                topologyVisibleLinks={topologyVisibleLinks}
-                selectedTopologyDeviceId={selectedTopologyDeviceId}
-                selectedTopologyLinkKey={selectedTopologyLinkKey}
-                selectedTopologyDevice={selectedTopologyDevice}
-                selectedTopologyLink={selectedTopologyLink}
-                topologyNeighborDevices={topologyNeighborDevices}
-                topologyDeviceLinks={topologyDeviceLinks}
-                topologyPriorityDevices={topologyPriorityDevices}
-                topologyOrphanDevices={topologyOrphanDevices}
-                topologyCanvasRef={topologyRef}
-                onTriggerDiscovery={handleTriggerDiscovery}
-                onExportMap={handleExportMap}
-                onTopologySearchChange={setTopologySearch}
-                onTopologySiteFilterChange={setTopologySiteFilter}
-                onTopologyRoleFilterChange={setTopologyRoleFilter}
-                onTopologyStatusFilterChange={setTopologyStatusFilter}
-                onSelectTopologyDevice={setSelectedTopologyDeviceId}
-                onSelectTopologyLink={setSelectedTopologyLinkKey}
-                onOpenDeviceDetail={handleShowDetails}
-                onOpenMonitoring={() => navTo('/monitoring')}
-                formatTopologyPort={formatTopologyPort}
-                formatTopologyInterfaceTelemetry={formatTopologyInterfaceTelemetry}
-                formatTopologyLastSeen={formatTopologyLastSeen}
-                formatTopologyOperationalState={formatTopologyOperationalState}
-                formatTopologyEvidenceLabel={formatTopologyEvidenceLabel}
-                getTopologyOperationalTone={getTopologyOperationalTone}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'automation' && automationPage === 'execute' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <AutomationExecuteTab
-                t={t}
-                language={language}
-                sectionHeaderRowClass={sectionHeaderRowClass}
-                devices={devices}
-                selectedDevice={selectedDevice}
-                batchMode={batchMode}
-                batchDeviceIds={batchDeviceIds}
-                automationSearch={automationSearch}
-                scenarioSearch={scenarioSearch}
-                filteredScenarios={filteredScenarios}
-                quickPlaybookScenario={quickPlaybookScenario}
-                quickPlaybookVars={quickPlaybookVars}
-                quickPlaybookPlatform={quickPlaybookPlatform}
-                quickPlaybookDryRun={quickPlaybookDryRun}
-                quickPlaybookConcurrency={quickPlaybookConcurrency}
-                quickPlaybookPreview={quickPlaybookPreview}
-                quickRiskConfirmed={quickRiskConfirmed}
-                hasQuickTargets={hasQuickTargets}
-                quickMissingRequiredFields={quickMissingRequiredFields}
-                quickHasMixedPlatforms={quickHasMixedPlatforms}
-                quickPlatformMismatch={quickPlatformMismatch}
-                isQuickPlaybookRunning={isQuickPlaybookRunning}
-                quickExecutionResult={quickExecutionResult}
-                executionStatus={executionStatus}
-                wsCompleteMsg={wsCompleteMsg}
-                deviceStatusMap={deviceStatusMap}
-                quickQueryRunning={quickQueryRunning}
-                quickQueryOutput={quickQueryOutput}
-                quickQueryLabel={quickQueryLabel}
-                quickQueryStructured={quickQueryStructured}
-                quickQueryView={quickQueryView}
-                quickQueryMaximized={quickQueryMaximized}
-                quickQueryCommands={quickQueryCommands}
-                quickQueryTable={quickQueryTable}
-                onNavigate={navigate}
-                onAutomationSearchChange={setAutomationSearch}
-                onScenarioSearchChange={setScenarioSearch}
-                onToggleBatchMode={handleToggleBatchMode}
-                onToggleBatchDevice={handleToggleBatchDevice}
-                onSelectDevice={handleSelectAutomationDevice}
-                onOpenCustomCommandModal={() => setShowCustomCommandModal(true)}
-                onOpenScenario={openQuickPlaybookModal}
-                onClearScenario={handleClearQuickScenario}
-                onQuickPlaybookVarChange={(key, value) => setQuickPlaybookVars((current) => ({ ...current, [key]: value }))}
-                onQuickPlaybookConcurrencyChange={setQuickPlaybookConcurrency}
-                onQuickRiskConfirmedChange={setQuickRiskConfirmed}
-                onRunValidation={(changeTicket?: string) => runQuickPlaybook(true, changeTicket)}
-                onRunApply={(changeTicket?: string) => runQuickPlaybook(false, changeTicket)}
-                onRunQuickQuery={runQuickQuery}
-                onResetQuickQuery={handleResetQuickQuery}
-                onQuickQueryViewChange={setQuickQueryView}
-                onQuickQueryMaximizedChange={setQuickQueryMaximized}
-                onOpenCommandPreview={() => setShowCmdPreviewModal(true)}
-                onExportQuickQueryTable={exportQuickQueryTable}
-                copyTextWithFallback={copyTextWithFallback}
-                showToast={showToast}
-                onResetExecutionState={handleResetQuickExecutionState}
-                getPlatformLabel={getPlatformLabel}
-              />
-            </Suspense>
-          )}
-          {activeTab === 'automation' && automationPage === 'playbooks' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <AutomationPlaybooksTab
-                t={t}
-                language={language}
-                scenarioSearch={scenarioSearch}
-                filteredScenarios={filteredScenarios}
-                selectedScenario={selectedScenario}
-                playbookVars={playbookVars}
-                playbookPreview={playbookPreview}
-                playbookPlatform={playbookPlatform}
-                playbookDeviceIds={playbookDeviceIds}
-                playbookConcurrency={playbookConcurrency}
-                executionStatus={executionStatus}
-                playbookDryRun={playbookDryRun}
-                devices={devices}
-                platforms={platforms}
-                onScenarioSearchChange={setScenarioSearch}
-                onSelectScenario={handleSelectPlaybookScenario}
-                onPlatformChange={handlePlaybookPlatformChange}
-                onVariableChange={handlePlaybookVariableChange}
-                onToggleDevice={handleTogglePlaybookDevice}
-                onConcurrencyChange={setPlaybookConcurrency}
-                onPreview={previewPlaybook}
-                onExecuteValidation={() => executePlaybook(true)}
-                onExecuteApply={() => executePlaybook(false)}
-              />
-            </Suspense>
-          )}
-          {activeTab === 'automation' && automationPage === 'scenarios' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <AutomationScenariosTab
-                t={t}
-                language={language}
-                scenarioSearch={scenarioSearch}
-                filteredScenarios={filteredScenarios}
-                platforms={platforms}
-                onScenarioSearchChange={setScenarioSearch}
-                onOpenManualScenarioDraft={openManualScenarioDraft}
-                onUseScenario={(scenario) => {
-                  openQuickPlaybookModal(scenario);
-                  navigate('/automation/execute');
-                }}
-              />
-            </Suspense>
-          )}
-          {activeTab === 'automation' && automationPage === 'history' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <AutomationHistoryTab
-                t={t}
-                language={language}
-                devices={devices}
-                playbookExecutions={playbookExecutions}
-                playbookHistoryTotal={playbookHistoryTotal}
-                playbookHistoryPage={playbookHistoryPage}
-                playbookHistoryStatusFilter={playbookHistoryStatusFilter}
-                playbookHistoryScenarioSearch={playbookHistoryScenarioSearch}
-                activeExecutionId={activeExecutionId}
-                executionStatus={executionStatus}
-                wsMessages={wsMessages}
-                selectedExecutionLoading={selectedExecutionLoading}
-                selectedExecutionDetail={selectedExecutionDetail}
-                selectedExecDevices={selectedExecDevices}
-                selectedExecDevicesTotal={selectedExecDevicesTotal}
-                selectedExecDevicesPage={selectedExecDevicesPage}
-                selectedExecDevicesStatusFilter={selectedExecDevicesStatusFilter}
-                selectedExecDevicesLoading={selectedExecDevicesLoading}
-                selectedDeviceDetail={selectedDeviceDetail}
-                selectedDeviceDetailLoading={selectedDeviceDetailLoading}
-                onRefreshHistory={handleRefreshHistory}
-                onScenarioSearchChange={setPlaybookHistoryScenarioSearch}
-                onHistoryPageChange={setPlaybookHistoryPage}
-                onHistoryStatusFilterChange={setPlaybookHistoryStatusFilter}
-                onSelectExecution={handleSelectExecution}
-                onDeleteExecution={handleDeleteExecution}
-                onExecDevicesStatusFilterChange={handleExecDevicesStatusFilterChange}
-                onExecDevicesPageChange={handleExecDevicesPageChange}
-                onSelectExecDevice={handleSelectExecDevice}
-                onCloseDeviceDetail={() => setSelectedDeviceDetail(null)}
-              />
-            </Suspense>
-          )}
-          {activeTab === 'automation' && automationPage === 'inspection' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <InspectionTab
-                t={t}
-                language={language}
-                devices={devices}
-                overview={monitorOverview?.device_health_summary || null}
-                onShowDetails={handleShowDetails}
-                initialView="overview"
-              />
-            </Suspense>
-          )}
-          {activeTab === 'automation' && automationPage === 'inspection-records' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <InspectionTab
-                t={t}
-                language={language}
-                devices={devices}
-                overview={monitorOverview?.device_health_summary || null}
-                onShowDetails={handleShowDetails}
-                initialView="records"
-              />
-            </Suspense>
-          )}
-          {activeTab === 'automation' && automationPage === 'schedule' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ExecutionScheduleTab t={t} language={language} showToast={showToast} initialTab="schedules" />
-            </Suspense>
-          )}
-          {activeTab === 'automation' && automationPage === 'schedule-history' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ExecutionScheduleTab t={t} language={language} showToast={showToast} initialTab="history" />
-            </Suspense>
-          )}
-          {activeTab === 'automation' && automationPage === 'scheduled-jobs' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ScheduledJobsTab t={t} language={language} showToast={showToast} />
-            </Suspense>
-          )}
-          {activeTab === 'automation' && automationPage === 'metrics' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <InspectionItemsTab t={t} language={language} showToast={showToast} />
-            </Suspense>
-          )}
-          {activeTab === 'compliance' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ComplianceTab
-                complianceOverview={complianceOverview}
-                complianceFindings={complianceFindings}
-                complianceFindingTotal={complianceFindingTotal}
-                complianceSeverityFilter={complianceSeverityFilter}
-                setComplianceSeverityFilter={setComplianceSeverityFilter}
-                complianceStatusFilter={complianceStatusFilter}
-                setComplianceStatusFilter={setComplianceStatusFilter}
-                complianceCategoryFilter={complianceCategoryFilter}
-                setComplianceCategoryFilter={setComplianceCategoryFilter}
-                compliancePage={compliancePage}
-                setCompliancePage={setCompliancePage}
-                compliancePageSize={compliancePageSize}
-                setCompliancePageSize={setCompliancePageSize}
-                complianceLoading={complianceLoading}
-                complianceRunLoading={complianceRunLoading}
-                runComplianceAudit={runComplianceAudit}
-                openComplianceFindingDetail={openComplianceFindingDetail}
-                updateComplianceFinding={updateComplianceFinding}
-                language={language}
-                t={t}
-              />
-            </Suspense>
-          )}
-
-          {/* ================================================================
-               /config/backup  —  备份中心
-          ================================================================ */}
-          {activeTab === 'config' && configPage === 'backup' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ConfigBackupTab
-                t={t}
-                language={language}
-                isTakingSnapshot={isTakingSnapshot}
-                onBackupAllOnline={handleRunBackupAllOnline}
-                onBackupDevice={handleBackupSingleDevice}
-                onNavigateToDiff={handleNavigateToConfigDiff}
-                showToast={showToast}
-              />
-            </Suspense>
-          )}
-          {activeTab === 'config' && configPage === 'diff' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ConfigDiffViewTab
-                t={t}
-                language={language}
-                activeDiffLines={activeDiffLines}
-                activeChangeLineIndexes={activeChangeLineIndexes}
-                diffFocusChangeIdx={diffFocusChangeIdx}
-                diffOnlyChanges={diffOnlyChanges}
-                diffShowFullBoth={diffShowFullBoth}
-                renderedDiffLines={renderedDiffLines}
-                fullSideBySideRows={fullSideBySideRows}
-                diffChangeBlocks={diffChangeBlocks}
-                filteredDiffChangeBlocks={filteredDiffChangeBlocks}
-                diffBlockQuery={diffBlockQuery}
-                diffLineRefs={diffLineRefs}
-                configDiffLeft={configDiffLeft}
-                configDiffRight={configDiffRight}
-                onReset={handleResetDiffView}
-                onSelectSnapshotPair={handleSelectSnapshotPair}
-                onJumpToDiff={jumpToDiff}
-                onToggleOnlyChanges={() => setDiffOnlyChanges((prev) => !prev)}
-                onToggleFullBoth={() => setDiffShowFullBoth((prev) => !prev)}
-                onDiffBlockQueryChange={setDiffBlockQuery}
-                onToggleQuickKeyword={(keyword) => setDiffBlockQuery((prev) => (prev.toLowerCase() === keyword ? '' : keyword))}
-                onFocusDiffChangeAt={focusDiffChangeAt}
-                preSelectedDeviceId={diffPreSelectedDeviceId || undefined}
-              />
-            </Suspense>
-          )}
-          {activeTab === 'config' && configPage === 'search' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ConfigSearchTab t={t} />
-            </Suspense>
-          )}
-                    {activeTab === 'configuration' && (
-                      <Suspense fallback={lazyPanelFallback}>
-                        <PlatformSettingsTab
-                          t={t}
-                          language={language}
-                          sectionHeaderRowClass={sectionHeaderRowClass}
-                          configTemplates={configTemplates}
-                          configVariableKeys={configVariableKeys}
-                          configMissingVariables={configMissingVariables}
-                          configScopedDevices={configScopedDevices}
-                          configScopedOnlineCount={configScopedOnlineCount}
-                          configReadinessScore={configReadinessScore}
-                          configValidationIssues={configValidationIssues}
-                          configValidationWarnings={configValidationWarnings}
-                          configWorkspaceView={configWorkspaceView}
-                          selectedTemplateId={selectedTemplateId}
-                          selectedConfigTemplate={selectedConfigTemplate}
-                          globalVars={globalVars}
-                          editorContent={editorContent}
-                          configRenderedPreview={configRenderedPreview}
-                          configScopePlatform={configScopePlatform}
-                          configScopeRole={configScopeRole}
-                          configScopeSite={configScopeSite}
-                          configPlatformOptions={configPlatformOptions}
-                          configRoleOptions={configRoleOptions}
-                          configSiteOptions={configSiteOptions}
-                          extractVars={extractVars}
-                          getPlatformLabel={getPlatformLabel}
-                          onImportVars={handleImportVars}
-                          onCreateTemplate={handleNewTemplate}
-                          onSelectTemplateIdChange={(templateId) => {
-                            setSelectedTemplateId(templateId);
-                            const template = configTemplates.find((item) => item.id === templateId);
-                            setEditorContent(template?.content || '');
-                          }}
-                          onAddVar={handleAddVar}
-                          onDeleteVar={handleDeleteVar}
-                          onSelectedTemplateNameChange={(value) => {
-                            setConfigTemplates((prev) => prev.map((template) => (
-                              template.id === selectedTemplateId ? { ...template, name: value } : template
-                            )));
-                          }}
-                          onSelectedTemplateVendorChange={(value) => {
-                            setConfigTemplates((prev) => prev.map((template) => (
-                              template.id === selectedTemplateId ? { ...template, vendor: value } : template
-                            )));
-                          }}
-                          onSelectedTemplateTypeChange={(value) => {
-                            setConfigTemplates((prev) => prev.map((template) => (
-                              template.id === selectedTemplateId ? { ...template, type: value } : template
-                            )));
-                          }}
-                          onDiscardChanges={handleDiscardChanges}
-                          onConfigWorkspaceViewChange={setConfigWorkspaceView}
-                          onValidate={handleValidateTemplateWorkspace}
-                          onSaveTemplate={handleSaveTemplate}
-                          onCreateScenarioDraft={handleCreateScenarioDraftFromTemplate}
-                          onSendToAutomation={handleOpenTemplateDeploy}
-                          onEditorContentChange={setEditorContent}
-                          onConfigScopePlatformChange={setConfigScopePlatform}
-                          onConfigScopeRoleChange={setConfigScopeRole}
-                          onConfigScopeSiteChange={setConfigScopeSite}
-                          showToast={showToast}
-                        />
-                      </Suspense>
-                    )}
-
-          {activeTab === 'users' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <UsersTab
-                users={users}
-                showAddUserModal={showAddUserModal}
-                setShowAddUserModal={setShowAddUserModal}
-                showEditUserModal={showEditUserModal}
-                setShowEditUserModal={setShowEditUserModal}
-                editingUser={editingUser}
-                setEditingUser={setEditingUser}
-                newUserForm={newUserForm}
-                setNewUserForm={setNewUserForm}
-                editUserForm={editUserForm}
-                setEditUserForm={setEditUserForm}
-                showNewUserPwd={showNewUserPwd}
-                setShowNewUserPwd={setShowNewUserPwd}
-                showEditUserPwd={showEditUserPwd}
-                setShowEditUserPwd={setShowEditUserPwd}
-                handleAddUser={handleAddUser}
-                handleEditUser={handleEditUser}
-                language={language}
-                t={t}
-              />
-            </Suspense>
-          )}
-          {activeTab === 'history' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <HistoryTab
-                auditRows={auditRows}
-                auditTotal={auditTotal}
-                auditPage={auditPage}
-                setAuditPage={setAuditPage}
-                auditPageSize={auditPageSize}
-                setAuditPageSize={setAuditPageSize}
-                auditLoading={auditLoading}
-                auditCategoryFilter={auditCategoryFilter}
-                setAuditCategoryFilter={setAuditCategoryFilter}
-                auditSeverityFilter={auditSeverityFilter}
-                setAuditSeverityFilter={setAuditSeverityFilter}
-                auditStatusFilter={auditStatusFilter}
-                setAuditStatusFilter={setAuditStatusFilter}
-                auditTimeFilter={auditTimeFilter}
-                setAuditTimeFilter={setAuditTimeFilter}
-                openAuditEventDetail={openAuditEventDetail}
-                language={language}
-                t={t}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'reports' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ReportsTab
-                devices={devices}
-                jobs={jobs}
-                complianceOverview={complianceOverview}
-                platformData={platformData}
-                language={language}
-                t={t}
-              />
-            </Suspense>
-          )}
-
-          {activeTab === 'config' && configPage === 'drift' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ConfigDriftTab language={language} t={t} />
-            </Suspense>
-          )}
-
-          {activeTab === 'capacity' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <CapacityPlanningTab language={language} t={t} />
-            </Suspense>
-          )}
-
-          {activeTab === 'ipam' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <IPVlanTab language={language} t={t} />
-            </Suspense>
-          )}
-
-          {activeTab === 'ip-locator' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <IPLocatorPage language={language} t={t} />
-            </Suspense>
-          )}
-
-          {activeTab === 'assets' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <AssetManagementTab language={language} t={t} setActiveTab={setActiveTab} />
-            </Suspense>
-          )}
-
-          {activeTab === 'tags' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <TagManagementTab language={language} t={t} />
-            </Suspense>
-          )}
-
-          {activeTab === 'credentials' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <CredentialManagementTab language={language} />
-            </Suspense>
-          )}
-
-          {activeTab === 'change-orders' && (
-            <Suspense fallback={lazyPanelFallback}>
-              <ChangeOrderTab 
-                language={language} 
-                t={t} 
-                users={users} 
-                scenarios={scenarios} 
-                configTemplates={configTemplates} 
-                platforms={platforms} 
-                currentUser={currentUser} 
-                findMatchingPlatform={findMatchingPlatform}
-                initialView={changeOrderPage === 'my-todo' ? 'my_todo' : changeOrderPage === 'group-todo' ? 'group_todo' : changeOrderPage === 'participated' ? 'my_participated' : changeOrderPage === 'focus' ? 'my_focus' : changeOrderPage === 'drafts' ? 'my_drafts' : changeOrderPage === 'new' ? 'create' : 'all'} 
-              />
-            </Suspense>
-          )}
-        </main>
-        </div>
-        <footer className={`h-10 px-8 border-t flex items-center justify-between text-[11px] ${resolvedTheme === 'dark' ? 'border-white/10 text-white/45 bg-[#0b1320]' : 'border-black/8 text-black/45 bg-white/70'}`}>
-          <span>Copyright (c) {new Date().getFullYear()} Nexora. All rights reserved.</span>
-          <span className="font-mono">NOC v2.0</span>
-        </footer>
-      </div>
+        <AppMainContent appProps={mainContentProps} />
 
       {/* ── Command Preview Modal ── */}
       {showCustomCommandModal && (
@@ -4065,7 +3524,7 @@ const App: React.FC = () => {
           onApprovalCodeChange={setApprovalCode}
           onRequestApproval={handleRequestApproval}
           onVerifyApproval={handleVerifyApproval}
-          approverUsers={users}
+          approverUsers={users as any}
           onScriptVarChange={(key, value) => setScriptVars((prev) => ({ ...prev, [key]: value }))}
           onToggleFavorite={saveFavorite}
           isFavorited={isFavorited}
@@ -4073,7 +3532,9 @@ const App: React.FC = () => {
             const label = prompt(language === 'zh' ? '给这个查询起个名字：' : 'Name this query:', '');
             if (!label) return;
             try {
-              const saved: { icon: string; label: string; labelEn: string; cmds: string }[] = JSON.parse(localStorage.getItem('quickQuerySaved') || '[]');
+              const raw = localStorage.getItem('quickQuerySaved') || '[]';
+              const parsed = JSON.parse(raw);
+              const saved: { icon: string; label: string; labelEn: string; cmds: string }[] = Array.isArray(parsed) ? parsed : [];
               saved.push({ icon: '⭐', label, labelEn: label, cmds: customCommand.trim() });
               localStorage.setItem('quickQuerySaved', JSON.stringify(saved));
               showToast(language === 'zh' ? '已保存到快捷查询' : 'Saved to Quick Query', 'success');
@@ -4395,14 +3856,14 @@ const App: React.FC = () => {
       )}
 
       <AuditEventDetailModal
-        event={selectedAuditEvent}
+        event={selectedAuditEvent as any}
         language={language}
         t={t}
         onClose={() => setSelectedAuditEvent(null)}
       />
 
       <ComplianceFindingDetailModal
-        finding={selectedFinding}
+        finding={selectedFinding as any}
         language={language}
         t={t}
         onClose={() => setSelectedFinding(null)}
@@ -4430,24 +3891,7 @@ const App: React.FC = () => {
       />
 
       {/* Toast Notification */}
-      <CommandPalette
-        open={cmdPaletteOpen}
-        language={language}
-        query={cmdPaletteQuery}
-        items={cmdPaletteFiltered}
-        pinnedPaths={pinnedPaths}
-        currentPath={location.pathname}
-        onClose={() => setCmdPaletteOpen(false)}
-        onQueryChange={setCmdPaletteQuery}
-        onNavigate={(path) => {
-          navTo(path);
-          setCmdPaletteOpen(false);
-        }}
-        onTogglePin={togglePin}
-      />
-
-      <ToastNotification toast={toast} />
-      </div>
+    </AppLayout>
     </AppRuntimeBoundary>
   );
 };
