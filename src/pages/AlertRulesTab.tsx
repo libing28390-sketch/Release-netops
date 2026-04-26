@@ -21,10 +21,43 @@ import {
   scopeTypeLabel,
   severityLabel,
   useAlertOverlayDismiss,
+  Check,
 } from './alertManagementShared';
 
 const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUsername, showToast }) => {
-  const thresholdMetrics = new Set<AlertRuleSettings['metric_type']>(['cpu', 'memory', 'interface_util', 'temperature_high', 'interface_error_rate_high', 'host_cpu', 'host_memory', 'host_disk']);
+  const thresholdMetrics = new Set<AlertRuleSettings['metric_type']>([
+    'cpu', 'memory', 'interface_util', 'temperature_high', 'interface_error_rate_high',
+    'host_cpu', 'host_memory', 'host_disk',
+    'srv_cpu_load', 'srv_cpu_util', 'srv_iowait', 'srv_mem_avail', 'srv_swap',
+    'srv_disk_util', 'srv_disk_inode', 'srv_io_latency', 'srv_tcp_retrans', 'srv_tcp_conns'
+  ]);
+
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, id: string) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+      showToast(language === 'zh' ? '已成功复制到剪贴板' : 'Copied to clipboard successfully', 'success');
+    } catch (err) {
+      console.error('Failed to copy: ', err);
+      showToast(language === 'zh' ? '复制失败' : 'Failed to copy', 'error');
+    }
+  };
 
   const defaultSeverityForMetric = (metricType: AlertRuleSettings['metric_type']): AlertRuleSettings['severity'] => {
     switch (metricType) {
@@ -39,6 +72,16 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
       case 'host_cpu':
       case 'host_memory':
       case 'host_disk':
+      case 'srv_cpu_load':
+      case 'srv_cpu_util':
+      case 'srv_iowait':
+      case 'srv_mem_avail':
+      case 'srv_swap':
+      case 'srv_disk_util':
+      case 'srv_disk_inode':
+      case 'srv_io_latency':
+      case 'srv_tcp_retrans':
+      case 'srv_tcp_conns':
         return 'major';
       case 'fan_failure':
       case 'power_supply_failure':
@@ -46,6 +89,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
       case 'ospf_neighbor_down':
       case 'bfd_session_down':
       case 'ping_unreachable':
+      case 'srv_process_health':
         return 'critical';
       default:
         return 'major';
@@ -56,12 +100,21 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
     switch (metricType) {
       case 'temperature_high':
       case 'host_cpu':
+      case 'srv_cpu_util':
+      case 'srv_cpu_load':
         return 75;
       case 'interface_error_rate_high':
+      case 'srv_tcp_retrans':
         return 2;
       case 'host_memory':
       case 'host_disk':
+      case 'srv_mem_avail':
+      case 'srv_disk_util':
+      case 'srv_disk_inode':
+      case 'srv_io_latency':
         return 80;
+      case 'srv_swap':
+        return 50;
       default:
         return 90;
     }
@@ -71,7 +124,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState('');
   const [enabledFilter, setEnabledFilter] = useState('all');
   const [metricFilter, setMetricFilter] = useState('all');
@@ -102,7 +155,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
       const data: AlertRuleListResponse = await resp.json();
       const items = data.items || [];
       setAlertRules(items);
-      setTotal(data.total || 0);
+      setTotal(data.total && data.total > 0 ? data.total : items.length);
       setSelectedIds(new Set());
       if (editingRuleId && !items.some((item) => item.id === editingRuleId)) {
         setEditingRuleId(null);
@@ -356,23 +409,27 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
   return (
     <>
-    <div className="h-full flex flex-col overflow-hidden space-y-4">
-      <div className={`${alertPanelClass} flex-1 flex flex-col overflow-hidden`}>
+    <div className="flex-1 flex flex-col overflow-hidden space-y-4 min-h-0">
+      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
-              {language === 'zh' ? '告警中心 / 告警规则' : 'Alert Center / Alert Rules'}
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold text-[#164e63]">
-              {language === 'zh' ? '当前规则' : 'Current Rules'}
-            </h2>
-            <p className="mt-2 text-sm text-black/50">
-              {language === 'zh' ? '灵活配置多维度监控指标的触发阈值，精细管理全生命周期的告警策略。' : 'Configure multi-dimensional trigger thresholds and manage full-lifecycle alerting policies.'}
-            </p>
+          <div className="flex-1">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 flex items-center justify-center">
+                <Shield className="w-5 h-5 text-cyan-600" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-[#164e63]">
+                  {language === 'zh' ? '告警规则管理' : 'Alert Rules Management'}
+                </h2>
+                <p className="text-[10px] text-black/35 font-bold uppercase tracking-widest mt-0.5">
+                  {language === 'zh' ? '灵活配置监控指标阈值与告警策略' : 'Configure metric thresholds and alerting policies'}
+                </p>
+              </div>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => void loadAlertRules()} className={alertSecondaryButtonClass}>
-              <RefreshCw size={14} />
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
               {language === 'zh' ? '刷新' : 'Refresh'}
             </button>
             <button onClick={openCreate} className={alertPrimaryButtonClass}>
@@ -422,6 +479,18 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             <option value="host_cpu">{metricTypeLabel('host_cpu', language)}</option>
             <option value="host_memory">{metricTypeLabel('host_memory', language)}</option>
             <option value="host_disk">{metricTypeLabel('host_disk', language)}</option>
+            <option disabled>─── {language === 'zh' ? '服务器' : 'Server'} ───</option>
+            <option value="srv_cpu_load">{metricTypeLabel('srv_cpu_load', language)}</option>
+            <option value="srv_cpu_util">{metricTypeLabel('srv_cpu_util', language)}</option>
+            <option value="srv_iowait">{metricTypeLabel('srv_iowait', language)}</option>
+            <option value="srv_mem_avail">{metricTypeLabel('srv_mem_avail', language)}</option>
+            <option value="srv_swap">{metricTypeLabel('srv_swap', language)}</option>
+            <option value="srv_disk_util">{metricTypeLabel('srv_disk_util', language)}</option>
+            <option value="srv_disk_inode">{metricTypeLabel('srv_disk_inode', language)}</option>
+            <option value="srv_io_latency">{metricTypeLabel('srv_io_latency', language)}</option>
+            <option value="srv_tcp_retrans">{metricTypeLabel('srv_tcp_retrans', language)}</option>
+            <option value="srv_tcp_conns">{metricTypeLabel('srv_tcp_conns', language)}</option>
+            <option value="srv_process_health">{metricTypeLabel('srv_process_health', language)}</option>
           </select>
           <select
             title={language === 'zh' ? '按启用状态筛选规则' : 'Filter rules by enabled state'}
@@ -461,7 +530,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto custom-scrollbar border-b border-black/5">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
           <table className="min-w-full border-collapse text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
@@ -515,9 +584,27 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       />
                     </td>
                     <td className="px-5 py-4 align-top">
-                      <div>
-                        <p className="text-sm font-semibold text-[#164e63]">{rule.name}</p>
-                        <p className="mt-1 text-xs text-black/40">{rule.id}</p>
+                      <div className="group/copy-name relative">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-semibold text-[#164e63]">{rule.name}</p>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); copyToClipboard(rule.name, `${rule.id}-name`); }}
+                            className={`opacity-0 group-hover/copy-name:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/5 ${copiedId === `${rule.id}-name` ? 'opacity-100' : ''}`}
+                            title={language === 'zh' ? '复制名称' : 'Copy Name'}
+                          >
+                            {copiedId === `${rule.id}-name` ? <Check size={11} className="text-green-500" /> : <Copy size={11} className="text-black/30" />}
+                          </button>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 group/copy-id">
+                          <p className="text-[10px] font-mono text-black/30">{rule.id}</p>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); copyToClipboard(rule.id || '', `${rule.id}-id`); }}
+                            className={`opacity-0 group-hover/copy-id:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/5 ${copiedId === `${rule.id}-id` ? 'opacity-100' : ''}`}
+                            title={language === 'zh' ? '复制 ID' : 'Copy ID'}
+                          >
+                            {copiedId === `${rule.id}-id` ? <Check size={9} className="text-green-500" /> : <Copy size={9} className="text-black/20" />}
+                          </button>
+                        </div>
                       </div>
                     </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{metricTypeLabel(rule.metric_type, language)}</td>
@@ -598,7 +685,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
           </table>
         </div>
 
-        <div className="mt-auto border-t border-black/5 bg-white">
+        <div className="mt-4">
           <Pagination
             currentPage={page}
             totalItems={total}
@@ -681,6 +768,18 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       <option value="host_cpu">{metricTypeLabel('host_cpu', language)}</option>
                       <option value="host_memory">{metricTypeLabel('host_memory', language)}</option>
                       <option value="host_disk">{metricTypeLabel('host_disk', language)}</option>
+                      <option disabled>─── {language === 'zh' ? '服务器' : 'Server'} ───</option>
+                      <option value="srv_cpu_load">{metricTypeLabel('srv_cpu_load', language)}</option>
+                      <option value="srv_cpu_util">{metricTypeLabel('srv_cpu_util', language)}</option>
+                      <option value="srv_iowait">{metricTypeLabel('srv_iowait', language)}</option>
+                      <option value="srv_mem_avail">{metricTypeLabel('srv_mem_avail', language)}</option>
+                      <option value="srv_swap">{metricTypeLabel('srv_swap', language)}</option>
+                      <option value="srv_disk_util">{metricTypeLabel('srv_disk_util', language)}</option>
+                      <option value="srv_disk_inode">{metricTypeLabel('srv_disk_inode', language)}</option>
+                      <option value="srv_io_latency">{metricTypeLabel('srv_io_latency', language)}</option>
+                      <option value="srv_tcp_retrans">{metricTypeLabel('srv_tcp_retrans', language)}</option>
+                      <option value="srv_tcp_conns">{metricTypeLabel('srv_tcp_conns', language)}</option>
+                      <option value="srv_process_health">{metricTypeLabel('srv_process_health', language)}</option>
                     </select>
                   </label>
                 </div>

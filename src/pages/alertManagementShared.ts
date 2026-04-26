@@ -242,6 +242,17 @@ export const metricTypeLabel = (metricType: AlertRuleSettings['metric_type'], la
     case 'host_cpu': return language === 'zh' ? '宿主机 CPU' : 'Host CPU';
     case 'host_memory': return language === 'zh' ? '宿主机内存' : 'Host Memory';
     case 'host_disk': return language === 'zh' ? '宿主机磁盘' : 'Host Disk';
+    case 'srv_cpu_load': return language === 'zh' ? '服务器负载' : 'Server CPU Load';
+    case 'srv_cpu_util': return language === 'zh' ? '服务器 CPU' : 'Server CPU Util';
+    case 'srv_iowait': return language === 'zh' ? 'IO 等待' : 'IO Wait';
+    case 'srv_mem_avail': return language === 'zh' ? '可用内存' : 'Mem Available';
+    case 'srv_swap': return language === 'zh' ? '交换分区' : 'Swap Usage';
+    case 'srv_disk_util': return language === 'zh' ? '磁盘利用率' : 'Disk Utilization';
+    case 'srv_disk_inode': return language === 'zh' ? 'Inode 利用率' : 'Inode Utilization';
+    case 'srv_io_latency': return language === 'zh' ? '磁盘延迟' : 'Disk IO Latency';
+    case 'srv_tcp_retrans': return language === 'zh' ? 'TCP 重传' : 'TCP Retransmission';
+    case 'srv_tcp_conns': return language === 'zh' ? '并发连接' : 'TCP Connections';
+    case 'srv_process_health': return language === 'zh' ? '进程状态' : 'Process Health';
     default: return metricType;
   }
 };

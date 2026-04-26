@@ -46,7 +46,6 @@ const lazyPanelFallback = (
 
 const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
   const props = appProps as any;
-  const mainClassName = 'relative flex-1 min-w-0 overflow-y-auto';
   const {
     activeTab,
     inventorySubPage,
@@ -279,12 +278,12 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     getPlatformLabel,
     handleImportVars,
     handleNewTemplate,
+    setSelectedTemplateId,
+    setEditorContent,
     handleAddVar,
     handleDeleteVar,
     handleDiscardChanges,
     setConfigWorkspaceView,
-    setSelectedTemplateId,
-    setEditorContent,
     setConfigScopePlatform,
     setConfigScopeRole,
     setConfigScopeSite,
@@ -324,7 +323,18 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     auditTimeFilter,
     setAuditTimeFilter,
     assetsTotal,
-  } = appProps;
+    playbookHistoryPageSize,
+    setPlaybookHistoryPageSize,
+  } = props;
+
+  const isStandaloneScrollTab = 
+    activeTab === 'alerts' || 
+    activeTab === 'alert-rules' || 
+    activeTab === 'alert-history' || 
+    activeTab === 'maintenance' || 
+    (activeTab === 'automation' && automationPage === 'metrics');
+
+  const mainClassName = `relative flex-1 min-w-0 flex flex-col min-h-0 ${isStandaloneScrollTab ? 'overflow-hidden' : 'overflow-y-auto'}`;
 
   return (
     <main className={mainClassName}>
@@ -755,6 +765,8 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             onRefreshHistory={props.handleRefreshHistory}
             onScenarioSearchChange={props.setPlaybookHistoryScenarioSearch}
             onHistoryPageChange={props.setPlaybookHistoryPage}
+            onHistoryPageSizeChange={props.setPlaybookHistoryPageSize}
+            playbookHistoryPageSize={playbookHistoryPageSize}
             onHistoryStatusFilterChange={props.setPlaybookHistoryStatusFilter}
             onSelectExecution={props.handleSelectExecution}
             onDeleteExecution={props.handleDeleteExecution}

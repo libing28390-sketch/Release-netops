@@ -207,9 +207,8 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                     onHistoryPageChange(1);
                     void onRefreshHistory(1, filterItem.key, playbookHistoryScenarioSearch);
                   }}
-                  className={`text-[9px] font-bold px-2 py-0.5 rounded-md transition-all ${
-                    playbookHistoryStatusFilter === filterItem.key ? `${filterItem.cls} shadow-sm` : 'text-black/30 hover:bg-black/[0.04]'
-                  }`}
+                  className={`text-[9px] font-bold px-2 py-0.5 rounded-md transition-all ${playbookHistoryStatusFilter === filterItem.key ? `${filterItem.cls} shadow-sm` : 'text-black/30 hover:bg-black/[0.04]'
+                    }`}
                 >
                   {filterItem.label}
                 </button>
@@ -243,9 +242,8 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                 <button
                   key={execution.id}
                   onClick={() => void onSelectExecution(execution)}
-                  className={`w-full text-left border-b border-black/5 transition-all flex group/row ${
-                    activeExecutionId === execution.id ? 'bg-black/[0.04]' : 'hover:bg-black/[0.015]'
-                  }`}
+                  className={`w-full text-left border-b border-black/5 transition-all flex group/row ${activeExecutionId === execution.id ? 'bg-black/[0.04]' : 'hover:bg-black/[0.015]'
+                    }`}
                 >
                   <div className={`w-1 shrink-0 ${activeExecutionId === execution.id ? accentColor : 'bg-transparent'}`} />
                   <div className="flex-1 p-3.5 pl-3 min-w-0">
@@ -253,12 +251,11 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                       {isLive && <span className="w-2 h-2 rounded-full bg-[#00bceb] animate-pulse shrink-0" />}
                       <span className="text-xs font-bold truncate">{execution.scenario_name}</span>
                       {execution._type === 'job' && <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-600 shrink-0">DIRECT</span>}
-                      <span className={`ml-auto shrink-0 text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                        execution.status === 'success' ? 'bg-emerald-50 text-emerald-600' :
-                        execution.status === 'running' || execution.status === 'pending' ? 'bg-blue-50 text-blue-600' :
-                        execution.status === 'dry_run_complete' ? 'bg-amber-50 text-amber-600' :
-                        'bg-red-50 text-red-600'
-                      }`}>{execution._type === 'job' ? execution.status : (execution.dry_run ? 'DRY-RUN' : execution.status?.replace(/_/g, ' '))}</span>
+                      <span className={`ml-auto shrink-0 text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${execution.status === 'success' ? 'bg-emerald-50 text-emerald-600' :
+                          execution.status === 'running' || execution.status === 'pending' ? 'bg-blue-50 text-blue-600' :
+                            execution.status === 'dry_run_complete' ? 'bg-amber-50 text-amber-600' :
+                              'bg-red-50 text-red-600'
+                        }`}>{execution._type === 'job' ? execution.status : (execution.dry_run ? 'DRY-RUN' : execution.status?.replace(/_/g, ' '))}</span>
                       {execution._type !== 'job' && !isLive && (
                         <button
                           title={isZh ? '删除此记录' : 'Delete this record'}
@@ -283,10 +280,10 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                     </div>
                   </div>
                 </button>
-            );
-          })}
-        </div>
-        {playbookHistoryTotal > 20 && (
+              );
+            })}
+          </div>
+          {playbookHistoryTotal > 20 && (
             <div className="px-3 py-2.5 border-t border-black/5 bg-black/[0.01]">
               <Pagination
                 currentPage={playbookHistoryPage}
@@ -314,14 +311,14 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                 {wsMessages.map((message, index) => {
                   const color =
                     message.type === 'start' ? 'text-blue-400' :
-                    message.type === 'device_start' ? 'text-cyan-400' :
-                    message.type === 'phase_start' ? 'text-purple-400' :
-                    message.type === 'phase_done' ? 'text-emerald-400' :
-                    message.type === 'device_done' ? 'text-green-300' :
-                    message.type === 'rollback_start' || message.type === 'rollback_done' ? 'text-red-400' :
-                    message.type === 'device_error' ? 'text-red-500' :
-                    message.type === 'complete' ? 'text-yellow-300' :
-                    'text-[#d4d4d4]';
+                      message.type === 'device_start' ? 'text-cyan-400' :
+                        message.type === 'phase_start' ? 'text-purple-400' :
+                          message.type === 'phase_done' ? 'text-emerald-400' :
+                            message.type === 'device_done' ? 'text-green-300' :
+                              message.type === 'rollback_start' || message.type === 'rollback_done' ? 'text-red-400' :
+                                message.type === 'device_error' ? 'text-red-500' :
+                                  message.type === 'complete' ? 'text-yellow-300' :
+                                    'text-[#d4d4d4]';
                   return (
                     <div key={index} className={`${color} leading-5`}>
                       <span className="text-white/20 mr-2">{String(index + 1).padStart(3, ' ')}</span>
@@ -366,12 +363,11 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-sm font-bold">{execution.task_name}</h3>
                         <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-cyan-50 text-cyan-600">DIRECT</span>
-                        <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                          execution.status === 'success' ? 'bg-emerald-50 text-emerald-600' :
-                          execution.status === 'failed' || execution.status === 'blocked' ? 'bg-red-50 text-red-600' :
-                          execution.status === 'running' ? 'bg-blue-50 text-blue-600' :
-                          'bg-gray-50 text-gray-600'
-                        }`}>{execution.status}</span>
+                        <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${execution.status === 'success' ? 'bg-emerald-50 text-emerald-600' :
+                            execution.status === 'failed' || execution.status === 'blocked' ? 'bg-red-50 text-red-600' :
+                              execution.status === 'running' ? 'bg-blue-50 text-blue-600' :
+                                'bg-gray-50 text-gray-600'
+                          }`}>{execution.status}</span>
                       </div>
                       <p className="text-[10px] text-black/40 mt-0.5">
                         {device?.hostname || `Device #${execution.device_id}`}{device?.ip_address ? ` (${device.ip_address})` : ''} · {new Date(execution.created_at).toLocaleString()}
@@ -449,11 +445,10 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                       <button
                         key={statusItem.key}
                         onClick={() => void onExecDevicesStatusFilterChange(statusItem.key)}
-                        className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${
-                          selectedExecDevicesStatusFilter === statusItem.key
+                        className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${selectedExecDevicesStatusFilter === statusItem.key
                             ? `${statusItem.activeCls} shadow-sm`
                             : 'text-black/35 hover:bg-black/[0.04] hover:text-black/50'
-                        }`}
+                          }`}
                       >
                         {statusItem.icon && <span className="text-[9px]">{statusItem.icon}</span>}
                         {statusItem.key === 'all' ? `${statusItem.label} (${selectedExecDevicesTotal})` : statusItem.label}
@@ -537,9 +532,8 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                             <span className="text-sm font-bold truncate">{selectedDeviceDetail?.hostname || '...'}</span>
                             {selectedDeviceDetail?.ip_address && <span className="text-[10px] text-black/30">{selectedDeviceDetail.ip_address}</span>}
                             {selectedDeviceDetail?.status && (
-                              <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                                selectedDeviceDetail.status === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
-                              }`}>{selectedDeviceDetail.status.replace(/_/g, ' ')}</span>
+                              <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${selectedDeviceDetail.status === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                                }`}>{selectedDeviceDetail.status.replace(/_/g, ' ')}</span>
                             )}
                           </div>
                           {(selectedDeviceDetail?.duration_ms || 0) > 0 && (

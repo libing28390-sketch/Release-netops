@@ -1,4 +1,4 @@
-export async function fetchAllPaginatedItems<T>(endpoint: string, params: URLSearchParams, pageSize = 200): Promise<T[]> {
+export async function fetchAllPaginatedItems<T>(endpoint: string, params: URLSearchParams, pageSize = 100): Promise<T[]> {
   const allItems: T[] = [];
   let page = 1;
   let total = Number.POSITIVE_INFINITY;

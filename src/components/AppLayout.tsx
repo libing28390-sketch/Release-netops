@@ -135,11 +135,11 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           onNavigate={onNavigate}
         />
 
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 overflow-hidden min-h-0">
           {activeTab !== 'dashboard' && !sidebarCollapsed && (
             <ModuleSubNav language={language} userRole={currentUserRole} />
           )}
-          <div className="flex-1 overflow-hidden">{children}</div>
+          <div className="flex-1 overflow-hidden flex flex-col min-h-0">{children}</div>
         </div>
 
         <footer className={`h-10 px-8 border-t flex items-center justify-between text-[11px] ${resolvedTheme === 'dark' ? 'border-white/10 text-white/45 bg-[#0b1320]' : 'border-black/8 text-black/45 bg-white/70'}`}>

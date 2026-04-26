@@ -202,7 +202,7 @@ const EMPTY_FORM = {
   commands: [] as string[],
 };
 
-const DEFAULT_PAGE_SIZE = 20;
+const DEFAULT_PAGE_SIZE = 10;
 const EMPTY_TEMPLATE_PREVIEW: ScenarioPhasePreview = {
   pre_check: [],
   execute: [],
@@ -482,7 +482,11 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
   // Sync viewTab when sidebar navigation changes
   useEffect(() => {
-    if (initialView && initialView !== 'create') setViewTab(initialView);
+    if (initialView && initialView !== 'create') {
+      setViewTab(initialView);
+      setSelectedOrder(null);
+      setTimeline([]);
+    }
   }, [initialView]);
 
   // ── Bookmarks ──
@@ -507,6 +511,10 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   useEffect(() => {
     if (initialView !== 'create') {
       setShowCreateModal(false);
+      if (initialView) {
+        setSelectedOrder(null);
+        setTimeline([]);
+      }
     }
   }, [initialView]);
   const [form, setForm] = useState(() => ({ ...EMPTY_FORM, authorization_exempt: currentUser.role === 'Administrator' }));
@@ -554,6 +562,41 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     setTemplatePreviewLoading(false);
   }, []);
 
+  const editorVisible = isCreateView || showCreateModal;
+
+  const isDirty = useMemo(() => {
+    if (!editorVisible) return false;
+    if (editingOrder) {
+      return (
+        form.title !== editingOrder.title ||
+        form.description !== (editingOrder.description || '') ||
+        form.priority !== editingOrder.priority ||
+        form.order_type !== editingOrder.order_type ||
+        form.risk_level !== editingOrder.risk_level ||
+        form.target_devices.length !== (editingOrder.target_devices?.length || 0) ||
+        form.commands.length !== (editingOrder.commands?.length || 0) ||
+        form.rollback_plan !== (editingOrder.rollback_plan || '')
+      );
+    }
+    return (
+      form.title.trim() !== '' ||
+      form.description.trim() !== '' ||
+      form.target_devices.length > 0 ||
+      form.commands.length > 0
+    );
+  }, [editorVisible, form, editingOrder]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
+
   const resetEditorState = useCallback(() => {
     setEditingOrder(null);
     setForm({ ...EMPTY_FORM, authorization_exempt: isPrivilegedDefault });
@@ -567,13 +610,16 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   }, [isPrivilegedDefault, resetTemplateComposer]);
 
   const closeEditor = useCallback(() => {
+    if (isDirty && !window.confirm(zh ? '当前页面有未保存的修改，确定要离开吗？' : 'Unsaved changes. Leave anyway?')) {
+      return;
+    }
     resetEditorState();
     setShowCreateModal(false);
     if (isCreateView) {
       navigate('/change-orders/all');
       return;
     }
-  }, [isCreateView, navigate, resetEditorState]);
+  }, [isCreateView, isDirty, navigate, resetEditorState, zh]);
 
   const getDefaultPrePostCheck = (platformKey: string): { pre_check: string[]; post_check: string[] } => {
     const prePostMap: Record<string, { pre_check: string[]; post_check: string[] }> = {
@@ -989,7 +1035,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     }
   }, [authHeaders, commandMode, selectedScenarioId, selectedScenarioPlatform, selectedScenarioPlatforms, selectedScenario, templateVariables, renderPhaseCommands, zh]);
 
-  const editorVisible = isCreateView || showCreateModal;
+
   const hideDraftListWhenEditing = showCreateModal && viewTab === 'my_drafts' && editingOrder !== null;
 
   // ── Local template preview computation (no API calls) ──
@@ -1292,6 +1338,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   // ── Copy order → open create modal pre-filled ──
   const handleCopyOrder = (order: ChangeOrder) => {
     setEditingOrder(null);
+    setSelectedOrder(null); // Clear detail view when copying
     setForm({
       title: `${order.title} (${zh ? '副本' : 'Copy'})`,
       description: order.description,
@@ -1555,7 +1602,8 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
      ═════════════════════════════════════════════════════════════════ */
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="flex flex-col gap-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
       {/* ── Toast ── */}
       <AnimatePresence>
         {toast && (
@@ -1966,19 +2014,25 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                     </tbody>
                   </table>
                 </div>
-                <div className="border-t border-black/5 px-4 py-3">
-                  <Pagination
-                    currentPage={page}
-                    itemsPerPage={pageSize}
-                    totalItems={total}
-                    onPageChange={setPage}
-                    onItemsPerPageChange={(v) => { setPageSize(v); setPage(1); }}
-                    language={language}
-                  />
-                </div>
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── Fixed Footer for Pagination (only in list view) ── */}
+      {/* ── Fixed Footer for Pagination (only in list view) ── */}
+      {!editorVisible && (
+        <div className="flex-shrink-0 bg-white border-t border-black/5 px-6 py-4">
+          <Pagination
+            currentPage={page}
+            itemsPerPage={pageSize}
+            totalItems={total}
+            onPageChange={setPage}
+            onItemsPerPageChange={(v) => { setPageSize(v); setPage(1); }}
+            language={language}
+            alwaysVisible
+          />
         </div>
       )}
       </>
@@ -3100,6 +3154,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
     </div>
   );
 };

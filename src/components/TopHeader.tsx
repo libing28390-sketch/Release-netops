@@ -141,7 +141,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
   }, [appSwitcherOpen]);
 
   return (
-    <header className="theme-header h-14 md:h-16 shadow-sm px-3 md:px-8 flex items-center justify-between z-10">
+    <header className="theme-header h-14 md:h-16 shadow-sm px-3 md:px-8 flex items-center justify-between z-[40]">
       <div className="flex items-center gap-2 md:gap-4 flex-1 min-w-0">
         {isHomePage ? (
           /* Home page: Grid icon + Nexora branding */

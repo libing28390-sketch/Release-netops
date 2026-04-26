@@ -30,7 +30,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [statusFilter, setStatusFilter] = useState('open');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -59,11 +59,12 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
       const resp = await fetch(`/api/alerts?${params.toString()}`);
       if (!resp.ok) throw new Error('Failed to load alerts');
       const data: AlertListResponse = await resp.json();
-      setRows(data.items || []);
-      setTotal(data.total || 0);
+      const items = data.items || [];
+      setRows(items);
+      setTotal(data.total && data.total > 0 ? data.total : items.length);
       if (data.status_counts) setStatusCounts(data.status_counts);
       setSelectedIds(new Set());
-      if (selectedAlertId && !data.items.some((item) => item.id === selectedAlertId)) {
+      if (selectedAlertId && !items.some((item) => item.id === selectedAlertId)) {
         setSelectedAlertId(null);
         setSelectedDetail(null);
       }
@@ -216,8 +217,10 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
       XLSX.utils.book_append_sheet(wb, ws, 'Alerts');
       const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
       XLSX.writeFile(wb, `alerts_export_${ts}.xlsx`);
+      showToast(language === 'zh' ? '导出成功' : 'Exported', 'success');
     } catch (error) {
       console.error('Failed to export alerts:', error);
+      showToast(language === 'zh' ? '导出失败' : 'Export failed', 'error');
     }
   };
 
@@ -320,8 +323,8 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
   return (
     <>
-    <div className="h-full flex flex-col overflow-hidden space-y-4">
-      <div className={`${alertPanelClass} flex-1 flex flex-col overflow-hidden`}>
+    <div className="flex-1 flex flex-col overflow-hidden space-y-4 min-h-0">
+      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
@@ -426,7 +429,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto custom-scrollbar border-b border-black/5">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
           <table className="min-w-full border-collapse text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
@@ -570,7 +573,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
           </table>
         </div>
 
-        <div className="mt-auto border-t border-black/5 bg-white">
+        <div className="mt-4">
           <Pagination
             currentPage={page}
             totalItems={total}

@@ -104,6 +104,7 @@ export const useAutomation = ({
   const [executionStatus, setExecutionStatus] = useState<string>('idle');
   const [automationSearch, setAutomationSearch] = useState('');
   const [scenarioSearch, setScenarioSearch] = useState('');
+  const [playbookHistoryPageSize, setPlaybookHistoryPageSize] = useState(10);
 
   const handleAutomationSearch = useCallback((value: string) => {
     setAutomationSearch(value);
@@ -335,7 +336,7 @@ export const useAutomation = ({
     try {
       const params = new URLSearchParams({
         page: String(page),
-        page_size: '20',
+        page_size: String(playbookHistoryPageSize),
         status: statusFilter,
         scenario: scenarioFilter,
       });
@@ -1065,6 +1066,7 @@ export const useAutomation = ({
     filteredScenarios, loadScenarios, loadPlaybookHistory, loadJobs, runPlaybook, openQuickPlaybookModal,
     loadQuickPlaybookPreview, previewPlaybook, resetAutomationSubmenuState, executePlaybook,
     runQuickPlaybook,
+    playbookHistoryPageSize, setPlaybookHistoryPageSize,
     extractVars, splitLines,
   };
 };

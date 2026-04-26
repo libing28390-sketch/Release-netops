@@ -112,7 +112,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<RuntimeFilter>('all');
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
@@ -277,9 +277,10 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
       const resp = await fetch(`/api/alerts/maintenance-windows?${params.toString()}`);
       if (!resp.ok) throw new Error('Failed to load maintenance windows');
       const data: AlertMaintenanceListResponse = await resp.json();
-      setWindows(data.items || []);
-      setTotal(data.total || 0);
-      if (selectedWindowId && !data.items.some((item) => item.id === selectedWindowId)) {
+      const items = data.items || [];
+      setWindows(items);
+      setTotal(data.total && data.total > 0 ? data.total : items.length);
+      if (selectedWindowId && !items.some((item) => item.id === selectedWindowId)) {
         setSelectedWindowId(null);
       }
     } catch (error) {
@@ -531,8 +532,8 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
 
   return (
     <>
-    <div className="h-full flex flex-col overflow-hidden space-y-4">
-      <div className={`${alertPanelClass} flex-1 flex flex-col overflow-hidden`}>
+    <div className="flex-1 flex flex-col overflow-hidden space-y-4 min-h-0">
+      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
@@ -587,7 +588,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
           </select>
         </div>
 
-        <div className="flex-1 overflow-y-auto custom-scrollbar border-b border-black/5">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
           <table className="min-w-full border-collapse text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
@@ -659,7 +660,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
           </table>
         </div>
 
-        <div className="mt-auto border-t border-black/5 bg-white">
+        <div className="mt-4">
           <Pagination
             currentPage={page}
             totalItems={total}

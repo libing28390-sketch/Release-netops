@@ -399,7 +399,18 @@ export type AlertRuleMetricType =
   | 'ping_unreachable'
   | 'host_cpu'
   | 'host_memory'
-  | 'host_disk';
+  | 'host_disk'
+  | 'srv_cpu_load'
+  | 'srv_cpu_util'
+  | 'srv_iowait'
+  | 'srv_mem_avail'
+  | 'srv_swap'
+  | 'srv_disk_util'
+  | 'srv_disk_inode'
+  | 'srv_io_latency'
+  | 'srv_tcp_retrans'
+  | 'srv_tcp_conns'
+  | 'srv_process_health';
 
 export type AlertRuleScopeType = 'global' | 'site' | 'device' | 'interface';
 
