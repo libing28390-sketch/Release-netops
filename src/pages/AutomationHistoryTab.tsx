@@ -459,7 +459,6 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                         {statusItem.key === 'all' ? `${statusItem.label} (${selectedExecDevicesTotal})` : statusItem.label}
                       </button>
                     ))}
-                    </div>
                   </div>
                   <div className="flex-1 overflow-auto p-4 space-y-3 custom-scrollbar">
                     {selectedExecDevicesLoading ? (

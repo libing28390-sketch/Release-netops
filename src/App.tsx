@@ -209,21 +209,6 @@ const App: React.FC = () => {
   const [globalVars, setGlobalVars] = useState<{id?: string, key: string, value: string}[]>([]);
   const [configTemplates, setConfigTemplates] = useState<ConfigTemplate[]>([]);
 
-  const handleRefreshHistory = useCallback(async (
-    page = playbookHistoryPage,
-    statusFilter = playbookHistoryStatusFilter,
-    scenarioFilter = playbookHistoryScenarioSearch,
-  ) => {
-    await loadPlaybookHistory(page, statusFilter, scenarioFilter);
-  }, [playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch, loadPlaybookHistory]);
-
-  useEffect(() => {
-    if (isAuthenticated && activeTab === 'automation' && automationPage === 'history') {
-      handleRefreshHistory(playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch);
-    }
-  }, [isAuthenticated, activeTab, automationPage, playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch, handleRefreshHistory]);
-
-
   const findMatchingPlatform = useCallback((devicePlatform: string, platforms: string[] | Record<string, any>) => {
     if (!devicePlatform) return undefined;
     const pList = Array.isArray(platforms) ? platforms : Object.keys(platforms);
@@ -339,6 +324,20 @@ const App: React.FC = () => {
   const [selectedExecDevicesLoading, setSelectedExecDevicesLoading] = useState(false);
   const [selectedDeviceDetail, setSelectedDeviceDetail] = useState<any | null>(null);
   const [selectedDeviceDetailLoading, setSelectedDeviceDetailLoading] = useState(false);
+
+  const handleRefreshHistory = useCallback(async (
+    page = playbookHistoryPage,
+    statusFilter = playbookHistoryStatusFilter,
+    scenarioFilter = playbookHistoryScenarioSearch,
+  ) => {
+    await loadPlaybookHistory(page, statusFilter, scenarioFilter);
+  }, [playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch, loadPlaybookHistory]);
+
+  useEffect(() => {
+    if (isAuthenticated && activeTab === 'automation' && automationPage === 'history') {
+      handleRefreshHistory(playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch);
+    }
+  }, [isAuthenticated, activeTab, automationPage, playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch, handleRefreshHistory]);
 
   const loadExecDevices = useCallback(async (executionId: string, page = 1, statusFilter = 'all', search = '') => {
     setSelectedExecDevicesLoading(true);
