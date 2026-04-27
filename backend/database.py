@@ -355,9 +355,11 @@ def init_db():
             category TEXT,
             vendor TEXT,
             content TEXT,
+            rollback TEXT,
             last_used TEXT
         )
         ''')
+        ensure_column('templates', 'rollback', 'TEXT')
         
         # Create users table if not exists
         cursor.execute('''
