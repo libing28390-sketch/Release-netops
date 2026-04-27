@@ -33,7 +33,7 @@ def read_templates():
     # 回退：从本地数据库读取
     conn = get_db_connection()
     try:
-        templates = conn.execute('SELECT id, name, type, category, vendor, content, last_used as lastUsed FROM templates').fetchall()
+        templates = conn.execute('SELECT id, name, type, category, vendor, content, rollback, last_used as lastUsed FROM templates').fetchall()
         return [dict(t) for t in templates]
     finally:
         conn.close()
@@ -44,8 +44,8 @@ def create_template(template: dict = Body(...)):
     template_id = template.get('id') or str(uuid.uuid4())
     try:
         conn.execute('''
-            INSERT INTO templates (id, name, type, category, vendor, content, last_used) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO templates (id, name, type, category, vendor, content, rollback, last_used) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             template_id,
             template.get('name'),
@@ -53,6 +53,7 @@ def create_template(template: dict = Body(...)):
             template.get('category', 'custom'),
             template.get('vendor', ''),
             template.get('content'),
+            template.get('rollback'),
             template.get('lastUsed')
         ))
         conn.commit()
@@ -80,12 +81,13 @@ def update_template(template_id: str, template: dict = Body(...)):
     conn = get_db_connection()
     try:
         conn.execute('''
-            UPDATE templates SET name = ?, type = ?, vendor = ?, content = ?, last_used = ? WHERE id = ?
+            UPDATE templates SET name = ?, type = ?, vendor = ?, content = ?, rollback = ?, last_used = ? WHERE id = ?
         ''', (
             template.get('name'),
             template.get('type'),
             template.get('vendor', ''),
             template.get('content'),
+            template.get('rollback'),
             template.get('lastUsed'),
             template_id
         ))

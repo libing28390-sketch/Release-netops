@@ -328,7 +328,7 @@ class ChangeOrderUpdate(BaseModel):
 def api_change_order_summary(user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        return {'success': True, 'data': get_summary(conn)}
+        return {'success': True, 'data': get_summary(conn, user_id=str(user.get('user_id') or ''), username=user.get('username', ''))}
     finally:
         conn.close()
 
@@ -366,6 +366,7 @@ def api_list_change_orders(
             search=search, requester=requester,
             assignee=assignee, bookmarked_by=bookmarked,
             my_todo=my_todo, group_todo=group_todo,
+            exclude_requester=user.get('username', ''),
             my_participated=my_participated, my_drafts=my_drafts,
             order_type=order_type,
             created_from=created_from, created_to=created_to,
@@ -515,9 +516,13 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
         payload = _normalize_assignment_payload(conn, body.model_dump())
         payload = _normalize_command_template_payload(payload)
         if payload.get('assigned_initial_reviewer_id') == user.get('user_id'):
-            raise HTTPException(status_code=400, detail='Requester cannot be the assigned initial reviewer')
+            raise HTTPException(status_code=400, detail='申请人不能作为指定的初审人')
         if payload.get('assigned_final_approver_id') == user.get('user_id'):
-            raise HTTPException(status_code=400, detail='Requester cannot be the assigned final approver')
+            raise HTTPException(status_code=400, detail='申请人不能作为指定的终审人')
+        if payload.get('assigned_initial_reviewer_id') and payload.get('assigned_initial_reviewer_id') == payload.get('assigned_final_approver_id'):
+            raise HTTPException(status_code=400, detail='初审人与终审人不能为同一人')
+        if payload.get('status') != 'draft' and not payload.get('assigned_initial_reviewer_id'):
+            raise HTTPException(status_code=400, detail='提交初审时必须指定初审人')
         order = create_change_order(
             conn,
             title=payload['title'],
@@ -624,25 +629,37 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         actor_groups = _load_actor_change_groups(conn, str(user.get('user_id') or ''))
         # Applicant cannot review/approve own ticket.
         if new_status in {'final_review', 'approved', 'rejected'} and requester_username and requester_username == actor_username:
-            raise HTTPException(status_code=403, detail='Requester cannot review/approve own change order')
+            raise HTTPException(status_code=403, detail='申请人不能审核或审批自己的变更工单')
         # Final approval requires administrator role.
         if new_status == 'approved' and user.get('role') != 'Administrator':
-            raise HTTPException(status_code=403, detail='Only Administrator can finalize approval for change orders')
+            raise HTTPException(status_code=403, detail='只有管理员角色的用户才能执行最终审批')
         # Final-stage reject also requires administrator role.
         if current_status == 'final_review' and new_status == 'rejected' and user.get('role') != 'Administrator':
-            raise HTTPException(status_code=403, detail='Only Administrator can reject in final review stage')
+            raise HTTPException(status_code=403, detail='只有管理员角色的用户才能在终审阶段驳回工单')
         if current_status == 'initial_review' and new_status in {'final_review', 'rejected'}:
             assigned_initial_reviewer_id = str(existing.get('assigned_initial_reviewer_id') or '')
             if assigned_initial_reviewer_id and assigned_initial_reviewer_id != str(user.get('user_id') or ''):
-                raise HTTPException(status_code=403, detail='Only the assigned initial reviewer can process this change order')
+                raise HTTPException(status_code=403, detail='只有被指定的初审人才能处理此工单的初审')
             if not assigned_initial_reviewer_id and actor_groups and 'initial_reviewer' not in actor_groups and user.get('role') != 'Administrator':
-                raise HTTPException(status_code=403, detail='Only users in the initial review group can process this change order')
+                raise HTTPException(status_code=403, detail='只有初审组成员或管理员才能处理此工单的初审')
         if current_status == 'final_review' and new_status in {'approved', 'rejected'}:
             assigned_final_approver_id = str(existing.get('assigned_final_approver_id') or '')
             if assigned_final_approver_id and assigned_final_approver_id != str(user.get('user_id') or ''):
-                raise HTTPException(status_code=403, detail='Only the assigned final approver can process this change order')
+                raise HTTPException(status_code=403, detail='只有被指定的终审人才能处理此工单的终审')
             if not assigned_final_approver_id and actor_groups and 'final_approver' not in actor_groups and user.get('role') != 'Administrator':
-                raise HTTPException(status_code=403, detail='Only users in the final approval group can process this change order')
+                raise HTTPException(status_code=403, detail='只有终审组成员或管理员才能处理此工单的终审')
+        
+        # Implementation stages: Only requester can operate
+        implementation_statuses = {'implementing', 'completed', 'failed', 'rollback_in_progress', 'rolled_back'}
+        if new_status in implementation_statuses or current_status in implementation_statuses:
+            if requester_username != actor_username and user.get('role') != 'Administrator':
+                raise HTTPException(status_code=403, detail='只有工单申请人（实施人）才能操作实施阶段')
+        
+        if new_status == 'final_review' and not existing.get('assigned_final_approver_id'):
+            # If moving to final review, check if it was assigned during the transition
+            assigned_final = body.get('assigned_final_approver_id') or existing.get('assigned_final_approver_id')
+            if not assigned_final:
+                raise HTTPException(status_code=400, detail='提交终审时必须指定终审人')
 
         updates = {'status': new_status}
         if new_status == 'rejected':

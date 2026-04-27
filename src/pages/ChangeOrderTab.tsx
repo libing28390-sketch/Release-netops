@@ -540,9 +540,23 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   const showToast = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
+    // Basic translation mapping for common backend messages that might be in English
+    const translationMap: Record<string, string> = {
+      'Requester cannot review/approve own change order': '申请人不能审核或审批自己的变更工单',
+      'Only Administrator can finalize approval for change orders': '只有管理员角色的用户才能执行最终审批',
+      'Only Administrator can reject in final review stage': '只有管理员角色的用户才能在终审阶段驳回工单',
+      'Only the assigned initial reviewer can process this change order': '只有被指定的初审人才能处理此工单的初审',
+      'Only users in the initial review group can process this change order': '只有初审组成员或管理员才能处理此工单的初审',
+      'Only the assigned final approver can process this change order': '只有被指定的终审人才能处理此工单的终审',
+      'Only users in the final approval group can process this change order': '只有终审组成员或管理员才能处理此工单的终审',
+      'Change order not found': '未找到变更工单',
+      'Forbidden': '拒绝访问',
+    };
+
+    const finalMsg = zh ? (translationMap[msg] || msg) : msg;
+    setToast({ msg: finalMsg, type });
+    setTimeout(() => setToast(null), type === 'error' ? 5000 : 3000);
+  }, [zh]);
 
   const authHeaders = useCallback((withJson = false) => {
     const token = localStorage.getItem('netops_token');
@@ -677,7 +691,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
             pre_check,
             execute: template.content ? [template.content] : [],
             post_check,
-            rollback: [],
+            rollback: template.rollback ? [template.rollback] : [],
           };
         });
         const varMatches = [...(template.content || '').matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)];
@@ -785,7 +799,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     const grouped = users.filter((item) => item.role !== 'Viewer' && hasChangeGroup(item, 'initial_reviewer') && String(item.id) !== String(currentUser.id));
     const fallback = users.filter((item) => item.role !== 'Viewer' && String(item.id) !== String(currentUser.id));
     return grouped.length > 0 ? grouped : fallback;
-  }, [users, currentUser.id]);
+  }, [users, currentUser.id, hasChangeGroup]);
 
   const finalApproverOptions = useMemo(() => {
     const grouped = users.filter((item) => item.role === 'Administrator' && hasChangeGroup(item, 'final_approver') && String(item.id) !== String(currentUser.id));
@@ -1158,6 +1172,10 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     if (!asDraft) {
       if (!form.assigned_initial_reviewer_id) {
         showToast(zh ? '请指定初审人' : 'Assign an initial reviewer', 'error');
+        return;
+      }
+      if (!form.assigned_final_approver_id) {
+        showToast(zh ? '请指定终审人' : 'Assign a final approver', 'error');
         return;
       }
       if (commandMode === 'manual' && form.commands.length === 0) {
@@ -1549,41 +1567,63 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   // ── Status transition buttons for detail panel ──
   const getTransitionActions = (order: ChangeOrder) => {
     const actions: { label: string; status: string; variant: string; icon: React.ElementType }[] = [];
+    const isRequester = order.requester_username === currentUser.username;
+    const isInitialReviewer = order.assigned_initial_reviewer_id === String(currentUser.id);
+    const isFinalApprover = order.assigned_final_approver_id === String(currentUser.id);
+    const isAdministrator = currentUser.role === 'Administrator';
+
     switch (order.status) {
       case 'draft':
-        actions.push({ label: zh ? '提交初审' : 'Submit Review', status: 'initial_review', variant: 'primary', icon: Send });
+        if (isRequester) {
+          actions.push({ label: zh ? '提交初审' : 'Submit Review', status: 'initial_review', variant: 'primary', icon: Send });
+        }
         break;
       case 'initial_review':
-        actions.push({ label: zh ? '初审通过' : 'Pass Initial Review', status: 'final_review', variant: 'success', icon: CheckCircle2 });
-        actions.push({ label: zh ? '驳回' : 'Reject', status: 'rejected', variant: 'danger', icon: XCircle });
+        if (isInitialReviewer || (isAdministrator && !order.assigned_initial_reviewer_id)) {
+          actions.push({ label: zh ? '初审通过' : 'Pass Initial Review', status: 'final_review', variant: 'success', icon: CheckCircle2 });
+          actions.push({ label: zh ? '驳回' : 'Reject', status: 'rejected', variant: 'danger', icon: XCircle });
+        }
         break;
       case 'final_review':
-        actions.push({ label: zh ? '审批通过' : 'Approve', status: 'approved', variant: 'success', icon: CheckCircle2 });
-        actions.push({ label: zh ? '驳回' : 'Reject', status: 'rejected', variant: 'danger', icon: XCircle });
-        break;
-      case 'pending':
-        actions.push({ label: zh ? '审批通过(旧)' : 'Approve (Legacy)', status: 'approved', variant: 'success', icon: CheckCircle2 });
-        actions.push({ label: zh ? '驳回' : 'Reject', status: 'rejected', variant: 'danger', icon: XCircle });
+        if (isFinalApprover || (isAdministrator && !order.assigned_final_approver_id)) {
+          actions.push({ label: zh ? '审批通过' : 'Approve', status: 'approved', variant: 'success', icon: CheckCircle2 });
+          actions.push({ label: zh ? '驳回' : 'Reject', status: 'rejected', variant: 'danger', icon: XCircle });
+        }
         break;
       case 'approved':
-        actions.push({ label: zh ? '进入实施' : 'Start Implementing', status: 'implementing', variant: 'primary', icon: Zap });
+        // Implementation can be started by the requester or anyone with appropriate group permissions. 
+        // For simplicity, we allow the requester or administrators.
+        if (isRequester || isAdministrator) {
+          actions.push({ label: zh ? '进入实施' : 'Start Implementing', status: 'implementing', variant: 'primary', icon: Zap });
+        }
         break;
       case 'implementing':
       case 'executing':
-        actions.push({ label: zh ? '标记完成' : 'Complete', status: 'completed', variant: 'success', icon: CheckCircle2 });
-        actions.push({ label: zh ? '标记失败' : 'Failed', status: 'failed', variant: 'danger', icon: XCircle });
-        actions.push({ label: zh ? '触发回溯' : 'Start Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
+        // Completing can be done by whoever is implementing it.
+        if (isRequester || isAdministrator) {
+          actions.push({ label: zh ? '标记完成' : 'Complete', status: 'completed', variant: 'success', icon: CheckCircle2 });
+          actions.push({ label: zh ? '标记失败' : 'Failed', status: 'failed', variant: 'danger', icon: XCircle });
+          actions.push({ label: zh ? '触发回溯' : 'Start Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
+        }
         break;
       case 'failed':
-        actions.push({ label: zh ? '发起回溯' : 'Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
+        if (isRequester || isAdministrator) {
+          actions.push({ label: zh ? '发起回溯' : 'Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
+        }
         break;
       case 'rollback_in_progress':
-        actions.push({ label: zh ? '回溯完成' : 'Rollback Completed', status: 'rolled_back', variant: 'success', icon: CheckCircle2 });
-        actions.push({ label: zh ? '回溯失败' : 'Rollback Failed', status: 'failed', variant: 'danger', icon: XCircle });
+        if (isRequester || isAdministrator) {
+          actions.push({ label: zh ? '回溯完成' : 'Rollback Completed', status: 'rolled_back', variant: 'success', icon: CheckCircle2 });
+          actions.push({ label: zh ? '回溯失败' : 'Rollback Failed', status: 'failed', variant: 'danger', icon: XCircle });
+        }
         break;
     }
+    
+    // Cancellation
     if (!['completed', 'cancelled', 'rolled_back'].includes(order.status)) {
-      actions.push({ label: zh ? '取消' : 'Cancel', status: 'cancelled', variant: 'muted', icon: X });
+      if (isRequester || isAdministrator) {
+        actions.push({ label: zh ? '取消' : 'Cancel', status: 'cancelled', variant: 'muted', icon: X });
+      }
     }
     return actions;
   };
@@ -1607,19 +1647,49 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       {/* ── Toast ── */}
       <AnimatePresence>
         {toast && (
-          <motion.div
-            key="global-toast"
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className={`fixed top-6 right-6 z-[9999] px-5 py-3 rounded-xl shadow-2xl text-sm font-medium ${
-              toast.type === 'success'
-                ? 'bg-emerald-500 text-white'
-                : 'bg-rose-500 text-white'
-            }`}
-          >
-            {toast.msg}
-          </motion.div>
+          <div className="fixed inset-0 pointer-events-none z-[9999] flex items-start justify-center pt-10">
+            <motion.div
+              key="global-toast"
+              initial={{ opacity: 0, y: -40, scale: 0.9 }}
+              animate={{ 
+                opacity: 1, 
+                y: 0, 
+                scale: 1,
+                x: toast.type === 'error' ? [0, -4, 4, -4, 4, 0] : 0 
+              }}
+              exit={{ opacity: 0, y: -20, scale: 0.9 }}
+              transition={{ 
+                type: 'spring', 
+                stiffness: 400, 
+                damping: 25,
+                x: { duration: 0.4, ease: "easeInOut" }
+              }}
+              className={`pointer-events-auto min-w-[320px] max-w-md px-6 py-4 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] flex items-center gap-4 border-2 transition-all ${
+                toast.type === 'success'
+                  ? 'bg-white border-emerald-500/20 text-emerald-900'
+                  : 'bg-white border-rose-500/20 text-rose-900'
+              }`}
+            >
+              <div className={`p-2.5 rounded-2xl shadow-sm ${toast.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`}>
+                {toast.type === 'success' ? <CheckCircle2 size={20} className="text-white" /> : <AlertTriangle size={20} className="text-white" />}
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-[15px] font-bold tracking-tight">
+                    {toast.type === 'success' ? (zh ? '操作成功' : 'Operation Success') : (zh ? '操作失败' : 'Operation Failed')}
+                  </span>
+                </div>
+                <p className="text-xs font-medium opacity-60 leading-relaxed">{toast.msg}</p>
+              </div>
+              <button 
+                onClick={() => setToast(null)} 
+                className="ml-2 p-1.5 hover:bg-black/5 rounded-xl transition-colors group"
+                title={zh ? '关闭' : 'Close'}
+              >
+                <X size={16} className="opacity-30 group-hover:opacity-60" />
+              </button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
@@ -1988,7 +2058,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                                 >
                                   <Eye size={14} />
                                 </button>
-                                {['draft', 'rejected'].includes(order.status) && (
+                                {['draft', 'rejected'].includes(order.status) && order.requester_username === currentUser.username && (
                                   <button
                                     onClick={(e) => { e.stopPropagation(); openEdit(order); }}
                                     className="p-1.5 rounded-lg text-black/30 hover:text-amber-600 hover:bg-amber-50 transition-all"
@@ -1997,7 +2067,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                                     <FileText size={14} />
                                   </button>
                                 )}
-                                {['draft', 'cancelled'].includes(order.status) && (
+                                {['draft', 'cancelled'].includes(order.status) && order.requester_username === currentUser.username && (
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleDelete(order.id); }}
                                     className="p-1.5 rounded-lg text-black/30 hover:text-rose-600 hover:bg-rose-50 transition-all"
@@ -2089,7 +2159,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
             )}
             <div className="w-px h-5 bg-black/8 mx-0.5" />
             {/* ── Workflow buttons ── */}
-            {['draft', 'rejected'].includes(selectedOrder.status) && (
+            {['draft', 'rejected'].includes(selectedOrder.status) && selectedOrder.requester_username === currentUser.username && (
               <button
                 onClick={() => openEdit(selectedOrder)}
                 className="px-3.5 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 bg-white text-black/60 border border-black/10 hover:bg-black/5 transition-all"
@@ -2464,27 +2534,62 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                     </div>
                     </div>
 
-                  {/* ── Timeline (full width) ── */}
-                  <div className="rounded-2xl border border-black/8 bg-black/[0.015] p-4">
-                    <p className="text-xs font-semibold text-black/50 mb-2">{zh ? '流程时间线' : 'Timeline'}</p>
+                  {/* ── Timeline (Professional Vertical Layout) ── */}
+                  <div className="rounded-2xl border border-black/8 bg-white p-6">
+                    <div className="flex items-center justify-between mb-6">
+                      <p className="text-sm font-bold text-black/80 flex items-center gap-2">
+                        <Clock size={16} className="text-[#00bceb]" />
+                        {zh ? '工单全生命周期记录' : 'Order Lifecycle Timeline'}
+                      </p>
+                      <span className="text-[10px] font-medium text-black/40 px-2 py-0.5 bg-black/[0.03] rounded-full">
+                        {zh ? `共 ${timeline.length} 条记录` : `${timeline.length} events`}
+                      </span>
+                    </div>
+
                     {timelineLoading ? (
-                      <div className="text-sm text-black/40 py-2">{zh ? '加载时间线中...' : 'Loading timeline...'}</div>
+                      <div className="flex items-center justify-center py-8 text-black/30">
+                        <RefreshCw size={18} className="animate-spin mr-2" /> {zh ? '加载时间线中...' : 'Loading timeline...'}
+                      </div>
                     ) : timeline.length === 0 ? (
-                      <div className="text-xs text-black/35 py-2">{zh ? '暂无流程记录' : 'No timeline events'}</div>
+                      <div className="flex flex-col items-center justify-center py-8 text-black/30 border border-dashed border-black/10 rounded-xl">
+                        <Clock size={24} className="mb-2 opacity-20" />
+                        <p className="text-xs">{zh ? '暂无流程记录' : 'No timeline events'}</p>
+                      </div>
                     ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {timeline.map((evt) => (
-                          <div key={evt.id} className="rounded-lg border border-black/6 bg-black/[0.015] px-2.5 py-1.5 min-w-[200px] flex-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[11px] font-medium text-black/65">{timelineEventLabel(evt.event_type, language)}</span>
-                              <span className="text-[10px] text-black/30 tabular-nums">{fmtTime(evt.created_at)}</span>
+                      <div className="relative pl-8 space-y-8 before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-0.5 before:bg-gradient-to-b before:from-[#00bceb]/60 before:via-[#00bceb]/20 before:to-transparent">
+                        {[...timeline].reverse().map((evt, idx) => {
+                          const isNewest = idx === 0;
+                          return (
+                            <div key={evt.id} className="relative">
+                              {/* Dot on the line */}
+                              <div className={`absolute -left-[35px] top-1.5 w-6 h-6 rounded-full border-4 border-white shadow-sm flex items-center justify-center z-10 ${
+                                isNewest ? 'bg-[#00bceb] scale-110' : 'bg-slate-200'
+                              }`}>
+                                <div className={`w-1.5 h-1.5 rounded-full ${isNewest ? 'bg-white' : 'bg-black/20'}`} />
+                              </div>
+
+                              <div className={`group transition-all duration-300 ${isNewest ? 'translate-x-1' : ''}`}>
+                                <div className="flex flex-wrap items-center gap-3 mb-1.5">
+                                  <span className={`text-sm font-bold ${isNewest ? 'text-black/90' : 'text-black/60'}`}>
+                                    {timelineEventLabel(evt.event_type, language)}
+                                  </span>
+                                  <span className="text-[11px] font-mono text-black/40 bg-black/[0.03] px-2 py-0.5 rounded-md tabular-nums">
+                                    {fmtDate(evt.created_at)}
+                                  </span>
+                                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-sky-50 text-[#0e7490] text-[10px] font-bold ring-1 ring-sky-200/50">
+                                    <User size={10} />
+                                    {evt.actor_username || (zh ? '系统自动化' : 'System')}
+                                  </div>
+                                </div>
+                                <div className="p-3.5 rounded-2xl border border-black/5 bg-black/[0.01] group-hover:bg-black/[0.03] group-hover:border-[#00bceb]/20 transition-all">
+                                  <p className="text-xs text-black/60 leading-relaxed">
+                                    {evt.summary || timelineEventLabel(evt.event_type, language)}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
-                            <div className="mt-0.5 text-[10px] text-black/40 whitespace-pre-wrap break-words">
-                              {evt.summary || timelineEventLabel(evt.event_type, language)}
-                              {' · '}{evt.actor_username || (zh ? '系统' : 'System')}
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

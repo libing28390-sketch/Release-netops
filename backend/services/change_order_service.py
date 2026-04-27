@@ -157,7 +157,8 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
                        completed_from: str = '',
                        completed_to: str = '',
                        scheduled_from: str = '',
-                       scheduled_to: str = '') -> tuple[list[dict], int]:
+                       scheduled_to: str = '',
+                       exclude_requester: str = '') -> tuple[list[dict], int]:
     conditions = []
     params = []
 
@@ -180,11 +181,11 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
         conditions.append(
             "("
             "(requester_username = ? AND status IN ('draft', 'rejected', 'approved'))"
-            " OR (assigned_initial_reviewer_username = ? AND status = 'initial_review')"
-            " OR (assigned_final_approver_username = ? AND status = 'final_review')"
+            " OR (assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?)"
+            " OR (assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)"
             ")"
         )
-        params.extend([my_todo, my_todo, my_todo])
+        params.extend([my_todo, my_todo, my_todo, my_todo, my_todo])
     if group_todo:
         groups = [g.strip() for g in group_todo.split(',') if g.strip()]
         gconds = []
@@ -197,6 +198,9 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
             gconds.append("(status = 'final_review' AND (assigned_final_approver_id IS NULL OR assigned_final_approver_id = ''))")
         if gconds:
             conditions.append(f"({' OR '.join(gconds)})")
+            if exclude_requester:
+                conditions.append("requester_username != ?")
+                params.append(exclude_requester)
         else:
             conditions.append("1=0")
     if status:
@@ -253,7 +257,7 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
     return [_row_to_dict(r) for r in rows], total
 
 
-def get_summary(conn) -> dict:
+def get_summary(conn, user_id: str = '', username: str = '') -> dict:
     total = conn.execute("SELECT COUNT(*) FROM change_orders").fetchone()[0]
     by_status = {}
     for row in conn.execute("SELECT status, COUNT(*) as cnt FROM change_orders GROUP BY status"):
@@ -264,11 +268,46 @@ def get_summary(conn) -> dict:
     by_type = {}
     for row in conn.execute("SELECT order_type, COUNT(*) as cnt FROM change_orders GROUP BY order_type"):
         by_type[row['order_type']] = row['cnt']
+
+    my_todo_count = 0
+    group_todo_count = 0
+    if user_id and username:
+        # My Todo
+        my_todo_count = conn.execute(
+            """
+            SELECT COUNT(*) FROM change_orders 
+            WHERE (
+                (status = 'initial_review' AND assigned_initial_reviewer_id = ?) OR 
+                (status = 'final_review' AND assigned_final_approver_id = ?)
+            ) AND requester_username != ?
+            """,
+            (user_id, user_id, username)
+        ).fetchone()[0]
+
+        # Group Todo
+        # Get user's groups
+        from .user_service import get_user_change_groups
+        groups = get_user_change_groups(conn, user_id)
+        if groups:
+            gconds = []
+            if 'initial_reviewer' in groups:
+                gconds.append("(status = 'initial_review' AND (assigned_initial_reviewer_id IS NULL OR assigned_initial_reviewer_id = ''))")
+            if 'final_approver' in groups:
+                gconds.append("(status = 'final_review' AND (assigned_final_approver_id IS NULL OR assigned_final_approver_id = ''))")
+            
+            if gconds:
+                group_todo_count = conn.execute(
+                    f"SELECT COUNT(*) FROM change_orders WHERE ({' OR '.join(gconds)}) AND requester_username != ?",
+                    (username,)
+                ).fetchone()[0]
+
     return {
         'total': total,
         'by_status': by_status,
         'by_priority': by_priority,
         'by_type': by_type,
+        'my_todo_count': my_todo_count,
+        'group_todo_count': group_todo_count,
     }
 
 

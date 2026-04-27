@@ -199,6 +199,7 @@ export interface ConfigTemplate {
   category: string;
   vendor?: string;
   content: string;
+  rollback?: string;
 }
 
 export interface ConfigSnapshot {
