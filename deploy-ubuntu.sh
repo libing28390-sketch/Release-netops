@@ -22,12 +22,12 @@ fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
 # ---------- 配置 ----------
 NODE_MAJOR=22                       # Node.js LTS 大版本
 PYTHON_MIN="3.10"                   # 最低 Python 版本
-GIT_REPO="https://github.com/libing28390-sketch/netsops.git"
+GIT_REPO="git@github.com:libing28390-sketch/netsops.git"
 PROJECT_NAME="netops-automation"
 SERVICE_NAME="netops"
 BACKEND_PORT=8003
 NGINX_PORT=8080                     # Nginx 监听端口（如 80 被占用可改为 8080 等）
-SERVER_NAME="_"                     # 改为你的域名，如 netops.example.com
+SERVER_NAME="www.kebos.top"                     # 改为你的域名，如 netops.example.com
 
 # ---------- 检查是否以 root 运行 ----------
 if [ "$EUID" -eq 0 ]; then

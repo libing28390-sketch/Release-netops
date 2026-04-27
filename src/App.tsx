@@ -108,6 +108,10 @@ const App: React.FC = () => {
   const [toast, setToast] = useState<ToastState | null>(null);
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
+    // 自动清除
+    setTimeout(() => {
+      setToast(null);
+    }, 5000);
   }, []);
 
   const [showSetupWizard, setShowSetupWizard] = useState(false);
@@ -3488,6 +3492,7 @@ const App: React.FC = () => {
         setCmdPaletteQuery={setCmdPaletteQuery}
         togglePin={togglePin}
         toast={toast}
+        onCloseToast={() => setToast(null)}
       >
 
         <AppMainContent appProps={mainContentProps} />

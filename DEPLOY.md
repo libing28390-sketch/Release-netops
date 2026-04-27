@@ -120,7 +120,7 @@ sudo apt install python3 python3-venv python3-dev build-essential
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/libing28390-sketch/netsops.git netops-automation
+git clone git@github.com/libing28390-sketch/netsops.git netops-automation
 cd netops-automation
 
 # 2. 创建 Python 虚拟环境
@@ -344,7 +344,7 @@ sudo usermod -aG docker $USER
 
 # 2. 安装 Git 并克隆项目
 sudo apt-get update -qq && sudo apt-get install -y -qq git nodejs npm
-git clone https://github.com/libing28390-sketch/netsops.git netops-automation
+git clone git@github.com:libing28390-sketch/netsops.git netops-automation
 cd netops-automation
 
 # 3. 构建前端 + 启动容器

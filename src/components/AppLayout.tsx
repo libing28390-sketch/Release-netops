@@ -52,6 +52,7 @@ interface AppLayoutProps {
   setCmdPaletteQuery: (query: string) => void;
   togglePin: (path: string) => void;
   toast: ToastState | null;
+  onCloseToast: () => void;
   children?: React.ReactNode;
 }
 
@@ -95,6 +96,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   setCmdPaletteQuery,
   togglePin,
   toast,
+  onCloseToast,
   children,
 }) => {
   const location = useLocation();
@@ -164,7 +166,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
         onTogglePin={togglePin}
       />
 
-      <ToastNotification toast={toast} />
+      <ToastNotification toast={toast} onClose={onCloseToast} />
     </div>
   );
 };

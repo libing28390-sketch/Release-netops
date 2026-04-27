@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, CheckCircle, XCircle } from 'lucide-react';
+import { Bell, CheckCircle, XCircle, X } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export interface ToastState {
@@ -9,9 +9,10 @@ export interface ToastState {
 
 interface ToastNotificationProps {
   toast: ToastState | null;
+  onClose: () => void;
 }
 
-const ToastNotification: React.FC<ToastNotificationProps> = ({ toast }) => {
+const ToastNotification: React.FC<ToastNotificationProps> = ({ toast, onClose }) => {
   if (!toast) return null;
 
   return (
@@ -29,6 +30,12 @@ const ToastNotification: React.FC<ToastNotificationProps> = ({ toast }) => {
       {toast.type === 'error' && <XCircle size={18} />}
       {toast.type === 'info' && <Bell size={18} />}
       <span className="text-sm font-medium">{toast.message}</span>
+      <button 
+        onClick={onClose}
+        className="ml-2 p-1 rounded-full hover:bg-white/20 transition-colors"
+      >
+        <X size={14} />
+      </button>
     </motion.div>
   );
 };
