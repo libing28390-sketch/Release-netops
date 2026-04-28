@@ -11,13 +11,14 @@ import { navConfig } from './AppSidebar/navConfig';
 interface ModuleSubNavProps {
   language: string;
   userRole?: string;
+  currentUser?: any;
 }
 
 const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, Viewer: 1 };
 
 const LS_KEY = 'nexora_module_nav';
 
-const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole }) => {
+const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, currentUser }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const zh = language === 'zh';
@@ -26,6 +27,8 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole }) => {
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem(LS_KEY) === 'collapsed'; } catch { return false; }
   });
+
+  const [todoCounts, setTodoCounts] = useState<{ my: number; group: number; focus: number }>({ my: 0, group: 0, focus: 0 });
 
   const toggleCollapsed = () => {
     setCollapsed(prev => {
@@ -42,6 +45,56 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole }) => {
       return pathname === child.path || pathname.startsWith(child.path + '/');
     })
   );
+
+  useEffect(() => {
+    if (currentGroup?.id !== 'tickets' || !currentUser) return;
+
+    let isMounted = true;
+    const fetchCounts = async () => {
+      try {
+        const token = localStorage.getItem('netops_token');
+        const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+        if (currentUser.username) {
+          const respMy = await fetch(`/api/change-orders?page=1&page_size=1&my_todo=${encodeURIComponent(currentUser.username)}`, { headers });
+          const dataMy = await respMy.json();
+          if (dataMy.success && isMounted) {
+            setTodoCounts(prev => ({ ...prev, my: dataMy.total || 0 }));
+          }
+        }
+
+        if (Array.isArray(currentUser.change_groups) && currentUser.change_groups.length > 0) {
+          const respGrp = await fetch(`/api/change-orders?page=1&page_size=1&group_todo=${encodeURIComponent(currentUser.change_groups.join(','))}`, { headers });
+          const dataGrp = await respGrp.json();
+          if (dataGrp.success && isMounted) {
+            setTodoCounts(prev => ({ ...prev, group: dataGrp.total || 0 }));
+          }
+        }
+
+        if (currentUser.id) {
+          const respFoc = await fetch(`/api/change-orders?page=1&page_size=1&bookmarked=${encodeURIComponent(currentUser.id)}`, { headers });
+          const dataFoc = await respFoc.json();
+          if (dataFoc.success && isMounted) {
+            setTodoCounts(prev => ({ ...prev, focus: dataFoc.total || 0 }));
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch todo counts', e);
+      }
+    };
+
+    fetchCounts();
+
+    const handleRefresh = () => {
+      fetchCounts();
+    };
+    window.addEventListener('refresh-todo-badge', handleRefresh);
+
+    return () => { 
+      isMounted = false; 
+      window.removeEventListener('refresh-todo-badge', handleRefresh);
+    };
+  }, [currentGroup?.id, currentUser?.id, currentUser?.username, currentUser?.change_groups, pathname]);
 
   if (!currentGroup) return null;
 
@@ -108,7 +161,18 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole }) => {
                   if (!active) e.currentTarget.style.background = 'transparent';
                 }}
               >
-                {abbr}
+                <span className="relative">
+                  {abbr}
+                  {child.id === 'my-todo' && todoCounts.my > 0 && (
+                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                  )}
+                  {child.id === 'group-todo' && todoCounts.group > 0 && (
+                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                  )}
+                  {child.id === 'my-focus' && todoCounts.focus > 0 && (
+                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                  )}
+                </span>
               </button>
             );
           }
@@ -137,6 +201,21 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole }) => {
                 />
               )}
               <span className="truncate">{label}</span>
+              {child.id === 'my-todo' && todoCounts.my > 0 && (
+                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white leading-none min-w-[16px] text-center">
+                  {todoCounts.my}
+                </span>
+              )}
+              {child.id === 'group-todo' && todoCounts.group > 0 && (
+                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-500 text-white leading-none min-w-[16px] text-center">
+                  {todoCounts.group}
+                </span>
+              )}
+              {child.id === 'my-focus' && todoCounts.focus > 0 && (
+                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-indigo-500 text-white leading-none min-w-[16px] text-center">
+                  {todoCounts.focus}
+                </span>
+              )}
             </button>
           );
         })}

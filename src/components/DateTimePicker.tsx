@@ -11,6 +11,7 @@ interface DateTimePickerProps {
   placeholder?: string;
   /** "datetime" (default) | "date" */
   mode?: 'datetime' | 'date';
+  required?: boolean;
 }
 
 const WEEKDAYS_ZH = ['一', '二', '三', '四', '五', '六', '日'];
@@ -90,6 +91,7 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
   className = '',
   placeholder,
   mode = 'datetime',
+  required = false,
 }) => {
   const zh = language === 'zh';
   const containerRef = useRef<HTMLDivElement>(null);
@@ -267,7 +269,11 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
-      {label && <label className="block text-xs font-semibold text-black/50 mb-1.5">{label}</label>}
+      {label && (
+        <label className="block text-xs font-semibold text-black/50 mb-1.5">
+          {label} {required && <span className="text-rose-500 ml-0.5">*</span>}
+        </label>
+      )}
       <button
         type="button"
         onClick={() => setOpen(!open)}

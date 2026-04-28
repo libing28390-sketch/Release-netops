@@ -19,7 +19,7 @@ export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
     return [];
   };
 
-  const normalizeDeviceRecord = (raw: any): Device => {
+  const normalizeDeviceRecord = useCallback((raw: any): Device => {
     const hostname = typeof raw?.hostname === 'string' && raw.hostname.trim()
       ? raw.hostname
       : (typeof raw?.id === 'string' ? raw.id : 'Unknown');
@@ -56,7 +56,7 @@ export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
       high_util_interface_count: typeof raw?.high_util_interface_count === 'number' ? raw.high_util_interface_count : Number(raw?.high_util_interface_count || 0),
       interface_error_count: typeof raw?.interface_error_count === 'number' ? raw.interface_error_count : Number(raw?.interface_error_count || 0),
     } as Device;
-  };
+  }, []);
 
   const fetchDevicesData = useCallback(async () => {
     try {

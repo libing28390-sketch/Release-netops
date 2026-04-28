@@ -276,6 +276,28 @@ const TIMELINE_EVENT_META: Record<string, { zh: string; en: string }> = {
 const timelineEventLabel = (eventType: string, lang: string) =>
   TIMELINE_EVENT_META[eventType]?.[lang === 'zh' ? 'zh' : 'en'] ?? eventType;
 
+const translateSummary = (summaryText: string, lang: string) => {
+  if (lang !== 'zh' || !summaryText) return summaryText;
+  let text = summaryText;
+  const statusMap: Record<string, string> = {
+    'draft': '草稿',
+    'initial_review': '初审中',
+    'final_review': '终审中',
+    'approved': '审批完成',
+    'implementing': '实施中',
+    'completed': '完成',
+    'rollback_in_progress': '回溯中',
+    'rolled_back': '已回溯',
+    'rejected': '已驳回',
+    'failed': '执行失败',
+    'cancelled': '已取消',
+  };
+  Object.entries(statusMap).forEach(([k, v]) => {
+    text = text.replace(new RegExp(`\\b${k}\\b`, 'g'), v);
+  });
+  return text;
+};
+
 type WorkflowVisualState = 'done' | 'current' | 'pending' | 'error';
 
 const PRIMARY_WORKFLOW = [
@@ -504,6 +526,21 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     onConfirm: (val: string) => void;
   } | null>(null);
 
+  const [finalApproverPrompt, setFinalApproverPrompt] = useState<{
+    onConfirm: (id: string) => void;
+  } | null>(null);
+  
+  const [finalApproverSearch, setFinalApproverSearch] = useState('');
+  const [tempSelectedFinalApprover, setTempSelectedFinalApprover] = useState<string>('');
+
+  const [initialApproverPrompt, setInitialApproverPrompt] = useState<{
+    onConfirm: (id: string) => void;
+  } | null>(null);
+  
+  const [initialApproverSearch, setInitialApproverSearch] = useState('');
+  const [tempSelectedInitialApprover, setTempSelectedInitialApprover] = useState<string>('');
+  const [selectedGroupForInitial, setSelectedGroupForInitial] = useState<string>('');
+
   // ── Create/Edit modal ──
   const [showCreateModal, setShowCreateModal] = useState(initialView === 'create');
   const [editingOrder, setEditingOrder] = useState<ChangeOrder | null>(null);
@@ -519,6 +556,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   }, [initialView]);
   const [form, setForm] = useState(() => ({ ...EMPTY_FORM, authorization_exempt: currentUser.role === 'Administrator' }));
   const [saving, setSaving] = useState(false);
+  const [selectedGroupForFinal, setSelectedGroupForFinal] = useState<string>('');
   const [commandInput, setCommandInput] = useState('');
   const [deviceInput, setDeviceInput] = useState({ hostname: '', ip_address: '' });
   const [deviceKeyword, setDeviceKeyword] = useState('');
@@ -623,8 +661,8 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     resetTemplateComposer();
   }, [isPrivilegedDefault, resetTemplateComposer]);
 
-  const closeEditor = useCallback(() => {
-    if (isDirty && !window.confirm(zh ? '当前页面有未保存的修改，确定要离开吗？' : 'Unsaved changes. Leave anyway?')) {
+  const closeEditor = useCallback((forceClose = false) => {
+    if (!forceClose && isDirty && !window.confirm(zh ? '确认不保存吗？' : 'Confirm not to save?')) {
       return;
     }
     resetEditorState();
@@ -801,11 +839,74 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     return grouped.length > 0 ? grouped : fallback;
   }, [users, currentUser.id, hasChangeGroup]);
 
+  const initialReviewerGroups = useMemo(() => {
+    const groups = new Set<string>();
+    initialReviewerOptions.forEach(u => { if (u.group_name) groups.add(u.group_name); });
+    return Array.from(groups).sort();
+  }, [initialReviewerOptions]);
+
+  const filteredInitialReviewers = useMemo(() => {
+    return initialReviewerOptions.filter(u => {
+      const matchGroup = !selectedGroupForInitial || u.group_name === selectedGroupForInitial;
+      const matchSearch = !initialApproverSearch || 
+        u.username.toLowerCase().includes(initialApproverSearch.toLowerCase()) || 
+        (u.role && u.role.toLowerCase().includes(initialApproverSearch.toLowerCase()));
+      return matchGroup && matchSearch;
+    });
+  }, [initialReviewerOptions, selectedGroupForInitial, initialApproverSearch]);
+
+  const groupedInitialReviewers = useMemo(() => {
+    const map: Record<string, typeof initialReviewerOptions> = {};
+    initialReviewerOptions.forEach(u => {
+      const matchSearch = !initialApproverSearch || 
+        u.username.toLowerCase().includes(initialApproverSearch.toLowerCase()) || 
+        (u.role && u.role.toLowerCase().includes(initialApproverSearch.toLowerCase()));
+      if (matchSearch) {
+        const g = u.group_name || (zh ? '无组别' : 'No Group');
+        if (!map[g]) map[g] = [];
+        map[g].push(u);
+      }
+    });
+    return map;
+  }, [initialReviewerOptions, initialApproverSearch, zh]);
+
   const finalApproverOptions = useMemo(() => {
-    const grouped = users.filter((item) => item.role === 'Administrator' && hasChangeGroup(item, 'final_approver') && String(item.id) !== String(currentUser.id));
-    const fallback = users.filter((item) => item.role === 'Administrator' && String(item.id) !== String(currentUser.id));
+    const reqId = selectedOrder?.requester_id;
+    const grouped = users.filter((item) => item.role === 'Administrator' && hasChangeGroup(item, 'final_approver') && String(item.id) !== String(currentUser.id) && String(item.id) !== String(reqId || ''));
+    const fallback = users.filter((item) => item.role === 'Administrator' && String(item.id) !== String(currentUser.id) && String(item.id) !== String(reqId || ''));
     return grouped.length > 0 ? grouped : fallback;
-  }, [users, currentUser.id]);
+  }, [users, currentUser.id, selectedOrder?.requester_id]);
+
+  const finalApproverGroups = useMemo(() => {
+    const groups = new Set<string>();
+    finalApproverOptions.forEach(u => { if (u.group_name) groups.add(u.group_name); });
+    return Array.from(groups).sort();
+  }, [finalApproverOptions]);
+
+  const groupedFinalApprovers = useMemo(() => {
+    const map: Record<string, typeof finalApproverOptions> = {};
+    finalApproverOptions.forEach(u => {
+      const matchSearch = !finalApproverSearch || 
+        u.username.toLowerCase().includes(finalApproverSearch.toLowerCase()) || 
+        (u.role && u.role.toLowerCase().includes(finalApproverSearch.toLowerCase()));
+      if (matchSearch) {
+        const g = u.group_name || (zh ? '无组别' : 'No Group');
+        if (!map[g]) map[g] = [];
+        map[g].push(u);
+      }
+    });
+    return map;
+  }, [finalApproverOptions, finalApproverSearch, zh]);
+
+  const filteredFinalApprovers = useMemo(() => {
+    return finalApproverOptions.filter(u => {
+      const matchGroup = !selectedGroupForFinal || u.group_name === selectedGroupForFinal;
+      const matchSearch = !finalApproverSearch || 
+        u.username.toLowerCase().includes(finalApproverSearch.toLowerCase()) || 
+        (u.role && u.role.toLowerCase().includes(finalApproverSearch.toLowerCase()));
+      return matchGroup && matchSearch;
+    });
+  }, [finalApproverOptions, selectedGroupForFinal, finalApproverSearch]);
 
   const assignReviewer = useCallback((stage: 'initial' | 'final', reviewerId: string) => {
     const source = stage === 'initial' ? initialReviewerOptions : finalApproverOptions;
@@ -1157,12 +1258,11 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchBookmarks(); }, [fetchBookmarks]);
 
-  // ── Create / Update ──
-  const saveOrder = async (closeAfterSave = true, asDraft = false) => {
+  const saveOrder = async (closeAfterSave = true, asDraft = false, explicitInitialReviewerId?: string) => {
     const effectiveScenarioPlatform = selectedScenarioPlatform || selectedScenarioPlatforms[0] || '';
-    // When no scenario selected, use local preview if available
     const localPreview = selectedScenarioId && effectiveScenarioPlatform ? getLocalTemplatePreview(effectiveScenarioPlatform) : null;
     const effectivePreview = templatePreview || localPreview;
+    const reviewerIdToUse = explicitInitialReviewerId || form.assigned_initial_reviewer_id;
     
     if (!form.title.trim()) {
       showToast(zh ? '请输入工单标题' : 'Title is required', 'error');
@@ -1170,16 +1270,32 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     }
 
     if (!asDraft) {
-      if (!form.assigned_initial_reviewer_id) {
-        showToast(zh ? '请指定初审人' : 'Assign an initial reviewer', 'error');
+      if (!form.scheduled_start) {
+        showToast(zh ? '请选择计划开始时间' : 'Scheduled start time is required', 'error');
         return;
       }
+      if (!form.scheduled_end) {
+        showToast(zh ? '请选择计划结束时间' : 'Scheduled end time is required', 'error');
+        return;
+      }
+      if (form.scheduled_start && form.scheduled_end && new Date(form.scheduled_start) >= new Date(form.scheduled_end)) {
+        showToast(zh ? '计划结束时间必须晚于开始时间' : 'End time must be after start time', 'error');
+        return;
+      }
+      if (!form.target_devices || form.target_devices.length === 0) {
+        showToast(zh ? '请选择目标设备' : 'Add at least one target device', 'error');
+        return;
+      }
+      
       if (commandMode === 'manual' && form.commands.length === 0) {
         showToast(zh ? '请至少添加一条执行命令' : 'Add at least one command', 'error');
         return;
       }
+      if (commandMode === 'manual' && !form.rollback_plan.trim()) {
+        showToast(zh ? '请输入回退方案' : 'Rollback plan is required', 'error');
+        return;
+      }
       if (commandMode === 'template') {
-        // Auto-match platform from device if not explicitly selected
         const devicePlatform = form.target_devices.find(d => d.platform)?.platform;
         const platformToUse = effectiveScenarioPlatform || devicePlatform || '';
         
@@ -1191,7 +1307,6 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           showToast(zh ? '无法确定目标平台' : 'Cannot determine target platform', 'error');
           return;
         }
-        // Only validate template preview if scenario is selected
         if (selectedScenarioId) {
           if (templateMissingRequired.length > 0) {
             showToast(zh ? `请先填写必填变量：${templateMissingRequired.join('、')}` : `Fill required variables: ${templateMissingRequired.join(', ')}`, 'error');
@@ -1203,12 +1318,22 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           }
         }
       }
+
+      if (!reviewerIdToUse) {
+        setInitialApproverPrompt({
+          onConfirm: (id: string) => {
+            saveOrder(closeAfterSave, asDraft, id);
+          }
+        });
+        return;
+      }
     }
 
     setSaving(true);
     try {
       const payload: any = {
         ...form,
+        assigned_initial_reviewer_id: reviewerIdToUse || '',
         status: asDraft ? 'draft' : 'initial_review',
         command_template: {},
         commands: form.commands,
@@ -1264,13 +1389,14 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           setEditingOrder(data.data);
         }
         if (closeAfterSave && !asDraft) {
-          closeEditor();
+          closeEditor(true);
         }
+        window.dispatchEvent(new CustomEvent('refresh-todo-badge'));
         fetchOrders();
         fetchSummary();
         if (asDraft) {
           if (!isCreateView) {
-            closeEditor();
+            closeEditor(true);
           } else {
             setShowCreateModal(false);
             resetEditorState();
@@ -1305,6 +1431,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           setSelectedOrder(data.data);
           fetchTimeline(orderId);
         }
+        window.dispatchEvent(new CustomEvent('refresh-todo-badge'));
         fetchOrders();
         fetchSummary();
       } else {
@@ -1583,32 +1710,32 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       case 'final_review':
         if (isFinalApprover || (isAdministrator && !order.assigned_final_approver_id)) {
           actions.push({ label: zh ? '审批通过' : 'Approve', status: 'approved', variant: 'success', icon: CheckCircle2 });
-          actions.push({ label: zh ? '驳回' : 'Reject', status: 'rejected', variant: 'danger', icon: XCircle });
+          actions.push({ label: zh ? '驳回到初审' : 'Reject to Initial', status: 'initial_review', variant: 'danger', icon: XCircle });
+          actions.push({ label: zh ? '彻底驳回' : 'Reject Completely', status: 'rejected', variant: 'danger', icon: XCircle });
         }
         break;
       case 'approved':
-        // Implementation can be started by the requester or anyone with appropriate group permissions. 
-        // For simplicity, we allow the requester or administrators.
-        if (isRequester || isAdministrator) {
+        // Implementation can only be started by the requester.
+        if (isRequester) {
           actions.push({ label: zh ? '进入实施' : 'Start Implementing', status: 'implementing', variant: 'primary', icon: Zap });
         }
         break;
       case 'implementing':
       case 'executing':
-        // Completing can be done by whoever is implementing it.
-        if (isRequester || isAdministrator) {
+        // Completing can only be done by the requester.
+        if (isRequester) {
           actions.push({ label: zh ? '标记完成' : 'Complete', status: 'completed', variant: 'success', icon: CheckCircle2 });
           actions.push({ label: zh ? '标记失败' : 'Failed', status: 'failed', variant: 'danger', icon: XCircle });
           actions.push({ label: zh ? '触发回溯' : 'Start Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
         }
         break;
       case 'failed':
-        if (isRequester || isAdministrator) {
+        if (isRequester) {
           actions.push({ label: zh ? '发起回溯' : 'Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
         }
         break;
       case 'rollback_in_progress':
-        if (isRequester || isAdministrator) {
+        if (isRequester) {
           actions.push({ label: zh ? '回溯完成' : 'Rollback Completed', status: 'rolled_back', variant: 'success', icon: CheckCircle2 });
           actions.push({ label: zh ? '回溯失败' : 'Rollback Failed', status: 'failed', variant: 'danger', icon: XCircle });
         }
@@ -1617,7 +1744,9 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     
     // Cancellation
     if (!['completed', 'cancelled', 'rolled_back'].includes(order.status)) {
-      if (isRequester || isAdministrator) {
+      if (isRequester) {
+        actions.push({ label: zh ? '废除' : 'Discard', status: 'cancelled', variant: 'danger', icon: Trash2 });
+      } else if (isAdministrator) {
         actions.push({ label: zh ? '取消' : 'Cancel', status: 'cancelled', variant: 'muted', icon: X });
       }
     }
@@ -1689,7 +1818,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         )}
       </AnimatePresence>
 
-      {!selectedOrder ? (
+      {!selectedOrder || editorVisible ? (
       <>
       {!editorVisible && (
         <>
@@ -2029,7 +2158,6 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                             </td>
                             <td className="px-4 py-3 text-center">
                               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-medium ${pm.bg} ${pm.color}`}>
-                                <PriorityIcon size={11} />
                                 {priorityLabel(order.priority, language)}
                               </span>
                             </td>
@@ -2168,14 +2296,39 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
               <button
                 key={action.status}
                 onClick={() => {
-                  if (action.status === 'rejected') {
+                  if (['rejected', 'initial_review'].includes(action.status)) {
                     setActionPrompt({
-                      title: zh ? '请输入驳回原因' : 'Rejection reason',
-                      placeholder: zh ? '必填项，说明驳回的具体原因' : 'Required. Reason for rejection',
+                      title: action.status === 'initial_review' ? (zh ? '请输入退回原因' : 'Return reason') : (zh ? '请输入驳回原因' : 'Rejection reason'),
+                      placeholder: zh ? '必填项，说明具体的意见和原因...' : 'Required. Specific reason/comments',
                       value: '',
                       required: true,
                       onConfirm: (val) => handleTransition(selectedOrder.id, action.status, { rejected_reason: val })
                     });
+                  } else if (action.status === 'approved') {
+                    setActionPrompt({
+                      title: zh ? '请输入审批意见' : 'Approval comments',
+                      placeholder: zh ? '可选填，请输入审批通过意见...' : 'Optional comments...',
+                      value: '',
+                      required: false,
+                      onConfirm: (val) => handleTransition(selectedOrder.id, action.status, { approval_comment: val })
+                    });
+                  } else if (action.status === 'final_review') {
+                    const proceed = (extraData?: any) => {
+                      setActionPrompt({
+                        title: zh ? '请输入初审意见' : 'Review comments',
+                        placeholder: zh ? '可选填，请输入初审通过意见...' : 'Optional comments...',
+                        value: '',
+                        required: false,
+                        onConfirm: (val) => handleTransition(selectedOrder.id, action.status, { ...extraData, review_comment: val })
+                      });
+                    };
+                    if (selectedOrder.assigned_final_approver_id) {
+                      proceed();
+                    } else {
+                      setFinalApproverPrompt({
+                        onConfirm: (id) => proceed({ assigned_final_approver_id: id })
+                      });
+                    }
                   } else if (action.status === 'completed') {
                     setActionPrompt({
                       title: zh ? '请输入实施结果说明' : 'Result summary',
@@ -2207,6 +2360,14 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                       value: '',
                       required: false,
                       onConfirm: (val) => handleTransition(selectedOrder.id, action.status, { result_summary: val })
+                    });
+                  } else if (action.status === 'cancelled') {
+                    setActionPrompt({
+                      title: zh ? '确定要废除/取消此工单吗？' : 'Discard this order?',
+                      placeholder: zh ? '可选填，说明废除工单的原因...' : 'Optional cancellation reason...',
+                      value: '',
+                      required: false,
+                      onConfirm: (val) => handleTransition(selectedOrder.id, action.status, { cancellation_reason: val })
                     });
                   } else {
                     handleTransition(selectedOrder.id, action.status);
@@ -2242,10 +2403,8 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                         })()}
                         {(() => {
                           const pm = PRIORITY_META[selectedOrder.priority] || PRIORITY_META.medium;
-                          const PIcon = pm.icon;
                           return (
                             <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-lg text-[10px] font-medium ${pm.bg} ${pm.color}`}>
-                              <PIcon size={10} />
                               {priorityLabel(selectedOrder.priority, language)}
                             </span>
                           );
@@ -2579,7 +2738,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                                 </div>
                                 <div className="p-3.5 rounded-2xl border border-black/5 bg-black/[0.01] group-hover:bg-black/[0.03] group-hover:border-[#00bceb]/20 transition-all">
                                   <p className="text-xs text-black/60 leading-relaxed">
-                                    {evt.summary || timelineEventLabel(evt.event_type, language)}
+                                    {translateSummary(evt.summary || timelineEventLabel(evt.event_type, language), language)}
                                   </p>
                                 </div>
                               </div>
@@ -2655,7 +2814,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                 {/* Type + Priority + Risk — 3 columns */}
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '变更类型' : 'Type'}</label>
+                    <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '变更类型' : 'Type'} <span className="text-rose-500">*</span></label>
                     <select
                       title={zh ? '变更类型' : 'Change order type'}
                       value={form.order_type}
@@ -2668,7 +2827,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '优先级' : 'Priority'}</label>
+                    <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '优先级' : 'Priority'} <span className="text-rose-500">*</span></label>
                     <select
                       title={zh ? '优先级' : 'Priority'}
                       value={form.priority}
@@ -2681,7 +2840,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '风险等级' : 'Risk Level'}</label>
+                    <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '风险等级' : 'Risk Level'} <span className="text-rose-500">*</span></label>
                     <select
                       title={zh ? '风险等级' : 'Risk level'}
                       value={form.risk_level}
@@ -2702,34 +2861,18 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                     value={form.scheduled_start}
                     onChange={v => setForm(f => ({ ...f, scheduled_start: v }))}
                     language={language}
+                    required
                   />
                   <DateTimePicker
                     label={zh ? '计划结束时间' : 'Scheduled End'}
                     value={form.scheduled_end}
                     onChange={v => setForm(f => ({ ...f, scheduled_end: v }))}
                     language={language}
+                    required
                   />
                 </div>
 
-                <div className="grid grid-cols-1 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '指定初审人' : 'Assigned Reviewer'}</label>
-                    <select
-                      title={zh ? '指定初审人' : 'Assigned reviewer'}
-                      value={form.assigned_initial_reviewer_id}
-                      onChange={(e) => assignReviewer('initial', e.target.value)}
-                      className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
-                    >
-                      <option value="" disabled>{zh ? '请选择初审人' : 'Select initial reviewer'}</option>
-                      {initialReviewerOptions.map((item) => (
-                        <option key={item.id} value={String(item.id)}>{buildUserOptionLabel(item)}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <p className="-mt-2 text-[11px] text-black/40">
-                  {zh ? '只需指定初审人，终审阶段由终审组成员处理。' : 'Only assign an initial reviewer now; final approval will be handled by the approver group later.'}
-                </p>
+
 
                 <div className="mt-4 rounded-2xl border border-black/8 bg-black/[0.015] p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2757,7 +2900,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                 {/* Target Devices */}
                 <div className="mt-4">
                   <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-                    <label className="block text-xs font-semibold text-black/50">{zh ? '目标设备' : 'Target Devices'}</label>
+                    <label className="block text-xs font-semibold text-black/50">{zh ? '目标设备' : 'Target Devices'} <span className="text-rose-500">*</span></label>
                     <button
                       type="button"
                       onClick={() => setShowDevicePicker(true)}
@@ -2766,25 +2909,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                       {zh ? '从设备库选择' : 'Pick from inventory'}
                     </button>
                   </div>
-                  <div className="flex gap-2 mb-2">
-                    <input
-                      title={zh ? '目标设备主机名' : 'Target device hostname'}
-                      value={deviceInput.hostname}
-                      onChange={e => setDeviceInput(d => ({ ...d, hostname: e.target.value }))}
-                      placeholder={zh ? '主机名' : 'Hostname'}
-                      className="flex-1 px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40"
-                    />
-                    <input
-                      title={zh ? '目标设备IP地址' : 'Target device IP address'}
-                      value={deviceInput.ip_address}
-                      onChange={e => setDeviceInput(d => ({ ...d, ip_address: e.target.value }))}
-                      placeholder={zh ? 'IP 地址' : 'IP Address'}
-                      className="flex-1 px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40"
-                    />
-                    <button title={zh ? '添加目标设备' : 'Add target device'} onClick={addDevice} className="px-3 py-2 rounded-xl bg-[#00bceb]/10 text-[#00bceb] text-sm font-medium hover:bg-[#00bceb]/18 transition-all">
-                      <Plus size={15} />
-                    </button>
-                  </div>
+                  {/* Manual device inputs removed as requested */}
                   {form.target_devices.length > 0 && (
                     <div className="mt-2 overflow-x-auto rounded-3xl border border-black/10 bg-slate-50">
                       <table className="min-w-full text-sm text-left">
@@ -2857,9 +2982,20 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                               onClick={() => setSelectedInventoryDevice(dev)}
                               className={`w-full px-4 py-3 text-left text-sm text-black/80 hover:bg-[#00bceb]/8 border-b last:border-b-0 border-black/10 transition-all ${selectedInventoryDevice?.id === dev.id ? 'bg-[#00bceb]/15' : ''}`}
                             >
-                              <div className="font-medium">{dev.hostname || (zh ? '未命名设备' : 'Unnamed')}</div>
-                              <div className="text-[11px] text-black/45">
-                                {dev.asset_tag ? `${dev.asset_tag} · ` : ''}{dev.ip_address || '—'}
+                              <div className="flex items-center gap-3">
+                                <input
+                                  type="radio"
+                                  name="selected_inventory_device"
+                                  checked={selectedInventoryDevice?.id === dev.id}
+                                  readOnly
+                                  className="w-4 h-4 text-[#06b6d4] focus:ring-[#06b6d4] border-black/20 shrink-0"
+                                />
+                                <div>
+                                  <div className="font-medium text-sm text-black/85">{dev.hostname || (zh ? '未命名设备' : 'Unnamed')}</div>
+                                  <div className="text-[11px] text-black/45 mt-0.5">
+                                    {dev.asset_tag ? `${dev.asset_tag} · ` : ''}{dev.ip_address || '—'}
+                                  </div>
+                                </div>
                               </div>
                             </button>
                           ))
@@ -3074,7 +3210,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                   ) : (
                     <div className="space-y-4">
                       <div>
-                        <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '执行命令' : 'Commands'}</label>
+                        <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '执行命令' : 'Commands'} <span className="text-rose-500">*</span></label>
                         <div className="flex gap-2">
                           <input
                             value={commandInput}
@@ -3107,7 +3243,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                       </div>
 
                       <div>
-                        <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '回退方案' : 'Rollback Plan'}</label>
+                        <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '回退方案' : 'Rollback Plan'} <span className="text-rose-500">*</span></label>
                         <textarea
                           value={form.rollback_plan}
                           onChange={e => setForm(f => ({ ...f, rollback_plan: e.target.value }))}
@@ -3170,6 +3306,18 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                 <h3 className="text-lg font-bold text-[#164e63]">{actionPrompt.title}</h3>
               </div>
               <div className="p-6">
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {(zh ? ['请审核', '同意', '请修改', '不同意'] : ['Please review', 'Agree', 'Please modify', 'Disagree']).map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setActionPrompt({ ...actionPrompt, value: tag })}
+                      className="px-2 py-1 rounded-lg text-xs bg-black/[0.04] hover:bg-[#00bceb]/10 hover:text-[#00bceb] border border-black/5 hover:border-[#00bceb]/20 transition-all font-medium text-black/60"
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
                 <textarea
                   autoFocus
                   rows={3}
@@ -3202,53 +3350,217 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         )}
       </AnimatePresence>
 
-      {/* Single Input Prompt Modal */}
+      {/* Final Approver Selection Modal */}
       <AnimatePresence>
-        {actionPrompt && (
+        {finalApproverPrompt && (
           <motion.div
             className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            onMouseDown={(e) => e.target === e.currentTarget && setActionPrompt(null)}
+            onMouseDown={(e) => e.target === e.currentTarget && setFinalApproverPrompt(null)}
           >
             <motion.div
-              className="w-full max-w-sm rounded-3xl bg-white shadow-2xl overflow-hidden"
+              className="w-full max-w-md rounded-3xl bg-white shadow-2xl overflow-hidden"
               initial={{ scale: 0.95, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
               transition={{ type: 'spring', stiffness: 400, damping: 25 }}
             >
               <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)]">
-                <h3 className="text-lg font-bold text-[#164e63]">{actionPrompt.title}</h3>
+                <h3 className="text-lg font-bold text-[#164e63]">{zh ? '请指定终审人' : 'Select Final Approver'}</h3>
               </div>
-              <div className="p-6">
-                <textarea
-                  autoFocus
-                  rows={3}
-                  value={actionPrompt.value}
-                  onChange={(e) => setActionPrompt({ ...actionPrompt, value: e.target.value })}
-                  placeholder={actionPrompt.placeholder}
-                  className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm text-[#164e63] focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all resize-none"
-                />
+              <div className="p-6 space-y-4">
+                {/* Search Box */}
+                <div>
+                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '搜索候选人 (拼音/中文)' : 'Search Candidates (Pinyin/Chinese)'}</label>
+                  <input
+                    type="text"
+                    placeholder={zh ? '输入用户名或拼音筛选...' : 'Type username...'}
+                    value={finalApproverSearch}
+                    onChange={(e) => setFinalApproverSearch(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 transition-all bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '勾选终审人' : 'Assigned Approver'}</label>
+                  <div className="max-h-[260px] overflow-y-auto border border-black/10 rounded-xl divide-y divide-black/5 bg-slate-50/50">
+                    {Object.keys(groupedFinalApprovers).length === 0 ? (
+                      <div className="p-4 text-center text-xs text-black/40">
+                        {zh ? '没有匹配的终审人' : 'No matching approvers'}
+                      </div>
+                    ) : (
+                      Object.entries(groupedFinalApprovers).map(([groupName, reviewers]) => (
+                        <div key={groupName} className="p-2 border-b border-black/5 last:border-b-0">
+                          <div className="text-[11px] font-bold text-[#00bceb] bg-[#00bceb]/10 px-2.5 py-1 rounded-lg inline-block mb-1.5">
+                            {groupName}
+                          </div>
+                          <div className="space-y-1">
+                            {reviewers.map((item) => (
+                              <label 
+                                key={item.id} 
+                                className={`flex items-center gap-3 p-2.5 rounded-xl hover:bg-white cursor-pointer transition-colors ${
+                                  tempSelectedFinalApprover === String(item.id) ? 'bg-cyan-50/50 border border-cyan-500/20 shadow-sm' : 'border border-transparent'
+                                }`}
+                              >
+                                <input
+                                  type="radio"
+                                  name="final_approver"
+                                  value={String(item.id)}
+                                  checked={tempSelectedFinalApprover === String(item.id)}
+                                  onChange={(e) => setTempSelectedFinalApprover(e.target.value)}
+                                  className="w-4 h-4 text-cyan-500 focus:ring-cyan-400 border-black/20"
+                                />
+                                <div className="flex flex-col">
+                                  <span className="text-sm font-medium text-black/80">{item.username}</span>
+                                  <span className="text-xs text-black/40">{item.role}</span>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               </div>
               <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
                 <button
-                  onClick={() => setActionPrompt(null)}
+                  onClick={() => {
+                    setFinalApproverPrompt(null);
+                    setFinalApproverSearch('');
+                    setTempSelectedFinalApprover('');
+                  }}
                   className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
                 >
                   {zh ? '取消' : 'Cancel'}
                 </button>
                 <button
-                  disabled={actionPrompt.required && !actionPrompt.value.trim()}
                   onClick={() => {
-                    actionPrompt.onConfirm(actionPrompt.value.trim());
-                    setActionPrompt(null);
+                    if (!tempSelectedFinalApprover) {
+                      showToast(zh ? '请先勾选终审人' : 'Please select an approver first', 'error');
+                      return;
+                    }
+                    finalApproverPrompt.onConfirm(tempSelectedFinalApprover);
+                    setFinalApproverPrompt(null);
+                    setFinalApproverSearch('');
+                    setTempSelectedFinalApprover('');
+                    setSelectedGroupForFinal(''); 
                   }}
-                  className="px-4 py-2 rounded-xl bg-cyan-600 text-white text-sm font-bold shadow-sm hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  className="px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#0096bd] shadow-lg shadow-[#00bceb]/16 transition-all"
                 >
-                  {zh ? '确认提交' : 'Confirm'}
+                  {zh ? '确定' : 'Confirm'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Initial Approver Selection Modal */}
+      <AnimatePresence>
+        {initialApproverPrompt && (
+          <motion.div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onMouseDown={(e) => e.target === e.currentTarget && setInitialApproverPrompt(null)}
+          >
+            <motion.div
+              className="w-full max-w-md rounded-3xl bg-white shadow-2xl overflow-hidden"
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+            >
+              <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)]">
+                <h3 className="text-lg font-bold text-[#164e63]">{zh ? '请指定初审人' : 'Select Initial Reviewer'}</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                {/* Search Box */}
+                <div>
+                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '搜索候选人 (拼音/中文)' : 'Search Candidates (Pinyin/Chinese)'}</label>
+                  <input
+                    type="text"
+                    placeholder={zh ? '输入用户名或拼音筛选...' : 'Type username...'}
+                    value={initialApproverSearch}
+                    onChange={(e) => setInitialApproverSearch(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 transition-all bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '勾选初审人' : 'Assigned Approver'}</label>
+                  <div className="max-h-[260px] overflow-y-auto border border-black/10 rounded-xl divide-y divide-black/5 bg-slate-50/50">
+                    {Object.keys(groupedInitialReviewers).length === 0 ? (
+                      <div className="p-4 text-center text-xs text-black/40">
+                        {zh ? '没有匹配的初审人' : 'No matching reviewers'}
+                      </div>
+                    ) : (
+                      Object.entries(groupedInitialReviewers).map(([groupName, reviewers]) => (
+                        <div key={groupName} className="p-2 border-b border-black/5 last:border-b-0">
+                          <div className="text-[11px] font-bold text-[#00bceb] bg-[#00bceb]/10 px-2.5 py-1 rounded-lg inline-block mb-1.5">
+                            {groupName}
+                          </div>
+                          <div className="space-y-1">
+                            {reviewers.map((item) => (
+                              <label 
+                                key={item.id} 
+                                className={`flex items-center gap-3 p-2.5 rounded-xl hover:bg-white cursor-pointer transition-colors ${
+                                  tempSelectedInitialApprover === String(item.id) ? 'bg-cyan-50/50 border border-cyan-500/20 shadow-sm' : 'border border-transparent'
+                                }`}
+                              >
+                                <input
+                                  type="radio"
+                                  name="initial_approver"
+                                  value={String(item.id)}
+                                  checked={tempSelectedInitialApprover === String(item.id)}
+                                  onChange={(e) => setTempSelectedInitialApprover(e.target.value)}
+                                  className="w-4 h-4 text-cyan-500 focus:ring-cyan-400 border-black/20"
+                                />
+                                <div className="flex flex-col">
+                                  <span className="text-sm font-medium text-black/80">{item.username}</span>
+                                  <span className="text-xs text-black/40">{item.role}</span>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
+                <button
+                  onClick={() => {
+                    setInitialApproverPrompt(null);
+                    setInitialApproverSearch('');
+                    setTempSelectedInitialApprover('');
+                  }}
+                  className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  onClick={() => {
+                    if (!tempSelectedInitialApprover) {
+                      showToast(zh ? '请先勾选初审人' : 'Please select a reviewer first', 'error');
+                      return;
+                    }
+                    initialApproverPrompt.onConfirm(tempSelectedInitialApprover);
+                    setInitialApproverPrompt(null);
+                    setInitialApproverSearch('');
+                    setTempSelectedInitialApprover('');
+                    setSelectedGroupForInitial(''); 
+                  }}
+                  className="px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#0096bd] shadow-lg shadow-[#00bceb]/16 transition-all"
+                >
+                  {zh ? '确定' : 'Confirm'}
                 </button>
               </div>
             </motion.div>

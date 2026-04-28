@@ -42,7 +42,7 @@ ALLOWED_STATUSES = {
 ALLOWED_TRANSITIONS = {
     'draft': {'initial_review', 'cancelled'},
     'initial_review': {'final_review', 'rejected', 'cancelled'},
-    'final_review': {'approved', 'rejected', 'cancelled'},
+    'final_review': {'approved', 'rejected', 'cancelled', 'initial_review'},
     'approved': {'implementing', 'cancelled'},
     'implementing': {'completed', 'failed', 'rollback_in_progress', 'cancelled'},
     'rollback_in_progress': {'rolled_back', 'failed'},
@@ -51,6 +51,21 @@ ALLOWED_TRANSITIONS = {
     # Legacy status compatibility path
     'pending': {'approved', 'rejected', 'cancelled'},
     'executing': {'completed', 'failed', 'rollback_in_progress', 'cancelled'},
+}
+
+
+STATUS_ZH = {
+    'draft': '草稿',
+    'initial_review': '初审中',
+    'final_review': '终审中',
+    'approved': '审批完成',
+    'implementing': '实施中',
+    'completed': '完成',
+    'rollback_in_progress': '回溯中',
+    'rolled_back': '已回溯',
+    'rejected': '已驳回',
+    'failed': '执行失败',
+    'cancelled': '已取消',
 }
 
 
@@ -630,13 +645,13 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         actor_username = user.get('username', '')
         actor_groups = _load_actor_change_groups(conn, str(user.get('user_id') or ''))
         # Applicant cannot review/approve own ticket.
-        if new_status in {'final_review', 'approved', 'rejected'} and requester_username and requester_username == actor_username:
+        if new_status in {'final_review', 'approved', 'rejected', 'initial_review'} and requester_username and requester_username == actor_username:
             raise HTTPException(status_code=403, detail='申请人不能审核或审批自己的变更工单')
         # Final approval requires administrator role.
         if new_status == 'approved' and user.get('role') != 'Administrator':
             raise HTTPException(status_code=403, detail='只有管理员角色的用户才能执行最终审批')
         # Final-stage reject also requires administrator role.
-        if current_status == 'final_review' and new_status == 'rejected' and user.get('role') != 'Administrator':
+        if current_status == 'final_review' and new_status in {'rejected', 'initial_review'} and user.get('role') != 'Administrator':
             raise HTTPException(status_code=403, detail='只有管理员角色的用户才能在终审阶段驳回工单')
         if current_status == 'initial_review' and new_status in {'final_review', 'rejected'}:
             assigned_initial_reviewer_id = str(existing.get('assigned_initial_reviewer_id') or '')
@@ -644,7 +659,7 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
                 raise HTTPException(status_code=403, detail='只有被指定的初审人才能处理此工单的初审')
             if not assigned_initial_reviewer_id and actor_groups and 'initial_reviewer' not in actor_groups and user.get('role') != 'Administrator':
                 raise HTTPException(status_code=403, detail='只有初审组成员或管理员才能处理此工单的初审')
-        if current_status == 'final_review' and new_status in {'approved', 'rejected'}:
+        if current_status == 'final_review' and new_status in {'approved', 'rejected', 'initial_review'}:
             assigned_final_approver_id = str(existing.get('assigned_final_approver_id') or '')
             if assigned_final_approver_id and assigned_final_approver_id != str(user.get('user_id') or ''):
                 raise HTTPException(status_code=403, detail='只有被指定的终审人才能处理此工单的终审')
@@ -664,7 +679,7 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
                 raise HTTPException(status_code=400, detail='提交终审时必须指定终审人')
 
         updates = {'status': new_status}
-        if new_status == 'rejected':
+        if new_status in {'rejected', 'initial_review'} and current_status in {'initial_review', 'final_review'}:
             updates['rejected_reason'] = body.get('rejected_reason', '')
             updates['result_detail'] = {
                 **(existing.get('result_detail') or {}),
@@ -675,6 +690,16 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         if new_status == 'final_review':
             updates['initial_reviewer_id'] = user.get('user_id', '')
             updates['initial_reviewer_username'] = user.get('username', '')
+            
+            final_approver_id = body.get('assigned_final_approver_id')
+            if final_approver_id:
+                cur = conn.cursor()
+                cur.execute('SELECT username FROM users WHERE id = ?', (final_approver_id,))
+                row = cur.fetchone()
+                if row:
+                    updates['assigned_final_approver_id'] = final_approver_id
+                    updates['assigned_final_approver_username'] = row[0]
+            
             updates['result_detail'] = {
                 **(existing.get('result_detail') or {}),
                 'initial_review_at': _utc_now_iso(),
@@ -714,7 +739,7 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             category='change_order',
             severity=severity,
             status='open',
-            summary=f"变更工单 {existing['order_number']} 状态变更为 {new_status}",
+            summary=f"变更工单 {existing['order_number']} 状态变更为 {STATUS_ZH.get(new_status, new_status)}",
             actor_id=user.get('user_id'),
             actor_username=user.get('username'),
             actor_role=user.get('role'),
@@ -725,7 +750,7 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             conn=conn,
         )
         conn.commit()
-        return {'success': True, 'data': order, 'message': f"工单状态已更新为 {new_status}"}
+        return {'success': True, 'data': order, 'message': f"工单状态已更新为 {STATUS_ZH.get(new_status, new_status)}"}
     finally:
         conn.close()
 

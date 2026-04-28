@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Check, Copy, Eye, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
@@ -126,6 +126,8 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
   const [maintenanceCancelingId, setMaintenanceCancelingId] = useState<string | null>(null);
   const [selectedWindowId, setSelectedWindowId] = useState<string | null>(null);
 
+  const queriedIps = useRef<Set<string>>(new Set());
+
   const selectedWindow = useMemo(
     () => windows.find((item) => item.id === selectedWindowId) || null,
     [selectedWindowId, windows],
@@ -206,7 +208,8 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
 
   const ensureDeviceLoaded = async (targetIp?: string | null) => {
     const target = targetIp?.trim();
-    if (!target || assetByIp.has(target)) return;
+    if (!target || assetByIp.has(target) || queriedIps.current.has(target)) return;
+    queriedIps.current.add(target);
     try {
       const params = new URLSearchParams({
         mode: 'light',

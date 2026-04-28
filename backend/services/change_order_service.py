@@ -290,8 +290,19 @@ def get_summary(conn, user_id: str = '', username: str = '') -> dict:
 
         # Group Todo
         # Get user's groups
-        from .user_service import get_user_change_groups
-        groups = get_user_change_groups(conn, user_id)
+        row = conn.execute('SELECT change_groups_json FROM users WHERE id = ?', (user_id,)).fetchone()
+        groups = set()
+        if row:
+            raw_groups = row[0]
+            if isinstance(raw_groups, str):
+                import json
+                try:
+                    raw_groups = json.loads(raw_groups or '[]')
+                except Exception:
+                    raw_groups = []
+            if isinstance(raw_groups, (list, tuple, set)):
+                groups = {str(item or '').strip() for item in raw_groups if str(item or '').strip()}
+        
         if groups:
             gconds = []
             if 'initial_reviewer' in groups:

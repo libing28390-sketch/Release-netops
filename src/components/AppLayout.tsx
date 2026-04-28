@@ -139,7 +139,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
 
         <div className="flex flex-1 overflow-hidden min-h-0">
           {activeTab !== 'dashboard' && !sidebarCollapsed && (
-            <ModuleSubNav language={language} userRole={currentUserRole} />
+            <ModuleSubNav language={language} userRole={currentUserRole} currentUser={currentUser} />
           )}
           <div className="flex-1 overflow-hidden flex flex-col min-h-0">{children}</div>
         </div>
