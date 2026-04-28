@@ -1174,10 +1174,6 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         showToast(zh ? '请指定初审人' : 'Assign an initial reviewer', 'error');
         return;
       }
-      if (!form.assigned_final_approver_id) {
-        showToast(zh ? '请指定终审人' : 'Assign a final approver', 'error');
-        return;
-      }
       if (commandMode === 'manual' && form.commands.length === 0) {
         showToast(zh ? '请至少添加一条执行命令' : 'Add at least one command', 'error');
         return;

@@ -523,6 +523,7 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
             raise HTTPException(status_code=400, detail='初审人与终审人不能为同一人')
         if payload.get('status') != 'draft' and not payload.get('assigned_initial_reviewer_id'):
             raise HTTPException(status_code=400, detail='提交初审时必须指定初审人')
+
         order = create_change_order(
             conn,
             title=payload['title'],
@@ -543,6 +544,7 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
             risk_level=payload['risk_level'],
             scheduled_start=payload['scheduled_start'],
             scheduled_end=payload['scheduled_end'],
+            authorization_exempt=bool(payload.get('authorization_exempt')),
         )
         log_audit_event(
             event_type='change_order.created',

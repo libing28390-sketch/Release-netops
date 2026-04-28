@@ -47,7 +47,8 @@ def create_change_order(conn, *, title: str, description: str = '',
                         rollback_plan: str = '',
                         risk_level: str = 'low',
                         scheduled_start: str = '',
-                        scheduled_end: str = '') -> dict:
+                        scheduled_end: str = '',
+                        authorization_exempt: bool = False) -> dict:
     order_id = str(uuid.uuid4())
     order_number = generate_order_number(conn)
     now = _utc_now_iso()
@@ -61,8 +62,9 @@ def create_change_order(conn, *, title: str, description: str = '',
             command_template_json,
             target_devices_json, commands_json, rollback_plan, risk_level,
             scheduled_start, scheduled_end,
+            authorization_exempt,
             created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             order_id, order_number, title, description, order_type, priority, status,
@@ -74,11 +76,13 @@ def create_change_order(conn, *, title: str, description: str = '',
             json.dumps(commands or [], ensure_ascii=False),
             rollback_plan, risk_level,
             scheduled_start, scheduled_end,
+            1 if authorization_exempt else 0,
             now, now,
         ),
     )
     conn.commit()
     return get_change_order(conn, order_id)
+
 
 
 def update_change_order(conn, order_id: str, updates: dict) -> dict | None:

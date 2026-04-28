@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, ChevronRight, Copy, Edit3, Plus, Power, PowerOff, RefreshCw, Save, Trash2, X, Search, Check } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Edit3, Plus, Power, PowerOff, RefreshCw, Save, Trash2, X, Search, Check, Shield } from 'lucide-react';
 import type { AlertRuleHistoryItem, AlertRuleListResponse, AlertRulePreview, AlertRuleSettings } from '../types';
 import Pagination from '../components/Pagination';
 import { severityBadgeClass } from '../components/shared';
