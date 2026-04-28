@@ -571,6 +571,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const [templatePreviewError, setTemplatePreviewError] = useState('');
   const [showDevicePicker, setShowDevicePicker] = useState(false);
   const [selectedInventoryDevice, setSelectedInventoryDevice] = useState<DeviceOption | null>(null);
+  const [selectedInventoryDevices, setSelectedInventoryDevices] = useState<DeviceOption[]>([]);
 
   const isPrivilegedDefault = currentUser.role === 'Administrator';
 
@@ -1278,9 +1279,17 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         showToast(zh ? '请选择计划结束时间' : 'Scheduled end time is required', 'error');
         return;
       }
-      if (form.scheduled_start && form.scheduled_end && new Date(form.scheduled_start) >= new Date(form.scheduled_end)) {
-        showToast(zh ? '计划结束时间必须晚于开始时间' : 'End time must be after start time', 'error');
-        return;
+      if (form.scheduled_start && form.scheduled_end) {
+        if (form.scheduled_start >= form.scheduled_end) {
+          showToast(zh ? '计划结束时间必须晚于开始时间' : 'End time must be after start time', 'error');
+          return;
+        }
+        const startMs = new Date(form.scheduled_start.replace(' ', 'T')).getTime();
+        const endMs = new Date(form.scheduled_end.replace(' ', 'T')).getTime();
+        if (endMs - startMs > 14 * 24 * 60 * 60 * 1000) {
+          showToast(zh ? '计划周期不能超过 2 周' : 'Duration cannot exceed 2 weeks', 'error');
+          return;
+        }
       }
       if (!form.target_devices || form.target_devices.length === 0) {
         showToast(zh ? '请选择目标设备' : 'Add at least one target device', 'error');
@@ -1633,20 +1642,31 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   };
 
   const confirmSelectedDevice = () => {
-    if (!selectedInventoryDevice) return;
-    addDeviceFromInventory(selectedInventoryDevice);
-    
-    if (commandMode === 'template' && selectedScenario && selectedInventoryDevice.platform) {
+    if (selectedInventoryDevices.length === 0) {
+      if (selectedInventoryDevice) {
+        addDeviceFromInventory(selectedInventoryDevice);
+      } else {
+        return;
+      }
+    } else {
+      selectedInventoryDevices.forEach(dev => {
+        addDeviceFromInventory(dev);
+      });
+    }
+
+    const firstDev = selectedInventoryDevices[0] || selectedInventoryDevice;
+    if (commandMode === 'template' && selectedScenario && firstDev?.platform) {
       const platformsList = selectedScenario.supported_platforms?.length 
         ? selectedScenario.supported_platforms 
         : Object.keys(selectedScenario.platform_phases || {});
-      const matchedPlatform = findMatchingPlatform(selectedInventoryDevice.platform, platformsList);
+      const matchedPlatform = findMatchingPlatform(firstDev.platform, platformsList);
       if (matchedPlatform) {
         setSelectedScenarioPlatform(matchedPlatform);
       }
     }
-    
+
     setSelectedInventoryDevice(null);
+    setSelectedInventoryDevices([]);
     setShowDevicePicker(false);
     setDeviceKeyword('');
     setDeviceOptions([]);
@@ -2859,14 +2879,40 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                   <DateTimePicker
                     label={zh ? '计划开始时间' : 'Scheduled Start'}
                     value={form.scheduled_start}
-                    onChange={v => setForm(f => ({ ...f, scheduled_start: v }))}
+                    onChange={v => {
+                      if (v && form.scheduled_end) {
+                        if (v >= form.scheduled_end) {
+                          showToast(zh ? '计划开始时间必须早于结束时间' : 'Start time must be earlier than end time', 'error');
+                        } else {
+                          const startMs = new Date(v.replace(' ', 'T')).getTime();
+                          const endMs = new Date(form.scheduled_end.replace(' ', 'T')).getTime();
+                          if (endMs - startMs > 14 * 24 * 60 * 60 * 1000) {
+                            showToast(zh ? '计划周期不能超过 2 周' : 'Duration cannot exceed 2 weeks', 'error');
+                          }
+                        }
+                      }
+                      setForm(f => ({ ...f, scheduled_start: v }));
+                    }}
                     language={language}
                     required
                   />
                   <DateTimePicker
                     label={zh ? '计划结束时间' : 'Scheduled End'}
                     value={form.scheduled_end}
-                    onChange={v => setForm(f => ({ ...f, scheduled_end: v }))}
+                    onChange={v => {
+                      if (v && form.scheduled_start) {
+                        if (form.scheduled_start >= v) {
+                          showToast(zh ? '计划结束时间必须晚于开始时间' : 'End time must be later than start time', 'error');
+                        } else {
+                          const startMs = new Date(form.scheduled_start.replace(' ', 'T')).getTime();
+                          const endMs = new Date(v.replace(' ', 'T')).getTime();
+                          if (endMs - startMs > 14 * 24 * 60 * 60 * 1000) {
+                            showToast(zh ? '计划周期不能超过 2 周' : 'Duration cannot exceed 2 weeks', 'error');
+                          }
+                        }
+                      }
+                      setForm(f => ({ ...f, scheduled_end: v }));
+                    }}
                     language={language}
                     required
                   />
@@ -2968,63 +3014,117 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                       placeholder={zh ? '搜索主机名 / IP / 管理IP / 资产标签' : 'Search hostname / IP / management IP / asset tag'}
                       className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40"
                     />
-                    <div className="mt-3 grid gap-4 xl:grid-cols-[1fr_250px]">
+
+                    <div className="flex justify-between items-center mt-3">
+                      <p className="text-xs font-semibold text-black/50">{zh ? '搜索结果' : 'Search Results'}</p>
+                      {deviceOptions.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const allSelected = deviceOptions.every(dev => selectedInventoryDevices.some(d => d.id === dev.id));
+                            if (allSelected) {
+                              const idsToRemove = deviceOptions.map(d => d.id);
+                              setSelectedInventoryDevices(selectedInventoryDevices.filter(d => !idsToRemove.includes(d.id)));
+                            } else {
+                              const newDevices = [...selectedInventoryDevices];
+                              deviceOptions.forEach(dev => {
+                                if (!newDevices.some(d => d.id === dev.id)) {
+                                  newDevices.push(dev);
+                                }
+                              });
+                              setSelectedInventoryDevices(newDevices);
+                            }
+                          }}
+                          className="text-xs font-semibold text-[#00bceb] hover:text-[#0096bd] transition-colors"
+                        >
+                          {deviceOptions.every(dev => selectedInventoryDevices.some(d => d.id === dev.id))
+                            ? (zh ? '取消全选当前结果' : 'Deselect All Current') 
+                            : (zh ? '全选当前结果' : 'Select All Current')}
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mt-2 grid gap-4 xl:grid-cols-[1fr_250px]">
                       <div className="max-h-72 overflow-y-auto border border-black/10 rounded-3xl bg-slate-50">
                         {deviceLoading ? (
                           <div className="px-3 py-3 text-sm text-black/50">{zh ? '搜索中...' : 'Searching...'}</div>
                         ) : deviceOptions.length === 0 ? (
                           <div className="px-3 py-3 text-sm text-black/40">{zh ? '未找到匹配设备，请修改关键词或直接输入目标设备。' : 'No devices found, change search term or add manually.'}</div>
                         ) : (
-                          deviceOptions.map((dev) => (
-                            <button
-                              type="button"
-                              key={`${dev.id}-${dev.ip_address}`}
-                              onClick={() => setSelectedInventoryDevice(dev)}
-                              className={`w-full px-4 py-3 text-left text-sm text-black/80 hover:bg-[#00bceb]/8 border-b last:border-b-0 border-black/10 transition-all ${selectedInventoryDevice?.id === dev.id ? 'bg-[#00bceb]/15' : ''}`}
-                            >
-                              <div className="flex items-center gap-3">
-                                <input
-                                  type="radio"
-                                  name="selected_inventory_device"
-                                  checked={selectedInventoryDevice?.id === dev.id}
-                                  readOnly
-                                  className="w-4 h-4 text-[#06b6d4] focus:ring-[#06b6d4] border-black/20 shrink-0"
-                                />
-                                <div>
-                                  <div className="font-medium text-sm text-black/85">{dev.hostname || (zh ? '未命名设备' : 'Unnamed')}</div>
-                                  <div className="text-[11px] text-black/45 mt-0.5">
-                                    {dev.asset_tag ? `${dev.asset_tag} · ` : ''}{dev.ip_address || '—'}
+                          deviceOptions.map((dev) => {
+                            const isChecked = selectedInventoryDevices.some(d => d.id === dev.id);
+                            return (
+                              <button
+                                type="button"
+                                key={`${dev.id}-${dev.ip_address}`}
+                                onClick={() => {
+                                  if (isChecked) {
+                                    setSelectedInventoryDevices(selectedInventoryDevices.filter(d => d.id !== dev.id));
+                                  } else {
+                                    setSelectedInventoryDevices([...selectedInventoryDevices, dev]);
+                                  }
+                                }}
+                                className={`w-full px-4 py-3 text-left text-sm text-black/80 hover:bg-[#00bceb]/8 border-b last:border-b-0 border-black/10 transition-all ${isChecked ? 'bg-[#00bceb]/15' : ''}`}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    readOnly
+                                    className="w-4 h-4 rounded text-[#06b6d4] focus:ring-[#06b6d4] border-black/20 shrink-0"
+                                  />
+                                  <div>
+                                    <div className="font-semibold text-sm text-black/85">{dev.hostname || (zh ? '未命名设备' : 'Unnamed')}</div>
+                                    <div className="text-[11px] text-black/45 mt-0.5">
+                                      {dev.asset_tag ? `${dev.asset_tag} · ` : ''}{dev.ip_address || '—'}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            </button>
-                          ))
+                              </button>
+                            );
+                          })
                         )}
                       </div>
-                      <div className="rounded-3xl border border-black/10 bg-slate-50 p-4">
-                        <p className="text-xs font-semibold text-black/50 mb-2">{zh ? '已选设备' : 'Selected device'}</p>
-                        {selectedInventoryDevice ? (
-                          <div className="space-y-3">
-                            <div className="rounded-2xl border border-black/10 bg-white p-3">
-                              <div className="font-medium text-black/80">{selectedInventoryDevice.hostname || (zh ? '未命名设备' : 'Unnamed device')}</div>
-                              <div className="text-[11px] text-black/45">
-                                {selectedInventoryDevice.asset_tag ? `${selectedInventoryDevice.asset_tag} · ` : ''}{selectedInventoryDevice.ip_address || '—'}
-                              </div>
-                              {selectedInventoryDevice.platform && (
-                                <div className="text-[11px] text-black/40">{platformLabel(selectedInventoryDevice.platform)}</div>
-                              )}
+
+                      <div className="rounded-3xl border border-black/10 bg-slate-50 p-4 flex flex-col justify-between">
+                        <div>
+                          <p className="text-xs font-semibold text-black/50 mb-2">{zh ? '已勾选设备' : 'Selected devices'}</p>
+                          {selectedInventoryDevices.length > 0 ? (
+                            <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                              {selectedInventoryDevices.map((dev) => (
+                                <div key={dev.id} className="flex justify-between items-center rounded-xl border border-black/5 bg-white p-2.5">
+                                  <div>
+                                    <div className="font-medium text-xs text-black/80">{dev.hostname || (zh ? '未命名' : 'Unnamed')}</div>
+                                    <div className="text-[10px] text-black/40 mt-0.5">{dev.ip_address || '—'}</div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedInventoryDevices(selectedInventoryDevices.filter(d => d.id !== dev.id));
+                                    }}
+                                    className="p-1 hover:bg-black/5 rounded-lg transition-colors text-black/30 hover:text-rose-500"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                              ))}
                             </div>
+                          ) : (
+                            <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 p-4 text-[11px] text-black/45">
+                              {zh ? '请勾选左侧列表中的一个或多个设备以确认添加到工单。' : 'Check one or more devices to add to the order.'}
+                            </div>
+                          )}
+                        </div>
+                        {selectedInventoryDevices.length > 0 && (
+                          <div className="mt-3">
                             <button
                               type="button"
                               onClick={confirmSelectedDevice}
-                              className="w-full rounded-xl bg-[#06b6d4] px-3 py-2 text-sm font-semibold text-white hover:bg-[#0891b2] transition-all"
+                              className="w-full rounded-xl bg-[#06b6d4] px-3 py-2 text-sm font-semibold text-white hover:bg-[#0891b2] transition-all shadow-md shadow-[#06b6d4]/20"
                             >
-                              {zh ? '确认添加设备' : 'Confirm add device'}
+                              {zh ? `确认添加 (${selectedInventoryDevices.length})` : `Add Selected (${selectedInventoryDevices.length})`}
                             </button>
-                          </div>
-                        ) : (
-                          <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 p-4 text-[11px] text-black/45">
-                            {zh ? '请选择一个设备以确认添加到工单。' : 'Select a device to confirm adding it to the order.'}
                           </div>
                         )}
                       </div>
