@@ -14,15 +14,17 @@ def build():
     os.chdir(project_root)
     
     # 需要编译的核心安全文件
-    source_files = [
-        "backend/license/verifier.py",
-        "backend/license/crypto.py"
+    from setuptools import Extension
+    
+    extensions = [
+        Extension("backend.license.verifier", ["backend/license/verifier.py"]),
+        Extension("backend.license.crypto", ["backend/license/crypto.py"])
     ]
     
     print("开始编译核心模块...")
     setup(
         ext_modules=cythonize(
-            source_files,
+            extensions,
             compiler_directives={'language_level': "3", 'always_allow_keywords': True}
         ),
         # --inplace 表示把编译生成的 .so 或 .pyd 文件放在原目录
@@ -34,7 +36,7 @@ def build():
     print("------------------------------------------------------")
     print("安全建议: 在最终发布部署前（例如 Docker 镜像打包环节），")
     print("可以通过加入以下代码将源码彻底删除：")
-    for f in source_files:
+    for f in ["backend/license/verifier.py", "backend/license/crypto.py"]:
         print(f"os.remove('{f}')")
     print("------------------------------------------------------")
 
