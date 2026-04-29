@@ -22,7 +22,7 @@ fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
 # ---------- 配置 ----------
 NODE_MAJOR=22                       # Node.js LTS 大版本
 PYTHON_MIN="3.10"                   # 最低 Python 版本
-GIT_REPO="git@github.com:libing28390-sketch/netsops.git"
+GIT_REPO="https://github.com/libing28390-sketch/Release-netops.git"
 PROJECT_NAME="netops-automation"
 SERVICE_NAME="netops"
 BACKEND_PORT=8003
