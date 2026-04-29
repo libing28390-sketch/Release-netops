@@ -7,7 +7,7 @@ COPY . .
 RUN npm run build
 
 # ── Runtime stage: Python backend ──
-FROM python:3.13-slim
+FROM python:3.10-slim
 LABEL maintainer="NetOps Team"
 
 # System dependencies
@@ -45,7 +45,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # Non-root user
 RUN useradd --create-home --shell /bin/bash netops && \
     chown -R netops:netops /app
-USER netops
+# USER netops
 
 # Volumes for persistent data
 VOLUME ["/app/data", "/app/backup"]
