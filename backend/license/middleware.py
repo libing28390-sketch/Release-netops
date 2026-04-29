@@ -31,6 +31,7 @@ _EXEMPT_PREFIXES = (
     "/api/license",      # license management endpoints themselves
     "/api/health",       # health check
     "/api/setup",        # initial setup
+    "/api/users",        # user login/auth
     "/docs",             # Swagger UI
     "/openapi.json",     # OpenAPI schema
     "/redoc",            # ReDoc
