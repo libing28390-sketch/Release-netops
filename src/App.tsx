@@ -2770,6 +2770,7 @@ const App: React.FC = () => {
       <SetupWizard
         language={language}
         onComplete={() => setShowSetupWizard(false)}
+        onLanguageChange={handleLanguagePreferenceChange}
         showToast={showToast}
       />
     );

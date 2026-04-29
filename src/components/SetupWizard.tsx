@@ -9,6 +9,7 @@ import {
 interface SetupWizardProps {
   language: string;
   onComplete: () => void;
+  onLanguageChange: (lang: 'en' | 'zh') => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -43,7 +44,7 @@ const WechatIcon = () => (
   </svg>
 );
 
-const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, showToast }) => {
+const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, onLanguageChange, showToast }) => {
   const zh = language === 'zh';
   const [step, setStep] = useState(0);
 
@@ -126,7 +127,11 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, showToa
         body: JSON.stringify({ system_name: sysName, timezone, preferred_language: prefLang }),
       });
       if (!r.ok) throw new Error('Failed');
-      showToast(zh ? '平台设置已保存' : 'Platform settings saved', 'success');
+      // Apply language change to the entire UI immediately
+      if (prefLang === 'en' || prefLang === 'zh') {
+        onLanguageChange(prefLang as 'en' | 'zh');
+      }
+      showToast(prefLang === 'zh' ? '平台设置已保存' : 'Platform settings saved', 'success');
       setStep(2);
     } catch {
       showToast(zh ? '保存失败' : 'Save failed', 'error');
