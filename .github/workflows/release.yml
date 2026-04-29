@@ -45,6 +45,11 @@ jobs:
           rm -f bug_fix_memory.md
           rm -rf docs/
           rm -rf skills/
+
+          # 删除 AI 助手残留和本地开发者垃圾文件
+          rm -rf .codex/ .cursor/ .playwright-mcp/
+          rm -f .clinerules .cursorrules .geminirules mcp-config.json
+          rm -f -- "--version"
           
           # 删除自动化配置文件夹，客户不需要看到这些
           rm -rf .github/
