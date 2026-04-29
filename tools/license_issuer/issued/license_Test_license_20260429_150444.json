@@ -1,0 +1,31 @@
+{
+  "payload": {
+    "license_id": "82bc1f66-5948-4681-9e1d-2faf916e82da",
+    "company": "Test license",
+    "license_type": "enterprise",
+    "issued_at": "2026-04-29T07:04:44.358034+00:00",
+    "expire_at": "2027-04-29T23:59:59",
+    "device_limit": 1000,
+    "server_limit": 1000,
+    "features": [
+      "automation",
+      "config_management",
+      "monitoring",
+      "alerting",
+      "rbac",
+      "change_orders",
+      "inspections",
+      "topology",
+      "ipam",
+      "capacity",
+      "compliance",
+      "reports",
+      "api_access",
+      "scheduled_jobs",
+      "password_rotation"
+    ],
+    "machine_id": null,
+    "metadata": null
+  },
+  "signature": "Dh2j+vcxm5hHeOnQGht6ul++XIiXnT0fqUtLCu4yZAaNbRf5QJhtVAjx2Zheeeys3t/GTLYIFY3jPQ2iREhq+nvHjOWzJzqG1IyZFH5nsj4c/5bIcsqXhODCddK8w1GZXPY2Njk0jlVe6YTAun8YpsTIWUxyL8svM5vqZFr3nW4eXIichgusONOood2ZPi1h0bOlKAuqqgYVEoiRcDNvEDkVrWZ3vUEX31Jplmw9yXSRSUmIFBMlmqeolfWdMNIzRvSK8gdBhAlpSp4TPXqp6htGPImvnDpufLbgzy8Lbzau3zNUPFnSf9t006+vBpFFb3KR7lFttmTTHgyzPKKnPA=="
+}

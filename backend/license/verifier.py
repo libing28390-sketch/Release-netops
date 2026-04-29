@@ -234,6 +234,7 @@ class LicenseVerifier:
                     expire_at=payload.expire_at,
                     days_remaining=days_remaining,
                     device_limit=payload.device_limit,
+                    server_limit=payload.server_limit,
                     features=payload.features,
                     error=f"License expired {abs(days_remaining)} days ago",
                 )
@@ -266,6 +267,7 @@ class LicenseVerifier:
                     expire_at=payload.expire_at,
                     days_remaining=days_remaining,
                     device_limit=payload.device_limit,
+                    server_limit=payload.server_limit,
                     features=payload.features,
                     error=f"License is bound to machine '{payload.machine_id}', but current machine is '{current_machine_id}'.",
                 )
@@ -284,6 +286,7 @@ class LicenseVerifier:
             expire_at=payload.expire_at,
             days_remaining=days_remaining,
             device_limit=payload.device_limit,
+            server_limit=payload.server_limit,
             features=payload.features,
             warnings=warnings,
         )
@@ -322,6 +325,21 @@ class LicenseVerifier:
         """Return the device limit from the license."""
         status = self.validate()
         return status.device_limit or 0
+
+    def check_server_limit(self, current_count: int) -> bool:
+        """
+        Check if the current server count is within the licensed limit.
+        Returns True if within limit, False if exceeded.
+        """
+        status = self.validate()
+        if not status.valid:
+            return False
+        return current_count <= (status.server_limit or 0)
+
+    def get_server_limit(self) -> int:
+        """Return the server limit from the license."""
+        status = self.validate()
+        return status.server_limit or 0
 
     def is_expired(self) -> bool:
         """Quick check: is the license expired?"""

@@ -26,8 +26,8 @@ GIT_REPO="https://github.com/libing28390-sketch/Release-netops.git"
 PROJECT_NAME="netops-automation"
 SERVICE_NAME="netops"
 BACKEND_PORT=8003
-NGINX_PORT=8080                     # Nginx 监听端口（如 80 被占用可改为 8080 等）
-SERVER_NAME="www.kebos.top"                     # 改为你的域名，如 netops.example.com
+NGINX_PORT=80                       # Nginx 监听端口
+SERVER_NAME="_"                     # 默认匹配所有域名，部署后按需改为实际域名
 
 # ---------- 检查是否以 root 运行 ----------
 if [ "$EUID" -eq 0 ]; then
