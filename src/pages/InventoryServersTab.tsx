@@ -235,8 +235,8 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
     if (!sortConfig) return servers;
     const { key, direction } = sortConfig;
     return [...servers].sort((a, b) => {
-      const av = (a as Record<string, unknown>)[key] ?? '';
-      const bv = (b as Record<string, unknown>)[key] ?? '';
+      const av = (a as any)[key] ?? '';
+      const bv = (b as any)[key] ?? '';
       const cmp = String(av).localeCompare(String(bv));
       return direction === 'asc' ? cmp : -cmp;
     });

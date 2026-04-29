@@ -77,7 +77,9 @@ class LicenseMiddleware(BaseHTTPMiddleware):
 
             # Inject warning header if license is expiring soon
             if lic_status.warnings:
-                response.headers["X-License-Warning"] = "; ".join(lic_status.warnings)
+                clean_warnings = "; ".join(lic_status.warnings).replace("\u2014", "-")
+                clean_warnings = clean_warnings.encode("latin-1", "replace").decode("latin-1")
+                response.headers["X-License-Warning"] = clean_warnings
                 if lic_status.days_remaining is not None:
                     response.headers["X-License-Days-Remaining"] = str(lic_status.days_remaining)
 
@@ -92,7 +94,8 @@ class LicenseMiddleware(BaseHTTPMiddleware):
                 # Allow read-only access with warning
                 response = await call_next(request)
                 response.headers["X-License-Expired"] = "true"
-                response.headers["X-License-Error"] = error_msg
+                clean_error = error_msg.replace("\u2014", "-").encode("latin-1", "replace").decode("latin-1")
+                response.headers["X-License-Error"] = clean_error
                 return response
             else:
                 logger.warning(

@@ -21,15 +21,16 @@ interface PaginationProps {
   itemsPerPage?: number;
   onItemsPerPageChange?: (size: number) => void;
   language: string;
+  alwaysVisible?: boolean;
 }
 
-const Pagination: React.FC<PaginationProps> = ({ currentPage, totalItems, onPageChange, itemsPerPage = 10, onItemsPerPageChange, language }) => {
+const Pagination: React.FC<PaginationProps> = ({ currentPage, totalItems, onPageChange, itemsPerPage = 10, onItemsPerPageChange, language, alwaysVisible }) => {
   const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
-  if (totalItems === 0) return null;
+  if (totalItems === 0 && !alwaysVisible) return null;
 
-  const startItem = Math.min((currentPage - 1) * itemsPerPage + 1, totalItems);
+  const startItem = totalItems === 0 ? 0 : Math.min((currentPage - 1) * itemsPerPage + 1, totalItems);
   const endItem = Math.min(currentPage * itemsPerPage, totalItems);
-  const progressPct = Math.max(2, Math.min(100, Math.round((endItem / totalItems) * 100)));
+  const progressPct = totalItems === 0 ? 0 : Math.max(2, Math.min(100, Math.round((endItem / totalItems) * 100)));
   const pageItems = buildPaginationItems(currentPage, totalPages);
   const zh = language === 'zh';
 

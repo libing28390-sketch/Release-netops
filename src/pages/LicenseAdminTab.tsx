@@ -95,6 +95,7 @@ const LicenseAdminTab: React.FC<Props> = ({ language }) => {
   const [showFeatures, setShowFeatures] = useState(true);
   const [showAudit, setShowAudit] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [copiedText, setCopiedText] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchAll = useCallback(async () => {
@@ -155,6 +156,61 @@ const LicenseAdminTab: React.FC<Props> = ({ language }) => {
     }
     setUploading(false);
     e.target.value = '';
+  };
+
+  const copyToClipboard = (text: string) => {
+    const onSuccess = () => {
+      setCopiedText(text);
+      setTimeout(() => setCopiedText(null), 2000);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        onSuccess();
+      }).catch(() => {
+        fallbackCopyTextToClipboard(text, onSuccess);
+      });
+    } else {
+      fallbackCopyTextToClipboard(text, onSuccess);
+    }
+  };
+
+  const fallbackCopyTextToClipboard = (text: string, onSuccess: () => void) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.top = "0";
+    textArea.style.left = "0";
+    textArea.style.position = "fixed";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      const successful = document.execCommand('copy');
+      if (successful) onSuccess();
+    } catch (err) {
+      // noop
+    }
+    document.body.removeChild(textArea);
+  };
+
+  const translateError = (err?: string) => {
+    if (!err) return '';
+    if (!zh) return err;
+    const lower = err.toLowerCase();
+    if (lower.includes('public key not found')) return '未找到公钥文件。';
+    if (lower.includes('license file not found')) return '未找到授权文件。';
+    if (lower.includes('corrupted')) return '授权文件损坏（非法的 JSON 格式）。';
+    if (lower.includes('invalid license signature')) return '授权签名无效，文件可能已被篡改。';
+    if (lower.includes('license expired')) {
+      const match = err.match(/\d+/);
+      const days = match ? match[0] : '';
+      return `授权已过期${days ? ` ${days} 天` : ''}。`;
+    }
+    if (lower.includes('machine id')) {
+      if (lower.includes('lacks machine_id')) return '非试用版授权必须绑定机器码。';
+      return '授权文件绑定的机器码与当前服务器不一致。';
+    }
+    return err;
   };
 
   const fmtDate = (iso?: string) => {
@@ -251,7 +307,7 @@ const LicenseAdminTab: React.FC<Props> = ({ language }) => {
           <ShieldAlert size={20} className="text-red-500 shrink-0" />
           <div>
             <p className="text-sm font-semibold text-red-800">{zh ? 'License 无效' : 'License Invalid'}</p>
-            <p className="text-xs text-red-600 mt-0.5">{status.error}</p>
+            <p className="text-xs text-red-600 mt-0.5">{translateError(status.error)}</p>
           </div>
         </div>
       )}
@@ -261,7 +317,11 @@ const LicenseAdminTab: React.FC<Props> = ({ language }) => {
           <AlertTriangle size={20} className="text-amber-500 shrink-0" />
           <div>
             <p className="text-sm font-semibold text-amber-800">{zh ? '授权即将到期' : 'License Expiring Soon'}</p>
-            {status.warnings.map((w, i) => <p key={i} className="text-xs text-amber-600 mt-0.5">{w}</p>)}
+            <p className="text-xs text-amber-600 mt-0.5">
+              {zh 
+                ? `License 将在 ${status?.days_remaining} 天内过期，请尽快续期。` 
+                : `License expires in ${status?.days_remaining} day(s) — please renew soon.`}
+            </p>
           </div>
         </div>
       )}
@@ -373,13 +433,12 @@ const LicenseAdminTab: React.FC<Props> = ({ language }) => {
                   {row.copyable && row.value && (
                     <button
                       onClick={() => {
-                        navigator.clipboard.writeText(row.value as string);
-                        setFeedbackMsg({ type: 'success', text: zh ? '已复制机器码' : 'Machine ID copied' });
+                        copyToClipboard(row.value as string);
                       }}
-                      className="text-black/30 hover:text-cyan-600 transition-colors opacity-0 group-hover:opacity-100"
+                      className={`transition-colors ${copiedText === row.value ? 'text-emerald-500' : 'text-black/30 hover:text-cyan-600'}`}
                       title={zh ? '复制' : 'Copy'}
                     >
-                      <Copy size={12} />
+                      {copiedText === row.value ? <CheckCircle2 size={12} /> : <Copy size={12} />}
                     </button>
                   )}
                 </div>

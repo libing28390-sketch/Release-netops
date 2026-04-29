@@ -253,7 +253,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
     scheduled_start?: string;
     scheduled_end?: string;
   }>({ loading: false });
-  const ticketValidateTimer = useRef<ReturnType<typeof setTimeout>>();
+  const ticketValidateTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   /* Debounced ticket validation */
   useEffect(() => {
@@ -694,7 +694,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                                   : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
                               }`}
                             >
-                              {tag.name}
+                              {isZh ? tag.label_zh : tag.label}
                             </button>
                           ))}
                         </div>

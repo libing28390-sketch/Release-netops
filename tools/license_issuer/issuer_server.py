@@ -9,7 +9,7 @@ License Issuer Server — 开发者专用签发工具
     cd d:/netsops/tools/license_issuer
     python issuer_server.py
 
-    然后浏览器打开 http://localhost:9900
+    然后浏览器打开 http://localhost:8888
 """
 
 from __future__ import annotations
@@ -328,7 +328,7 @@ if __name__ == "__main__":
     print(f"  Private key: {PRIVATE_KEY_PATH}")
     print(f"  Public key:  {PUBLIC_KEY_PATH}")
     print(f"  Archive dir: {ISSUED_DIR}")
-    print(f"  UI:          http://localhost:9900")
+    print(f"  UI:          http://localhost:8888")
     print("=" * 56 + "\n")
 
-    uvicorn.run(app, host="0.0.0.0", port=9900, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=8888, log_level="info")

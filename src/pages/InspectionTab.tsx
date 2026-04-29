@@ -109,7 +109,7 @@ const ScoreGauge: React.FC<{ score: number | null; size?: number }> = ({ score, 
 };
 
 /* ── Th helper ── */
-const Th: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
+const Th: React.FC<{ children?: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
   <th className={`px-4 py-3 text-[10px] font-bold uppercase tracking-[0.12em] text-black/35 whitespace-nowrap ${className}`}>{children}</th>
 );
 

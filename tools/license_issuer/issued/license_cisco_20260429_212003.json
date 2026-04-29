@@ -1,0 +1,31 @@
+{
+  "payload": {
+    "license_id": "e49696d0-9a8b-465c-af74-86756f54e727",
+    "company": "cisco",
+    "license_type": "enterprise",
+    "issued_at": "2026-04-29T13:20:03.757658+00:00",
+    "expire_at": "2026-05-06T23:59:59",
+    "device_limit": 1000,
+    "server_limit": 1000,
+    "features": [
+      "automation",
+      "config_management",
+      "monitoring",
+      "alerting",
+      "rbac",
+      "change_orders",
+      "inspections",
+      "topology",
+      "ipam",
+      "capacity",
+      "compliance",
+      "reports",
+      "api_access",
+      "scheduled_jobs",
+      "password_rotation"
+    ],
+    "machine_id": "7294-18BB-E08A-5D49",
+    "metadata": null
+  },
+  "signature": "Fu4cu8KSoZAnNP0flKuhRaxiJrFL0+3WjbZ5ONLfRR1MBWcepy3D+KMA4OOy0ATnydtxKtO/i++CHUhAznRC+oENqQkrVj3oKrKYJRJI43hADahzDPViYxLnXIyFhGSBC4I3VFzoYPs/IQQMik6EWuI2HfdOO6aRXpiTk3F1BDddlKFE1lpRbLgt9PudJdbEegH1HLJpXZizTr4Oobn/IDH3iTCDt4oMOm9tz/Kd2T8a7DR0thYOPmxr7KfeZicLntsMQ2LxdozKZLIh9Cd5uWY9h7X7pTbEng3i6XR7XTepDcouhaRZeVxk9ZOIp779aK2//o8NjN4SCLJIQ6ygxg=="
+}

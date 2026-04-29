@@ -196,7 +196,7 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
   }, []);
 
   const [countdown, setCountdown] = useState('--:--:--');
-  const countdownRef = useRef<ReturnType<typeof setInterval>>();
+  const countdownRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   useEffect(() => {
     if (countdownRef.current) clearInterval(countdownRef.current);
     if (!preview?.upcoming?.[0]) { setCountdown('--:--:--'); return; }
