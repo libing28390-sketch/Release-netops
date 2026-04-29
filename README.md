@@ -17,6 +17,11 @@ Nexora is built for network engineers who need a unified console to manage multi
 - **Dashboard** — Operational overview with device status donut chart, job trends, compliance trends, and real-time KPIs
 - **Multi-vendor device inventory** with platform, model, software, site, and role metadata
 - **Interface monitoring** with traffic, bandwidth utilization, status changes, and flap detection
+- **Topology Map** — Automatic node linking maps, real-time discovery graphs, and operational visibility
+- **Change Orders** — Standardized operational review chains, approval mechanisms, and execution pre-checks
+- **Visual Rack Management** — 2D equipment chassis mapping across physical locations
+- **Tag & Asset Lifecycle** — Tailored metadata categorization and compliance tracking
+- **Credential Vault & Offline Guard** — Granular SSH/Telnet profile security and system authorization
 - **Automation center** for direct execution, playbooks, and execution history
 - **Configuration center** for backup, snapshot browsing, diff comparison, search, and rollback workflows
 - **Config drift detection** — Scan all devices for running-config changes, color-coded diff view, selective line-level rollback preview
@@ -154,6 +159,11 @@ Nexora 是一个面向网络工程师和运维团队的统一运维平台，目�
 - **运维看板** — 设备状态甜甜圈图、作业趋势、合规趋势、实时 KPI 卡片
 - **多厂商设备资产管理**，支持平台、型号、版本、站点、角色等信息维护
 - **接口监控**，支持流量、带宽利用率、状态变化和 flap 检测
+- **拓扑大屏** — 跨厂商自动化物理链路发现、全景负载追踪
+- **电子工单变更中心** — 覆盖运维任务双因子审批、变更排期与操作合规保障
+- **2D 物理机架可视化** — 支持对数据中心机房空间排布的精准映射
+- **自定义资产标签与全寿期追踪** — 贯穿硬件入库到退役维护
+- **加密凭据保险箱与离线证书防线** — 保障基础设施登录、授权万无一失
 - **自动化中心**，支持直接执行、场景编排、Playbook 和执行历史
 - **配置中心**，支持备份、快照浏览、差异对比、搜索和回滚流程
 - **配置漂移检测** — 全量扫描设备配置变化，彩色 diff 视图，支持选择性行级回滚预览
