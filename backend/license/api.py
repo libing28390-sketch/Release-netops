@@ -332,7 +332,7 @@ async def upload_license(request: Request, file: UploadFile = File(...)):
         audit.log("rejected", "Upload rejected: invalid file format", client_ip, username=user.get('username', 'system'))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid license file format",
+            detail="Invalid license file",
         )
 
     # Verify signature
@@ -343,7 +343,7 @@ async def upload_license(request: Request, file: UploadFile = File(...)):
         audit.log("rejected", f"Upload rejected: signature verification FAILED (possible forgery attempt)", client_ip, username=user.get('username', 'system'))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="License signature verification failed — invalid or tampered file",
+            detail="Invalid license file",
         )
 
     # ── Signature valid — proceed with save ──
