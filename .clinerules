@@ -16,3 +16,8 @@
 - Backend: `backend/*.py`, `api/*.py`, `core/*.py`.
 - Frontend: `src/**/*.tsx`, `src/**/*.css`.
 - Documentation: `*.md` (specifically `zhihu.md`).
+
+## Bug Fix Recording
+- **Memory File**: `bug_fix_memory.md`
+- **Rule**: Whenever a bug is fixed or a logical enhancement is made, append a record to `bug_fix_memory.md` categorized by the date and adhering to the established template (Title, Problem, Technical Root Cause, Solution).
+

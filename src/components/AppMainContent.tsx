@@ -37,6 +37,7 @@ const ScheduledJobsTab = lazy(() => import('../pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
 const TagManagementTab = lazy(() => import('../pages/TagManagementTab'));
+const LicenseAdminTab = lazy(() => import('../pages/LicenseAdminTab'));
 
 const lazyPanelFallback = (
   <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-black/5 bg-white/70 text-sm text-black/40">
@@ -1091,6 +1092,12 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             findMatchingPlatform={props.findMatchingPlatform}
             initialView={changeOrderPage === 'my-todo' ? 'my_todo' : changeOrderPage === 'group-todo' ? 'group_todo' : changeOrderPage === 'participated' ? 'my_participated' : changeOrderPage === 'focus' ? 'my_focus' : changeOrderPage === 'drafts' ? 'my_drafts' : changeOrderPage === 'new' ? 'create' : 'all'}
           />
+        </Suspense>
+      )}
+
+      {activeTab === 'license' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <LicenseAdminTab language={language} t={t} />
         </Suspense>
       )}
     </main>

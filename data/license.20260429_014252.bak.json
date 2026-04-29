@@ -1,0 +1,30 @@
+{
+  "payload": {
+    "license_id": "2803633d-4b0e-4132-84ce-32b5370b2ac1",
+    "company": "Nexora Demo Inc.",
+    "license_type": "enterprise",
+    "issued_at": "2026-04-29T00:45:31.046397+00:00",
+    "expire_at": "2027-12-31T23:59:59",
+    "device_limit": 1000,
+    "features": [
+      "automation",
+      "config_management",
+      "monitoring",
+      "alerting",
+      "rbac",
+      "change_orders",
+      "inspections",
+      "topology",
+      "ipam",
+      "capacity",
+      "compliance",
+      "reports",
+      "api_access",
+      "scheduled_jobs",
+      "password_rotation"
+    ],
+    "machine_id": null,
+    "metadata": null
+  },
+  "signature": "f7VR0vi/y1lo/48RHaLdEIu72g08fMETj3wO1ADqBvRUnasjL6Ve/VjLyb7XDWUOp0qoeLUWZWxyH9WCu7mI+4ow//seGNX7SsGFz03qHLfvJRH/q9l7t/kcMaRukuISRwTDHq14B0jSCudfjt82iQmK7PxAszXgU0mGLZs27MvGCsgXQMI3xyn3OWDQQ3wtLLNZuc9hJZ1hkiMzplMsDpj6KV9sKfrIJEWAajhgjMEFnKTH89a/wkfrcNZjWRMb4V+b91rZOgN5tLTxHXkUnBoRc+nrHBpNhcfFwUn2XxDQN47YAyfxeBjzfJcyb71Gv0iBPAL1LDbKkaC93b1Shw=="
+}

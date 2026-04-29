@@ -29,6 +29,7 @@ import {
   X,
   Zap,
   Tags,
+  Shield,
 } from 'lucide-react';
 import type { HostResourceSnapshot } from '../types';
 
@@ -686,17 +687,17 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => {
                   const next = !managementGroupOpen;
                   setManagementGroupOpen(next);
-                  if (next && !['history', 'configuration', 'users'].includes(activeTab)) {
+                  if (next && !['history', 'configuration', 'users', 'license'].includes(activeTab)) {
                     setActiveTab('history');
                   }
                 }}
                 className={`${navButtonGroupClass} ${
-                  ['history', 'configuration', 'users'].includes(activeTab)
+                  ['history', 'configuration', 'users', 'license'].includes(activeTab)
                     ? activePrimaryNavClass
                     : inactivePrimaryNavClass
                 }`}
               >
-                <Settings size={17} className={['history', 'configuration', 'users'].includes(activeTab) ? 'text-[#5fe6ff]' : 'text-white/72'} />
+                <Settings size={17} className={['history', 'configuration', 'users', 'license'].includes(activeTab) ? 'text-[#5fe6ff]' : 'text-white/72'} />
                 <span className={navLabelClass}>{language === 'zh' ? '平台管理' : 'Management'}</span>
                 <ChevronRight size={groupChevronIconSize} className={`${plainChevronClass} ${managementGroupOpen ? 'rotate-90 text-white/55' : ''}`} />
               </button>
@@ -706,6 +707,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                     { id: 'history', icon: History, label: t('auditLogs') },
                     { id: 'configuration', icon: Settings, label: t('configuration') },
                     { id: 'users', icon: User, label: t('userManagement') },
+                    { id: 'license', icon: Shield, label: language === 'zh' ? '授权管理' : 'License' },
                   ] as const).map((item) => {
                     const isActive = activeTab === item.id;
                     return (

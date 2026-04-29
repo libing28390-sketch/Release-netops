@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexora License Issuer</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
+.header{background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);border-bottom:1px solid rgba(56,189,248,.12);padding:20px 32px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:1.3rem;font-weight:700;display:flex;align-items:center;gap:10px}
+.header h1 .badge{font-size:.6rem;padding:3px 8px;border-radius:6px;background:rgba(239,68,68,.15);color:#f87171;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.header p{font-size:.75rem;color:#64748b;margin-top:2px}
+.container{max-width:1100px;margin:0 auto;padding:24px}
+.tabs{display:flex;gap:4px;margin-bottom:20px;background:#1e293b;border-radius:12px;padding:4px;border:1px solid rgba(255,255,255,.05)}
+.tab{flex:1;padding:10px;text-align:center;border-radius:8px;cursor:pointer;font-size:.8rem;font-weight:600;color:#94a3b8;transition:all .2s}
+.tab.active{background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;box-shadow:0 4px 12px rgba(14,165,233,.3)}
+.tab:hover:not(.active){background:rgba(255,255,255,.04);color:#e2e8f0}
+.panel{display:none}.panel.active{display:block}
+.card{background:#1e293b;border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:24px;margin-bottom:16px}
+.card h3{font-size:.85rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.1em;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+label{display:block;font-size:.75rem;font-weight:600;color:#64748b;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em}
+input,select,textarea{width:100%;padding:10px 14px;background:#0f172a;border:1px solid rgba(255,255,255,.08);border-radius:10px;color:#e2e8f0;font-size:.85rem;outline:none;transition:border .2s}
+input:focus,select:focus,textarea:focus{border-color:#0ea5e9;box-shadow:0 0 0 3px rgba(14,165,233,.1)}
+textarea{resize:vertical;min-height:60px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+.field{margin-bottom:14px}
+.features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.feat-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.05);cursor:pointer;transition:all .15s;font-size:.75rem}
+.feat-item:hover{border-color:rgba(14,165,233,.3);background:rgba(14,165,233,.05)}
+.feat-item.on{border-color:rgba(16,185,129,.4);background:rgba(16,185,129,.08)}
+.feat-item input{accent-color:#10b981;width:14px;height:14px}
+.preset-bar{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.preset-btn{padding:5px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:transparent;color:#94a3b8;font-size:.7rem;font-weight:600;cursor:pointer;transition:all .15s}
+.preset-btn:hover{border-color:#0ea5e9;color:#0ea5e9;background:rgba(14,165,233,.06)}
+.preset-btn.active{border-color:#10b981;color:#10b981;background:rgba(16,185,129,.08)}
+.btn-primary{display:inline-flex;align-items:center;gap:8px;padding:12px 28px;border-radius:12px;border:none;background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;font-size:.9rem;font-weight:700;cursor:pointer;transition:all .2s;box-shadow:0 4px 16px rgba(14,165,233,.3)}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(14,165,233,.4)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn-sm{padding:6px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#94a3b8;font-size:.7rem;font-weight:600;cursor:pointer;transition:all .15s}
+.btn-sm:hover{border-color:#0ea5e9;color:#0ea5e9}
+.btn-sm.dl{border-color:rgba(16,185,129,.3);color:#10b981}
+.toast{position:fixed;top:20px;right:20px;padding:14px 20px;border-radius:12px;font-size:.85rem;font-weight:600;z-index:999;transform:translateX(120%);transition:transform .3s;max-width:380px}
+.toast.show{transform:translateX(0)}
+.toast.ok{background:#065f46;border:1px solid #10b981;color:#a7f3d0}
+.toast.err{background:#7f1d1d;border:1px solid #ef4444;color:#fca5a5}
+table{width:100%;border-collapse:collapse;font-size:.75rem}
+th{text-align:left;padding:10px 12px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.08em;font-size:.65rem;border-bottom:1px solid rgba(255,255,255,.06)}
+td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.03);color:#cbd5e1}
+tr:hover td{background:rgba(255,255,255,.02)}
+.type-badge{padding:3px 8px;border-radius:6px;font-size:.65rem;font-weight:700;text-transform:uppercase}
+.type-trial{background:rgba(100,116,139,.15);color:#94a3b8}
+.type-standard{background:rgba(59,130,246,.12);color:#60a5fa}
+.type-professional{background:rgba(139,92,246,.12);color:#a78bfa}
+.type-enterprise{background:rgba(245,158,11,.12);color:#fbbf24}
+.empty-state{text-align:center;padding:48px;color:#475569;font-size:.85rem}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);z-index:50;display:none;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:#1e293b;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:28px;max-width:560px;width:90%;max-height:80vh;overflow-y:auto}
+.modal h2{font-size:1.1rem;font-weight:700;margin-bottom:4px}
+.modal .sub{font-size:.75rem;color:#64748b;margin-bottom:16px}
+pre.license-json{background:#0f172a;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:14px;font-size:.7rem;overflow-x:auto;max-height:300px;color:#7dd3fc;line-height:1.5}
+.actions{display:flex;gap:10px;margin-top:16px;justify-content:flex-end}
+.security-note{margin-top:20px;padding:14px 18px;border-radius:12px;background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);font-size:.72rem;color:#fca5a5;line-height:1.6}
+.security-note strong{color:#f87171}
+.dt-picker{position:absolute;top:100%;left:0;z-index:100;background:#ffffff;border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px;width:380px;display:none;box-shadow:0 10px 25px rgba(0,0,0,.1);margin-top:4px}
+.dt-picker.show{display:block}
+.dt-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.dt-header span{font-size:.9rem;font-weight:700;color:#00172D}
+.dt-header button{background:none;border:none;color:#a3a3a3;cursor:pointer;padding:2px 6px;font-size:1rem}
+.dt-header button:hover{color:#1e293b}
+.dt-weekdays{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;font-size:.7rem;color:#a3a3a3;margin-bottom:8px}
+.dt-body{display:flex;gap:12px}
+.dt-calendar{flex:1}
+.dt-days{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.dt-day{border:none;background:none;color:#00172D;font-size:.75rem;padding:6px 0;border-radius:8px;cursor:pointer;text-align:center;transition:all .15s}
+.dt-day:hover{background:#f3f4f6}
+.dt-day.other-month{color:#d1d5db}
+.dt-day.selected{background:#00bceb;color:#fff;font-weight:700}
+.dt-day.today{border:1px solid #00bceb;color:#00bceb;font-weight:700}
+.dt-time{width:100px;border-left:1px solid #f3f4f6;padding-left:12px;display:flex;flex-direction:column}
+.dt-time-lbl{font-size:.65rem;color:#a3a3a3;display:flex;align-items:center;gap:4px;margin-bottom:8px}
+.dt-time-cols{display:flex;gap:4px;justify-content:center;flex:1}
+.dt-time-col{display:flex;flex-direction:column;gap:2px;overflow-y:auto;height:140px;scrollbar-width:none}
+.dt-time-col::-webkit-scrollbar{display:none}
+.dt-time-btn{border:none;background:none;padding:4px 6px;font-size:.75rem;border-radius:4px;cursor:pointer;color:#00172D;text-align:center}
+.dt-time-btn.active{background:#00bceb;color:#fff;font-weight:700}
+.dt-time-btn:hover:not(.active){background:#f3f4f6}
+.dt-footer{border-top:1px solid #f3f4f6;margin-top:12px;padding-top:12px;display:flex;justify-content:space-between;align-items:center}
+.dt-footer-clear{border:none;background:none;color:#a3a3a3;font-size:.75rem;cursor:pointer;display:flex;align-items:center;gap:4px}
+.dt-footer-clear:hover{color:#ef4444}
+.dt-footer-confirm{border:none;background:#00bceb;color:#fff;font-size:.75rem;font-weight:700;padding:6px 16px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:background .15s}
+.dt-footer-confirm:hover{background:#0ea5e9}
+
+/* Login Overlay Styles */
+.login-overlay-gate{position:fixed;inset:0;background:#0f172a;z-index:1000;display:flex;align-items:center;justify-content:center}
+.login-box{background:#1e293b;padding:32px;border-radius:16px;border:1px solid rgba(255,255,255,.08);width:100%;max-width:400px;box-shadow:0 20px 50px rgba(0,0,0,.6)}
+.login-box h2{font-size:1.25rem;font-weight:700;margin-bottom:8px;text-align:center;color:#fff}
+.login-box p{font-size:.8rem;color:#64748b;margin-bottom:24px;text-align:center}
+.login-box .form-group{margin-bottom:16px}
+.login-box input{background:#0f172a;border:1px solid rgba(255,255,255,.1);border-radius:10px;color:#fff}
+.login-box .btn-login{width:100%;padding:12px;border-radius:10px;background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;font-weight:700;border:none;cursor:pointer;transition:all .2s;margin-top:8px}
+.login-box .btn-login:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(14,165,233,.4)}
+
+</style>
+</head>
+<body>
+
+<!-- Login Gate Overlay -->
+<div id="login-gate" class="login-overlay-gate">
+  <div class="login-box">
+    <h2>🔑 签发工具登录验证</h2>
+    <p>请输入管理员凭证以继续</p>
+    <div class="form-group">
+      <label>用户名</label>
+      <input type="text" id="login-username" placeholder="请输入用户名" value="admin" />
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input type="password" id="login-password" placeholder="请输入密码" />
+    </div>
+    <button class="btn-login" onclick="attemptLogin()">安全登录</button>
+  </div>
+</div>
+
+<div class="header">
+  <div>
+    <h1>🔑 Nexora License Issuer <span class="badge">Developer Only</span></h1>
+    <p>为客户签发 License 文件 — 私钥仅存于本机</p>
+  </div>
+  <div>
+    <button class="btn-sm" style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;" onclick="openPasswordModal()">🔐 修改凭证</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('issue')">📝 签发 License</div>
+    <div class="tab" onclick="switchTab('history')">📋 签发历史</div>
+    <div class="tab" onclick="switchTab('verify')">🔍 验证 License</div>
+  </div>
+
+  <!-- Issue Panel -->
+  <div id="panel-issue" class="panel active">
+    <div class="card">
+      <h3>📋 客户信息</h3>
+      <div class="row">
+        <div class="field">
+          <label>公司名称 *</label>
+          <input id="f-company" placeholder="例：华为技术有限公司" />
+        </div>
+        <div class="field">
+          <label>版本类型</label>
+          <select id="f-type" onchange="onTypeChange()">
+            <option value="trial">试用版 Trial (功能受限)</option>
+            <option value="standard" selected>标准版 Standard</option>
+            <option value="professional">专业版 Professional</option>
+            <option value="enterprise">企业版 Enterprise (全功能)</option>
+          </select>
+        </div>
+      </div>
+      <div class="row3">
+        <div class="field" style="position:relative;">
+          <label>到期日期 *</label>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <input id="f-expire" type="text" placeholder="YYYY-MM-DD" style="flex:1" onclick="togglePicker()" readonly />
+            <button class="preset-btn" onclick="addDays(3)">3天</button>
+            <button class="preset-btn" onclick="addDays(7)">7天</button>
+            <button class="preset-btn" onclick="addDays(30)">30天</button>
+            <button class="preset-btn" onclick="addDays(365)">1年</button>
+          </div>
+          <div id="rich-dt-picker" class="dt-picker">
+            <div class="dt-header">
+              <button onclick="changeMonth(-1)">&lt;</button>
+              <span id="dt-month-label">2026年4月</span>
+              <button onclick="changeMonth(1)">&gt;</button>
+            </div>
+            <div class="dt-body">
+              <div class="dt-calendar">
+                <div class="dt-weekdays">
+                  <div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div>
+                </div>
+                <div class="dt-days" id="dt-days-grid"></div>
+              </div>
+              <div class="dt-time">
+                <div class="dt-time-lbl">
+                  <span>🕒 时间</span>
+                  <span style="color:#00bceb; cursor:pointer;" onclick="setNowTime()">现在</span>
+                </div>
+                <div class="dt-time-cols">
+                  <div class="dt-time-col" id="dt-hour-col"></div>
+                  <div class="dt-time-col" id="dt-minute-col"></div>
+                </div>
+              </div>
+            </div>
+            <div class="dt-footer">
+              <button class="dt-footer-clear" onclick="clearPicker()">✕ 清除</button>
+              <button class="dt-footer-confirm" onclick="togglePicker()">✓ 确认</button>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label>网络设备上限</label>
+          <input id="f-devices" type="number" value="50" min="1" max="100000" />
+        </div>
+        <div class="field">
+          <label>服务器数量上限</label>
+          <input id="f-servers" type="number" value="50" min="1" max="100000" />
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>机器指纹 (可选)</label>
+          <input id="f-machine" placeholder="留空则不绑定机器" />
+        </div>
+        <div class="field">
+          <label>内部备注 (不写入License)</label>
+          <input id="f-notes" placeholder="例：合同编号 HT-2026-0042" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>⚡ 功能授权</h3>
+      <div class="preset-bar">
+        <span style="font-size:.7rem;color:#475569;margin-right:4px;line-height:28px">快速选择:</span>
+        <button class="preset-btn" onclick="applyPreset('trial')">试用版</button>
+        <button class="preset-btn" onclick="applyPreset('standard')">标准版</button>
+        <button class="preset-btn" onclick="applyPreset('professional')">专业版</button>
+        <button class="preset-btn" onclick="applyPreset('enterprise')">全选</button>
+        <button class="preset-btn" onclick="applyPreset('none')">清空</button>
+      </div>
+      <div class="features-grid" id="features-grid"></div>
+    </div>
+
+    <div style="text-align:center;padding:8px 0">
+      <button class="btn-primary" id="btn-issue" onclick="issueLicense()">🔐 签名并生成 License</button>
+    </div>
+
+    <div class="security-note">
+      <strong>⚠️ 安全提示：</strong>此工具使用本地 RSA-2048 私钥对 License 进行数字签名。
+      签发的 license.json 文件交付给客户后，客户在平台 → 授权管理页面导入即可激活。
+      客户无法自行修改 License 内容（任何篡改都会导致签名校验失败）。
+    </div>
+  </div>
+
+  <!-- History Panel -->
+  <div id="panel-history" class="panel">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h3 style="margin:0">📋 签发记录</h3>
+        <input type="text" id="history-search" placeholder="搜索公司、备注或日期..." style="max-width:250px; padding:6px 12px;" oninput="historyPage=1; renderHistoryTable()" />
+      </div>
+      <div id="history-table"></div>
+      <div id="history-pagination" style="display:flex; justify-content:center; gap:8px; margin-top:16px;"></div>
+    </div>
+  </div>
+
+  <!-- Verify Panel -->
+  <div id="panel-verify" class="panel">
+    <div class="card">
+      <h3>🔍 验证 License 文件</h3>
+      <div class="field">
+        <label>粘贴 license.json 内容</label>
+        <textarea id="verify-input" rows="10" placeholder='将 license.json 文件内容粘贴到此处...'></textarea>
+      </div>
+      <button class="btn-primary" onclick="verifyLicense()" style="margin-top:8px">🔍 验证签名</button>
+      <div id="verify-result" style="margin-top:16px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Success Modal -->
+<div class="modal-overlay" id="success-modal">
+  <div class="modal">
+    <h2>✅ License 签发成功</h2>
+    <p class="sub" id="modal-sub"></p>
+    <pre class="license-json" id="modal-json"></pre>
+    <div class="actions">
+      <button class="btn-sm" onclick="copyLicense()">📋 复制内容</button>
+      <button class="btn-sm dl" id="btn-download">⬇️ 下载文件</button>
+      <button class="btn-sm" onclick="closeModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- Password Modal -->
+<div class="modal-overlay" id="password-modal">
+  <div class="modal" style="max-width:400px">
+    <h2>🔐 修改管理员密码</h2>
+    <div class="field" style="margin-top:16px">
+      <label>原密码</label>
+      <input type="password" id="old-password" placeholder="请输入当前密码" />
+    </div>
+    <div class="field">
+      <label>新密码</label>
+      <input type="password" id="new-password" placeholder="请输入新密码（至少4位）" />
+    </div>
+    <div class="field">
+      <label>确认新密码</label>
+      <input type="password" id="confirm-password" placeholder="请再次输入新密码" />
+    </div>
+    <div class="actions" style="margin-top:20px">
+      <button class="btn-sm" onclick="closePasswordModal()">取消</button>
+      <button class="btn-sm dl" onclick="submitPasswordChange()">确认修改</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '';
+let features = {};
+let presets = {};
+let lastLicenseJson = '';
+let authToken = sessionStorage.getItem('issuer_token') || '';
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (authToken) {
+    document.getElementById('login-gate').style.display = 'none';
+    init();
+  }
+});
+
+async function attemptLogin() {
+  const u = document.getElementById('login-username').value;
+  const p = document.getElementById('login-password').value;
+  try {
+    const res = await fetch(API + '/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      authToken = data.token;
+      sessionStorage.setItem('issuer_token', authToken);
+      document.getElementById('login-gate').style.display = 'none';
+      init();
+    } else {
+      showToast(data.detail || '登录失败，请检查用户名和密码', 'err');
+    }
+  } catch (e) {
+    showToast('网络错误: ' + e.message, 'err');
+  }
+}
+
+async function authFetch(url, options = {}) {
+  if (!options.headers) options.headers = {};
+  options.headers['Authorization'] = `Bearer ${authToken}`;
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    sessionStorage.removeItem('issuer_token');
+    document.getElementById('login-gate').style.display = 'flex';
+  }
+  return res;
+}
+
+let currentViewDate = new Date();
+let selectedDate = new Date();
+selectedDate.setFullYear(selectedDate.getFullYear() + 1); // default 1 year from now
+
+let selectedHour = 23;
+let selectedMinute = 59;
+
+function initTimeSelects() {
+  const hCol = document.getElementById('dt-hour-col');
+  const mCol = document.getElementById('dt-minute-col');
+  
+  let hHtml = '';
+  for (let i = 0; i < 24; i++) {
+    const pad = i < 10 ? '0' + i : i;
+    hHtml += `<button class="dt-time-btn ${i === selectedHour ? 'active' : ''}" onclick="selectHour(${i}, this)">${pad}</button>`;
+  }
+  hCol.innerHTML = hHtml;
+
+  let mHtml = '';
+  for (let i = 0; i < 60; i++) {
+    const pad = i < 10 ? '0' + i : i;
+    mHtml += `<button class="dt-time-btn ${i === selectedMinute ? 'active' : ''}" onclick="selectMinute(${i}, this)">${pad}</button>`;
+  }
+  mCol.innerHTML = mHtml;
+}
+
+function selectHour(h, el) {
+  selectedHour = h;
+  const parent = el.parentElement;
+  parent.querySelectorAll('.dt-time-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  updateTimeValue();
+}
+
+function selectMinute(m, el) {
+  selectedMinute = m;
+  const parent = el.parentElement;
+  parent.querySelectorAll('.dt-time-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  updateTimeValue();
+}
+
+function setNowTime() {
+  const now = new Date();
+  selectedHour = now.getHours();
+  selectedMinute = now.getMinutes();
+  initTimeSelects();
+  updateTimeValue();
+}
+
+function togglePicker() {
+  const p = document.getElementById('rich-dt-picker');
+  p.classList.toggle('show');
+  if (p.classList.contains('show')) {
+    renderPicker();
+    // Auto-scroll time columns to selected values
+    setTimeout(() => {
+      const hActive = document.querySelector('#dt-hour-col .dt-time-btn.active');
+      const mActive = document.querySelector('#dt-minute-col .dt-time-btn.active');
+      if (hActive) hActive.scrollIntoView({ block: 'center', behavior: 'instant' });
+      if (mActive) mActive.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }, 50);
+  }
+}
+
+function clearPicker() {
+  document.getElementById('f-expire').value = '';
+  document.getElementById('rich-dt-picker').classList.remove('show');
+}
+
+function changeMonth(dir) {
+  currentViewDate.setMonth(currentViewDate.getMonth() + dir);
+  renderPicker();
+}
+
+function selectPickerDay(y, m, d) {
+  selectedDate = new Date(y, m, d);
+  updateTimeValue();
+  renderPicker();
+}
+
+function updateTimeValue() {
+  const pad = n => n < 10 ? '0'+n : n;
+  document.getElementById('f-expire').value = `${selectedDate.getFullYear()}-${pad(selectedDate.getMonth()+1)}-${pad(selectedDate.getDate())}T${pad(selectedHour)}:${pad(selectedMinute)}:59`;
+}
+
+function renderPicker() {
+  const monthLabel = document.getElementById('dt-month-label');
+  const grid = document.getElementById('dt-days-grid');
+  
+  const year = currentViewDate.getFullYear();
+  const month = currentViewDate.getMonth();
+  
+  const MONTHS_ZH = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+  monthLabel.textContent = `${year}年${MONTHS_ZH[month]}`;
+  
+  const daysInM = new Date(year, month + 1, 0).getDate();
+  const startDay = new Date(year, month, 1).getDay();
+  const offset = startDay === 0 ? 6 : startDay - 1; // Monday based
+  
+  let html = '';
+  
+  const prevDaysInM = new Date(year, month, 0).getDate();
+  for (let i = offset - 1; i >= 0; i--) {
+    const d = prevDaysInM - i;
+    html += `<button class="dt-day other-month">${d}</button>`;
+  }
+  
+  const today = new Date();
+  for (let d = 1; d <= daysInM; d++) {
+    const isToday = today.getFullYear() === year && today.getMonth() === month && today.getDate() === d;
+    const isSel = selectedDate.getFullYear() === year && selectedDate.getMonth() === month && selectedDate.getDate() === d;
+    const cls = ['dt-day'];
+    if (isToday) cls.push('today');
+    if (isSel) cls.push('selected');
+    html += `<button class="${cls.join(' ')}" onclick="selectPickerDay(${year}, ${month}, ${d})">${d}</button>`;
+  }
+  
+  const remaining = 42 - (offset + daysInM);
+  for (let d = 1; d <= remaining; d++) {
+    html += `<button class="dt-day other-month">${d}</button>`;
+  }
+  
+  grid.innerHTML = html;
+}
+
+function addDays(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  selectedDate = d;
+  selectedHour = 23;
+  selectedMinute = 59;
+  initTimeSelects();
+  updateTimeValue();
+  currentViewDate = new Date(d);
+}
+
+async function init() {
+  initTimeSelects();
+  const res = await authFetch(API + '/api/features');
+  const data = await res.json();
+  features = data.catalog;
+  presets = data.presets;
+  renderFeatures();
+  
+  const d = new Date(); d.setFullYear(d.getFullYear() + 1);
+  selectedDate = d;
+  updateTimeValue();
+  onTypeChange();
+}
+
+function renderFeatures() {
+  const grid = document.getElementById('features-grid');
+  grid.innerHTML = '';
+  for (const [key, label] of Object.entries(features)) {
+    const div = document.createElement('div');
+    div.className = 'feat-item';
+    div.innerHTML = `<input type="checkbox" id="feat-${key}" value="${key}"><label for="feat-${key}" style="cursor:pointer;font-size:.72rem;color:#94a3b8">${label}</label>`;
+    div.onclick = (e) => { if (e.target.tagName !== 'INPUT') { const cb = div.querySelector('input'); cb.checked = !cb.checked; } div.classList.toggle('on', div.querySelector('input').checked); };
+    grid.appendChild(div);
+  }
+}
+
+function applyPreset(name) {
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  if (name === 'none') {
+    document.querySelectorAll('#features-grid input').forEach(cb => { cb.checked = false; cb.closest('.feat-item').classList.remove('on'); });
+    return;
+  }
+  const list = presets[name] || [];
+  document.querySelectorAll('#features-grid input').forEach(cb => {
+    cb.checked = list.includes(cb.value);
+    cb.closest('.feat-item').classList.toggle('on', cb.checked);
+  });
+  event.target.classList.add('active');
+}
+
+function onTypeChange() {
+  const type = document.getElementById('f-type').value;
+  applyPreset(type);
+  // Suggest device limits
+  const suggestions = { trial: 10, standard: 50, professional: 200, enterprise: 1000 };
+  document.getElementById('f-devices').value = suggestions[type] || 50;
+  document.getElementById('f-servers').value = suggestions[type] || 50;
+}
+
+function getSelectedFeatures() {
+  return Array.from(document.querySelectorAll('#features-grid input:checked')).map(cb => cb.value);
+}
+
+async function issueLicense() {
+  const company = document.getElementById('f-company').value.trim();
+  const expire = document.getElementById('f-expire').value;
+  if (!company) { showToast('请填写公司名称', 'err'); return; }
+  if (!expire) { showToast('请选择到期日期', 'err'); return; }
+
+  const btn = document.getElementById('btn-issue');
+  btn.disabled = true; btn.textContent = '⏳ 签名中...';
+
+  try {
+    const body = {
+      company,
+      license_type: document.getElementById('f-type').value,
+      expire_at: expire + (expire.includes('T') ? '' : 'T23:59:59'),
+      device_limit: parseInt(document.getElementById('f-devices').value) || 50,
+      server_limit: parseInt(document.getElementById('f-servers').value) || 50,
+      features: getSelectedFeatures(),
+      machine_id: document.getElementById('f-machine').value.trim() || null,
+      notes: document.getElementById('f-notes').value.trim() || null,
+    };
+
+    const res = await authFetch(API + '/api/issue', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.detail || '签发失败', 'err'); return; }
+
+    lastLicenseJson = JSON.stringify(data.license_content, null, 2);
+    document.getElementById('modal-sub').textContent = `公司: ${company} | ID: ${data.license_id}`;
+    document.getElementById('modal-json').textContent = lastLicenseJson;
+    document.getElementById('btn-download').onclick = () => { window.open(API + '/api/download/' + data.filename + '?token=' + authToken); };
+    document.getElementById('success-modal').classList.add('show');
+    showToast('License 签发成功！', 'ok');
+  } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
+  finally { btn.disabled = false; btn.textContent = '🔐 签名并生成 License'; }
+}
+
+function copyLicense() {
+  navigator.clipboard.writeText(lastLicenseJson);
+  showToast('已复制到剪贴板', 'ok');
+}
+
+function closeModal() { document.getElementById('success-modal').classList.remove('show'); }
+
+let allHistoryRecords = [];
+let historyPage = 1;
+const PAGE_SIZE = 10;
+
+async function loadHistory() {
+  try {
+    const res = await authFetch(API + '/api/history');
+    const data = await res.json();
+    allHistoryRecords = data.records || [];
+    historyPage = 1;
+    renderHistoryTable();
+  } catch { document.getElementById('history-table').innerHTML = '<div class="empty-state">加载失败</div>'; }
+}
+
+function renderHistoryTable() {
+  if (!allHistoryRecords.length) {
+    document.getElementById('history-table').innerHTML = '<div class="empty-state">暂无签发记录</div>';
+    document.getElementById('history-pagination').innerHTML = '';
+    return;
+  }
+  
+  const q = (document.getElementById('history-search').value || '').toLowerCase();
+  const filtered = allHistoryRecords.filter(r => 
+    (r.company && r.company.toLowerCase().includes(q)) || 
+    (r.notes && r.notes.toLowerCase().includes(q)) ||
+    (r.expire_at && r.expire_at.includes(q)) ||
+    (r.issued_at && r.issued_at.includes(q))
+  );
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
+  if (historyPage > totalPages) historyPage = totalPages;
+  if (historyPage < 1) historyPage = 1;
+  
+  const start = (historyPage - 1) * PAGE_SIZE;
+  const pageRecords = filtered.slice(start, start + PAGE_SIZE);
+
+  let html = '<table><thead><tr><th>公司</th><th>类型</th><th>设备(网/服)</th><th>签发时间</th><th>到期</th><th>备注</th><th>操作</th></tr></thead><tbody>';
+  for (const r of pageRecords) {
+    const tc = `type-${r.license_type}`;
+    html += `<tr>
+      <td style="font-weight:600">${r.company}</td>
+      <td><span class="type-badge ${tc}">${r.license_type}</span></td>
+      <td>${r.device_limit} / ${r.server_limit || 0}</td>
+      <td style="font-size:.7rem;color:#64748b">${new Date(r.issued_at).toLocaleString('zh-CN')}</td>
+      <td>${r.expire_at?.split('T')[0] || '-'}</td>
+      <td style="font-size:.7rem;color:#475569;max-width:120px;overflow:hidden;text-overflow:ellipsis">${r.notes || '-'}</td>
+      <td><button class="btn-sm dl" onclick="window.open(API+'/api/download/${r.filename}?token='+authToken)">下载</button></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('history-table').innerHTML = html;
+
+  let pagHtml = '';
+  pagHtml += `<button class="btn-sm" ${historyPage === 1 ? 'disabled style="opacity:0.5"' : ''} onclick="historyPage--; renderHistoryTable()">上一页</button>`;
+  pagHtml += `<span style="font-size:.8rem; color:#94a3b8; line-height:28px;">${historyPage} / ${totalPages}</span>`;
+  pagHtml += `<button class="btn-sm" ${historyPage === totalPages ? 'disabled style="opacity:0.5"' : ''} onclick="historyPage++; renderHistoryTable()">下一页</button>`;
+  document.getElementById('history-pagination').innerHTML = pagHtml;
+}
+
+async function verifyLicense() {
+  const input = document.getElementById('verify-input').value.trim();
+  if (!input) { showToast('请粘贴 License 内容', 'err'); return; }
+  let parsed;
+  try { parsed = JSON.parse(input); } catch { showToast('JSON 格式错误', 'err'); return; }
+
+  try {
+    const res = await authFetch(API + '/api/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(parsed) });
+    const data = await res.json();
+    const p = data.payload || {};
+    document.getElementById('verify-result').innerHTML = `
+      <div style="padding:16px;border-radius:12px;border:1px solid ${data.valid ? 'rgba(16,185,129,.3)' : 'rgba(239,68,68,.3)'};background:${data.valid ? 'rgba(16,185,129,.06)' : 'rgba(239,68,68,.06)'}">
+        <p style="font-size:.9rem;font-weight:700;color:${data.valid ? '#10b981' : '#ef4444'}">${data.valid ? '✅ 签名验证通过' : '❌ 签名验证失败'}</p>
+        ${data.expired ? '<p style="color:#f59e0b;font-size:.8rem;margin-top:4px">⚠️ 此 License 已过期</p>' : ''}
+        <div style="margin-top:10px;font-size:.75rem;color:#94a3b8;line-height:1.8">
+          <div>公司: <strong>${p.company || '-'}</strong></div>
+          <div>类型: ${p.license_type || '-'} | 网络设备: ${p.device_limit || '-'} | 服务器: ${p.server_limit || '-'} | 剩余: ${data.days_remaining} 天</div>
+          <div>功能: ${(p.features || []).join(', ') || '-'}</div>
+        </div>
+      </div>`;
+  } catch (e) { showToast('验证请求失败', 'err'); }
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['issue','history','verify'][i] === name));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  if (name === 'history') loadHistory();
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast ' + type + ' show';
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// Close picker on outside click
+document.addEventListener('click', (e) => {
+  const picker = document.getElementById('rich-dt-picker');
+  const field = picker?.closest('.field');
+  if (picker && picker.classList.contains('show') && field && !field.contains(e.target)) {
+    picker.classList.remove('show');
+  }
+});
+
+// Enter key on login
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && document.getElementById('login-gate').style.display !== 'none') {
+    attemptLogin();
+  }
+});
+
+function openPasswordModal() {
+  document.getElementById('old-password').value = '';
+  document.getElementById('new-password').value = '';
+  document.getElementById('confirm-password').value = '';
+  document.getElementById('password-modal').classList.add('show');
+}
+function closePasswordModal() {
+  document.getElementById('password-modal').classList.remove('show');
+}
+
+async function submitPasswordChange() {
+  const oldP = document.getElementById('old-password').value;
+  const newP = document.getElementById('new-password').value;
+  const confP = document.getElementById('confirm-password').value;
+  
+  if (!oldP || !newP) { showToast('密码不能为空', 'err'); return; }
+  if (newP !== confP) { showToast('两次输入的新密码不一致', 'err'); return; }
+  if (newP.length < 4) { showToast('新密码太短', 'err'); return; }
+  
+  try {
+    const res = await authFetch(API + '/api/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_password: oldP, new_password: newP })
+    });
+    if (res.ok) {
+      showToast('密码修改成功，请重新登录', 'ok');
+      closePasswordModal();
+      sessionStorage.removeItem('issuer_token');
+      document.getElementById('login-gate').style.display = 'flex';
+    } else {
+      const data = await res.json();
+      showToast(data.detail || '密码修改失败', 'err');
+    }
+  } catch (e) {
+    showToast('网络错误: ' + e.message, 'err');
+  }
+}
+
+// NOTE: init() is called from DOMContentLoaded or after login — not here
+</script>
+</body>
+</html>

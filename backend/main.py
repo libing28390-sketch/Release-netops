@@ -35,6 +35,9 @@ from api.inspections import router as inspections_router
 from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
+from license.api import router as license_router
+from license.middleware import LicenseMiddleware
+from license.verifier import get_license_verifier
 import logging
 import os
 import asyncio
@@ -64,6 +67,21 @@ init_db()
 async def lifespan(app: FastAPI):
     # ── startup ──
     logger.info(f"Starting up {settings.PROJECT_NAME} in {settings.ENVIRONMENT} mode...")
+
+    # License validation at startup
+    _lic = get_license_verifier()
+    _lic.load()
+    _lic_status = _lic.validate(force=True)
+    if _lic_status.valid:
+        logger.info(f"[License] ✓ Valid — {_lic_status.company} ({_lic_status.license_type}), "
+                     f"expires in {_lic_status.days_remaining}d, "
+                     f"devices: {_lic_status.device_limit}")
+        if _lic_status.warnings:
+            for w in _lic_status.warnings:
+                logger.warning(f"[License] ⚠ {w}")
+    else:
+        logger.error(f"[License] ✗ INVALID — {_lic_status.error}")
+
     configure_ntc_templates()
     seed_data()
     # Seed built-in tag definitions
@@ -199,6 +217,10 @@ app.include_router(inspections_router, prefix="/api")
 app.include_router(tags_router, prefix="/api")
 app.include_router(scheduled_jobs_router, prefix="/api")
 app.include_router(racks_router, prefix="/api")
+app.include_router(license_router, prefix="/api")
+
+# ── License Middleware (after CORS, before APScheduler) ──────────────
+app.add_middleware(LicenseMiddleware)
 
 # ── APScheduler ──────────────────────────────────────────────────────
 scheduler = AsyncIOScheduler()

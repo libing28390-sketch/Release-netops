@@ -545,6 +545,7 @@ const App: React.FC = () => {
       { path: '/history', label: t('auditLogs'), group: zh ? '平台管理' : 'Management' },
       { path: '/configuration', label: zh ? '平台设置' : 'Platform Settings', group: zh ? '平台管理' : 'Management' },
       { path: '/users', label: t('userManagement'), group: zh ? '平台管理' : 'Management' },
+      { path: '/license', label: zh ? '授权管理' : 'License Management', group: zh ? '平台管理' : 'Management' },
       { path: '/change-orders/all', label: zh ? '全部工单' : 'All Orders', group: zh ? '工单管理' : 'Tickets' },
       { path: '/change-orders/group-todo', label: zh ? '组内待办' : 'Group Todo', group: zh ? '工单管理' : 'Tickets' },
       { path: '/change-orders/my-todo', label: zh ? '个人待办' : 'My Todo', group: zh ? '工单管理' : 'Tickets' },
@@ -624,6 +625,7 @@ const App: React.FC = () => {
     if (activeTab === 'tags') return language === 'zh' ? '标签管理' : 'Tag Management';
     if (activeTab === 'racks') return language === 'zh' ? '机柜管理' : 'Rack Management';
     if (activeTab === 'credentials') return language === 'zh' ? '凭据管理' : 'Credential Management';
+    if (activeTab === 'license') return language === 'zh' ? '授权管理' : 'License Management';
     if (activeTab === 'change-orders') {
       if (changeOrderPage === 'all') return language === 'zh' ? '全部工单' : 'All Orders';
       if (changeOrderPage === 'my-todo') return language === 'zh' ? '个人待办' : 'My Todo';
@@ -679,7 +681,7 @@ const App: React.FC = () => {
     const configActive = activeTab === 'config' || activeTab === 'compliance' || location.pathname.startsWith('/config');
     const automationActive = activeTab === 'automation' || location.pathname.startsWith('/automation');
     const inventoryActive = activeTab === 'inventory' || activeTab === 'ipam' || activeTab === 'ip-locator';
-    const managementActive = ['history', 'configuration', 'users'].includes(activeTab);
+    const managementActive = ['history', 'configuration', 'users', 'license'].includes(activeTab);
     setMonitoringGroupOpen(monitoringActive);
     setAlertGroupOpen(alertActive);
     setConfigGroupOpen(configActive);

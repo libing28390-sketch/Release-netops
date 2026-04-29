@@ -1,0 +1,37 @@
+[
+  {
+    "license_id": "9092d4ad-b490-4efd-8e50-92fb92c3d928",
+    "company": "Huawei Technologies Co., Ltd.",
+    "license_type": "standard",
+    "issued_at": "2026-04-29T01:10:53.542993+00:00",
+    "expire_at": "2027-04-29T23:59:59",
+    "device_limit": 50,
+    "features": [
+      "automation",
+      "config_management",
+      "monitoring",
+      "alerting",
+      "rbac",
+      "topology"
+    ],
+    "machine_id": null,
+    "notes": null,
+    "filename": "license_Huawei_Technologies_Co_Ltd_20260429_091054.json"
+  },
+  {
+    "license_id": "fd0e90c4-33cd-4626-b70f-0a847c7416c0",
+    "company": "test",
+    "license_type": "trial",
+    "issued_at": "2026-04-29T01:19:10.941390+00:00",
+    "expire_at": "2027-04-29T23:59:59",
+    "device_limit": 10,
+    "features": [
+      "automation",
+      "config_management",
+      "monitoring"
+    ],
+    "machine_id": null,
+    "notes": null,
+    "filename": "license_test_20260429_091911.json"
+  }
+]
