@@ -1362,17 +1362,43 @@ def init_db():
         ensure_column('devices', 'password_expires_at', "TEXT DEFAULT ''")
         ensure_column('devices', 'rotation_status', "TEXT DEFAULT ''")  # rotating / completed / failed
 
-        # Auto-link existing devices to matching assets (one-time migration)
+        # Auto-link existing devices to matching assets, or create missing assets (Plan-A unification)
         unlinked = cursor.execute(
-            "SELECT id, hostname, ip_address FROM devices WHERE (asset_id IS NULL OR asset_id = '')"
+            "SELECT id, hostname, ip_address, sn, model, role, site, vendor, status, lifecycle_status FROM devices WHERE (asset_id IS NULL OR asset_id = '')"
         ).fetchall()
-        for dev in unlinked:
-            match = cursor.execute(
-                "SELECT id FROM physical_assets WHERE asset_type='network_device' AND (hostname = ? OR management_ip = ?) LIMIT 1",
-                (dev['hostname'], dev['ip_address'])
-            ).fetchone()
-            if match:
-                cursor.execute('UPDATE devices SET asset_id = ? WHERE id = ?', (match['id'], dev['id']))
+        if unlinked:
+            import uuid
+            for dev in unlinked:
+                # Check if there's a physical asset with the same hostname or IP
+                match = cursor.execute(
+                    "SELECT id FROM physical_assets WHERE asset_type='network_device' AND (hostname = ? OR management_ip = ?) LIMIT 1",
+                    (dev['hostname'], dev['ip_address'])
+                ).fetchone()
+                if match:
+                    cursor.execute('UPDATE devices SET asset_id = ? WHERE id = ?', (match['id'], dev['id']))
+                else:
+                    # Create a new physical_asset
+                    asset_id = f"asset-{uuid.uuid4().hex[:12]}"
+                    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+                    
+                    cursor.execute('''
+                        INSERT INTO physical_assets (
+                            id, asset_type, asset_tag, serial_number, vendor, model, hostname,
+                            datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
+                            vlan, uplink_switch, uplink_port,
+                            status, purchase_date, warranty_expiry, department, notes, created_at, updated_at, lifecycle_status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        asset_id, 'network_device', '', dev['sn'] or '', dev['vendor'] or '',
+                        dev['model'] or '', dev['hostname'] or '',
+                        dev['site'] or '', '', '', 1, None,
+                        dev['ip_address'] or '', '', dev['role'] or '',
+                        '', '', '',
+                        dev['status'] or 'active', '', '', '', '', now, now,
+                        dev['lifecycle_status'] or 'staging'
+                    ))
+                    cursor.execute('UPDATE devices SET asset_id = ? WHERE id = ?', (asset_id, dev['id']))
+
 
         # ── Change Order / Ticket Management ──
         cursor.execute('''
