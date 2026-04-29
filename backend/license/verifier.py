@@ -255,6 +255,25 @@ class LicenseVerifier:
             return status
 
         # 3. Machine ID Binding Check
+        if payload.license_type.value != "trial" and not payload.machine_id:
+            status = LicenseStatus(
+                valid=False,
+                license_id=payload.license_id,
+                company=payload.company,
+                license_type=payload.license_type.value,
+                issued_at=payload.issued_at,
+                expire_at=payload.expire_at,
+                days_remaining=days_remaining,
+                device_limit=payload.device_limit,
+                server_limit=payload.server_limit,
+                features=payload.features,
+                error="Non-trial licenses must be locked to a specific Machine ID to prevent reuse.",
+            )
+            self._cached_status = status
+            self._last_validated = now
+            logger.error(f"[License] REUSE BLOCKED: Non-trial license {payload.license_id} lacks machine_id")
+            return status
+
         if payload.machine_id:
             current_machine_id = get_machine_id()
             if payload.machine_id != current_machine_id:

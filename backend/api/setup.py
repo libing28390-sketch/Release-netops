@@ -157,7 +157,21 @@ def save_platform_settings(
     user=require_role("Administrator"),
 ):
     _set_setting("platform_settings", body.model_dump_json())
-    logger.info("Platform settings saved by %s", user["username"])
+    
+    # Also update the administrator's personal language preference
+    if body.preferred_language:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                "UPDATE users SET preferred_language = ? WHERE id = ?",
+                (body.preferred_language, user["user_id"])
+            )
+            conn.commit()
+        finally:
+            conn.close()
+            
+    logger.info("Platform settings and language preference (%s) saved by %s", body.preferred_language, user["username"])
     return {"success": True}
 
 
