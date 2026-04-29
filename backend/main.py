@@ -1689,7 +1689,8 @@ async def status_monitor():
         await asyncio.sleep(monitor_sleep_seconds)
 
 def seed_data():
-    if not os.path.exists(DB_PATH):
+    from database import _USE_PG
+    if not _USE_PG and not os.path.exists(DB_PATH):
         return
     conn = get_db_connection()
     
