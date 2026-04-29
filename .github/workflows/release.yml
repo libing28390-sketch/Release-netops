@@ -28,9 +28,9 @@ jobs:
 
       - name: 5. 彻底清理敏感文件与原始源码
         run: |
-          # 删除原始 Python 代码
-          rm -f backend/license/verifier.py
-          rm -f backend/license/crypto.py
+          # 删除原始 Python 代码及 Cython 产生的中间层 C 代码
+          rm -f backend/license/verifier.py backend/license/verifier.c
+          rm -f backend/license/crypto.py backend/license/crypto.c
           
           # 删除核心私钥（绝对不能发给客户）
           rm -f backend/license/keys/private.pem
