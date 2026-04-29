@@ -49,7 +49,7 @@ netops-automation/
 
 ```powershell
 # 1. 克隆项目
-git clone https://github.com/libing28390-sketch/netsops.git netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
 cd netops-automation
 
 # 2. 创建 Python 虚拟环境
@@ -120,7 +120,7 @@ sudo apt install python3 python3-venv python3-dev build-essential
 
 ```bash
 # 1. 克隆项目
-git clone git@github.com/libing28390-sketch/netsops.git netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
 cd netops-automation
 
 # 2. 创建 Python 虚拟环境
@@ -304,14 +304,14 @@ chmod +x deploy-ubuntu.sh
 
 ```bash
 # 一行命令，什么都不用装
-curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/netsops/main/deploy-ubuntu.sh | bash
+curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
 ```
 
 或者手动指定安装目录：
 
 ```bash
 # 下载脚本后执行（默认安装到 /opt/netops-automation）
-curl -fsSL -o deploy.sh https://raw.githubusercontent.com/libing28390-sketch/netsops/main/deploy-ubuntu.sh
+curl -fsSL -o deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
 chmod +x deploy.sh
 INSTALL_DIR=/opt ./deploy.sh
 ```
@@ -344,7 +344,7 @@ sudo usermod -aG docker $USER
 
 # 2. 安装 Git 并克隆项目
 sudo apt-get update -qq && sudo apt-get install -y -qq git nodejs npm
-git clone git@github.com:libing28390-sketch/netsops.git netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
 cd netops-automation
 
 # 3. 构建前端 + 启动容器
