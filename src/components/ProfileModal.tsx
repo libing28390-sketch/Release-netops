@@ -17,9 +17,9 @@ interface ProfileFormState {
 }
 
 interface NotificationChannelsState {
-  feishu: { webhook_url: string; enabled: boolean };
-  dingtalk: { webhook_url: string; enabled: boolean; secret: string };
-  wechat: { webhook_url: string; enabled: boolean };
+  feishu: { webhook_url: string; enabled: boolean; creator_username?: string };
+  dingtalk: { webhook_url: string; enabled: boolean; secret: string; creator_username?: string };
+  wechat: { webhook_url: string; enabled: boolean; creator_username?: string };
 }
 
 interface ProfileModalProps {
@@ -127,24 +127,24 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
         className={`w-full max-w-lg rounded-2xl border shadow-2xl overflow-hidden ${isDark ? 'bg-[#121c2d] border-white/10' : 'bg-white border-black/10'}`}
       >
         <div className={`px-6 py-4 border-b ${isDark ? 'border-white/10' : 'border-black/10'}`}>
-          <h3 className={`text-lg font-bold ${isDark ? 'text-white/90' : 'text-[#0b2a3c]'}`}>Profile</h3>
-          <p className={`text-xs mt-1 ${isDark ? 'text-white/45' : 'text-black/45'}`}>Manage your account information</p>
+          <h3 className={`text-lg font-bold ${isDark ? 'text-white/90' : 'text-[#0b2a3c]'}`}>个人信息</h3>
+          <p className={`text-xs mt-1 ${isDark ? 'text-white/45' : 'text-black/45'}`}>管理您的账户个人信息</p>
         </div>
 
         <div className="px-6 py-5 space-y-4 max-h-[75vh] overflow-y-auto">
           <div>
-            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>Avatar</label>
+            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>个人头像</label>
             <div className="flex items-center gap-3">
               <div className={`w-14 h-14 rounded-full border overflow-hidden flex items-center justify-center ${isDark ? 'bg-white/10 border-white/10 text-white/75' : 'bg-black/10 border-black/10 text-black/60'}`}>
                 {renderAvatarContent(profileAvatarPreview, 24)}
               </div>
               <div className="flex gap-2">
                 <label className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-black/[0.05] text-black/70 hover:bg-black/[0.08]'}`}>
-                  Upload
+                  上传图片
                   <input type="file" accept="image/*" className="hidden" onChange={onAvatarFileChange} />
                 </label>
                 <button type="button" onClick={onClearAvatar} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isDark ? 'bg-red-500/15 text-red-300 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`}>
-                  Use Default
+                  恢复默认
                 </button>
               </div>
             </div>
@@ -166,26 +166,26 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                 );
               })}
             </div>
-            <p className={`text-[10px] mt-1.5 ${isDark ? 'text-white/35' : 'text-black/35'}`}>Supports PNG/JPG/WebP, max 2MB. Stored in your user profile.</p>
+            <p className={`text-[10px] mt-1.5 ${isDark ? 'text-white/35' : 'text-black/35'}`}>支持 PNG/JPG/WebP 格式，大小不超过 2MB。</p>
           </div>
 
           <div>
-            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>Username</label>
+            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>用户名</label>
             <input
               type="text"
               value={profileForm.username}
               onChange={(event) => onProfileFormChange((prev) => ({ ...prev, username: event.target.value }))}
               title="Profile username"
-              placeholder="Username"
+              placeholder="请输入用户名"
               className={`w-full rounded-xl px-3 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
             />
           </div>
 
           <div>
-            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>Role</label>
+            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>当前角色</label>
             <input
               type="text"
-              value={currentRole}
+              value={language === 'zh' ? (currentRole === 'Administrator' ? '管理员' : currentRole === 'Operator' ? '操作员' : currentRole === 'Viewer' ? '只读用户' : currentRole) : currentRole}
               disabled
               title="Profile role"
               className={`w-full rounded-xl px-3 py-2.5 text-sm border ${isDark ? 'bg-white/5 border-white/10 text-white/60' : 'bg-black/[0.03] border-black/10 text-black/55'}`}
@@ -193,30 +193,30 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
           </div>
 
           <div>
-            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>New Password</label>
+            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>修改密码</label>
             <div className="relative">
               <input
                 type={showProfilePwd ? 'text' : 'password'}
                 value={profileForm.password}
                 onChange={(event) => onProfileFormChange((prev) => ({ ...prev, password: event.target.value }))}
                 title="New password"
-                placeholder="Leave blank to keep unchanged"
+                placeholder="留空则保持原密码不变"
                 className={`w-full rounded-xl px-3 pr-10 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
               />
-              <button type="button" title={showProfilePwd ? 'Hide password' : 'Show password'} onClick={onToggleProfilePassword} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/35 hover:text-black/60'}`}>
+              <button type="button" title={showProfilePwd ? '隐藏密码' : '显示密码'} onClick={onToggleProfilePassword} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/35 hover:text-black/60'}`}>
                 {showProfilePwd ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
           </div>
 
           <div>
-            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>Confirm Password</label>
+            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>确认密码</label>
             <input
               type={showProfilePwd ? 'text' : 'password'}
               value={profileForm.confirmPassword}
               onChange={(event) => onProfileFormChange((prev) => ({ ...prev, confirmPassword: event.target.value }))}
               title="Confirm password"
-              placeholder="Confirm new password"
+              placeholder="请再次输入新密码"
               className={`w-full rounded-xl px-3 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
             />
           </div>
@@ -236,6 +236,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
             {channels.map(({ key, label, sub, icon, iconBg, badge, hint, hasSecret, docsUrl, docsLabel, tip }) => {
               const channel = notificationChannels[key];
               const isEnabled = channel.enabled;
+              const isCreator = !channel.creator_username || channel.creator_username === profileForm.username;
 
               return (
                 <div
@@ -266,9 +267,10 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     </a>
                     <button
                       type="button"
-                      title={isEnabled ? '关闭此渠道' : '开启此渠道'}
+                      title={!isCreator ? `仅创建者 ${channel.creator_username} 有权操作` : (isEnabled ? '关闭此渠道' : '开启此渠道')}
+                      disabled={!isCreator}
                       onClick={() => onNotificationChannelToggle(key)}
-                      className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${isEnabled ? 'bg-[#00bceb]' : (isDark ? 'bg-white/15' : 'bg-black/12')}`}
+                      className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${!isCreator ? 'opacity-30 cursor-not-allowed bg-gray-500/30' : (isEnabled ? 'bg-[#00bceb]' : (isDark ? 'bg-white/15' : 'bg-black/12'))}`}
                     >
                       <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${isEnabled ? 'left-[18px]' : 'left-0.5'}`} />
                     </button>
@@ -278,29 +280,49 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     <p className={`text-[10px] leading-relaxed ${isDark ? 'text-white/30' : 'text-black/35'}`}>{tip}</p>
                     <input
                       type="text"
+                      disabled={!isCreator}
                       value={channel.webhook_url}
                       onChange={(event) => onNotificationWebhookChange(key, event.target.value)}
                       title={`${label} Webhook URL`}
                       placeholder={hint}
-                      className={`w-full rounded-lg px-2.5 py-2 text-[11px] outline-none border transition-all font-mono ${isDark ? 'bg-black/20 border-white/10 text-white/80 placeholder-white/20 focus:border-[#00bceb]/50' : 'bg-white/60 border-black/8 text-[#0b2a3c] placeholder-black/20 focus:border-[#00bceb]/40'}`}
+                      className={`w-full rounded-lg px-2.5 py-2 text-[11px] outline-none border transition-all font-mono ${!isCreator ? (isDark ? 'bg-black/40 text-white/30 cursor-not-allowed border-white/5' : 'bg-black/[0.04] text-black/30 cursor-not-allowed border-black/5') : (isDark ? 'bg-black/20 border-white/10 text-white/80 placeholder-white/20 focus:border-[#00bceb]/50' : 'bg-white/60 border-black/8 text-[#0b2a3c] placeholder-black/20 focus:border-[#00bceb]/40')}`}
                     />
+                    {!isCreator ? (
+                      <p className={`text-[9px] font-sans ${isDark ? 'text-red-400/70' : 'text-red-500/70'}`}>
+                        🔒 仅创建者（{channel.creator_username}）有权修改与启闭。
+                      </p>
+                    ) : (
+                      (channel.webhook_url.includes('***') || channel.webhook_url.includes('****')) && (
+                        <p className={`text-[9px] font-sans ${isDark ? 'text-[#00bceb]/70' : 'text-[#007fa3]'}`}>
+                          ℹ 已加密。如需更换，请直接输入新的 Webhook 地址并保存。
+                        </p>
+                      )
+                    )}
                     {hasSecret && (
-                      <input
-                        type="password"
-                        value={notificationChannels.dingtalk.secret}
-                        onChange={(event) => onNotificationSecretChange(event.target.value)}
-                        title={`${label} Secret`}
-                        placeholder="加签 Secret（可选，留空则不验签）"
-                        className={`w-full rounded-lg px-2.5 py-2 text-[11px] outline-none border transition-all font-mono ${isDark ? 'bg-black/20 border-white/10 text-white/80 placeholder-white/20 focus:border-[#00bceb]/50' : 'bg-white/60 border-black/8 text-[#0b2a3c] placeholder-black/20 focus:border-[#00bceb]/40'}`}
-                      />
+                      <>
+                        <input
+                          type="password"
+                          disabled={!isCreator}
+                          value={notificationChannels.dingtalk.secret}
+                          onChange={(event) => onNotificationSecretChange(event.target.value)}
+                          title={`${label} Secret`}
+                          placeholder="加签 Secret（可选，留空则不验签）"
+                          className={`w-full rounded-lg px-2.5 py-2 text-[11px] outline-none border transition-all font-mono ${!isCreator ? (isDark ? 'bg-black/40 text-white/30 cursor-not-allowed border-white/5' : 'bg-black/[0.04] text-black/30 cursor-not-allowed border-black/5') : (isDark ? 'bg-black/20 border-white/10 text-white/80 placeholder-white/20 focus:border-[#00bceb]/50' : 'bg-white/60 border-black/8 text-[#0b2a3c] placeholder-black/20 focus:border-[#00bceb]/40')}`}
+                        />
+                        {isCreator && notificationChannels.dingtalk.secret === '***' && (
+                          <p className={`text-[9px] font-sans ${isDark ? 'text-[#00bceb]/70' : 'text-[#007fa3]'}`}>
+                            ℹ 密钥已加密。如需更换，请直接输入新密钥。
+                          </p>
+                        )}
+                      </>
                     )}
                     <button
                       type="button"
                       title={`向 ${label} 发送测试告警`}
-                      disabled={!channel.webhook_url.trim() || notifyTestLoading === key}
+                      disabled={!channel.webhook_url.trim() || notifyTestLoading === key || !isCreator}
                       onClick={() => onTestNotificationChannel(key)}
                       className={`w-full py-1.5 rounded-lg text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 ${
-                        !channel.webhook_url.trim() || notifyTestLoading === key
+                        !channel.webhook_url.trim() || notifyTestLoading === key || !isCreator
                           ? (isDark ? 'bg-white/5 text-white/20 cursor-not-allowed' : 'bg-black/4 text-black/20 cursor-not-allowed')
                           : (isDark ? 'bg-[#00bceb]/12 text-[#00bceb] hover:bg-[#00bceb]/22 border border-[#00bceb]/20' : 'bg-[#e8f9ff] text-[#007fa3] hover:bg-[#d2f2fd] border border-[#00bceb]/20')
                       }`}
@@ -315,15 +337,15 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
             })}
           </div>
 
-          <p className={`text-[11px] ${isDark ? 'text-white/40' : 'text-black/40'}`}>Last login: {currentUserLastLogin}</p>
+          <p className={`text-[11px] ${isDark ? 'text-white/40' : 'text-black/40'}`}>上次登录时间：{currentUserLastLogin}</p>
         </div>
 
         <div className={`px-6 py-4 border-t flex gap-3 ${isDark ? 'border-white/10' : 'border-black/10'}`}>
           <button onClick={onClose} className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-black/[0.04] text-black/70 hover:bg-black/[0.08]'}`}>
-            Cancel
+            取消
           </button>
           <button onClick={onSave} className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-[#008bb0] hover:bg-[#00769a] transition-all shadow-lg shadow-[#00bceb]/20">
-            Save Profile
+            保存个人资料
           </button>
         </div>
       </motion.div>

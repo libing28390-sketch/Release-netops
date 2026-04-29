@@ -307,7 +307,7 @@ def read_devices(
         # Safety cap: never return more than 200 rows without explicit pagination.
         if page is None or page_size is None:
             devices = conn.execute(
-                f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT 200',
+                f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT 5000',
                 tuple(params)
             ).fetchall()
             items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d) for d in devices]

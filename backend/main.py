@@ -980,40 +980,28 @@ async def status_monitor():
             payload = {"msgtype": "text", "text": {"content": plain}}
             asyncio.create_task(asyncio.to_thread(_send_webhook_notification, payload))
 
-        # 2. 遍历所有已启用 notification_channels 的用户
         def _dispatch_user_channels():
             try:
                 rows = _db_quick(
-                    "SELECT notification_channels, preferred_language FROM users WHERE notification_channels IS NOT NULL AND notification_channels != '{}'",
+                    "SELECT platform, webhook_url, enabled, secret FROM global_notification_channels WHERE enabled = 1",
                     fetchall=True,
                 )
                 if not rows:
                     return
-                sent_urls: set[str] = set()  # dedupe: same webhook URL across users
+                
+                channels = {}
                 for row in rows:
-                    try:
-                        channels = json.loads(row['notification_channels'] or '{}')
-                    except Exception:
-                        continue
-                    if not channels:
-                        continue
-                    # Remove channels whose webhook_url has already been sent
-                    deduped_channels: dict = {}
-                    for platform, cfg in channels.items():
-                        if not isinstance(cfg, dict):
-                            continue
-                        url = (cfg.get('webhook_url') or '').strip()
-                        if url and url in sent_urls:
-                            continue
-                        deduped_channels[platform] = cfg
-                        if url:
-                            sent_urls.add(url)
-                    if deduped_channels:
-                        user_lang = row['preferred_language'] if 'preferred_language' in row.keys() else 'zh'
-                        user_alert = {**alert_info, 'lang': user_lang or 'zh'}
-                        notification_service.send_all_channels(deduped_channels, user_alert)
+                    channels[row['platform']] = {
+                        'webhook_url': row['webhook_url'],
+                        'enabled': True,
+                        'secret': row['secret']
+                    }
+                
+                if channels:
+                    user_alert = {**alert_info, 'lang': 'zh'}
+                    notification_service.send_all_channels(channels, user_alert)
             except Exception as exc:
-                logger.warning(f"[Alert] User channel dispatch failed: {exc}")
+                logger.warning(f"[Alert] Workspace channel dispatch failed: {exc}")
 
         asyncio.create_task(asyncio.to_thread(_dispatch_user_channels))
 

@@ -740,7 +740,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
         </Suspense>
       )}
 
-      {activeTab === 'automation' && automationPage === 'history' && (
+      {activeTab === 'automation' && automationPage === 'queries' && (
         <Suspense fallback={lazyPanelFallback}>
           <AutomationHistoryTab
             t={t}

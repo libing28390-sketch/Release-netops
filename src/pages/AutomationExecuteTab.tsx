@@ -235,6 +235,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const [treeFilterRole, setTreeFilterRole] = useState<string | null>(null);
   const [showSelectedDrawer, setShowSelectedDrawer] = useState(false);
   const [changeTicket, setChangeTicket] = useState<string>('');
+  const [quickQuerySearch, setQuickQuerySearch] = useState('');
 
   useEffect(() => {
     fetch('/api/tags/definitions')
@@ -424,14 +425,27 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   }, [hasQuickTargets, quickHasMixedPlatforms, quickPlatformMismatch, hasMissingRequired, riskNeedsConfirm, isZh, quickMissingRequiredFields, needsChangeTicket, changeTicket, ticketValidation]);
 
   /* Quick Query helpers */
-  const singleDevice = batchMode && batchDeviceIds.length === 1
-    ? devices.find(d => d.id === batchDeviceIds[0]) || null
-    : selectedDevice;
+  const targetDevices = batchMode
+    ? devices.filter(d => batchDeviceIds.includes(d.id))
+    : (selectedDevice ? [selectedDevice] : []);
+  const singleDevice = targetDevices[0] || null;
+  const hasTargets = targetDevices.length > 0;
   const platform = (singleDevice?.platform || '').toLowerCase();
   const isCisco = platform.includes('cisco') || platform.includes('arista') || platform.includes('rgos');
   const isHuawei = platform.includes('huawei') || platform.includes('h3c') || platform.includes('ce_');
   const isJuniper = platform.includes('juniper') || platform.includes('junos');
   const deviceRole = (singleDevice?.role || '').toLowerCase();
+
+  const filteredQuickQueryRecords = useMemo(() => {
+    if (!quickQueryTable.records) return [];
+    if (!quickQuerySearch.trim()) return quickQueryTable.records;
+    const q = quickQuerySearch.toLowerCase().trim();
+    return quickQueryTable.records.filter((rec) => {
+      return Object.values(rec).some((val) =>
+        String(val || '').toLowerCase().includes(q)
+      );
+    });
+  }, [quickQueryTable.records, quickQuerySearch]);
 
   const queryPresets = useMemo(() => {
     const all: Array<{ icon: string; label: string; labelEn: string; cmds: string; group: string; operationalCategory?: string; excludeRoles?: string[] }> = [
@@ -538,7 +552,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
             {isZh ? '自定义命令' : 'Custom Command'}
           </button>
           <button
-            onClick={() => onNavigate('/automation/history')}
+            onClick={() => onNavigate('/automation/queries')}
             className="px-3 py-2 text-xs font-semibold border border-gray-200 rounded-xl hover:bg-gray-50 transition-all"
           >
             {isZh ? '执行历史' : 'History'}
@@ -975,7 +989,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  {singleDevice && (
+                  {hasTargets && (
                     <button
                       onClick={() => setShowQuickQuery(!showQuickQuery)}
                       className="px-3 py-2 rounded-lg text-xs font-bold border border-gray-200 bg-white hover:bg-gray-50 transition-all flex items-center gap-1.5"
@@ -1047,7 +1061,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
 
               {/* Quick Query slide-up panel */}
               <AnimatePresence>
-                {showQuickQuery && singleDevice && (
+                {showQuickQuery && hasTargets && (
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -1060,7 +1074,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                         <Terminal size={14} className="text-cyan-600" />
                         <span className="text-sm font-bold text-gray-700">{isZh ? '快捷查询' : 'Quick Query'}</span>
                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 font-mono font-bold border border-cyan-100">
-                          {singleDevice.hostname}
+                          {targetDevices.length === 1 ? targetDevices[0].hostname : (isZh ? `已选 ${targetDevices.length} 台设备` : `${targetDevices.length} devices`)}
                         </span>
                       </div>
                       <button onClick={() => setShowQuickQuery(false)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400"><X size={14} /></button>
@@ -1733,7 +1747,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                                 {isZh ? 'WebSocket 连接可能中断，请查看执行历史获取详细结果。' : 'WebSocket may have disconnected. Check execution history for details.'}
                               </p>
                               <button
-                                onClick={() => onNavigate('/automation/history')}
+                                onClick={() => onNavigate('/automation/queries')}
                                 className="text-[11px] text-cyan-600 hover:text-cyan-700 font-semibold mt-1"
                               >
                                 {isZh ? '查看执行历史 →' : 'View History →'}
@@ -1872,7 +1886,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                         </div>
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => onNavigate('/automation/history')}
+                            onClick={() => onNavigate('/automation/queries')}
                             className="px-4 py-2 rounded-xl text-xs font-bold border border-gray-200 hover:bg-gray-50 transition-all flex items-center gap-1.5"
                           >
                             <ExternalLink size={12} />
@@ -2023,7 +2037,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                   : <Monitor size={13} className="text-emerald-400 shrink-0" />}
                 <span className="text-[12px] font-bold text-white/90 truncate">{quickQueryLabel}</span>
                 <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md bg-white/[0.06] text-white/35 font-mono border border-white/[0.04]">
-                  {singleDevice?.hostname || ''}
+                  {targetDevices.length === 1 ? targetDevices[0].hostname : (isZh ? `多选 (${targetDevices.length})` : `Batch (${targetDevices.length})`)}
                 </span>
                 {!quickQueryRunning && quickQueryStructured && (
                   <div className="ml-2 flex items-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.04] p-1">
@@ -2121,9 +2135,29 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
               ) : quickQueryStructured && quickQueryView === 'table' ? (
                 <div className="p-5 space-y-4">
                   <div className="flex items-center justify-between gap-3 border-b border-white/[0.04] pb-3">
-                    <div>
-                      <p className="text-[12px] font-bold text-white/90">{quickQueryLabel}</p>
-                      <p className="mt-1 text-[10px] text-white/35">{quickQueryTable.category?.parser || 'ntc-templates'} · {isZh ? '记录数' : 'Records'} {Number(quickQueryTable.category?.count || 0)}</p>
+                    <div className="flex items-center gap-4">
+                      <div>
+                        <p className="text-[12px] font-bold text-white/90">{quickQueryLabel}</p>
+                        <p className="mt-1 text-[10px] text-white/35">{quickQueryTable.category?.parser || 'ntc-templates'} · {isZh ? '记录数' : 'Records'} {filteredQuickQueryRecords.length} / {Number(quickQueryTable.category?.count || 0)}</p>
+                      </div>
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/25" size={11} />
+                        <input
+                          type="text"
+                          value={quickQuerySearch}
+                          onChange={(e) => setQuickQuerySearch(e.target.value)}
+                          placeholder={isZh ? '过滤结果...' : 'Filter results...'}
+                          className="pl-7 pr-3 py-1 bg-white/[0.04] border border-white/[0.08] rounded-lg text-[11px] text-white placeholder-white/25 outline-none focus:border-cyan-500/50 w-44 transition-all"
+                        />
+                        {quickQuerySearch && (
+                          <button
+                            onClick={() => setQuickQuerySearch('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-white/25 hover:text-white"
+                          >
+                            <X size={10} />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {quickQueryTable.category?.parse_errors?.length > 0 && (
                       <span className="rounded-full bg-amber-500/12 px-2 py-1 text-[10px] font-bold uppercase text-amber-300">{isZh ? '部分回退' : 'Partial Fallback'}</span>
@@ -2140,7 +2174,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                           </tr>
                         </thead>
                         <tbody>
-                          {quickQueryTable.records.map((rec, ri) => (
+                          {filteredQuickQueryRecords.map((rec, ri) => (
                             <tr key={ri} className="border-b border-white/[0.04] last:border-b-0 hover:bg-white/[0.03]">
                               {quickQueryTable.columns.map(col => {
                                 const val = rec?.[col];

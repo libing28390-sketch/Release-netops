@@ -339,7 +339,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
                 ))}
                 {unreadNotifications.length === 0 && (
                   <p className={`px-4 py-6 text-center text-xs ${resolvedTheme === 'dark' ? 'text-white/50' : 'text-black/45'}`}>
-                    No notifications.
+                    {language === 'zh' ? '暂无通知' : 'No notifications.'}
                   </p>
                 )}
               </div>
@@ -371,7 +371,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
               </div>
               <div className="min-w-0">
                 <p className={`text-[13px] font-semibold truncate leading-tight ${resolvedTheme === 'dark' ? 'text-white/90' : 'text-black/85'}`}>{currentUser.username}</p>
-                <p className={`text-[11px] truncate ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/45'}`}>{currentUser.role || 'Administrator'}</p>
+                <p className={`text-[11px] truncate ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/45'}`}>{language === 'zh' ? (currentUser.role === 'Administrator' ? '管理员' : currentUser.role === 'Operator' ? '操作员' : currentUser.role === 'Viewer' ? '只读用户' : (currentUser.role || '管理员')) : (currentUser.role || 'Administrator')}</p>
               </div>
             </div>
 

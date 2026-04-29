@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, Clock, Plus, X, Trash2, Activity, RotateCcw,
   Play, Shield, CheckCircle2, CalendarRange, AlertTriangle,
+  Eye, Download, Search
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import DateTimePicker from '../components/DateTimePicker';
@@ -85,6 +86,34 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   type InspSubTab = 'schedules' | 'history';
   const [inspSubTab, setInspSubTab] = useState<InspSubTab>(initialTab || 'schedules');
 
+  // Unified execution history states
+  interface UnifiedExecutionLog {
+    id: string;
+    source: 'inspection' | 'playbook';
+    started_at: string;
+    trigger_type: 'manual' | 'plan' | 'job';
+    status: string;
+    total_devices: number;
+    success_count: number;
+    failed_count: number;
+    partial_count?: number;
+    avg_health_score?: number;
+    created_by: string;
+    name: string;
+  }
+  const [unifiedLogs, setUnifiedLogs] = useState<UnifiedExecutionLog[]>([]);
+  const [executionTypeFilter, setExecutionTypeFilter] = useState<'all' | 'manual' | 'plan' | 'job'>('all');
+
+  const [selectedLog, setSelectedLog] = useState<UnifiedExecutionLog | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [logDetailLoading, setLogDetailLoading] = useState(false);
+  
+  const [inspectionDetail, setInspectionDetail] = useState<any>(null);
+  const [pbDetail, setPbDetail] = useState<any>(null);
+  const [pbDevices, setPbDevices] = useState<any[]>([]);
+  const [selectedPbDevice, setSelectedPbDevice] = useState<any>(null);
+  const [pbDeviceDetail, setPbDeviceDetail] = useState<any>(null);
+
   useEffect(() => { if (initialTab) setInspSubTab(initialTab); }, [initialTab]);
 
   // Approval states
@@ -140,20 +169,137 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   const fetchInspRuns = useCallback(async () => {
     setInspRunsLoading(true);
     try {
-      const offset = (inspRunPage - 1) * inspRunPageSize;
-      const r = await fetch(`/api/inspections?limit=${inspRunPageSize}&offset=${offset}`, { headers: authHeaders });
-      if (r.ok) {
-        const j = await r.json(); const d = j.data;
-        if (d && typeof d === 'object' && !Array.isArray(d)) {
-          setInspRuns(Array.isArray(d.items) ? d.items : []);
-          setInspRunTotal(typeof d.total === 'number' ? d.total : 0);
-        } else {
-          setInspRuns(Array.isArray(d) ? d : []);
-          setInspRunTotal(Array.isArray(d) ? d.length : 0);
+      // 1. Fetch inspections (limit 500)
+      const inspResp = await fetch(`/api/inspections?limit=500`, { headers: authHeaders });
+      let inspections: any[] = [];
+      if (inspResp.ok) {
+        const j = await inspResp.json();
+        const d = j.data;
+        inspections = Array.isArray(d) ? d : (d?.items || []);
+      }
+
+      // 2. Fetch playbooks (limit 500)
+      const pbResp = await fetch(`/api/playbooks?page=1&page_size=500`, { headers: authHeaders });
+      let playbooks: any[] = [];
+      if (pbResp.ok) {
+        const j = await pbResp.json();
+        playbooks = Array.isArray(j) ? j : (j?.items || []);
+      }
+
+      // 3. Normalize & Merge
+      const normalizedInsp: UnifiedExecutionLog[] = inspections.map(run => ({
+        id: run.id,
+        source: 'inspection',
+        started_at: run.started_at,
+        trigger_type: run.trigger_type === 'manual' ? 'manual' : 'plan',
+        status: run.status,
+        total_devices: run.total_devices || 0,
+        success_count: run.success_count || 0,
+        failed_count: run.failed_count || 0,
+        avg_health_score: run.avg_health_score,
+        created_by: run.created_by || 'system',
+        name: run.schedule_name || run.name || (zh ? '网络巡检' : 'Network Inspection')
+      }));
+
+      const normalizedPlaybooks: UnifiedExecutionLog[] = playbooks.map(pb => {
+        const isScheduled = pb.author === 'scheduler' || pb.author === 'system';
+        return {
+          id: pb.id,
+          source: 'playbook',
+          started_at: pb.created_at,
+          trigger_type: isScheduled ? 'job' : 'manual',
+          status: pb.status,
+          total_devices: pb.total_devices || 0,
+          success_count: pb.success_count || 0,
+          failed_count: pb.failed_count || 0,
+          partial_count: pb.partial_count || 0,
+          created_by: pb.author || 'admin',
+          name: pb.scenario_name || pb.task_name || (zh ? '快捷命令执行' : 'Quick Playbook')
+        };
+      });
+
+      const combined = [...normalizedInsp, ...normalizedPlaybooks].sort((a, b) => {
+        return new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+      });
+
+      setUnifiedLogs(combined);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setInspRunsLoading(false);
+    }
+  }, [authHeaders, zh]);
+
+  const filteredLogs = useMemo(() => {
+    return unifiedLogs.filter(log => {
+      if (executionTypeFilter === 'all') return true;
+      return log.trigger_type === executionTypeFilter;
+    });
+  }, [unifiedLogs, executionTypeFilter]);
+
+  const paginatedLogs = useMemo(() => {
+    const start = (inspRunPage - 1) * inspRunPageSize;
+    return filteredLogs.slice(start, start + inspRunPageSize);
+  }, [filteredLogs, inspRunPage, inspRunPageSize]);
+
+  const handleSelectLog = async (log: UnifiedExecutionLog) => {
+    setSelectedLog(log);
+    setIsDetailModalOpen(true);
+    setLogDetailLoading(true);
+    setInspectionDetail(null);
+    setPbDetail(null);
+    setPbDevices([]);
+    setSelectedPbDevice(null);
+    setPbDeviceDetail(null);
+
+    try {
+      if (log.source === 'inspection') {
+        const resp = await fetch(`/api/inspections/${log.id}`, { headers: authHeaders });
+        if (resp.ok) {
+          const j = await resp.json();
+          setInspectionDetail(j.data);
+        }
+      } else {
+        const pbResp = await fetch(`/api/playbooks/${log.id}`, { headers: authHeaders });
+        if (pbResp.ok) {
+          const j = await pbResp.json();
+          setPbDetail(j);
+        }
+        const devResp = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=100`, { headers: authHeaders });
+        if (devResp.ok) {
+          const j = await devResp.json();
+          const devs = Array.isArray(j) ? j : (j.items || []);
+          setPbDevices(devs);
+          if (devs.length > 0) {
+            setSelectedPbDevice(devs[0].device_id);
+            const detailResp = await fetch(`/api/playbooks/${log.id}/devices/${devs[0].device_id}`, { headers: authHeaders });
+            if (detailResp.ok) {
+              const dj = await detailResp.json();
+              setPbDeviceDetail(dj);
+            }
+          }
         }
       }
-    } finally { setInspRunsLoading(false); }
-  }, [authHeaders, inspRunPage, inspRunPageSize]);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLogDetailLoading(false);
+    }
+  };
+
+  const handleSelectPbDevice = async (device_id: string) => {
+    setSelectedPbDevice(device_id);
+    setPbDeviceDetail(null);
+    try {
+      const resp = await fetch(`/api/playbooks/${selectedLog?.id}/devices/${device_id}`, { headers: authHeaders });
+      if (resp.ok) {
+        const j = await resp.json();
+        setPbDeviceDetail(j);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   useEffect(() => {
     fetchInspSchedules();
@@ -777,8 +923,36 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                 </div>
                 <h3 className="text-sm font-bold text-[#164e63]">{zh ? '执行流水历史' : 'Execution Logs'}</h3>
               </div>
-              <div className="text-[11px] font-bold text-black/25 uppercase tracking-widest tabular-nums">
-                {inspRunTotal} {zh ? '条记录' : 'Logs'}
+              
+              <div className="flex items-center gap-4">
+                {/* Type Filter Buttons */}
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                  {(['all', 'manual', 'plan', 'job'] as const).map(type => {
+                    const labels = {
+                      all: zh ? '全部' : 'All',
+                      manual: zh ? '手动执行' : 'Manual',
+                      plan: zh ? '执行计划' : 'Plan',
+                      job: zh ? '定时作业' : 'Job',
+                    };
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => { setExecutionTypeFilter(type); setInspRunPage(1); }}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                          executionTypeFilter === type 
+                            ? 'bg-white text-[#164e63] shadow-sm' 
+                            : 'text-black/50 hover:text-black/70'
+                        }`}
+                      >
+                        {labels[type]}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="text-[11px] font-bold text-black/25 uppercase tracking-widest tabular-nums">
+                  {filteredLogs.length} {zh ? '条记录' : 'Logs'}
+                </div>
               </div>
             </div>
 
@@ -788,81 +962,142 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                   <RotateCcw size={32} className="animate-spin opacity-20" />
                   <span className="text-sm font-medium">{zh ? '获取流水中...' : 'Loading history...'}</span>
                 </div>
-              ) : inspRuns.length > 0 ? (
+              ) : paginatedLogs.length > 0 ? (
                 <table className="w-full text-left border-collapse min-w-[1000px]">
                   <thead className="sticky top-0 bg-slate-50 border-b border-black/5 z-10">
                     <tr className="bg-black/[0.01]">
                       <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '触发时间' : 'Triggered At'}</th>
-                      <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '类型' : 'Type'}</th>
+                      <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '任务名称' : 'Task Name'}</th>
+                      <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '执行方式' : 'Type'}</th>
                       <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '状态' : 'Status'}</th>
-                      <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '设备概况' : 'Devices Info'}</th>
-                      <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '健康指数' : 'Health Score'}</th>
-                      <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider text-right">{zh ? '执行人' : 'Operator'}</th>
+                      <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '执行概况' : 'Execution Summary'}</th>
+                      <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '执行人' : 'Operator'}</th>
+                      <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider text-right">{zh ? '操作' : 'Actions'}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-black/[0.03]">
-                    {inspRuns.map(run => {
+                    {paginatedLogs.map(log => {
                       const statusMap: Record<string, { label: string; cls: string; dot: string }> = {
                         completed: { label: zh ? '已完成' : 'Completed', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
+                        success: { label: zh ? '已完成' : 'Completed', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
                         running: { label: zh ? '执行中' : 'Running', cls: 'bg-cyan-50 text-cyan-700', dot: 'bg-cyan-500' },
                         failed: { label: zh ? '已失败' : 'Failed', cls: 'bg-red-50 text-red-700', dot: 'bg-red-500' },
                       };
-                      const st = statusMap[run.status] || { label: run.status, cls: 'bg-slate-50 text-slate-600', dot: 'bg-slate-400' };
+                      const st = statusMap[log.status] || { label: log.status, cls: 'bg-slate-50 text-slate-600', dot: 'bg-slate-400' };
+                      
+                      const typeLabels = {
+                        manual: { label: zh ? '手动执行' : 'Manual', cls: 'bg-violet-50 text-violet-600 border-violet-100' },
+                        plan: { label: zh ? '执行计划' : 'Execution Plan', cls: 'bg-blue-50 text-blue-600 border-blue-100' },
+                        job: { label: zh ? '定时作业' : 'Scheduled Job', cls: 'bg-amber-50 text-amber-600 border-amber-100' },
+                      };
+                      const tl = typeLabels[log.trigger_type] || { label: log.trigger_type, cls: 'bg-slate-50 text-slate-600 border-slate-100' };
+
                       return (
-                        <tr key={run.id} className="hover:bg-indigo-50/20 transition-colors">
+                        <tr key={`${log.source}-${log.id}`} className="hover:bg-indigo-50/20 transition-colors">
                           <td className="px-6 py-4 text-[13px] text-[#164e63] font-mono whitespace-nowrap">
-                            {new Date(run.started_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false })}
+                            {new Date(log.started_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false })}
+                          </td>
+                          <td className="px-6 py-4 text-xs font-bold text-black/80">
+                            {log.name}
                           </td>
                           <td className="px-6 py-4">
-                            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${
-                              run.trigger_type === 'manual' 
-                                ? 'bg-violet-50 text-violet-600 border-violet-100' 
-                                : 'bg-blue-50 text-blue-600 border-blue-100'
-                            }`}>
-                              {run.trigger_type === 'manual' ? <Play size={10} /> : <Clock size={10} />}
-                              {run.trigger_type === 'manual' ? (zh ? '手动' : 'Manual') : (zh ? '计划' : 'Plan')}
+                            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${tl.cls}`}>
+                              {log.trigger_type === 'manual' ? <Play size={10} /> : log.trigger_type === 'plan' ? <CalendarClock size={10} /> : <Clock size={10} />}
+                              {tl.label}
                             </span>
                           </td>
                           <td className="px-6 py-4">
                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold ${st.cls}`}>
-                              <div className={`w-1.5 h-1.5 rounded-full ${run.status === 'running' ? 'animate-pulse' : ''} ${st.dot}`} />
+                              <div className={`w-1.5 h-1.5 rounded-full ${log.status === 'running' ? 'animate-pulse' : ''} ${st.dot}`} />
                               {st.label}
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            <div className="flex items-center gap-3">
-                              <div className="flex flex-col">
-                                <span className="text-xs font-bold text-black/60">{run.total_devices} {zh ? '台设备' : 'Devices'}</span>
-                                <div className="flex items-center gap-1.5 mt-1">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" title={zh ? '健康' : 'Healthy'} />
-                                  <span className="text-[10px] text-emerald-600 font-bold">{run.healthy_count}</span>
-                                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-1" title={zh ? '警告' : 'Warning'} />
-                                  <span className="text-[10px] text-amber-600 font-bold">{run.warning_count}</span>
-                                  <div className="w-1.5 h-1.5 rounded-full bg-red-400 ml-1" title={zh ? '故障' : 'Critical'} />
-                                  <span className="text-[10px] text-red-600 font-bold">{run.critical_count}</span>
+                            {log.source === 'inspection' ? (
+                              <div className="flex items-center gap-3">
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-bold text-black/60">{log.total_devices} {zh ? '台设备' : 'Devices'}</span>
+                                  <div className="flex items-center gap-1.5 mt-1">
+                                    <span className="text-[10px] text-black/40">{zh ? '平均分' : 'Avg Score'}:</span>
+                                    <span className={`text-[11px] font-black tabular-nums ${
+                                      (log.avg_health_score || 0) >= 80 ? 'text-emerald-600' : (log.avg_health_score || 0) >= 60 ? 'text-amber-600' : 'text-red-600'
+                                    }`}>
+                                      {log.avg_health_score?.toFixed(1) ?? '—'}
+                                    </span>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
+                            ) : (
+                              <div className="flex items-center gap-3">
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-bold text-black/60">{log.total_devices} {zh ? '台设备' : 'Devices'}</span>
+                                  <div className="flex items-center gap-1.5 mt-1">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                    <span className="text-[10px] text-emerald-600 font-bold">{log.success_count}</span>
+                                    <div className="w-1.5 h-1.5 rounded-full bg-red-400 ml-1" />
+                                    <span className="text-[10px] text-red-600 font-bold">{log.failed_count}</span>
+                                    {log.partial_count ? (
+                                      <>
+                                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-1" />
+                                        <span className="text-[10px] text-amber-600 font-bold">{log.partial_count}</span>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </td>
                           <td className="px-6 py-4">
-                            <div className="flex flex-col gap-1.5">
-                              <span className={`text-sm font-black tabular-nums ${
-                                run.avg_health_score >= 80 ? 'text-emerald-600' : run.avg_health_score >= 60 ? 'text-amber-600' : 'text-red-600'
-                              }`}>
-                                {run.avg_health_score?.toFixed(1) ?? '—'}
-                              </span>
-                              <div className="w-20 h-1 bg-black/5 rounded-full overflow-hidden">
-                                <div 
-                                  className={`h-full rounded-full transition-all duration-1000 ${
-                                    run.avg_health_score >= 80 ? 'bg-emerald-500' : run.avg_health_score >= 60 ? 'bg-amber-500' : 'bg-red-500'
-                                  }`}
-                                  style={{ width: `${run.avg_health_score ?? 0}%` }}
-                                />
-                              </div>
-                            </div>
+                            <span className="text-xs font-bold text-black/40">{log.created_by}</span>
                           </td>
                           <td className="px-6 py-4 text-right">
-                            <span className="text-xs font-bold text-black/30 group-hover:text-black/50 transition-colors">{run.created_by || 'system'}</span>
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => handleSelectLog(log)}
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-cyan-600 border border-cyan-100 bg-cyan-50/20 hover:bg-cyan-50 transition-all active:scale-95"
+                              >
+                                <Eye size={12} />
+                                {zh ? '查看' : 'View'}
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  let dlData = null;
+                                  let fn = `execution_${log.id}.json`;
+                                  try {
+                                    if (log.source === 'inspection') {
+                                      const r = await fetch(`/api/inspections/${log.id}`, { headers: authHeaders });
+                                      if (r.ok) {
+                                        const j = await r.json();
+                                        dlData = j.data;
+                                        fn = `inspection_report_${log.id}.json`;
+                                      }
+                                    } else {
+                                      const r1 = await fetch(`/api/playbooks/${log.id}`, { headers: authHeaders });
+                                      const r2 = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=100`, { headers: authHeaders });
+                                      if (r1.ok && r2.ok) {
+                                        const j1 = await r1.json();
+                                        const j2 = await r2.json();
+                                        dlData = { summary: j1, devices: Array.isArray(j2) ? j2 : (j2.items || []) };
+                                        fn = `playbook_execution_${log.id}.json`;
+                                      }
+                                    }
+                                    if (dlData) {
+                                      const blob = new Blob([JSON.stringify(dlData, null, 2)], { type: 'application/json' });
+                                      const url = URL.createObjectURL(blob);
+                                      const a = document.createElement('a');
+                                      a.href = url;
+                                      a.download = fn;
+                                      a.click();
+                                      URL.revokeObjectURL(url);
+                                    }
+                                  } catch (err) { console.error(err); }
+                                }}
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-all active:scale-95"
+                              >
+                                <Download size={12} />
+                                {zh ? '下载' : 'Download'}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -877,11 +1112,11 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
               )}
             </div>
 
-            {inspRunTotal > 0 && (
+            {filteredLogs.length > 0 && (
               <div className="mt-auto">
                 <Pagination
                   currentPage={inspRunPage}
-                  totalItems={inspRunTotal}
+                  totalItems={filteredLogs.length}
                   onPageChange={setInspRunPage}
                   itemsPerPage={inspRunPageSize}
                   onItemsPerPageChange={setInspRunPageSize}
@@ -895,6 +1130,185 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
 
       {/* ── Detail Modal ── */}
       <AnimatePresence>
+    {isDetailModalOpen && selectedLog && (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 lg:p-8">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={() => setIsDetailModalOpen(false)}
+          className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        />
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 20 }}
+          className="relative bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl h-[90vh] overflow-hidden flex flex-col z-10 border border-black/10"
+        >
+          {/* Modal Header */}
+          <div className="px-6 py-4 border-b border-black/5 flex items-center justify-between bg-black/[0.015] flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 border border-indigo-100">
+                <Activity size={18} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-[#164e63]">
+                  {selectedLog.name}
+                </h3>
+                <p className="text-[10px] text-black/30 font-mono mt-0.5">ID: {selectedLog.id}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsDetailModalOpen(false)}
+                className="p-2 rounded-xl text-black/20 hover:bg-black/5 hover:text-black/40 transition-all"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+
+          {/* Modal Content */}
+          <div className="flex-1 overflow-hidden relative">
+            {logDetailLoading ? (
+              <div className="h-full flex flex-col items-center justify-center text-black/20 gap-3">
+                <RotateCcw size={32} className="animate-spin opacity-20" />
+                <span className="text-xs font-bold">{zh ? '加载详情中...' : 'Loading details...'}</span>
+              </div>
+            ) : selectedLog.source === 'inspection' ? (
+              /* Inspection Details View */
+              <div className="flex flex-col h-full overflow-y-auto p-6 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 flex-shrink-0">
+                  <div className="p-4 bg-slate-50 border border-black/5 rounded-2xl">
+                    <span className="text-[10px] font-bold text-black/30 uppercase block mb-1">{zh ? '总设备数' : 'Total Devices'}</span>
+                    <span className="text-xl font-black text-[#164e63]">{inspectionDetail?.total_devices || selectedLog.total_devices}</span>
+                  </div>
+                  <div className="p-4 bg-emerald-50/50 border border-emerald-500/10 rounded-2xl">
+                    <span className="text-[10px] font-bold text-emerald-600 block mb-1">{zh ? '健康设备' : 'Healthy'}</span>
+                    <span className="text-xl font-black text-emerald-600">{inspectionDetail?.healthy_count || selectedLog.success_count}</span>
+                  </div>
+                  <div className="p-4 bg-amber-50/50 border border-amber-500/10 rounded-2xl">
+                    <span className="text-[10px] font-bold text-amber-600 block mb-1">{zh ? '告警/异常' : 'Warning'}</span>
+                    <span className="text-xl font-black text-amber-600">{(inspectionDetail?.warning_count || 0) + (inspectionDetail?.critical_count || 0)}</span>
+                  </div>
+                  <div className="p-4 bg-cyan-50 border border-cyan-500/10 rounded-2xl">
+                    <span className="text-[10px] font-bold text-cyan-600 block mb-1">{zh ? '平均得分' : 'Avg Score'}</span>
+                    <span className="text-xl font-black text-cyan-600">{inspectionDetail?.avg_health_score?.toFixed(1) || '—'}</span>
+                  </div>
+                </div>
+
+                <div className="flex-1 rounded-2xl border border-black/5 overflow-hidden flex flex-col bg-white">
+                  <div className="px-4 py-3 bg-black/[0.02] border-b border-black/5">
+                    <h4 className="text-xs font-bold text-[#164e63]">{zh ? '各设备巡检指标' : 'Device Metric Summaries'}</h4>
+                  </div>
+                  <div className="flex-1 overflow-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="sticky top-0 bg-slate-50 border-b border-black/5">
+                        <tr>
+                          <th className="px-4 py-3 font-bold text-black/40">{zh ? '主机名' : 'Hostname'}</th>
+                          <th className="px-4 py-3 font-bold text-black/40">{zh ? 'IP地址' : 'IP Address'}</th>
+                          <th className="px-4 py-3 font-bold text-black/40">{zh ? 'Ping通' : 'Ping'}</th>
+                          <th className="px-4 py-3 font-bold text-black/40">{zh ? 'SSH通' : 'SSH'}</th>
+                          <th className="px-4 py-3 font-bold text-black/40">{zh ? '得分' : 'Score'}</th>
+                          <th className="px-4 py-3 font-bold text-black/40">{zh ? '状态' : 'Status'}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-black/[0.02]">
+                        {(inspectionDetail?.results || []).map((res: any) => (
+                          <tr key={res.id} className="hover:bg-indigo-50/10">
+                            <td className="px-4 py-3 font-bold text-black/80">{res.hostname}</td>
+                            <td className="px-4 py-3 text-black/50 font-mono">{res.ip_address}</td>
+                            <td className="px-4 py-3">
+                              <span className={`font-bold ${res.ping_ok ? 'text-emerald-600' : 'text-red-500'}`}>{res.ping_ok ? 'OK' : 'FAIL'}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`font-bold ${res.ssh_ok ? 'text-emerald-600' : 'text-red-500'}`}>{res.ssh_ok ? 'OK' : 'FAIL'}</span>
+                            </td>
+                            <td className="px-4 py-3 font-black">{res.health_score ?? '—'}</td>
+                            <td className="px-4 py-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                res.health_status === 'healthy' ? 'bg-emerald-50 text-emerald-600' : res.health_status === 'warning' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'
+                              }`}>
+                                {res.health_status === 'healthy' ? (zh ? '健康' : 'Healthy') : res.health_status === 'warning' ? (zh ? '警告' : 'Warning') : (zh ? '故障' : 'Critical')}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Playbook Details View */
+              <div className="flex flex-col md:flex-row h-full">
+                {/* Device List (Left) */}
+                <div className="w-full md:w-4/12 border-r border-black/5 flex flex-col h-full bg-slate-50/50">
+                  <div className="p-4 border-b border-black/5 bg-white">
+                    <span className="text-xs font-bold text-black/50">{zh ? '执行设备情况' : 'Device Execution'}</span>
+                  </div>
+                  <div className="flex-1 overflow-auto p-2 space-y-1">
+                    {pbDevices.map((dev) => {
+                      const stMap: Record<string, { cls: string; label: string }> = {
+                        success: { cls: 'bg-emerald-500', label: zh ? '成功' : 'Pass' },
+                        failed: { cls: 'bg-red-500', label: zh ? '失败' : 'Fail' },
+                        running: { cls: 'bg-cyan-500 animate-pulse', label: zh ? '运行中' : 'Live' },
+                      };
+                      const dst = stMap[dev.status || ''] || { cls: 'bg-red-500', label: zh ? '失败' : 'Fail' };
+                      const isSelected = selectedPbDevice === dev.device_id;
+
+                      return (
+                        <div
+                          key={dev.device_id}
+                          onClick={() => handleSelectPbDevice(dev.device_id)}
+                          className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
+                            isSelected 
+                              ? 'bg-[#164e63] text-white border-transparent shadow-md' 
+                              : 'bg-white border-black/5 hover:border-black/10 hover:shadow-sm'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <p className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-[#164e63]'}`}>{dev.hostname}</p>
+                            <p className={`text-[10px] font-mono mt-0.5 ${isSelected ? 'text-white/60' : 'text-black/30'}`}>{dev.ip_address}</p>
+                          </div>
+                          <span className={`text-[9px] font-bold text-white px-2 py-0.5 rounded-md ${dst.cls}`}>{dst.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Command Output (Right) */}
+                <div className="flex-1 flex flex-col bg-[#1E1E1E] overflow-hidden">
+                  <div className="p-4 border-b border-white/10 bg-black/20 flex items-center justify-between">
+                    <span className="text-xs text-white/60 font-bold">
+                      {selectedPbDevice 
+                        ? (pbDevices.find((d: any) => d.device_id === selectedPbDevice)?.hostname || '') 
+                        : (zh ? '请选择设备查看命令输出' : 'Select a device to view command outputs')}
+                    </span>
+                  </div>
+                  <div className="flex-1 p-6 font-mono text-xs text-[#d4d4d4] overflow-auto whitespace-pre-wrap select-text">
+                    {pbDeviceDetail?.phases ? (
+                      Object.entries(pbDeviceDetail.phases).map(([phase, output]: any) => (
+                        <div key={phase} className="mb-4">
+                          <span className="text-[#a170e8] block mb-1 font-bold"># PHASE: {phase.toUpperCase()}</span>
+                          <div className="pl-4 border-l border-[#a170e8]/20 text-[#e0e0e0]">{output.output || '—'}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-white/20 text-center py-24 select-none">{zh ? '无命令输出' : 'No command output'}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </div>
+    )}
+  </AnimatePresence>
+
+  <AnimatePresence>
         {showScheduleDetail && selectedSchedule && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 lg:p-8">
             <motion.div

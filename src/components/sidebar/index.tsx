@@ -228,7 +228,7 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
             { id: 'auto-scenarios', path: '/automation/scenarios', icon: FolderOpen, labelZh: '场景库', labelEn: 'Scenarios' },
             { id: 'auto-execution-plan', path: '/automation/schedule', icon: Clock, labelZh: '执行计划', labelEn: 'Execution Plan' },
             { id: 'auto-scheduled-jobs', path: '/automation/scheduled-jobs', icon: CalendarClock, labelZh: '定时作业', labelEn: 'Scheduled Jobs' },
-            { id: 'auto-history', path: '/automation/history', icon: History, labelZh: '执行历史', labelEn: 'History' },
+            { id: 'auto-history', path: '/automation/queries', icon: History, labelZh: '查询记录', labelEn: 'Query Records' },
           ],
         },
         {

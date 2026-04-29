@@ -20,3 +20,9 @@ data/logs/
 tools/license_issuer/credentials.json
 zhihu*.md
 
+# License files
+data/license*.json
+tools/license_issuer/issued/
+
+
+tools/license_issuer/issued/registry.json

@@ -557,7 +557,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   {([
                     { path: 'automation/execute', icon: Zap, label: t('directExecution') },
                     { path: 'automation/scenarios', icon: FolderOpen, label: t('scenarioLibrary') },
-                    { path: 'automation/history', icon: History, label: t('executionHistory') },
+                    { path: 'automation/queries', icon: History, label: t('executionHistory') },
                   ] as const).map((item) => {
                     const isActive = currentPath === `/${item.path}`;
                     return (

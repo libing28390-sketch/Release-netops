@@ -527,7 +527,7 @@ export const useAutomation = ({
         return; 
       }
       loadScenarios();
-      if (automationPage === 'execute' || automationPage === 'scenarios' || automationPage === 'history') {
+      if (automationPage === 'execute' || automationPage === 'scenarios' || automationPage === 'queries') {
         loadPlaybookHistory();
       }
     }
@@ -642,7 +642,7 @@ export const useAutomation = ({
             }
           } catch { /* ignore */ }
         };
-        navigate('/automation/history');
+        navigate('/automation/queries');
       }
     } catch (e: any) {
       showToast(`Execution error: ${e.message || 'Network error'}`, 'error');
@@ -973,9 +973,11 @@ export const useAutomation = ({
   }, [quickQueryStructured, quickQueryLabel, language, showToast]);
 
   const runQuickQuery = useCallback(async (label: string, commands: string, operationalCategory?: string) => {
-    const device = selectedDevice || (batchMode && batchDeviceIds.length === 1 ? devices.find(d => d.id === batchDeviceIds[0]) : null);
-    if (!device) {
-      showToast(language === 'zh' ? '请先选择一台设备' : 'Select a device first', 'error');
+    const targets = batchMode
+      ? devices.filter(d => batchDeviceIds.includes(d.id))
+      : (selectedDevice ? [selectedDevice] : []);
+    if (targets.length === 0) {
+      showToast(language === 'zh' ? '请先选择目标设备' : 'Select target devices first', 'error');
       return;
     }
     const fallbackCommands = commands.split('\n').map((command) => command.trim()).filter(Boolean);
@@ -985,47 +987,103 @@ export const useAutomation = ({
     setQuickQueryView('terminal');
     setQuickQueryCommands(fallbackCommands);
     setQuickQueryRunning(true);
+
     try {
       if (operationalCategory) {
-        const resp = await fetch(`/api/devices/${device.id}/operational-data`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
-          body: JSON.stringify({ categories: [operationalCategory] }),
+        const results = await Promise.all(
+          targets.map(async (device) => {
+            try {
+              const resp = await fetch(`/api/devices/${device.id}/operational-data`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
+                body: JSON.stringify({ categories: [operationalCategory] }),
+              });
+              if (!resp.ok) return { device, ok: false, error: resp.statusText };
+              const data = await resp.json();
+              return { device, ok: true, data };
+            } catch (err: any) {
+              return { device, ok: false, error: err.message || String(err) };
+            }
+          })
+        );
+
+        let combinedRecords: any[] = [];
+        let combinedOutput = '';
+
+        results.forEach((res) => {
+          if (!res.ok) {
+            combinedOutput += `--- ${res.device.hostname} ---\nError: ${res.error}\n\n`;
+            return;
+          }
+          const firstCat = Array.isArray(res.data?.categories) ? res.data.categories[0] : null;
+          if (firstCat && Array.isArray(firstCat.records)) {
+            const recordsWithHost = firstCat.records.map((rec: any) => ({
+              'Hostname': res.device.hostname,
+              'IP Address': res.device.ip_address,
+              ...rec,
+            }));
+            combinedRecords = [...combinedRecords, ...recordsWithHost];
+          }
+          if (res.data) {
+            combinedOutput += `--- ${res.device.hostname} ---\n${formatQuickQueryRawOutput(res.data)}\n\n`;
+          }
         });
-        const data = await resp.json();
-        if (resp.ok) {
-          const firstCategory = Array.isArray(data?.categories) ? data.categories[0] : null;
-          const hasStructuredRecords = Array.isArray(firstCategory?.records) && firstCategory.records.length > 0;
-          setQuickQueryCommands(payloadCommands => payloadCommands.length > 0 ? payloadCommands : fallbackCommands); // Simple
-          setQuickQueryStructured(data);
-          setQuickQueryOutput(formatQuickQueryRawOutput(data));
-          setQuickQueryView(hasStructuredRecords ? 'table' : 'terminal');
-        } else {
-          setQuickQueryOutput(`Error: ${data.detail || data.error || 'Unknown error'}`);
-        }
+
+        const hasStructuredRecords = combinedRecords.length > 0;
+        const mockStructured = {
+          device: { hostname: targets.length === 1 ? targets[0].hostname : (language === 'zh' ? '多选聚合' : 'Aggregate'), platform: 'mixed' },
+          categories: [
+            {
+              name: operationalCategory,
+              parser: 'ntc-templates',
+              count: combinedRecords.length,
+              records: combinedRecords,
+            },
+          ],
+        };
+
+        setQuickQueryStructured(mockStructured);
+        setQuickQueryOutput(combinedOutput);
+        setQuickQueryView(hasStructuredRecords ? 'table' : 'terminal');
         return;
       }
 
-      const resp = await fetch('/api/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
-        body: JSON.stringify({
-          device_id: device.id,
-          command: commands,
-          isConfig: false,
-          save_history: false,
-          author: currentUser.username || 'admin',
-          actor_id: currentUser.id,
-          actor_role: currentUser.role || 'Administrator',
-        }),
+      const results = await Promise.all(
+        targets.map(async (device) => {
+          try {
+            const resp = await fetch('/api/execute', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
+              body: JSON.stringify({
+                device_id: device.id,
+                command: commands,
+                isConfig: false,
+                save_history: false,
+                author: currentUser.username || 'admin',
+                actor_id: currentUser.id,
+                actor_role: currentUser.role || 'Administrator',
+              }),
+            });
+            if (!resp.ok) return { device, ok: false, error: resp.statusText };
+            const data = await resp.json();
+            return { device, ok: true, data };
+          } catch (err: any) {
+            return { device, ok: false, error: err.message || String(err) };
+          }
+        })
+      );
+
+      let combinedOutput = '';
+      results.forEach((res) => {
+        if (!res.ok) {
+          combinedOutput += `--- ${res.device.hostname} ---\nError: ${res.error}\n\n`;
+        } else {
+          combinedOutput += `--- ${res.device.hostname} ---\n${res.data.output || 'No output'}\n\n`;
+        }
       });
-      const data = await resp.json();
-      if (resp.ok) {
-        setQuickQueryStructured(null);
-        setQuickQueryOutput(data.output || 'No output');
-      } else {
-        setQuickQueryOutput(`Error: ${data.error || data.detail || 'Unknown error'}`);
-      }
+
+      setQuickQueryStructured(null);
+      setQuickQueryOutput(combinedOutput || 'No output');
     } catch (e: any) {
       setQuickQueryOutput(`Error: ${e.message || e}`);
     } finally {

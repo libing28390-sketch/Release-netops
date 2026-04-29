@@ -77,12 +77,68 @@ def _normalize_change_groups(raw_groups) -> list[str]:
     return normalized
 
 
+def _mask_webhook_url(url: str) -> str:
+    if not url:
+        return ''
+    if 'feishu.cn' in url and '/hook/' in url:
+        base, token = url.split('/hook/', 1)
+        if len(token) > 12:
+            masked_token = token[:4] + '-****-****-****-' + token[-4:]
+        else:
+            masked_token = '****'
+        return f"{base}/hook/{masked_token}"
+    elif 'access_token=' in url:
+        base, token = url.split('access_token=', 1)
+        if len(token) > 8:
+            masked_token = token[:4] + '****' + token[-4:]
+        else:
+            masked_token = '****'
+        return f"{base}access_token={masked_token}"
+    elif 'key=' in url:
+        base, token = url.split('key=', 1)
+        if len(token) > 8:
+            masked_token = token[:4] + '****' + token[-4:]
+        else:
+            masked_token = '****'
+        return f"{base}key={masked_token}"
+    else:
+        if len(url) > 24:
+            return url[:12] + '***' + url[-6:]
+        return '***'
+
+
 def _hydrate_user_row(row) -> dict:
     result = dict(row)
+    conn = get_db_connection()
     try:
-        result['notification_channels'] = json.loads(result.get('notification_channels') or '{}')
+        shared_rows = conn.execute(
+            'SELECT platform, webhook_url, enabled, secret, creator_username FROM global_notification_channels'
+        ).fetchall()
+        
+        shared_channels = {}
+        for s_row in shared_rows:
+            url = (s_row['webhook_url'] or '').strip()
+            masked_url = _mask_webhook_url(url)
+                    
+            shared_channels[s_row['platform']] = {
+                'webhook_url': masked_url,
+                'enabled': bool(s_row['enabled']),
+                'secret': '***' if (s_row['secret'] or '').strip() else '',
+                'creator_username': s_row['creator_username']
+            }
+            
+        for p in ['feishu', 'dingtalk', 'wechat']:
+            if p not in shared_channels:
+                shared_channels[p] = {'webhook_url': '', 'enabled': False, 'secret': '', 'creator_username': ''}
+                
+        result['notification_channels'] = shared_channels
     except Exception:
-        result['notification_channels'] = {}
+        try:
+            result['notification_channels'] = json.loads(result.get('notification_channels') or '{}')
+        except Exception:
+            result['notification_channels'] = {}
+    finally:
+        conn.close()
 
     try:
         raw_groups = json.loads(result.get('change_groups_json') or '[]')
@@ -571,6 +627,58 @@ def update_user(user_id: str, request: Request, user: dict = Body(...)):
         if preferred_language not in ('zh', 'en'):
             preferred_language = 'zh'
         notification_channels_raw = user.get('notification_channels')
+        if notification_channels_raw is not None and isinstance(notification_channels_raw, dict):
+            for platform, cfg in notification_channels_raw.items():
+                if not isinstance(cfg, dict):
+                    continue
+                
+                existing_global = conn.execute(
+                    'SELECT webhook_url, secret, creator_username FROM global_notification_channels WHERE platform = ?',
+                    (platform,)
+                ).fetchone()
+                
+                new_url = str(cfg.get('webhook_url') or '').strip()
+                new_enabled = 1 if cfg.get('enabled') else 0
+                new_secret = str(cfg.get('secret') or '').strip()
+                
+                final_url = ''
+                final_secret = ''
+                
+                auth_username = existing['username']
+                
+                if not existing_global:
+                    final_url = new_url
+                    final_secret = new_secret
+                    final_enabled = new_enabled
+                    creator = auth_username
+                else:
+                    creator = existing_global['creator_username'] or auth_username
+                    if auth_username == creator:
+                        if '***' not in new_url and '****' not in new_url and new_url != '':
+                            final_url = new_url
+                        else:
+                            final_url = existing_global['webhook_url']
+                            
+                        if '***' not in new_secret and '****' not in new_secret and new_secret != '':
+                            final_secret = new_secret
+                        else:
+                            final_secret = existing_global['secret']
+                            
+                        final_enabled = new_enabled
+                    else:
+                        final_url = existing_global['webhook_url']
+                        final_secret = existing_global['secret']
+                        final_enabled = existing_global['enabled']
+                
+                conn.execute(
+                    '''
+                    INSERT INTO global_notification_channels (platform, webhook_url, enabled, secret, creator_username, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(platform) DO UPDATE SET webhook_url=excluded.webhook_url, enabled=excluded.enabled, secret=excluded.secret, updated_at=excluded.updated_at
+                    ''',
+                    (platform, final_url, final_enabled, final_secret, creator, datetime.now().isoformat())
+                )
+
         notification_channels_str = json.dumps(notification_channels_raw) if notification_channels_raw is not None else (existing['notification_channels'] or '{}')
         change_groups_str = json.dumps(change_groups, ensure_ascii=False)
         password = user.get('password')

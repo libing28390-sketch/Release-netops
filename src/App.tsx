@@ -338,7 +338,7 @@ const App: React.FC = () => {
   }, [playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch, loadPlaybookHistory]);
 
   useEffect(() => {
-    if (isAuthenticated && activeTab === 'automation' && automationPage === 'history') {
+    if (isAuthenticated && activeTab === 'automation' && automationPage === 'queries') {
       handleRefreshHistory(playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch);
     }
   }, [isAuthenticated, activeTab, automationPage, playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch, handleRefreshHistory]);
@@ -483,7 +483,7 @@ const App: React.FC = () => {
     if (path === '/assets') return language === 'zh' ? '资产管理' : 'Assets';
     if (path === '/automation/execute') return t('directExecution');
     if (path === '/automation/scenarios') return t('scenarioLibrary');
-    if (path === '/automation/history') return t('executionHistory');
+    if (path === '/automation/queries') return t('executionHistory');
     if (path === '/config/backup') return t('backupHistory');
     if (path === '/config/diff') return t('diffCompare');
     if (path === '/config/search') return t('configSearchTab');
@@ -528,7 +528,7 @@ const App: React.FC = () => {
       { path: '/maintenance', label: zh ? '维护期' : 'Maintenance', group: zh ? '告警管理' : 'Alerts' },
       { path: '/automation/execute', label: t('directExecution'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scenarios', label: t('scenarioLibrary'), group: zh ? '作业自动化' : 'Automation' },
-      { path: '/automation/history', label: t('executionHistory'), group: zh ? '作业自动化' : 'Automation' },
+      { path: '/automation/queries', label: t('executionHistory'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/inspection', label: zh ? '巡检概览' : 'Inspection Overview', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/inspection-records', label: zh ? '巡检记录' : 'Inspection Records', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/schedule', label: zh ? '执行计划' : 'Execution Schedules', group: zh ? '作业自动化' : 'Automation' },
@@ -1043,9 +1043,9 @@ const App: React.FC = () => {
   const [showProfilePwd, setShowProfilePwd] = useState(false);
   const [profileForm, setProfileForm] = useState({ username: '', password: '', confirmPassword: '' });
   const [notificationChannels, setNotificationChannels] = useState<{
-    feishu:   { webhook_url: string; enabled: boolean };
-    dingtalk: { webhook_url: string; enabled: boolean; secret: string };
-    wechat:   { webhook_url: string; enabled: boolean };
+    feishu:   { webhook_url: string; enabled: boolean; creator_username?: string };
+    dingtalk: { webhook_url: string; enabled: boolean; secret: string; creator_username?: string };
+    wechat:   { webhook_url: string; enabled: boolean; creator_username?: string };
   }>({
     feishu:   { webhook_url: '', enabled: false },
     dingtalk: { webhook_url: '', enabled: false, secret: '' },
@@ -1238,9 +1238,9 @@ const App: React.FC = () => {
     // 加载通知渠道配置
     const savedChannels = currentUserRecord?.notification_channels as any;
     setNotificationChannels({
-      feishu:   { webhook_url: savedChannels?.feishu?.webhook_url   || '', enabled: !!savedChannels?.feishu?.enabled   },
-      dingtalk: { webhook_url: savedChannels?.dingtalk?.webhook_url || '', enabled: !!savedChannels?.dingtalk?.enabled, secret: savedChannels?.dingtalk?.secret || '' },
-      wechat:   { webhook_url: savedChannels?.wechat?.webhook_url   || '', enabled: !!savedChannels?.wechat?.enabled   },
+      feishu:   { webhook_url: savedChannels?.feishu?.webhook_url   || '', enabled: !!savedChannels?.feishu?.enabled, creator_username: savedChannels?.feishu?.creator_username || '' },
+      dingtalk: { webhook_url: savedChannels?.dingtalk?.webhook_url || '', enabled: !!savedChannels?.dingtalk?.enabled, secret: savedChannels?.dingtalk?.secret || '', creator_username: savedChannels?.dingtalk?.creator_username || '' },
+      wechat:   { webhook_url: savedChannels?.wechat?.webhook_url   || '', enabled: !!savedChannels?.wechat?.enabled, creator_username: savedChannels?.wechat?.creator_username || '' },
     });
     setNotifyTestLoading('');
     setShowProfileModal(true);

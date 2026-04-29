@@ -394,6 +394,18 @@ def init_db():
         )
         ''')
 
+        # Create global_notification_channels table if not exists
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS global_notification_channels (
+            platform TEXT PRIMARY KEY,
+            webhook_url TEXT,
+            enabled INTEGER DEFAULT 0,
+            secret TEXT DEFAULT '',
+            creator_username TEXT,
+            updated_at TEXT
+        )
+        ''')
+
         # Create config_snapshots table if not exists
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS config_snapshots (
