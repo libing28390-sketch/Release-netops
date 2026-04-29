@@ -93,7 +93,7 @@ const TestConnectionResultModal: React.FC<TestConnectionResultModalProps> = ({
                 const label = stage.stage === 'icmp'
                   ? 'ICMP'
                   : stage.stage === 'tcp'
-                    ? (targetDevice?.connection_method === 'telnet' ? 'TCP/23' : 'TCP/22')
+                    ? ((targetDevice?.connection_method as any) === 'telnet' ? 'TCP/23' : 'TCP/22')
                     : 'SSH';
                 return (
                   <div key={`${stage.stage}-${stage.summary}`} className="flex items-center gap-3 px-3 py-2 rounded-xl bg-black/[0.03]">

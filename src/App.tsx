@@ -3430,7 +3430,7 @@ const App: React.FC = () => {
         sidebarCollapsed={sidebarCollapsed}
         activeTab={activeTab}
         pageTitle={pageTitle}
-        currentUser={currentUser}
+        currentUser={currentUser as any}
         currentUserRole={currentUser.role || currentUserRecord?.role || 'Viewer'}
         currentAvatar={currentAvatar}
         currentUserLastLogin={currentUserLastLogin}

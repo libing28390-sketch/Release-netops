@@ -17,3 +17,4 @@ backend/data/*.db
 backup/
 data/logs/
 .vscode/
+tools/license_issuer/credentials.json

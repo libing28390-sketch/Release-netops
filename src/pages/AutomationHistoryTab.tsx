@@ -97,6 +97,8 @@ interface AutomationHistoryTabProps {
   onScenarioSearchChange: (value: string) => void;
   onHistoryPageChange: (page: number) => void;
   onHistoryStatusFilterChange: (value: string) => void;
+  playbookHistoryPageSize?: number;
+  onHistoryPageSizeChange?: (size: number) => void;
   onSelectExecution: (execution: PlaybookExecution) => Promise<void> | void;
   onDeleteExecution: (execution: PlaybookExecution) => Promise<void> | void;
   onExecDevicesStatusFilterChange: (value: string) => Promise<void> | void;

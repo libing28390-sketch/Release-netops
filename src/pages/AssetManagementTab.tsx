@@ -174,7 +174,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
   const [rotatingAssetId, setRotatingAssetId] = useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const rotationPollRef = React.useRef<ReturnType<typeof setInterval>>();
+  const rotationPollRef = React.useRef<any>(null);
 
   /* Cleanup rotation polling on unmount */
   useEffect(() => () => { if (rotationPollRef.current) clearInterval(rotationPollRef.current); }, []);

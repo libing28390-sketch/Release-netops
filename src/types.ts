@@ -264,7 +264,7 @@ export interface NotificationItem {
   message: string;
   time: string;
   source?: string;
-  severity?: 'low' | 'medium' | 'high' | 'major' | 'critical';
+  severity?: 'low' | 'medium' | 'high' | 'major' | 'critical' | 'warning';
   read: boolean;
 }
 
@@ -274,7 +274,7 @@ export interface AlertRecord {
   id: string;
   dedupe_key: string;
   source: string;
-  severity: 'low' | 'medium' | 'high' | 'major' | 'critical';
+  severity: 'low' | 'medium' | 'high' | 'major' | 'critical' | 'warning';
   title: string;
   message: string;
   device_id?: string | null;

@@ -14,7 +14,7 @@ interface CommandItem {
 
 interface AppLayoutProps {
   language: 'zh' | 'en';
-  resolvedTheme: string;
+  resolvedTheme: 'light' | 'dark';
   themeMode: ThemeMode;
   sidebarCollapsed: boolean;
   activeTab: string;
