@@ -54,7 +54,7 @@ jobs:
           rm -rf .git
           git init
           git add .
-          git commit -m "🚀 Release build: 自动编译底层并剔除机密源码"
+          git commit -m "🚀 Release build: Production ready stable release"
           
           # 推送到客户专门用的发布库 Release-netops
           git branch -M main
