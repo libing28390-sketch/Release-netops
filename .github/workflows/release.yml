@@ -41,6 +41,11 @@ jobs:
           # 删除部署脚本里没用的编译脚本
           rm -f scripts/compile_license.py
           
+          # 删除开发者的 Bug 记录、内部技术笔记、提示词技能库
+          rm -f bug_fix_memory.md
+          rm -rf docs/
+          rm -rf skills/
+          
           # 删除自动化配置文件夹，客户不需要看到这些
           rm -rf .github/
           
