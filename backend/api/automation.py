@@ -59,12 +59,12 @@ async def create_script(script: dict = Body(...), user: dict = Depends(get_opera
         conn.execute('''
             INSERT INTO scripts (
                 id, name, platform, description, content, 
-                script_type, author, version, status, 
+                script_type, category, author, version, status, 
                 submitter_name, approver_username, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             script_id, script.get('name'), script.get('platform'), script.get('description'), 
-            script.get('content'), script.get('script_type', 'shell'), submitter,
+            script.get('content'), script.get('script_type', 'shell'), script.get('category', 'custom'), submitter,
             script.get('version', 'v1.0.0'), script.get('status', 'draft'),
             submitter, approver, now, now
         ))
@@ -97,6 +97,7 @@ async def update_script(script_id: str, script: dict = Body(...), user: dict = D
             "description": script.get('description', existing['description']),
             "content": script.get('content', existing['content']),
             "script_type": script.get('script_type', existing['script_type']),
+            "category": script.get('category', existing['category']),
             "version": script.get('version', existing['version']),
             "status": script.get('status', existing['status']),
             "approver_username": approver,

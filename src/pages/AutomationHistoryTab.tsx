@@ -428,7 +428,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-[#164e63]">
-                      {isLive ? (isZh ? '正在执行详情' : 'Live Execution Log') : (isZh ? '查询详细记录' : 'Execution Log Details')}
+                      {isLive ? (isZh ? '正在执行详情' : 'Live Execution Log') : (isZh ? '执行历史详情' : 'Execution Log Details')}
                     </h3>
                     <p className="text-[10px] text-black/30 font-mono mt-0.5">ID: {activeExecutionId || selectedExecutionDetail?.id}</p>
                   </div>

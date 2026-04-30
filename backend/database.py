@@ -368,6 +368,7 @@ def init_db():
             ('approver_id', 'TEXT DEFAULT ""'),
             ('approver_username', 'TEXT DEFAULT ""'),
             ('rejected_reason', 'TEXT DEFAULT ""'),
+            ('category', 'TEXT DEFAULT "custom"'),
             ('created_at', 'TEXT'),
             ('updated_at', 'TEXT')
         ]:

@@ -999,24 +999,8 @@ async def status_monitor():
 
         def _dispatch_user_channels():
             try:
-                rows = _db_quick(
-                    "SELECT platform, webhook_url, enabled, secret FROM global_notification_channels WHERE enabled = 1",
-                    fetchall=True,
-                )
-                if not rows:
-                    return
-                
-                channels = {}
-                for row in rows:
-                    channels[row['platform']] = {
-                        'webhook_url': row['webhook_url'],
-                        'enabled': True,
-                        'secret': row['secret']
-                    }
-                
-                if channels:
-                    user_alert = {**alert_info, 'lang': 'zh'}
-                    notification_service.send_all_channels(channels, user_alert)
+                user_alert = {**alert_info, 'lang': 'zh'}
+                notification_service.dispatch_to_all_users(user_alert)
             except Exception as exc:
                 logger.warning(f"[Alert] Workspace channel dispatch failed: {exc}")
 

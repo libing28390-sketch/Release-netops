@@ -4,7 +4,7 @@ import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
   Database, Activity, Power, PowerOff,
-  Search, FileCode,
+  Search, FileCode, Eye, Target, FileText,
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import TagConditionPicker, { type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter, parseTagFilter } from '../components/TagConditionPicker';
@@ -31,8 +31,13 @@ const CRON_FIELD_HINTS_ZH = ['0-59, */5, 0,30', '0-23, */2, 0-6', '1-31, */2', '
 const CRON_FIELD_HINTS_EN = ['0-59, */5, 0,30', '0-23, */2, 0-6', '1-31, */2', '1-12, */3', '0-6 (Sun=0), 1-5'];
 
 const ACTION_TYPES = [
-  { value: 'backup', labelZh: '配置采集', labelEn: 'Config Collection', icon: Database },
-  { value: 'script_run', labelZh: '自动化变更', labelEn: 'Automation Change', icon: Zap },
+  { value: 'backup', labelZh: '核心配置备份', labelEn: 'Config Backup', icon: Database, category: 'collection' },
+  { value: 'script_run', labelZh: '自动化脚本', labelEn: 'Automated Script', icon: Zap, category: 'script_run_placeholder' },
+];
+
+const MAJOR_CATEGORIES = [
+  { value: 'collection', labelZh: '采集与巡检', labelEn: 'Collection & Inspection', icon: Database },
+  { value: 'change', labelZh: '自动化变更', labelEn: 'Automation Change', icon: Zap },
 ];
 
 const SCOPE_OPTIONS = [
@@ -111,6 +116,7 @@ const INITIAL_FORM: FormState = {
   script_id: '',
   is_config: false,
   config_reason: '',
+  major_type: 'collection', // UI helper state
 };
 
 /* ═══════════════════════════════════════════════════════ */
@@ -180,7 +186,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   // Modal
   const [modalOpen, setModalOpen] = useState(false);
+  const [detailJob, setDetailJob] = useState<ScheduledJob | null>(null);
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null);
+  const [viewingScript, setViewingScript] = useState<any>(null); // New state for script content view
   const [presetOpen, setPresetOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
@@ -203,8 +211,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [approvalCountdown, setApprovalCountdown] = useState(0);
   const [approvalError, setApprovalError] = useState('');
 
-  // Script selection for action_type: 'script_run'
-  const [availableScripts, setAvailableScripts] = useState<{ id: string; name: string; status: string }[]>([]);
+  // Script selection
+  const [availableScripts, setAvailableScripts] = useState<{ id: string; name: string; status: string; category: string }[]>([]);
   const [scriptSearch, setScriptSearch] = useState('');
   const [showScriptDropdown, setShowScriptDropdown] = useState(false);
 
@@ -247,7 +255,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       const r = await fetch('/api/scripts', { headers: authHeaders });
       if (r.ok) {
         const j = await r.json();
-        setAvailableScripts(j.filter((s: any) => s.status === 'released'));
+        const data = j.data?.items || j.data || j;
+        const list = Array.isArray(data) ? data : [];
+        setAvailableScripts(list.filter((s: any) => s.status === 'released'));
       }
     } catch { /* ignore */ }
   }, [authHeaders]);
@@ -255,8 +265,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
   useEffect(() => { 
     if (modalOpen && !isEditMode) fetchApprovers(); 
-    if (modalOpen && form.action_type === 'script_run') fetchScripts();
-  }, [modalOpen, isEditMode, fetchApprovers, fetchScripts, form.action_type]);
+    if ((modalOpen || detailJob) && (form.action_type === 'script_run' || detailJob?.action_type === 'script_run')) fetchScripts();
+  }, [modalOpen, detailJob, isEditMode, fetchApprovers, fetchScripts, form.action_type]);
 
   useEffect(() => {
     if (approvalCountdown <= 0) return;
@@ -270,6 +280,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     setTagFilter({ ...EMPTY_TAG_FILTER });
     setIpDevices([]);
     setIpInput('');
+    setScriptSearch('');
+    setShowScriptDropdown(false);
     setApproverUsername('');
     setApprovalToken('');
     setApprovalCode('');
@@ -296,6 +308,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       script_id: job.script_id || '',
       is_config: !!job.is_config,
       config_reason: job.config_reason || '',
+      major_type: job.action_type === 'backup' ? 'collection' : 'change', // Simple inference
     });
     if (job.device_scope === 'tag') {
       setTagFilter(parseTagFilter(job.device_filter));
@@ -336,6 +349,26 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     setApprovalCountdown(0);
     setApprovalError('');
     setModalOpen(true);
+  };
+
+  const fetchAndShowScriptDetail = async (scriptId: string) => {
+    if (!scriptId) return;
+    try {
+      const r = await fetch('/api/scripts', { headers: authHeaders });
+      if (r.ok) {
+        const j = await r.json();
+        const data = j.data?.items || j.data || j;
+        const list = Array.isArray(data) ? data : [];
+        const script = list.find((s: any) => s.id === scriptId);
+        if (script) {
+          setViewingScript(script);
+        } else {
+          showToast(zh ? '找不到脚本详情' : 'Script detail not found', 'error');
+        }
+      }
+    } catch {
+      showToast(zh ? '获取脚本失败' : 'Failed to fetch script', 'error');
+    }
   };
 
   const closeModal = () => {
@@ -651,7 +684,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   layout
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className={`rounded-2xl border bg-white shadow-sm transition-all hover:shadow-md ${isEnabled ? 'border-black/[0.06]' : 'border-black/[0.04] opacity-60'}`}
+                  onClick={() => setDetailJob(job)}
+                  className={`rounded-2xl border bg-white shadow-sm transition-all hover:shadow-md cursor-pointer group ${isEnabled ? 'border-black/[0.06]' : 'border-black/[0.04] opacity-60'}`}
                 >
                   <div className="flex items-center gap-4 px-5 py-3.5">
                     {/* Icon */}
@@ -711,7 +745,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                      <button
+                        onClick={() => setDetailJob(job)}
+                        className="p-2 rounded-lg text-black/25 hover:bg-cyan-50 hover:text-cyan-600 transition-all opacity-0 group-hover:opacity-100"
+                        title={zh ? '查看详情' : 'View Detail'}
+                      >
+                        <Eye size={14} />
+                      </button>
                       <button
                         onClick={() => openEditModal(job)}
                         className="p-2 rounded-lg text-black/25 hover:bg-cyan-50 hover:text-cyan-600 transition-all"
@@ -786,6 +827,180 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} language={language} />
         </div>
       )}
+
+      {/* --- Detail Modal --- */}
+      <AnimatePresence>
+        {detailJob && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          >
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-md" onClick={() => setDetailJob(null)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl max-h-[85vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-black/5"
+            >
+              {/* Header */}
+              <div className="px-6 py-5 border-b border-black/[0.03] flex items-center justify-between bg-gradient-to-r from-slate-50/50 to-white">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 flex items-center justify-center">
+                    <Info className="w-5 h-5 text-cyan-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-[#164e63]">{detailJob.name}</h3>
+                    <div className="flex items-center gap-2 text-[10px] text-black/40 mt-0.5">
+                      <span className="bg-slate-100 px-1.5 py-0.5 rounded font-mono">{detailJob.id}</span>
+                      <span>·</span>
+                      <span>{zh ? '定时作业详情' : 'Scheduled Job Detail'}</span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setDetailJob(null)}
+                  className="p-2 rounded-xl text-black/20 hover:bg-black/5 hover:text-black/40 transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                {/* 1. Schedule & Scope Grid */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-4 rounded-2xl bg-slate-50/50 border border-black/[0.02]">
+                    <div className="flex items-center gap-2 text-[11px] font-bold text-black/40 mb-2 uppercase tracking-wider">
+                      <CalendarClock size={12} />
+                      {zh ? '执行周期' : 'Schedule'}
+                    </div>
+                    <p className="text-sm font-semibold text-[#0e7490]">
+                      {describeCron(detailJob.cron_expr, zh)}
+                    </p>
+                    <p className="text-[10px] font-mono text-black/30 mt-1">{detailJob.cron_expr}</p>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-slate-50/50 border border-black/[0.02]">
+                    <div className="flex items-center gap-2 text-[11px] font-bold text-black/40 mb-2 uppercase tracking-wider">
+                      <Target size={12} />
+                      {zh ? '执行范围' : 'Target Scope'}
+                    </div>
+                    <p className="text-sm font-semibold text-slate-700">
+                      {detailJob.device_scope === 'all' ? (zh ? '全部在线设备' : 'All Online Devices') :
+                       detailJob.device_scope === 'ip' ? (zh ? '按 IP 指定' : 'By IP Address') :
+                       detailJob.device_scope === 'tag' ? (zh ? '按标签筛选' : 'By Tags') : (zh ? '自定义范围' : 'Custom')}
+                    </p>
+                    <p className="text-[10px] text-black/40 mt-1 truncate">
+                      {detailJob.device_filter || (zh ? '无额外过滤条件' : 'No filter')}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 2. Device List (IP List) */}
+                {(detailJob.device_scope === 'ip' || detailJob.device_scope === 'all') && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-[11px] font-bold text-black/50 uppercase tracking-wider">{zh ? '执行 IP 列表' : 'Target IPs'}</h4>
+                      <span className="text-[10px] text-black/30">
+                        {detailJob.device_scope === 'all' ? (zh ? '动态获取' : 'Dynamic') : `${(detailJob.device_filter || '').split(',').length} 个目标`}
+                      </span>
+                    </div>
+                    <div className="p-3 rounded-2xl border border-black/[0.04] bg-slate-50/30">
+                      <div className="flex flex-wrap gap-1.5">
+                        {detailJob.device_scope === 'all' ? (
+                          <div className="text-[11px] text-black/40 italic px-2 py-1">{zh ? '作业运行时将自动扫描所有在线设备' : 'Automatically targets all online devices at runtime'}</div>
+                        ) : (
+                          (detailJob.device_filter || '').split(',').map((ip, idx) => (
+                            <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded-md bg-white border border-black/[0.06] text-[11px] font-mono text-slate-600 shadow-sm">
+                              {ip.trim()}
+                            </span>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Execution Content (Script/Commands) */}
+                <div>
+                  <h4 className="text-[11px] font-bold text-black/50 uppercase tracking-wider mb-2">{zh ? '执行脚本/内容' : 'Execution Content'}</h4>
+                  <div className="rounded-2xl border border-black/[0.06] overflow-hidden bg-[#1e293b]">
+                    <div className="px-4 py-2 bg-white/5 border-b border-white/[0.05] flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileText size={12} className="text-cyan-400" />
+                        <span className="text-[11px] font-bold text-white/70">
+                          {detailJob.action_type === 'backup' ? (zh ? '采集与巡检：核心配置备份' : 'Collection & Inspection: Config Backup') :
+                           (availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id || (zh ? '操作内容' : 'Operation Content'))}
+                        </span>
+                        {detailJob.script_id && (
+                          <button 
+                            onClick={() => fetchAndShowScriptDetail(detailJob.script_id!)}
+                            className="text-[9px] bg-cyan-500/10 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-500/20 hover:bg-cyan-500/20 transition-all ml-1"
+                          >
+                            {zh ? '查看脚本详情' : 'View Script'}
+                          </button>
+                        )}
+                      </div>
+                      <div className="text-[9px] font-bold text-cyan-400/60 uppercase tracking-widest">
+                        {detailJob.action_type === 'backup' ? (zh ? '采集' : 'BACKUP') : 
+                         detailJob.major_type === 'collection' ? (zh ? '巡检' : 'INSPECTION') : (zh ? '变更' : 'CHANGE')}
+                      </div>
+                    </div>
+                    <div className="p-4 overflow-x-auto">
+                      <pre className="font-mono text-[11px] leading-relaxed text-cyan-50/90 whitespace-pre-wrap">
+                        {detailJob.action_type === 'backup' 
+                          ? (zh ? '# 该作业为内置配置备份任务\n# 将自动采集设备 running-config 并进行版本比对' : '# This is a built-in config backup job.\n# It will collect running-config and track drifts.')
+                          : (detailJob.commands || (zh ? '-- 未设置具体执行内容 --' : '-- No commands defined --'))}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Meta Info */}
+                <div className="pt-4 border-t border-black/[0.03] grid grid-cols-2 gap-y-4 text-[10px]">
+                  <div>
+                    <p className="text-black/30 mb-1">{zh ? '状态' : 'Status'}</p>
+                    <span className={`px-2 py-0.5 rounded-full font-bold ${detailJob.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                      {detailJob.enabled ? (zh ? '已启用' : 'Active') : (zh ? '已停用' : 'Disabled')}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-black/30 mb-1">{zh ? '配置原因' : 'Reason'}</p>
+                    <p className="text-slate-600 font-medium italic truncate">{detailJob.config_reason || '\u2014'}</p>
+                  </div>
+                  <div>
+                    <p className="text-black/30 mb-1">{zh ? '审批人' : 'Approver'}</p>
+                    <p className="text-slate-600 font-bold">{detailJob.approved_by || (zh ? '系统自核' : 'Auto')}</p>
+                  </div>
+                  <div>
+                    <p className="text-black/30 mb-1">{zh ? '创建者' : 'Creator'}</p>
+                    <p className="text-slate-600 font-bold">{detailJob.created_by} · {new Date(detailJob.created_at).toLocaleDateString()}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 bg-slate-50/80 border-t border-black/[0.03] flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setDetailJob(null)}
+                  className="px-6 py-2 rounded-xl border border-black/10 text-xs font-bold text-black/50 hover:bg-black/5 transition-all"
+                >
+                  {zh ? '关闭' : 'Close'}
+                </button>
+                <button
+                  onClick={() => {
+                    const job = detailJob;
+                    setDetailJob(null);
+                    openEditModal(job);
+                  }}
+                  className="px-6 py-2 rounded-xl bg-[#164e63] text-white text-xs font-bold shadow-lg shadow-cyan-900/10 hover:bg-[#0891b2] transition-all"
+                >
+                  {zh ? '编辑该作业' : 'Edit Job'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {modalOpen && (
           <motion.div
@@ -833,25 +1048,49 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                     <div>
                       <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '作业类型' : 'Action Type'}</label>
                       <div className="grid grid-cols-2 gap-2">
-                        {ACTION_TYPES.map(at => (
+                        {MAJOR_CATEGORIES.map(mc => (
                           <button
-                            key={at.value} type="button"
+                            key={mc.value} type="button"
                             onClick={() => {
-                               setForm(f => ({ ...f, action_type: at.value }));
-                               if (at.value === 'script_run') fetchScripts();
+                               setForm(f => ({ ...f, major_type: mc.value as any }));
+                               if (mc.value === 'change') {
+                                 setForm(f => ({ ...f, action_type: 'script_run' }));
+                               } else if (mc.value === 'collection' && form.action_type !== 'script_run') {
+                                 setForm(f => ({ ...f, action_type: 'backup' }));
+                               }
+                               fetchScripts();
                             }}
                             className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
-                              form.action_type === at.value
+                              form.major_type === mc.value
                                 ? 'border-cyan-400 bg-cyan-50 text-[#0891b2]'
                                 : 'border-black/[0.06] bg-white text-black/50 hover:border-black/15'
                             }`}
                           >
-                            <at.icon className="w-3.5 h-3.5" />
-                            {zh ? at.labelZh : at.labelEn}
+                            <mc.icon className="w-3.5 h-3.5" />
+                            {zh ? mc.labelZh : mc.labelEn}
                           </button>
                         ))}
                       </div>
                     </div>
+
+                    {form.major_type === 'collection' && (
+                      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="p-1 bg-slate-50 rounded-xl border border-black/5 flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, action_type: 'backup', script_id: '' }))}
+                          className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${form.action_type === 'backup' ? 'bg-white shadow-sm text-cyan-600' : 'text-black/40 hover:text-black/60'}`}
+                        >
+                          {zh ? '核心配置采集' : 'Config Backup'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, action_type: 'script_run' }))}
+                          className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${form.action_type === 'script_run' ? 'bg-white shadow-sm text-cyan-600' : 'text-black/40 hover:text-black/60'}`}
+                        >
+                          {zh ? '巡检/采集脚本' : 'Inspection Script'}
+                        </button>
+                      </motion.div>
+                    )}
 
                     {form.action_type === 'script_run' && (
                        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="relative">
@@ -860,11 +1099,17 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                              <input 
                                type="text" 
-                               placeholder={zh ? "搜索脚本..." : "Search script..."}
-                               value={scriptSearch || ((availableScripts || []).find(s => s.id === form.script_id)?.name || '')}
-                               onFocus={() => setShowScriptDropdown(true)}
+                               placeholder={zh ? "输入名称搜索所有脚本..." : "Type to search all scripts..."}
+                               value={scriptSearch}
+                               onFocus={() => {
+                                 setShowScriptDropdown(true);
+                                 if (!scriptSearch) {
+                                   const current = (availableScripts || []).find(s => s.id === form.script_id);
+                                   if (current) setScriptSearch(current.name);
+                                 }
+                               }}
                                onChange={(e) => { setScriptSearch(e.target.value); setShowScriptDropdown(true); }}
-                               className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all"
+                               className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all placeholder:text-black/20"
                              />
                           </div>
                           
@@ -874,17 +1119,53 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                   initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
                                   className="absolute z-[60] left-0 right-0 mt-2 bg-[#0f172a]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar"
                                 >
-                                   {(availableScripts || []).filter(s => s.name.toLowerCase().includes(scriptSearch.toLowerCase())).map(s => (
-                                      <div 
-                                        key={s.id} 
-                                        onClick={() => { setForm(f => ({ ...f, script_id: s.id })); setScriptSearch(''); setShowScriptDropdown(false); }}
-                                        className={`px-5 py-3 text-[12px] cursor-pointer hover:bg-white/5 transition-all flex items-center justify-between ${form.script_id === s.id ? 'bg-cyan-500/20 text-[#00a9ce] font-bold' : 'text-slate-300'}`}
-                                      >
-                                         <span className="flex items-center gap-2"><FileCode size={12} /> {s.name}</span>
-                                         {form.script_id === s.id && <CheckCircle2 size={14} />}
-                                      </div>
-                                   ))}
-                                   {availableScripts.length === 0 && <div className="p-4 text-center text-slate-400 text-[11px] italic">{zh ? '暂无已发布的脚本' : 'No released scripts'}</div>}
+                                   {(() => {
+                                      const filtered = (availableScripts || []).filter(s => {
+                                         const searchVal = scriptSearch.toLowerCase();
+                                         return s.name.toLowerCase().includes(searchVal);
+                                      });
+                                      
+                                      if (filtered.length === 0) {
+                                         return <div className="p-8 text-center text-slate-400 text-[11px] italic">{zh ? '未找到匹配的脚本' : 'No matching scripts found'}</div>;
+                                      }
+
+                                      return filtered.map(s => {
+                                         const isSelected = form.script_id === s.id;
+                                         const expectedCategory = form.major_type === 'collection' ? 'inspection' : 'change';
+                                         const isWrongCategory = s.category && s.category !== expectedCategory;
+                                         
+                                         return (
+                                            <div 
+                                              key={s.id} 
+                                              onClick={() => { 
+                                                setForm(f => ({ ...f, script_id: s.id })); 
+                                                setScriptSearch(s.name); 
+                                                setShowScriptDropdown(false); 
+                                              }}
+                                              className={`px-5 py-3 text-[12px] cursor-pointer hover:bg-white/5 transition-all flex items-center justify-between border-b border-white/5 last:border-0 ${isSelected ? 'bg-cyan-500/20 text-[#00a9ce] font-bold' : 'text-slate-300'}`}
+                                            >
+                                               <div className="flex flex-col gap-0.5">
+                                                  <span className="flex items-center gap-2">
+                                                     <FileCode size={12} className={isWrongCategory ? 'text-amber-500' : 'text-cyan-500'} /> 
+                                                     {s.name}
+                                                  </span>
+                                                  <div className="flex items-center gap-2 mt-1">
+                                                     <span className={`text-[8px] px-1.5 py-0.5 rounded uppercase tracking-wider ${s.category === 'inspection' ? 'bg-emerald-500/10 text-emerald-500' : s.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-slate-500/10 text-slate-500'}`}>
+                                                        {s.category === 'inspection' ? (zh ? '巡检/采集' : 'INSPECTION') : 
+                                                         s.category === 'change' ? (zh ? '自动化变更' : 'CHANGE') : (zh ? '未分类' : 'UNCATEGORIZED')}
+                                                     </span>
+                                                     {isWrongCategory && (
+                                                        <span className="text-[8px] text-amber-500/60 italic font-normal">
+                                                           {zh ? '(非当前分类)' : '(Not current category)'}
+                                                        </span>
+                                                     )}
+                                                  </div>
+                                               </div>
+                                               {isSelected && <CheckCircle2 size={14} className="text-cyan-400" />}
+                                            </div>
+                                         );
+                                      });
+                                   })()}
                                 </motion.div>
                              )}
                           </AnimatePresence>
@@ -1211,6 +1492,63 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   className="px-5 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
                 >
                   {isEditMode ? (zh ? '保存修改' : 'Save Changes') : (zh ? '创建定时作业' : 'Create Scheduled Job')}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- Script Preview Modal --- */}
+      <AnimatePresence>
+        {viewingScript && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              className="relative w-full max-w-4xl max-h-[85vh] bg-[#0f172a] rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-white/10"
+            >
+              <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center">
+                    <FileCode className="w-4 h-4 text-cyan-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white/90">{viewingScript.name}</h3>
+                    <p className="text-[10px] text-white/40">{viewingScript.id} · {viewingScript.category === 'inspection' ? (zh ? '巡检脚本' : 'Inspection') : (zh ? '变更脚本' : 'Change')}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViewingScript(null)}
+                  className="p-2 rounded-lg text-white/20 hover:bg-white/5 hover:text-white/40 transition-all"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+                 {viewingScript.description && (
+                   <div className="p-4 rounded-xl bg-white/5 border border-white/5">
+                     <p className="text-[11px] text-white/60 leading-relaxed italic">
+                       {viewingScript.description}
+                     </p>
+                   </div>
+                 )}
+                 <div className="relative group">
+                   <pre className="p-5 rounded-2xl bg-black/50 border border-white/10 font-mono text-[11px] leading-relaxed text-cyan-50/80 overflow-x-auto">
+                     {viewingScript.content}
+                   </pre>
+                 </div>
+              </div>
+              <div className="px-6 py-4 bg-white/[0.02] border-t border-white/5 flex items-center justify-end">
+                <button
+                  onClick={() => setViewingScript(null)}
+                  className="px-6 py-2 rounded-xl bg-white/5 text-white/60 text-xs font-bold hover:bg-white/10 transition-all"
+                >
+                  {zh ? '返回详情' : 'Back'}
                 </button>
               </div>
             </motion.div>

@@ -295,6 +295,13 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                          </div>
                       </div>
                       <div>
+                         <label className={labelClass}>{zh ? '脚本分类' : 'CATEGORY'}</label>
+                         <select disabled={isReadOnly} className={inputClass} value={editForm.category ?? 'inspection'} onChange={e => setEditForm({...editForm, category: e.target.value})}>
+                            <option value="inspection">{zh ? '周期巡检/数据采集' : 'Inspection / Collection'}</option>
+                            <option value="change">{zh ? '自动化变更/配置下发' : 'Automation Change'}</option>
+                         </select>
+                      </div>
+                      <div>
                          <label className={labelClass}>{zh ? '描述信息' : 'DESC'}</label>
                          <textarea readOnly={isReadOnly} className={inputClass + " h-32 resize-none"} value={editForm.description ?? ''} onChange={e => setEditForm({...editForm, description: e.target.value})} />
                       </div>

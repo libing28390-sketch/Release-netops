@@ -163,26 +163,9 @@ def _dispatch_host_resource_notification(
     if alert_count is not None:
         alert_info['alert_count'] = alert_count
 
-    conn = get_db_connection()
-    try:
-        rows = conn.execute(
-            "SELECT notification_channels, preferred_language FROM users WHERE notification_channels IS NOT NULL AND notification_channels != '{}'",
-        ).fetchall()
-    finally:
-        conn.close()
-
-    for row in rows or []:
-        try:
-            channels = json.loads(row['notification_channels'] or '{}')
-        except Exception:
-            continue
-        if not channels:
-            continue
-        user_alert = {
-            **alert_info,
-            'lang': row['preferred_language'] if 'preferred_language' in row.keys() and row['preferred_language'] else alert_info['lang'],
-        }
-        notification_service.send_all_channels(channels, user_alert)
+    # 统一分发到所有用户的通道
+    from services.notification_service import dispatch_to_all_users
+    dispatch_to_all_users(alert_info)
 
 
 def _get_db_health() -> tuple[bool, str]:

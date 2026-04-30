@@ -543,3 +543,78 @@ def send_all_channels(channels: dict, alert: dict) -> list[dict]:
             logger.warning(f"[Notify] WeCom send failed: {msg}")
 
     return results
+
+
+def dispatch_to_all_users(alert: dict) -> list[dict]:
+    """
+    遍历所有用户，根据其个人通知偏好（enabled/disabled）分发告警。
+    自动去重 (platform, webhook_url)，防止对同一个群组机器人重复发消息。
+    """
+    from database import get_db_connection
+    conn = get_db_connection()
+    try:
+        # 1. 获取全局通道配置（作为 URL 和 Secret 的来源）
+        global_rows = conn.execute(
+            "SELECT platform, webhook_url, enabled, secret FROM global_notification_channels"
+        ).fetchall()
+        global_map = {r['platform']: dict(r) for r in global_rows}
+
+        # 2. 获取所有用户的通知偏好
+        user_rows = conn.execute(
+            "SELECT notification_channels, preferred_language FROM users WHERE status = 'active'"
+        ).fetchall()
+
+        # 3. 汇总去重后的发送目标
+        # targets: (platform, url) -> {secret, lang}
+        targets = {}  
+        
+        for u_row in user_rows:
+            try:
+                user_channels = json.loads(u_row['notification_channels'] or '{}')
+                u_lang = u_row['preferred_language'] or 'zh'
+            except Exception:
+                continue
+
+            for platform, g_cfg in global_map.items():
+                if not g_cfg['webhook_url']:
+                    continue
+                
+                u_pref = user_channels.get(platform, {})
+                # 优先级：用户设置的 enabled 状态 > 全局设置
+                is_enabled = u_pref.get('enabled') if 'enabled' in u_pref else bool(g_cfg['enabled'])
+                
+                if is_enabled:
+                    key = (platform, g_cfg['webhook_url'])
+                    if key not in targets:
+                        targets[key] = {
+                            'secret': g_cfg['secret'] or '',
+                            'lang': u_lang
+                        }
+
+        # 4. 执行发送
+        results = []
+        for (platform, url), cfg in targets.items():
+            # 为当前目的地克隆告警信息并设置语言
+            user_alert = {**alert, 'lang': cfg['lang']}
+            
+            if platform == 'feishu':
+                ok, msg = send_feishu(url, user_alert)
+            elif platform == 'dingtalk':
+                ok, msg = send_dingtalk(url, user_alert, secret=cfg['secret'])
+            elif platform == 'wechat':
+                ok, msg = send_wechat(url, user_alert)
+            else:
+                continue
+            
+            results.append({"platform": platform, "success": ok, "error": "" if ok else msg})
+            if ok:
+                logger.info(f"[Notify] Dispatched to {platform}: {url[:30]}...")
+            else:
+                logger.warning(f"[Notify] Dispatch failed to {platform}: {msg}")
+
+        return results
+    except Exception as e:
+        logger.error(f"[Notify] dispatch_to_all_users error: {e}")
+        return []
+    finally:
+        conn.close()

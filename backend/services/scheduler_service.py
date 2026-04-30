@@ -1,10 +1,12 @@
 import uuid
 import json
 import asyncio
+import logging
+import time
 from datetime import datetime
 from database import get_db_connection
 from services.automation_service import AutomationService
-from services.notification_service import send_all_channels
+from services.notification_service import dispatch_to_all_users
 from core.crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
@@ -170,37 +172,21 @@ async def run_scheduled_automation_job(job_id: str):
         conn.close()
 
 async def notify_job_failure(job, details):
-    """发送告警到全局通知渠道"""
-    conn = get_db_connection()
-    try:
-        # 获取全局通知配置
-        channels_row = conn.execute("SELECT * FROM global_notification_channels WHERE enabled = 1").fetchall()
-        if not channels_row:
-            return
+    # 获取活跃用户的通知偏好并分发
+    from services.notification_service import dispatch_to_all_users
+    alert = {
+        "title": f"定时作业执行失败: {job['name']}",
+        "object_name": job['name'],
+        "ip_address": "N/A",
+        "status": "active",
+        "severity": "major",
+        "message": f"作业类型: {job['action_type']}\n失败设备数: {len(details)}\n详细信息: " + "\n".join(details[:10]),
+        "first_occurrence": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "last_occurrence": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
 
-        channels_config = {}
-        for r in channels_row:
-            channels_config[r['platform'].lower()] = {
-                "webhook_url": r['webhook_url'],
-                "enabled": True,
-                "secret": r.get('secret', '')
-            }
-
-        alert = {
-            "title": f"定时作业执行失败: {job['name']}",
-            "object_name": job['name'],
-            "ip_address": "N/A",
-            "status": "active",
-            "severity": "major",
-            "message": f"作业类型: {job['action_type']}\n失败设备数: {len(details)}\n详细信息: " + "\n".join(details[:10]),
-            "first_occurrence": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "last_occurrence": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-
-        # 调用通知服务
-        send_all_channels(channels_config, alert)
-    finally:
-        conn.close()
+    # 调用通知服务 (同步调用，调用方通常已经在子线程或独立进程中)
+    dispatch_to_all_users(alert)
 
 def sync_scheduler_jobs(scheduler):
     """

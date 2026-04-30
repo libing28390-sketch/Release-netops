@@ -2758,6 +2758,7 @@ async def list_playbooks(
         total = conn.execute(
             f"SELECT COUNT(*) FROM playbook_executions {where_sql}", params
         ).fetchone()[0]
+        logger.info(f"[Playbooks] Found {total} total executions (status={status}, scenario={scenario})")
         offset = (page - 1) * page_size
         rows = conn.execute(
             f'''SELECT id, scenario_id, scenario_name, platform, device_ids,

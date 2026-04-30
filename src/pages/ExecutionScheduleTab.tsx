@@ -129,6 +129,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
 
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('netops_token');
+    console.log('[ExecutionScheduleTab] Auth token present:', !!token);
     return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
   }, []);
 
@@ -169,6 +170,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   }, [authHeaders, inspSchedulePage, inspSchedulePageSize]);
 
   const fetchInspRuns = useCallback(async () => {
+    console.log('[ExecutionScheduleTab] fetchInspRuns called');
     setInspRunsLoading(true);
     try {
       // 1. Fetch inspections (limit 500)
@@ -185,7 +187,10 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
       let playbooks: any[] = [];
       if (pbResp.ok) {
         const j = await pbResp.json();
+        console.log('[ExecutionScheduleTab] Playbooks API raw response:', j);
         playbooks = Array.isArray(j) ? j : (j?.items || []);
+      } else {
+        console.warn('[ExecutionScheduleTab] Playbooks API failed:', pbResp.status);
       }
 
       // 3. Normalize & Merge
@@ -221,9 +226,12 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
       });
 
       const combined = [...normalizedInsp, ...normalizedPlaybooks].sort((a, b) => {
-        return new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+        const timeA = a.started_at ? new Date(a.started_at).getTime() : 0;
+        const timeB = b.started_at ? new Date(b.started_at).getTime() : 0;
+        return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
       });
 
+      console.log(`[ExecutionScheduleTab] Combined logs count: ${combined.length}`);
       setUnifiedLogs(combined);
     } catch (e) {
       console.error(e);
@@ -238,6 +246,11 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
       return log.trigger_type === executionTypeFilter;
     });
   }, [unifiedLogs, executionTypeFilter]);
+
+  // Reset log page when filter changes
+  useEffect(() => {
+    setInspRunPage(1);
+  }, [executionTypeFilter, unifiedLogs.length]);
 
   const paginatedLogs = useMemo(() => {
     const start = (inspRunPage - 1) * inspRunPageSize;
@@ -304,8 +317,17 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   };
 
   useEffect(() => {
+    if (initialTab) setInspSubTab(initialTab);
+    setInspRunPage(1);
+    setInspSchedulePage(1);
+  }, [initialTab]);
+
+  useEffect(() => {
     fetchInspSchedules();
-    if (inspSubTab === 'history') fetchInspRuns();
+    if (inspSubTab === 'history') {
+      console.log('[ExecutionScheduleTab] Triggering fetchInspRuns due to subTab change');
+      fetchInspRuns();
+    }
     fetchInspectionItems();
   }, [inspSubTab, fetchInspSchedules, fetchInspRuns, fetchInspectionItems]);
 
