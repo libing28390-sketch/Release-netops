@@ -1,5 +1,5 @@
 """
-assets.py — Physical Asset Management (PAM) API
+assets.py - Physical Asset Management (PAM) API
 Provides CRUD for servers and network devices with physical/location metadata.
 When asset_type='network_device', a linked record in the `devices` table is
 auto-created / synced / cascade-deleted so that the asset registry serves as
@@ -14,7 +14,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from database import get_db_connection
-from core.crypto import encrypt_credential
+from core.crypto import encrypt_credential, decrypt_credential
+from drivers.ssh_compat import get_ssh_error_code, build_ssh_error_guidance
+
+import ping3
+import socket
+from scrapli import Scrapli
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +32,11 @@ def _utc_now() -> str:
 
 # ── helpers: devices ↔ physical_assets sync ──────────────────────────
 
-def _platform_from_vendor(vendor: str) -> str:
-    """Map asset vendor string to a best-guess Netmiko platform."""
-    v = vendor.lower()
+def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> str:
+    """Map asset vendor string to a best-guess Scrapli/Netmiko platform."""
+    v = (vendor or '').lower()
     if 'cisco' in v:
-        return 'cisco_ios'
+        return 'cisco_iosxe'
     if 'huawei' in v:
         return 'huawei_vrp'
     if 'h3c' in v or 'comware' in v:
@@ -40,7 +45,12 @@ def _platform_from_vendor(vendor: str) -> str:
         return 'arista_eos'
     if 'juniper' in v:
         return 'juniper_junos'
-    return 'cisco_ios'
+    if any(x in v for x in ['ubuntu', 'debian', 'centos', 'redhat', 'linux']):
+        return 'linux'
+    
+    if asset_type == 'server':
+        return 'linux'
+    return 'cisco_iosxe'
 
 
 def _safe_encrypt(plaintext: str) -> str:
@@ -57,7 +67,7 @@ def _safe_encrypt(plaintext: str) -> str:
 def _create_linked_device(conn, asset_id: str, body) -> str:
     """Create a devices row linked to a physical_assets row."""
     device_id = str(uuid.uuid4())
-    platform = getattr(body, 'platform', '') or _platform_from_vendor(body.vendor)
+    platform = getattr(body, 'platform', '') or _platform_from_vendor(body.vendor, body.asset_type)
     method = getattr(body, 'connection_method', '') or 'ssh'
     uname = getattr(body, 'username', '') or ''
     pwd = getattr(body, 'password', '') or ''
@@ -156,7 +166,7 @@ class AssetCreate(BaseModel):
     planned_start_u: Optional[int] = None
     management_ip: str = ''
     business_ip: str = ''
-    device_role: str = ''  # switch/router/firewall/ap — only for network_device
+    device_role: str = ''  # switch/router/firewall/ap - only for network_device
     vlan: str = ''
     uplink_switch: str = ''
     uplink_port: str = ''
@@ -371,8 +381,10 @@ def create_asset(body: AssetCreate):
                 id, asset_type, asset_tag, serial_number, vendor, model, hostname,
                 datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
-                status, lifecycle_status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status, lifecycle_status, purchase_date, warranty_expiry, department, notes,
+                platform, connection_method, username, password, snmp_community, snmp_port,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
@@ -380,14 +392,17 @@ def create_asset(body: AssetCreate):
             body.management_ip, body.business_ip, body.device_role,
             body.vlan, body.uplink_switch, body.uplink_port,
             body.status, body.lifecycle_status,
-            body.purchase_date, body.warranty_expiry, body.department, body.notes, now, now
+            body.purchase_date, body.warranty_expiry, body.department, body.notes,
+            body.platform, body.connection_method, body.username, _safe_encrypt(body.password),
+            body.snmp_community, body.snmp_port,
+            now, now
         ))
 
-        # Plan-A: auto-create linked device for network_device assets
+        # Plan-A: auto-create linked device for managed assets
         device_id = None
-        if body.asset_type == 'network_device':
+        if body.asset_type in ('network_device', 'server'):
             device_id = _create_linked_device(conn, asset_id, body)
-            logger.info('Auto-created device %s for asset %s', device_id, asset_id)
+            logger.info('Auto-created device %s for asset %s (%s)', device_id, asset_id, body.asset_type)
 
         conn.commit()
         return {'id': asset_id, 'device_id': device_id}
@@ -417,7 +432,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
         transitioning_to_production = (new_lifecycle == 'production' and old_lifecycle != 'production')
 
         # ── Pre-flight: block production transition if onboarding not complete ──
-        if transitioning_to_production and row['asset_type'] == 'network_device':
+        if transitioning_to_production and row['asset_type'] in ('network_device', 'server'):
             device_row = conn.execute(
                 'SELECT id, onboarding_status, username, password, ip_address FROM devices WHERE asset_id = ?',
                 (asset_id,)
@@ -434,7 +449,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
                         status_code=422,
                         detail=f'投产前请先完成口令上手流程（当前状态: {hint}）。请在设备详情中完成凭据设置与连通性验证。'
                     )
-                # Also check credentials exist — merge values from request body
+                # Also check credentials exist - merge values from request body
                 # (body may carry new username/password that hasn't been persisted yet)
                 from core.crypto import decrypt_credential
                 db_ip = (device_row['ip_address'] or '').strip()
@@ -465,13 +480,19 @@ def update_asset(asset_id: str, body: AssetUpdate):
             'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
             'datacenter', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
             'vlan', 'uplink_switch', 'uplink_port',
-            'status', 'lifecycle_status', 'purchase_date', 'warranty_expiry', 'department', 'notes'
+            'status', 'lifecycle_status', 'purchase_date', 'warranty_expiry', 'department', 'notes',
+            'platform', 'connection_method', 'username', 'password', 'snmp_community', 'snmp_port'
         ]
         for field in updatable:
             val = getattr(body, field, None)
             if val is not None:
-                updates.append(f'{field} = ?')
-                params.append(val)
+                if field == 'password':
+                    if val != '':
+                        updates.append('password = ?')
+                        params.append(_safe_encrypt(val))
+                else:
+                    updates.append(f'{field} = ?')
+                    params.append(val)
 
         rotation_result = None
         if updates:
@@ -525,7 +546,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
                                         dev_id, a_id
                                     )
                                 else:
-                                    # Rotation failed — revert lifecycle + mark failed
+                                    # Rotation failed - revert lifecycle + mark failed
                                     bg_conn.execute(
                                         "UPDATE devices SET rotation_status = 'failed', lifecycle_status = ? WHERE id = ?",
                                         (old_lc, dev_id)
@@ -637,8 +658,10 @@ def import_assets(items: list[AssetCreate]):
                     id, asset_type, asset_tag, serial_number, vendor, model, hostname,
                     datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                     vlan, uplink_switch, uplink_port,
-                    status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, purchase_date, warranty_expiry, department, notes,
+                    platform, connection_method, username, password, snmp_community, snmp_port,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
                 body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
@@ -646,13 +669,160 @@ def import_assets(items: list[AssetCreate]):
                 body.management_ip, body.business_ip, body.device_role,
                 body.vlan, body.uplink_switch, body.uplink_port,
                 body.status,
-                body.purchase_date, body.warranty_expiry, body.department, body.notes, now, now
+                body.purchase_date, body.warranty_expiry, body.department, body.notes,
+                body.platform, body.connection_method, body.username, _safe_encrypt(body.password),
+                body.snmp_community, body.snmp_port,
+                now, now
             ))
-            # Plan-A: auto-create linked device for network_device assets
-            if body.asset_type == 'network_device':
+            # Plan-A: auto-create linked device for managed assets
+            if body.asset_type in ('network_device', 'server'):
                 _create_linked_device(conn, asset_id, body)
             created += 1
         conn.commit()
         return {'created': created, 'skipped': skipped}
+    finally:
+        conn.close()
+
+@router.get("/assets/{asset_id}/verify")
+async def verify_asset_connectivity(asset_id: str):
+    """
+    Perform a quick connectivity check:
+    1. Ping management IP
+    2. Try SSH port (22)
+    3. If credentials exist, try SSH login (fast)
+    """
+    conn = get_db_connection()
+    try:
+        asset = conn.execute('SELECT * FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        
+        asset = dict(asset)
+        ip = asset.get('management_ip')
+        if not ip:
+            return {"success": False, "error": "No management IP configured", "ping": False, "ssh": False}
+
+        results = {
+            "ping": False,
+            "ssh": False,
+            "latency": 0,
+            "ssh_error": None,
+            "ping_error": None
+        }
+
+        # 1. Ping Test
+        try:
+            latency = ping3.ping(ip, timeout=1)
+            if latency is not None and latency is not False:
+                results["ping"] = True
+                results["latency"] = round(latency * 1000, 2)
+            else:
+                results["ping_error"] = "Ping timeout"
+        except Exception as e:
+            results["ping_error"] = str(e)
+
+        # 2. SSH Port Test (Quick check)
+        ssh_port = 22
+        try:
+            with socket.create_connection((ip, ssh_port), timeout=1):
+                results["ssh_port_open"] = True
+        except Exception:
+            results["ssh_port_open"] = False
+            results["ssh_error"] = "SSH port closed or unreachable"
+            return results
+
+        # 3. SSH Login Test (if credentials found)
+        # Check physical_assets first, then linked device
+        username = asset.get('username')
+        password_enc = asset.get('password')
+        
+        if not username or not password_enc:
+            dev = conn.execute('SELECT username, password, platform FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+            if dev:
+                username = dev['username']
+                password_enc = dev['password']
+                # FORCE linux if it's a server
+                if asset['asset_type'] == 'server':
+                    platform = 'linux'
+                else:
+                    platform = dev['platform']
+            else:
+                platform = _platform_from_vendor(asset['vendor'], asset['asset_type'])
+        else:
+            if asset['asset_type'] == 'server':
+                platform = 'linux'
+            else:
+                platform = _platform_from_vendor(asset['vendor'], asset['asset_type'])
+
+        if username and password_enc:
+            try:
+                password = decrypt_credential(password_enc)
+                # Use Scrapli for a quick "fast" login
+                # We just want to see if we can get a prompt
+                import platform as platform_module
+                device_config = {
+                    "host": ip,
+                    "auth_username": username,
+                    "auth_password": password,
+                    "platform": platform or "linux",
+                    "auth_strict_key": False,
+                    "timeout_socket": 5,
+                    "timeout_transport": 10,
+                }
+                
+                # Windows compatibility (same as ScrapliDriver)
+                if platform_module.system() == 'Windows':
+                    device_config['transport'] = 'paramiko'
+                    device_config['transport_options'] = {
+                        'paramiko_open_options': {
+                            'look_for_keys': False,
+                            'allow_agent': False,
+                        }
+                    }
+
+                if asset['asset_type'] == 'server':
+                    # FOR SERVERS: Use direct Paramiko to avoid prompt detection complexity
+                    import paramiko
+                    client = paramiko.SSHClient()
+                    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    try:
+                        client.connect(
+                            hostname=ip,
+                            username=username,
+                            password=password,
+                            port=device_config.get('port', 22),
+                            timeout=10,
+                            allow_agent=False,
+                            look_for_keys=False,
+                            disabled_algorithms={}
+                        )
+                        results["ssh"] = True
+                        results["ssh_summary"] = "SSH 登录验证成功 (直接认证通过)"
+                    finally:
+                        client.close()
+                else:
+                    # FOR NETWORK DEVICES: Use Scrapli for full stateful check
+                    with Scrapli(**device_config) as conn_ssh:
+                        results["ssh"] = True
+                        results["ssh_summary"] = f"SSH 登录验证成功 ({platform} 提示符已捕获)"
+            except Exception as e:
+                err_str = str(e)
+                logger.error(f"Asset verification failed for {ip}: {err_str}", exc_info=True)
+                # Humanize the error for the UI
+                err_code = get_ssh_error_code(err_str)
+                if err_code == 'ssh_authentication_failed':
+                    results["ssh_error"] = "认证失败：用户名或密码错误，或服务器禁用了密码登录"
+                elif err_code == 'ssh_transport_timeout':
+                    results["ssh_error"] = "连接超时：网络不通或 SSH 服务未响应"
+                elif 'ScrapliConnectionNotOpened' in err_str:
+                    results["ssh_error"] = "连接未建立：请检查 IP 和端口"
+                else:
+                    # Clean up technical debris from the error string
+                    clean_err = err_str.split('\n')[0]
+                    results["ssh_error"] = f"SSH 失败: {clean_err}"
+        else:
+            results["ssh_error"] = "No credentials provided for login test"
+
+        return results
     finally:
         conn.close()

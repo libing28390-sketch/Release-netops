@@ -75,14 +75,14 @@ async def lifespan(app: FastAPI):
     _lic.load()
     _lic_status = _lic.validate(force=True)
     if _lic_status.valid:
-        logger.info(f"[License] ✓ Valid — {_lic_status.company} ({_lic_status.license_type}), "
+        logger.info(f"[License] [OK] Valid - {_lic_status.company} ({_lic_status.license_type}), "
                      f"expires in {_lic_status.days_remaining}d, "
                      f"devices: {_lic_status.device_limit}")
         if _lic_status.warnings:
             for w in _lic_status.warnings:
                 logger.warning(f"[License] ⚠ {w}")
     else:
-        logger.error(f"[License] ✗ INVALID — {_lic_status.error}")
+        logger.error(f"[License] [X] INVALID - {_lic_status.error}")
 
     configure_ntc_templates()
     seed_data()
@@ -178,8 +178,6 @@ from fastapi.responses import JSONResponse
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
-    with open(r'd:\netsops\record_debug.log', 'a') as f:
-        f.write(f"[{datetime.now()}] 422 Error: {request.url}\nDetail: {exc.errors()}\n")
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors(), "body": exc.body},
@@ -190,7 +188,7 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS — restrict to known origins in production; permissive in dev
+# CORS - restrict to known origins in production; permissive in dev
 _cors_origins = ["*"] if os.environ.get("NODE_ENV") == "development" else [
     f"http://localhost:{os.environ.get('PORT', '8003')}",
     f"http://127.0.0.1:{os.environ.get('PORT', '8003')}",
@@ -1426,7 +1424,7 @@ async def status_monitor():
                                     raw_delta_out = iface['out_octets'] - prev[iname]['out_octets']
                                     delta_in = raw_delta_in if raw_delta_in >= 0 else raw_delta_in + COUNTER32_MAX
                                     delta_out = raw_delta_out if raw_delta_out >= 0 else raw_delta_out + COUNTER32_MAX
-                                    # Sanity: if delta implies >100 Gbps, likely a reset — discard
+                                    # Sanity: if delta implies >100 Gbps, likely a reset - discard
                                     max_reasonable = 100_000_000_000 * dt / 8  # 100Gbps in bytes
                                     if delta_in > max_reasonable:
                                         delta_in = 0
@@ -1699,7 +1697,7 @@ def seed_data():
             conn.execute('INSERT INTO devices (id, hostname, ip_address, platform, status, compliance, username, password, cpu_usage, memory_usage, snmp_community, role, site) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                          (str(uuid.uuid4()), 'Mock-Device-01', '127.0.0.1', 'cisco_ios', 'online', 'compliant', 'test', 'test', 5, 20, 'public', 'Test', 'Lab'))
         
-        # Check if users table is empty — only insert default admin if no users exist
+        # Check if users table is empty - only insert default admin if no users exist
         count = conn.execute('SELECT COUNT(*) as count FROM users').fetchone()['count']
         if count == 0:
             import bcrypt as _bcrypt
@@ -1881,4 +1879,6 @@ if __name__ == "__main__":
         # Multi-worker: pass app as import string so each worker can import it
         uvicorn.run("main:app", host="0.0.0.0", port=port, workers=workers)
     else:
-        uvicorn.run(app, host="0.0.0.0", port=port)
+        # Single worker: enable reload for dev convenience if not in production
+        is_dev = os.environ.get("NODE_ENV") == "development"
+        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=is_dev)

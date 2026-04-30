@@ -152,13 +152,18 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
 
     conn = get_db_connection()
     try:
-        final_command = command
+        is_shell_script = False
+        is_config = False
         task_name = payload.get('task_name') or 'Custom Command'
+        
+        final_command = command
         if script_id:
             script = conn.execute('SELECT * FROM scripts WHERE id = ?', (script_id,)).fetchone()
             if script:
                 final_command = command if command else script['content']
                 task_name = f"Script: {script['name']}"
+                if script.get('script_type') == 'shell':
+                    is_shell_script = True
             else:
                 template = conn.execute('SELECT * FROM templates WHERE id = ?', (script_id,)).fetchone()
                 if template:
@@ -166,19 +171,34 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
                     task_name = f"Template: {template['name']}"
         
         if not final_command: raise HTTPException(status_code=400, detail="No command or script provided")
-        commands = [c.strip() for c in final_command.split('\n') if c.strip()]
-        _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ')
-        is_query_only = all(any(c.lower().startswith(p) for p in _show_prefixes) for c in commands)
+        
+        # Detect if it's a shell script by shebang if not already known
+        if not is_shell_script and final_command.strip().startswith('#!'):
+            is_shell_script = True
 
-        if not is_query_only:
-            is_config = True
-            ticket_valid = False
-            if change_ticket:
-                row = conn.execute("SELECT status FROM change_orders WHERE order_number = ?", (change_ticket,)).fetchone()
-                if row and row['status'] in {'approved', 'implementing'}: ticket_valid = True
-            if not ticket_valid and is_config_req:
-                if not consume_approval(approval_token): raise HTTPException(status_code=403, detail="授权无效")
-        else: is_config = False
+        if is_shell_script:
+            # Use a robust temp-file wrapping method to ensure shebang execution
+            import uuid
+            tmp_file = f"/tmp/netops_{uuid.uuid4().hex}.sh"
+            wrapped_command = f"cat > {tmp_file} << 'NETOPS_EOF'\n{final_command}\nNETOPS_EOF\nchmod +x {tmp_file} && {tmp_file}; rm -f {tmp_file}"
+            commands = [wrapped_command]
+            is_config = False
+            is_query_only = True # Treat as query to avoid approvals if not explicitly marked as config
+        else:
+            commands = [c.strip() for c in final_command.split('\n') if c.strip()]
+            _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ')
+            is_query_only = all(any(c.lower().startswith(p) for p in _show_prefixes) for c in commands)
+
+            if not is_query_only:
+                is_config = True
+                ticket_valid = False
+                if change_ticket:
+                    row = conn.execute("SELECT status FROM change_orders WHERE order_number = ?", (change_ticket,)).fetchone()
+                    if row and row['status'] in {'approved', 'implementing'}: ticket_valid = True
+                if not ticket_valid and is_config_req:
+                    if not consume_approval(approval_token): raise HTTPException(status_code=403, detail="授权无效")
+            else:
+                is_config = False
 
         batch_results = {}
         for dev_id in device_ids:

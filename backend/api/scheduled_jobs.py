@@ -106,7 +106,7 @@ def create_scheduled_job(
 
     name = (payload.get("name") or "").strip()
     job_type = payload.get("job_type", "cron")  # 'cron' | 'once'
-    action_type = payload.get("action_type", "backup")  # 'backup' | 'inspection' (cron); 'command' | 'backup' | 'inspection' (once)
+    action_type = payload.get("action_type", "backup")  # 'backup' | 'inspection' | 'server_check' | 'health_check' (cron); 'command' | 'backup' | 'inspection' (once)
     cron_expr = (payload.get("cron_expr") or "").strip()
     scheduled_at = (payload.get("scheduled_at") or "").strip()
     device_scope = payload.get("device_scope", "all")
@@ -119,8 +119,8 @@ def create_scheduled_job(
     if not name:
         raise HTTPException(status_code=400, detail="作业名称不能为空")
     # 定时作业（cron）仅支持备份和巡检
-    if job_type == "cron" and action_type not in ("backup", "inspection", "script_run"):
-        raise HTTPException(status_code=400, detail="定时作业仅支持配置备份、设备巡检和脚本执行")
+    if job_type == "cron" and action_type not in ("backup", "inspection", "script_run", "server_check", "health_check"):
+        raise HTTPException(status_code=400, detail="定时作业支持：配置备份、网络巡检、服务器巡检、健康检查及脚本执行")
     if job_type == "cron" and not cron_expr:
         raise HTTPException(status_code=400, detail="定时作业需要 cron 表达式")
     if job_type == "once" and not scheduled_at:
@@ -327,8 +327,8 @@ def update_scheduled_job(
 
         if not name:
             raise HTTPException(status_code=400, detail="作业名称不能为空")
-        if row["job_type"] == "cron" and action_type not in ("backup", "inspection", "script_run"):
-            raise HTTPException(status_code=400, detail="定时作业仅支持配置备份、设备巡检和脚本执行")
+        if row["job_type"] == "cron" and action_type not in ("backup", "inspection", "script_run", "server_check", "health_check"):
+            raise HTTPException(status_code=400, detail="定时作业支持：配置备份、网络巡检、服务器巡检、健康检查及脚本执行")
         if row["job_type"] == "cron" and not cron_expr:
             raise HTTPException(status_code=400, detail="定时作业需要 cron 表达式")
 

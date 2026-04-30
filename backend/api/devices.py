@@ -44,8 +44,6 @@ def _vendor_from_platform(platform: str) -> str:
   
 def _record_instant_execution(device_id: str, name: str, commands: list[str], status: str, platform: str = 'unknown', error: str = '', output: str = ''):
     """Log a one-off query execution into the playbook_executions table so it shows up in history."""
-    with open(r'd:\netsops\record_debug.log', 'a') as f:
-        f.write(f"[{datetime.now()}] Recording: {name}, Device: {device_id}, Status: {status}\n")
     conn = get_db_connection()
     try:
         exec_id = str(uuid.uuid4())

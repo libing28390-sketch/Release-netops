@@ -2628,10 +2628,14 @@ def _render_phase_commands(phase_templates: list, variables: dict) -> list[str]:
     commands = []
     for tmpl in phase_templates:
         rendered = _render_template(tmpl, variables)
-        for line in rendered.split('\n'):
-            line = line.rstrip()
-            if line:
-                commands.append(line)
+        # If the rendered block looks like a shell script, don't split it
+        if rendered.strip().startswith('#!'):
+            commands.append(rendered)
+        else:
+            for line in rendered.split('\n'):
+                line = line.rstrip()
+                if line:
+                    commands.append(line)
     return commands
 
 # ════════════════════════════════════════════════════════════════════
@@ -2999,8 +3003,8 @@ async def get_execution_device_detail(execution_id: str, device_id: str):
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT * FROM execution_device_results WHERE execution_id = ? AND device_id = ?",
-            (execution_id, device_id)
+            "SELECT * FROM execution_device_results WHERE execution_id = ? AND (device_id = ? OR ip_address = ?)",
+            (execution_id, device_id, device_id)
         ).fetchone()
         if row:
             res = dict(row)

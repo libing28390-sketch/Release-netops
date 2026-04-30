@@ -490,6 +490,7 @@ const App: React.FC = () => {
     if (path === '/config/backup') return t('backupHistory');
     if (path === '/config/diff') return t('diffCompare');
     if (path === '/config/search') return t('configSearchTab');
+    if (path === '/config/schedule') return language === 'zh' ? '备份计划' : 'Backup Schedule';
     if (path === '/config/drift') return language === 'zh' ? '配置漂移' : 'Config Drift';
     if (path === '/compliance') return t('compliance');
     if (path === '/capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
@@ -542,6 +543,7 @@ const App: React.FC = () => {
       { path: '/config/backup', label: t('backupHistory'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/diff', label: t('diffCompare'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/search', label: t('configSearchTab'), group: zh ? '配置与合规' : 'Config & Compliance' },
+      { path: '/config/schedule', label: zh ? '备份计划' : 'Backup Schedule', group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/drift', label: zh ? '配置漂移' : 'Config Drift', group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/compliance', label: t('compliance'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/capacity', label: zh ? '容量规划' : 'Capacity Planning', group: zh ? '分析报告' : 'Analytics' },
@@ -603,6 +605,7 @@ const App: React.FC = () => {
         backup: t('backupHistory'),
         diff: t('diffCompare'),
         search: t('configSearchTab'),
+        schedule: language === 'zh' ? '备份计划' : 'Backup Schedule',
         drift: language === 'zh' ? '配置漂移' : 'Config Drift',
       };
       return map[configPage] || configPage;
@@ -3263,6 +3266,15 @@ const App: React.FC = () => {
     openComplianceFindingDetail,
     updateComplianceFinding,
     isTakingSnapshot,
+    scheduleEnabled,
+    setScheduleEnabled,
+    scheduleCron,
+    setScheduleCron,
+    scheduleLoading,
+    retentionDays,
+    setRetentionDays,
+    saveScheduleConfig,
+    configSnapshots,
     handleRunBackupAllOnline,
     handleBackupSingleDevice,
     handleNavigateToConfigDiff,

@@ -24,8 +24,37 @@
       "scheduled_jobs",
       "password_rotation"
     ],
-    "machine_id": "8481-9F17-6557-5CC3",
+    "machine_id": "7294-18BB-E08A-5D49",
     "notes": null,
     "filename": "license_cisco_20260430_084821.json"
+  },
+  {
+    "license_id": "5cd8caed-5e84-491d-bfd1-9bba9a7de4bc",
+    "company": "cisco",
+    "license_type": "enterprise",
+    "issued_at": "2026-04-30T12:46:15.290081+00:00",
+    "expire_at": "2027-04-30T23:59:59",
+    "device_limit": 1000,
+    "server_limit": 1000,
+    "features": [
+      "automation",
+      "config_management",
+      "monitoring",
+      "alerting",
+      "rbac",
+      "change_orders",
+      "inspections",
+      "topology",
+      "ipam",
+      "capacity",
+      "compliance",
+      "reports",
+      "api_access",
+      "scheduled_jobs",
+      "password_rotation"
+    ],
+    "machine_id": "7294-18BB-E08A-5D49",
+    "notes": null,
+    "filename": "license_cisco_20260430_204615.json"
   }
 ]

@@ -14,6 +14,8 @@ import {
   User,
   X,
   XCircle,
+  Copy,
+  Check,
 } from 'lucide-react';
 import type { Device } from '../types';
 import Pagination from '../components/Pagination';
@@ -630,6 +632,37 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                         {selectedDeviceDetail.duration_ms >= 1000 ? `${(selectedDeviceDetail.duration_ms / 1000).toFixed(2)} s` : `${selectedDeviceDetail.duration_ms} ms`}
                                       </span>
                                     )}
+                                    <button
+                                      onClick={() => {
+                                        if (!selectedDeviceDetail) return;
+                                        let logText = "";
+                                        try {
+                                          const phases = JSON.parse(selectedDeviceDetail.phases_json || '{}');
+                                          Object.entries(phases).forEach(([name, p]: [string, any]) => {
+                                            logText += `[PHASE: ${name.toUpperCase()}]\n`;
+                                            if (p.commands && Array.isArray(p.commands)) {
+                                              logText += p.commands.join('\n\n') + '\n\n';
+                                            } else if (p.output) {
+                                              logText += (typeof p.output === 'string' ? p.output : JSON.stringify(p.output, null, 2)) + '\n\n';
+                                            }
+                                          });
+                                        } catch (e) {
+                                          logText = selectedDeviceDetail.phases_json || "";
+                                        }
+                                        const blob = new Blob([logText], { type: 'text/plain' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `log_${selectedDeviceDetail.hostname}_${new Date().toISOString().slice(0,10)}.txt`;
+                                        a.click();
+                                        URL.revokeObjectURL(url);
+                                      }}
+                                      className="p-1.5 rounded-lg text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-all flex items-center gap-1 shadow-sm border border-indigo-100"
+                                      title={isZh ? '下载此设备日志' : 'Download this log'}
+                                    >
+                                      <Download size={14} />
+                                      <span className="text-[9px] font-bold uppercase">{isZh ? '下载日志' : 'Download'}</span>
+                                    </button>
                                   </div>
                                 </div>
 
@@ -689,14 +722,50 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                         </span>
                                       )}
                                     </div>
-                                    <div className="px-4 py-3">
-                                      {data?.commands && (
-                                        <p className="text-[10px] text-black/30 mb-1.5">{Array.isArray(data.commands) ? data.commands.length : 0} {isZh ? '条命令' : 'commands'}</p>
-                                      )}
-                                      {data?.output ? (
-                                        <pre className="text-[11px] font-mono text-black/60 bg-black/[0.02] rounded-lg p-3 max-h-48 overflow-auto whitespace-pre-wrap">{typeof data.output === 'string' ? data.output : JSON.stringify(data.output, null, 2)}</pre>
-                                      ) : (
+                                    <div className="px-4 py-3 space-y-3">
+                                      {data?.commands && Array.isArray(data.commands) && data.commands.map((cmdOutput, idx) => {
+                                        const [copied, setCopied] = React.useState(false);
+                                        return (
+                                          <div key={idx} className="group/code relative">
+                                            <div className="absolute right-2 top-2 z-10 transition-opacity">
+                                              <button
+                                                onClick={() => {
+                                                  const textArea = document.createElement("textarea");
+                                                  textArea.value = cmdOutput;
+                                                  document.body.appendChild(textArea);
+                                                  textArea.select();
+                                                  try {
+                                                    document.execCommand('copy');
+                                                    setCopied(true);
+                                                    setTimeout(() => setCopied(false), 2000);
+                                                  } catch (err) {
+                                                    console.error('Copy failed', err);
+                                                  }
+                                                  document.body.removeChild(textArea);
+                                                }}
+                                                className={`p-1.5 rounded-md border transition-all shadow-sm ${
+                                                  copied 
+                                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-600' 
+                                                    : 'bg-white/80 backdrop-blur-sm border-black/10 text-black/40 hover:text-indigo-600 hover:border-indigo-200'
+                                                }`}
+                                                title={isZh ? '复制内容' : 'Copy output'}
+                                              >
+                                                {copied ? <Check size={12} /> : <Copy size={12} />}
+                                              </button>
+                                            </div>
+                                            <pre className="text-[11px] font-mono text-black/70 bg-black/[0.03] rounded-xl p-4 max-h-[500px] overflow-auto whitespace-pre-wrap border border-black/5">
+                                              {cmdOutput}
+                                            </pre>
+                                          </div>
+                                        );
+                                      })}
+                                      {(!data?.commands || data.commands.length === 0) && !data?.output && (
                                         <p className="text-[10px] text-black/20 italic">{isZh ? '无输出' : 'No output'}</p>
+                                      )}
+                                      {data?.output && !data?.commands && (
+                                        <pre className="text-[11px] font-mono text-black/60 bg-black/[0.02] rounded-lg p-3 max-h-48 overflow-auto whitespace-pre-wrap">
+                                          {typeof data.output === 'string' ? data.output : JSON.stringify(data.output, null, 2)}
+                                        </pre>
                                       )}
                                     </div>
                                   </div>

@@ -359,16 +359,16 @@ def init_db():
 
         # Migration for script management enhancements
         for col, dtype in [
-            ('script_type', 'TEXT DEFAULT "shell"'), 
-            ('author', 'TEXT DEFAULT "admin"'), 
-            ('version', 'TEXT DEFAULT "v1.0.0"'), 
-            ('status', 'TEXT DEFAULT "released"'),
-            ('submitter_id', 'TEXT DEFAULT ""'),
-            ('submitter_name', 'TEXT DEFAULT ""'),
-            ('approver_id', 'TEXT DEFAULT ""'),
-            ('approver_username', 'TEXT DEFAULT ""'),
-            ('rejected_reason', 'TEXT DEFAULT ""'),
-            ('category', 'TEXT DEFAULT "custom"'),
+            ('script_type', "TEXT DEFAULT 'shell'"), 
+            ('author', "TEXT DEFAULT 'admin'"), 
+            ('version', "TEXT DEFAULT 'v1.0.0'"), 
+            ('status', "TEXT DEFAULT 'released'"),
+            ('submitter_id', "TEXT DEFAULT ''"),
+            ('submitter_name', "TEXT DEFAULT ''"),
+            ('approver_id', "TEXT DEFAULT ''"),
+            ('approver_username', "TEXT DEFAULT ''"),
+            ('rejected_reason', "TEXT DEFAULT ''"),
+            ('category', "TEXT DEFAULT 'custom'"),
             ('created_at', 'TEXT'),
             ('updated_at', 'TEXT')
         ]:
@@ -1374,6 +1374,14 @@ def init_db():
         ensure_column('physical_assets', 'uplink_port', "TEXT DEFAULT ''")
         ensure_column('physical_assets', 'lifecycle_status', "TEXT DEFAULT 'staging'")
 
+        # Migration: add connection and credential columns for general assets (e.g. servers)
+        ensure_column('physical_assets', 'platform', "TEXT DEFAULT ''")
+        ensure_column('physical_assets', 'connection_method', "TEXT DEFAULT 'ssh'")
+        ensure_column('physical_assets', 'username', "TEXT DEFAULT ''")
+        ensure_column('physical_assets', 'password', "TEXT DEFAULT ''")
+        ensure_column('physical_assets', 'snmp_community', "TEXT DEFAULT 'public'")
+        ensure_column('physical_assets', 'snmp_port', "INTEGER DEFAULT 161")
+
         # Rack planning on assets: device height (U) and optional planned start RU for DCIM install flow
         ensure_column('physical_assets', 'u_height', 'INTEGER NOT NULL DEFAULT 1')
         ensure_column('physical_assets', 'planned_start_u', 'INTEGER')
@@ -1550,9 +1558,9 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_schedules_enabled ON inspection_schedules(enabled)')
 
         # Migration: add time-range scheduling, description and check_items columns
-        for col, default in [('scheduled_at', '""'), ('expires_at', '""'), ('description', '""'), ('check_items', '"[]"')]:
+        for col, default in [('scheduled_at', "''"), ('expires_at', "''"), ('description', "''"), ('check_items', "'[]'")]:
             try:
-                cursor.execute(f'ALTER TABLE inspection_schedules ADD COLUMN {col} TEXT DEFAULT {default}')
+                cursor.execute(f"ALTER TABLE inspection_schedules ADD COLUMN {col} TEXT DEFAULT {default}")
             except Exception:
                 pass  # column already exists
 
@@ -1763,7 +1771,7 @@ def init_db():
         ''')
         
         # Migration: Add missing columns if they don't exist
-        for col, dtype in [('script_id', 'TEXT DEFAULT ""'), ('warning_threshold', 'REAL'), ('critical_threshold', 'REAL'), ('method', 'TEXT DEFAULT "SNMP"'), ('command', 'TEXT DEFAULT ""')]:
+        for col, dtype in [('script_id', "TEXT DEFAULT ''"), ('warning_threshold', 'REAL'), ('critical_threshold', 'REAL'), ('method', "TEXT DEFAULT 'SNMP'"), ('command', "TEXT DEFAULT ''")]:
             try:
                 cursor.execute(f'ALTER TABLE inspection_items ADD COLUMN {col} {dtype}')
             except: pass
@@ -1772,7 +1780,7 @@ def init_db():
 
         # Migration for inspection_results
         try:
-            cursor.execute('ALTER TABLE inspection_results ADD COLUMN metrics_json TEXT DEFAULT "{}"')
+            cursor.execute("ALTER TABLE inspection_results ADD COLUMN metrics_json TEXT DEFAULT '{}'")
         except: pass
 
         # Seed standard scripts

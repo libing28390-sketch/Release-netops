@@ -39,6 +39,7 @@ const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
 const TagManagementTab = lazy(() => import('../pages/TagManagementTab'));
 const LicenseAdminTab = lazy(() => import('../pages/LicenseAdminTab'));
 const ScriptManagementTab = lazy(() => import('../pages/ScriptManagementTab'));
+const ConfigScheduleTab = lazy(() => import('../pages/ConfigScheduleTab'));
 
 const lazyPanelFallback = (
   <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-black/5 bg-white/70 text-sm text-black/40">
@@ -233,6 +234,15 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     openComplianceFindingDetail,
     updateComplianceFinding,
     isTakingSnapshot,
+    scheduleEnabled,
+    setScheduleEnabled,
+    scheduleCron,
+    setScheduleCron,
+    scheduleLoading,
+    retentionDays,
+    setRetentionDays,
+    saveScheduleConfig,
+    configSnapshots,
     handleRunBackupAllOnline,
     handleBackupSingleDevice,
     handleNavigateToConfigDiff,
@@ -854,6 +864,37 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             onBackupAllOnline={handleRunBackupAllOnline}
             onBackupDevice={handleBackupSingleDevice}
             onNavigateToDiff={handleNavigateToConfigDiff}
+            showToast={showToast}
+          />
+        </Suspense>
+      )}
+
+      {activeTab === 'config' && configPage === 'schedule' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <ConfigScheduleTab
+            t={t}
+            language={language}
+            devices={devices}
+            configSnapshots={configSnapshots || []}
+            isTakingSnapshot={isTakingSnapshot}
+            scheduleEnabled={scheduleEnabled}
+            scheduleCron={scheduleCron}
+            scheduleLoading={scheduleLoading}
+            retentionDays={retentionDays}
+            getVendorFromPlatform={(platform?: string) => {
+              const p = (platform || '').toLowerCase();
+              if (p.includes('cisco')) return 'Cisco';
+              if (p.includes('juniper') || p.includes('junos')) return 'Juniper';
+              if (p.includes('huawei')) return 'Huawei';
+              if (p.includes('h3c')) return 'H3C';
+              if (p.includes('arista')) return 'Arista';
+              return 'Other';
+            }}
+            onToggleScheduleEnabled={() => setScheduleEnabled((v: boolean) => !v)}
+            onCronChange={setScheduleCron}
+            onRetentionDaysChange={setRetentionDays}
+            onSaveSchedule={saveScheduleConfig}
+            onRunBackupNow={handleRunBackupAllOnline}
             showToast={showToast}
           />
         </Suspense>

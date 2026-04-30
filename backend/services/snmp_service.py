@@ -57,8 +57,14 @@ def _install_snmp_error_filter() -> None:
 
     def _filter_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
         msg = context.get('message', '')
-        if '_loop_reading' in msg:
+        # Suppress harmless puresnmp transport errors on Windows
+        if '_loop_reading' in msg or '_SelectorDatagramTransport' in msg:
             return  # suppress
+        
+        # Also suppress InvalidStateError from puresnmp futures
+        exception = context.get('exception')
+        if exception and 'InvalidStateError' in str(type(exception)):
+            return # suppress
         if _original_handler:
             _original_handler(loop, context)
         else:

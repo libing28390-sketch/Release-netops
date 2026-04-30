@@ -23,7 +23,9 @@ class ScrapliDriver(BaseDriver):
             'huawei_vrp': 'huawei_vrp',
             'h3c_comware': 'hp_comware',
             'juniper_junos': 'juniper_junos',
-            'arista_eos': 'arista_eos'
+            'arista_eos': 'arista_eos',
+            'linux': 'linux',
+            'server': 'linux'
         }
         return mapping.get(platform, 'cisco_iosxe')
 

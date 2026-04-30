@@ -99,12 +99,22 @@ class NetmikoDriver(BaseDriver):
             'h3c_comware':  'hp_comware',
             'juniper_junos':'juniper_junos',
             'arista_eos':   'arista_eos',
+            'linux':        'linux',
+            'ubuntu':       'linux',
+            'centos':       'linux',
+            'debian':       'linux',
+            'redhat':       'linux',
+            'esxi':         'linux',
         }
         if platform not in mapping:
             logging.getLogger(__name__).warning(
                 f"Unknown platform '{platform}', falling back to cisco_ios. "
                 f"Supported: {list(mapping)}"
             )
+        # 自动纠错：如果资产类型是服务器且平台是默认值或未知，强制使用 linux 驱动
+        if self.device_info.get('asset_type') == 'server' and platform in ('', 'cisco_ios', 'unknown', None):
+            return 'linux'
+            
         return mapping.get(platform, 'cisco_ios')
 
     def connect(self):
@@ -182,12 +192,14 @@ class NetmikoDriver(BaseDriver):
             if not self.conn:
                 raise Exception("Not connected")
             logger.debug(f"[send_command] {self.host} | {command[:60]}")
+            # 极度耐心模式：大幅增加超时和延时系数，确保慢脚本也能读完
             output = self.conn.send_command(
                 command,
                 cmd_verify=False,
                 strip_prompt=True,
                 strip_command=True,
-                read_timeout=30,
+                read_timeout=120,
+                delay_factor=2
             )
             elapsed = time.time() - start_time
             err_line = self._check_cli_errors(output)

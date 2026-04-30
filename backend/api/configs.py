@@ -1,5 +1,5 @@
 """
-configs.py — Config Snapshot API
+configs.py - Config Snapshot API
 Stores config files in: backup/YYYY/MM/Vendor/Hostname/YYYYMMDD_HHMMSS_trigger.cfg
 Stores metadata in SQLite table config_snapshots.
 """
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Backup root directory — relative to cwd (d:\netops-automation)
+# Backup root directory - relative to cwd (d:\netops-automation)
 BACKUP_ROOT = os.path.join(os.getcwd(), 'backup')
 
 
@@ -75,7 +75,7 @@ def _write_config_file(vendor: str, hostname: str, ts: datetime, trigger: str, c
         f = _get_fernet()
         data = b'ENCRYPTED:' + f.encrypt(data)
     except Exception:
-        pass  # Encryption key not configured — store plaintext
+        pass  # Encryption key not configured - store plaintext
     with open(abs_path, 'wb') as fh:
         fh.write(data)
     return os.path.relpath(abs_path, BACKUP_ROOT).replace(os.sep, '/')
@@ -467,7 +467,7 @@ def get_backup_stats():
             daily_map[d]['total'] += r['cnt']
         daily_history = sorted(daily_map.values(), key=lambda x: x['date'])
 
-        # Today's failures — online devices without today's backup
+        # Today's failures - online devices without today's backup
         all_device_ids = conn.execute(
             "SELECT id FROM devices WHERE status = 'online'"
         ).fetchall()
@@ -807,7 +807,7 @@ def _cleanup_expired_snapshots():
         for d in devs:
             excess = conn.execute(
                 '''SELECT id, file_path FROM config_snapshots
-                   WHERE device_id = ? ORDER BY timestamp DESC LIMIT -1 OFFSET ?''',
+                   WHERE device_id = ? ORDER BY timestamp DESC LIMIT 1000 OFFSET ?''',
                 (d['device_id'], max_per_device)
             ).fetchall()
             for s in excess:
@@ -829,7 +829,7 @@ def _cleanup_expired_snapshots():
 
 
 # ──────────────────────────────────────────────
-# Core backup logic — called by scheduler & manual triggers
+# Core backup logic - called by scheduler & manual triggers
 # ──────────────────────────────────────────────
 
 MOCK_IPS = {'127.0.0.1', '0.0.0.0', 'localhost'}
@@ -900,7 +900,7 @@ async def run_scheduled_backup():
 
         if not backup_ok:
             failed += 1
-            logger.error(f"[Scheduled Backup] ✗ {device['hostname']}: no valid config obtained")
+            logger.error(f"[Scheduled Backup] [X] {device['hostname']}: no valid config obtained")
             continue
 
         try:
@@ -933,12 +933,12 @@ async def run_scheduled_backup():
             finally:
                 conn2.close()
             success += 1
-            logger.info(f"[Scheduled Backup] ✓ {device['hostname']}")
+            logger.info(f"[Scheduled Backup] [OK] {device['hostname']}")
         except Exception as e:
             failed += 1
-            logger.error(f"[Scheduled Backup] ✗ {device['hostname']}: {e}")
+            logger.error(f"[Scheduled Backup] [X] {device['hostname']}: {e}")
 
-    logger.info(f"[Scheduled Backup] Done — {success} succeeded, {failed} failed, {skipped} skipped")
+    logger.info(f"[Scheduled Backup] Done - {success} succeeded, {failed} failed, {skipped} skipped")
 
     # Run retention cleanup after backup
     try:

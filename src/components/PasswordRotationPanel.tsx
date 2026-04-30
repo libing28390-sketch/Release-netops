@@ -30,6 +30,8 @@ const platformLabel = (p: string): string => {
     cisco_ios: 'Cisco IOS', cisco_nxos: 'Cisco NX-OS', cisco_xe: 'Cisco IOS-XE',
     huawei_vrp: 'Huawei VRP', h3c_comware: 'H3C Comware',
     arista_eos: 'Arista EOS', juniper_junos: 'Juniper JunOS',
+    linux: 'Linux', ubuntu: 'Ubuntu', centos: 'CentOS', debian: 'Debian',
+    esxi: 'VMware ESXi',
   };
   return map[p] || p || '-';
 };
@@ -40,6 +42,7 @@ const platformColor = (p: string): string => {
   if (p?.startsWith('h3c')) return 'bg-orange-50 text-orange-600 border-orange-200';
   if (p?.startsWith('arista')) return 'bg-cyan-50 text-cyan-600 border-cyan-200';
   if (p?.startsWith('juniper')) return 'bg-green-50 text-green-600 border-green-200';
+  if (['linux', 'ubuntu', 'centos', 'debian'].includes(p)) return 'bg-slate-100 text-slate-700 border-slate-300';
   return 'bg-slate-50 text-slate-600 border-slate-200';
 };
 
@@ -123,10 +126,36 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
 
   const handleCopyPwd = () => {
     if (!revealedPwd) return;
-    navigator.clipboard.writeText(revealedPwd).then(() => {
+    
+    // Modern API
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(revealedPwd)
+        .then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        })
+        .catch(() => {
+          // Fallback to legacy if modern fails
+          legacyCopy(revealedPwd);
+        });
+    } else {
+      legacyCopy(revealedPwd);
+    }
+  };
+
+  const legacyCopy = (text: string) => {
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    } catch (err) {
+      console.error('Fallback copy failed', err);
+    }
   };
 
   /* ── computed stats ── */

@@ -1,10 +1,10 @@
 """
-Password Rotation Service — 设备密码自动轮换。
+Password Rotation Service - 设备密码自动轮换。
 
 功能:
-1. check_expiring()  — 扫描即将过期的设备密码列表
-2. rotate_password() — 对单台设备执行 SSH 改密 + 更新 DB/Vault
-3. run_rotation_sweep() — 定时调度入口，批量处理到期设备
+1. check_expiring()  - 扫描即将过期的设备密码列表
+2. rotate_password() - 对单台设备执行 SSH 改密 + 更新 DB/Vault
+3. run_rotation_sweep() - 定时调度入口，批量处理到期设备
 
 支持厂商:
 - Cisco IOS/IOS-XE: terminal length 0 → username secret 命令
@@ -79,12 +79,23 @@ def _arista_change_password_commands(username: str, new_password: str) -> list[s
     return [f'username {username} secret {new_password}']
 
 
+def _linux_change_password_commands(username: str, new_password: str) -> list[str]:
+    """Linux shell commands. Using chpasswd for non-interactive rotation."""
+    if username == 'root':
+        return [f'echo "{username}:{new_password}" | chpasswd']
+    return [f'echo "{username}:{new_password}" | sudo -S chpasswd']
+
+
 _CHANGE_PASSWORD_HANDLERS: dict[str, Any] = {
     'cisco_ios': _cisco_change_password_commands,
     'cisco_nxos': _cisco_change_password_commands,
     'huawei_vrp': _huawei_change_password_commands,
     'h3c_comware': _h3c_change_password_commands,
     'arista_eos': _arista_change_password_commands,
+    'linux': _linux_change_password_commands,
+    'ubuntu': _linux_change_password_commands,
+    'centos': _linux_change_password_commands,
+    'debian': _linux_change_password_commands,
 }
 
 # Exec-mode save commands per platform (run AFTER config mode exit)
@@ -94,6 +105,9 @@ _SAVE_COMMANDS: dict[str, str] = {
     'huawei_vrp': 'save force',
     'h3c_comware': 'save force',
     'arista_eos': 'write memory',
+    'linux': 'sync',
+    'ubuntu': 'sync',
+    'centos': 'sync',
 }
 
 
@@ -152,7 +166,7 @@ def rotate_password(device_id: str) -> dict[str, Any]:
     # ── Diagnostic: trace credential resolution ──────────────────────
     raw_pwd = device.get('password') or ''
     logger.info(
-        "rotate_password diagnostic — device=%s ip=%s raw_pwd_prefix=%s raw_pwd_len=%d",
+        "rotate_password diagnostic - device=%s ip=%s raw_pwd_prefix=%s raw_pwd_len=%d",
         device_id,
         device.get('ip_address', ''),
         raw_pwd[:7] if raw_pwd else '(empty)',
@@ -160,14 +174,27 @@ def rotate_password(device_id: str) -> dict[str, Any]:
     )
 
     creds = resolve_device_credentials(device)
-    platform = (device.get('platform') or 'cisco_ios').lower()
+    
+    # FORCE linux platform for servers regardless of what's in the DB
+    if device.get('asset_id'):
+        conn_check = get_db_connection()
+        try:
+            asset_row = conn_check.execute('SELECT asset_type FROM physical_assets WHERE id = ?', (device['asset_id'],)).fetchone()
+            if asset_row and asset_row['asset_type'] == 'server':
+                platform = 'linux'
+            else:
+                platform = (device.get('platform') or 'cisco_ios').lower()
+        finally:
+            conn_check.close()
+    else:
+        platform = (device.get('platform') or 'cisco_ios').lower()
 
     # Pre-flight: validate credentials before attempting SSH
     username = creds.get('username', '').strip()
     password = creds.get('password', '').strip()
 
     logger.info(
-        "rotate_password diagnostic — resolved username=%s password_len=%d password_is_encrypted=%s platform=%s",
+        "rotate_password diagnostic - resolved username=%s password_len=%d password_is_encrypted=%s platform=%s",
         username,
         len(password),
         password.startswith('enc:v1:'),
@@ -217,7 +244,12 @@ def rotate_password(device_id: str) -> dict[str, Any]:
                 logger.warning("Save command failed on %s: %s (password may still be changed in running-config)",
                                device_id, save_result.error)
     except Exception as exc_netmiko:
-        logger.warning("Rotation phase-1 netmiko failed for %s: %s — trying scrapli", device_id, exc_netmiko)
+        # If it's a linux/server, don't even try scrapli as it's often more problematic for shell
+        if platform in ('linux', 'ubuntu', 'centos', 'debian', 'server'):
+            logger.error("Rotation phase-1 failed for %s (linux): %s", device_id, exc_netmiko)
+            return {'success': False, 'message': f'Failed to execute change commands (Netmiko): {exc_netmiko}'}
+            
+        logger.warning("Rotation phase-1 netmiko failed for %s: %s - trying scrapli", device_id, exc_netmiko)
         try:
             with DriverFactory.get_driver('scrapli', device_info) as driver:
                 result = driver.send_config(commands)
@@ -236,8 +268,8 @@ def rotate_password(device_id: str) -> dict[str, Any]:
         with DriverFactory.get_driver('netmiko', verify_info) as verify_driver:
             pass  # successful connect = password verified
     except Exception as exc:
-        logger.error("Rotation phase-2 verify failed for %s: %s — attempting rollback", device_id, exc)
-        # Cannot rollback easily — log critical and keep old password
+        logger.error("Rotation phase-2 verify failed for %s: %s - attempting rollback", device_id, exc)
+        # Cannot rollback easily - log critical and keep old password
         return {
             'success': False,
             'message': f'Password changed on device but verification failed: {exc}. Manual intervention required.',
@@ -265,10 +297,18 @@ def rotate_password(device_id: str) -> dict[str, Any]:
 
     conn2 = get_db_connection()
     try:
+        # Update devices table
         conn2.execute(
             'UPDATE devices SET password = ?, password_last_rotated = ?, password_expires_at = ? WHERE id = ?',
             (enc_new, now_str, expires_str, device_id)
         )
+        # ALSO update physical_assets table if linked
+        asset_id = device.get('asset_id')
+        if asset_id:
+            conn2.execute(
+                'UPDATE physical_assets SET username = ?, password = ? WHERE id = ?',
+                (username, enc_new, asset_id)
+            )
         conn2.commit()
     finally:
         conn2.close()

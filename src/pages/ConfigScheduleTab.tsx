@@ -25,8 +25,6 @@ const CRON_PRESETS = [
   { label: '每月1日 02:00', labelEn: '1st of month at 02:00', cron: '0 2 1 * *' },
 ];
 
-
-
 const CRON_FIELD_LABELS_ZH = ['分钟', '小时', '日', '月', '星期'];
 const CRON_FIELD_LABELS_EN = ['Minute', 'Hour', 'Day', 'Month', 'Weekday'];
 const CRON_FIELD_HINTS_ZH = ['0-59, */5, 0,30', '0-23, */2, 0-6', '1-31, */2', '1-12, */3', '0-6, 1-5'];
@@ -43,8 +41,6 @@ interface SimpleForm { freq: CronFreq; hour: number; minute: number; weekday: nu
 
 interface UpcomingDevice { id: string; hostname: string; ip_address: string; platform: string; status: string }
 interface PreviewData { enabled: boolean; cron: string; upcoming: string[]; devices: UpcomingDevice[]; device_count: number }
-
-
 
 interface DeviceStat {
   id: string; hostname: string; ip_address: string; platform: string; status: string;
@@ -150,10 +146,6 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
 }) => {
   const zh = language === 'zh';
   const onlineCount = devices.filter(d => d.status === 'online').length;
-
-  // Backup-only page (inspection moved to /automation/schedule)
-
-  /* ═══ BACKUP STATE ═══ */
 
   const cronParts = scheduleCron.split(/\s+/);
   const cronFields = [cronParts[0] ?? '0', cronParts[1] ?? '*', cronParts[2] ?? '*', cronParts[3] ?? '*', cronParts[4] ?? '*'];
@@ -263,23 +255,15 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
     );
   }, [zh]);
 
-  const DEVICE_PAGE_SIZE = 5;
   const [devicePage, setDevicePage] = useState(1);
-  const [scopeExpanded, setScopeExpanded] = useState(false);
-  const SCOPE_PREVIEW_COUNT = 4;
-  const TIMELINE_PREVIEW = 2;
+  const DEVICE_PAGE_SIZE = 5;
   const [timelineExpanded, setTimelineExpanded] = useState(false);
-
-  // ── Advanced backup options (local state) ──
   const [backupScope, setBackupScope] = useState<'all' | 'selected'>('all');
-  const [scopeDeviceIds, setScopeDeviceIds] = useState<string[]>([]);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
   const [concurrency, setConcurrency] = useState(50);
   const [retryCount, setRetryCount] = useState(2);
   const [diffOnly, setDiffOnly] = useState(false);
-  const [scopePickerOpen, setScopePickerOpen] = useState(false);
 
-  // Platform groups derived from online devices
   const platformGroups = useMemo(() => {
     const online = devices.filter(d => d.status === 'online');
     const map = new Map<string, { platform: string; count: number; ids: string[] }>();
@@ -294,19 +278,8 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
   }, [devices]);
 
   const togglePlatform = useCallback((platform: string) => {
-    setSelectedPlatforms(prev => {
-      const next = prev.includes(platform) ? prev.filter(p => p !== platform) : [...prev, platform];
-      // Sync scopeDeviceIds from selected platforms
-      const allIds = platformGroups.filter(g => next.includes(g.platform)).flatMap(g => g.ids);
-      setScopeDeviceIds(allIds);
-      return next;
-    });
-  }, [platformGroups]);
-
-  const scopeDeviceCount = useMemo(() => {
-    if (backupScope === 'all') return onlineCount;
-    return scopeDeviceIds.length;
-  }, [backupScope, scopeDeviceIds, onlineCount]);
+    setSelectedPlatforms(prev => prev.includes(platform) ? prev.filter(p => p !== platform) : [...prev, platform]);
+  }, []);
 
   const displayDeviceStats = useMemo(() => {
     const stats = backupStats?.device_stats || [];
@@ -314,898 +287,402 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
     return stats.slice(start, start + DEVICE_PAGE_SIZE);
   }, [backupStats, devicePage]);
 
-  /* ═══ INSPECTION STATE ═══ */
-
-  /* ═══ RENDER ═══ */
-
   const sevenDayTotal = backupStats?.daily_history?.reduce((a, d) => a + d.total, 0) ?? 0;
 
   return (
-    <div className="space-y-3">
-      {/* ═══ Page Header ═══ */}
-      <div className="rounded-2xl border border-black/5 bg-white shadow-sm">
-        <div className="flex items-center justify-between px-5 py-3">
-          <div>
-            <h2 className="text-lg font-semibold text-[#164e63]">{zh ? '备份计划' : 'Backup Schedule'}</h2>
-            <p className="text-[11px] text-black/40">{zh ? '自动化运维控制台 · 管理配置备份计划' : 'Automation Console · Manage config backup schedules'}</p>
+    <div className="space-y-4">
+      {/* ── Status Bar & Integrated Header ── */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="relative overflow-hidden rounded-[28px] bg-slate-900 p-6 shadow-2xl"
+      >
+        <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-cyan-500/10 blur-[80px]" />
+        <div className="absolute -left-20 -bottom-20 h-64 w-64 rounded-full bg-violet-500/10 blur-[80px]" />
+
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-3">
+              <h2 className="text-2xl font-bold tracking-tight text-white">
+                {zh ? '备份计划' : 'Backup Schedule'}
+              </h2>
+              <div className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${scheduleEnabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-white/5 text-white/30 border border-white/10'}`}>
+                <div className={`w-1.5 h-1.5 rounded-full ${scheduleEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-white/20'}`} />
+                {scheduleEnabled ? (zh ? '运行中' : 'ACTIVE') : (zh ? '已停用' : 'IDLE')}
+              </div>
+            </div>
+            <p className="text-sm text-slate-400 max-w-md">
+              {zh ? '自动化运维控制台 · 管理全网设备配置的定时备份任务与数据保留策略' : 'Automation Console · Manage scheduled backup tasks and retention policies for all network assets.'}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-8 px-6 py-3 rounded-2xl bg-white/5 border border-white/5 backdrop-blur-md">
+              <div className="text-center">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">{zh ? '今日执行' : 'TODAY'}</p>
+                <p className="text-xl font-mono font-bold text-white leading-none">{backupStats?.today?.total ?? 0}</p>
+              </div>
+              <div className="w-px h-8 bg-white/10" />
+              <div className="text-center">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">{zh ? '下次执行' : 'NEXT RUN'}</p>
+                <p className="text-xl font-mono font-bold text-cyan-400 leading-none">{countdown}</p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => void handleRunBackup()}
+              disabled={isTakingSnapshot}
+              className="group relative inline-flex h-12 items-center gap-3 rounded-2xl bg-white px-6 text-sm font-bold text-slate-900 shadow-[0_20px_40px_rgba(255,255,255,0.1)] transition-all hover:-translate-y-0.5 hover:bg-slate-50 active:scale-95 disabled:opacity-50"
+            >
+              {isTakingSnapshot ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} className="fill-current" />}
+              {zh ? '立即备份' : 'Run Backup Now'}
+            </button>
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      {/* ═══════════════════════════════════════ */}
-      {/*  BACKUP CONTENT                         */}
-      {/* ═══════════════════════════════════════ */}
-        <div className="space-y-3">
-          {/* ── NOC Status Bar ── */}
-          <motion.div
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="rounded-2xl bg-gradient-to-r from-[#0f172a] to-[#1e293b] p-4 shadow-lg"
-          >
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              {/* Left: Status */}
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${scheduleEnabled ? 'bg-emerald-500/15' : 'bg-white/5'}`}>
-                  <div className={`w-2 h-2 rounded-full ${scheduleEnabled ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]' : 'bg-white/20'}`} />
-                  <span className={`text-[11px] font-bold uppercase tracking-wider ${scheduleEnabled ? 'text-emerald-400' : 'text-white/30'}`}>
-                    {scheduleEnabled ? (zh ? '运行中' : 'ACTIVE') : (zh ? '已停用' : 'IDLE')}
-                  </span>
-                </div>
-                <div className="hidden sm:flex items-center gap-2 text-xs text-white/40">
-                  <code className="text-cyan-400/80 font-mono text-[11px]">{scheduleCron}</code>
-                  <span className="text-white/25">{describeCron(scheduleCron, zh)}</span>
-                </div>
-                <div className="hidden md:flex items-center gap-1.5 text-xs text-white/35">
-                  <Server size={11} className="text-white/25" />
-                  <span>{onlineCount} {zh ? '在线' : 'online'}</span>
+      {/* ── Main Dashboard Layout ── */}
+      <div className="grid grid-cols-12 gap-5">
+        {/* Left Column: Stats & Detailed Tables (8 cols) */}
+        <div className="col-span-12 lg:col-span-8 space-y-5">
+          {/* Top Row: Mini Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+              className="rounded-2xl bg-white dark:bg-[#1a2333] border border-black/[0.06] dark:border-white/10 p-5 shadow-sm hover:shadow-md transition-all group overflow-hidden relative">
+              <div className="absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 bg-cyan-500/5 rounded-full blur-2xl group-hover:bg-cyan-500/10 transition-colors" />
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">{zh ? '总快照数' : 'TOTAL SNAPSHOTS'}</span>
+                <Database size={16} className="text-cyan-500/40" />
+              </div>
+              <p className="text-3xl font-bold text-slate-800 dark:text-white/90 tabular-nums">{backupStats?.total_snapshots ?? '—'}</p>
+              <div className="mt-2 flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">{zh ? '数据保留策略生效中' : 'Retention policy active'}</p>
+              </div>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+              className="rounded-2xl bg-white dark:bg-[#1a2333] border border-black/[0.06] dark:border-white/10 p-5 shadow-sm hover:shadow-md transition-all group overflow-hidden relative">
+              <div className="absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition-colors" />
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">{zh ? '资产覆盖' : 'ASSET COVERAGE'}</span>
+                <Server size={16} className="text-emerald-500/40" />
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <p className="text-3xl font-bold text-slate-800 dark:text-white/90 tabular-nums">
+                  {backupStats?.device_stats?.filter(d => d.backup_count > 0).length ?? 0}
+                </p>
+                <p className="text-sm font-semibold text-slate-300 dark:text-slate-600">/{backupStats?.device_stats?.length ?? devices.length}</p>
+              </div>
+              <div className="mt-3">
+                <div className="h-1.5 rounded-full bg-slate-100 dark:bg-white/5 overflow-hidden">
+                  <div className={`h-full rounded-full transition-all duration-700 ${((backupStats?.device_stats?.filter(d => d.backup_count > 0).length ?? 0) / (backupStats?.device_stats?.length || devices.length || 1) * 100) >= 80 ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${((backupStats?.device_stats?.filter(d => d.backup_count > 0).length ?? 0) / (backupStats?.device_stats?.length || devices.length || 1) * 100)}%` }} />
                 </div>
               </div>
+            </motion.div>
 
-              {/* Center: Today stats */}
-              <div className="hidden lg:flex items-center gap-4">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-white/25">{zh ? '今日' : 'Today'}</span>
-                  <span className="text-xl font-bold text-white tabular-nums">{backupStats?.today?.total ?? 0}</span>
-                </div>
-                <div className="w-px h-5 bg-white/10" />
-                <div className="flex items-center gap-1.5 text-xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                  <span className="text-cyan-400/80 tabular-nums">{backupStats?.today?.scheduled ?? 0}</span>
-                  <span className="text-white/20">{zh ? '定时' : 'sched'}</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                  <span className="text-violet-400/80 tabular-nums">{backupStats?.today?.manual ?? 0}</span>
-                  <span className="text-white/20">{zh ? '手动' : 'manual'}</span>
-                </div>
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
+              className="rounded-2xl bg-white dark:bg-[#1a2333] border border-black/[0.06] dark:border-white/10 p-5 shadow-sm hover:shadow-md transition-all group overflow-hidden relative">
+              <div className="absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 bg-amber-500/5 rounded-full blur-2xl group-hover:bg-amber-500/10 transition-colors" />
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">{zh ? '今日执行' : 'TODAY RUNS'}</span>
+                <TrendingUp size={16} className="text-amber-500/40" />
               </div>
-
-              {/* Right: Countdown + CTA */}
-              <div className="flex items-center gap-3">
-                {scheduleEnabled && preview?.upcoming?.[0] && (
-                  <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5">
-                    <Timer size={12} className="text-cyan-400/60" />
-                    <span className="text-[10px] text-white/30 uppercase tracking-wide">{zh ? '下次' : 'Next'}</span>
-                    <span className="font-mono text-sm font-bold text-cyan-400 tabular-nums tracking-wider">{countdown}</span>
+              {(() => {
+                const success = backupStats?.today?.success ?? 0;
+                const failed = backupStats?.today?.failed ?? 0;
+                return (
+                  <div>
+                    <div className="flex items-baseline gap-2">
+                      <p className="text-3xl font-bold text-emerald-600 tabular-nums">{success}</p>
+                      <p className={`text-xl font-bold tabular-nums ${failed > 0 ? 'text-red-500' : 'text-slate-200 dark:text-slate-700'}`}>{failed}</p>
+                    </div>
+                    <p className="text-[10px] font-medium text-slate-400 dark:text-slate-500 mt-1 uppercase tracking-wide">
+                      {zh ? `成功 ${success} · 失败 ${failed}` : `SUCCESS ${success} · FAIL ${failed}`}
+                    </p>
                   </div>
-                )}
-                <button
-                  onClick={() => void handleRunBackup()}
-                  disabled={isTakingSnapshot}
-                  className="inline-flex h-9 items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-400 px-4 text-xs font-bold text-white shadow-lg shadow-cyan-500/25 transition-all hover:shadow-cyan-500/40 hover:brightness-110 disabled:opacity-40 active:scale-[0.97]"
-                >
-                  {isTakingSnapshot ? <RotateCcw size={13} className="animate-spin" /> : <Play size={13} />}
-                  {zh ? '立即备份' : 'Run Now'}
+                );
+              })()}
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+              className="rounded-2xl bg-white dark:bg-[#1a2333] border border-black/[0.06] dark:border-white/10 p-5 shadow-sm hover:shadow-md transition-all group overflow-hidden relative">
+              <div className="absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 bg-violet-500/5 rounded-full blur-2xl group-hover:bg-violet-500/10 transition-colors" />
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">{zh ? '存储占用' : 'STORAGE'}</span>
+                <HardDrive size={16} className="text-violet-500/40" />
+              </div>
+              <p className="text-3xl font-bold text-slate-800 dark:text-white/90 tabular-nums">
+                {(() => {
+                  const bytes = backupStats?.storage_bytes ?? backupStats?.recent_backups?.reduce((a, b) => a + (b.size || 0), 0) ?? 0;
+                  if (bytes < 1048576) return (bytes / 1024).toFixed(1);
+                  return (bytes / 1048576).toFixed(1);
+                })()}
+                <span className="text-sm font-semibold text-slate-400 dark:text-slate-600 ml-1">{backupStats?.storage_bytes && backupStats.storage_bytes < 1048576 ? 'KB' : 'MB'}</span>
+              </p>
+              <div className="mt-2 flex items-center gap-1.5">
+                <BarChart3 size={11} className="text-slate-300 dark:text-slate-600" />
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">{zh ? '7日趋势稳定' : 'Stable trend last 7d'}</p>
+              </div>
+            </motion.div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
+              className="rounded-3xl border border-black/[0.06] bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-6">
+                <h4 className="text-sm font-bold text-slate-700">{zh ? '近期备份趋势' : 'Backup Trends'}</h4>
+                <div className="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider">
+                  <span className="flex items-center gap-1.5 text-cyan-600"><span className="w-2 h-2 rounded-full bg-cyan-500" />{zh ? '定时' : 'Sched'}</span>
+                  <span className="flex items-center gap-1.5 text-violet-600"><span className="w-2 h-2 rounded-full bg-violet-500" />{zh ? '手动' : 'Manual'}</span>
+                </div>
+              </div>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} barGap={4}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} allowDecimals={false} width={28} />
+                    <Tooltip content={renderTooltip} cursor={{ fill: '#f8fafc' }} />
+                    <Bar dataKey="scheduled" fill="#06b6d4" radius={[4, 4, 0, 0]} name="scheduled" />
+                    <Bar dataKey="manual" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="manual" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
+              className="rounded-3xl border border-black/[0.06] bg-white shadow-sm flex flex-col">
+              <div className="flex items-center justify-between px-6 py-5 border-b border-slate-50">
+                <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                  <Calendar size={16} className="text-cyan-500" />
+                  {zh ? '执行计划' : 'Scheduled Tasks'}
+                </h3>
+                <button onClick={() => void loadPreview()} disabled={previewLoading}
+                  className="p-2 rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-all disabled:opacity-50">
+                  <RotateCcw size={14} className={previewLoading ? 'animate-spin' : ''} />
                 </button>
               </div>
+              <div className="flex-1 p-6">
+                {!preview || !preview.enabled ? (
+                  <div className="flex flex-col items-center justify-center h-full text-slate-300 py-4">
+                    <Calendar size={32} strokeWidth={1.5} className="mb-2 opacity-50" />
+                    <p className="text-xs font-semibold">{zh ? '未启用定时计划' : 'No Active Schedule'}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {(timelineExpanded ? preview.upcoming : preview.upcoming.slice(0, 4)).map((iso, idx) => {
+                      const { time, date, day } = formatPreviewTime(iso);
+                      const rel = relativeTime(iso);
+                      return (
+                        <div key={idx} className="flex items-center justify-between group p-2 rounded-2xl hover:bg-slate-50 transition-colors">
+                          <div className="flex items-center gap-4">
+                            <div className={`w-2 h-2 rounded-full ${idx === 0 ? 'bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'bg-slate-200'}`} />
+                            <div>
+                              <p className={`text-sm font-bold font-mono ${idx === 0 ? 'text-slate-900' : 'text-slate-400'}`}>{time}</p>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">{date} · {day}</p>
+                            </div>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${idx === 0 ? 'bg-cyan-50 text-cyan-600' : 'bg-slate-100 text-slate-400'}`}>
+                            {rel}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {preview.upcoming.length > 4 && (
+                      <button onClick={() => setTimelineExpanded(!timelineExpanded)}
+                        className="w-full text-center text-[10px] font-bold text-slate-400 hover:text-cyan-600 transition-colors pt-2 uppercase tracking-widest">
+                        {timelineExpanded ? (zh ? '收起' : 'SHOW LESS') : (zh ? `查看全部 ${preview.upcoming.length} 条` : `VIEW ALL ${preview.upcoming.length}`)}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
+            className="rounded-3xl border border-black/[0.06] bg-white shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-5 border-b border-slate-50">
+              <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                <Activity size={16} className="text-violet-500" />
+                {zh ? '最近执行日志' : 'Recent Activity'}
+              </h3>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{zh ? '实时更新' : 'LIVE'}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/50">
+                    <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">{zh ? '设备' : 'DEVICE'}</th>
+                    <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">{zh ? '时间' : 'TIME'}</th>
+                    <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">{zh ? '类型' : 'TYPE'}</th>
+                    <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">{zh ? '大小' : 'SIZE'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {backupStats?.recent_backups?.slice(0, 5).map(bk => (
+                    <tr key={bk.id} className="group hover:bg-slate-50/80 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 group-hover:bg-white transition-colors">
+                            <Server size={14} />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-slate-700">{bk.hostname}</p>
+                            <p className="text-[10px] font-semibold text-slate-400 uppercase">{bk.vendor}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-xs font-bold text-slate-600 font-mono">
+                          {new Date(bk.timestamp).toLocaleTimeString(zh ? 'zh-CN' : 'en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                        <p className="text-[10px] font-medium text-slate-400">{new Date(bk.timestamp).toLocaleDateString()}</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${bk.trigger === 'scheduled' ? 'bg-cyan-50 text-cyan-600' : 'bg-violet-50 text-violet-600'}`}>
+                          {bk.trigger === 'scheduled' ? (zh ? '定时' : 'SCHED') : (zh ? '手动' : 'MANUAL')}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <p className="text-xs font-bold text-slate-600 font-mono tracking-tight">{fmtSize(bk.size)}</p>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </motion.div>
+        </div>
 
-          {/* ── Main Grid: Dashboard + Config ── */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
-            {/* Config Card (right on XL via order) */}
-            <div className="xl:order-2">
-              <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm xl:sticky xl:top-3">
-                {/* Enable toggle */}
-                <div className="flex items-center justify-between pb-4 border-b border-black/5">
-                  <div>
-                    <h3 className="text-sm font-bold text-[#164e63]">{zh ? '启用定时备份' : 'Enable Scheduled Backup'}</h3>
-                    <p className="text-[11px] text-black/35 mt-0.5">{zh ? '开启后按计划自动备份所有在线设备' : 'Auto-backup all online devices on schedule'}</p>
-                  </div>
-                  <button
-                    onClick={onToggleScheduleEnabled}
-                    className={`relative w-12 h-[26px] rounded-full transition-colors duration-200 ${scheduleEnabled ? 'bg-[#06b6d4]' : 'bg-black/10'}`}
-                  >
-                    <span className={`absolute top-[3px] left-[3px] w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${scheduleEnabled ? 'translate-x-[22px]' : ''}`} />
-                  </button>
-                </div>
-
-                {/* Cron mode switch */}
-                <div className={`mt-4 transition-opacity ${scheduleEnabled ? '' : 'opacity-35 pointer-events-none'}`}>
-
-                  {/* ── Device Scope Selector (Platform Tag Groups) ── */}
-                  <div className="mb-4 pb-4 border-b border-black/5">
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-black/30 mb-2">
-                      <Tag size={9} className="inline -mt-px mr-1" />
-                      {zh ? '适用设备范围' : 'Device Scope'}
-                    </label>
-                    <div className="flex items-center gap-1 rounded-lg bg-black/[0.03] p-0.5 mb-2">
-                      <button onClick={() => { setBackupScope('all'); setScopeDeviceIds([]); setSelectedPlatforms([]); }}
-                        className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${backupScope === 'all' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40'}`}>
-                        {zh ? '全部在线设备' : 'All Online'}
-                      </button>
-                      <button onClick={() => setBackupScope('selected')}
-                        className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${backupScope === 'selected' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40'}`}>
-                        {zh ? '按平台选择' : 'By Platform'}
-                      </button>
-                    </div>
-                    {backupScope === 'all' ? (
-                      <p className="text-[10px] text-black/30 flex items-center gap-1">
-                        <Server size={10} className="text-emerald-500/60" />
-                        {zh ? `将备份全部 ${onlineCount} 台在线设备` : `Will backup all ${onlineCount} online devices`}
-                      </p>
-                    ) : (
-                      <div>
-                        {/* Platform tag chips */}
-                        <div className="flex flex-wrap gap-1.5 mb-2">
-                          {platformGroups.map(g => {
-                            const active = selectedPlatforms.includes(g.platform);
-                            return (
-                              <button key={g.platform} onClick={() => togglePlatform(g.platform)}
-                                className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold border transition-all ${
-                                  active
-                                    ? 'bg-[#ecfeff] border-[#06b6d4]/30 text-[#0891b2] shadow-sm'
-                                    : 'bg-white border-black/8 text-black/40 hover:border-black/15 hover:text-black/55'
-                                }`}>
-                                <Layers size={10} className={active ? 'text-[#06b6d4]' : 'text-black/20'} />
-                                {getVendorFromPlatform(g.platform)}
-                                <span className={`ml-0.5 px-1 py-px rounded text-[8px] font-bold ${active ? 'bg-[#06b6d4]/15 text-[#0891b2]' : 'bg-black/5 text-black/30'}`}>
-                                  {g.count}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {/* Summary */}
-                        <div className="flex items-center justify-between">
-                          <p className="text-[10px] text-black/30 flex items-center gap-1">
-                            <Server size={10} className={scopeDeviceIds.length > 0 ? 'text-[#06b6d4]/60' : 'text-black/20'} />
-                            {scopeDeviceIds.length > 0
-                              ? (zh ? `已选择 ${scopeDeviceIds.length} 台设备` : `${scopeDeviceIds.length} devices selected`)
-                              : (zh ? '点击平台标签选择设备组' : 'Click platform tags to select')
-                            }
-                          </p>
-                          {selectedPlatforms.length > 0 && (
-                            <button onClick={() => { setSelectedPlatforms([]); setScopeDeviceIds([]); }}
-                              className="text-[9px] text-red-400 hover:text-red-500 transition-colors">
-                              {zh ? '清空' : 'Clear'}
-                            </button>
-                          )}
-                        </div>
-                        {/* Expandable individual device list */}
-                        {scopeDeviceIds.length > 0 && (
-                          <div className="mt-2">
-                            <button onClick={() => setScopePickerOpen(v => !v)}
-                              className="inline-flex items-center gap-1 text-[9px] font-medium text-[#0891b2] hover:text-[#06b6d4] transition-colors">
-                              <ChevronDown size={9} className={`transition-transform ${scopePickerOpen ? 'rotate-180' : ''}`} />
-                              {zh ? '查看设备明细' : 'View devices'}
-                            </button>
-                            <AnimatePresence>
-                              {scopePickerOpen && (
-                                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                                  className="mt-1 flex flex-wrap gap-1 overflow-hidden">
-                                  {scopeDeviceIds.map(id => {
-                                    const dev = devices.find(d => d.id === id);
-                                    return dev ? (
-                                      <span key={id} className="inline-flex items-center gap-1 rounded-md bg-black/[0.02] border border-black/[0.04] px-1.5 py-0.5 text-[9px] text-[#164e63]">
-                                        <span className="w-1 h-1 rounded-full bg-emerald-500 flex-shrink-0" />
-                                        {dev.hostname}
-                                      </span>
-                                    ) : null;
-                                  })}
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 rounded-lg bg-black/[0.03] p-0.5">
-                    <button
-                      onClick={switchToSimple}
-                      className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${cronMode === 'simple' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40'}`}
-                    >
-                      {zh ? '简易模式' : 'Simple'}
-                    </button>
-                    <button
-                      onClick={() => setCronMode('advanced')}
-                      className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${cronMode === 'advanced' ? 'bg-white text-[#164e63] shadow-sm' : 'text-black/40'}`}
-                    >
-                      {zh ? '高级模式' : 'Advanced'}
-                    </button>
-                  </div>
-
-                  {/* ── Simple Mode ── */}
-                  {cronMode === 'simple' && (
-                    <div className="mt-3 space-y-3">
-                      <div>
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-black/30 mb-1 block">{zh ? '执行频率' : 'Frequency'}</label>
-                        <select
-                          value={simpleForm.freq}
-                          onChange={e => handleSimpleChange({ freq: e.target.value as CronFreq })}
-                          className="w-full h-10 rounded-xl border border-black/8 bg-[#f8fafc] px-3 text-sm outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-                        >
-                          <option value="hourly">{zh ? '每N小时' : 'Every N hours'}</option>
-                          <option value="daily">{zh ? '每天' : 'Daily'}</option>
-                          <option value="weekly">{zh ? '每周' : 'Weekly'}</option>
-                          <option value="monthly">{zh ? '每月' : 'Monthly'}</option>
-                        </select>
-                      </div>
-
-                      {simpleForm.freq === 'hourly' && (
-                        <div>
-                          <label className="text-[10px] font-bold uppercase tracking-wider text-black/30 mb-1 block">{zh ? '间隔' : 'Interval'}</label>
-                          <select
-                            value={simpleForm.interval}
-                            onChange={e => handleSimpleChange({ interval: parseInt(e.target.value) })}
-                            className="w-full h-10 rounded-xl border border-black/8 bg-[#f8fafc] px-3 text-sm outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-                          >
-                            {[1, 2, 3, 4, 6, 8, 12].map(n => (
-                              <option key={n} value={n}>{zh ? `每 ${n} 小时` : `Every ${n} hours`}</option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-
-                      {simpleForm.freq !== 'hourly' && (
-                        <div>
-                          <label className="text-[10px] font-bold uppercase tracking-wider text-black/30 mb-1 block">{zh ? '执行时间' : 'Time'}</label>
-                          <div className="flex items-center gap-2">
-                            <select
-                              value={simpleForm.hour}
-                              onChange={e => handleSimpleChange({ hour: parseInt(e.target.value) })}
-                              className="flex-1 h-10 rounded-xl border border-black/8 bg-[#f8fafc] px-3 text-sm font-mono outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-                            >
-                              {Array.from({ length: 24 }, (_, i) => (
-                                <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
-                              ))}
-                            </select>
-                            <span className="text-lg font-bold text-black/20">:</span>
-                            <select
-                              value={simpleForm.minute}
-                              onChange={e => handleSimpleChange({ minute: parseInt(e.target.value) })}
-                              className="flex-1 h-10 rounded-xl border border-black/8 bg-[#f8fafc] px-3 text-sm font-mono outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-                            >
-                              {[0, 5, 10, 15, 20, 30, 45].map(m => (
-                                <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-                      )}
-
-                      {simpleForm.freq === 'weekly' && (
-                        <div>
-                          <label className="text-[10px] font-bold uppercase tracking-wider text-black/30 mb-1.5 block">{zh ? '星期' : 'Day'}</label>
-                          <div className="grid grid-cols-7 gap-1">
-                            {(zh ? WEEKDAY_ZH : WEEKDAY_EN).map((label, i) => (
-                              <button
-                                key={i}
-                                onClick={() => handleSimpleChange({ weekday: i })}
-                                className={`h-8 rounded-lg text-[11px] font-semibold transition-all ${
-                                  simpleForm.weekday === i
-                                    ? 'bg-[#06b6d4] text-white shadow-sm'
-                                    : 'bg-black/[0.03] text-black/40 hover:bg-black/[0.06]'
-                                }`}
-                              >
-                                {label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {simpleForm.freq === 'monthly' && (
-                        <div>
-                          <label className="text-[10px] font-bold uppercase tracking-wider text-black/30 mb-1 block">{zh ? '日期' : 'Date'}</label>
-                          <select
-                            value={simpleForm.monthday}
-                            onChange={e => handleSimpleChange({ monthday: parseInt(e.target.value) })}
-                            className="w-full h-10 rounded-xl border border-black/8 bg-[#f8fafc] px-3 text-sm outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-                          >
-                            {Array.from({ length: 28 }, (_, i) => (
-                              <option key={i + 1} value={i + 1}>{zh ? `每月 ${i + 1} 日` : `Day ${i + 1}`}</option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── Advanced Mode ── */}
-                  {cronMode === 'advanced' && (
-                    <div className="mt-3 space-y-3">
-                      {/* Quick presets */}
-                      <div className="relative">
-                        <button
-                          onClick={() => setPresetOpen(!presetOpen)}
-                          className="inline-flex h-10 w-full items-center justify-between gap-2 rounded-xl border border-black/8 bg-[#f8fafc] px-3.5 text-sm text-[#164e63] transition-all hover:border-[#06b6d4]/30 hover:bg-white"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Zap size={13} className="text-[#06b6d4]" />
-                            <span>{zh ? '快速预设' : 'Quick Presets'}</span>
-                          </div>
-                          <ChevronDown size={14} className={`text-black/30 transition-transform ${presetOpen ? 'rotate-180' : ''}`} />
-                        </button>
-                        <AnimatePresence>
-                          {presetOpen && (
-                            <motion.div
-                              initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                              className="absolute z-20 mt-1.5 w-full rounded-xl border border-black/8 bg-white shadow-lg overflow-hidden"
-                            >
-                              {CRON_PRESETS.map(p => (
-                                <button
-                                  key={p.cron}
-                                  onClick={() => applyPreset(p.cron)}
-                                  className={`flex w-full items-center justify-between px-3.5 py-2.5 text-sm transition-colors hover:bg-[#ecfeff] ${scheduleCron === p.cron ? 'bg-[#ecfeff] text-[#0891b2] font-medium' : 'text-black/60'}`}
-                                >
-                                  <span>{zh ? p.label : p.labelEn}</span>
-                                  <code className="text-[10px] font-mono text-black/30">{p.cron}</code>
-                                </button>
-                              ))}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-
-                      {/* 5-field cron editor */}
-                      <div>
-                        <div className="flex items-center gap-1.5 mb-1.5">
-                          <Info size={11} className="text-black/25" />
-                          <p className="text-[10px] text-black/30">{zh ? '标准 5 段 Cron：分 时 日 月 周' : '5-field Cron: min hour day month weekday'}</p>
-                        </div>
-                        <div className="grid grid-cols-5 gap-1.5">
-                          {cronFields.map((val, i) => (
-                            <div key={i}>
-                              <label className="block text-[9px] font-bold uppercase tracking-wider text-black/30 mb-0.5">
-                                {zh ? CRON_FIELD_LABELS_ZH[i] : CRON_FIELD_LABELS_EN[i]}
-                              </label>
-                              <input
-                                value={val}
-                                onChange={e => updateCronField(i, e.target.value)}
-                                placeholder="*"
-                                className="w-full rounded-lg border border-black/8 bg-[#f8fafc] px-2 py-1.5 text-center font-mono text-sm text-[#164e63] outline-none placeholder:text-black/20 focus:border-[#06b6d4]/40 focus:bg-white focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-                              />
-                              <p className="mt-0.5 text-[8px] text-black/20 text-center truncate">
-                                {zh ? CRON_FIELD_HINTS_ZH[i] : CRON_FIELD_HINTS_EN[i]}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* ── Execution Options (inside Advanced Mode) ── */}
-                      <div className="pt-3 border-t border-black/5">
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-black/30 mb-2">{zh ? '执行参数' : 'Execution Options'}</label>
-                      <div className="space-y-2.5">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5">
-                            <Hash size={11} className="text-black/25" />
-                            <span className="text-xs text-[#164e63] font-medium">{zh ? '最大并发数' : 'Concurrency'}</span>
-                          </div>
-                          <input type="number" min={1} max={200} value={concurrency}
-                            onChange={e => setConcurrency(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
-                            className="w-20 h-8 rounded-lg border border-black/8 bg-[#f8fafc] px-2 text-center font-mono text-sm text-[#164e63] outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all" />
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5">
-                            <RefreshCw size={11} className="text-black/25" />
-                            <span className="text-xs text-[#164e63] font-medium">{zh ? '失败重试' : 'Retries'}</span>
-                          </div>
-                          <input type="number" min={0} max={5} value={retryCount}
-                            onChange={e => setRetryCount(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-                            className="w-20 h-8 rounded-lg border border-black/8 bg-[#f8fafc] px-2 text-center font-mono text-sm text-[#164e63] outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all" />
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5 flex-1 pr-3">
-                            <GitCompareArrows size={11} className="text-black/25 flex-shrink-0" />
-                            <span className="text-xs text-[#164e63] font-medium leading-tight">{zh ? '变更对比保存' : 'Diff-only Save'}</span>
-                          </div>
-                          <button onClick={() => setDiffOnly(v => !v)}
-                            className={`relative w-10 h-[22px] rounded-full transition-colors duration-200 flex-shrink-0 ${diffOnly ? 'bg-[#06b6d4]' : 'bg-black/10'}`}>
-                            <span className={`absolute top-[3px] left-[3px] w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 ${diffOnly ? 'translate-x-[18px]' : ''}`} />
-                          </button>
-                        </div>
-                        <p className="text-[9px] text-black/25 leading-tight">{zh ? '仅在配置有变更时保存新版本' : 'Only saves when changes are detected'}</p>
-                      </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Cron display line */}
-                  <div className="flex items-center gap-3 mt-3 rounded-lg bg-[#0c4a6e]/[0.04] px-3 py-2">
-                    <code className="flex-1 font-mono text-sm text-[#164e63] font-semibold">{scheduleCron}</code>
-                    <span className="text-[11px] text-black/40">{describeCron(scheduleCron, zh)}</span>
-                  </div>
-                </div>
-
-                {/* Retention */}
-                <div className={`mt-4 pt-4 border-t border-black/5 transition-opacity ${scheduleEnabled ? '' : 'opacity-35 pointer-events-none'}`}>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-black/30 mb-1.5">{zh ? '保留周期' : 'Retention'}</label>
-                  <div className="flex items-center gap-3">
-                    <select
-                      value={retentionDays}
-                      onChange={e => onRetentionDaysChange(Number(e.target.value))}
-                      title={zh ? '备份保留天数' : 'Retention days'}
-                      className="rounded-xl border border-black/8 bg-[#f8fafc] px-3 py-2 text-sm outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-                    >
-                      <option value={30}>30 {zh ? '天' : 'days'}</option>
-                      <option value={90}>90 {zh ? '天' : 'days'}</option>
-                      <option value={180}>180 {zh ? '天' : 'days'}</option>
-                      <option value={365}>1 {zh ? '年' : 'year'}</option>
-                      <option value={730}>2 {zh ? '年' : 'years'}</option>
-                    </select>
-                    <p className="text-[11px] text-black/30">{zh ? '超过期限自动清理' : 'Auto-removed when expired'}</p>
-                  </div>
-                </div>
-
-                {/* Save button */}
-                <div className="mt-4">
-                  <button
-                    onClick={() => void handleSave()}
-                    disabled={scheduleLoading}
-                    className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl bg-[#164e63] text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0c4a6e] disabled:opacity-45"
-                  >
-                    {scheduleLoading && <RotateCcw size={12} className="animate-spin" />}
-                    {zh ? '应用策略' : 'Apply Policy'}
-                  </button>
-                </div>
+        {/* Right Column: Settings Panel (4 cols) */}
+        <div className="col-span-12 lg:col-span-4">
+          <div className="rounded-[32px] border border-black/5 bg-white p-8 shadow-xl shadow-slate-200/50 sticky top-5 space-y-8">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">{zh ? '备份配置' : 'Backup Config'}</h3>
+                <p className="text-xs text-slate-400 font-medium">{zh ? '配置自动化运行策略' : 'Automation policies'}</p>
               </div>
+              <button onClick={onToggleScheduleEnabled}
+                className={`relative w-14 h-8 rounded-full transition-all duration-300 ${scheduleEnabled ? 'bg-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.3)]' : 'bg-slate-200'}`}>
+                <div className={`absolute top-1 left-1 w-6 h-6 bg-white rounded-full shadow-lg transition-transform duration-300 ${scheduleEnabled ? 'translate-x-6' : ''}`} />
+              </button>
             </div>
 
-            {/* Left: Stats + Chart + Timeline (2/3 width) */}
-            <div className="xl:col-span-2 xl:order-1 space-y-3">
-              {/* Stats Cards */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
-                  className="rounded-xl bg-white border border-black/[0.06] p-3.5 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '总备份' : 'Total'}</span>
-                    <Database size={13} className="text-[#06b6d4]/50" />
+            <div className={`space-y-4 transition-all duration-300 ${scheduleEnabled ? '' : 'opacity-40 grayscale pointer-events-none scale-[0.98]'}`}>
+              <div className="space-y-3">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <Tag size={12} className="text-slate-300" />
+                  {zh ? '资产范围' : 'ASSET SCOPE'}
+                </label>
+                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-50 rounded-2xl">
+                  <button onClick={() => { setBackupScope('all'); setSelectedPlatforms([]); }}
+                    className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${backupScope === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>
+                    {zh ? '全选' : 'ALL'}
+                  </button>
+                  <button onClick={() => setBackupScope('selected')}
+                    className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${backupScope === 'selected' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>
+                    {zh ? '筛选' : 'SCOPE'}
+                  </button>
+                </div>
+                {backupScope === 'selected' && (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {platformGroups.map(g => (
+                      <button key={g.platform} onClick={() => togglePlatform(g.platform)}
+                        className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border transition-all ${selectedPlatforms.includes(g.platform)
+                          ? 'bg-cyan-50 border-cyan-200 text-cyan-700' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-200'}`}>
+                        {getVendorFromPlatform(g.platform)} ({g.count})
+                      </button>
+                    ))}
                   </div>
-                  <p className="mt-1.5 text-2xl font-bold text-[#164e63] tabular-nums">{backupStats?.total_snapshots ?? '—'}</p>
-                  <p className="text-[10px] text-black/30 mt-0.5">{zh ? '份配置快照' : 'config snapshots'}</p>
-                </motion.div>
-
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-                  className="rounded-xl bg-white border border-black/[0.06] p-3.5 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '设备覆盖' : 'Coverage'}</span>
-                    <Server size={13} className="text-emerald-500/50" />
-                  </div>
-                  <p className="mt-1.5 text-2xl font-bold text-[#164e63] tabular-nums">
-                    {backupStats?.device_stats?.filter(d => d.backup_count > 0).length ?? 0}
-                    <span className="text-sm font-normal text-black/25">/{backupStats?.device_stats?.length ?? devices.length}</span>
-                  </p>
-                  {/* Coverage progress bar */}
-                  {(() => {
-                    const total = backupStats?.device_stats?.length ?? devices.length;
-                    const backed = backupStats?.device_stats?.filter(d => d.backup_count > 0).length ?? 0;
-                    const pct = total > 0 ? Math.round((backed / total) * 100) : 0;
-                    return (
-                      <div className="mt-2">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <p className="text-[10px] text-black/30">{zh ? '覆盖率' : 'Coverage'}</p>
-                          <span className={`text-[10px] font-bold tabular-nums ${pct >= 80 ? 'text-emerald-600' : pct >= 50 ? 'text-amber-600' : 'text-red-500'}`}>{pct}%</span>
-                        </div>
-                        <div className="h-1.5 rounded-full bg-black/[0.04] overflow-hidden">
-                          <div className={`h-full rounded-full transition-all duration-500 ${pct >= 80 ? 'bg-emerald-500' : pct >= 50 ? 'bg-amber-500' : 'bg-red-400'}`}
-                            style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  {/* Storage usage bar */}
-                  {(() => {
-                    const usedBytes = backupStats?.storage_bytes ?? backupStats?.recent_backups?.reduce((a, b) => a + (b.size || 0), 0) ?? 0;
-                    if (usedBytes <= 0) return null;
-                    // Estimate capacity: avg size per snapshot × retention × device count
-                    const avgSize = backupStats?.total_snapshots ? usedBytes / backupStats.total_snapshots : 2048;
-                    const devCount = backupStats?.device_stats?.length ?? devices.length;
-                    const estimatedCap = Math.max(avgSize * devCount * retentionDays, usedBytes * 1.2);
-                    const pct = Math.min(100, Math.round((usedBytes / estimatedCap) * 100));
-                    return (
-                      <div className="mt-2">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <div className="flex items-center gap-1">
-                            <HardDrive size={9} className="text-black/20" />
-                            <span className="text-[9px] text-black/30">{fmtSize(usedBytes)}</span>
-                          </div>
-                          <span className={`text-[9px] font-bold tabular-nums ${pct >= 85 ? 'text-red-500' : pct >= 60 ? 'text-amber-500' : 'text-black/30'}`}>{pct}%</span>
-                        </div>
-                        <div className="h-1 rounded-full bg-black/[0.04] overflow-hidden">
-                          <div className={`h-full rounded-full transition-all duration-500 ${pct >= 85 ? 'bg-red-400' : pct >= 60 ? 'bg-amber-400' : 'bg-[#06b6d4]/50'}`}
-                            style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </motion.div>
-
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
-                  className="rounded-xl bg-white border border-black/[0.06] p-3.5 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '今日执行' : 'Today'}</span>
-                    <TrendingUp size={13} className="text-amber-500/50" />
-                  </div>
-                  {/* Success / Failure prominent split */}
-                  {(() => {
-                    const success = backupStats?.today?.success ?? backupStats?.today?.total ?? 0;
-                    const failed = backupStats?.today?.failed ?? 0;
-                    return (
-                      <>
-                        <div className="mt-1.5 flex items-baseline gap-1.5">
-                          <div className="flex items-center gap-1">
-                            <CheckCircle2 size={14} className="text-emerald-500" />
-                            <span className="text-xl font-bold text-emerald-600 tabular-nums">{success}</span>
-                          </div>
-                          <span className="text-black/15 text-sm font-light">/</span>
-                          <div className="flex items-center gap-1">
-                            <XCircle size={14} className={failed > 0 ? 'text-red-500' : 'text-black/15'} />
-                            <span className={`text-xl font-bold tabular-nums ${failed > 0 ? 'text-red-500' : 'text-black/20'}`}>{failed}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <span className="text-[10px] text-emerald-600/60">{zh ? '成功' : 'ok'}</span>
-                          <span className="text-[10px] text-black/15">/</span>
-                          <span className={`text-[10px] ${failed > 0 ? 'text-red-400 font-semibold' : 'text-black/25'}`}>{zh ? '失败' : 'failed'}</span>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </motion.div>
-
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-                  className="rounded-xl bg-white border border-black/[0.06] p-3.5 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '7日总量' : '7-Day'}</span>
-                    <BarChart3 size={13} className="text-violet-500/50" />
-                  </div>
-                  <p className="mt-1.5 text-2xl font-bold text-[#164e63] tabular-nums">{sevenDayTotal}</p>
-                  <p className="text-[10px] text-black/30 mt-0.5">{zh ? '近7日备份总数' : 'backups last 7 days'}</p>
-                </motion.div>
+                )}
               </div>
 
-              {/* Chart + Timeline side by side */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {/* 7-Day Trend Chart */}
-                {chartData.length > 0 && (
-                  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
-                    className="rounded-2xl border border-black/[0.06] bg-white p-4 shadow-sm">
-                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-black/30 mb-3">{zh ? '7日备份趋势' : '7-Day Backup Trend'}</h4>
-                    <div className="h-36">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={chartData} barGap={2}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                          <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                          <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={28} />
-                          <Tooltip content={renderTooltip} cursor={{ fill: 'rgba(6,182,212,0.04)' }} />
-                          <Bar dataKey="scheduled" fill="#06b6d4" radius={[3, 3, 0, 0]} name="scheduled" />
-                          <Bar dataKey="manual" fill="#8b5cf6" radius={[3, 3, 0, 0]} name="manual" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="flex items-center gap-4 mt-2 text-[10px]">
-                      <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-[#06b6d4]" />{zh ? '定时' : 'Scheduled'}</span>
-                      <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm bg-violet-500" />{zh ? '手动' : 'Manual'}</span>
-                    </div>
-                  </motion.div>
-                )}
+              <div className="space-y-3">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <Timer size={12} className="text-slate-300" />
+                  {zh ? '执行模式' : 'EXECUTION MODE'}
+                </label>
+                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-50 rounded-2xl">
+                  <button onClick={switchToSimple}
+                    className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${cronMode === 'simple' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>
+                    {zh ? '常规' : 'SIMPLE'}
+                  </button>
+                  <button onClick={() => setCronMode('advanced')}
+                    className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${cronMode === 'advanced' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>
+                    {zh ? '高级' : 'EXPERT'}
+                  </button>
+                </div>
+              </div>
 
-                {/* Upcoming Executions Timeline */}
-                <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm">
-                  <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
-                    <h3 className="text-xs font-bold text-[#164e63] flex items-center gap-1.5">
-                      <Calendar size={13} className="text-[#06b6d4]" />
-                      {zh ? '执行计划' : 'Upcoming'}
-                    </h3>
-                    <button
-                      onClick={() => void loadPreview()}
-                      disabled={previewLoading}
-                      className="inline-flex h-6 items-center gap-1 rounded-md border border-black/8 bg-[#f8fafc] px-2 text-[10px] font-medium text-[#0e7490] transition-all hover:bg-white hover:border-[#06b6d4]/30"
-                    >
-                      <RotateCcw size={10} className={previewLoading ? 'animate-spin' : ''} />
-                      {zh ? '刷新' : 'Refresh'}
-                    </button>
-                  </div>
-                  <div className="px-4 py-2">
-                    {previewLoading ? (
-                      <div className="flex items-center justify-center py-6 text-black/30">
-                        <RotateCcw size={14} className="animate-spin mr-2" />
-                        <span className="text-xs">{zh ? '计算中...' : 'Computing...'}</span>
-                      </div>
-                    ) : !preview || !preview.enabled ? (
-                      <div className="flex flex-col items-center py-6 text-black/25">
-                        <Calendar size={22} strokeWidth={1} />
-                        <p className="mt-2 text-xs font-medium">{zh ? '定时备份未启用' : 'Scheduled backup disabled'}</p>
-                      </div>
-                    ) : preview.upcoming.length === 0 ? (
-                      <div className="flex flex-col items-center py-6 text-black/25">
-                        <Calendar size={22} strokeWidth={1} />
-                        <p className="mt-2 text-xs">{zh ? '暂无计划' : 'No upcoming runs'}</p>
-                      </div>
-                    ) : (
-                      <div>
-                        {(timelineExpanded ? preview.upcoming : preview.upcoming.slice(0, TIMELINE_PREVIEW)).map((iso, idx) => {
-                          const { date, day, time } = formatPreviewTime(iso);
-                          const rel = relativeTime(iso);
-                          const isFirst = idx === 0;
-                          const totalVisible = timelineExpanded ? preview.upcoming.length : Math.min(preview.upcoming.length, TIMELINE_PREVIEW);
-                          return (
-                            <div key={idx} className={`flex items-center gap-2 py-1 ${idx < totalVisible - 1 ? 'border-b border-black/[0.03]' : ''}`}>
-                              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isFirst ? 'bg-[#06b6d4] shadow-[0_0_6px_rgba(6,182,212,0.4)]' : 'bg-black/10'}`} />
-                              <span className={`font-mono text-[11px] flex-shrink-0 ${isFirst ? 'text-[#164e63] font-semibold' : 'text-black/55'}`}>{time}</span>
-                              <span className="text-[10px] text-black/30 flex-shrink-0">{date}</span>
-                              <span className="text-[10px] text-black/20 flex-shrink-0">{day}</span>
-                              <span className="flex-1" />
-                              <span className={`rounded-full px-1.5 py-px text-[9px] font-medium ${isFirst ? 'bg-[#ecfeff] text-[#0891b2]' : 'text-black/25'}`}>{rel}</span>
-                            </div>
-                          );
-                        })}
-                        {preview.upcoming.length > TIMELINE_PREVIEW && (
-                          <button
-                            onClick={() => setTimelineExpanded(v => !v)}
-                            className="w-full mt-1 py-1 text-[10px] font-semibold text-[#0891b2] hover:text-[#06b6d4] transition-colors"
-                          >
-                            {timelineExpanded ? (zh ? '收起' : 'Collapse') : `${zh ? '查看全部' : 'Show all'} ${preview.upcoming.length} ${zh ? '条' : ''}`}
-                          </button>
-                        )}
+              <div className="bg-slate-50/50 rounded-3xl p-6 space-y-5 border border-slate-50">
+                {cronMode === 'simple' ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold text-slate-400">{zh ? '频率' : 'FREQUENCY'}</p>
+                      <select value={simpleForm.freq} onChange={e => handleSimpleChange({ freq: e.target.value as CronFreq })}
+                        className="w-full bg-white border border-slate-100 rounded-xl px-4 py-2.5 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-cyan-500/20">
+                        <option value="daily">{zh ? '每天' : 'Daily'}</option>
+                        <option value="weekly">{zh ? '每周' : 'Weekly'}</option>
+                        <option value="hourly">{zh ? '每隔N小时' : 'Every N Hours'}</option>
+                      </select>
+                    </div>
+                    {simpleForm.freq !== 'hourly' && (
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-bold text-slate-400">{zh ? '时间' : 'START TIME'}</p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <select value={simpleForm.hour} onChange={e => handleSimpleChange({ hour: parseInt(e.target.value) })}
+                            className="bg-white border border-slate-100 rounded-xl px-4 py-2.5 text-sm font-mono font-bold text-slate-700">
+                            {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{String(i).padStart(2, '0')}</option>)}
+                          </select>
+                          <select value={simpleForm.minute} onChange={e => handleSimpleChange({ minute: parseInt(e.target.value) })}
+                            className="bg-white border border-slate-100 rounded-xl px-4 py-2.5 text-sm font-mono font-bold text-slate-700">
+                            {[0, 5, 10, 15, 20, 30, 45].map(m => <option key={m} value={m}>{String(m).padStart(2, '0')}</option>)}
+                          </select>
+                        </div>
                       </div>
                     )}
                   </div>
-                  {preview && preview.devices.length > 0 && (
-                    <div className="border-t border-black/5 px-4 py-2.5">
-                      <div className="flex flex-wrap gap-1">
-                        {(scopeExpanded ? preview.devices : preview.devices.slice(0, SCOPE_PREVIEW_COUNT)).map(d => (
-                          <span key={d.id} className="inline-flex items-center gap-1 rounded-md bg-black/[0.02] border border-black/[0.04] px-1.5 py-0.5 text-[9px]">
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
-                            <span className="font-medium text-[#164e63]">{d.hostname}</span>
-                          </span>
-                        ))}
-                        {!scopeExpanded && preview.devices.length > SCOPE_PREVIEW_COUNT && (
-                          <button
-                            onClick={() => setScopeExpanded(true)}
-                            className="inline-flex items-center rounded-md bg-[#ecfeff] border border-[#06b6d4]/15 px-1.5 py-0.5 text-[9px] font-semibold text-[#0891b2] hover:bg-[#cffafe] transition-colors"
-                          >
-                            +{preview.devices.length - SCOPE_PREVIEW_COUNT} {zh ? '更多' : 'more'}
-                          </button>
-                        )}
-                        {scopeExpanded && preview.devices.length > SCOPE_PREVIEW_COUNT && (
-                          <button
-                            onClick={() => setScopeExpanded(false)}
-                            className="inline-flex items-center rounded-md bg-black/[0.02] border border-black/[0.04] px-1.5 py-0.5 text-[9px] font-medium text-black/35 hover:bg-black/[0.04] transition-colors"
-                          >
-                            {zh ? '收起' : 'Less'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* ── Recent Execution Log (compact) ── */}
-              {backupStats?.recent_backups && backupStats.recent_backups.length > 0 && (
-                <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden">
-                  <div className="flex items-center justify-between px-4 py-2.5 border-b border-black/5">
-                    <h3 className="text-xs font-bold text-[#164e63] flex items-center gap-1.5">
-                      <Activity size={13} className="text-[#06b6d4]" />
-                      {zh ? '最近执行日志' : 'Recent Execution Log'}
-                    </h3>
-                    <span className="text-[9px] text-black/25">{zh ? '最近5条' : 'Last 5'}</span>
-                  </div>
-                  <div className="divide-y divide-black/[0.03]">
-                    {backupStats.recent_backups.slice(0, 5).map(bk => (
-                      <div key={bk.id} className="flex items-center gap-2 px-4 py-1.5 hover:bg-black/[0.01] transition-colors">
-                        <CheckCircle2 size={10} className="text-emerald-500 flex-shrink-0" />
-                        <span className="font-mono text-[10px] text-black/40 flex-shrink-0 w-14 text-right">
-                          {new Date(bk.timestamp).toLocaleTimeString(zh ? 'zh-CN' : 'en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                        <span className="text-[10px] font-semibold text-[#164e63] truncate max-w-[90px]">{bk.hostname}</span>
-                        <span className="text-[9px] text-black/20 flex-shrink-0">{bk.vendor}</span>
-                        <span className="flex-1" />
-                        <span className={`px-1.5 py-px rounded text-[9px] font-medium ${bk.trigger === 'scheduled' ? 'bg-cyan-50 text-cyan-600' : 'bg-violet-50 text-violet-600'}`}>
-                          {bk.trigger === 'scheduled' ? (zh ? '定时' : 'sched') : (zh ? '手动' : 'manual')}
-                        </span>
-                        <span className="text-[9px] text-black/20 tabular-nums w-12 text-right">{fmtSize(bk.size)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* ── Recent Failures Panel ── */}
-              {(() => {
-                const missedDevices = backupStats?.device_stats?.filter(d => d.status === 'online' && d.backup_count === 0) ?? [];
-                return missedDevices.length > 0 ? (
-                  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-                    className="rounded-2xl border border-red-100 bg-gradient-to-br from-red-50/60 to-white shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-red-100/60">
-                      <h3 className="text-xs font-bold text-red-600 flex items-center gap-1.5">
-                        <AlertTriangle size={13} className="text-red-500" />
-                        {zh ? '备份异常设备' : 'Missed Devices'}
-                        <span className="ml-1 px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 text-[9px] font-bold tabular-nums">{missedDevices.length}</span>
-                      </h3>
-                      <p className="text-[9px] text-red-400/80">{zh ? '在线但未有任何备份记录' : 'Online but no backup records'}</p>
-                    </div>
-                    <div className="divide-y divide-red-50">
-                      {missedDevices.slice(0, 5).map(dev => (
-                        <div key={dev.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-red-50/30 transition-colors">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-7 h-7 rounded-lg bg-red-100/60 flex items-center justify-center">
-                              <AlertTriangle size={12} className="text-red-400" />
-                            </div>
-                            <div>
-                              <span className="text-xs font-semibold text-[#164e63]">{dev.hostname}</span>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-[10px] text-black/25 font-mono">{dev.ip_address}</span>
-                                <span className="text-[9px] text-black/20">{getVendorFromPlatform(dev.platform)}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <button className="inline-flex h-6 items-center gap-1 rounded-md border border-black/8 bg-white px-2 text-[10px] font-medium text-black/45 hover:border-[#06b6d4]/30 hover:text-[#0891b2] transition-all">
-                              <Eye size={10} />
-                              {zh ? '详情' : 'Detail'}
-                            </button>
-                            <button onClick={() => void handleRunBackup()}
-                              className="inline-flex h-6 items-center gap-1 rounded-md bg-[#06b6d4]/10 px-2 text-[10px] font-semibold text-[#0891b2] hover:bg-[#06b6d4]/20 transition-all">
-                              <RefreshCw size={10} />
-                              {zh ? '重试' : 'Retry'}
-                            </button>
-                          </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-5 gap-2">
+                      {cronFields.map((val, i) => (
+                        <div key={i} className="space-y-1">
+                          <p className="text-[8px] font-bold text-slate-400 text-center">{zh ? CRON_FIELD_LABELS_ZH[i] : CRON_FIELD_LABELS_EN[i].slice(0, 3)}</p>
+                          <input value={val} onChange={e => updateCronField(i, e.target.value)}
+                            className="w-full bg-white border border-slate-100 rounded-lg py-2 text-center text-xs font-mono font-bold text-slate-700 outline-none focus:border-cyan-500" />
                         </div>
                       ))}
                     </div>
-                    {missedDevices.length > 5 && (
-                      <div className="px-4 py-2 border-t border-red-100/60 text-center">
-                        <span className="text-[10px] text-red-400">{zh ? `还有 ${missedDevices.length - 5} 台设备未备份` : `${missedDevices.length - 5} more devices without backups`}</span>
-                      </div>
-                    )}
-                  </motion.div>
-                ) : null;
-              })()}
+                    <div className="p-3 bg-cyan-50/50 rounded-xl border border-cyan-100">
+                      <p className="text-[10px] font-bold text-cyan-700 font-mono tracking-tight">{scheduleCron}</p>
+                      <p className="text-[9px] text-cyan-600 mt-1 font-medium">{describeCron(scheduleCron, zh)}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400">{zh ? '数据保留' : 'RETENTION'}</p>
+                  <select value={retentionDays} onChange={e => onRetentionDaysChange(Number(e.target.value))}
+                    className="w-full bg-white border border-slate-100 rounded-xl px-4 py-2.5 text-sm font-bold text-slate-700 outline-none">
+                    <option value={30}>30 {zh ? '天' : 'Days'}</option>
+                    <option value={90}>90 {zh ? '天' : 'Days'}</option>
+                    <option value={365}>1 {zh ? '年' : 'Year'}</option>
+                    <option value={730}>2 {zh ? '年' : 'Years'}</option>
+                  </select>
+                </div>
+              </div>
+
+              <button onClick={() => void handleSave()} disabled={scheduleLoading}
+                className="w-full h-14 rounded-[20px] bg-slate-900 text-white font-bold text-sm shadow-xl shadow-slate-300 transition-all hover:bg-slate-800 hover:-translate-y-0.5 active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2">
+                {scheduleLoading ? <RefreshCw size={18} className="animate-spin" /> : <Shield size={18} />}
+                {zh ? '保存并应用策略' : 'SAVE & APPLY POLICY'}
+              </button>
             </div>
           </div>
-
-          {/* ── Device Backup Status Table ── */}
-          {(backupStats?.device_stats?.length ?? 0) > 0 && (
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-              className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-black/5">
-                <h3 className="text-sm font-bold text-[#164e63] flex items-center gap-2">
-                  <Server size={14} className="text-[#06b6d4]" />
-                  {zh ? '设备备份状态' : 'Device Backup Status'}
-                  <span className="text-[10px] font-normal text-black/30">({backupStats?.device_stats?.length ?? 0})</span>
-                </h3>
-              </div>
-              <div className="overflow-x-auto max-h-[calc(100vh-380px)] overflow-y-auto custom-scrollbar">
-                <table className="w-full text-left">
-                  <thead className="sticky top-0 z-10 bg-slate-50 border-b border-black/5">
-                    <tr className="bg-black/[0.015]">
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '设备' : 'Device'}</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '状态' : 'Status'}</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '平台' : 'Platform'}</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '备份数' : 'Backups'}</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '最近备份' : 'Latest'}</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '触发方式' : 'Trigger'}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {displayDeviceStats.map(dev => (
-                      <tr key={dev.id} className="border-b border-black/[0.03] hover:bg-black/[0.01] transition-colors">
-                        <td className="px-4 py-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-[#164e63]">{dev.hostname}</span>
-                            <span className="text-[10px] text-black/25 font-mono">{dev.ip_address}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                            dev.status === 'online' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'
-                          }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${dev.status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                            {dev.status === 'online' ? (zh ? '在线' : 'Online') : (zh ? '离线' : 'Offline')}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-[11px] text-black/40">{getVendorFromPlatform(dev.platform)}</td>
-                        <td className="px-4 py-2.5">
-                          <span className={`text-xs font-bold tabular-nums px-2 py-0.5 rounded-full ${
-                            dev.backup_count > 0 ? 'bg-black/[0.03] text-[#164e63]' : 'bg-red-50 text-red-400'
-                          }`}>
-                            {dev.backup_count}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-[11px] text-black/45 font-mono">
-                          {dev.latest_backup ? new Date(dev.latest_backup).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '—'}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          {dev.last_trigger ? (
-                            <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
-                              dev.last_trigger === 'scheduled' ? 'bg-cyan-50 text-cyan-600' : 'bg-violet-50 text-violet-600'
-                            }`}>
-                              {dev.last_trigger === 'scheduled' ? (zh ? '定时' : 'Sched') : dev.last_trigger === 'manual' ? (zh ? '手动' : 'Manual') : dev.last_trigger}
-                            </span>
-                          ) : <span className="text-black/20">—</span>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {(backupStats?.device_stats?.length ?? 0) > DEVICE_PAGE_SIZE && (
-                <div className="px-4 py-3 border-t border-black/5">
-                  <Pagination
-                    currentPage={devicePage}
-                    totalItems={backupStats?.device_stats?.length ?? 0}
-                    onPageChange={setDevicePage}
-                    itemsPerPage={DEVICE_PAGE_SIZE}
-                    language={language}
-                  />
-                </div>
-              )}
-            </motion.div>
-          )}
-
-          {/* ── Recent Execution Log ── */}
-          {backupStats?.recent_backups && backupStats.recent_backups.length > 0 && (
-            <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden">
-              <div className="px-5 py-3 border-b border-black/5">
-                <h3 className="text-sm font-bold text-[#164e63] flex items-center gap-2">
-                  <Activity size={14} className="text-[#06b6d4]" />
-                  {zh ? '最近执行记录' : 'Recent Executions'}
-                  <span className="text-[10px] font-normal text-black/30">({zh ? '最近 5 条' : 'last 5'})</span>
-                </h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-black/5 bg-black/[0.015]">
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '时间' : 'Time'}</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '设备' : 'Device'}</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '厂商' : 'Vendor'}</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '触发' : 'Trigger'}</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '操作者' : 'Author'}</th>
-                      <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35">{zh ? '大小' : 'Size'}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {backupStats.recent_backups.slice(0, 5).map(bk => (
-                      <tr key={bk.id} className="border-b border-black/[0.03] hover:bg-black/[0.01] transition-colors">
-                        <td className="px-4 py-2 text-[11px] text-black/50 font-mono">
-                          {new Date(bk.timestamp).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false })}
-                        </td>
-                        <td className="px-4 py-2 text-xs font-medium text-[#164e63]">{bk.hostname}</td>
-                        <td className="px-4 py-2 text-[11px] text-black/40">{bk.vendor}</td>
-                        <td className="px-4 py-2">
-                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                            bk.trigger === 'scheduled' ? 'bg-cyan-50 text-cyan-600' : 'bg-violet-50 text-violet-600'
-                          }`}>
-                            {bk.trigger === 'scheduled' ? (zh ? '定时' : 'Sched') : bk.trigger === 'manual' ? (zh ? '手动' : 'Manual') : bk.trigger}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-[11px] text-black/40">{bk.author || '—'}</td>
-                        <td className="px-4 py-2 text-[11px] text-black/40 tabular-nums">{fmtSize(bk.size)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </div>
+      </div>
     </div>
   );
 };

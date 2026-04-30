@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Search, Plus, Download, Upload, Trash2, Pencil,
   Server, ChevronDown, ChevronUp, ChevronRight,
-  CheckCircle2, XCircle, AlertTriangle, Wrench, X,
+  CheckCircle2, XCircle, AlertTriangle, Wrench, X, Activity, ShieldCheck, ShieldAlert, RefreshCw,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../components/Pagination';
@@ -197,6 +197,8 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
   const [detailServer, setDetailServer] = useState<ServerAsset | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ServerAsset | null>(null);
   const [deleting, setDeleting]         = useState(false);
+  const [verifyingIds, setVerifyingIds] = useState<Set<string>>(new Set());
+  const [verifyResults, setVerifyResults] = useState<Record<string, any>>({});
 
   /* ─── Data Fetching ─── */
   const fetchServers = useCallback(async () => {
@@ -278,6 +280,22 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
     }
     setSelectedIds(new Set());
     fetchServers();
+  };
+
+  const handleVerify = async (server: ServerAsset) => {
+    setVerifyingIds(prev => new Set(prev).add(server.id));
+    try {
+      const r = await fetch(`/api/assets/${server.id}/verify`);
+      if (r.ok) {
+        const data = await r.json();
+        setVerifyResults(prev => ({ ...prev, [server.id]: data }));
+      }
+    } catch { /* noop */ }
+    setVerifyingIds(prev => {
+      const next = new Set(prev);
+      next.delete(server.id);
+      return next;
+    });
   };
 
   /* ─── Selection ─── */
@@ -495,10 +513,51 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
                     </td>
                     {/* Status */}
                     <td className="px-3 py-2">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${st.badge}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
-                        {zh ? st.zh : st.en}
-                      </span>
+                      <div className="flex flex-col gap-1.5">
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border self-start ${st.badge}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
+                          {zh ? st.zh : st.en}
+                        </span>
+                        
+                        {verifyResults[server.id] && (
+                          <div className="flex flex-wrap gap-1">
+                            <div 
+                              title={verifyResults[server.id].ping_error || (zh ? 'Ping 正常' : 'Ping OK')}
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight
+                                ${verifyResults[server.id].ping 
+                                  ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' 
+                                  : 'bg-red-500/10 text-red-600 border border-red-500/20'}`}>
+                              PING: {verifyResults[server.id].ping ? 'OK' : 'FAIL'}
+                            </div>
+                            <div 
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight
+                                ${verifyResults[server.id].ssh 
+                                  ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' 
+                                  : 'bg-red-500/10 text-red-600 border border-red-500/20'}`}>
+                              SSH: {verifyResults[server.id].ssh ? 'OK' : 'FAIL'}
+                            </div>
+                            {verifyResults[server.id].ssh && verifyResults[server.id].ssh_summary && (
+                              <div className="w-full flex items-center gap-1 mt-0.5">
+                                <span className="w-1 h-1 rounded-full bg-emerald-400" />
+                                <p className="text-[9px] text-emerald-600/80 leading-tight">
+                                  {verifyResults[server.id].ssh_summary}
+                                </p>
+                              </div>
+                            )}
+                            {verifyResults[server.id].ssh_error && (
+                              <div className="w-full flex items-center gap-1 mt-0.5 group/err">
+                                <AlertTriangle size={10} className="text-red-400 shrink-0" />
+                                <p className="text-[9px] text-red-500/80 leading-tight truncate max-w-[120px] cursor-help" title={verifyResults[server.id].ssh_error}>
+                                  {verifyResults[server.id].ssh_error}
+                                </p>
+                              </div>
+                            )}
+                            <p className="w-full text-[8px] text-slate-300 dark:text-slate-600 mt-1 font-mono uppercase tracking-tighter">
+                              {zh ? '最后验证' : 'LAST VERIFIED'}: {new Date().toLocaleTimeString()}
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </td>
                     {/* Department */}
                     <td className="px-3 py-2">
@@ -508,7 +567,25 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
                     <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
                         <button
-                          onClick={() => setDeleteTarget(server)}
+                          onClick={(e) => { e.stopPropagation(); handleVerify(server); }}
+                          disabled={verifyingIds.has(server.id)}
+                          title={zh ? '连接测试 (Ping/SSH)' : 'Connectivity Test (Ping/SSH)'}
+                          className={`inline-flex items-center justify-center w-7 h-7 rounded-md transition-all
+                            ${verifyingIds.has(server.id) ? 'bg-black/5 text-black/20' : 'text-black/30 dark:text-white/25 hover:bg-[#00bceb]/10 hover:text-[#00bceb]'}`}>
+                          {verifyingIds.has(server.id) ? (
+                            <RefreshCw size={13} className="animate-spin" />
+                          ) : verifyResults[server.id] ? (
+                            verifyResults[server.id].ping && verifyResults[server.id].ssh ? (
+                              <ShieldCheck size={13} className="text-emerald-500" />
+                            ) : (
+                              <ShieldAlert size={13} className="text-red-500" />
+                            )
+                          ) : (
+                            <Activity size={13} />
+                          )}
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setDeleteTarget(server); }}
                           title={zh ? '删除' : 'Delete'}
                           className="inline-flex items-center justify-center w-7 h-7 rounded-md
                             text-black/30 dark:text-white/25 hover:bg-red-500/10

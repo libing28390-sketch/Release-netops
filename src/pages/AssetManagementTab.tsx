@@ -99,7 +99,18 @@ const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
   'Palo Alto':[{ value: 'paloalto_panos', label: 'PAN-OS' }],
   ZTE:        [{ value: 'zte_zxros', label: 'ZTE ZXROS' }],
 };
-const ALL_PLATFORMS = Object.values(VENDOR_PLATFORMS).flat();
+
+const SERVER_PLATFORMS = [
+  { value: 'linux',   label: 'Linux (Generic)' },
+  { value: 'ubuntu',  label: 'Ubuntu' },
+  { value: 'centos',  label: 'CentOS' },
+  { value: 'debian',  label: 'Debian' },
+  { value: 'redhat',  label: 'Red Hat (RHEL)' },
+  { value: 'windows', label: 'Windows Server' },
+  { value: 'esxi',    label: 'VMware ESXi' },
+];
+
+const ALL_PLATFORMS = [...Object.values(VENDOR_PLATFORMS).flat(), ...SERVER_PLATFORMS];
 
 /* ═══════════════════════════════════════════════════════════════════
    Helpers
@@ -1143,7 +1154,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
               </div>
 
               {/* ─── 网络设备: 连接 & SNMP ─── */}
-              {form.asset_type === 'network_device' && (
+              {(form.asset_type === 'network_device' || form.asset_type === 'server') && (
                 <>
                   <div className="flex items-center gap-1.5 mt-4 mb-2">
                     <Terminal size={12} className="text-[#00bceb]/60" />
@@ -1154,9 +1165,15 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                       <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '平台' : 'Platform'}</label>
                       <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value }))} title="Platform"
                         className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25">
-                        {(VENDOR_PLATFORMS[form.vendor] || ALL_PLATFORMS).map(p => (
-                          <option key={p.value} value={p.value}>{p.label}</option>
-                        ))}
+                        {form.asset_type === 'server' ? (
+                          SERVER_PLATFORMS.map(p => (
+                            <option key={p.value} value={p.value}>{p.label}</option>
+                          ))
+                        ) : (
+                          (VENDOR_PLATFORMS[form.vendor] || ALL_PLATFORMS).map(p => (
+                            <option key={p.value} value={p.value}>{p.label}</option>
+                          ))
+                        )}
                       </select>
                     </div>
                     <div>

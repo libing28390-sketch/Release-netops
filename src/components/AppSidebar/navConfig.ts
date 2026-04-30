@@ -55,6 +55,7 @@ export const navConfig: NavGroup[] = [
     icon: 'FileText',
     children: [
       { id: 'config-backup',  label: '备份中心',   labelEn: 'Backup Center',    path: '/config/backup' },
+      { id: 'config-schedule', label: '备份计划',   labelEn: 'Backup Schedule',  path: '/config/schedule' },
       { id: 'config-diff',    label: '配置对比',   labelEn: 'Config Diff',      path: '/config/diff' },
       { id: 'config-search',  label: '配置搜索',   labelEn: 'Config Search',    path: '/config/search' },
     ],
