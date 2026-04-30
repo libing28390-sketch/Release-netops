@@ -97,7 +97,7 @@ def trigger_inspection(
 
 @router.get('/inspections')
 def list_inspection_runs(
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
     _user=require_role('Viewer'),
 ):

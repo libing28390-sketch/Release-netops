@@ -12,6 +12,7 @@ import {
   FileText,
   Filter,
   FolderTree,
+  History,
   LayoutGrid,
   List,
   Maximize2,
@@ -95,6 +96,9 @@ interface AutomationExecuteTabProps {
   batchDeviceIds: string[];
   automationSearch: string;
   scenarioSearch: string;
+  changeTicket?: string;
+  setChangeTicket?: (val: string) => void;
+  savedQueries: any[];
   filteredScenarios: AutomationScenario[];
   quickPlaybookScenario: AutomationScenario | null;
   quickPlaybookVars: Record<string, string>;
@@ -193,7 +197,9 @@ const STEPS = [
 const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const {
     t, language, devices, selectedDevice, batchMode, batchDeviceIds,
-    automationSearch, scenarioSearch, filteredScenarios,
+    automationSearch, scenarioSearch, changeTicket: propChangeTicket, setChangeTicket: propSetChangeTicket,
+    savedQueries,
+    filteredScenarios,
     quickPlaybookScenario, quickPlaybookVars, quickPlaybookPlatform,
     quickPlaybookDryRun, quickPlaybookConcurrency, quickPlaybookPreview,
     quickRiskConfirmed, hasQuickTargets, quickMissingRequiredFields,
@@ -223,8 +229,11 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const [showQuickQuery, setShowQuickQuery] = useState(false);
   const [deviceViewMode, setDeviceViewMode] = useState<'grid' | 'list'>('list');
   const [devicePage, setDevicePage] = useState(1);
-  const [allTags, setAllTags] = useState<TagDefinition[]>([]);
-  const [tagFilterIds, setTagFilterIds] = useState<string[]>([]);
+  // Fallback to local if props not provided (though they should be)
+  const [localChangeTicket, localSetChangeTicket] = useState('');
+  const changeTicket = propChangeTicket !== undefined ? propChangeTicket : localChangeTicket;
+  const setChangeTicket = propSetChangeTicket || localSetChangeTicket;
+
   const DEVICE_PAGE_SIZE = 20;
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'validate' | 'apply'>('validate');
@@ -234,15 +243,8 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const [treeFilterSite, setTreeFilterSite] = useState<string | null>(null);
   const [treeFilterRole, setTreeFilterRole] = useState<string | null>(null);
   const [showSelectedDrawer, setShowSelectedDrawer] = useState(false);
-  const [changeTicket, setChangeTicket] = useState<string>('');
   const [quickQuerySearch, setQuickQuerySearch] = useState('');
 
-  useEffect(() => {
-    fetch('/api/tags/definitions')
-      .then(r => r.json())
-      .then(d => { if (d.success && Array.isArray(d.data)) setAllTags(d.data); })
-      .catch(() => {});
-  }, []);
   const [ticketValidation, setTicketValidation] = useState<{
     loading: boolean;
     found?: boolean;
@@ -327,9 +329,6 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
       }
       if (siteFilter !== 'all' && (d.site || '') !== siteFilter) return false;
       /* Tag filter */
-      if (tagFilterIds.length > 0) {
-        if (!Array.isArray(d.tag_ids) || !tagFilterIds.some(tid => (d.tag_ids || []).includes(tid))) return false;
-      }
       /* Tree filter */
       if (treeFilterSite) {
         const dSite = d.site || (isZh ? '未分组' : 'Ungrouped');
@@ -341,7 +340,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
       }
       return true;
     });
-  }, [devices, automationSearch, statusFilter, vendorFilter, siteFilter, tagFilterIds, treeFilterSite, treeFilterRole, isZh]);
+  }, [devices, automationSearch, statusFilter, vendorFilter, siteFilter, treeFilterSite, treeFilterRole, isZh]);
 
   /* Device tree structure: site → role → count */
   const deviceTree = useMemo(() => {
@@ -462,8 +461,22 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
       { icon: '⏱️', label: '运行时间', labelEn: 'Uptime', group: 'sys', cmds: isCisco ? 'show uptime' : isHuawei ? 'display clock\ndisplay version | include uptime' : isJuniper ? 'show system uptime' : 'show uptime' },
       { icon: '💾', label: '运行配置', labelEn: 'Running Config', group: 'sys', cmds: isCisco ? 'show running-config' : isHuawei ? 'display current-configuration' : isJuniper ? 'show configuration' : 'show running-config' },
     ];
+
+    // Load user saved queries from reactive state
+    if (Array.isArray(savedQueries)) {
+      savedQueries.forEach(s => {
+        all.push({
+          icon: s.icon || '⭐',
+          label: s.label,
+          labelEn: s.labelEn || s.label,
+          cmds: s.cmds,
+          group: 'user'
+        });
+      });
+    }
+
     return all.filter(p => !p.excludeRoles || !p.excludeRoles.includes(deviceRole));
-  }, [isCisco, isHuawei, isJuniper, deviceRole]);
+  }, [isCisco, isHuawei, isJuniper, deviceRole, savedQueries]);
 
   /* Step validation */
   const canProceed = (step: StepId): boolean => {
@@ -540,27 +553,35 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
             {isZh ? '自动化执行控制台' : 'Automation Console'}
           </h2>
           <p className="text-sm text-gray-400 mt-0.5">
-            {isZh ? '选择设备 → 选择任务 → 配置参数 → 批量执行' : 'Select → Configure → Execute → Monitor'}
+            {isZh ? '选择设备进行快捷查询或执行自定义命令' : 'Select devices for quick query or custom commands'}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={onOpenCustomCommandModal}
-            className="px-3 py-2 text-xs font-semibold border border-gray-200 rounded-xl hover:bg-gray-50 transition-all flex items-center gap-1.5"
+            disabled={targetCount === 0}
+            className={`px-3 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 border ${
+              targetCount > 0 
+                ? 'border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 shadow-sm' 
+                : 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed opacity-50'
+            }`}
           >
-            <Plus size={12} />
+            <Plus size={13} />
             {isZh ? '自定义命令' : 'Custom Command'}
           </button>
+          <div className="w-px h-6 bg-gray-100 mx-1" />
           <button
-            onClick={() => onNavigate('/automation/queries')}
-            className="px-3 py-2 text-xs font-semibold border border-gray-200 rounded-xl hover:bg-gray-50 transition-all"
+            onClick={() => onNavigate('/automation/history')}
+            className="px-3 py-2 text-xs font-semibold border border-gray-200 rounded-xl hover:bg-gray-50 transition-all flex items-center gap-1.5 text-gray-500"
           >
+            <History size={13} />
             {isZh ? '执行历史' : 'History'}
           </button>
         </div>
       </div>
 
-      {/* ── Stepper ── */}
+      {/* ── Stepper (Hidden for Execute Tab) ── */}
+      {/* 
       <div className="flex-shrink-0 mb-3">
         <div className="flex items-center bg-white rounded-xl border border-gray-100 px-5 py-2.5">
           {STEPS.map((step, idx) => {
@@ -625,6 +646,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
           })}
         </div>
       </div>
+      */}
 
       {/* ── Step Content ── */}
       <div className="flex-1 min-h-0 overflow-hidden">
@@ -645,9 +667,9 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                 <div className="w-[200px] flex-shrink-0 bg-white rounded-xl border border-gray-100 overflow-hidden flex flex-col">
                   <div className="px-3 py-2.5 border-b border-gray-100 flex items-center justify-between">
                     <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{isZh ? '快速筛选' : 'Quick Filter'}</span>
-                    {(treeFilterSite || treeFilterRole || tagFilterIds.length > 0) && (
+                    {(treeFilterSite || treeFilterRole) && (
                       <button
-                        onClick={() => { setTreeFilterSite(null); setTreeFilterRole(null); setTagFilterIds([]); }}
+                        onClick={() => { setTreeFilterSite(null); setTreeFilterRole(null); }}
                         className="text-[10px] text-cyan-600 hover:text-cyan-700 font-semibold"
                       >
                         {isZh ? '清除' : 'Clear'}
@@ -689,31 +711,6 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                         ))}
                       </div>
                     </div>
-                    {/* Tag chips */}
-                    {allTags.length > 0 && (
-                      <div>
-                        <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '标签' : 'Tags'}</label>
-                        <div className="flex flex-wrap gap-1">
-                          {allTags.slice(0, 20).map(tag => (
-                            <button
-                              key={tag.id}
-                              onClick={() => {
-                                setTagFilterIds(prev =>
-                                  prev.includes(tag.id) ? prev.filter(id => id !== tag.id) : [...prev, tag.id]
-                                );
-                              }}
-                              className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all ${
-                                tagFilterIds.includes(tag.id)
-                                  ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
-                                  : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
-                              }`}
-                            >
-                              {isZh ? tag.label_zh : tag.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                     {/* Status chips */}
                     <div>
                       <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '状态' : 'Status'}</label>
@@ -988,30 +985,119 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                     </>
                   )}
                 </div>
-                <div className="flex items-center gap-3">
-                  {hasTargets && (
-                    <button
-                      onClick={() => setShowQuickQuery(!showQuickQuery)}
-                      className="px-3 py-2 rounded-lg text-xs font-bold border border-gray-200 bg-white hover:bg-gray-50 transition-all flex items-center gap-1.5"
-                    >
-                      <Terminal size={13} />
-                      {isZh ? '快捷查询' : 'Quick Query'}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => targetCount > 0 && setCurrentStep(2)}
-                    disabled={targetCount === 0}
-                    className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${
-                      targetCount > 0
-                        ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-white shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40'
-                        : 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                    }`}
-                  >
-                    {isZh ? '下一步：选择任务' : 'Next: Select Task'}
-                    <ChevronRight size={15} />
-                  </button>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-400 font-medium italic">
+                    {isZh ? '请从顶部或下方选择工具' : 'Select a tool from above'}
+                  </span>
                 </div>
               </div>
+
+              {/* Quick Query Area — Re-imagined as a focused overlay */}
+              <AnimatePresence>
+                {hasTargets && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-[60] flex flex-col bg-slate-900/40 backdrop-blur-md p-6"
+                  >
+                    <div className="flex-1 flex flex-col max-w-6xl mx-auto w-full bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden">
+                      {/* Header: Target Confirmation */}
+                      <div className="flex-shrink-0 px-8 py-6 bg-gradient-to-r from-slate-50 to-white border-b border-gray-100 flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 rounded-2xl bg-cyan-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+                            <Terminal size={24} className="text-white" />
+                          </div>
+                          <div>
+                            <h3 className="text-xl font-black text-slate-800 tracking-tight">
+                              {isZh ? '确认目标并选择操作' : 'Confirm Targets & Execute'}
+                            </h3>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                              <p className="text-sm text-slate-500 font-medium">
+                                {isZh ? `已选中 ${targetDevices.length} 台设备，请确认后点击下方工具执行` : `${targetDevices.length} devices selected. Confirm and click a tool below.`}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleClearSelection}
+                          className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-white border border-gray-200 text-slate-500 hover:text-red-500 hover:border-red-100 hover:bg-red-50 transition-all font-bold text-sm shadow-sm"
+                        >
+                          <X size={16} />
+                          {isZh ? '重选设备' : 'Reselect Devices'}
+                        </button>
+                      </div>
+
+                      {/* Device List Recap (Confirmation Bar) */}
+                      <div className="flex-shrink-0 px-8 py-4 bg-slate-50/50 border-b border-gray-100 overflow-hidden">
+                        <div className="flex flex-wrap gap-2">
+                          {targetDevices.map(dev => (
+                            <div key={dev.id} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white border border-slate-200/60 shadow-sm">
+                              <span className={`w-1.5 h-1.5 rounded-full ${dev.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                              <span className="text-xs font-bold text-slate-700">{dev.hostname}</span>
+                              <span className="text-[10px] font-mono text-slate-400">{dev.ip_address}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Tools Grid */}
+                      <div className="flex-1 overflow-auto p-8 custom-scrollbar">
+                        <div className="space-y-8">
+                          {Object.entries(
+                            queryPresets.reduce((acc: Record<string, typeof queryPresets>, item) => {
+                              if (!acc[item.group]) acc[item.group] = [];
+                              acc[item.group].push(item);
+                              return acc;
+                            }, {})
+                          ).map(([groupId, items]) => {
+                            const groupMeta = groupId === 'net' ? { label: isZh ? '基础网络查询' : 'Network', icon: '🌐', bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100' }
+                              : groupId === 'route' ? { label: isZh ? '路由协议分析' : 'Routing', icon: '🗺️', bg: 'bg-indigo-50', text: 'text-indigo-600', border: 'border-indigo-100' }
+                              : groupId === 'sys' ? { label: isZh ? '系统状态监控' : 'System', icon: '⚙️', bg: 'bg-slate-50', text: 'text-slate-600', border: 'border-slate-100' }
+                              : { label: isZh ? '个人常用收藏' : 'Favorites', icon: '⭐', bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100' };
+
+                            return (
+                              <div key={groupId} className="space-y-4">
+                                <div className="flex items-center gap-3">
+                                  <span className={`text-sm font-black uppercase tracking-[0.2em] ${groupMeta.text}`}>
+                                    {groupMeta.icon} {groupMeta.label}
+                                  </span>
+                                  <div className="h-px flex-1 bg-slate-100" />
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                  {items.map((cmd, idx) => (
+                                    <button
+                                      key={idx}
+                                      disabled={quickQueryRunning}
+                                      onClick={() => { onRunQuickQuery(isZh ? cmd.label : cmd.labelEn, cmd.cmds, cmd.operationalCategory); }}
+                                      className="group relative flex items-center gap-4 p-4 rounded-2xl border border-slate-100 bg-white hover:border-cyan-400 hover:shadow-xl hover:shadow-cyan-500/10 hover:-translate-y-1 transition-all duration-300 disabled:opacity-40"
+                                    >
+                                      <div className={`w-12 h-12 rounded-xl ${groupMeta.bg} ${groupMeta.border} border flex items-center justify-center text-2xl group-hover:scale-110 transition-transform flex-shrink-0`}>
+                                        {cmd.icon}
+                                      </div>
+                                      <div className="min-w-0 text-left">
+                                        <p className="text-[13px] font-black text-slate-700 group-hover:text-cyan-700 transition-colors">{isZh ? cmd.label : cmd.labelEn}</p>
+                                        <p className="text-[10px] text-slate-400 font-bold mt-0.5 font-mono uppercase tracking-wider">{cmd.operationalCategory || 'CLI'}</p>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Footer: Tips */}
+                      <div className="flex-shrink-0 px-8 py-4 bg-slate-50 text-[11px] text-slate-400 flex items-center gap-2 border-t border-slate-100">
+                        <Zap size={12} className="text-amber-400" />
+                        {isZh ? '点击上方图标将立即开始执行查询。如需执行自定义命令，请点击右上角按钮。' : 'Click any icon to execute. For custom commands, use the button in the top right.'}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* ── Selected devices drawer ── */}
               <AnimatePresence>
@@ -1059,43 +1145,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                 )}
               </AnimatePresence>
 
-              {/* Quick Query slide-up panel */}
-              <AnimatePresence>
-                {showQuickQuery && hasTargets && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 20 }}
-                    className="fixed bottom-4 left-[calc(var(--sidebar-width,240px)+1rem)] right-4 z-50 bg-white rounded-2xl border border-gray-200 shadow-2xl p-4"
-                    style={{ maxHeight: '45vh' }}
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2.5">
-                        <Terminal size={14} className="text-cyan-600" />
-                        <span className="text-sm font-bold text-gray-700">{isZh ? '快捷查询' : 'Quick Query'}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 font-mono font-bold border border-cyan-100">
-                          {targetDevices.length === 1 ? targetDevices[0].hostname : (isZh ? `已选 ${targetDevices.length} 台设备` : `${targetDevices.length} devices`)}
-                        </span>
-                      </div>
-                      <button onClick={() => setShowQuickQuery(false)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400"><X size={14} /></button>
-                    </div>
-                    <div className="grid grid-cols-6 md:grid-cols-8 lg:grid-cols-12 gap-2 overflow-auto" style={{ maxHeight: 'calc(45vh - 60px)' }}>
-                      {queryPresets.map((cmd, idx) => (
-                        <button
-                          key={idx}
-                          disabled={quickQueryRunning}
-                          onClick={() => { onRunQuickQuery(isZh ? cmd.label : cmd.labelEn, cmd.cmds, cmd.operationalCategory); setShowQuickQuery(false); }}
-                          title={cmd.cmds}
-                          className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-xl border border-gray-100 bg-white hover:border-cyan-200 hover:shadow-md hover:-translate-y-0.5 transition-all disabled:opacity-40"
-                        >
-                          <span className="text-lg leading-none">{cmd.icon}</span>
-                          <span className="text-[10px] font-semibold text-gray-500 text-center leading-tight">{isZh ? cmd.label : cmd.labelEn}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              {/* Removed old Quick Query slide-up panel */}
             </motion.div>
           )}
 
@@ -2020,7 +2070,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
       {/* ── Quick Query Result Overlay (preserved from original) ── */}
       {(quickQueryRunning || quickQueryOutput) && (
         <>
-          <div className="fixed inset-0 z-[70] bg-[#020817]/72 backdrop-blur-sm" onClick={onResetQuickQuery} />
+          <div className="fixed inset-0 z-[70] bg-[#020817]/72 backdrop-blur-sm" onClick={() => { onResetQuickQuery(); handleClearSelection(); }} />
           <div className={quickQueryMaximized
             ? 'fixed left-1/2 top-1/2 z-[80] flex h-[84vh] w-[min(1280px,90vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-3xl border border-white/10 bg-[linear-gradient(180deg,#0d1117_0%,#151b23_100%)] shadow-[0_32px_120px_rgba(0,0,0,0.6)]'
             : 'fixed left-1/2 top-1/2 z-[80] flex h-[min(520px,70vh)] w-[min(720px,85vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-3xl border border-white/10 bg-[linear-gradient(180deg,#0d1117_0%,#151b23_100%)] shadow-[0_32px_120px_rgba(0,0,0,0.6)]'}>
@@ -2078,7 +2128,15 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                     <Copy size={13} />
                   </button>
                 )}
-                <button onClick={onResetQuickQuery} className="text-white/25 hover:text-white/60 p-2 rounded-lg hover:bg-white/[0.06] transition-all">
+                <button
+                  onClick={() => { onResetQuickQuery(); handleClearSelection(); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[10px] font-bold text-white/60 hover:text-white hover:bg-white/10 transition-all mr-2"
+                  title={isZh ? '关闭所有并返回列表' : 'Close all and return to list'}
+                >
+                  <ChevronLeft size={12} />
+                  {isZh ? '完成' : 'Done'}
+                </button>
+                <button onClick={onResetQuickQuery} className="text-white/25 hover:text-white/60 p-2 rounded-lg hover:bg-white/[0.06] transition-all" title={isZh ? '关闭结果' : 'Close result'}>
                   <X size={13} />
                 </button>
               </div>

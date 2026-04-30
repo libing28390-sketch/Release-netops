@@ -2739,7 +2739,7 @@ async def create_custom_scenario(request: Request, payload: dict = Body(...)):
 @router.get("/playbooks")
 async def list_playbooks(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=500),
     status: str = Query('all'),
     scenario: str = Query(''),
 ):
@@ -2877,6 +2877,33 @@ async def get_execution_summary(execution_id: str):
     finally:
         conn.close()
 
+@router.get("/playbooks/{execution_id}/full")
+async def get_execution_full(execution_id: str):
+    """Return the complete execution record, including phases_json and variables."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            '''SELECT id, scenario_id, scenario_name, platform, device_ids, variables, 
+                      status, dry_run, author, concurrency, phases_json, 
+                      total_devices, success_count, failed_count, partial_count,
+                      created_at, updated_at
+               FROM playbook_executions WHERE id = ?''',
+            (execution_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Execution not found")
+        d = dict(row)
+        # Parse JSON fields
+        for field in ['device_ids', 'variables', 'phases_json']:
+            if d.get(field):
+                try:
+                    d[field.replace('_json', '')] = json.loads(d[field])
+                except Exception:
+                    d[field.replace('_json', '')] = d[field]
+        return d
+    finally:
+        conn.close()
+
 @router.get("/playbooks/{execution_id}/devices")
 async def get_execution_devices(
     execution_id: str,
@@ -2975,7 +3002,13 @@ async def get_execution_device_detail(execution_id: str, device_id: str):
             (execution_id, device_id)
         ).fetchone()
         if row:
-            return dict(row)
+            res = dict(row)
+            if res.get('phases_json'):
+                try:
+                    res['phases'] = json.loads(res['phases_json'])
+                except Exception:
+                    res['phases'] = {}
+            return res
         # Legacy fallback
         exec_row = conn.execute(
             "SELECT results_json FROM playbook_executions WHERE id = ?", (execution_id,)

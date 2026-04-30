@@ -112,7 +112,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               <button onClick={() => navigate('/automation/execute')} className={primaryActionBtnClass + ' !py-1.5 !text-xs'}>
                 {t('openAutomation')}
               </button>
-              <button onClick={() => navigate('/automation/queries')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs'}>
+              <button onClick={() => navigate('/automation/history')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs'}>
                 {t('viewExecHistory')}
               </button>
             </div>

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity, Plus, X, Trash2, Edit3, Save, RotateCcw,
-  Shield, CheckCircle2, Search, Filter, Info, ListFilter, Copy, Check, Download
+  Shield, CheckCircle2, Search, Filter, Info, ListFilter, Copy, Check, Download, Database, FileCode
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import {
@@ -24,6 +24,7 @@ interface InspectionItem {
   oid: string;
   created_at: string;
   updated_at: string;
+  script_id: string;
 }
 
 
@@ -62,6 +63,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [scripts, setScripts] = useState<any[]>([]);
 
   const copyToClipboard = (text: string, id: string) => {
     try {
@@ -110,7 +112,20 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     }
   }, [authHeaders]);
 
-  useEffect(() => { fetchItems(); }, [fetchItems]);
+  const fetchScripts = useCallback(async () => {
+    try {
+      const r = await fetch('/api/scripts', { headers: authHeaders });
+      if (r.ok) {
+        const j = await r.json();
+        setScripts(j || []);
+      }
+    } catch { /* ignore */ }
+  }, [authHeaders]);
+
+  useEffect(() => { 
+    fetchItems();
+    fetchScripts();
+  }, [fetchItems, fetchScripts]);
 
   const handleAdd = async () => {
     if (!form.name || !form.name_zh || !form.check_key) {
@@ -267,34 +282,41 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
         <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
           <div className="flex-1">
             <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar mb-4">
+            <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar mb-4">
               <button
                 onClick={() => setCategoryFilter('All')}
-                className={`px-3 py-1.5 rounded-xl text-[11px] font-bold tracking-wider uppercase transition-all whitespace-nowrap ${
+                className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
                   categoryFilter === 'All' 
-                  ? 'bg-[#00172d] text-white shadow-lg' 
-                  : 'bg-black/5 text-black/40 hover:bg-black/10'
+                  ? 'bg-gradient-to-br from-[#164e63] to-[#0e3f52] text-white border-[#164e63] shadow-lg shadow-cyan-900/20 scale-[1.02]' 
+                  : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
                 }`}
               >
-                {zh ? '全部' : 'All'}
-                <span className="ml-1 opacity-50 font-normal">({items.length})</span>
+                {zh ? '全部指标' : 'All Metrics'}
+                <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'All' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                  {items.length}
+                </span>
               </button>
               {CATEGORIES.map(cat => {
                 const count = items.filter(i => i.category === cat.id).length;
+                const isActive = categoryFilter === cat.id;
                 return (
                   <button
                     key={cat.id}
                     onClick={() => setCategoryFilter(cat.id)}
-                    className={`px-3 py-1.5 rounded-xl text-[11px] font-bold tracking-wider uppercase transition-all whitespace-nowrap ${
-                      categoryFilter === cat.id 
-                      ? 'bg-[#00172d] text-white shadow-lg' 
-                      : 'bg-black/5 text-black/40 hover:bg-black/10'
+                    className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
+                      isActive 
+                      ? 'bg-gradient-to-br from-cyan-600 to-cyan-700 text-white border-cyan-500 shadow-lg shadow-cyan-600/20 scale-[1.02]' 
+                      : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
                     }`}
                   >
                     {zh ? cat.zh : cat.en}
-                    <span className="ml-1 opacity-50 font-normal">({count})</span>
+                    <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                      {count}
+                    </span>
                   </button>
                 );
               })}
+            </div>
             </div>
 
             <div className="flex items-center gap-3">
@@ -607,39 +629,66 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                           />
                                         </div>
                                       ) : (
-                                        <div className="space-y-1">
-                                          <div className="line-clamp-1 max-w-[200px] break-all text-black/40 text-[10px] font-medium" title={item.description}>
-                                            {item.description || (zh ? "暂无描述" : "No description")}
+                                        <div className="space-y-2">
+                                          <div className="line-clamp-1 max-w-[240px] break-all text-slate-400 text-[10px] font-medium leading-relaxed" title={item.description}>
+                                            {item.description || (zh ? "暂无指标业务描述" : "No description")}
                                           </div>
                                           <div className="flex items-center gap-2">
-                                            <span className="px-1.5 py-0.5 rounded bg-black/5 text-[9px] font-bold text-black/40 uppercase">{item.method}</span>
-                                            {item.oid && (
-                                              <div className="flex items-center gap-1 group/copy relative">
-                                                <span className="text-[9px] font-mono text-indigo-500 font-bold truncate max-w-[120px]">{item.oid}</span>
-                                                <button 
-                                                  onClick={(e) => { e.stopPropagation(); copyToClipboard(item.oid, `${item.id}-oid`); }}
-                                                  className="opacity-0 group-hover/copy:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/5"
-                                                  title={zh ? '复制 OID' : 'Copy OID'}
-                                                >
-                                                  {copiedId === `${item.id}-oid` ? <Check className="w-2.5 h-2.5 text-green-500" /> : <Copy className="w-2.5 h-2.5 text-black/30" />}
-                                                </button>
-                                              </div>
+                                            {(() => {
+                                              const method = item.method?.toUpperCase();
+                                              const isScript = !!item.script_id;
+                                              const scriptName = isScript ? (scripts.find(s => s.id === item.script_id)?.name || item.script_id).replace(/（精细化）|\(精细化\)/g, '').trim() : null;
+                                              
+                                              const cfg = method === 'SNMP' ? { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100', icon: Database }
+                                                        : method === 'SSH' ? { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100', icon: Shield }
+                                                        : method === 'ICMP' ? { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100', icon: Activity }
+                                                        : isScript ? { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-100', icon: FileCode }
+                                                        : { bg: 'bg-slate-50', text: 'text-slate-500', border: 'border-slate-100', icon: Info };
+                                              const Icon = cfg.icon;
+                                              return (
+                                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${cfg.bg} ${cfg.text} ${cfg.border} text-[10px] font-black uppercase tracking-wider shadow-sm`}>
+                                                  <Icon size={12} />
+                                                  {isScript ? `${zh ? '脚本: ' : 'Script: '}${scriptName}` : method}
+                                                </span>
+                                              );
+                                            })()}
+                                            {item.warning_threshold !== undefined && item.warning_threshold !== null && (
+                                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-orange-50 text-orange-600 border border-orange-100 text-[9px] font-bold">
+                                                W: {item.warning_threshold}%
+                                              </span>
+                                            )}
+                                            {item.critical_threshold !== undefined && item.critical_threshold !== null && (
+                                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-red-50 text-red-600 border border-red-100 text-[9px] font-bold">
+                                                C: {item.critical_threshold}%
+                                              </span>
                                             )}
                                           </div>
                                         </div>
                                       )}
                                     </td>
                                     <td className="px-6 py-4 text-right">
-                                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <div className="flex justify-end gap-2">
                                         {isEditing ? (
                                           <>
-                                            <button onClick={(e) => { e.stopPropagation(); handleUpdate(item.id, form); }} className="p-1.5 rounded-lg hover:bg-cyan-50 text-cyan-600 transition-colors"><Save className="w-4 h-4" /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); setEditingId(null); }} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 transition-colors"><X className="w-4 h-4" /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleUpdate(item.id, form); }} className="p-1.5 rounded-lg hover:bg-cyan-50 text-cyan-600 transition-colors shadow-sm border border-cyan-100"><Save className="w-4 h-4" /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); setEditingId(null); }} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 transition-colors shadow-sm border border-red-100"><X className="w-4 h-4" /></button>
                                           </>
                                         ) : (
                                           <>
-                                            <button onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }} className={alertTableActionButtonClass}><Edit3 size={13} /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }} className="p-1.5 rounded-lg text-black/20 hover:text-red-500 hover:bg-red-50 transition-all"><Trash2 size={13} /></button>
+                                            <button 
+                                              onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }} 
+                                              className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 border border-slate-100 transition-all shadow-sm"
+                                              title={zh ? '编辑指标' : 'Edit Metric'}
+                                            >
+                                              <Edit3 size={14} />
+                                            </button>
+                                            <button 
+                                              onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }} 
+                                              className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 border border-slate-100 transition-all shadow-sm"
+                                              title={zh ? '删除指标' : 'Delete Metric'}
+                                            >
+                                              <Trash2 size={14} />
+                                            </button>
                                           </>
                                         )}
                                       </div>
@@ -670,7 +719,9 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                               </div>
                                               <div className="bg-white/40 backdrop-blur-sm p-5 rounded-2xl border border-black/[0.03] space-y-4 shadow-sm">
                                                 <div className="flex items-center justify-between">
-                                                  <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/30">{zh ? '数据采集与指令' : 'ACQUISITION & COMMAND'}</h4>
+                                                  <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/30">
+                                                    {item.script_id ? (zh ? '自动化采集脚本源代码' : 'AUTOMATED SCRIPT SOURCE') : (zh ? '数据采集与指令' : 'ACQUISITION & COMMAND')}
+                                                  </h4>
                                                   <div className="flex gap-2">
                                                     {item.oid && <span className="px-2.5 py-1 rounded-lg bg-indigo-500 text-white text-[10px] font-black shadow-lg shadow-indigo-500/20">OID: {item.oid}</span>}
                                                     <span className="px-2.5 py-1 rounded-lg bg-cyan-500 text-white text-[10px] font-black shadow-lg shadow-cyan-500/20">{item.method}</span>
@@ -679,8 +730,10 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                                 <div className="bg-[#00172d] p-4 rounded-xl border border-white/5 relative group/code overflow-hidden shadow-inner">
                                                   <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
                                                   <div className="relative group/copy-cmd">
-                                                    <code className="text-[11px] text-cyan-300 font-mono whitespace-pre-wrap break-all relative z-10 block pr-8">
-                                                      {item.command || '# No command defined'}
+                                                    <code className="text-[11px] text-cyan-300 font-mono whitespace-pre-wrap break-all relative z-10 block pr-8 leading-relaxed">
+                                                      {item.script_id 
+                                                        ? (scripts.find(s => s.id === item.script_id)?.content || '# Script content loading...') 
+                                                        : (item.command || '# No command defined')}
                                                     </code>
                                                     <button 
                                                       onClick={(e) => { e.stopPropagation(); copyToClipboard(item.command, `${item.id}-cmd`); }}

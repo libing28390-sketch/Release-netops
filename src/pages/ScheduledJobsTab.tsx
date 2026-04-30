@@ -4,6 +4,7 @@ import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
   Database, Activity, Power, PowerOff,
+  Search, FileCode,
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import TagConditionPicker, { type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter, parseTagFilter } from '../components/TagConditionPicker';
@@ -30,8 +31,8 @@ const CRON_FIELD_HINTS_ZH = ['0-59, */5, 0,30', '0-23, */2, 0-6', '1-31, */2', '
 const CRON_FIELD_HINTS_EN = ['0-59, */5, 0,30', '0-23, */2, 0-6', '1-31, */2', '1-12, */3', '0-6 (Sun=0), 1-5'];
 
 const ACTION_TYPES = [
-  { value: 'backup', labelZh: '配置备份', labelEn: 'Config Backup', icon: Database },
-  { value: 'inspection', labelZh: '设备巡检', labelEn: 'Device Inspection', icon: Activity },
+  { value: 'backup', labelZh: '配置采集', labelEn: 'Config Collection', icon: Database },
+  { value: 'script_run', labelZh: '自动化变更', labelEn: 'Automation Change', icon: Zap },
 ];
 
 const SCOPE_OPTIONS = [
@@ -89,6 +90,7 @@ interface FormState {
   device_scope: string;
   device_filter: string;
   commands: string;
+  script_id: string;
   is_config: boolean;
   config_reason: string;
 }
@@ -106,6 +108,7 @@ const INITIAL_FORM: FormState = {
   device_scope: 'all',
   device_filter: '',
   commands: '',
+  script_id: '',
   is_config: false,
   config_reason: '',
 };
@@ -200,6 +203,11 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [approvalCountdown, setApprovalCountdown] = useState(0);
   const [approvalError, setApprovalError] = useState('');
 
+  // Script selection for action_type: 'script_run'
+  const [availableScripts, setAvailableScripts] = useState<{ id: string; name: string; status: string }[]>([]);
+  const [scriptSearch, setScriptSearch] = useState('');
+  const [showScriptDropdown, setShowScriptDropdown] = useState(false);
+
   const isEditMode = editingJob !== null;
 
   const authHeaders = useMemo(() => {
@@ -234,8 +242,21 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     } catch { /* ignore */ }
   }, [authHeaders]);
 
+  const fetchScripts = useCallback(async () => {
+    try {
+      const r = await fetch('/api/scripts', { headers: authHeaders });
+      if (r.ok) {
+        const j = await r.json();
+        setAvailableScripts(j.filter((s: any) => s.status === 'released'));
+      }
+    } catch { /* ignore */ }
+  }, [authHeaders]);
+
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
-  useEffect(() => { if (modalOpen && !isEditMode) fetchApprovers(); }, [modalOpen, isEditMode, fetchApprovers]);
+  useEffect(() => { 
+    if (modalOpen && !isEditMode) fetchApprovers(); 
+    if (modalOpen && form.action_type === 'script_run') fetchScripts();
+  }, [modalOpen, isEditMode, fetchApprovers, fetchScripts, form.action_type]);
 
   useEffect(() => {
     if (approvalCountdown <= 0) return;
@@ -272,6 +293,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       device_scope: job.device_scope,
       device_filter: job.device_filter,
       commands: job.commands || '',
+      script_id: job.script_id || '',
       is_config: !!job.is_config,
       config_reason: job.config_reason || '',
     });
@@ -513,6 +535,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           cron_expr: form.cron_expr,
           device_scope: form.device_scope,
           device_filter: resolveFilter(),
+          script_id: form.script_id,
           config_reason: form.config_reason,
         }),
       });
@@ -560,6 +583,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const submitForm = () => {
+    if (form.action_type === 'script_run' && !form.script_id) {
+      showToast(zh ? '请选择一个要执行的脚本' : 'Please select a script to execute', 'error');
+      return;
+    }
     if (isEditMode) updateJob();
     else createJob();
   };
@@ -639,6 +666,16 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                         <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${isEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
                           {isEnabled ? (zh ? '运行中' : 'Active') : (zh ? '已停用' : 'Disabled')}
                         </span>
+                        {job.last_run_status && (
+                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
+                            job.last_run_status === 'success' 
+                              ? 'bg-green-50 text-green-600 border border-green-100' 
+                              : 'bg-red-50 text-red-600 border border-red-100'
+                          }`}>
+                            <div className={`w-1 h-1 rounded-full ${job.last_run_status === 'success' ? 'bg-green-500' : 'bg-red-500'}`} />
+                            {job.last_run_status === 'success' ? (zh ? '成功' : 'Success') : (zh ? '失败' : 'Failed')}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-[11px] text-black/40 flex-wrap">
                         <span className="flex items-center gap-1">
@@ -649,6 +686,15 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                         <span>{zh ? (atInfo?.labelZh || job.action_type) : (atInfo?.labelEn || job.action_type)}</span>
                         <span className="text-black/10">·</span>
                         <span>{scopeDesc}</span>
+                        {job.action_type === 'script_run' && job.script_id && (
+                          <>
+                            <span className="text-black/10">·</span>
+                            <span className="flex items-center gap-1 text-[#00a9ce] font-bold">
+                              <FileCode size={10} />
+                              {(availableScripts || []).find(s => s.id === job.script_id)?.name || job.script_id}
+                            </span>
+                          </>
+                        )}
                         {job.run_count > 0 && (
                           <>
                             <span className="text-black/10">·</span>
@@ -790,7 +836,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                         {ACTION_TYPES.map(at => (
                           <button
                             key={at.value} type="button"
-                            onClick={() => setForm(f => ({ ...f, action_type: at.value }))}
+                            onClick={() => {
+                               setForm(f => ({ ...f, action_type: at.value }));
+                               if (at.value === 'script_run') fetchScripts();
+                            }}
                             className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
                               form.action_type === at.value
                                 ? 'border-cyan-400 bg-cyan-50 text-[#0891b2]'
@@ -803,6 +852,44 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                         ))}
                       </div>
                     </div>
+
+                    {form.action_type === 'script_run' && (
+                       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="relative">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-[#00a9ce] block mb-1.5">{zh ? '关联已发布脚本' : 'ASSOCIATED SCRIPT'}</label>
+                          <div className="relative">
+                             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                             <input 
+                               type="text" 
+                               placeholder={zh ? "搜索脚本..." : "Search script..."}
+                               value={scriptSearch || ((availableScripts || []).find(s => s.id === form.script_id)?.name || '')}
+                               onFocus={() => setShowScriptDropdown(true)}
+                               onChange={(e) => { setScriptSearch(e.target.value); setShowScriptDropdown(true); }}
+                               className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all"
+                             />
+                          </div>
+                          
+                          <AnimatePresence>
+                             {showScriptDropdown && (
+                                <motion.div 
+                                  initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
+                                  className="absolute z-[60] left-0 right-0 mt-2 bg-[#0f172a]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar"
+                                >
+                                   {(availableScripts || []).filter(s => s.name.toLowerCase().includes(scriptSearch.toLowerCase())).map(s => (
+                                      <div 
+                                        key={s.id} 
+                                        onClick={() => { setForm(f => ({ ...f, script_id: s.id })); setScriptSearch(''); setShowScriptDropdown(false); }}
+                                        className={`px-5 py-3 text-[12px] cursor-pointer hover:bg-white/5 transition-all flex items-center justify-between ${form.script_id === s.id ? 'bg-cyan-500/20 text-[#00a9ce] font-bold' : 'text-slate-300'}`}
+                                      >
+                                         <span className="flex items-center gap-2"><FileCode size={12} /> {s.name}</span>
+                                         {form.script_id === s.id && <CheckCircle2 size={14} />}
+                                      </div>
+                                   ))}
+                                   {availableScripts.length === 0 && <div className="p-4 text-center text-slate-400 text-[11px] italic">{zh ? '暂无已发布的脚本' : 'No released scripts'}</div>}
+                                </motion.div>
+                             )}
+                          </AnimatePresence>
+                       </motion.div>
+                    )}
 
                     <div>
                       <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '设备范围' : 'Device Scope'}</label>

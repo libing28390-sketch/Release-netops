@@ -38,6 +38,7 @@ const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
 const TagManagementTab = lazy(() => import('../pages/TagManagementTab'));
 const LicenseAdminTab = lazy(() => import('../pages/LicenseAdminTab'));
+const ScriptManagementTab = lazy(() => import('../pages/ScriptManagementTab'));
 
 const lazyPanelFallback = (
   <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-black/5 bg-white/70 text-sm text-black/40">
@@ -190,6 +191,8 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     quickQueryView,
     quickQueryMaximized,
     quickQueryCommands,
+    changeTicket,
+    setChangeTicket,
     quickQueryTable,
     handleAutomationSearch,
     handleScenarioSearch,
@@ -639,6 +642,8 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             batchDeviceIds={props.batchDeviceIds}
             automationSearch={props.automationSearch}
             scenarioSearch={props.scenarioSearch}
+            changeTicket={changeTicket}
+            setChangeTicket={setChangeTicket}
             filteredScenarios={filteredScenarios}
             quickPlaybookScenario={quickPlaybookScenario}
             quickPlaybookVars={quickPlaybookVars}
@@ -664,6 +669,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             quickQueryMaximized={quickQueryMaximized}
             quickQueryCommands={quickQueryCommands}
             quickQueryTable={quickQueryTable}
+            savedQueries={props.savedQueries}
             onNavigate={navigate}
             onAutomationSearchChange={props.handleAutomationSearch}
             onScenarioSearchChange={props.handleScenarioSearch}
@@ -689,6 +695,12 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             onResetExecutionState={handleResetQuickExecutionState}
             getPlatformLabel={getPlatformLabel}
           />
+        </Suspense>
+      )}
+
+      {activeTab === 'automation' && automationPage === 'scripts' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <ScriptManagementTab language={language} showToast={showToast} />
         </Suspense>
       )}
 
@@ -733,48 +745,22 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             onScenarioSearchChange={handleScenarioSearch}
             onOpenManualScenarioDraft={openManualScenarioDraft}
             onUseScenario={(scenario: any) => {
-              openQuickPlaybookModal(scenario);
-              navigate('/automation/execute');
+              // Redirect to Change Order creation with the scenario pre-selected
+              navigate('/change-orders/new', { state: { scenarioId: scenario.id } });
             }}
           />
         </Suspense>
       )}
 
-      {activeTab === 'automation' && automationPage === 'queries' && (
+      {activeTab === 'automation' && (automationPage === 'history' || automationPage === 'schedule-history' || automationPage === 'queries') && (
         <Suspense fallback={lazyPanelFallback}>
-          <AutomationHistoryTab
-            t={t}
-            language={language}
+          <ExecutionScheduleTab 
+            t={t} 
+            language={language} 
+            showToast={showToast} 
+            initialTab="history" 
             devices={devices}
-            playbookExecutions={props.playbookExecutions}
-            playbookHistoryTotal={props.playbookHistoryTotal}
-            playbookHistoryPage={props.playbookHistoryPage}
-            playbookHistoryStatusFilter={props.playbookHistoryStatusFilter}
-            playbookHistoryScenarioSearch={props.playbookHistoryScenarioSearch}
-            activeExecutionId={props.activeExecutionId}
-            executionStatus={executionStatus}
-            wsMessages={props.wsMessages}
-            selectedExecutionLoading={props.selectedExecutionLoading}
-            selectedExecutionDetail={props.selectedExecutionDetail}
-            selectedDeviceDetail={props.selectedDeviceDetail}
-            selectedDeviceDetailLoading={props.selectedDeviceDetailLoading}
-            selectedExecDevices={props.selectedExecDevices}
-            selectedExecDevicesTotal={props.selectedExecDevicesTotal}
-            selectedExecDevicesPage={props.selectedExecDevicesPage}
-            selectedExecDevicesStatusFilter={props.selectedExecDevicesStatusFilter}
-            selectedExecDevicesLoading={props.selectedExecDevicesLoading}
-            onRefreshHistory={props.handleRefreshHistory}
-            onScenarioSearchChange={props.setPlaybookHistoryScenarioSearch}
-            onHistoryPageChange={props.setPlaybookHistoryPage}
-            onHistoryPageSizeChange={props.setPlaybookHistoryPageSize}
-            playbookHistoryPageSize={playbookHistoryPageSize}
-            onHistoryStatusFilterChange={props.setPlaybookHistoryStatusFilter}
-            onSelectExecution={props.handleSelectExecution}
-            onDeleteExecution={props.handleDeleteExecution}
-            onExecDevicesStatusFilterChange={props.handleExecDevicesStatusFilterChange}
-            onExecDevicesPageChange={props.handleExecDevicesPageChange}
-            onSelectExecDevice={props.handleSelectExecDevice}
-            onCloseDeviceDetail={() => setActiveTab('history')}
+            onRerun={props.handleRerun}
           />
         </Suspense>
       )}
@@ -807,15 +793,18 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
 
       {activeTab === 'automation' && automationPage === 'schedule' && (
         <Suspense fallback={lazyPanelFallback}>
-          <ExecutionScheduleTab t={t} language={language} showToast={showToast} initialTab="schedules" />
+          <ExecutionScheduleTab 
+            t={t} 
+            language={language} 
+            showToast={showToast} 
+            initialTab="schedules" 
+            devices={devices}
+            onRerun={props.handleRerun}
+          />
         </Suspense>
       )}
 
-      {activeTab === 'automation' && automationPage === 'schedule-history' && (
-        <Suspense fallback={lazyPanelFallback}>
-          <ExecutionScheduleTab t={t} language={language} showToast={showToast} initialTab="history" />
-        </Suspense>
-      )}
+      {/* Consolidated with automationPage === 'history' above */}
 
       {activeTab === 'automation' && automationPage === 'scheduled-jobs' && (
         <Suspense fallback={lazyPanelFallback}>

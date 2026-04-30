@@ -590,23 +590,55 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                       <tr>
                         <Th>{isZh ? '设备' : 'Device'}</Th>
                         <Th>Ping/SSH</Th>
-                        <Th>{isZh ? '评分' : 'Score'}</Th>
-                        <Th>CPU/Mem</Th>
-                        <Th>{isZh ? '接口' : 'IF'}</Th>
-                        <Th>{isZh ? '发现' : 'Findings'}</Th>
+                        <Th>{isZh ? '精细化指标 (取值)' : 'Granular Metrics'}</Th>
+                        <Th>{isZh ? '状态/评分' : 'Status/Score'}</Th>
+                        <Th>{isZh ? '详细发现' : 'Findings'}</Th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-black/[0.04]">
-                      {selectedRunDetail.results.map(r => (
-                        <tr key={r.id} className="hover:bg-slate-50/50">
-                          <td className="px-4 py-3"><div className="font-semibold text-[#0b2340]">{r.hostname}</div><div className="text-[10px] text-black/30 font-mono">{r.ip_address}</div></td>
-                          <td className="px-4 py-3 flex flex-col gap-1"><span className={`text-[10px] font-bold ${r.ping_ok ? 'text-emerald-600' : 'text-red-500'}`}>PING {r.ping_ok ? 'OK' : 'FAIL'}</span><span className={`text-[10px] font-bold ${r.ssh_ok ? 'text-emerald-600' : 'text-red-500'}`}>SSH {r.ssh_ok ? 'OK' : 'FAIL'}</span></td>
-                          <td className="px-4 py-3 font-bold tabular-nums">{r.health_score ?? '—'}</td>
-                          <td className="px-4 py-3 text-[11px] text-black/55">{r.cpu_usage}% / {r.memory_usage}%</td>
-                          <td className="px-4 py-3 text-[11px] font-semibold"><span className="text-emerald-600">{r.interface_up}↑</span><span className="ml-1.5 text-red-400">{r.interface_down}↓</span></td>
-                          <td className="px-4 py-3 max-w-[240px] truncate text-xs text-black/60 italic">{r.findings_json || 'OK'}</td>
-                        </tr>
-                      ))}
+                      {selectedRunDetail.results.map(r => {
+                        const metrics = JSON.parse(r.metrics_json || '{}');
+                        const findings = JSON.parse(r.findings_json || '[]');
+                        
+                        return (
+                          <tr key={r.id} className="hover:bg-slate-50/50">
+                            <td className="px-4 py-3">
+                              <div className="font-semibold text-[#0b2340]">{r.hostname}</div>
+                              <div className="text-[10px] text-black/30 font-mono">{r.ip_address}</div>
+                            </td>
+                            <td className="px-4 py-3 flex flex-col gap-1">
+                              <span className={`text-[10px] font-bold ${r.ping_ok ? 'text-emerald-600' : 'text-red-500'}`}>PING {r.ping_ok ? 'OK' : 'FAIL'}</span>
+                              <span className={`text-[10px] font-bold ${r.ssh_ok ? 'text-emerald-600' : 'text-red-500'}`}>SSH {r.ssh_ok ? 'OK' : 'FAIL'}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-1.5 max-w-[300px]">
+                                {Object.entries(metrics).map(([key, val]) => (
+                                  <div key={key} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${typeof val === 'number' ? 'bg-slate-50 border-slate-200 text-slate-700' : 'bg-red-50 border-red-100 text-red-600'}`}>
+                                    <span className="opacity-50 mr-1">{key}:</span>
+                                    <span className="font-mono">{typeof val === 'number' ? val.toFixed(1) + (key.includes('util') || key.includes('avail') ? '%' : '') : val}</span>
+                                  </div>
+                                ))}
+                                {Object.keys(metrics).length === 0 && <span className="text-black/20 text-[10px] italic">No metrics collected</span>}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${statusToneMap[r.health_status] || statusToneMap.unknown}`}>
+                                {r.health_status} ({r.health_score ?? '—'})
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="space-y-1">
+                                {findings.map((f: any, idx: number) => (
+                                  <div key={idx} className={`text-[11px] leading-tight ${f.severity === 'critical' ? 'text-red-600 font-medium' : 'text-amber-600'}`}>
+                                    • {f.message}
+                                  </div>
+                                ))}
+                                {findings.length === 0 && <span className="text-emerald-600 text-[11px] font-medium">✓ Passed all checks</span>}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

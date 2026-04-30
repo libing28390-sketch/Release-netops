@@ -105,6 +105,7 @@ interface AutomationHistoryTabProps {
   onExecDevicesPageChange: (page: number) => Promise<void> | void;
   onSelectExecDevice: (deviceId: string) => Promise<void> | void;
   onCloseDeviceDetail: () => void;
+  onRerun: (execution: PlaybookExecution) => void;
 }
 
 const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
@@ -138,6 +139,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
   onExecDevicesPageChange,
   onSelectExecDevice,
   onCloseDeviceDetail,
+  onRerun,
 }) => {
   const isZh = language === 'zh';
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -210,7 +212,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
         </div>
         <button
           onClick={() => void onRefreshHistory()}
-          title={isZh ? '刷新查询记录' : 'Refresh query records'}
+          title={isZh ? '刷新执行历史' : 'Refresh execution history'}
           className="p-2 rounded-xl border border-black/10 hover:bg-black/5 transition-all"
         >
           <RotateCcw size={14} />
@@ -349,13 +351,21 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <button
+                            onClick={() => onRerun(execution)}
+                            className="flex items-center gap-1 px-2 py-1.5 text-xs text-amber-600 hover:bg-amber-50 font-bold rounded-lg transition-all"
+                            title={isZh ? '重复执行' : 'Rerun'}
+                          >
+                            <RotateCcw size={14} />
+                            <span className="hidden sm:inline">{isZh ? '重试' : 'Retry'}</span>
+                          </button>
+                          <button
                             onClick={() => {
                               void onSelectExecution(execution);
                               setIsDetailModalOpen(true);
                             }}
                             className="flex items-center gap-1 px-2 py-1.5 text-xs text-[#0e7490] hover:bg-cyan-50 font-bold rounded-lg transition-all"
                           >
-                            {isZh ? '查看详情' : 'Details'}
+                            {isZh ? '详情' : 'Details'}
                           </button>
                           {!isRowLive && (
                             <button
@@ -608,18 +618,46 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                             <div className="h-full flex items-center justify-center text-black/30"><RotateCcw size={20} className="animate-spin" /></div>
                           ) : selectedDeviceDetail ? (
                             <div className="flex flex-col h-full">
-                              <div className="p-4 border-b border-black/5 flex items-center justify-between bg-black/[0.01] flex-shrink-0">
-                                <div>
-                                  <p className="text-xs font-bold text-[#164e63]">{selectedDeviceDetail.hostname}</p>
-                                  <p className="text-[10px] font-mono text-black/40 mt-0.5">{selectedDeviceDetail.ip_address}</p>
+                              <div className="p-4 border-b border-black/5 bg-black/[0.01] flex-shrink-0">
+                                <div className="flex items-center justify-between mb-3">
+                                  <div>
+                                    <p className="text-xs font-bold text-[#164e63]">{selectedDeviceDetail.hostname}</p>
+                                    <p className="text-[10px] font-mono text-black/40 mt-0.5">{selectedDeviceDetail.ip_address}</p>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {selectedDeviceDetail.duration_ms !== undefined && (
+                                      <span className="text-[10px] font-bold px-2 py-1 bg-black/[0.03] text-black/40 rounded-lg">
+                                        {selectedDeviceDetail.duration_ms >= 1000 ? `${(selectedDeviceDetail.duration_ms / 1000).toFixed(2)} s` : `${selectedDeviceDetail.duration_ms} ms`}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  {selectedDeviceDetail.duration_ms !== undefined && (
-                                    <span className="text-[10px] font-bold px-2 py-1 bg-black/[0.03] text-black/40 rounded-lg">
-                                      {selectedDeviceDetail.duration_ms >= 1000 ? `${(selectedDeviceDetail.duration_ms / 1000).toFixed(2)} s` : `${selectedDeviceDetail.duration_ms} ms`}
-                                    </span>
-                                  )}
-                                </div>
+
+                                {/* Key Device Information */}
+                                {(() => {
+                                  const dev = devices.find(d => d.hostname === selectedDeviceDetail.hostname || d.ip_address === selectedDeviceDetail.ip_address);
+                                  if (!dev) return null;
+                                  return (
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1">
+                                      <div className="px-2 py-1.5 rounded-lg bg-black/[0.02] border border-black/5">
+                                        <p className="text-[9px] font-bold text-black/20 uppercase tracking-tighter">{isZh ? '平台' : 'Platform'}</p>
+                                        <p className="text-[10px] font-bold text-black/60 truncate">{dev.platform || '-'}</p>
+                                      </div>
+                                      <div className="px-2 py-1.5 rounded-lg bg-black/[0.02] border border-black/5">
+                                        <p className="text-[9px] font-bold text-black/20 uppercase tracking-tighter">{isZh ? '角色' : 'Role'}</p>
+                                        <p className="text-[10px] font-bold text-black/60 truncate">{dev.role || '-'}</p>
+                                      </div>
+                                      <div className="px-2 py-1.5 rounded-lg bg-black/[0.02] border border-black/5">
+                                        <p className="text-[9px] font-bold text-black/20 uppercase tracking-tighter">{isZh ? '站点' : 'Site'}</p>
+                                        <p className="text-[10px] font-bold text-black/60 truncate">{dev.site || '-'}</p>
+                                      </div>
+                                      <div className="px-2 py-1.5 rounded-lg bg-black/[0.02] border border-black/5">
+                                        <p className="text-[9px] font-bold text-black/20 uppercase tracking-tighter">{isZh ? '型号' : 'Model'}</p>
+                                        <p className="text-[10px] font-bold text-black/60 truncate">{dev.model || '-'}</p>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                               
                               {/* Output Stream Content */}

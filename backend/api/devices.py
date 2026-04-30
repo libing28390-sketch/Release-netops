@@ -40,6 +40,50 @@ def _vendor_from_platform(platform: str) -> str:
     if 'juniper' in p or 'junos' in p:
         return 'Juniper'
     return ''
+  
+  
+def _record_instant_execution(device_id: str, name: str, commands: list[str], status: str, platform: str = 'unknown', error: str = '', output: str = ''):
+    """Log a one-off query execution into the playbook_executions table so it shows up in history."""
+    with open(r'd:\netsops\record_debug.log', 'a') as f:
+        f.write(f"[{datetime.now()}] Recording: {name}, Device: {device_id}, Status: {status}\n")
+    conn = get_db_connection()
+    try:
+        exec_id = str(uuid.uuid4())
+        # Use simple ISO format for consistency with playbook history
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # 1. Create Playbook Execution (status: 'completed' or 'failed')
+        conn.execute('''
+            INSERT INTO playbook_executions 
+            (id, scenario_id, scenario_name, platform, device_ids, variables, status, dry_run, author, concurrency, phases_json, created_at, updated_at, total_devices, success_count, failed_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            exec_id, 'instant', name, platform, json.dumps([device_id]), '{}',
+            status, 0, 'admin', 1, json.dumps({'execute': commands}),
+            now, now, 1, 1 if status == 'completed' else 0, 0 if status == 'completed' else 1
+        ))
+        
+        # 2. Create Device Result
+        conn.execute('''
+            INSERT INTO execution_device_results
+            (id, execution_id, device_id, status, error_message, phases_json, started_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            str(uuid.uuid4()), exec_id, device_id, status, error,
+            json.dumps({
+                'execute': {
+                    'success': status == 'completed',
+                    'output': output or error or ('' if status == 'completed' else 'Unknown error'),
+                    'commands': commands
+                }
+            }),
+            now, now
+        ))
+        conn.commit()
+    except Exception as e:
+        _logger.warning(f"Failed to record instant execution: {e}")
+    finally:
+        conn.close()
 
 
 def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str | None:
@@ -1119,12 +1163,17 @@ def collect_device_operational_data(device_id: str, payload: dict = Body(default
     device_info = dict(row)
     device_info['password'] = decrypt_credential(device_info.get('password')) or ''
     categories = payload.get('categories') if isinstance(payload, dict) else None
+    query_name = payload.get('name') or f"Quick Query: {', '.join(categories or [])}"
 
     try:
-        return collect_operational_data(device_info, categories=categories)
+        res = collect_operational_data(device_info, categories=categories)
+        _record_instant_execution(device_id, query_name, [], 'completed', platform=device_info.get('platform', 'unknown'))
+        return res
     except ValueError as exc:
+        _record_instant_execution(device_id, query_name, [], 'failed', platform=device_info.get('platform', 'unknown'), error=str(exc))
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
+        _record_instant_execution(device_id, query_name, [], 'failed', platform=device_info.get('platform', 'unknown'), error=str(exc))
         raise HTTPException(status_code=500, detail=f'Operational data collection failed: {exc}')
 
 
@@ -1142,10 +1191,15 @@ def collect_device_parsed_command(device_id: str, payload: dict = Body(default={
     device_info = dict(row)
     device_info['password'] = decrypt_credential(device_info.get('password')) or ''
     command = payload.get('command') if isinstance(payload, dict) else None
+    query_name = payload.get('name') or "Custom Command Query"
 
     try:
-        return collect_custom_command_data(device_info, command=command)
+        res = collect_custom_command_data(device_info, command=command)
+        _record_instant_execution(device_id, query_name, [command] if command else [], 'completed', platform=device_info.get('platform', 'unknown'))
+        return res
     except ValueError as exc:
+        _record_instant_execution(device_id, query_name, [command] if command else [], 'failed', platform=device_info.get('platform', 'unknown'), error=str(exc))
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
+        _record_instant_execution(device_id, query_name, [command] if command else [], 'failed', platform=device_info.get('platform', 'unknown'), error=str(exc))
         raise HTTPException(status_code=500, detail=f'Parsed command execution failed: {exc}')

@@ -65,13 +65,14 @@ export const navConfig: NavGroup[] = [
     labelEn: 'AUTOMATION',
     icon: 'Zap',
     children: [
-      { id: 'auto-exec',  label: '自动化任务',  labelEn: 'Automation',        path: '/automation/execute', activeMatch: '/automation/execute,/automation/playbooks,/automation/scenarios,/automation/queries' },
+      { id: 'auto-exec',  label: '自动化任务',  labelEn: 'Automation',        path: '/automation/execute', activeMatch: '/automation/execute,/automation/playbooks,/automation/scenarios' },
       { id: 'inspection', label: '巡检概览',    labelEn: 'Inspection Overview', path: '/automation/inspection' },
       { id: 'inspection-records', label: '巡检记录', labelEn: 'Inspection Records', path: '/automation/inspection-records' },
       { id: 'exec-schedule', label: '执行计划',  labelEn: 'Execution Schedules', path: '/automation/schedule' },
-      { id: 'exec-history', label: '执行历史',   labelEn: 'Execution History', path: '/automation/schedule-history' },
+      { id: 'exec-history', label: '执行历史',   labelEn: 'Execution History', path: '/automation/history' },
       { id: 'scheduled-jobs', label: '定时作业',  labelEn: 'Scheduled Jobs',    path: '/automation/scheduled-jobs' },
       { id: 'inspection-metrics', label: '巡检指标', labelEn: 'Inspection Metrics', path: '/automation/metrics' },
+      { id: 'scripts', label: '操作管理', labelEn: 'Operations', path: '/automation/scripts' },
     ],
   },
   {

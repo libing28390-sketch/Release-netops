@@ -181,19 +181,18 @@ const App: React.FC = () => {
   const {
     jobs, setJobs, scheduledTasks, setScheduledTasks, scenarios, platforms, playbookExecutions,
     scripts, setScripts, selectedScript, setSelectedScript, selectedAutomationTemplate, setSelectedAutomationTemplate, editedScriptContent, setEditedScriptContent,
-    customCommand, setCustomCommand, customCommandMode, setCustomCommandMode, configReason, setConfigReason,
-    approverUsername, setApproverUsername, approvalCode, setApprovalCode, approvalToken, setApprovalToken,
-    approvalStatus, setApprovalStatus, approvalError, setApprovalError, approvalCountdown, setApprovalCountdown,
+    customCommand, setCustomCommand, onCustomCommandChange,
     scriptParams, setScriptParams, commandFavorites, setCommandFavorites, showFavorites, setShowFavorites,
+    commandHistory,
     scriptVars, setScriptVars, batchMode, setBatchMode, batchDeviceIds, setBatchDeviceIds,
     batchResults, setBatchResults, isBatchRunning, setIsBatchRunning, dryRun, setDryRun,
     quickQueryOutput, setQuickQueryOutput, quickQueryRunning, setQuickQueryRunning, quickQueryLabel, setQuickQueryLabel,
     quickQueryStructured, setQuickQueryStructured, quickQueryView, setQuickQueryView, quickQueryMaximized, setQuickQueryMaximized,
-    quickQueryCommands, setQuickQueryCommands,
+    quickQueryCommands, setQuickQueryCommands, changeTicket, setChangeTicket,
     selectedJob, setSelectedJob, showCustomCommandModal, setShowCustomCommandModal, showCmdPreviewModal, setShowCmdPreviewModal,
     isAutomationTaskRunning, setIsAutomationTaskRunning, showDiff, setShowDiff, currentDiff, setCurrentDiff, customCommandVars,
     applyScriptVars, formatQuickQueryRawOutput, getQuickQueryCommands, runTask, runParsedCustomCommand, rollback, runBatchTask,
-    saveFavorite, isFavorited, closeCustomCommandModal, handleRequestApproval, handleVerifyApproval, submitCustomCommand,
+    saveFavorite, isFavorited, closeCustomCommandModal, submitCustomCommand,
     handleSelectPlaybookScenario, handlePlaybookPlatformChange, handlePlaybookVariableChange, handleTogglePlaybookDevice,
     selectedScenario, setSelectedScenario, playbookVars, setPlaybookVars, playbookDeviceIds, setPlaybookDeviceIds,
     playbookPlatform, setPlaybookPlatform, playbookDryRun, setPlaybookDryRun, playbookConcurrency, setPlaybookConcurrency,
@@ -207,7 +206,11 @@ const App: React.FC = () => {
     automationSearch, setAutomationSearch, handleAutomationSearch, scenarioSearch, setScenarioSearch, handleScenarioSearch, filteredScenarios,
     loadScenarios, loadPlaybookHistory, loadJobs, runPlaybook, openQuickPlaybookModal, loadQuickPlaybookPreview, previewPlaybook, executePlaybook, resetAutomationSubmenuState,
     runQuickPlaybook, runQuickQuery, handleResetQuickQuery, handleToggleBatchMode, handleToggleBatchDevice, handleSelectAutomationDevice, handleClearQuickScenario, handleResetQuickExecutionState, exportQuickQueryTable,
-    extractVars, splitLines
+    extractVars, splitLines,
+    saveQuickQueryModalOpen, setSaveQuickQueryModalOpen, quickQuerySaveLabel, setQuickQuerySaveLabel,
+    handleSaveQuickQuery,
+    savedQueries,
+    handleRerun
   } = useAutomation({ currentUser, language, showToast, navigate, setSelectedDevice, devices, selectedDevice, activeTab, automationPage });
 
   const [globalVars, setGlobalVars] = useState<{id?: string, key: string, value: string}[]>([]);
@@ -535,6 +538,7 @@ const App: React.FC = () => {
       { path: '/automation/schedule-history', label: zh ? '执行历史' : 'Execution History', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scheduled-jobs', label: zh ? '定时作业' : 'Scheduled Jobs', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/metrics', label: zh ? '巡检指标项' : 'Inspection Metrics', group: zh ? '作业自动化' : 'Automation' },
+      { path: '/automation/scripts', label: zh ? '脚本管理' : 'Script Management', group: zh ? '作业自动化' : 'Automation' },
       { path: '/config/backup', label: t('backupHistory'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/diff', label: t('diffCompare'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/search', label: t('configSearchTab'), group: zh ? '配置与合规' : 'Config & Compliance' },
@@ -590,6 +594,7 @@ const App: React.FC = () => {
         'schedule-history': language === 'zh' ? '执行历史' : 'Execution History',
         'scheduled-jobs': language === 'zh' ? '定时作业' : 'Scheduled Jobs',
         'metrics': language === 'zh' ? '巡检指标' : 'Inspection Metrics',
+        'scripts': language === 'zh' ? '脚本管理' : 'Script Management',
       };
       return map[automationPage] || automationPage;
     }
@@ -1204,7 +1209,7 @@ const App: React.FC = () => {
     setQuickQueryMaximized(false);
     setQuickQueryCommands([]);
     setCustomCommand(automationBridgeState.command || '');
-    setCustomCommandMode(automationBridgeState.mode === 'query' ? 'query' : 'config');
+    // customCommandMode is no longer used as the modal is now strictly query-only
     setScriptVars(automationBridgeState.variableValues || {});
 
     if (targetDeviceIds.length > 1) {
@@ -3211,7 +3216,10 @@ const App: React.FC = () => {
     quickQueryView,
     quickQueryMaximized,
     quickQueryCommands,
+    changeTicket,
+    setChangeTicket,
     quickQueryTable,
+    savedQueries,
     handleAutomationSearch,
     handleScenarioSearch,
     handleToggleBatchMode,
@@ -3420,6 +3428,7 @@ const App: React.FC = () => {
     handleValidateTemplateWorkspace,
     openAuditEventDetail,
     findMatchingPlatform,
+    handleRerun,
   };
 
   return (
@@ -3506,7 +3515,6 @@ const App: React.FC = () => {
           language={language}
           t={t}
           customCommand={customCommand}
-          customCommandMode={customCommandMode}
           customCommandVars={customCommandVars}
           scriptVars={scriptVars}
           batchMode={batchMode}
@@ -3516,42 +3524,85 @@ const App: React.FC = () => {
           isTestingConnection={isAutomationTaskRunning}
           showFavorites={showFavorites}
           commandFavorites={commandFavorites}
+          commandHistory={commandHistory}
           onClose={closeCustomCommandModal}
           onSubmit={submitCustomCommand}
-          onCustomCommandChange={setCustomCommand}
-          onModeChange={setCustomCommandMode}
-          configReason={configReason}
-          onConfigReasonChange={setConfigReason}
-          approverUsername={approverUsername}
-          approvalCode={approvalCode}
-          approvalStatus={approvalStatus}
-          approvalError={approvalError}
-          approvalCountdown={approvalCountdown}
-          onApproverUsernameChange={setApproverUsername}
-          onApprovalCodeChange={setApprovalCode}
-          onRequestApproval={handleRequestApproval}
-          onVerifyApproval={handleVerifyApproval}
-          approverUsers={users as any}
+          onCustomCommandChange={onCustomCommandChange}
           onScriptVarChange={(key, value) => setScriptVars((prev) => ({ ...prev, [key]: value }))}
           onToggleFavorite={saveFavorite}
           isFavorited={isFavorited}
-          onSaveQuickQuery={() => {
-            const label = prompt(language === 'zh' ? '给这个查询起个名字：' : 'Name this query:', '');
-            if (!label) return;
-            try {
-              const raw = localStorage.getItem('quickQuerySaved') || '[]';
-              const parsed = JSON.parse(raw);
-              const saved: { icon: string; label: string; labelEn: string; cmds: string }[] = Array.isArray(parsed) ? parsed : [];
-              saved.push({ icon: '⭐', label, labelEn: label, cmds: customCommand.trim() });
-              localStorage.setItem('quickQuerySaved', JSON.stringify(saved));
-              showToast(language === 'zh' ? '已保存到快捷查询' : 'Saved to Quick Query', 'success');
-            } catch {
-              // ignore local cache errors to avoid blocking the modal flow
-            }
-          }}
+          onSaveQuickQuery={() => setSaveQuickQueryModalOpen(true)}
           onToggleFavorites={() => setShowFavorites((prev) => !prev)}
           onUseFavorite={setCustomCommand}
         />
+      )}
+
+      {/* ── Save Quick Query Modal ── */}
+      {saveQuickQueryModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4" onClick={() => setSaveQuickQueryModalOpen(false)}>
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-black/5 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-2xl bg-cyan-500 flex items-center justify-center shadow-lg shadow-cyan-500/30">
+                  <Plus size={20} className="text-white" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">{language === 'zh' ? '保存到快捷查询' : 'Save to Quick Query'}</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">{language === 'zh' ? '为您的命令起一个易于识别的名称' : 'Give your command a recognizable name'}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 ml-1">
+                    {language === 'zh' ? '查询名称' : 'Query Name'}
+                  </label>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={quickQuerySaveLabel}
+                    onChange={(e) => setQuickQuerySaveLabel(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSaveQuickQuery()}
+                    placeholder={language === 'zh' ? '例如：核心交换机版本检查' : 'e.g. Core Switch Version Check'}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all text-sm font-medium"
+                  />
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-gray-50 border border-gray-100">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">{language === 'zh' ? '命令预览' : 'Command Preview'}</p>
+                  <code className="text-xs font-mono text-cyan-700 break-all line-clamp-3 leading-relaxed">
+                    {customCommand}
+                  </code>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 mt-8">
+                <button
+                  onClick={() => setSaveQuickQueryModalOpen(false)}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-gray-500 hover:bg-gray-50 transition-all border border-transparent"
+                >
+                  {language === 'zh' ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  onClick={handleSaveQuickQuery}
+                  disabled={!quickQuerySaveLabel.trim()}
+                  className={`flex-[2] px-4 py-2.5 rounded-xl text-sm font-extrabold text-white shadow-lg transition-all ${
+                    quickQuerySaveLabel.trim() 
+                      ? 'bg-cyan-500 hover:bg-cyan-600 shadow-cyan-500/30' 
+                      : 'bg-gray-200 cursor-not-allowed shadow-none'
+                  }`}
+                >
+                  {language === 'zh' ? '确认保存' : 'Save Query'}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
       )}
 
       <CommandPreviewModal

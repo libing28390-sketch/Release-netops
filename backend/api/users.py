@@ -109,34 +109,47 @@ def _mask_webhook_url(url: str) -> str:
 
 def _hydrate_user_row(row) -> dict:
     result = dict(row)
+    
+    # 1. Parse user's personal notification settings from the 'notification_channels' column
+    try:
+        user_channels = json.loads(result.get('notification_channels') or '{}')
+    except Exception:
+        user_channels = {}
+
     conn = get_db_connection()
     try:
+        # 2. Fetch global channel templates (URLs, secrets)
         shared_rows = conn.execute(
             'SELECT platform, webhook_url, enabled, secret, creator_username FROM global_notification_channels'
         ).fetchall()
         
-        shared_channels = {}
+        final_channels = {}
         for s_row in shared_rows:
+            platform = s_row['platform']
             url = (s_row['webhook_url'] or '').strip()
             masked_url = _mask_webhook_url(url)
+            
+            # 3. MASKED Logic: Use global config as template, but prioritize USER'S enabled state if present
+            user_pref = user_channels.get(platform, {})
+            # If the user has a personal preference for this platform, use their 'enabled' state
+            is_enabled = bool(user_pref.get('enabled')) if 'enabled' in user_pref else bool(s_row['enabled'])
                     
-            shared_channels[s_row['platform']] = {
+            final_channels[platform] = {
                 'webhook_url': masked_url,
-                'enabled': bool(s_row['enabled']),
+                'enabled': is_enabled,
                 'secret': '***' if (s_row['secret'] or '').strip() else '',
                 'creator_username': s_row['creator_username']
             }
             
+        # Ensure all standard platforms are present
         for p in ['feishu', 'dingtalk', 'wechat']:
-            if p not in shared_channels:
-                shared_channels[p] = {'webhook_url': '', 'enabled': False, 'secret': '', 'creator_username': ''}
+            if p not in final_channels:
+                final_channels[p] = {'webhook_url': '', 'enabled': False, 'secret': '', 'creator_username': ''}
                 
-        result['notification_channels'] = shared_channels
-    except Exception:
-        try:
-            result['notification_channels'] = json.loads(result.get('notification_channels') or '{}')
-        except Exception:
-            result['notification_channels'] = {}
+        result['notification_channels'] = final_channels
+    except Exception as e:
+        logger.error(f"Error hydrating user row: {e}")
+        result['notification_channels'] = user_channels
     finally:
         conn.close()
 
@@ -653,7 +666,7 @@ def update_user(user_id: str, request: Request, user: dict = Body(...)):
                     creator = auth_username
                 else:
                     creator = existing_global['creator_username'] or auth_username
-                    if auth_username == creator:
+                    if auth_username == creator or existing['role'] == 'Administrator':
                         if '***' not in new_url and '****' not in new_url and new_url != '':
                             final_url = new_url
                         else:

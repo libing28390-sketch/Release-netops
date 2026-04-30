@@ -30,6 +30,8 @@ interface ExecutionScheduleTabProps {
   language: string;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
   initialTab?: 'schedules' | 'history';
+  devices: Device[];
+  onRerun?: (log: any) => void;
 }
 
 /* ═══════════════════════════════════════════════════════ */
@@ -57,7 +59,7 @@ const getScheduleStatus = (sch: InspectionSchedule, zh: boolean) => {
 /*  Component                                              */
 /* ═══════════════════════════════════════════════════════ */
 
-const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, showToast, initialTab }) => {
+const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, showToast, initialTab, devices, onRerun }) => {
   const zh = language === 'zh';
 
   /* ═══ STATE ═══ */
@@ -1020,88 +1022,98 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                   <div className="flex items-center gap-1.5 mt-1">
                                     <span className="text-[10px] text-black/40">{zh ? '平均分' : 'Avg Score'}:</span>
                                     <span className={`text-[11px] font-black tabular-nums ${
-                                      (log.avg_health_score || 0) >= 80 ? 'text-emerald-600' : (log.avg_health_score || 0) >= 60 ? 'text-amber-600' : 'text-red-600'
+                                    (log.avg_health_score || 0) >= 80 ? 'text-emerald-600' : (log.avg_health_score || 0) >= 60 ? 'text-amber-600' : 'text-red-600'
                                     }`}>
                                       {log.avg_health_score?.toFixed(1) ?? '—'}
                                     </span>
                                   </div>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-3">
-                                <div className="flex flex-col">
-                                  <span className="text-xs font-bold text-black/60">{log.total_devices} {zh ? '台设备' : 'Devices'}</span>
-                                  <div className="flex items-center gap-1.5 mt-1">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                                    <span className="text-[10px] text-emerald-600 font-bold">{log.success_count}</span>
-                                    <div className="w-1.5 h-1.5 rounded-full bg-red-400 ml-1" />
-                                    <span className="text-[10px] text-red-600 font-bold">{log.failed_count}</span>
-                                    {log.partial_count ? (
-                                      <>
-                                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-1" />
-                                        <span className="text-[10px] text-amber-600 font-bold">{log.partial_count}</span>
-                                      </>
-                                    ) : null}
                                   </div>
                                 </div>
+                              ) : (
+                                <div className="flex items-center gap-3">
+                                  <div className="flex flex-col">
+                                    <span className="text-xs font-bold text-black/60">{log.total_devices} {zh ? '台设备' : 'Devices'}</span>
+                                    <div className="flex items-center gap-1.5 mt-1">
+                                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                      <span className="text-[10px] text-emerald-600 font-bold">{log.success_count}</span>
+                                      <div className="w-1.5 h-1.5 rounded-full bg-red-400 ml-1" />
+                                      <span className="text-[10px] text-red-600 font-bold">{log.failed_count}</span>
+                                      {log.partial_count ? (
+                                        <>
+                                          <div className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-1" />
+                                          <span className="text-[10px] text-amber-600 font-bold">{log.partial_count}</span>
+                                        </>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="text-xs font-bold text-black/40">{log.created_by}</span>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {onRerun && (
+                                  <button
+                                    onClick={() => onRerun(log)}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-amber-600 border border-amber-100 bg-amber-50 hover:bg-amber-100 transition-all active:scale-95"
+                                    title={zh ? '重新执行' : 'Rerun'}
+                                  >
+                                    <RotateCcw size={12} />
+                                    {zh ? '重试' : 'Retry'}
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleSelectLog(log)}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-cyan-600 border border-cyan-100 bg-cyan-50/20 hover:bg-cyan-50 transition-all active:scale-95"
+                                >
+                                  <Eye size={12} />
+                                  {zh ? '查看' : 'View'}
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    let dlData = null;
+                                    let fn = `execution_${log.id}.json`;
+                                    try {
+                                      if (log.source === 'inspection') {
+                                        const r = await fetch(`/api/inspections/${log.id}`, { headers: authHeaders });
+                                        if (r.ok) {
+                                          const j = await r.json();
+                                          dlData = j.data;
+                                          fn = `inspection_report_${log.id}.json`;
+                                        }
+                                      } else {
+                                        const r1 = await fetch(`/api/playbooks/${log.id}`, { headers: authHeaders });
+                                        const r2 = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=100`, { headers: authHeaders });
+                                        if (r1.ok && r2.ok) {
+                                          const j1 = await r1.json();
+                                          const j2 = await r2.json();
+                                          dlData = { summary: j1, devices: Array.isArray(j2) ? j2 : (j2.items || []) };
+                                          fn = `playbook_execution_${log.id}.json`;
+                                        }
+                                      }
+                                      if (dlData) {
+                                        const blob = new Blob([JSON.stringify(dlData, null, 2)], { type: 'application/json' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = fn;
+                                        a.click();
+                                        URL.revokeObjectURL(url);
+                                      }
+                                    } catch (err) { console.error(err); }
+                                  }}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-all active:scale-95"
+                                >
+                                  <Download size={12} />
+                                  {zh ? '下载' : 'Download'}
+                                </button>
                               </div>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="text-xs font-bold text-black/40">{log.created_by}</span>
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                onClick={() => handleSelectLog(log)}
-                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-cyan-600 border border-cyan-100 bg-cyan-50/20 hover:bg-cyan-50 transition-all active:scale-95"
-                              >
-                                <Eye size={12} />
-                                {zh ? '查看' : 'View'}
-                              </button>
-                              <button
-                                onClick={async () => {
-                                  let dlData = null;
-                                  let fn = `execution_${log.id}.json`;
-                                  try {
-                                    if (log.source === 'inspection') {
-                                      const r = await fetch(`/api/inspections/${log.id}`, { headers: authHeaders });
-                                      if (r.ok) {
-                                        const j = await r.json();
-                                        dlData = j.data;
-                                        fn = `inspection_report_${log.id}.json`;
-                                      }
-                                    } else {
-                                      const r1 = await fetch(`/api/playbooks/${log.id}`, { headers: authHeaders });
-                                      const r2 = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=100`, { headers: authHeaders });
-                                      if (r1.ok && r2.ok) {
-                                        const j1 = await r1.json();
-                                        const j2 = await r2.json();
-                                        dlData = { summary: j1, devices: Array.isArray(j2) ? j2 : (j2.items || []) };
-                                        fn = `playbook_execution_${log.id}.json`;
-                                      }
-                                    }
-                                    if (dlData) {
-                                      const blob = new Blob([JSON.stringify(dlData, null, 2)], { type: 'application/json' });
-                                      const url = URL.createObjectURL(blob);
-                                      const a = document.createElement('a');
-                                      a.href = url;
-                                      a.download = fn;
-                                      a.click();
-                                      URL.revokeObjectURL(url);
-                                    }
-                                  } catch (err) { console.error(err); }
-                                }}
-                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-all active:scale-95"
-                              >
-                                <Download size={12} />
-                                {zh ? '下载' : 'Download'}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                            </td>
+                          </tr>
+                        );
+                      })}
                   </tbody>
                 </table>
               ) : (
@@ -1281,18 +1293,41 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                 {/* Command Output (Right) */}
                 <div className="flex-1 flex flex-col bg-[#1E1E1E] overflow-hidden">
                   <div className="p-4 border-b border-white/10 bg-black/20 flex items-center justify-between">
-                    <span className="text-xs text-white/60 font-bold">
-                      {selectedPbDevice 
-                        ? (pbDevices.find((d: any) => d.device_id === selectedPbDevice)?.hostname || '') 
-                        : (zh ? '请选择设备查看命令输出' : 'Select a device to view command outputs')}
-                    </span>
+                    <div>
+                      <span className="text-xs text-white/80 font-bold block">
+                        {selectedPbDevice 
+                          ? (pbDevices.find((d: any) => d.device_id === selectedPbDevice)?.hostname || '') 
+                          : (zh ? '请选择设备查看命令输出' : 'Select a device to view command outputs')}
+                      </span>
+                      {selectedPbDevice && (() => {
+                        const dev = devices.find(d => d.id === selectedPbDevice);
+                        if (!dev) return null;
+                        return (
+                          <div className="flex items-center gap-3 mt-1.5">
+                            <span className="text-[10px] text-white/40 font-mono bg-white/5 px-1.5 py-0.5 rounded uppercase tracking-tighter">PLAT: {dev.platform || '-'}</span>
+                            <span className="text-[10px] text-white/40 font-mono bg-white/5 px-1.5 py-0.5 rounded uppercase tracking-tighter">ROLE: {dev.role || '-'}</span>
+                            <span className="text-[10px] text-white/40 font-mono bg-white/5 px-1.5 py-0.5 rounded uppercase tracking-tighter">SITE: {dev.site || '-'}</span>
+                            <span className="text-[10px] text-white/40 font-mono bg-white/5 px-1.5 py-0.5 rounded uppercase tracking-tighter">MOD: {dev.model || '-'}</span>
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
                   <div className="flex-1 p-6 font-mono text-xs text-[#d4d4d4] overflow-auto whitespace-pre-wrap select-text">
                     {pbDeviceDetail?.phases ? (
                       Object.entries(pbDeviceDetail.phases).map(([phase, output]: any) => (
                         <div key={phase} className="mb-4">
                           <span className="text-[#a170e8] block mb-1 font-bold"># PHASE: {phase.toUpperCase()}</span>
-                          <div className="pl-4 border-l border-[#a170e8]/20 text-[#e0e0e0]">{output.output || '—'}</div>
+                          <div className="pl-4 border-l border-[#a170e8]/20 text-[#e0e0e0]">
+                            {output.commands && output.commands.length > 0 && (
+                              <div className="text-cyan-400/50 mb-2 font-bold italic">
+                                {output.commands.map((cmd: string, i: number) => (
+                                  <div key={i}>&gt; {cmd}</div>
+                                ))}
+                              </div>
+                            )}
+                            {output.output || '—'}
+                          </div>
                         </div>
                       ))
                     ) : (

@@ -1,13 +1,12 @@
-import React, { useEffect, useRef } from 'react';
-import { motion } from 'motion/react';
-import { X } from 'lucide-react';
-import type { Device, User } from '../types';
+import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { X, Star, History, Terminal, Trash2, ChevronRight, Bookmark } from 'lucide-react';
+import type { Device } from '../types';
 
 interface CustomCommandModalProps {
   language: string;
   t: (key: string) => string;
   customCommand: string;
-  customCommandMode: 'query' | 'config';
   customCommandVars: string[];
   scriptVars: Record<string, string>;
   batchMode: boolean;
@@ -17,35 +16,22 @@ interface CustomCommandModalProps {
   isTestingConnection: boolean;
   showFavorites: boolean;
   commandFavorites: string[];
-  configReason: string;
-  approverUsername: string;
-  approvalCode: string;
-  approvalStatus: 'idle' | 'sending' | 'sent' | 'verified' | 'error';
-  approvalError: string;
-  approvalCountdown: number;
-  approverUsers: User[];
+  commandHistory: string[];
   onClose: () => void;
   onSubmit: () => void;
   onCustomCommandChange: (value: string) => void;
-  onModeChange: (mode: 'query' | 'config') => void;
   onScriptVarChange: (key: string, value: string) => void;
   onToggleFavorite: (command: string) => void;
   isFavorited: (command: string) => boolean;
   onSaveQuickQuery: () => void;
   onToggleFavorites: () => void;
   onUseFavorite: (command: string) => void;
-  onConfigReasonChange: (value: string) => void;
-  onApproverUsernameChange: (value: string) => void;
-  onApprovalCodeChange: (value: string) => void;
-  onRequestApproval: () => void;
-  onVerifyApproval: () => void;
 }
 
 const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
   language,
   t,
   customCommand,
-  customCommandMode,
   customCommandVars,
   scriptVars,
   batchMode,
@@ -55,45 +41,54 @@ const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
   isTestingConnection,
   showFavorites,
   commandFavorites,
+  commandHistory,
   onClose,
   onSubmit,
   onCustomCommandChange,
-  onModeChange,
   onScriptVarChange,
   onToggleFavorite,
   isFavorited,
   onSaveQuickQuery,
   onToggleFavorites,
   onUseFavorite,
-  configReason,
-  onConfigReasonChange,
-  approverUsername,
-  approvalCode,
-  approvalStatus,
-  approvalError,
-  approvalCountdown,
-  approverUsers,
-  onApproverUsernameChange,
-  onApprovalCodeChange,
-  onRequestApproval,
-  onVerifyApproval,
 }) => {
+  const [activeTab, setActiveTab] = useState<'favorites' | 'history'>('favorites');
   const canSubmit = (batchMode ? batchDeviceIds.length > 0 : !!selectedDevice) && customCommand.trim() && !(batchMode ? isBatchRunning : isTestingConnection);
-  const needsConfirm = customCommandMode === 'config';
-  const canConfirmSubmit = canSubmit && (!needsConfirm || approvalStatus === 'verified');
-  const canSendCode = needsConfirm && approverUsername.trim().length >= 1 && configReason.trim().length >= 2 && approvalStatus !== 'sending';
 
-  // Auto-verify when 6 digits entered
-  const prevCodeLen = useRef(0);
-  useEffect(() => {
-    if (approvalCode.length === 6 && prevCodeLen.current < 6 && approvalStatus === 'sent') {
-      onVerifyApproval();
-    }
-    prevCodeLen.current = approvalCode.length;
-  }, [approvalCode, approvalStatus, onVerifyApproval]);
-
-  // Filter to users with Administrator/Operator role for approver dropdown
-  const eligibleApprovers = approverUsers.filter(u => u.role === 'Administrator' || u.role === 'Operator');
+  const renderCommandItem = (cmd: string, type: 'favorite' | 'history') => {
+    const isFav = isFavorited(cmd);
+    
+    return (
+      <div 
+        key={`${type}-${cmd}`}
+        className="group relative flex flex-col gap-2 p-3.5 rounded-2xl border border-black/5 bg-white hover:border-cyan-200 hover:shadow-md hover:shadow-cyan-500/5 transition-all duration-300"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <code className="text-[12px] font-mono text-slate-700 leading-relaxed block break-all line-clamp-2 bg-slate-50/50 rounded-lg px-2 py-1.5 border border-slate-100 group-hover:bg-cyan-50/30 group-hover:border-cyan-100/50 transition-colors">
+              {cmd}
+            </code>
+          </div>
+          <button
+            onClick={() => onToggleFavorite(cmd)}
+            className={`p-1.5 rounded-xl transition-all ${isFav ? 'text-amber-400 bg-amber-50 shadow-sm shadow-amber-200/50' : 'text-slate-300 hover:text-amber-400 hover:bg-slate-50'}`}
+            title={isFav ? (language === 'zh' ? '取消收藏' : 'Unfavorite') : (language === 'zh' ? '收藏' : 'Favorite')}
+          >
+            <Star size={14} fill={isFav ? "currentColor" : "none"} strokeWidth={isFav ? 1.5 : 2} />
+          </button>
+        </div>
+        <div className="flex items-center gap-2 mt-1">
+          <button
+            onClick={() => onUseFavorite(cmd)}
+            className="flex-1 flex items-center justify-center gap-2 py-1.5 rounded-xl bg-cyan-500 text-white text-[11px] font-bold hover:bg-cyan-600 shadow-sm shadow-cyan-500/20 active:scale-95 transition-all"
+          >
+            <ChevronRight size={12} strokeWidth={3} />
+            {language === 'zh' ? '填入编辑器' : 'Use Command'}
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -103,131 +98,96 @@ const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
       <motion.div
         initial={{ scale: 0.96, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="w-full max-w-3xl max-h-[86vh] rounded-3xl bg-white shadow-2xl border border-black/8 overflow-hidden flex flex-col"
+        className="w-full max-w-4xl max-h-[90vh] rounded-[32px] bg-white shadow-2xl border border-black/5 overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-6 py-5 border-b border-black/6 bg-[linear-gradient(135deg,rgba(0,188,235,0.08),rgba(0,82,122,0.04))]">
+        {/* Header */}
+        <div className="px-8 py-6 border-b border-black/5 bg-[linear-gradient(135deg,rgba(0,188,235,0.06),rgba(0,82,122,0.03))]">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-[#0087a9]">
-                {language === 'zh' ? 'Direct Execution' : 'Direct Execution'}
-              </p>
-              <h3 className="mt-1 text-xl font-semibold text-black/85">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
+                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-600/80">
+                  {language === 'zh' ? 'DIRECT EXECUTION' : 'DIRECT EXECUTION'}
+                </p>
+              </div>
+              <h3 className="mt-1.5 text-2xl font-black text-slate-800 tracking-tight">
                 {language === 'zh' ? '自定义命令' : 'Custom Command'}
               </h3>
             </div>
             <button
               onClick={onClose}
-              title={language === 'zh' ? '关闭' : 'Close'}
-              className="text-black/35 hover:text-black/70 transition-colors mt-1"
+              className="w-10 h-10 rounded-2xl flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all active:scale-90"
             >
-              <X size={20} />
+              <X size={20} strokeWidth={2.5} />
             </button>
           </div>
-          <div className="mt-4 flex items-center gap-3">
-            <span className="text-[11px] font-semibold text-black/40">
-              {language === 'zh' ? '执行模式' : 'Mode'}
-            </span>
-            <div className="flex items-center bg-black/[0.06] rounded-xl p-[3px] gap-[3px]">
-              <button
-                onClick={() => onModeChange('query')}
-                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[12px] font-semibold transition-all ${
-                  customCommandMode === 'query'
-                    ? 'bg-white text-[#0087a9] shadow-sm shadow-black/10'
-                    : 'text-black/40 hover:text-black/60'
-                }`}
-              >
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="opacity-80"><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.8"/><path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
-                {language === 'zh' ? '查看' : 'Query'}
-              </button>
-              <button
-                onClick={() => onModeChange('config')}
-                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[12px] font-semibold transition-all ${
-                  customCommandMode === 'config'
-                    ? 'bg-[#005b75] text-white shadow-sm shadow-[#005b75]/30'
-                    : 'text-black/40 hover:text-black/60'
-                }`}
-              >
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="opacity-80"><path d="M2 4h12M2 8h8M2 12h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
-                {language === 'zh' ? '配置' : 'Config'}
-              </button>
+          
+          <div className="mt-5 flex items-center gap-4">
+            <div className="flex items-center bg-cyan-500/10 border border-cyan-500/20 rounded-2xl px-4 py-2 gap-2.5">
+              <Terminal size={14} className="text-cyan-600" />
+              <span className="text-[13px] font-bold text-cyan-700">
+                {language === 'zh' ? '查询模式' : 'Query Mode'}
+              </span>
             </div>
-            <span className={`text-[11px] font-medium transition-colors ${customCommandMode === 'query' ? 'text-sky-600' : 'text-amber-600'}`}>
-              {customCommandMode === 'query'
-                ? (language === 'zh' ? 'Exec 模式 — 只读，不改变配置' : 'Exec mode — read-only, no changes')
-                : (language === 'zh' ? 'Config 模式 — 自动进入配置视图' : 'Config mode — enters config view automatically')}
+            <div className="h-4 w-px bg-slate-200 mx-1" />
+            <span className="text-[12px] font-medium text-slate-500 italic">
+              {language === 'zh' ? 'Exec 模式：只读操作，配置变更需走工单流' : 'Exec mode: read-only operations only'}
             </span>
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-auto p-6 space-y-5 bg-[#fbfdff]">
-          <div className="grid grid-cols-1 lg:grid-cols-[1.25fr,0.75fr] gap-5">
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-black/8 bg-white p-4 shadow-sm">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-black/35">
-                    {language === 'zh' ? '命令内容' : 'Command Content'}
-                  </p>
-                  <div className="flex items-center gap-1.5">
-                    {customCommandMode === 'query' && (
-                      <button
-                        disabled={!customCommand.trim()}
-                        onClick={onSaveQuickQuery}
-                        className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold border transition-all ${customCommand.trim()
-                          ? 'border-[#00bceb]/30 text-[#0087a9] hover:bg-[#00bceb]/10' : 'border-black/8 text-black/25 cursor-not-allowed'}`}
-                      >
-                        {language === 'zh' ? '+ 快捷查询' : '+ Quick Query'}
-                      </button>
-                    )}
+        {/* Content */}
+        <div className="flex-1 min-h-0 overflow-auto p-8 bg-[#fdfeff]">
+          <div className="grid grid-cols-1 lg:grid-cols-[1.1fr,0.9fr] gap-8">
+            {/* Left Column: Editor & Variables */}
+            <div className="space-y-6">
+              <div className="rounded-3xl border border-black/5 bg-white p-6 shadow-sm ring-1 ring-black/[0.02]">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div className="flex items-center gap-2">
+                    <Bookmark size={14} className="text-slate-400" />
+                    <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">
+                      {language === 'zh' ? '命令内容' : 'Command Content'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={() => onToggleFavorite(customCommand)}
                       disabled={!customCommand.trim()}
-                      className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold border transition-all ${customCommand.trim()
-                        ? (isFavorited(customCommand)
-                          ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
-                          : 'border-black/10 text-black/60 hover:bg-black/5')
-                        : 'border-black/8 text-black/25 cursor-not-allowed'}`}
+                      onClick={onSaveQuickQuery}
+                      className={`px-4 py-2 rounded-xl text-[11px] font-bold border transition-all active:scale-95 ${customCommand.trim()
+                        ? 'border-cyan-500/30 text-cyan-600 hover:bg-cyan-50' : 'border-slate-100 text-slate-300 cursor-not-allowed'}`}
                     >
-                      {isFavorited(customCommand)
-                        ? (language === 'zh' ? '取消收藏' : 'Unfavorite')
-                        : (language === 'zh' ? '收藏命令' : 'Save Favorite')}
+                      {language === 'zh' ? '+ 快捷查询' : '+ Quick Query'}
                     </button>
                   </div>
                 </div>
                 <textarea
                   value={customCommand}
                   onChange={(e) => onCustomCommandChange(e.target.value)}
-                  placeholder={customCommandMode === 'query'
-                    ? (language === 'zh'
-                      ? '例如:\nshow ip interface brief\nshow version\ndisplay version'
-                      : 'Example:\nshow ip interface brief\nshow version\ndisplay version')
-                    : (language === 'zh'
-                      ? '例如:\ninterface Vlan100\n description Branch Office\n ip address 10.10.0.1 255.255.255.0'
-                      : 'Example:\ninterface Vlan100\n description Branch Office\n ip address 10.10.0.1 255.255.255.0')}
-                  className="w-full min-h-[260px] resize-y rounded-2xl border border-black/10 bg-[#0c1622] px-4 py-3 text-[13px] leading-6 text-[#d9f3ff] font-mono outline-none focus:border-[#00bceb]/50"
+                  placeholder={language === 'zh'
+                    ? '例如:\nshow ip interface brief\nshow version\ndisplay version'
+                    : 'Example:\nshow ip interface brief\nshow version\ndisplay version'}
+                  className="w-full min-h-[320px] resize-y rounded-2xl border border-slate-100 bg-slate-900 px-5 py-4 text-[14px] leading-7 text-cyan-50 font-mono outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500/40 transition-all shadow-inner"
                 />
               </div>
 
               {customCommandVars.length > 0 && (
-                <div className="rounded-2xl border border-black/8 bg-white p-4 shadow-sm space-y-3">
+                <div className="rounded-3xl border border-black/5 bg-white p-6 shadow-sm ring-1 ring-black/[0.02] space-y-4">
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-black/35">
+                    <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">
                       {language === 'zh' ? '变量替换' : 'Variable Substitution'}
                     </p>
-                    <p className="mt-1 text-xs text-black/40">
-                      {language === 'zh' ? '使用 `{{VAR}}` 占位符时，请在这里填写值。' : 'Fill values for any `{{VAR}}` placeholders here.'}
-                    </p>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {customCommandVars.map((key) => (
-                      <label key={key} className="space-y-1.5">
-                        <span className="text-[11px] font-semibold text-black/65">{key}</span>
+                      <label key={key} className="space-y-1.5 block">
+                        <span className="text-[11px] font-bold text-slate-500 ml-1">{key}</span>
                         <input
                           type="text"
                           value={scriptVars[key] || ''}
                           onChange={(e) => onScriptVarChange(key, e.target.value)}
                           placeholder={language === 'zh' ? `输入 ${key}` : `Enter ${key}`}
-                          className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm outline-none focus:border-[#00bceb]/45"
+                          className="w-full rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-2.5 text-sm outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
                         />
                       </label>
                     ))}
@@ -236,273 +196,141 @@ const CustomCommandModal: React.FC<CustomCommandModalProps> = ({
               )}
             </div>
 
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-black/8 bg-white p-4 shadow-sm space-y-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-black/35">
+            {/* Right Column: Targets & Favorites/History */}
+            <div className="space-y-6">
+              {/* Target Section */}
+              <div className="rounded-3xl border border-black/5 bg-white p-6 shadow-sm ring-1 ring-black/[0.02] space-y-4">
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">
                   {language === 'zh' ? '执行目标' : 'Execution Target'}
                 </p>
-                <div className="rounded-xl border border-black/8 bg-black/[0.02] px-3 py-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-semibold text-black/75">
+                <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[13px] font-bold text-slate-800">
                       {batchMode
                         ? (language === 'zh' ? `批量模式 · ${batchDeviceIds.length} 台设备` : `Batch mode · ${batchDeviceIds.length} devices`)
                         : (selectedDevice
-                          ? `${selectedDevice.hostname} (${selectedDevice.ip_address})`
+                          ? `${selectedDevice.hostname}`
                           : (language === 'zh' ? '未选择设备' : 'No device selected'))}
                     </p>
                     {!batchMode && selectedDevice && (
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-[#00bceb]/10 text-[#0087a9] font-mono">
+                      <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-cyan-100 text-cyan-700 font-mono">
                         {selectedDevice.platform || 'unknown'}
                       </span>
                     )}
                   </div>
-                  <p className="mt-1 text-[11px] text-black/40">
-                    {batchMode
-                      ? (language === 'zh' ? '使用左侧设备列表维护批量目标。' : 'Manage batch targets from the device list on the left.')
-                      : (language === 'zh' ? '当前将下发到左侧选中的单台设备。' : 'Command will run on the device selected in the left panel.')}
-                  </p>
+                  {!batchMode && selectedDevice && (
+                    <p className="mt-1 text-[11px] text-slate-400 font-medium">{selectedDevice.ip_address}</p>
+                  )}
                 </div>
-                <div className={`rounded-xl px-3 py-3 text-xs leading-5 transition-all ${
-                  customCommandMode === 'query'
-                    ? 'border border-sky-200 bg-sky-50 text-sky-700'
-                    : 'border border-amber-200 bg-amber-50 text-amber-700'
-                }`}>
-                  {customCommandMode === 'query'
-                    ? (language === 'zh'
-                      ? '查看模式：命令在 Exec 模式下执行，适用于 show、display、ping、tracert 等只读命令。若匹配到 ntc-templates，会自动生成表格；未匹配时默认保留原始终端输出。'
-                      : 'Query mode: commands run in exec mode. Use for show, display, ping, tracert — read-only, no config changes. When an ntc template matches, the result is structured automatically; otherwise the raw terminal output is preserved.')
-                    : (language === 'zh'
-                      ? <>配置模式——各平台自动进入配置视图：<br/>· Cisco：<code className="font-mono">configure terminal</code><br/>· Huawei / H3C：<code className="font-mono">system-view</code><br/>· Arista EOS：<code className="font-mono">configure session</code>（事务，失败自动回滚）<br/>· Juniper：<code className="font-mono">configure</code></>
-                      : <><b>Config mode</b> — config view entered automatically per platform:<br/>· Cisco: <code className="font-mono">configure terminal</code><br/>· Huawei / H3C: <code className="font-mono">system-view</code><br/>· Arista EOS: <code className="font-mono">configure session</code> (transactional, auto-rollback on error)<br/>· Juniper: <code className="font-mono">configure</code></>)}
+                <div className="rounded-2xl px-4 py-3.5 text-[12px] leading-6 border border-cyan-100 bg-cyan-50/50 text-cyan-700 font-medium">
+                  {language === 'zh'
+                    ? '当前处于只读模式，系统会自动拦截所有的配置变更命令。'
+                    : 'System is in read-only mode. All config modification commands will be intercepted.'}
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-black/8 bg-white p-4 shadow-sm space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-black/35">
-                    {language === 'zh' ? '常用命令' : 'Favorites'}
-                  </p>
+              {/* Favorites & History Section */}
+              <div className="rounded-3xl border border-black/5 bg-white shadow-sm ring-1 ring-black/[0.02] flex flex-col min-h-[400px]">
+                {/* Tab Switcher */}
+                <div className="flex p-1.5 bg-slate-100/50 rounded-t-3xl border-b border-slate-100">
                   <button
-                    onClick={onToggleFavorites}
-                    className="text-[11px] font-semibold text-[#0087a9] hover:text-[#006c86]"
+                    onClick={() => setActiveTab('favorites')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-2xl text-[12px] font-bold transition-all ${
+                      activeTab === 'favorites' ? 'bg-white text-cyan-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                    }`}
                   >
-                    {showFavorites
-                      ? (language === 'zh' ? '收起' : 'Hide')
-                      : (language === 'zh' ? '展开' : 'Show')}
+                    <Star size={14} fill={activeTab === 'favorites' ? "currentColor" : "none"} />
+                    {language === 'zh' ? '常用收藏' : 'Favorites'}
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('history')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-2xl text-[12px] font-bold transition-all ${
+                      activeTab === 'history' ? 'bg-white text-cyan-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                    }`}
+                  >
+                    <History size={14} />
+                    {language === 'zh' ? '执行历史' : 'History'}
                   </button>
                 </div>
-                {showFavorites ? (
-                  commandFavorites.length > 0 ? (
-                    <div className="space-y-2 max-h-[260px] overflow-auto pr-1">
-                      {commandFavorites.map((favorite, idx) => (
-                        <div key={`${favorite}-${idx}`} className="rounded-xl border border-black/8 bg-black/[0.02] p-3">
-                          <pre className="text-[11px] leading-5 text-black/70 font-mono whitespace-pre-wrap break-all">{favorite}</pre>
-                          <div className="mt-2 flex items-center justify-between gap-2">
-                            <button
-                              onClick={() => onUseFavorite(favorite)}
-                              className="px-2.5 py-1.5 rounded-lg bg-[#00bceb] text-white text-[11px] font-semibold hover:bg-[#009ac2] transition-all"
-                            >
-                              {language === 'zh' ? '填入编辑器' : 'Use Command'}
-                            </button>
-                            <button
-                              onClick={() => onToggleFavorite(favorite)}
-                              className="px-2.5 py-1.5 rounded-lg border border-black/10 text-[11px] font-semibold text-black/55 hover:bg-black/5 transition-all"
-                            >
-                              {language === 'zh' ? '移除' : 'Remove'}
-                            </button>
+
+                {/* List Container */}
+                <div className="p-5 flex-1 min-h-0 overflow-auto max-h-[400px] scrollbar-thin">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={activeTab}
+                      initial={{ opacity: 0, x: activeTab === 'favorites' ? -10 : 10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: activeTab === 'favorites' ? 10 : -10 }}
+                      transition={{ duration: 0.2 }}
+                      className="grid grid-cols-1 gap-3"
+                    >
+                      {activeTab === 'favorites' ? (
+                        commandFavorites.length > 0 ? (
+                          commandFavorites.map(fav => renderCommandItem(fav, 'favorite'))
+                        ) : (
+                          <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
+                            <div className="w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center mb-3">
+                              <Star size={24} className="text-slate-200" />
+                            </div>
+                            <p className="text-[12px] font-bold text-slate-400">{language === 'zh' ? '还没有收藏任何命令' : 'No favorites yet'}</p>
+                            <p className="text-[11px] text-slate-300 mt-1">{language === 'zh' ? '点击命令旁的小星星即可收藏' : 'Click the star icon to save'}</p>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-xl border border-dashed border-black/10 px-3 py-4 text-xs text-black/35 text-center">
-                      {language === 'zh' ? '还没有收藏的命令。' : 'No saved commands yet.'}
-                    </div>
-                  )
-                ) : (
-                  <p className="text-xs text-black/35">
-                    {language === 'zh' ? '可将常用配置收藏到这里，便于快速复用。' : 'Save frequently used commands here for quick reuse.'}
-                  </p>
-                )}
+                        )
+                      ) : (
+                        commandHistory.length > 0 ? (
+                          commandHistory.map(hist => renderCommandItem(hist, 'history'))
+                        ) : (
+                          <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
+                            <div className="w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center mb-3">
+                              <History size={24} className="text-slate-200" />
+                            </div>
+                            <p className="text-[12px] font-bold text-slate-400">{language === 'zh' ? '历史记录为空' : 'History is empty'}</p>
+                            <p className="text-[11px] text-slate-300 mt-1">{language === 'zh' ? '执行过的命令会出现在这里' : 'Executed commands will appear here'}</p>
+                          </div>
+                        )
+                      )}
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="px-6 py-4 border-t border-black/6 bg-white space-y-3">
-          {needsConfirm && (
-            <div className="rounded-2xl border border-black/8 overflow-hidden">
-              {/* 顶栏 */}
-              <div className={`px-4 py-2.5 flex items-center gap-2.5 ${
-                approvalStatus === 'verified'
-                  ? 'bg-gradient-to-r from-emerald-500 to-emerald-600'
-                  : 'bg-gradient-to-r from-[#005b75] to-[#00465a]'
-              }`}>
-                {approvalStatus === 'verified' ? (
-                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" className="text-white/90 flex-shrink-0"><path d="M3 8.5L6.5 12L13 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                ) : (
-                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" className="text-white/90 flex-shrink-0"><rect x="2" y="7" width="12" height="8" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M5 7V5a3 3 0 016 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="8" cy="11" r="1" fill="currentColor"/></svg>
-                )}
-                <span className="text-[12px] font-semibold text-white/95">
-                  {approvalStatus === 'verified'
-                    ? (language === 'zh' ? '审批已通过' : 'Approval Granted')
-                    : (language === 'zh' ? '配置变更审批' : 'Config Change Approval')}
-                </span>
-                {approvalStatus === 'verified' && (
-                  <span className="ml-auto text-[11px] text-white/70 font-medium">
-                    {language === 'zh' ? '可以执行配置' : 'Ready to apply'}
-                  </span>
-                )}
-              </div>
-
-              {approvalStatus !== 'verified' && (
-                <div className="px-4 py-3.5 bg-[#f7fbfc] space-y-3">
-                  {/* 变更原因 + 审批人 — 双列 */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] font-semibold text-black/50 mb-1 block tracking-wide">
-                        {language === 'zh' ? '变更原因' : 'Change Reason'}
-                      </label>
-                      <input
-                        value={configReason}
-                        onChange={e => onConfigReasonChange(e.target.value)}
-                        placeholder={language === 'zh' ? '例如：添加 VLAN 100 接口配置' : 'e.g. Add VLAN 100 interface config'}
-                        className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20 placeholder:text-black/25 transition-all"
-                        maxLength={200}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-semibold text-black/50 mb-1 block tracking-wide">
-                        {language === 'zh' ? '审批人' : 'Approver'}
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <select
-                          value={approverUsername}
-                          onChange={e => onApproverUsernameChange(e.target.value)}
-                          title={language === 'zh' ? '选择审批人' : 'Select approver'}
-                          className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20 transition-all appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20d%3D%22M3%205l3%203%203-3%22%20stroke%3D%22%23999%22%20stroke-width%3D%221.5%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[right_10px_center] bg-no-repeat pr-8"
-                          disabled={approvalStatus === 'sent' || approvalStatus === 'sending'}
-                        >
-                          <option value="">{language === 'zh' ? '选择审批人...' : 'Select approver...'}</option>
-                          {eligibleApprovers.map(u => (
-                            <option key={u.id} value={u.username}>
-                              {u.username} ({u.role})
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={onRequestApproval}
-                          disabled={!canSendCode || (approvalStatus === 'sent' && approvalCountdown > 0)}
-                          className={`px-3.5 py-2 rounded-xl text-[11px] font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
-                            canSendCode && !(approvalStatus === 'sent' && approvalCountdown > 0)
-                              ? 'bg-[#005b75] text-white hover:bg-[#00465a] shadow-sm shadow-[#005b75]/20'
-                              : 'bg-black/8 text-black/30 cursor-not-allowed'
-                          }`}
-                        >
-                          {approvalStatus === 'sending' ? (
-                            <><svg className="animate-spin" width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28" strokeDashoffset="8" strokeLinecap="round" opacity="0.7"/></svg>{language === 'zh' ? '发送中' : 'Sending'}</>
-                          ) : approvalStatus === 'sent' && approvalCountdown > 0 ? (
-                            <>{approvalCountdown}s</>
-                          ) : (
-                            <><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 3h12v10H2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M2 3l6 5 6-5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>{language === 'zh' ? '发送验证码' : 'Send Code'}</>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 验证码输入区 — 仅发送后展示 */}
-                  {(approvalStatus === 'sent' || approvalStatus === 'error') && (
-                    <div className="rounded-xl border border-dashed border-[#00bceb]/30 bg-[#ecfeff]/50 px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1">
-                          <label className="text-[11px] font-semibold text-[#0087a9] mb-1.5 block">
-                            {language === 'zh' ? '输入审批人收到的 6 位验证码' : 'Enter the 6-digit code sent to approver'}
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <input
-                              value={approvalCode}
-                              onChange={e => {
-                                const v = e.target.value.replace(/\D/g, '').slice(0, 6);
-                                onApprovalCodeChange(v);
-                              }}
-                              placeholder="· · · · · ·"
-                              className="flex-1 rounded-xl border border-[#00bceb]/25 bg-white px-4 py-2 text-sm outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20 placeholder:text-black/20 tracking-[0.5em] font-mono text-center font-semibold transition-all"
-                              maxLength={6}
-                              autoFocus
-                            />
-                            <button
-                              onClick={onVerifyApproval}
-                              disabled={approvalCode.length !== 6}
-                              className={`px-4 py-2 rounded-xl text-[11px] font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
-                                approvalCode.length === 6
-                                  ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm shadow-emerald-600/20'
-                                  : 'bg-black/8 text-black/30 cursor-not-allowed'
-                              }`}
-                            >
-                              <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 8.5L6.5 12L13 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                              {language === 'zh' ? '验证' : 'Verify'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 错误信息 */}
-                  {approvalError && (
-                    <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2">
-                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="text-red-500 flex-shrink-0"><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/><path d="M8 5v3.5M8 10.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                      <p className="text-[11px] text-red-700 font-medium">{approvalError}</p>
-                    </div>
-                  )}
-
-                  {/* 底部信息 */}
-                  <div className="flex items-center gap-1.5 pt-0.5">
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="text-black/25 flex-shrink-0"><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.2"/><path d="M8 5v3.5M8 10.5v.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
-                    <p className="text-[11px] text-black/35">
-                      {language === 'zh'
-                        ? '验证码将通过飞书发送给审批人，有效期 5 分钟。'
-                        : 'A verification code will be sent to the approver via Feishu, valid for 5 minutes.'}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-black/35">
-              {language === 'zh'
-                ? (batchMode ? '将按左侧批量目标逐台执行。' : '执行结果会自动出现在历史记录中。')
-                : (batchMode ? 'Commands will execute sequentially across the selected batch.' : 'Execution results will appear in the history view automatically.')}
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={onClose}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-black/60 hover:text-black hover:bg-black/5 transition-all"
-              >
-                {t('cancel')}
-              </button>
-              <button
-                onClick={onSubmit}
-                disabled={!canConfirmSubmit}
-                className={`px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-all ${
-                  canConfirmSubmit
-                    ? (needsConfirm ? 'bg-[#005b75] hover:bg-[#00465a] shadow-lg shadow-[#005b75]/20' : 'bg-[#005b75] hover:bg-[#00465a] shadow-lg shadow-[#005b75]/20')
-                    : 'bg-black/15 text-black/30 cursor-not-allowed'
-                }`}
-              >
-                {batchMode
-                  ? (isBatchRunning
-                    ? (language === 'zh' ? '批量执行中...' : 'Running Batch...')
-                    : (language === 'zh' ? `批量下发 (${batchDeviceIds.length})` : `Run Batch (${batchDeviceIds.length})`))
-                  : (isTestingConnection
-                    ? (language === 'zh' ? '执行中...' : 'Running...')
-                    : needsConfirm
-                      ? (language === 'zh' ? '确认并执行配置' : 'Confirm & Apply Config')
-                      : (language === 'zh' ? '执行命令' : 'Run Command'))}
-              </button>
-            </div>
+        {/* Footer */}
+        <div className="px-8 py-6 border-t border-black/5 bg-slate-50/50 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+             <div className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+             <p className="text-[12px] font-bold text-slate-400">
+               {batchMode
+                 ? (language === 'zh' ? `即将下发至 ${batchDeviceIds.length} 台设备` : `Run on ${batchDeviceIds.length} devices`)
+                 : (language === 'zh' ? '结果将实时呈现在终端视图中' : 'Results will appear in terminal')}
+             </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onClose}
+              className="px-6 py-2.5 rounded-2xl text-[13px] font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all active:scale-95"
+            >
+              {t('cancel')}
+            </button>
+            <button
+              onClick={onSubmit}
+              disabled={!canSubmit}
+              className={`px-8 py-3 rounded-2xl text-[13px] font-black text-white shadow-xl transition-all active:scale-95 ${
+                canSubmit
+                  ? 'bg-slate-800 hover:bg-slate-900 shadow-slate-200'
+                  : 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+              }`}
+            >
+              {batchMode
+                ? (isBatchRunning
+                  ? (language === 'zh' ? '批量执行中...' : 'Running Batch...')
+                  : (language === 'zh' ? `批量查询 (${batchDeviceIds.length})` : `Run Batch (${batchDeviceIds.length})`))
+                : (isTestingConnection
+                  ? (language === 'zh' ? '执行中...' : 'Running...')
+                  : (language === 'zh' ? '立即执行' : 'Run Query'))}
+            </button>
           </div>
         </div>
       </motion.div>

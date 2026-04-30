@@ -1,10 +1,10 @@
 {
   "payload": {
-    "license_id": "e49696d0-9a8b-465c-af74-86756f54e727",
+    "license_id": "84021415-7a45-4bbb-b142-04b61282891f",
     "company": "cisco",
     "license_type": "enterprise",
-    "issued_at": "2026-04-29T13:20:03.757658+00:00",
-    "expire_at": "2026-05-06T23:59:59",
+    "issued_at": "2026-04-30T00:48:21.371266+00:00",
+    "expire_at": "2027-04-30T23:59:59",
     "device_limit": 1000,
     "server_limit": 1000,
     "features": [
@@ -24,8 +24,8 @@
       "scheduled_jobs",
       "password_rotation"
     ],
-    "machine_id": "7294-18BB-E08A-5D49",
+    "machine_id": "8481-9F17-6557-5CC3",
     "metadata": null
   },
-  "signature": "Fu4cu8KSoZAnNP0flKuhRaxiJrFL0+3WjbZ5ONLfRR1MBWcepy3D+KMA4OOy0ATnydtxKtO/i++CHUhAznRC+oENqQkrVj3oKrKYJRJI43hADahzDPViYxLnXIyFhGSBC4I3VFzoYPs/IQQMik6EWuI2HfdOO6aRXpiTk3F1BDddlKFE1lpRbLgt9PudJdbEegH1HLJpXZizTr4Oobn/IDH3iTCDt4oMOm9tz/Kd2T8a7DR0thYOPmxr7KfeZicLntsMQ2LxdozKZLIh9Cd5uWY9h7X7pTbEng3i6XR7XTepDcouhaRZeVxk9ZOIp779aK2//o8NjN4SCLJIQ6ygxg=="
+  "signature": "XTmceWL2fEYaO/ziRjikJJpYdRo7v/ij2nvKwX2pLctZ8fee1uaxRwX6zI+Ch5S8RFS0+Hfaokk7QxjJ6ZPVjLJmK+PM17Df8+jtquDP5EqJRdosFCBqTKx+MwvK1XuURYRm6maY18GgGo3QPYnUlk/fN4RoxUtcPA9qFvNINjs/d/8T4adhO8L/wPehhAJOYh+HvKFzu1112FgL7nqog8MRUgMYUXjcDh2aX6boI33oJOu/mjnjzKwxh6YD/ywon77OOSBJgNupkj9cQlMPETblhpfh6NSWRNj/S2AACpChbokiKO5ZhfHQMTBTHhoV9e4RBt7OZoreeww/2ive9w=="
 }

@@ -3,26 +3,9 @@ from fastapi.responses import JSONResponse
 import os
 import uuid
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from ping3 import ping
-try:
-    from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
-    HAS_NETMIKO = True
-except ImportError:
-    HAS_NETMIKO = False
-
-try:
-    from scrapli.driver.core import AsyncIOSXEDriver, AsyncNXOSDriver, AsyncEOSDriver, AsyncJunosDriver
-    from scrapli.exceptions import ScrapliException
-    HAS_SCRAPLI = True
-except ImportError:
-    HAS_SCRAPLI = False
-
-try:
-    from scrapli_community.huawei.vrp.async_driver import AsyncHuaweiVRPDriver
-    from scrapli_community.hp.comware.async_driver import AsyncHPComwareDriver
-except ImportError:
-    pass
 from database import get_db_connection
 import logging
 import asyncio
@@ -30,6 +13,7 @@ import asyncio
 from services.automation_service import AutomationService
 from drivers.base import CommandResult
 from services.audit_service import log_audit_event
+from api.devices import _record_instant_execution
 from services.config_approval_service import request_approval, verify_code, consume_approval
 from core.crypto import decrypt_credential
 from core.rbac import require_role
@@ -37,370 +21,199 @@ from core.rbac import require_role
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# ── Dangerous command blacklist ──
-# Commands that can cause irreversible damage to network devices.
-_DANGEROUS_COMMANDS = [
-    'write erase', 'erase startup', 'erase nvram', 'erase flash',
-    'format ', 'delete /force', 'delete /recursive',
-    'reload', 'reboot', 'reset saved-configuration',
-    'restore factory-default', 'system-shutdown',
-    'license boot', 'boot system',
-]
+# ── Helper to resolve the nested Depends issue ──
+# Because rbac.require_role returns a Depends object, we extract the underlying function
+def get_operator(user=require_role("Operator")):
+    return user
 
-def _check_command_safety(commands: list[str]) -> str | None:
-    """Return an error message if any command matches the blacklist, or None if safe."""
-    for cmd in commands:
-        cmd_lower = cmd.lower().strip()
-        for dangerous in _DANGEROUS_COMMANDS:
-            if cmd_lower.startswith(dangerous) or cmd_lower == dangerous.strip():
-                return f"Blocked dangerous command: '{cmd}'. This operation requires direct console access."
-    return None
+def get_admin(user=require_role("Administrator")):
+    return user
 
-# 初始化业务服务
-automation_service = AutomationService(driver_type='netmiko') # 使用 Netmiko 驱动执行命令
+# ── Script Management CRUD ──
 
+@router.get("/scripts")
+async def read_scripts():
+    conn = get_db_connection()
+    try:
+        scripts = conn.execute('SELECT * FROM scripts ORDER BY updated_at DESC').fetchall()
+        return [dict(s) for s in scripts]
+    finally:
+        conn.close()
 
-# ── 配置审批验证码 ─────────────────────────────────────
+@router.post("/scripts")
+async def create_script(script: dict = Body(...), user: dict = Depends(get_operator)):
+    conn = get_db_connection()
+    script_id = script.get('id', '').strip()
+    
+    if not re.match(r'^[a-zA-Z0-9_\-]+$', script_id):
+        raise HTTPException(status_code=400, detail="标识码(Code ID)仅支持英文、数字和下划线")
 
+    submitter = user.get('username', 'admin')
+    approver = script.get('approver_username', '')
+    
+    if submitter == approver:
+        raise HTTPException(status_code=403, detail="审批回避原则：审核人不能是提单人本人")
+    
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        conn.execute('''
+            INSERT INTO scripts (
+                id, name, platform, description, content, 
+                script_type, author, version, status, 
+                submitter_name, approver_username, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            script_id, script.get('name'), script.get('platform'), script.get('description'), 
+            script.get('content'), script.get('script_type', 'shell'), submitter,
+            script.get('version', 'v1.0.0'), script.get('status', 'draft'),
+            submitter, approver, now, now
+        ))
+        conn.commit()
+        return {"success": True, "id": script_id}
+    except Exception as e:
+        logger.error(f"Failed to create script: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
-@router.post("/config-approval/request")
-async def request_config_approval(payload: dict = Body(...), user=require_role("Operator")):
-    """请求配置变更审批验证码，发送到审批人的飞书。"""
-    approver_username = (payload.get('approver_username') or '').strip()
-    config_reason = (payload.get('config_reason') or '').strip()
-    device_hostname = (payload.get('device_hostname') or '').strip()
-    command_preview = (payload.get('command_preview') or '').strip()
-    approval_type = (payload.get('approval_type') or 'config').strip()
-    extra_fields = payload.get('extra_fields') or {}
+@router.put("/scripts/{script_id}")
+async def update_script(script_id: str, script: dict = Body(...), user: dict = Depends(get_operator)):
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    submitter = user.get('username', 'admin')
+    
+    try:
+        existing = conn.execute('SELECT * FROM scripts WHERE id = ?', (script_id,)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Script not found")
+        
+        approver = script.get('approver_username', existing['approver_username'])
+        if script.get('status') == 'pending_audit' and submitter == approver:
+             raise HTTPException(status_code=403, detail="审批回避原则：审核人不能是提单人本人")
 
-    if not approver_username:
-        raise HTTPException(status_code=400, detail="approver_username is required")
-    if not config_reason or len(config_reason) < 2:
-        raise HTTPException(status_code=400, detail="config_reason is required (min 2 chars)")
+        fields = {
+            "name": script.get('name', existing['name']),
+            "platform": script.get('platform', existing['platform']),
+            "description": script.get('description', existing['description']),
+            "content": script.get('content', existing['content']),
+            "script_type": script.get('script_type', existing['script_type']),
+            "version": script.get('version', existing['version']),
+            "status": script.get('status', existing['status']),
+            "approver_username": approver,
+            "rejected_reason": script.get('rejected_reason', existing['rejected_reason']),
+            "updated_at": now
+        }
+        
+        sql = 'UPDATE scripts SET ' + ', '.join([f"{k} = ?" for k in fields.keys()]) + ' WHERE id = ?'
+        params = list(fields.values()) + [script_id]
+        
+        conn.execute(sql, params)
+        conn.commit()
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update script {script_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
-    requester = user.get('username', 'unknown')
-    token, err = request_approval(
-        approver_username=approver_username,
-        requester_username=requester,
-        config_reason=config_reason,
-        device_hostname=device_hostname,
-        command_preview=command_preview,
-        approval_type=approval_type,
-        extra_fields=extra_fields,
-    )
-    if err:
-        raise HTTPException(status_code=400, detail=err)
+@router.delete("/scripts/{script_id}")
+async def delete_script(script_id: str, user: dict = Depends(get_admin)):
+    conn = get_db_connection()
+    try:
+        conn.execute('DELETE FROM scripts WHERE id = ?', (script_id,))
+        conn.commit()
+        return {"success": True}
+    finally:
+        conn.close()
 
-    return {"success": True, "approval_token": token, "message": "Approval code sent to approver via Feishu"}
-
-
-@router.post("/config-approval/verify")
-async def verify_config_approval(payload: dict = Body(...), user=require_role("Operator")):
-    """验证审批码。"""
-    approval_token = (payload.get('approval_token') or '').strip()
-    code = (payload.get('code') or '').strip()
-
-    if not approval_token or not code:
-        raise HTTPException(status_code=400, detail="approval_token and code are required")
-
-    ok, err = verify_code(approval_token, code)
-    if not ok:
-        raise HTTPException(status_code=400, detail=err)
-
-    return {"success": True, "message": "Approval code verified"}
-
+# ── Execution & Task Routes ──
 
 @router.post("/execute")
-async def execute_task(request: Request, payload: dict = Body(...), user=require_role("Operator")):
-    # Support both single device_id (backward compat) and batch device_ids
+async def execute_task(request: Request, payload: dict = Body(...), user: dict = Depends(get_operator)):
     device_id = payload.get('device_id')
     device_ids = payload.get('device_ids', [])
-    
-    # Normalize to list of device_ids
     if isinstance(device_ids, str):
-        try:
-            device_ids = json.loads(device_ids)
-        except (json.JSONDecodeError, TypeError):
-            device_ids = [device_ids] if device_ids else []
-    
-    if not isinstance(device_ids, list):
-        device_ids = [device_ids] if device_ids else []
-    
-    # If device_id is provided, add it to list (backward compat)
-    if device_id and device_id not in device_ids:
-        device_ids.insert(0, device_id)
-    
-    if not device_ids:
-        raise HTTPException(status_code=400, detail="device_id or device_ids is required")
+        try: device_ids = json.loads(device_ids)
+        except: device_ids = [device_ids] if device_ids else []
+    if not isinstance(device_ids, list): device_ids = [device_ids] if device_ids else []
+    if device_id and device_id not in device_ids: device_ids.insert(0, device_id)
+    if not device_ids: raise HTTPException(status_code=400, detail="device_id or device_ids is required")
     
     script_id = payload.get('script_id')
     command = payload.get('command')
     is_config_req = payload.get('isConfig')
     config_reason = payload.get('config_reason', '').strip()
     approval_token = payload.get('approval_token', '').strip()
-    save_history = payload.get('save_history', True)
+    change_ticket = str(payload.get('change_ticket') or payload.get('order_number') or '').strip()
     actor_username = user.get('username', 'admin')
-    actor_id = user.get('id')
-    actor_role = user.get('role', 'Operator')
-
-    # 配置模式强制要求填写变更原因 + 已通过的审批令牌
-    if is_config_req and not config_reason:
-        raise HTTPException(status_code=400, detail="Config mode requires a change reason (config_reason)")
-    if is_config_req:
-        if not approval_token:
-            raise HTTPException(status_code=400, detail="Config mode requires an approved approval_token")
-        approval_record = consume_approval(approval_token)
-        if not approval_record:
-            raise HTTPException(status_code=403, detail="Invalid or expired approval token. Please request a new code.")
 
     conn = get_db_connection()
     try:
-        # Batch execution: collect all devices first
-        devices_data = []
-        for dev_id in device_ids:
-            device = conn.execute('SELECT * FROM devices WHERE id = ?', (dev_id,)).fetchone()
-            if not device:
-                raise HTTPException(status_code=404, detail=f"Device {dev_id} not found")
-            device_dict = dict(device)
-            device_dict['password'] = decrypt_credential(device_dict.get('password')) or ''
-            devices_data.append(device_dict)
-        
-        if not devices_data:
-            raise HTTPException(status_code=400, detail="No valid devices provided")
-        
         final_command = command
-        task_name = 'Direct Command'
-        
+        task_name = payload.get('task_name') or 'Custom Command'
         if script_id:
-            # Try scripts table first
             script = conn.execute('SELECT * FROM scripts WHERE id = ?', (script_id,)).fetchone()
             if script:
                 final_command = command if command else script['content']
                 task_name = f"Script: {script['name']}"
             else:
-                # Try templates table
                 template = conn.execute('SELECT * FROM templates WHERE id = ?', (script_id,)).fetchone()
                 if template:
                     final_command = command if command else template['content']
                     task_name = f"Template: {template['name']}"
         
-        if not final_command:
-            raise HTTPException(status_code=400, detail="No command or script provided")
+        if not final_command: raise HTTPException(status_code=400, detail="No command or script provided")
+        commands = [c.strip() for c in final_command.split('\n') if c.strip()]
+        _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ')
+        is_query_only = all(any(c.lower().startswith(p) for p in _show_prefixes) for c in commands)
 
-        job_ids = [str(uuid.uuid4()) for _ in devices_data]
-        if save_history:
-            for job_id, device_dict in zip(job_ids, devices_data):
-                conn.execute('INSERT INTO jobs (id, device_id, task_name, status, created_at) VALUES (?, ?, ?, ?, ?)',
-                             (job_id, device_dict['id'], task_name, 'running', datetime.now().isoformat()))
-            conn.commit()
+        if not is_query_only:
+            is_config = True
+            ticket_valid = False
+            if change_ticket:
+                row = conn.execute("SELECT status FROM change_orders WHERE order_number = ?", (change_ticket,)).fetchone()
+                if row and row['status'] in {'approved', 'implementing'}: ticket_valid = True
+            if not ticket_valid and is_config_req:
+                if not consume_approval(approval_token): raise HTTPException(status_code=403, detail="授权无效")
+        else: is_config = False
 
-        try:
-            commands = [c.strip() for c in final_command.split('\n') if c.strip()]
-
-            # 以实际命令内容判断是否进入配置模式
-            _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ')
-            _has_show = any(
-                c.lower().startswith(p) for c in commands for p in _show_prefixes
-            )
-            if _has_show:
-                is_config = False
-            elif is_config_req is not None:
-                is_config = is_config_req
-            else:
-                _joined = '\n'.join(commands).lower()
-                _config_kws = (
-                    'conf t', 'configure terminal', 'system-view',
-                    'interface ', 'ip route', 'ip address', 'vlan ',
-                    'router ', 'access-list', 'route-map', 'no shutdown',
-                )
-                is_config = any(kw in _joined for kw in _config_kws)
-
-            # ── Safety check: block dangerous/destructive commands ──
-            safety_err = _check_command_safety(commands)
-            if safety_err:
-                for job_id in job_ids:
-                    conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('blocked', safety_err, job_id))
-                conn.commit()
-                log_audit_event(
-                    event_type='COMMAND_BLOCKED',
-                    category='automation',
-                    severity='critical',
-                    status='blocked',
-                    summary=f"Blocked dangerous command on {len(devices_data)} device(s)",
-                    actor_username=actor_username,
-                    actor_role=actor_role,
-                    source_ip=request.client.host if request.client else None,
-                    target_type='device',
-                    target_id=devices_data[0]['id'] if devices_data else None,
-                    target_name=devices_data[0].get('hostname') if devices_data else None,
-                    device_id=devices_data[0]['id'] if devices_data else None,
-                    job_id=job_ids[0] if job_ids else None,
-                    details={'blocked_reason': safety_err, 'command_preview': '\n'.join(commands[:8]), 'device_count': len(devices_data)},
-                )
-                raise HTTPException(status_code=403, detail=safety_err)
-            
-            # Execute on all devices and aggregate results
-            batch_results = {}
-            for job_id, device_dict in zip(job_ids, devices_data):
-                try:
-                    driver_type = 'mock' if device_dict.get('ip_address') in ['127.0.0.1', '0.0.0.0', 'localhost'] else 'netmiko'
-                    service = AutomationService(driver_type=driver_type)
-                    
-                    import time
-                    exec_start = time.time()
-                    
-                    def _execute():
-                        exec_begin = time.time()
-                        results = service.execute_commands(device_dict, commands, is_config=is_config)
-                        exec_elapsed = time.time() - exec_begin
-                        logger.info(f"Command execution took {exec_elapsed:.2f}s for device {device_dict.get('hostname')}")
-                        
-                        merge_start = time.time()
-                        output = "\n".join([r.output if r.success else f"Error: {r.error}" for r in results])
-                        merge_elapsed = time.time() - merge_start
-                        logger.info(f"Result merge took {merge_elapsed:.3f}s, output size: {len(output)} chars")
-                        
-                        return output
-
-                    result = await asyncio.get_event_loop().run_in_executor(None, _execute)
-                    total_elapsed = time.time() - exec_start
-                    logger.info(f"Total execution time: {total_elapsed:.2f}s")
-                    
-                    if save_history:
-                        conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('success', result, job_id))
-                        conn.commit()
-                    
-                    batch_results[device_dict['id']] = {'status': 'success', 'output': result}
-                    
-                    log_audit_event(
-                        event_type='DIRECT_EXECUTION',
-                        category='automation',
-                        severity='high' if is_config else 'medium',
-                        status='success',
-                        summary=f"Executed {task_name} on {device_dict.get('hostname')}",
-                        actor_id=str(actor_id) if actor_id is not None else None,
-                        actor_username=actor_username,
-                        actor_role=actor_role,
-                        source_ip=request.client.host if request.client else None,
-                        target_type='device',
-                        target_id=device_dict['id'],
-                        target_name=device_dict.get('hostname'),
-                        device_id=device_dict['id'],
-                        job_id=job_id,
-                        details={
-                            'task_name': task_name,
-                            'command_count': len(commands),
-                            'is_config': is_config,
-                            'script_id': script_id,
-                            'command_preview': '\n'.join(commands[:8]),
-                            'config_reason': config_reason if is_config else None,
-                            'batch_size': len(devices_data),
-                        },
-                    )
-                except Exception as e:
-                    error_msg = str(e)
-                    logger.error(f"Job execution failed for device {device_dict.get('hostname')}: {error_msg}", exc_info=True)
-                    if save_history:
-                        conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('failed', error_msg, job_id))
-                        conn.commit()
-                    batch_results[device_dict['id']] = {'status': 'error', 'output': error_msg}
-                    log_audit_event(
-                        event_type='DIRECT_EXECUTION',
-                        category='automation',
-                        severity='high' if is_config_req else 'medium',
-                        status='failed',
-                        summary=f"Execution failed for {device_dict.get('hostname')}",
-                        actor_id=str(actor_id) if actor_id is not None else None,
-                        actor_username=actor_username,
-                        actor_role=actor_role,
-                        source_ip=request.client.host if request.client else None,
-                        target_type='device',
-                        target_id=device_dict['id'],
-                        target_name=device_dict.get('hostname'),
-                        device_id=device_dict['id'],
-                        job_id=job_id,
-                        details={'task_name': task_name, 'error': error_msg, 'script_id': script_id, 'batch_size': len(devices_data)},
-                    )
-            
-            # Return aggregated result
-            if len(device_ids) == 1:
-                # Single device: backward compatible response
-                first_result = batch_results.get(devices_data[0]['id'], {})
-                return {"status": first_result.get('status', 'unknown'), "jobId": job_ids[0], "output": first_result.get('output', '')}
-            else:
-                # Batch: return map of device_id -> result
-                return {"status": "completed", "jobIds": job_ids, "results": batch_results, "device_count": len(devices_data)}
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Batch execution failed: {error_msg}", exc_info=True)
-            if save_history:
-                for job_id in job_ids:
-                    conn.execute('UPDATE jobs SET status = ?, output = ? WHERE id = ?', ('failed', error_msg, job_id))
-                conn.commit()
-            log_audit_event(
-                event_type='DIRECT_EXECUTION',
-                category='automation',
-                severity='high' if is_config_req else 'medium',
-                status='failed',
-                summary=f"Batch execution failed for {len(devices_data)} device(s)",
-                actor_id=str(actor_id) if actor_id is not None else None,
-                actor_username=actor_username,
-                actor_role=actor_role,
-                source_ip=request.client.host if request.client else None,
-                target_type='device',
-                target_id=devices_data[0]['id'] if devices_data else None,
-                target_name=devices_data[0].get('hostname') if devices_data else None,
-                device_id=devices_data[0]['id'] if devices_data else None,
-                job_id=job_ids[0] if job_ids else None,
-                details={'error': error_msg, 'batch_size': len(devices_data)},
-            )
-            return JSONResponse(status_code=500, content={"status": "error", "error": error_msg, "jobIds": job_ids})
+        batch_results = {}
+        for dev_id in device_ids:
+            device = conn.execute('SELECT * FROM devices WHERE id = ?', (dev_id,)).fetchone()
+            if device:
+                d = dict(device)
+                d['password'] = decrypt_credential(d.get('password')) or ''
+                driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
+                service = AutomationService(driver_type=driver_type)
+                result = await asyncio.get_event_loop().run_in_executor(None, lambda: "\n".join([r.output if r.success else f"Error: {r.error}" for r in service.execute_commands(d, commands, is_config=is_config)]))
+                _record_instant_execution(d['id'], task_name, commands, 'completed', platform=d.get('platform'), output=result)
+                batch_results[d['id']] = {'status': 'success', 'output': result}
+        
+        return {"status": "completed", "results": batch_results} if len(device_ids) > 1 else {"status": "success", "output": list(batch_results.values())[0]['output']}
     finally:
         conn.close()
+
+@router.post("/config-approval/request")
+async def request_config_approval(payload: dict = Body(...), user: dict = Depends(get_operator)):
+    approver_username = (payload.get('approver_username') or '').strip()
+    config_reason = (payload.get('config_reason') or '').strip()
+    requester = user.get('username', 'unknown')
+    token, err = request_approval(approver_username=approver_username, requester_username=requester, config_reason=config_reason, approval_type='config')
+    if err: raise HTTPException(status_code=400, detail=err)
+    return {"success": True, "approval_token": token}
+
+@router.post("/config-approval/verify")
+async def verify_config_approval(payload: dict = Body(...)):
+    approval_token = payload.get('approval_token', '').strip()
+    code = payload.get('code', '').strip()
+    ok, err = verify_code(approval_token, code)
+    if not ok: raise HTTPException(status_code=400, detail=err)
+    return {"success": True}
 
 @router.post("/devices/ping")
 async def ping_device(payload: dict = Body(...)):
     ip = payload.get('ip_address')
-    if not ip:
-        raise HTTPException(status_code=400, detail="IP address is required")
-    
-    try:
-        # Run ping in a thread to avoid blocking
-        def _ping():
-            return ping(ip, timeout=2)
-            
-        delay = await asyncio.get_event_loop().run_in_executor(None, _ping)
-        
-        if delay is not None:
-            return {
-                "status": "success", 
-                "message": f"Ping to {payload.get('hostname')} ({ip}) successful", 
-                "output": f"Response time: {delay*1000:.2f}ms"
-            }
-        else:
-            raise Exception(f"Ping to {ip} timed out")
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
-
-@router.get("/scripts")
-def read_scripts():
-    conn = get_db_connection()
-    try:
-        scripts = conn.execute('SELECT * FROM scripts').fetchall()
-        return [dict(s) for s in scripts]
-    finally:
-        conn.close()
-
-@router.post("/scripts")
-def create_script(script: dict = Body(...)):
-    conn = get_db_connection()
-    script_id = script.get('id') or str(uuid.uuid4())
-    try:
-        conn.execute('INSERT INTO scripts (id, name, platform, description, content) VALUES (?, ?, ?, ?, ?)',
-                     (script_id, script.get('name'), script.get('platform'), script.get('description'), script.get('content')))
-        conn.commit()
-        return {"success": True}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
-    finally:
-        conn.close()
+    delay = await asyncio.get_event_loop().run_in_executor(None, lambda: ping(ip, timeout=2))
+    return {"status": "success", "output": f"Time: {delay*1000:.2f}ms"} if delay else JSONResponse(status_code=500, content={"status":"error"})

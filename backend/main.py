@@ -38,6 +38,7 @@ from api.racks import router as racks_router
 from license.api import router as license_router
 from license.middleware import LicenseMiddleware
 from license.verifier import get_license_verifier
+from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
 import logging
 import os
 import asyncio
@@ -50,6 +51,7 @@ from ping3 import ping
 from database import DB_PATH, init_db, get_db_connection, _USE_PG
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from core.scheduler_manager import scheduler, refresh_dynamic_scheduler
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -154,6 +156,8 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
         max_instances=1,
     )
+    # Sync dynamic scheduled jobs from database
+    sync_scheduler_jobs(scheduler)
     logger.info("[Scheduler] APScheduler started")
     yield
     # ── shutdown ──
@@ -161,11 +165,25 @@ async def lifespan(app: FastAPI):
     logger.info("[Scheduler] APScheduler stopped")
 
 app = FastAPI(
-    title="NetOps Automation Platform",
-    version="1.0.0",
-    description="Network Automation Platform API",
+    title=settings.PROJECT_NAME,
+    version="2.0.0",
     lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    with open(r'd:\netsops\record_debug.log', 'a') as f:
+        f.write(f"[{datetime.now()}] 422 Error: {request.url}\nDetail: {exc.errors()}\n")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": exc.body},
+    )
 
 # ── Rate Limiting ────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
@@ -223,7 +241,7 @@ app.include_router(license_router, prefix="/api")
 app.add_middleware(LicenseMiddleware)
 
 # ── APScheduler ──────────────────────────────────────────────────────
-scheduler = AsyncIOScheduler()
+# scheduler is now imported from core.scheduler_manager
 
 def _daily_db_maintenance():
     """Clean expired sessions, vacuum database."""
@@ -273,7 +291,6 @@ def reschedule_backup(cfg: dict):
             name='Scheduled Config Backup',
             replace_existing=True,
         )
-        logger.info(f"[Scheduler] Backup scheduled with cron: {cron_expr}")
     else:
         logger.info("[Scheduler] Scheduled backup disabled")
 

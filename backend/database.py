@@ -342,9 +342,36 @@ def init_db():
             content TEXT,
             description TEXT,
             platform TEXT,
-            category TEXT DEFAULT 'custom'
+            category TEXT DEFAULT 'custom',
+            script_type TEXT DEFAULT 'shell', -- shell, python, ansible
+            author TEXT DEFAULT 'admin',
+            version TEXT DEFAULT 'v1.0.0',
+            status TEXT DEFAULT 'released',   -- draft, pending_audit, released, rejected
+            submitter_id TEXT DEFAULT '',
+            submitter_name TEXT DEFAULT '',
+            approver_id TEXT DEFAULT '',
+            approver_username TEXT DEFAULT '',
+            rejected_reason TEXT DEFAULT '',
+            created_at TEXT,
+            updated_at TEXT
         )
         ''')
+
+        # Migration for script management enhancements
+        for col, dtype in [
+            ('script_type', 'TEXT DEFAULT "shell"'), 
+            ('author', 'TEXT DEFAULT "admin"'), 
+            ('version', 'TEXT DEFAULT "v1.0.0"'), 
+            ('status', 'TEXT DEFAULT "released"'),
+            ('submitter_id', 'TEXT DEFAULT ""'),
+            ('submitter_name', 'TEXT DEFAULT ""'),
+            ('approver_id', 'TEXT DEFAULT ""'),
+            ('approver_username', 'TEXT DEFAULT ""'),
+            ('rejected_reason', 'TEXT DEFAULT ""'),
+            ('created_at', 'TEXT'),
+            ('updated_at', 'TEXT')
+        ]:
+            ensure_column('scripts', col, dtype)
         
         # Create templates table if not exists
         cursor.execute('''
@@ -1587,6 +1614,7 @@ def init_db():
             compliance_status TEXT DEFAULT 'unknown',
             compliance_findings INTEGER DEFAULT 0,
             findings_json TEXT DEFAULT '[]',
+            metrics_json TEXT DEFAULT '{}',
             checked_at TEXT NOT NULL,
             FOREIGN KEY (run_id) REFERENCES inspection_runs(id),
             FOREIGN KEY (device_id) REFERENCES devices(id)
@@ -1721,8 +1749,11 @@ def init_db():
             category TEXT NOT NULL,
             check_key TEXT UNIQUE NOT NULL,
             description TEXT DEFAULT '',
-            method TEXT DEFAULT 'SNMP', -- SNMP, SSH, Agent
+            method TEXT DEFAULT 'SNMP', -- SNMP, SSH, Shell, Agent
             command TEXT DEFAULT '',     -- Specific command or OID
+            script_id TEXT DEFAULT '',   -- Reference to scripts table
+            warning_threshold REAL,
+            critical_threshold REAL,
             vendor TEXT DEFAULT '',
             oid TEXT DEFAULT '',
             created_at TEXT NOT NULL,
@@ -1731,73 +1762,69 @@ def init_db():
         ''')
         
         # Migration: Add missing columns if they don't exist
-        try:
-            cursor.execute('ALTER TABLE inspection_items ADD COLUMN method TEXT DEFAULT "SNMP"')
-        except: pass
-        try:
-            cursor.execute('ALTER TABLE inspection_items ADD COLUMN command TEXT DEFAULT ""')
-        except: pass
-        try:
-            cursor.execute('ALTER TABLE inspection_items ADD COLUMN vendor TEXT DEFAULT ""')
-        except: pass
-        try:
-            cursor.execute('ALTER TABLE inspection_items ADD COLUMN oid TEXT DEFAULT ""')
-        except: pass
+        for col, dtype in [('script_id', 'TEXT DEFAULT ""'), ('warning_threshold', 'REAL'), ('critical_threshold', 'REAL'), ('method', 'TEXT DEFAULT "SNMP"'), ('command', 'TEXT DEFAULT ""')]:
+            try:
+                cursor.execute(f'ALTER TABLE inspection_items ADD COLUMN {col} {dtype}')
+            except: pass
+            
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_items_cat ON inspection_items(category)')
+
+        # Migration for inspection_results
+        try:
+            cursor.execute('ALTER TABLE inspection_results ADD COLUMN metrics_json TEXT DEFAULT "{}"')
+        except: pass
+
+        # Seed standard scripts
+        std_scripts = [
+            ('std_linux_mem', 'Linux 内存使用率', '#!/bin/bash\n# 计算内存使用率 (已用/总计)\nmem_total=$(free | grep Mem | awk "{print $2}")\nmem_used=$(free | grep Mem | awk "{print $3}")\n[ "$mem_total" -gt 0 ] && echo | awk "{print ($mem_used/$mem_total)*100}" || echo 0', '计算系统内存使用百分比 (0-100)', 'Linux', 'standard'),
+            ('std_linux_cpu', 'Linux CPU 使用率', '#!/bin/bash\n# 提取系统 CPU 整体利用率\ntop -bn1 | grep "Cpu(s)" | sed "s/.*, *\\([0-9.]*\\)%* id.*/\\1/" | awk "{print 100 - $1}"', '计算系统整体 CPU 使用率 (0-100)', 'Linux', 'standard'),
+            ('std_linux_disk', 'Linux 全量磁盘空间', '#!/bin/bash\n# 扫描所有本地挂载点，过滤虚拟分区，按使用率排序\necho "Detailed Disk Usage (Top 10):"\ndf -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10\n# 提取全局最大利用率作为判定值\nmax_usage=$(df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk "{print $5}" | sed "s/%//" | sort -rn | head -1)\necho "MAX_UTILIZATION: ${max_usage:-0}"', '扫描所有本地分区，取最大利用率百分比', 'Linux', 'standard'),
+            ('std_linux_inode', 'Linux 全量磁盘 Inode', '#!/bin/bash\n# 扫描所有本地挂载点 Inode 使用率\necho "Detailed Inode Usage (Top 10):"\ndf -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10\nmax_inode=$(df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk "{print $5}" | sed "s/%//" | sort -rn | head -1)\necho "MAX_INODE_UTIL: ${max_inode:-0}"', '扫描所有本地分区，取最大 Inode 使用率', 'Linux', 'standard'),
+            ('std_linux_iowait', 'Linux IO Wait 延迟', '#!/bin/bash\n# 提取 CPU IO 等待比例\niostat -c 1 2 | grep -v "avg-cpu" | tail -1 | awk "{print $4}"', 'CPU 等待磁盘 IO 时间占比 (0-100)', 'Linux', 'standard'),
+            ('std_linux_swap', 'Linux Swap 使用率', '#!/bin/bash\nfree | grep Swap | awk "{if ($2>0) print ($3/$2)*100; else print 0}"', '交换分区使用百分比 (0-100)', 'Linux', 'standard'),
+            ('std_linux_load', 'Linux CPU 负载比例', '#!/bin/bash\n# 计算负载与核心数的比值\ncores=$(grep -c ^processor /proc/cpuinfo)\nload=$(uptime | awk -F "load average:" "{print $2}" | cut -d, -f1 | xargs)\necho | awk "{print ($load/$cores)*100}"', '系统 1min 负载相对于核心数的比例', 'Linux', 'standard'),
+            ('std_linux_conns', 'Linux TCP 连接数', '#!/bin/bash\nss -ant | grep ESTAB | wc -l', '统计系统 Established 状态的 TCP 连接总数', 'Linux', 'standard'),
+            ('std_linux_proc', 'Linux 关键进程巡检', '#!/bin/bash\n# 检查指定的多个关键进程，返回丢失的数量\nprocs=${1:-"sshd crond docker"}\nmissing=0\nfor p in $procs; do\n  if ! pgrep -f "$p" > /dev/null; then\n    echo "[CRITICAL] Process not found: $p"\n    missing=$((missing + 1))\n  fi\ndone\necho "MISSING_COUNT: $missing"', '检查进程存活状态，返回未运行的进程数', 'Linux', 'standard')
+        ]
+        cursor.executemany(
+            'INSERT INTO scripts (id, name, content, description, platform, category) VALUES (?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, description = EXCLUDED.description',
+            std_scripts
+        )
 
         # Seed/Update default items
         now = _beijing_now_iso()
         default_items = [
-            # --- Network Device (SNMP based) ---
-            ('net_ping', 'Connectivity (Ping)', '网络连通性 (Ping)', 'Network', 'ping', '检查设备 ICMP 响应时间与丢包率 (阈值: >100ms 告警)', 'ICMP', 'ping -c 3 {ip}', 'Generic', '', now, now),
-            ('net_ssh', 'SSH Accessibility', '管理通道 (SSH)', 'Network', 'ssh', '检查 22 端口可用性与响应速度', 'TCP', 'socket.connect({ip}, 22)', 'Generic', '', now, now),
-            ('net_cpu', 'CPU Utilization', 'CPU 利用率 (SNMP)', 'Network', 'cpu', '监控网络设备 CPU 负载 (阈值: >85% 告警)', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.109.1.1.1.1.7', 'Cisco', '1.3.6.1.4.1.9.9.109.1.1.1.1.7', now, now),
-            ('net_mem', 'Memory Utilization', '内存利用率 (SNMP)', 'Network', 'memory', '监控网络设备内存消耗 (阈值: >90% 告警)', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.48.1.1.1.5.1', 'Cisco', '1.3.6.1.4.1.9.9.48.1.1.1.5.1', now, now),
-            ('net_temp', 'Chassis Temperature', '机箱温度', 'Network', 'temp', '监控设备环境温度与过热告警', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.13.1.3.1.3', 'Cisco', '1.3.6.1.4.1.9.9.13.1.3.1.3', now, now),
-            ('net_intf_err', 'Interface Error Rate', '端口错误率', 'Network', 'interface_error', '检查接口 CRC/Input Errors (阈值: >0.1% 告警)', 'SNMP', 'OID: 1.3.6.1.2.1.2.2.1.14', 'Generic', '1.3.6.1.2.1.2.2.1.14', now, now),
-            ('net_intf_util', 'Interface Utilization', '端口带宽利用率', 'Network', 'interface_util', '检查接口入/出带宽占用 (阈值: >85% 告警)', 'SNMP', 'OID: 1.3.6.1.2.1.2.2.1.10 / 1.16', 'Generic', '1.3.6.1.2.1.2.2.1.10', now, now),
-            ('net_bgp', 'BGP Peer Status', 'BGP 邻居状态', 'Network', 'bgp_neighbor', '监控 BGP 状态机 (非 Established 即告警)', 'SSH', 'show ip bgp summary', 'Generic', '', now, now),
-            ('net_fan', 'Fan Tray Status', '风扇组件状态', 'Network', 'fan_status', '监控风扇转速与运行健康度', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.13.1.4.1.3', 'Cisco', '1.3.6.1.4.1.9.9.13.1.4.1.3', now, now),
-            ('net_psu', 'PSU Redundancy', '电源冗余状态', 'Network', 'psu_status', '监控电源在位与供电状态', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.13.1.5.1.3', 'Cisco', '1.3.6.1.4.1.9.9.13.1.5.1.3', now, now),
-
-            # --- Server / Host (Agent based) ---
-            ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min/5min/15min 负载 (阈值: >核心数*2 告警)', 'Shell', 'uptime | awk "{print $10}"', 'Linux', '', now, now),
-            ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (阈值: >90% 告警)', 'Shell', 'top -bn1 | grep "Cpu(s)"', 'Linux', '', now, now),
-            ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'iostat -c 1 2', 'Linux', '', now, now),
-            ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统实际可用内存 (阈值: <10% 告警)', 'Shell', 'free -m | grep Mem', 'Linux', '', now, now),
-            ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控 Swap 活动状态 (阈值: >50% 告警)', 'Shell', 'free -m | grep Swap', 'Linux', '', now, now),
-            ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控各个挂载点空间占用 (阈值: >90% 告警)', 'Shell', 'df -h', 'Linux', '', now, now),
-            ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控文件系统 Inode 占用 (阈值: >90% 告警)', 'Shell', 'df -i', 'Linux', '', now, now),
-            ('srv_disk_latency', 'Disk IO Latency', '磁盘 IO 延迟', 'Server', 'io_latency', '监控平均读写响应时间 (阈值: >20ms 告警)', 'Shell', 'iostat -dx 1 2', 'Linux', '', now, now),
-            ('srv_net_retrans', 'TCP Retransmission', 'TCP 重传率', 'Server', 'tcp_retrans', '监控网络重传比例 (阈值: >1% 告警)', 'Shell', 'netstat -s | grep retransmitted', 'Linux', '', now, now),
-            ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'netstat -ant | grep ESTABLISHED | wc -l', 'Linux', '', now, now),
-            ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定系统/应用进程是否存在', 'Shell', 'ps aux | grep {process_name}', 'Linux', '', now, now),
+            # --- Network Device ---
+            ('net_ping', 'Connectivity (Ping)', '网络连通性 (Ping)', 'Network', 'ping', '检查设备 ICMP 响应时间与丢包率', 'ICMP', 'ping -c 3 {ip}', '', 100, 200, 'Generic', '', now, now),
+            ('net_ssh', 'SSH Accessibility', '管理通道 (SSH)', 'Network', 'ssh', '检查 22 端口可用性', 'TCP', 'socket.connect({ip}, 22)', '', 500, 2000, 'Generic', '', now, now),
+            ('net_cpu', 'CPU Utilization', 'CPU 利用率 (SNMP)', 'Network', 'cpu', '监控网络设备 CPU 负载', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.109.1.1.1.1.7', '', 85, 95, 'Cisco', '1.3.6.1.4.1.9.9.109.1.1.1.1.7', now, now),
+            ('net_mem', 'Memory Utilization', '内存利用率 (SNMP)', 'Network', 'memory', '监控网络设备内存消耗', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.48.1.1.1.5.1', '', 90, 98, 'Cisco', '1.3.6.1.4.1.9.9.48.1.1.1.5.1', now, now),
+            ('net_bgp', 'BGP Peer Status', 'BGP 邻居状态', 'Network', 'bgp_neighbor', '监控 BGP 状态机', 'SSH', 'show ip bgp summary', '', 0, 1, 'Generic', '', now, now),
+ 
+            # --- Server / Host ( 精细化采集) ---
+            ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min 负载相对于核心数的比例', 'Shell', 'std_linux_load', 'std_linux_load', 80, 150, 'Linux', '', now, now),
+            ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (0-100)', 'Shell', 'std_linux_cpu', 'std_linux_cpu', 90, 95, 'Linux', '', now, now),
+            ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统内存使用百分比 (0-100)', 'Shell', 'std_linux_mem', 'std_linux_mem', 85, 95, 'Linux', '', now, now),
+            ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控交换分区使用百分比 (0-100)', 'Shell', 'std_linux_swap', 'std_linux_swap', 70, 90, 'Linux', '', now, now),
+            ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'std_linux_iowait', 'std_linux_iowait', 15, 30, 'Linux', '', now, now),
+            ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控根分区空间占用 (0-100)', 'Shell', 'std_linux_disk', 'std_linux_disk', 90, 95, 'Linux', '', now, now),
+            ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控根分区 Inode 占用 (0-100)', 'Shell', 'std_linux_inode', 'std_linux_inode', 90, 95, 'Linux', '', now, now),
+            ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
+            ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定进程是否存在', 'Shell', 'std_linux_proc', 'std_linux_proc', 1, 0, 'Linux', '', now, now),
         ]
+        
+        sql = '''INSERT INTO inspection_items 
+                 (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'''
         if _USE_PG:
-            cursor.executemany(
-                '''INSERT INTO inspection_items
-                   (id, name, name_zh, category, check_key, description, method, command, vendor, oid, created_at, updated_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                   ON CONFLICT (id) DO UPDATE SET
-                     name = EXCLUDED.name,
-                     name_zh = EXCLUDED.name_zh,
-                     category = EXCLUDED.category,
-                     check_key = EXCLUDED.check_key,
-                     description = EXCLUDED.description,
-                     method = EXCLUDED.method,
-                     command = EXCLUDED.command,
-                     vendor = EXCLUDED.vendor,
-                     oid = EXCLUDED.oid,
-                     updated_at = EXCLUDED.updated_at''',
-                default_items
-            )
+            sql = sql.replace('?', '%s')
+            # For PG, we use a different approach for ON CONFLICT since it's more complex with many columns
+            # But for seeding, let's keep it simple and just do many inserts with conflict handling if needed,
+            # or just skip if exists. For now, let's use a simpler replace-like logic.
+            cursor.execute("DELETE FROM inspection_items WHERE id IN (%s)" % ",".join(["'%s'" % x[0] for x in default_items]))
+            cursor.executemany(sql, default_items)
         else:
-            cursor.executemany(
-                '''INSERT OR REPLACE INTO inspection_items 
-                   (id, name, name_zh, category, check_key, description, method, command, vendor, oid, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
-                default_items
-            )
+            cursor.executemany('INSERT OR REPLACE INTO inspection_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', default_items)
 
         conn.commit()
     finally:

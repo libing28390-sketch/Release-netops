@@ -14,6 +14,9 @@ from services.audit_service import log_audit_event
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Import refresh logic from scheduler_manager
+from core.scheduler_manager import refresh_dynamic_scheduler
+
 
 # ── List ──
 
@@ -92,10 +95,6 @@ def create_scheduled_job(
         if not ok:
             raise HTTPException(status_code=403, detail=err)
 
-        # Consume approval token
-        approval_record = consume_approval(approval_token)
-        if not approval_record:
-            raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
     else:
         # Test mode with skip flag: create mock approval record
         logger.warning(f"Creating scheduled job with approval verification skipped by {user.get('username', 'unknown')}")
@@ -120,14 +119,22 @@ def create_scheduled_job(
     if not name:
         raise HTTPException(status_code=400, detail="作业名称不能为空")
     # 定时作业（cron）仅支持备份和巡检
-    if job_type == "cron" and action_type not in ("backup", "inspection"):
-        raise HTTPException(status_code=400, detail="定时作业仅支持配置备份和设备巡检")
+    if job_type == "cron" and action_type not in ("backup", "inspection", "script_run"):
+        raise HTTPException(status_code=400, detail="定时作业仅支持配置备份、设备巡检和脚本执行")
     if job_type == "cron" and not cron_expr:
         raise HTTPException(status_code=400, detail="定时作业需要 cron 表达式")
     if job_type == "once" and not scheduled_at:
         raise HTTPException(status_code=400, detail="执行计划需要执行时间")
     if action_type == "command" and not commands and not script_id:
         raise HTTPException(status_code=400, detail="命令类型作业需要命令或脚本")
+    if action_type == "script_run" and not script_id:
+        raise HTTPException(status_code=400, detail="自动化变更作业需要选择一个已发布的脚本")
+
+    # 5. ALL VALIDATIONS PASSED -> Consume approval token
+    if not skip_approval_verification:
+        approval_record = consume_approval(approval_token)
+        if not approval_record:
+            raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
 
     now = datetime.now().isoformat()
     job_id = str(uuid.uuid4())
@@ -172,6 +179,9 @@ def create_scheduled_job(
                 "approval_skipped": skip_approval_verification,
             },
         )
+        
+        # Refresh scheduler
+        refresh_dynamic_scheduler()
 
         return {
             "success": True,
@@ -231,6 +241,9 @@ def toggle_scheduled_job(
         )
         conn.commit()
 
+        # Refresh scheduler
+        refresh_dynamic_scheduler()
+
         return {"success": True, "message": "已更新"}
     finally:
         conn.close()
@@ -263,6 +276,9 @@ def delete_scheduled_job(
             source_ip=request.client.host if request.client else None,
             details={"job_id": job_id, "job_name": row["name"]},
         )
+
+        # Refresh scheduler
+        refresh_dynamic_scheduler()
 
         return {"success": True, "message": "已删除"}
     finally:
@@ -311,8 +327,8 @@ def update_scheduled_job(
 
         if not name:
             raise HTTPException(status_code=400, detail="作业名称不能为空")
-        if row["job_type"] == "cron" and action_type not in ("backup", "inspection"):
-            raise HTTPException(status_code=400, detail="定时作业仅支持配置备份和设备巡检")
+        if row["job_type"] == "cron" and action_type not in ("backup", "inspection", "script_run"):
+            raise HTTPException(status_code=400, detail="定时作业仅支持配置备份、设备巡检和脚本执行")
         if row["job_type"] == "cron" and not cron_expr:
             raise HTTPException(status_code=400, detail="定时作业需要 cron 表达式")
 
@@ -339,6 +355,9 @@ def update_scheduled_job(
             source_ip=request.client.host if request.client else None,
             details={"job_id": job_id, "job_name": name, "changes": payload},
         )
+        
+        # Refresh scheduler
+        refresh_dynamic_scheduler()
 
         return {"success": True, "message": "作业已更新"}
     finally:

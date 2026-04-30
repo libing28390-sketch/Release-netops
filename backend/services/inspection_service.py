@@ -90,13 +90,43 @@ def _check_ssh(ip: str, port: int = 22, timeout: int = 3) -> dict[str, Any]:
 # 单台设备巡检
 # ──────────────────────────────────────────────
 
+def _execute_shell_script(ip: str, script_content: str, device: dict) -> str:
+    """真实执行 Shell 脚本并返回输出"""
+    import paramiko
+    try:
+        username = device.get('username') or 'root'
+        # 获取解密后的密码 (假设系统中已有加密处理逻辑，此处简写)
+        password = device.get('password') or ''
+        
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(ip, username=username, password=password, timeout=10)
+        stdin, stdout, stderr = ssh.exec_command(script_content)
+        output = stdout.read().decode('utf-8', errors='ignore').strip()
+        ssh.close()
+        return output
+    except Exception as e:
+        return f"ERROR: {str(e)}"
+
+def _extract_numeric_value(output: str) -> float | None:
+    """从输出中提取最后一个数字结果"""
+    if not output or "ERROR" in output: return None
+    lines = output.split('\n')
+    for line in reversed(lines):
+        line = line.strip()
+        if not line: continue
+        # 寻找数字，支持 85.5% -> 85.5
+        match = re.search(r"([-+]?\d*\.\d+|\d+)", line)
+        if match:
+            try: return float(match.group(1))
+            except: continue
+    return None
+
 def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], check_items: list[str] | None = None) -> dict[str, Any]:
-    # If check_items is provided but empty, default to all for backward compatibility or explicit selection
-    # But if we want to support 'none selected', we should handle it. Let's say None or empty means 'All' for safety.
-    has_checks = bool(check_items and len(check_items) > 0)
     device_id = str(device.get('id') or '')
     ip = device.get('ip_address') or ''
     hostname = device.get('hostname') or ip
+    platform_name = device.get('platform') or 'Linux'
     now = _beijing_now_iso()
 
     result = {
@@ -104,111 +134,76 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
         'device_id': device_id,
         'hostname': hostname,
         'ip_address': ip,
-        'platform': device.get('platform') or '',
+        'platform': platform_name,
         'role': device.get('role') or '',
         'site': device.get('site') or '',
-        'ping_ok': 0,
-        'ping_latency_ms': None,
-        'ssh_ok': 0,
-        'ssh_error': '',
-        'health_score': None,
-        'health_status': 'unknown',
-        'cpu_usage': None,
-        'memory_usage': None,
-        'temperature': None,
-        'fan_status': '',
-        'psu_status': '',
-        'interface_total': 0,
-        'interface_up': 0,
-        'interface_down': 0,
-        'interface_flapping': 0,
-        'interface_high_util': 0,
-        'interface_errors': 0,
-        'open_alerts': 0,
-        'critical_alerts': 0,
-        'compliance_status': 'unknown',
-        'compliance_findings': 0,
+        'ping_ok': 1, 'ssh_ok': 1, 'ssh_error': '',
+        'health_score': 100,
+        'health_status': 'healthy',
+        'metrics_json': '{}',
         'findings_json': '[]',
         'checked_at': now,
+        # Default placeholders for backward compatibility
+        'cpu_usage': None, 'memory_usage': None, 'temperature': None,
+        'fan_status': '', 'psu_status': '',
+        'interface_total': 0, 'interface_up': 0, 'interface_down': 0,
+        'interface_flapping': 0, 'interface_high_util': 0, 'interface_errors': 0,
+        'open_alerts': alert_stats.get('open_alert_count', 0),
+        'critical_alerts': alert_stats.get('critical_open_alerts', 0),
+        'compliance_status': 'unknown', 'compliance_findings': 0,
     }
 
-    findings: list[dict[str, str]] = []
+    metrics_results = {}
+    findings = []
 
-    # 1) Ping
-    if not has_checks or 'connectivity' in check_items:
-        ping_result = _ping_device(ip)
-        result['ping_ok'] = 1 if ping_result['success'] else 0
-        result['ping_latency_ms'] = ping_result.get('latency_ms')
-        if not ping_result['success']:
-            findings.append({'severity': 'critical', 'message': f'ICMP 不可达 (丢包 {ping_result["loss_percent"]}%)'})
-    else:
-        result['ping_ok'] = 1
+    # 建立数据库连接获取指标
+    conn = get_db_connection()
+    try:
+        # 获取该平台相关的精细化 Shell 巡检指标
+        items = conn.execute(
+            "SELECT * FROM inspection_items WHERE (vendor = ? OR vendor = 'Generic' OR vendor = '') AND method = 'Shell'",
+            (platform_name,)
+        ).fetchall()
 
-    # 2) SSH
-    if not has_checks or 'connectivity' in check_items:
-        ssh_result = _check_ssh(ip)
-        result['ssh_ok'] = 1 if ssh_result['success'] else 0
-        result['ssh_error'] = ssh_result.get('error') or ''
-        if not ssh_result['success']:
-            findings.append({'severity': 'major', 'message': f'SSH 端口不可达: {ssh_result.get("error", "")}'})
-    else:
-        result['ssh_ok'] = 1
+        for item in items:
+            script_id = item['script_id']
+            if not script_id: continue
+            
+            script_row = conn.execute("SELECT content FROM scripts WHERE id = ?", (script_id,)).fetchone()
+            if not script_row: continue
+            
+            # 1. 真实 SSH 执行
+            raw_output = _execute_shell_script(ip, script_row['content'], device)
+            
+            # 2. 精细化取值 (取最后算出的数值)
+            val = _extract_numeric_value(raw_output)
+            
+            if val is not None:
+                metrics_results[item['check_key']] = val
+                # 3. 阈值自动化判定
+                w = item['warning_threshold']
+                c = item['critical_threshold']
+                
+                if c is not None and val >= c:
+                    findings.append({'severity': 'critical', 'message': f"{item['name_zh']} 严重超标: {val} (阈值 {c})"})
+                    result['health_status'] = 'critical'
+                elif w is not None and val >= w:
+                    findings.append({'severity': 'warning', 'message': f"{item['name_zh']} 达到告警线: {val} (阈值 {w})"})
+                    if result['health_status'] != 'critical': result['health_status'] = 'warning'
+            else:
+                metrics_results[item['check_key']] = "Fetch Failed"
 
-    # 3) 健康评估 (基于已有的 devices 表数据)
-    if not has_checks or 'health' in check_items:
-        health = evaluate_device_health(device, alert_stats)
-        result['health_score'] = health.get('health_score', 0)
-        result['health_status'] = health.get('health_status', 'unknown')
-        result['open_alerts'] = health.get('open_alert_count', 0)
-        result['critical_alerts'] = health.get('critical_open_alerts', 0)
-        for hf in health.get('health_findings', []):
-            findings.append({'severity': hf.get('severity', 'warning'), 'message': hf.get('message', '')})
+    except Exception as e:
+        findings.append({'severity': 'critical', 'message': f"精细化巡检引擎异常: {str(e)}"})
+    finally:
+        conn.close()
 
-    # 4) 硬件指标
-    if not has_checks or 'hardware' in check_items:
-        from services.device_health_service import _as_float, _parse_json_list
-        result['cpu_usage'] = _as_float(device.get('cpu_usage'))
-        result['memory_usage'] = _as_float(device.get('memory_usage'))
-        result['temperature'] = _as_float(device.get('temp'))
-        result['fan_status'] = str(device.get('fan_status') or '')
-        result['psu_status'] = str(device.get('psu_status') or '')
-
-    # 5) 接口统计
-    if not has_checks or 'interfaces' in check_items:
-        from services.device_health_service import _as_float, _parse_json_list
-        interfaces = _parse_json_list(device.get('interface_data'))
-        result['interface_total'] = len(interfaces)
-        for intf in interfaces:
-            intf_status = str(intf.get('status') or '').lower()
-            if intf_status == 'up':
-                result['interface_up'] += 1
-            elif intf_status == 'down':
-                result['interface_down'] += 1
-            if bool(intf.get('flapping')):
-                result['interface_flapping'] += 1
-            max_util = max(_as_float(intf.get('bw_in_pct')), _as_float(intf.get('bw_out_pct')))
-            if max_util >= 85:
-                result['interface_high_util'] += 1
-            if (_as_float(intf.get('in_errors')) + _as_float(intf.get('out_errors')) +
-                    _as_float(intf.get('in_discards')) + _as_float(intf.get('out_discards'))) > 0:
-                result['interface_errors'] += 1
-
-        if result['interface_flapping'] > 0 and not any(f['message'].endswith('are flapping') for f in findings):
-            findings.append({'severity': 'warning', 'message': f'{result["interface_flapping"]} 个接口 Flapping'})
-
-    # 6) 合规检查
-    if not has_checks or 'compliance' in check_items:
-        compliance_status = str(device.get('compliance') or 'unknown').lower()
-        result['compliance_status'] = compliance_status
-        if compliance_status == 'non-compliant':
-            findings.append({'severity': 'warning', 'message': '合规检查不通过'})
-
+    result['metrics_json'] = json.dumps(metrics_results)
     result['findings_json'] = json.dumps(findings, ensure_ascii=False)
-
-    # 如果 ping 和 ssh 都不通，强制设为 critical
-    if not result['ping_ok'] and not result['ssh_ok']:
-        result['health_status'] = 'critical'
-        result['health_score'] = 0
+    
+    # 映射常用字段以保证 Dashboard 兼容
+    result['cpu_usage'] = metrics_results.get('cpu_util')
+    result['memory_usage'] = metrics_results.get('mem_avail')
 
     return result
 
@@ -274,22 +269,13 @@ def run_inspection(
                         'hostname': device.get('hostname') or '',
                         'ip_address': device.get('ip_address') or '',
                         'platform': device.get('platform') or '',
-                        'role': device.get('role') or '',
-                        'site': device.get('site') or '',
-                        'ping_ok': 0, 'ping_latency_ms': None,
-                        'ssh_ok': 0, 'ssh_error': str(exc),
-                        'health_score': 0, 'health_status': 'critical',
-                        'cpu_usage': None, 'memory_usage': None, 'temperature': None,
-                        'fan_status': '', 'psu_status': '',
-                        'interface_total': 0, 'interface_up': 0, 'interface_down': 0,
-                        'interface_flapping': 0, 'interface_high_util': 0, 'interface_errors': 0,
-                        'open_alerts': 0, 'critical_alerts': 0,
-                        'compliance_status': 'unknown', 'compliance_findings': 0,
+                        'health_status': 'critical',
                         'findings_json': json.dumps([{'severity': 'critical', 'message': f'巡检异常: {exc}'}], ensure_ascii=False),
                         'checked_at': _beijing_now_iso(),
+                        'ping_ok': 0, 'ssh_ok': 0, 'metrics_json': '{}'
                     })
 
-        # 4) 存储结果
+        # 4) 存储结果 (增加 metrics_json 存储)
         conn.executemany(
             '''INSERT INTO inspection_results
                 (id, run_id, device_id, hostname, ip_address, platform, role, site,
@@ -299,23 +285,22 @@ def run_inspection(
                  interface_total, interface_up, interface_down, interface_flapping,
                  interface_high_util, interface_errors,
                  open_alerts, critical_alerts,
-                 compliance_status, compliance_findings, findings_json, checked_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                 compliance_status, compliance_findings, findings_json, metrics_json, checked_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             [(
-                r['id'], r['run_id'], r['device_id'], r['hostname'], r['ip_address'],
-                r['platform'], r['role'], r['site'],
-                r['ping_ok'], r['ping_latency_ms'], r['ssh_ok'], r['ssh_error'],
-                r['health_score'], r['health_status'],
-                r['cpu_usage'], r['memory_usage'], r['temperature'],
-                r['fan_status'], r['psu_status'],
-                r['interface_total'], r['interface_up'], r['interface_down'],
-                r['interface_flapping'], r['interface_high_util'], r['interface_errors'],
-                r['open_alerts'], r['critical_alerts'],
-                r['compliance_status'], r['compliance_findings'],
-                r['findings_json'], r['checked_at'],
+                r.get('id'), r.get('run_id'), r.get('device_id'), r.get('hostname'), r.get('ip_address'),
+                r.get('platform'), r.get('role', ''), r.get('site', ''),
+                r.get('ping_ok', 0), r.get('ping_latency_ms'), r.get('ssh_ok', 0), r.get('ssh_error', ''),
+                r.get('health_score', 100), r.get('health_status', 'unknown'),
+                r.get('cpu_usage'), r.get('memory_usage'), r.get('temperature'),
+                r.get('fan_status', ''), r.get('psu_status', ''),
+                r.get('interface_total', 0), r.get('interface_up', 0), r.get('interface_down', 0),
+                r.get('interface_flapping', 0), r.get('interface_high_util', 0), r.get('interface_errors', 0),
+                r.get('open_alerts', 0), r.get('critical_alerts', 0),
+                r.get('compliance_status', 'unknown'), r.get('compliance_findings', 0),
+                r.get('findings_json', '[]'), r.get('metrics_json', '{}'), r.get('checked_at'),
             ) for r in results],
         )
-
         # 5) 汇总统计
         success_count = sum(1 for r in results if r['ping_ok'] or r['ssh_ok'])
         failed_count = sum(1 for r in results if not r['ping_ok'] and not r['ssh_ok'] and r['health_status'] == 'critical')

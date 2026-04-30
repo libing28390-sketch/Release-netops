@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ClipboardList, Plus, Search, X, RefreshCw, ChevronRight,
   Clock, CheckCircle2, XCircle, AlertTriangle, Send,
@@ -476,6 +476,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const zh = language === 'zh';
   const isCreateView = initialView === 'create';
   const navigate = useNavigate();
+  const location = useLocation();
 
   // ── Data state ──
   const [orders, setOrders] = useState<ChangeOrder[]>([]);
@@ -510,6 +511,18 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       setTimeline([]);
     }
   }, [initialView]);
+ 
+  // Handle scenarioId from location state (for redirection from scenarios tab)
+  useEffect(() => {
+    if (location.state && (location.state as any).scenarioId) {
+      const scenarioId = (location.state as any).scenarioId;
+      setSelectedScenarioId(scenarioId);
+      setCommandMode('template');
+      setShowCreateModal(true);
+      // Optional: Clear state to avoid re-triggering
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   // ── Bookmarks ──
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
@@ -857,7 +870,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   }, [initialReviewerOptions, selectedGroupForInitial, initialApproverSearch]);
 
   const groupedInitialReviewers = useMemo(() => {
-    const map: Record<string, typeof initialReviewerOptions> = {};
+    const map: Record<string, UserOption[]> = {};
     initialReviewerOptions.forEach(u => {
       const matchSearch = !initialApproverSearch || 
         u.username.toLowerCase().includes(initialApproverSearch.toLowerCase()) || 
@@ -885,7 +898,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   }, [finalApproverOptions]);
 
   const groupedFinalApprovers = useMemo(() => {
-    const map: Record<string, typeof finalApproverOptions> = {};
+    const map: Record<string, UserOption[]> = {};
     finalApproverOptions.forEach(u => {
       const matchSearch = !finalApproverSearch || 
         u.username.toLowerCase().includes(finalApproverSearch.toLowerCase()) || 
@@ -3493,7 +3506,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                         {zh ? '没有匹配的终审人' : 'No matching approvers'}
                       </div>
                     ) : (
-                      Object.entries(groupedFinalApprovers).map(([groupName, reviewers]) => (
+                      (Object.entries(groupedFinalApprovers) as [string, UserOption[]][]).map(([groupName, reviewers]) => (
                         <div key={groupName} className="p-2 border-b border-black/5 last:border-b-0">
                           <div className="text-[11px] font-bold text-[#00bceb] bg-[#00bceb]/10 px-2.5 py-1 rounded-lg inline-block mb-1.5">
                             {groupName}
@@ -3602,7 +3615,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                         {zh ? '没有匹配的初审人' : 'No matching reviewers'}
                       </div>
                     ) : (
-                      Object.entries(groupedInitialReviewers).map(([groupName, reviewers]) => (
+                      (Object.entries(groupedInitialReviewers) as [string, UserOption[]][]).map(([groupName, reviewers]) => (
                         <div key={groupName} className="p-2 border-b border-black/5 last:border-b-0">
                           <div className="text-[11px] font-bold text-[#00bceb] bg-[#00bceb]/10 px-2.5 py-1 rounded-lg inline-block mb-1.5">
                             {groupName}

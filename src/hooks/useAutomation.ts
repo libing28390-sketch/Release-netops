@@ -32,16 +32,7 @@ export const useAutomation = ({
   const [editedScriptContent, setEditedScriptContent] = useState<string>('');
   
   const [customCommand, setCustomCommand] = useState('');
-  const [customCommandMode, setCustomCommandMode] = useState<'query' | 'config'>('query');
-  const [configReason, setConfigReason] = useState('');
-  
-  // Config approval flow
-  const [approverUsername, setApproverUsername] = useState('');
-  const [approvalCode, setApprovalCode] = useState('');
-  const [approvalToken, setApprovalToken] = useState('');
-  const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified' | 'error'>('idle');
-  const [approvalError, setApprovalError] = useState('');
-  const [approvalCountdown, setApprovalCountdown] = useState(0);
+  const [customCommandVars, setCustomCommandVars] = useState<string[]>([]);
   const [scriptParams, setScriptParams] = useState<Record<string, string>>({});
 
   // Command favorites
@@ -53,7 +44,34 @@ export const useAutomation = ({
       return [];
     }
   });
-  const [showFavorites, setShowFavorites] = useState(false);
+  const [showFavorites, setShowFavorites] = useState(() => {
+    try {
+      const val = JSON.parse(localStorage.getItem('cmdFavorites') || '[]');
+      return Array.isArray(val) && val.length > 0;
+    } catch {
+      return false;
+    }
+  });
+  const [commandHistory, setCommandHistory] = useState<string[]>(() => {
+    try {
+      const val = JSON.parse(localStorage.getItem('cmdHistory') || '[]');
+      return Array.isArray(val) ? val : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [savedQueries, setSavedQueries] = useState<any[]>(() => {
+    try {
+      const raw = localStorage.getItem('quickQuerySaved');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [saveQuickQueryModalOpen, setSaveQuickQueryModalOpen] = useState(false);
+  const [quickQuerySaveLabel, setQuickQuerySaveLabel] = useState('');
   
   // Script variable substitution
   const [scriptVars, setScriptVars] = useState<Record<string, string>>({});
@@ -105,6 +123,17 @@ export const useAutomation = ({
   const [automationSearch, setAutomationSearch] = useState('');
   const [scenarioSearch, setScenarioSearch] = useState('');
   const [playbookHistoryPageSize, setPlaybookHistoryPageSize] = useState(10);
+  const [changeTicket, setChangeTicket] = useState('');
+
+  const onCustomCommandChange = useCallback((value: string) => {
+    setCustomCommand(value);
+    const vars = value.match(/{{(.*?)}}/g);
+    if (vars) {
+      setCustomCommandVars([...new Set(vars.map(v => v.replace(/{{|}}/g, '')))]);
+    } else {
+      setCustomCommandVars([]);
+    }
+  }, []);
 
   const handleAutomationSearch = useCallback((value: string) => {
     setAutomationSearch(value);
@@ -121,11 +150,6 @@ export const useAutomation = ({
   const [showDiff, setShowDiff] = useState(false); // Needed for runTask closure
   const [currentDiff, setCurrentDiff] = useState({ before: '', after: '' });
 
-  const customCommandVars = useMemo(() => {
-    const matches = [...customCommand.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)];
-    return [...new Set(matches.map(m => m[1]))];
-  }, [customCommand]);
-  
   const wsRef = useRef<WebSocket | null>(null);
 
   const extractVars = useCallback((text: string): string[] => {
@@ -527,7 +551,7 @@ export const useAutomation = ({
         return; 
       }
       loadScenarios();
-      if (automationPage === 'execute' || automationPage === 'scenarios' || automationPage === 'queries') {
+      if (automationPage === 'execute' || automationPage === 'scenarios' || automationPage === 'history') {
         loadPlaybookHistory();
       }
     }
@@ -642,7 +666,7 @@ export const useAutomation = ({
             }
           } catch { /* ignore */ }
         };
-        navigate('/automation/queries');
+        navigate('/automation/history');
       }
     } catch (e: any) {
       showToast(`Execution error: ${e.message || 'Network error'}`, 'error');
@@ -676,9 +700,7 @@ export const useAutomation = ({
             ? undefined 
             : (selectedScript?.id || selectedAutomationTemplate?.id),
           command: (taskName === 'VLAN Update' || taskName === 'Compliance Audit' || taskName === 'Custom Command') ? commandPayload : editedScriptContent,
-          isConfig: taskName === 'VLAN Update' ? true : taskName === 'Custom Command' ? customCommandMode === 'config' : (!!selectedScript || !!selectedAutomationTemplate),
-          config_reason: (taskName === 'Custom Command' && customCommandMode === 'config') ? configReason : undefined,
-          approval_token: (taskName === 'Custom Command' && customCommandMode === 'config') ? approvalToken : undefined,
+          isConfig: (taskName === 'VLAN Update' || (!!selectedScript || !!selectedAutomationTemplate)),
           author: currentUser.username || 'admin',
           actor_id: currentUser.id,
           actor_role: currentUser.role || 'Administrator',
@@ -700,7 +722,7 @@ export const useAutomation = ({
     } finally {
       setIsAutomationTaskRunning(false);
     }
-  }, [selectedDevice, customCommand, selectedScript, selectedAutomationTemplate, editedScriptContent, customCommandMode, configReason, approvalToken, currentUser, showToast, loadJobs]);
+  }, [selectedDevice, customCommand, selectedScript, selectedAutomationTemplate, editedScriptContent, currentUser, showToast, loadJobs]);
 
   const runParsedCustomCommand = useCallback(async (label: string, command: string) => {
     const device = selectedDevice || (batchMode && batchDeviceIds.length === 1 ? devices.find((item) => item.id === batchDeviceIds[0]) : null);
@@ -722,7 +744,7 @@ export const useAutomation = ({
           'Content-Type': 'application/json',
           ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
         },
-        body: JSON.stringify({ command }),
+        body: JSON.stringify({ command, name: label }),
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -769,9 +791,9 @@ export const useAutomation = ({
           body: JSON.stringify({
             device_id: device.id,
             command: commandPayload,
-            isConfig: taskName === 'Custom Command' ? customCommandMode === 'config' : taskName !== 'Compliance Audit',
-            config_reason: (taskName === 'Custom Command' && customCommandMode === 'config') ? configReason : undefined,
-            approval_token: (taskName === 'Custom Command' && customCommandMode === 'config') ? approvalToken : undefined,
+            isConfig: taskName === 'Custom Command' ? false : (taskName !== 'Compliance Audit'),
+            change_ticket: changeTicket,
+            task_name: taskName,
             author: currentUser.username || 'admin',
             actor_id: currentUser.id,
             actor_role: currentUser.role || 'Administrator',
@@ -793,7 +815,7 @@ export const useAutomation = ({
     }
     showToast(`Batch task "${taskName}" completed on ${targets.length} devices`, 'success');
     return true;
-  }, [devices, batchDeviceIds, customCommand, dryRun, customCommandMode, configReason, approvalToken, currentUser, showToast, loadJobs, editedScriptContent]);
+  }, [devices, batchDeviceIds, customCommand, dryRun, currentUser, showToast, loadJobs, editedScriptContent, changeTicket]);
 
   const saveFavorite = useCallback((cmd: string) => {
     if (!cmd.trim()) return;
@@ -808,73 +830,7 @@ export const useAutomation = ({
     setShowCustomCommandModal(false);
     setShowFavorites(false);
     setCustomCommand('');
-    setConfigReason('');
-    setApproverUsername('');
-    setApprovalCode('');
-    setApprovalToken('');
-    setApprovalStatus('idle');
-    setApprovalError('');
-    setApprovalCountdown(0);
   }, []);
-
-  const handleRequestApproval = useCallback(async () => {
-    if (!approverUsername.trim() || configReason.trim().length < 2) return;
-    setApprovalStatus('sending');
-    setApprovalError('');
-    try {
-      const deviceName = batchMode ? `${batchDeviceIds.length} devices (batch)` : selectedDevice?.hostname || '';
-      const resp = await fetch('/api/config-approval/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('netops_token') || ''}` },
-        body: JSON.stringify({
-          approver_username: approverUsername.trim(),
-          config_reason: configReason.trim(),
-          device_hostname: deviceName,
-          command_preview: customCommand.trim(),
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        setApprovalStatus('error');
-        setApprovalError(data.detail || 'Failed to send approval code');
-        return;
-      }
-      setApprovalToken(data.approval_token);
-      setApprovalStatus('sent');
-      showToast(language === 'zh' ? '验证码已发送至审批人飞书' : 'Code sent to approver via Feishu', 'success');
-      let sec = 60;
-      setApprovalCountdown(sec);
-      const timer = setInterval(() => {
-        sec -= 1;
-        setApprovalCountdown(sec);
-        if (sec <= 0) clearInterval(timer);
-      }, 1000);
-    } catch {
-      setApprovalStatus('error');
-      setApprovalError(language === 'zh' ? '网络错误，请重试' : 'Network error, please retry');
-    }
-  }, [approverUsername, configReason, batchMode, batchDeviceIds, selectedDevice, customCommand, language, showToast]);
-
-  const handleVerifyApproval = useCallback(async () => {
-    if (approvalCode.length !== 6 || !approvalToken) return;
-    try {
-      const resp = await fetch('/api/config-approval/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('netops_token') || ''}` },
-        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        setApprovalError(data.detail || 'Verification failed');
-        return;
-      }
-      setApprovalStatus('verified');
-      setApprovalError('');
-      showToast(language === 'zh' ? '审批验证通过 ✓' : 'Approval verified ✓', 'success');
-    } catch {
-      setApprovalError(language === 'zh' ? '网络错误，请重试' : 'Network error, please retry');
-    }
-  }, [approvalCode, approvalToken, language, showToast]);
 
   const submitCustomCommand = useCallback(async () => {
     const resolvedCommand = applyScriptVars(customCommand).trim();
@@ -882,6 +838,16 @@ export const useAutomation = ({
       showToast(language === 'zh' ? '请先输入命令内容' : 'Enter command content first', 'error');
       return;
     }
+
+    // Save to history (at the beginning of history, unique, max 20)
+    const rawCmd = customCommand.trim();
+    setCommandHistory(prev => {
+      const filtered = prev.filter(c => c !== rawCmd);
+      const updated = [rawCmd, ...filtered].slice(0, 20);
+      localStorage.setItem('cmdHistory', JSON.stringify(updated));
+      return updated;
+    });
+
     const missingVars = customCommandVars.filter((key) => !String(scriptVars[key] ?? '').trim());
     if (missingVars.length > 0) {
       showToast(language === 'zh' ? `请先填写变量: ${missingVars.join('、')}` : `Fill variable values first: ${missingVars.join(', ')}`, 'error');
@@ -900,14 +866,10 @@ export const useAutomation = ({
       showToast(language === 'zh' ? '请先选择目标设备' : 'Select a target device first', 'error');
       return;
     }
-    if (customCommandMode === 'query') {
-      const ok = await runParsedCustomCommand(language === 'zh' ? '自定义查询' : 'Custom Query', resolvedCommand);
-      if (ok) closeCustomCommandModal();
-      return;
-    }
-    const ok = await runTask('Custom Command');
+    // Always use runParsedCustomCommand for single device as custom commands are now query-only
+    const ok = await runParsedCustomCommand(language === 'zh' ? '自定义查询' : 'Custom Query', resolvedCommand);
     if (ok) closeCustomCommandModal();
-  }, [applyScriptVars, customCommand, customCommandVars, scriptVars, batchMode, batchDeviceIds, runBatchTask, closeCustomCommandModal, selectedDevice, customCommandMode, runParsedCustomCommand, runTask, language, showToast]);
+  }, [applyScriptVars, customCommand, customCommandVars, scriptVars, batchMode, batchDeviceIds, runBatchTask, closeCustomCommandModal, selectedDevice, runParsedCustomCommand, language, showToast]);
 
   const sanitizeExportName = useCallback((value: string, fallback: string) => {
     const normalized = String(value || fallback)
@@ -996,9 +958,12 @@ export const useAutomation = ({
               const resp = await fetch(`/api/devices/${device.id}/operational-data`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
-                body: JSON.stringify({ categories: [operationalCategory] }),
+                body: JSON.stringify({ categories: [operationalCategory], name: label }),
               });
-              if (!resp.ok) return { device, ok: false, error: resp.statusText };
+              if (!resp.ok) {
+                const errData = await resp.json().catch(() => ({}));
+                return { device, ok: false, error: errData.detail || errData.error || resp.statusText };
+              }
               const data = await resp.json();
               return { device, ok: true, data };
             } catch (err: any) {
@@ -1058,13 +1023,17 @@ export const useAutomation = ({
                 device_id: device.id,
                 command: commands,
                 isConfig: false,
-                save_history: false,
+                save_history: true,
+                task_name: label || (language === 'zh' ? '自定义命令' : 'Custom Command'),
                 author: currentUser.username || 'admin',
                 actor_id: currentUser.id,
                 actor_role: currentUser.role || 'Administrator',
               }),
             });
-            if (!resp.ok) return { device, ok: false, error: resp.statusText };
+            if (!resp.ok) {
+              const errData = await resp.json().catch(() => ({}));
+              return { device, ok: false, error: errData.detail || errData.error || resp.statusText };
+            }
             const data = await resp.json();
             return { device, ok: true, data };
           } catch (err: any) {
@@ -1091,6 +1060,69 @@ export const useAutomation = ({
     }
   }, [selectedDevice, batchMode, batchDeviceIds, devices, currentUser, language, showToast, formatQuickQueryRawOutput]);
 
+  const handleRerun = useCallback(async (execution: any) => {
+    try {
+      const resp = await fetch(`/api/playbooks/${execution.id}/full`, { 
+        headers: { Authorization: `Bearer ${localStorage.getItem('netops_token')}` } 
+      });
+      if (!resp.ok) throw new Error('Fetch failed');
+      
+      const full = await resp.json();
+      const devIds = Array.isArray(full.device_ids) ? full.device_ids : [];
+      
+      // Reset current state first to avoid mixing old and new rerun states
+      setCustomCommand('');
+      setSelectedScenario(null);
+      setPlaybookVars({});
+      setPlaybookDeviceIds([]);
+      setBatchDeviceIds([]);
+
+      if (full.scenario_id === 'custom' || full.scenario_id === 'instant') {
+        const cmds = full.phases?.execute?.commands || [];
+        setCustomCommand(cmds.join('\n'));
+        
+        if (devIds.length > 1) {
+          setBatchMode(true);
+          setBatchDeviceIds(devIds);
+        } else if (devIds.length === 1) {
+          setBatchMode(false);
+          const devObj = devices.find(d => d.id === devIds[0]);
+          if (devObj) setSelectedDevice(devObj);
+          else setBatchDeviceIds(devIds); // fallback if device object not found
+        } else {
+          setBatchMode(false);
+        }
+        
+        if (typeof navigate === 'function') navigate('/automation/execute');
+      } else {
+        // Find scenario object to ensure all required metadata (variables, platforms) is present
+        const scenarioObj = scenarios.find(s => s.id === full.scenario_id || s.name === full.scenario_name);
+        if (scenarioObj) {
+          handleSelectPlaybookScenario(scenarioObj);
+          setPlaybookVars(full.variables || {});
+          setPlaybookDeviceIds(devIds);
+          if (devIds.length > 1) {
+            setBatchMode(true);
+            setBatchDeviceIds(devIds);
+          } else if (devIds.length === 1) {
+            setBatchMode(false);
+            const devObj = devices.find(d => d.id === devIds[0]);
+            if (devObj) setSelectedDevice(devObj);
+            else setBatchDeviceIds(devIds);
+          }
+          if (typeof navigate === 'function') navigate('/automation/execute');
+        } else {
+          showToast(language === 'zh' ? '未找到对应的场景模板' : 'Scenario template not found', 'error');
+        }
+      }
+      
+      showToast(language === 'zh' ? '已填入历史执行配置，您可以修改参数或目标设备后重新执行' : 'History config pre-filled. You can modify parameters or devices before rerunning.', 'success');
+    } catch (err) {
+      console.error('Rerun failed:', err);
+      showToast(language === 'zh' ? '加载历史记录失败' : 'Failed to load historical record', 'error');
+    }
+  }, [navigate, language, showToast, scenarios, devices, handleSelectPlaybookScenario, setPlaybookVars, setPlaybookDeviceIds, setCustomCommand, setBatchMode, setBatchDeviceIds, setSelectedDevice, setSelectedScenario]);
+
   return {
     jobs, setJobs, scheduledTasks, setScheduledTasks, scenarios, platforms, playbookExecutions,
     selectedScenario, setSelectedScenario, playbookVars, setPlaybookVars, playbookDeviceIds, setPlaybookDeviceIds,
@@ -1099,19 +1131,18 @@ export const useAutomation = ({
     quickPlaybookPlatform, setQuickPlaybookPlatform, quickPlaybookDryRun, setQuickPlaybookDryRun,
     quickPlaybookConcurrency, setQuickPlaybookConcurrency, scripts, setScripts, selectedScript, setSelectedScript,
     selectedAutomationTemplate, setSelectedAutomationTemplate, editedScriptContent, setEditedScriptContent,
-    customCommand, setCustomCommand, customCommandMode, setCustomCommandMode, configReason, setConfigReason,
-    approverUsername, setApproverUsername, approvalCode, setApprovalCode, approvalToken, setApprovalToken,
-    approvalStatus, setApprovalStatus, approvalError, setApprovalError, approvalCountdown, setApprovalCountdown,
+    customCommand, setCustomCommand, onCustomCommandChange,
     scriptParams, setScriptParams, commandFavorites, setCommandFavorites, showFavorites, setShowFavorites,
+    commandHistory, setCommandHistory,
     scriptVars, setScriptVars, batchMode, setBatchMode, batchDeviceIds, setBatchDeviceIds,
     batchResults, setBatchResults, isBatchRunning, setIsBatchRunning, dryRun, setDryRun,
     quickQueryOutput, setQuickQueryOutput, quickQueryRunning, setQuickQueryRunning, quickQueryLabel, setQuickQueryLabel,
     quickQueryStructured, setQuickQueryStructured, quickQueryView, setQuickQueryView, quickQueryMaximized, setQuickQueryMaximized,
-    quickQueryCommands, setQuickQueryCommands, selectedJob, setSelectedJob, showCustomCommandModal, setShowCustomCommandModal,
+    quickQueryCommands, setQuickQueryCommands, changeTicket, setChangeTicket, selectedJob, setSelectedJob, showCustomCommandModal, setShowCustomCommandModal,
     showCmdPreviewModal, setShowCmdPreviewModal, isAutomationTaskRunning, setIsAutomationTaskRunning, showDiff, setShowDiff,
     currentDiff, setCurrentDiff, customCommandVars, applyScriptVars, formatQuickQueryRawOutput, getQuickQueryCommands,
     runTask, runParsedCustomCommand, rollback, runBatchTask, saveFavorite, isFavorited, closeCustomCommandModal,
-    handleRequestApproval, handleVerifyApproval, submitCustomCommand, handleSelectPlaybookScenario, handlePlaybookPlatformChange,
+    submitCustomCommand, handleSelectPlaybookScenario, handlePlaybookPlatformChange,
     handlePlaybookVariableChange, handleTogglePlaybookDevice, sanitizeExportName, getQuickQueryStructuredTable,
     exportQuickQueryTable, runQuickQuery, handleToggleBatchMode, handleToggleBatchDevice, handleResetQuickQuery,
     handleSelectAutomationDevice, handleClearQuickScenario, handleResetQuickExecutionState, quickPlaybookPreview,
@@ -1126,5 +1157,43 @@ export const useAutomation = ({
     runQuickPlaybook,
     playbookHistoryPageSize, setPlaybookHistoryPageSize,
     extractVars, splitLines,
+    saveQuickQueryModalOpen, setSaveQuickQueryModalOpen, quickQuerySaveLabel, setQuickQuerySaveLabel,
+    savedQueries,
+    handleSaveQuickQuery: () => {
+      if (!quickQuerySaveLabel.trim()) {
+        showToast(language === 'zh' ? '请输入查询名称' : 'Please enter a name for the query', 'error');
+        return;
+      }
+      if (!customCommand.trim()) {
+        showToast(language === 'zh' ? '命令内容不能为空' : 'Command content cannot be empty', 'error');
+        return;
+      }
+      try {
+        const raw = localStorage.getItem('quickQuerySaved') || '[]';
+        const saved = JSON.parse(raw);
+        const list = Array.isArray(saved) ? saved : [];
+        
+        // Check for duplicates
+        if (list.some((item: any) => item.label === quickQuerySaveLabel.trim())) {
+          showToast(language === 'zh' ? '该查询名称已存在，请使用唯一名称' : 'This query name already exists. Please use a unique name.', 'error');
+          return;
+        }
+
+        list.push({
+          icon: '⭐',
+          label: quickQuerySaveLabel.trim(),
+          labelEn: quickQuerySaveLabel.trim(),
+          cmds: customCommand.trim()
+        });
+        localStorage.setItem('quickQuerySaved', JSON.stringify(list));
+        setSavedQueries(list);
+        showToast(language === 'zh' ? '已成功保存到快捷查询，您可以在自动化页面查看' : 'Saved to Quick Query. You can find it on the Automation page.', 'success');
+        setSaveQuickQueryModalOpen(false);
+        setQuickQuerySaveLabel('');
+      } catch (e) {
+        showToast(language === 'zh' ? '保存失败' : 'Failed to save', 'error');
+      }
+    },
+    handleRerun
   };
 };
