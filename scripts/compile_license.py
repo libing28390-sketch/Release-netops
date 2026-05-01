@@ -17,8 +17,8 @@ def build():
     from setuptools import Extension
     
     extensions = [
-        Extension("backend.license.verifier", ["backend/license/verifier.py"]),
-        Extension("backend.license.crypto", ["backend/license/crypto.py"])
+        Extension("backend.license_auth.verifier", ["backend/license_auth/verifier.py"]),
+        Extension("backend.license_auth.crypto", ["backend/license_auth/crypto.py"])
     ]
     
     print("开始编译核心模块...")
@@ -32,11 +32,11 @@ def build():
     )
     
     # 编译完成后，你可以选择自动删除原来的 .py 文件（源码）
-    print("\n编译完成！生成的动态链接库已放在 backend/license 目录下。")
+    print("\n编译完成！生成的动态链接库已放在 backend/license_auth 目录下。")
     print("------------------------------------------------------")
     print("安全建议: 在最终发布部署前（例如 Docker 镜像打包环节），")
     print("可以通过加入以下代码将源码彻底删除：")
-    for f in ["backend/license/verifier.py", "backend/license/crypto.py"]:
+    for f in ["backend/license_auth/verifier.py", "backend/license_auth/crypto.py"]:
         print(f"os.remove('{f}')")
     print("------------------------------------------------------")
 
