@@ -28,7 +28,8 @@ logger = logging.getLogger("license.middleware")
 
 # Paths that are ALWAYS allowed regardless of license state
 _EXEMPT_PREFIXES = (
-    "/api/license",      # license management endpoints themselves
+    "/api/license/status", # explicit status check
+    "/api/license/upload", # explicit upload
     "/api/health",       # health check
     "/api/setup",        # initial setup
     "/api/login",        # user authentication (login)
@@ -113,13 +114,22 @@ class LicenseMiddleware(BaseHTTPMiddleware):
                 )
 
         # Hard block: invalid, corrupted, missing, tampered
-        logger.warning(f"[License] Blocked request {request.method} {path} — {error_msg}")
+        # For GET requests, we allow them to pass through but add a header (graceful mode)
+        # This ensures the UI can load, users can login, and reach the license page.
+        if request.method == "GET":
+            response = await call_next(request)
+            response.headers["X-License-Status"] = "invalid"
+            response.headers["X-License-Error"] = error_msg
+            return response
+
+        logger.warning(f"[License] Blocked write request {request.method} {path} — {error_msg}")
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
             content={
-                "detail": "License validation failed. Please provide a valid license.",
+                "detail": f"License validation failed: {error_msg}. Write operations are blocked.",
                 "license_error": error_msg,
                 "code": "LICENSE_INVALID",
+                "machine_id": get_machine_id()
             },
         )
 

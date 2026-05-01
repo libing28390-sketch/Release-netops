@@ -62,13 +62,15 @@ from slowapi.errors import RateLimitExceeded
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# Initialize Database
-init_db()
+# ── Startup ──
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── startup ──
     logger.info(f"Starting up {settings.PROJECT_NAME} in {settings.ENVIRONMENT} mode...")
+    
+    # Initialize Database once
+    init_db()
 
     # License validation at startup
     _lic = get_license_verifier()
