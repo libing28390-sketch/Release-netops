@@ -64,6 +64,11 @@ if _USE_PG:
         if _pg_pool is None:
             _pg_pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=2, maxconn=_POOL_SIZE, dsn=_DATABASE_URL,
+                # Enable TCP keepalives to prevent unexpected connection drops
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=5
             )
 
     _LIKE_RE = re.compile(r'\bLIKE\b', re.IGNORECASE)
@@ -209,6 +214,18 @@ def _make_raw_connection():
     if _USE_PG:
         _ensure_pg_pool()
         raw = _pg_pool.getconn()
+        # Add a simple health check for PG
+        try:
+            with raw.cursor() as tmp_cur:
+                tmp_cur.execute("SELECT 1")
+        except Exception:
+            # If health check fails, discard the bad connection and get a new one
+            try:
+                _pg_pool.putconn(raw, close=True)
+            except Exception:
+                pass
+            raw = _pg_pool.getconn()
+            
         return _PgPooledConnection(_PgRawConnection(raw), raw)
     else:
         conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
