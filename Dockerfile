@@ -28,9 +28,6 @@ COPY backend/ /app/backend/
 # Copy .env file if it exists at project root
 COPY .env* /app/
 
-# Explicitly remove legacy license folder if it was copied by accident
-RUN rm -rf /app/backend/license
-
 # Copy built frontend from build stage
 COPY --from=frontend-build /app/dist /app/dist
 

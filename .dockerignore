@@ -1,0 +1,29 @@
+# Git files
+.git
+.github
+.gitignore
+
+# Python cache
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Node modules
+node_modules
+dist-ssr
+
+# Old license folder (Security)
+backend/license
+
+# Local environment files
+.venv
+.vscode
+.idea
+.pytest_cache
+.env
+
+# Build artifacts
+*.so
+build/
+dist/
