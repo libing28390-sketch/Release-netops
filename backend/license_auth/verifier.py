@@ -117,10 +117,12 @@ class LicenseVerifier:
         Returns True if loaded successfully (does NOT validate yet).
         """
         # Load public key
+        abs_key_path = self._public_key_path.resolve()
         if not self._public_key_path.exists():
-            logger.error(f"[License] Public key not found: {self._public_key_path}")
-            self._cached_status = LicenseStatus(valid=False, error="Public key not found")
+            logger.error(f"[License] Public key NOT FOUND at: {abs_key_path} (relative: {self._public_key_path})")
+            self._cached_status = LicenseStatus(valid=False, error=f"Public key not found at {abs_key_path}")
             return False
+        logger.info(f"[License] Loading public key from: {abs_key_path}")
         self._public_key_pem = load_public_key_from_file(str(self._public_key_path))
 
         # Load license file

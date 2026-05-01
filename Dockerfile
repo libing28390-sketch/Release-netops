@@ -25,6 +25,12 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 # Copy backend code
 COPY backend/ /app/backend/
 
+# Copy .env file if it exists at project root
+COPY .env* /app/
+
+# Explicitly remove legacy license folder if it was copied by accident
+RUN rm -rf /app/backend/license
+
 # Copy built frontend from build stage
 COPY --from=frontend-build /app/dist /app/dist
 
@@ -35,6 +41,8 @@ RUN mkdir -p /app/data /app/backup /app/data/logs
 ENV NODE_ENV=production
 ENV PYTHONPATH=/app/backend
 ENV CREDENTIAL_ENCRYPTION_KEY=change-me-to-a-random-secret
+ENV ENVIRONMENT=production
+ENV LICENSE_PUBLIC_KEY_PATH=/app/backend/license_auth/keys/public.pem
 
 EXPOSE 8003
 
