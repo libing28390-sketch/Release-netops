@@ -129,9 +129,8 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
 
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('netops_token');
-    console.log('[ExecutionScheduleTab] Auth token present:', !!token);
     return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
-  }, []);
+  }, [localStorage.getItem('netops_token')]); // Re-evaluate if token changes
 
   /* ═══ FETCHERS ═══ */
   const fetchInspectionItems = useCallback(async () => {
@@ -187,10 +186,13 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
       let playbooks: any[] = [];
       if (pbResp.ok) {
         const j = await pbResp.json();
-        console.log('[ExecutionScheduleTab] Playbooks API raw response:', j);
         playbooks = Array.isArray(j) ? j : (j?.items || []);
+        console.log(`[ExecutionScheduleTab] Fetched ${playbooks.length} playbooks`);
       } else {
-        console.warn('[ExecutionScheduleTab] Playbooks API failed:', pbResp.status);
+        console.warn(`[ExecutionScheduleTab] Playbooks API failed: ${pbResp.status} ${pbResp.statusText}`);
+        if (pbResp.status === 403) {
+          showToast(zh ? '获取执行历史被拒绝 (403)' : 'Access denied to execution history (403)', 'error');
+        }
       }
 
       // 3. Normalize & Merge

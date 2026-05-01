@@ -34,7 +34,12 @@ from .models import LicenseFile, LicensePayload, LicenseStatus
 logger = logging.getLogger("license.verifier")
 
 def get_machine_id() -> str:
-    """Generate a unique machine ID based on MAC address."""
+    """Generate a unique machine ID based on MAC address.
+    Supports MACHINE_ID_OVERRIDE for Docker/Cloud deployments."""
+    override = os.environ.get("MACHINE_ID_OVERRIDE")
+    if override:
+        return override.strip().upper()
+        
     mac = uuid.getnode()
     h = hashlib.sha256(str(mac).encode("utf-8")).hexdigest().upper()
     return f"{h[:4]}-{h[4:8]}-{h[8:12]}-{h[12:16]}"
@@ -47,7 +52,7 @@ _GRACE_PERIOD_DAYS = 0  # hard cutoff: no grace period by default
 # Resolve paths relative to backend/ directory
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 _DEFAULT_LICENSE_PATH = _BACKEND_DIR.parent / "data" / "license.json"
-_DEFAULT_PUBLIC_KEY_PATH = _BACKEND_DIR / "license" / "keys" / "public.pem"
+_DEFAULT_PUBLIC_KEY_PATH = _BACKEND_DIR / "license_auth" / "keys" / "public.pem"
 
 
 class LicenseVerifier:

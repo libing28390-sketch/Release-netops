@@ -35,9 +35,9 @@ from api.inspections import router as inspections_router
 from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
-from license.api import router as license_router
-from license.middleware import LicenseMiddleware
-from license.verifier import get_license_verifier
+from license_auth.api import router as license_router
+from license_auth.middleware import LicenseMiddleware
+from license_auth.verifier import get_license_verifier
 from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
 import logging
 import os

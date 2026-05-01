@@ -1822,18 +1822,21 @@ def init_db():
             ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定进程是否存在', 'Shell', 'std_linux_proc', 'std_linux_proc', 1, 0, 'Linux', '', now, now),
         ]
         
-        sql = '''INSERT INTO inspection_items 
-                 (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'''
-        if _USE_PG:
-            sql = sql.replace('?', '%s')
-            # For PG, we use a different approach for ON CONFLICT since it's more complex with many columns
-            # But for seeding, let's keep it simple and just do many inserts with conflict handling if needed,
-            # or just skip if exists. For now, let's use a simpler replace-like logic.
-            cursor.execute("DELETE FROM inspection_items WHERE id IN (%s)" % ",".join(["'%s'" % x[0] for x in default_items]))
-            cursor.executemany(sql, default_items)
-        else:
-            cursor.executemany('INSERT OR REPLACE INTO inspection_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', default_items)
+        cursor.execute('INSERT OR REPLACE INTO inspection_items (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', default_items[0])
+        for item in default_items[1:]:
+             cursor.execute('INSERT OR REPLACE INTO inspection_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', item)
+
+        # ── Seed Default Admin User ──
+        admin_exists = cursor.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone()
+        if not admin_exists:
+            import bcrypt
+            # Default password: admin
+            hashed = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
+            cursor.execute(
+                "INSERT INTO users (id, username, password, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "admin", hashed, "Administrator", "active", now)
+            )
+            logger.info("[Database] Default admin user created (admin/admin)")
 
         conn.commit()
     finally:

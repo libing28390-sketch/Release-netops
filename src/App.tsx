@@ -486,7 +486,7 @@ const App: React.FC = () => {
     if (path === '/assets') return language === 'zh' ? '资产管理' : 'Assets';
     if (path === '/automation/execute') return t('directExecution');
     if (path === '/automation/scenarios') return t('scenarioLibrary');
-    if (path === '/automation/queries') return t('executionHistory');
+    if (path === '/automation/queries' || path === '/automation/schedule-history') return language === 'zh' ? '执行历史' : 'Execution History';
     if (path === '/config/backup') return t('backupHistory');
     if (path === '/config/diff') return t('diffCompare');
     if (path === '/config/search') return t('configSearchTab');
@@ -532,10 +532,6 @@ const App: React.FC = () => {
       { path: '/maintenance', label: zh ? '维护期' : 'Maintenance', group: zh ? '告警管理' : 'Alerts' },
       { path: '/automation/execute', label: t('directExecution'), group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scenarios', label: t('scenarioLibrary'), group: zh ? '作业自动化' : 'Automation' },
-      { path: '/automation/queries', label: t('executionHistory'), group: zh ? '作业自动化' : 'Automation' },
-      { path: '/automation/inspection', label: zh ? '巡检概览' : 'Inspection Overview', group: zh ? '作业自动化' : 'Automation' },
-      { path: '/automation/inspection-records', label: zh ? '巡检记录' : 'Inspection Records', group: zh ? '作业自动化' : 'Automation' },
-      { path: '/automation/schedule', label: zh ? '执行计划' : 'Execution Schedules', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/schedule-history', label: zh ? '执行历史' : 'Execution History', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scheduled-jobs', label: zh ? '定时作业' : 'Scheduled Jobs', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/metrics', label: zh ? '巡检指标项' : 'Inspection Metrics', group: zh ? '作业自动化' : 'Automation' },

@@ -34,6 +34,7 @@ _EXEMPT_PREFIXES = (
     "/api/login",        # user authentication (login)
     "/api/session",      # session validation
     "/api/users",        # user management
+    "/api/playbooks/scenarios", # allowed to load basic UI
     "/docs",             # Swagger UI
     "/openapi.json",     # OpenAPI schema
     "/redoc",            # ReDoc
