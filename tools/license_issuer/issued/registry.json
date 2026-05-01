@@ -56,5 +56,34 @@
     "machine_id": "7294-18BB-E08A-5D49",
     "notes": null,
     "filename": "license_cisco_20260430_204615.json"
+  },
+  {
+    "license_id": "0022a0b9-98ee-42a8-92df-2357ccd40c22",
+    "company": "AI-KEBOS",
+    "license_type": "enterprise",
+    "issued_at": "2026-05-01T09:10:27.700630+00:00",
+    "expire_at": "2027-05-01T23:59:59",
+    "device_limit": 1000,
+    "server_limit": 1000,
+    "features": [
+      "automation",
+      "config_management",
+      "monitoring",
+      "alerting",
+      "rbac",
+      "change_orders",
+      "inspections",
+      "topology",
+      "ipam",
+      "capacity",
+      "compliance",
+      "reports",
+      "api_access",
+      "scheduled_jobs",
+      "password_rotation"
+    ],
+    "machine_id": "22DA-A41C-9780-D37E",
+    "notes": null,
+    "filename": "license_AI-KEBOS_20260501_171027.json"
   }
 ]

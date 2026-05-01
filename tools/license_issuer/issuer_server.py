@@ -34,18 +34,18 @@ from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
 
-from license.crypto import (
+from license_auth.crypto import (
     generate_key_pair,
     load_private_key_from_file,
     sign_payload,
     verify_signature,
     load_public_key_from_file,
 )
-from license.models import LicenseFile, LicensePayload, LicenseType
+from license_auth.models import LicenseFile, LicensePayload, LicenseType
 
 # ── Config ────────────────────────────────────────────────────────────
 
-KEYS_DIR = _BACKEND_DIR / "license" / "keys"
+KEYS_DIR = _BACKEND_DIR / "license_auth" / "keys"
 PRIVATE_KEY_PATH = KEYS_DIR / "private.pem"
 PUBLIC_KEY_PATH = KEYS_DIR / "public.pem"
 ISSUED_DIR = _TOOL_DIR / "issued"  # Archive of all issued licenses
