@@ -129,6 +129,14 @@ if _USE_PG:
         def close(self):
             self._conn.close()
 
+        @property
+        def autocommit(self):
+            return self._conn.autocommit
+
+        @autocommit.setter
+        def autocommit(self, value):
+            self._conn.autocommit = value
+
     class _PgPooledConnection:
         """Close returns PG connection to the pool."""
         __slots__ = ('_conn', '_raw')
@@ -156,6 +164,14 @@ if _USE_PG:
             if self._conn is None:
                 raise RuntimeError("Connection already returned to pool")
             return getattr(self._conn, name)
+
+        @property
+        def autocommit(self):
+            return self._conn.autocommit
+
+        @autocommit.setter
+        def autocommit(self, value):
+            self._conn.autocommit = value
 
         def __enter__(self):
             return self
@@ -218,6 +234,7 @@ def _make_raw_connection():
         try:
             with raw.cursor() as tmp_cur:
                 tmp_cur.execute("SELECT 1")
+            raw.rollback() # Ensure no active transaction after health check
         except Exception:
             # If health check fails, discard the bad connection and get a new one
             try:
@@ -288,1603 +305,1597 @@ def init_db():
     global _db_initialized
     if _db_initialized:
         return
-    _db_initialized = True
     
     conn = get_db_connection()
-    _pg_raw = None
-    _pg_prev_autocommit = None
     try:
-        if _USE_PG:
-            # Run bootstrap DDL in autocommit mode so tolerated migration errors
-            # (e.g. duplicate columns) won't poison the whole transaction.
-            try:
-                _pg_raw = conn._conn._conn
-                _pg_prev_autocommit = _pg_raw.autocommit
-                _pg_raw.autocommit = True
-            except Exception:
-                _pg_raw = None
-        cursor = conn.cursor()
+        # Use autocommit for initialization to prevent transaction poisoning
+        if _USE_PG and hasattr(conn, 'autocommit'):
+            conn.autocommit = True
+        _init_db_logic(conn)
+        _db_initialized = True
+        logger.info("Database initialization completed successfully.")
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except: pass
+        logger.error(f"CRITICAL: Database initialization failed: {e}", exc_info=True)
+        # We catch and log, but don't re-raise to avoid FastAPI lifespan loop
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
-        def ensure_column(table_name: str, column_name: str, definition: str):
-            cols = _table_columns(cursor, table_name)
-            if column_name not in cols:
-                cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}')
+def _init_db_logic(conn):
+    cursor = conn.cursor()
+
+    def ensure_column(table_name: str, column_name: str, definition: str):
+        cols = _table_columns(cursor, table_name)
+        if column_name not in cols:
+            cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}')
         
-        # Create devices table if not exists
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS devices (
-            id TEXT PRIMARY KEY,
-            hostname TEXT,
-            ip_address TEXT,
-            platform TEXT,
-            status TEXT,
-            compliance TEXT,
-            sn TEXT,
-            model TEXT,
-            version TEXT,
-            role TEXT,
-            site TEXT,
-            uptime TEXT,
-            connection_method TEXT,
-            username TEXT,
-            password TEXT,
-            current_config TEXT,
-            config_history TEXT,
-            cpu_usage INTEGER DEFAULT 0,
-            memory_usage INTEGER DEFAULT 0,
-            interface_data TEXT DEFAULT '[]',
-            snmp_community TEXT DEFAULT 'public',
-            snmp_port INTEGER DEFAULT 161,
-            cpu_history TEXT DEFAULT '[]',
-            memory_history TEXT DEFAULT '[]',
-            temp INTEGER DEFAULT 35,
-            fan_status TEXT DEFAULT 'ok',
-            psu_status TEXT DEFAULT 'redundant',
-            sys_name TEXT,
-            sys_location TEXT,
-            sys_contact TEXT
-        )
-        ''')
+    # Create devices table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS devices (
+        id TEXT PRIMARY KEY,
+        hostname TEXT,
+        ip_address TEXT,
+        platform TEXT,
+        status TEXT,
+        compliance TEXT,
+        sn TEXT,
+        model TEXT,
+        version TEXT,
+        role TEXT,
+        site TEXT,
+        uptime TEXT,
+        connection_method TEXT,
+        username TEXT,
+        password TEXT,
+        current_config TEXT,
+        config_history TEXT,
+        cpu_usage INTEGER DEFAULT 0,
+        memory_usage INTEGER DEFAULT 0,
+        interface_data TEXT DEFAULT '[]',
+        snmp_community TEXT DEFAULT 'public',
+        snmp_port INTEGER DEFAULT 161,
+        cpu_history TEXT DEFAULT '[]',
+        memory_history TEXT DEFAULT '[]',
+        temp INTEGER DEFAULT 35,
+        fan_status TEXT DEFAULT 'ok',
+        psu_status TEXT DEFAULT 'redundant',
+        sys_name TEXT,
+        sys_location TEXT,
+        sys_contact TEXT
+    )
+    ''')
         
-        # Create jobs table if not exists
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS jobs (
-            id TEXT PRIMARY KEY,
-            device_id TEXT,
-            task_name TEXT,
-            status TEXT,
-            output TEXT,
-            created_at TEXT,
-            FOREIGN KEY (device_id) REFERENCES devices (id)
-        )
-        ''')
-        
-        # Create scripts table if not exists
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS scripts (
-            id TEXT PRIMARY KEY,
-            name TEXT,
-            content TEXT,
-            description TEXT,
-            platform TEXT,
-            category TEXT DEFAULT 'custom',
-            script_type TEXT DEFAULT 'shell', -- shell, python, ansible
-            author TEXT DEFAULT 'admin',
-            version TEXT DEFAULT 'v1.0.0',
-            status TEXT DEFAULT 'released',   -- draft, pending_audit, released, rejected
-            submitter_id TEXT DEFAULT '',
-            submitter_name TEXT DEFAULT '',
-            approver_id TEXT DEFAULT '',
-            approver_username TEXT DEFAULT '',
-            rejected_reason TEXT DEFAULT '',
-            created_at TEXT,
-            updated_at TEXT
-        )
-        ''')
+    # Create jobs table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        device_id TEXT,
+        task_name TEXT,
+        status TEXT,
+        output TEXT,
+        created_at TEXT,
+        FOREIGN KEY (device_id) REFERENCES devices (id)
+    )
+    ''')
+    
+    # Create scripts table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS scripts (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        content TEXT,
+        description TEXT,
+        platform TEXT,
+        category TEXT DEFAULT 'custom',
+        script_type TEXT DEFAULT 'shell', -- shell, python, ansible
+        author TEXT DEFAULT 'admin',
+        version TEXT DEFAULT 'v1.0.0',
+        status TEXT DEFAULT 'released',   -- draft, pending_audit, released, rejected
+        submitter_id TEXT DEFAULT '',
+        submitter_name TEXT DEFAULT '',
+        approver_id TEXT DEFAULT '',
+        approver_username TEXT DEFAULT '',
+        rejected_reason TEXT DEFAULT '',
+        created_at TEXT,
+        updated_at TEXT
+    )
+    ''')
 
-        # Migration for script management enhancements
-        for col, dtype in [
-            ('script_type', "TEXT DEFAULT 'shell'"), 
-            ('author', "TEXT DEFAULT 'admin'"), 
-            ('version', "TEXT DEFAULT 'v1.0.0'"), 
-            ('status', "TEXT DEFAULT 'released'"),
-            ('submitter_id', "TEXT DEFAULT ''"),
-            ('submitter_name', "TEXT DEFAULT ''"),
-            ('approver_id', "TEXT DEFAULT ''"),
-            ('approver_username', "TEXT DEFAULT ''"),
-            ('rejected_reason', "TEXT DEFAULT ''"),
-            ('category', "TEXT DEFAULT 'custom'"),
-            ('created_at', 'TEXT'),
-            ('updated_at', 'TEXT')
-        ]:
-            ensure_column('scripts', col, dtype)
-        
-        # Create templates table if not exists
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS templates (
-            id TEXT PRIMARY KEY,
-            name TEXT,
-            type TEXT,
-            category TEXT,
-            vendor TEXT,
-            content TEXT,
-            rollback TEXT,
-            last_used TEXT
-        )
-        ''')
-        ensure_column('templates', 'rollback', 'TEXT')
-        
-        # Create users table if not exists
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            username TEXT UNIQUE,
-            password TEXT,
-            role TEXT,
-            status TEXT,
-            last_login TEXT,
-            avatar_url TEXT
-        )
-        ''')
+    # Migration for script management enhancements
+    for col, dtype in [
+        ('script_type', "TEXT DEFAULT 'shell'"), 
+        ('author', "TEXT DEFAULT 'admin'"), 
+        ('version', "TEXT DEFAULT 'v1.0.0'"), 
+        ('status', "TEXT DEFAULT 'released'"),
+        ('submitter_id', "TEXT DEFAULT ''"),
+        ('submitter_name', "TEXT DEFAULT ''"),
+        ('approver_id', "TEXT DEFAULT ''"),
+        ('approver_username', "TEXT DEFAULT ''"),
+        ('rejected_reason', "TEXT DEFAULT ''"),
+        ('category', "TEXT DEFAULT 'custom'"),
+        ('created_at', 'TEXT'),
+        ('updated_at', 'TEXT')
+    ]:
+        ensure_column('scripts', col, dtype)
+    
+    # Create templates table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS templates (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        type TEXT,
+        category TEXT,
+        vendor TEXT,
+        content TEXT,
+        rollback TEXT,
+        last_used TEXT
+    )
+    ''')
+    ensure_column('templates', 'rollback', 'TEXT')
+    
+    # Create users table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        username TEXT UNIQUE,
+        password TEXT,
+        role TEXT,
+        status TEXT,
+        last_login TEXT,
+        avatar_url TEXT
+    )
+    ''')
 
-        # Store user-defined scenario templates for playbooks
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS custom_scenarios (
-            id TEXT PRIMARY KEY,
-            data_json TEXT NOT NULL,
-            created_by TEXT DEFAULT 'admin',
-            created_at TEXT,
-            updated_at TEXT
-        )
-        ''')
-        
-        # Create global_vars table if not exists
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS global_vars (
-            id TEXT PRIMARY KEY,
-            key TEXT UNIQUE,
-            value TEXT
-        )
-        ''')
+    # Store user-defined scenario templates for playbooks
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS custom_scenarios (
+        id TEXT PRIMARY KEY,
+        data_json TEXT NOT NULL,
+        created_by TEXT DEFAULT 'admin',
+        created_at TEXT,
+        updated_at TEXT
+    )
+    ''')
+    
+    # Create global_vars table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS global_vars (
+        id TEXT PRIMARY KEY,
+        key TEXT UNIQUE,
+        value TEXT
+    )
+    ''')
 
-        # Create global_notification_channels table if not exists
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS global_notification_channels (
-            platform TEXT PRIMARY KEY,
-            webhook_url TEXT,
-            enabled INTEGER DEFAULT 0,
-            secret TEXT DEFAULT '',
-            creator_username TEXT,
-            updated_at TEXT
-        )
-        ''')
+    # Create global_notification_channels table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS global_notification_channels (
+        platform TEXT PRIMARY KEY,
+        webhook_url TEXT,
+        enabled INTEGER DEFAULT 0,
+        secret TEXT DEFAULT '',
+        creator_username TEXT,
+        updated_at TEXT
+    )
+    ''')
 
-        # Create config_snapshots table if not exists
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS config_snapshots (
-            id TEXT PRIMARY KEY,
-            device_id TEXT,
-            hostname TEXT,
-            vendor TEXT,
-            timestamp TEXT,
-            trigger TEXT,
-            author TEXT,
-            tag TEXT DEFAULT '',
-            file_path TEXT,
-            size INTEGER DEFAULT 0,
-            FOREIGN KEY (device_id) REFERENCES devices (id)
-        )
-        ''')
+    # Create config_snapshots table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS config_snapshots (
+        id TEXT PRIMARY KEY,
+        device_id TEXT,
+        hostname TEXT,
+        vendor TEXT,
+        timestamp TEXT,
+        trigger TEXT,
+        author TEXT,
+        tag TEXT DEFAULT '',
+        file_path TEXT,
+        size INTEGER DEFAULT 0,
+        FOREIGN KEY (device_id) REFERENCES devices (id)
+    )
+    ''')
 
-        # Create links table for topology
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS links (
-            id TEXT PRIMARY KEY,
-            link_key TEXT UNIQUE,
-            source_device_id TEXT,
-            source_hostname TEXT,
-            source_port TEXT,
-            source_port_normalized TEXT,
-            target_device_id TEXT,
-            target_hostname TEXT,
-            target_port TEXT,
-            target_port_normalized TEXT,
-            discovery_source TEXT DEFAULT 'lldp',
-            confidence REAL DEFAULT 0.0,
-            status TEXT DEFAULT 'up',
-            is_inferred INTEGER DEFAULT 0,
-            evidence_count INTEGER DEFAULT 1,
-            metadata_json TEXT DEFAULT '{}',
-            created_at TEXT,
-            updated_at TEXT,
-            last_seen TEXT,
-            FOREIGN KEY (source_device_id) REFERENCES devices (id),
-            FOREIGN KEY (target_device_id) REFERENCES devices (id)
-        )
-        ''')
-        ensure_column('links', 'link_key', 'TEXT')
-        ensure_column('links', 'source_hostname', 'TEXT')
-        ensure_column('links', 'source_port_normalized', 'TEXT')
-        ensure_column('links', 'target_hostname', 'TEXT')
-        ensure_column('links', 'target_port_normalized', 'TEXT')
-        ensure_column('links', 'discovery_source', "TEXT DEFAULT 'lldp'")
-        ensure_column('links', 'confidence', 'REAL DEFAULT 0.0')
-        ensure_column('links', 'status', "TEXT DEFAULT 'up'")
-        ensure_column('links', 'is_inferred', 'INTEGER DEFAULT 0')
-        ensure_column('links', 'evidence_count', 'INTEGER DEFAULT 1')
-        ensure_column('links', 'metadata_json', "TEXT DEFAULT '{}'")
-        ensure_column('links', 'created_at', 'TEXT')
-        ensure_column('links', 'updated_at', 'TEXT')
-        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_links_link_key ON links(link_key)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_last_seen ON links(last_seen)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_source_target ON links(source_device_id, target_device_id)')
+    # Create links table for topology
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS links (
+        id TEXT PRIMARY KEY,
+        link_key TEXT UNIQUE,
+        source_device_id TEXT,
+        source_hostname TEXT,
+        source_port TEXT,
+        source_port_normalized TEXT,
+        target_device_id TEXT,
+        target_hostname TEXT,
+        target_port TEXT,
+        target_port_normalized TEXT,
+        discovery_source TEXT DEFAULT 'lldp',
+        confidence REAL DEFAULT 0.0,
+        status TEXT DEFAULT 'up',
+        is_inferred INTEGER DEFAULT 0,
+        evidence_count INTEGER DEFAULT 1,
+        metadata_json TEXT DEFAULT '{}',
+        created_at TEXT,
+        updated_at TEXT,
+        last_seen TEXT,
+        FOREIGN KEY (source_device_id) REFERENCES devices (id),
+        FOREIGN KEY (target_device_id) REFERENCES devices (id)
+    )
+    ''')
+    ensure_column('links', 'link_key', 'TEXT')
+    ensure_column('links', 'source_hostname', 'TEXT')
+    ensure_column('links', 'source_port_normalized', 'TEXT')
+    ensure_column('links', 'target_hostname', 'TEXT')
+    ensure_column('links', 'target_port_normalized', 'TEXT')
+    ensure_column('links', 'discovery_source', "TEXT DEFAULT 'lldp'")
+    ensure_column('links', 'confidence', 'REAL DEFAULT 0.0')
+    ensure_column('links', 'status', "TEXT DEFAULT 'up'")
+    ensure_column('links', 'is_inferred', 'INTEGER DEFAULT 0')
+    ensure_column('links', 'evidence_count', 'INTEGER DEFAULT 1')
+    ensure_column('links', 'metadata_json', "TEXT DEFAULT '{}'")
+    ensure_column('links', 'created_at', 'TEXT')
+    ensure_column('links', 'updated_at', 'TEXT')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_links_link_key ON links(link_key)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_last_seen ON links(last_seen)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_source_target ON links(source_device_id, target_device_id)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS topology_discovery_runs (
-            id TEXT PRIMARY KEY,
-            scope TEXT NOT NULL DEFAULT 'full',
-            status TEXT NOT NULL DEFAULT 'pending',
-            requested_by TEXT DEFAULT 'system',
-            protocol_scope TEXT DEFAULT 'lldp_cdp',
-            started_at TEXT NOT NULL,
-            completed_at TEXT,
-            total_devices INTEGER DEFAULT 0,
-            success_devices INTEGER DEFAULT 0,
-            failed_devices INTEGER DEFAULT 0,
-            total_observations INTEGER DEFAULT 0,
-            total_links INTEGER DEFAULT 0,
-            summary_json TEXT DEFAULT '{}'
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_runs_started_at ON topology_discovery_runs(started_at)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_runs_status ON topology_discovery_runs(status)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS topology_discovery_runs (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL DEFAULT 'full',
+        status TEXT NOT NULL DEFAULT 'pending',
+        requested_by TEXT DEFAULT 'system',
+        protocol_scope TEXT DEFAULT 'lldp_cdp',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        total_devices INTEGER DEFAULT 0,
+        success_devices INTEGER DEFAULT 0,
+        failed_devices INTEGER DEFAULT 0,
+        total_observations INTEGER DEFAULT 0,
+        total_links INTEGER DEFAULT 0,
+        summary_json TEXT DEFAULT '{}'
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_runs_started_at ON topology_discovery_runs(started_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_runs_status ON topology_discovery_runs(status)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS topology_discovery_run_devices (
-            id TEXT PRIMARY KEY,
-            run_id TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            hostname TEXT DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'pending',
-            discovery_method TEXT DEFAULT '',
-            started_at TEXT,
-            completed_at TEXT,
-            observations_count INTEGER DEFAULT 0,
-            matched_links_count INTEGER DEFAULT 0,
-            error_message TEXT DEFAULT '',
-            FOREIGN KEY (run_id) REFERENCES topology_discovery_runs(id),
-            FOREIGN KEY (device_id) REFERENCES devices(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_run_devices_run_id ON topology_discovery_run_devices(run_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_run_devices_device_id ON topology_discovery_run_devices(device_id)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS topology_discovery_run_devices (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        hostname TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        discovery_method TEXT DEFAULT '',
+        started_at TEXT,
+        completed_at TEXT,
+        observations_count INTEGER DEFAULT 0,
+        matched_links_count INTEGER DEFAULT 0,
+        error_message TEXT DEFAULT '',
+        FOREIGN KEY (run_id) REFERENCES topology_discovery_runs(id),
+        FOREIGN KEY (device_id) REFERENCES devices(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_run_devices_run_id ON topology_discovery_run_devices(run_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_run_devices_device_id ON topology_discovery_run_devices(device_id)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS topology_layouts (
-            user_id TEXT PRIMARY KEY,
-            layout_json TEXT NOT NULL DEFAULT '{}',
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_layouts_updated_at ON topology_layouts(updated_at)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS topology_layouts (
+        user_id TEXT PRIMARY KEY,
+        layout_json TEXT NOT NULL DEFAULT '{}',
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_layouts_updated_at ON topology_layouts(updated_at)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS topology_observations (
-            id TEXT PRIMARY KEY,
-            source_device_id TEXT NOT NULL,
-            source_hostname TEXT DEFAULT '',
-            source_port_raw TEXT DEFAULT '',
-            source_port_normalized TEXT DEFAULT '',
-            neighbor_name_raw TEXT DEFAULT '',
-            neighbor_name_normalized TEXT DEFAULT '',
-            neighbor_ip_address TEXT DEFAULT '',
-            target_device_id TEXT,
-            target_hostname TEXT DEFAULT '',
-            target_port_raw TEXT DEFAULT '',
-            target_port_normalized TEXT DEFAULT '',
-            protocol TEXT NOT NULL DEFAULT 'lldp',
-            confidence REAL DEFAULT 0.5,
-            status TEXT DEFAULT 'active',
-            discovery_run_id TEXT,
-            raw_payload_json TEXT DEFAULT '{}',
-            collected_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (source_device_id) REFERENCES devices(id),
-            FOREIGN KEY (target_device_id) REFERENCES devices(id),
-            FOREIGN KEY (discovery_run_id) REFERENCES topology_discovery_runs(id)
-        )
-        ''')
-        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_topology_obs_unique ON topology_observations(source_device_id, source_port_normalized, neighbor_name_normalized, target_device_id, target_port_normalized, protocol)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_obs_target ON topology_observations(target_device_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_obs_collected_at ON topology_observations(collected_at)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS topology_observations (
+        id TEXT PRIMARY KEY,
+        source_device_id TEXT NOT NULL,
+        source_hostname TEXT DEFAULT '',
+        source_port_raw TEXT DEFAULT '',
+        source_port_normalized TEXT DEFAULT '',
+        neighbor_name_raw TEXT DEFAULT '',
+        neighbor_name_normalized TEXT DEFAULT '',
+        neighbor_ip_address TEXT DEFAULT '',
+        target_device_id TEXT,
+        target_hostname TEXT DEFAULT '',
+        target_port_raw TEXT DEFAULT '',
+        target_port_normalized TEXT DEFAULT '',
+        protocol TEXT NOT NULL DEFAULT 'lldp',
+        confidence REAL DEFAULT 0.5,
+        status TEXT DEFAULT 'active',
+        discovery_run_id TEXT,
+        raw_payload_json TEXT DEFAULT '{}',
+        collected_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (source_device_id) REFERENCES devices(id),
+        FOREIGN KEY (target_device_id) REFERENCES devices(id),
+        FOREIGN KEY (discovery_run_id) REFERENCES topology_discovery_runs(id)
+    )
+    ''')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_topology_obs_unique ON topology_observations(source_device_id, source_port_normalized, neighbor_name_normalized, target_device_id, target_port_normalized, protocol)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_obs_target ON topology_observations(target_device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_obs_collected_at ON topology_observations(collected_at)')
 
-        # Create playbook_executions table
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS playbook_executions (
-            id TEXT PRIMARY KEY,
-            scenario_id TEXT,
-            scenario_name TEXT,
-            platform TEXT DEFAULT 'cisco_ios',
-            device_ids TEXT DEFAULT '[]',
-            variables TEXT DEFAULT '{}',
-            status TEXT DEFAULT 'pending',
-            dry_run INTEGER DEFAULT 0,
-            author TEXT DEFAULT 'admin',
-            concurrency INTEGER DEFAULT 1,
-            phases_json TEXT DEFAULT '{}',
-            results_json TEXT DEFAULT '{}',
-            total_devices INTEGER DEFAULT 0,
-            success_count INTEGER DEFAULT 0,
-            failed_count INTEGER DEFAULT 0,
-            partial_count INTEGER DEFAULT 0,
-            created_at TEXT,
-            updated_at TEXT
-        )
-        ''')
+    # Create playbook_executions table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS playbook_executions (
+        id TEXT PRIMARY KEY,
+        scenario_id TEXT,
+        scenario_name TEXT,
+        platform TEXT DEFAULT 'cisco_ios',
+        device_ids TEXT DEFAULT '[]',
+        variables TEXT DEFAULT '{}',
+        status TEXT DEFAULT 'pending',
+        dry_run INTEGER DEFAULT 0,
+        author TEXT DEFAULT 'admin',
+        concurrency INTEGER DEFAULT 1,
+        phases_json TEXT DEFAULT '{}',
+        results_json TEXT DEFAULT '{}',
+        total_devices INTEGER DEFAULT 0,
+        success_count INTEGER DEFAULT 0,
+        failed_count INTEGER DEFAULT 0,
+        partial_count INTEGER DEFAULT 0,
+        created_at TEXT,
+        updated_at TEXT
+    )
+    ''')
 
-        # Per-device execution results (replaces bulky results_json blob)
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS execution_device_results (
-            id TEXT PRIMARY KEY,
-            execution_id TEXT NOT NULL,
-            device_id TEXT,
-            hostname TEXT DEFAULT '',
-            ip_address TEXT DEFAULT '',
-            status TEXT DEFAULT 'pending',
-            error_message TEXT DEFAULT '',
-            phases_json TEXT DEFAULT '{}',
-            started_at TEXT,
-            completed_at TEXT,
-            duration_ms INTEGER DEFAULT 0,
-            FOREIGN KEY (execution_id) REFERENCES playbook_executions(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_edr_execution_id ON execution_device_results(execution_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_edr_exec_status ON execution_device_results(execution_id, status)')
+    # Per-device execution results (replaces bulky results_json blob)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS execution_device_results (
+        id TEXT PRIMARY KEY,
+        execution_id TEXT NOT NULL,
+        device_id TEXT,
+        hostname TEXT DEFAULT '',
+        ip_address TEXT DEFAULT '',
+        status TEXT DEFAULT 'pending',
+        error_message TEXT DEFAULT '',
+        phases_json TEXT DEFAULT '{}',
+        started_at TEXT,
+        completed_at TEXT,
+        duration_ms INTEGER DEFAULT 0,
+        FOREIGN KEY (execution_id) REFERENCES playbook_executions(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_edr_execution_id ON execution_device_results(execution_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_edr_exec_status ON execution_device_results(execution_id, status)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS audit_events (
-            id TEXT PRIMARY KEY,
-            event_type TEXT NOT NULL,
-            category TEXT NOT NULL,
-            severity TEXT NOT NULL,
-            status TEXT NOT NULL,
-            actor_id TEXT,
-            actor_username TEXT,
-            actor_role TEXT,
-            source_ip TEXT,
-            target_type TEXT,
-            target_id TEXT,
-            target_name TEXT,
-            device_id TEXT,
-            job_id TEXT,
-            execution_id TEXT,
-            snapshot_id TEXT,
-            summary TEXT NOT NULL,
-            details_json TEXT DEFAULT '{}',
-            created_at TEXT NOT NULL
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_category ON audit_events(category)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_severity ON audit_events(severity)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_actor_username ON audit_events(actor_username)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS audit_events (
+        id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        category TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        status TEXT NOT NULL,
+        actor_id TEXT,
+        actor_username TEXT,
+        actor_role TEXT,
+        source_ip TEXT,
+        target_type TEXT,
+        target_id TEXT,
+        target_name TEXT,
+        device_id TEXT,
+        job_id TEXT,
+        execution_id TEXT,
+        snapshot_id TEXT,
+        summary TEXT NOT NULL,
+        details_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_category ON audit_events(category)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_severity ON audit_events(severity)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_actor_username ON audit_events(actor_username)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS compliance_rules (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT NOT NULL,
-            category TEXT NOT NULL,
-            severity TEXT NOT NULL,
-            platforms_json TEXT DEFAULT '[]',
-            logic_json TEXT DEFAULT '{}',
-            remediation TEXT DEFAULT '',
-            reference TEXT DEFAULT '',
-            enabled INTEGER DEFAULT 1,
-            is_builtin INTEGER DEFAULT 0,
-            created_at TEXT,
-            updated_at TEXT
-        )
-        ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS compliance_rules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        category TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        platforms_json TEXT DEFAULT '[]',
+        logic_json TEXT DEFAULT '{}',
+        remediation TEXT DEFAULT '',
+        reference TEXT DEFAULT '',
+        enabled INTEGER DEFAULT 1,
+        is_builtin INTEGER DEFAULT 0,
+        created_at TEXT,
+        updated_at TEXT
+    )
+    ''')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS compliance_runs (
-            id TEXT PRIMARY KEY,
-            initiated_by TEXT DEFAULT 'admin',
-            scope_json TEXT DEFAULT '[]',
-            status TEXT DEFAULT 'pending',
-            started_at TEXT NOT NULL,
-            completed_at TEXT,
-            summary_json TEXT DEFAULT '{}'
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_compliance_runs_started_at ON compliance_runs(started_at)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS compliance_runs (
+        id TEXT PRIMARY KEY,
+        initiated_by TEXT DEFAULT 'admin',
+        scope_json TEXT DEFAULT '[]',
+        status TEXT DEFAULT 'pending',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        summary_json TEXT DEFAULT '{}'
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_compliance_runs_started_at ON compliance_runs(started_at)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS compliance_findings (
-            id TEXT PRIMARY KEY,
-            fingerprint TEXT UNIQUE NOT NULL,
-            rule_id TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            run_id TEXT,
-            severity TEXT NOT NULL,
-            category TEXT NOT NULL,
-            title TEXT NOT NULL,
-            description TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'open',
-            observed_value TEXT DEFAULT '',
-            evidence TEXT DEFAULT '',
-            remediation TEXT DEFAULT '',
-            owner TEXT DEFAULT '',
-            note TEXT DEFAULT '',
-            first_seen_at TEXT NOT NULL,
-            last_seen_at TEXT NOT NULL,
-            resolved_at TEXT,
-            FOREIGN KEY (rule_id) REFERENCES compliance_rules(id),
-            FOREIGN KEY (device_id) REFERENCES devices(id),
-            FOREIGN KEY (run_id) REFERENCES compliance_runs(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_compliance_findings_status ON compliance_findings(status)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_compliance_findings_severity ON compliance_findings(severity)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_compliance_findings_device_id ON compliance_findings(device_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_compliance_findings_last_seen_at ON compliance_findings(last_seen_at)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS compliance_findings (
+        id TEXT PRIMARY KEY,
+        fingerprint TEXT UNIQUE NOT NULL,
+        rule_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        run_id TEXT,
+        severity TEXT NOT NULL,
+        category TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        observed_value TEXT DEFAULT '',
+        evidence TEXT DEFAULT '',
+        remediation TEXT DEFAULT '',
+        owner TEXT DEFAULT '',
+        note TEXT DEFAULT '',
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        resolved_at TEXT,
+        FOREIGN KEY (rule_id) REFERENCES compliance_rules(id),
+        FOREIGN KEY (device_id) REFERENCES devices(id),
+        FOREIGN KEY (run_id) REFERENCES compliance_runs(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_compliance_findings_status ON compliance_findings(status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_compliance_findings_severity ON compliance_findings(severity)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_compliance_findings_device_id ON compliance_findings(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_compliance_findings_last_seen_at ON compliance_findings(last_seen_at)')
 
-        # Track notification read status per user
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS notification_reads (
-            user_id TEXT,
-            notification_id TEXT,
-            read_at TEXT,
-            PRIMARY KEY (user_id, notification_id)
-        )
-        ''')
+    # Track notification read status per user
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS notification_reads (
+        user_id TEXT,
+        notification_id TEXT,
+        read_at TEXT,
+        PRIMARY KEY (user_id, notification_id)
+    )
+    ''')
 
-        # Persistent session store
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sessions (
-            token TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            username TEXT NOT NULL,
-            role TEXT NOT NULL,
-            created_at REAL NOT NULL
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)')
+    # Persistent session store
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at REAL NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)')
 
-        # Persistent login failure tracking
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS login_failures (
-            username TEXT PRIMARY KEY,
-            count INTEGER DEFAULT 0,
-            locked_until REAL DEFAULT 0
-        )
-        ''')
+    # Persistent login failure tracking
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS login_failures (
+        username TEXT PRIMARY KEY,
+        count INTEGER DEFAULT 0,
+        locked_until REAL DEFAULT 0
+    )
+    ''')
 
-        # Password reset verification codes (sent via Feishu/DingTalk/WeChat)
-        cursor.execute(f'''
-        CREATE TABLE IF NOT EXISTS password_reset_codes (
-            id {_SERIAL_PK},
-            username TEXT NOT NULL,
-            code TEXT NOT NULL,
-            created_at REAL NOT NULL,
-            expires_at REAL NOT NULL,
-            used INTEGER DEFAULT 0
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pwd_reset_username ON password_reset_codes(username)')
+    # Password reset verification codes (sent via Feishu/DingTalk/WeChat)
+    cursor.execute(f'''
+    CREATE TABLE IF NOT EXISTS password_reset_codes (
+        id {_SERIAL_PK},
+        username TEXT NOT NULL,
+        code TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        expires_at REAL NOT NULL,
+        used INTEGER DEFAULT 0
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pwd_reset_username ON password_reset_codes(username)')
 
-        # High-frequency raw interface telemetry (short retention)
-        cursor.execute(f'''
-        CREATE TABLE IF NOT EXISTS interface_telemetry_raw (
-            id {_SERIAL_PK},
-            ts TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            interface_name TEXT NOT NULL,
-            status TEXT,
-            speed_mbps REAL,
-            in_bps REAL,
-            out_bps REAL,
-            bw_in_pct REAL,
-            bw_out_pct REAL,
-            in_pkts INTEGER,
-            out_pkts INTEGER,
-            in_errors INTEGER,
-            out_errors INTEGER,
-            in_discards INTEGER,
-            out_discards INTEGER
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_interface_telemetry_raw_ts ON interface_telemetry_raw(ts)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_interface_telemetry_raw_dev_intf_ts ON interface_telemetry_raw(device_id, interface_name, ts)')
+    # High-frequency raw interface telemetry (short retention)
+    cursor.execute(f'''
+    CREATE TABLE IF NOT EXISTS interface_telemetry_raw (
+        id {_SERIAL_PK},
+        ts TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        interface_name TEXT NOT NULL,
+        status TEXT,
+        speed_mbps REAL,
+        in_bps REAL,
+        out_bps REAL,
+        bw_in_pct REAL,
+        bw_out_pct REAL,
+        in_pkts INTEGER,
+        out_pkts INTEGER,
+        in_errors INTEGER,
+        out_errors INTEGER,
+        in_discards INTEGER,
+        out_discards INTEGER
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_interface_telemetry_raw_ts ON interface_telemetry_raw(ts)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_interface_telemetry_raw_dev_intf_ts ON interface_telemetry_raw(device_id, interface_name, ts)')
 
-        # 1-minute rollup telemetry for long-term trending
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS interface_telemetry_1m (
-            ts_minute TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            interface_name TEXT NOT NULL,
-            samples INTEGER DEFAULT 0,
-            avg_in_bps REAL,
-            max_in_bps REAL,
-            avg_out_bps REAL,
-            max_out_bps REAL,
-            avg_bw_in_pct REAL,
-            max_bw_in_pct REAL,
-            avg_bw_out_pct REAL,
-            max_bw_out_pct REAL,
-            in_pkts_sum INTEGER DEFAULT 0,
-            out_pkts_sum INTEGER DEFAULT 0,
-            err_delta_sum INTEGER DEFAULT 0,
-            discard_delta_sum INTEGER DEFAULT 0,
-            PRIMARY KEY (ts_minute, device_id, interface_name)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_interface_telemetry_1m_ts ON interface_telemetry_1m(ts_minute)')
+    # 1-minute rollup telemetry for long-term trending
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS interface_telemetry_1m (
+        ts_minute TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        interface_name TEXT NOT NULL,
+        samples INTEGER DEFAULT 0,
+        avg_in_bps REAL,
+        max_in_bps REAL,
+        avg_out_bps REAL,
+        max_out_bps REAL,
+        avg_bw_in_pct REAL,
+        max_bw_in_pct REAL,
+        avg_bw_out_pct REAL,
+        max_bw_out_pct REAL,
+        in_pkts_sum INTEGER DEFAULT 0,
+        out_pkts_sum INTEGER DEFAULT 0,
+        err_delta_sum INTEGER DEFAULT 0,
+        discard_delta_sum INTEGER DEFAULT 0,
+        PRIMARY KEY (ts_minute, device_id, interface_name)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_interface_telemetry_1m_ts ON interface_telemetry_1m(ts_minute)')
 
-        # Alert lifecycle records (open/resolved)
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS alert_events (
-            id TEXT PRIMARY KEY,
-            dedupe_key TEXT NOT NULL,
-            source TEXT NOT NULL,
-            severity TEXT NOT NULL,
-            title TEXT NOT NULL,
-            message TEXT NOT NULL,
-            device_id TEXT,
-            interface_name TEXT,
-            created_at TEXT NOT NULL,
-            resolved_at TEXT,
-            workflow_status TEXT NOT NULL DEFAULT 'open',
-            assignee TEXT,
-            ack_by TEXT,
-            ack_at TEXT,
-            note TEXT DEFAULT '',
-            updated_at TEXT
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_events_created_at ON alert_events(created_at)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_events_resolved_at ON alert_events(resolved_at)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_events_dedupe_key ON alert_events(dedupe_key)')
+    # Alert lifecycle records (open/resolved)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS alert_events (
+        id TEXT PRIMARY KEY,
+        dedupe_key TEXT NOT NULL,
+        source TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        device_id TEXT,
+        interface_name TEXT,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT,
+        workflow_status TEXT NOT NULL DEFAULT 'open',
+        assignee TEXT,
+        ack_by TEXT,
+        ack_at TEXT,
+        note TEXT DEFAULT '',
+        updated_at TEXT
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_events_created_at ON alert_events(created_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_events_resolved_at ON alert_events(resolved_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_events_dedupe_key ON alert_events(dedupe_key)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS protocol_peer_state (
-            metric_type TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            peer TEXT NOT NULL,
-            object_name TEXT,
-            updated_at TEXT NOT NULL,
-            PRIMARY KEY (metric_type, device_id, peer)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_protocol_peer_state_device_metric ON protocol_peer_state(device_id, metric_type)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS protocol_peer_state (
+        metric_type TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        peer TEXT NOT NULL,
+        object_name TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (metric_type, device_id, peer)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_protocol_peer_state_device_metric ON protocol_peer_state(device_id, metric_type)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS alert_maintenance_windows (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            target_ip TEXT NOT NULL,
-            target_ips_json TEXT DEFAULT '[]',
-            selection_mode TEXT DEFAULT 'resources',
-            condition_logic TEXT DEFAULT 'all',
-            match_conditions_json TEXT DEFAULT '[]',
-            title_pattern TEXT DEFAULT '',
-            message_pattern TEXT DEFAULT '',
-            starts_at TEXT NOT NULL,
-            ends_at TEXT NOT NULL,
-            notify_user_ids TEXT DEFAULT '[]',
-            reason TEXT DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'scheduled',
-            created_by TEXT DEFAULT 'system',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            last_match_count INTEGER DEFAULT 0
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_mw_target_ip ON alert_maintenance_windows(target_ip)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_mw_starts_at ON alert_maintenance_windows(starts_at)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_mw_ends_at ON alert_maintenance_windows(ends_at)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS alert_maintenance_windows (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        target_ip TEXT NOT NULL,
+        target_ips_json TEXT DEFAULT '[]',
+        selection_mode TEXT DEFAULT 'resources',
+        condition_logic TEXT DEFAULT 'all',
+        match_conditions_json TEXT DEFAULT '[]',
+        title_pattern TEXT DEFAULT '',
+        message_pattern TEXT DEFAULT '',
+        starts_at TEXT NOT NULL,
+        ends_at TEXT NOT NULL,
+        notify_user_ids TEXT DEFAULT '[]',
+        reason TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'scheduled',
+        created_by TEXT DEFAULT 'system',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_match_count INTEGER DEFAULT 0
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_mw_target_ip ON alert_maintenance_windows(target_ip)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_mw_starts_at ON alert_maintenance_windows(starts_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_mw_ends_at ON alert_maintenance_windows(ends_at)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS alert_rules (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            metric_type TEXT NOT NULL,
-            scope_type TEXT NOT NULL DEFAULT 'global',
-            scope_match_mode TEXT NOT NULL DEFAULT 'exact',
-            scope_value TEXT DEFAULT '',
-            severity TEXT NOT NULL DEFAULT 'major',
-            threshold REAL,
-            enabled INTEGER DEFAULT 1,
-            aggregation_mode TEXT DEFAULT 'dedupe_key',
-            notification_repeat_window_seconds INTEGER DEFAULT 120,
-            notify_on_active INTEGER DEFAULT 1,
-            notify_on_recovery INTEGER DEFAULT 1,
-            notify_on_reopen_after_maintenance INTEGER DEFAULT 1,
-            created_by TEXT DEFAULT 'system',
-            created_at TEXT NOT NULL,
-            updated_by TEXT DEFAULT 'system',
-            updated_at TEXT NOT NULL
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_rules_metric_type ON alert_rules(metric_type)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS alert_rules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        metric_type TEXT NOT NULL,
+        scope_type TEXT NOT NULL DEFAULT 'global',
+        scope_match_mode TEXT NOT NULL DEFAULT 'exact',
+        scope_value TEXT DEFAULT '',
+        severity TEXT NOT NULL DEFAULT 'major',
+        threshold REAL,
+        enabled INTEGER DEFAULT 1,
+        aggregation_mode TEXT DEFAULT 'dedupe_key',
+        notification_repeat_window_seconds INTEGER DEFAULT 120,
+        notify_on_active INTEGER DEFAULT 1,
+        notify_on_recovery INTEGER DEFAULT 1,
+        notify_on_reopen_after_maintenance INTEGER DEFAULT 1,
+        created_by TEXT DEFAULT 'system',
+        created_at TEXT NOT NULL,
+        updated_by TEXT DEFAULT 'system',
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_rules_metric_type ON alert_rules(metric_type)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS alert_rule_settings (
-            id TEXT PRIMARY KEY,
-            interface_down_enabled INTEGER DEFAULT 1,
-            interface_util_threshold REAL DEFAULT 85,
-            cpu_threshold REAL DEFAULT 90,
-            memory_threshold REAL DEFAULT 90,
-            aggregation_mode TEXT DEFAULT 'dedupe_key',
-            notification_repeat_window_seconds INTEGER DEFAULT 120,
-            notify_on_active INTEGER DEFAULT 1,
-            notify_on_recovery INTEGER DEFAULT 1,
-            notify_on_reopen_after_maintenance INTEGER DEFAULT 1,
-            updated_by TEXT DEFAULT 'system',
-            updated_at TEXT NOT NULL
-        )
-        ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS alert_rule_settings (
+        id TEXT PRIMARY KEY,
+        interface_down_enabled INTEGER DEFAULT 1,
+        interface_util_threshold REAL DEFAULT 85,
+        cpu_threshold REAL DEFAULT 90,
+        memory_threshold REAL DEFAULT 90,
+        aggregation_mode TEXT DEFAULT 'dedupe_key',
+        notification_repeat_window_seconds INTEGER DEFAULT 120,
+        notify_on_active INTEGER DEFAULT 1,
+        notify_on_recovery INTEGER DEFAULT 1,
+        notify_on_reopen_after_maintenance INTEGER DEFAULT 1,
+        updated_by TEXT DEFAULT 'system',
+        updated_at TEXT NOT NULL
+    )
+    ''')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS alert_rule_history (
-            id TEXT PRIMARY KEY,
-            settings_id TEXT NOT NULL DEFAULT 'default',
-            snapshot_json TEXT NOT NULL,
-            changed_by TEXT DEFAULT 'system',
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (settings_id) REFERENCES alert_rule_settings(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_rule_history_settings_id ON alert_rule_history(settings_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_rule_history_created_at ON alert_rule_history(created_at)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS alert_rule_history (
+        id TEXT PRIMARY KEY,
+        settings_id TEXT NOT NULL DEFAULT 'default',
+        snapshot_json TEXT NOT NULL,
+        changed_by TEXT DEFAULT 'system',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (settings_id) REFERENCES alert_rule_settings(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_rule_history_settings_id ON alert_rule_history(settings_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alert_rule_history_created_at ON alert_rule_history(created_at)')
 
-        # Host resource telemetry for the platform server itself
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS host_resource_samples (
-            ts TEXT PRIMARY KEY,
-            status TEXT NOT NULL,
-            cpu_percent REAL,
-            memory_percent REAL,
-            disk_percent REAL,
-            load_1m REAL,
-            process_memory_mb REAL,
-            process_cpu_percent REAL,
-            memory_used_gb REAL,
-            memory_total_gb REAL,
-            disk_used_gb REAL,
-            disk_total_gb REAL,
-            disk_free_gb REAL,
-            uptime_hours REAL,
-            database_ok INTEGER DEFAULT 0,
-            database_status TEXT DEFAULT ''
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_host_resource_samples_ts ON host_resource_samples(ts)')
+    # Host resource telemetry for the platform server itself
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS host_resource_samples (
+        ts TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        cpu_percent REAL,
+        memory_percent REAL,
+        disk_percent REAL,
+        load_1m REAL,
+        process_memory_mb REAL,
+        process_cpu_percent REAL,
+        memory_used_gb REAL,
+        memory_total_gb REAL,
+        disk_used_gb REAL,
+        disk_total_gb REAL,
+        disk_free_gb REAL,
+        uptime_hours REAL,
+        database_ok INTEGER DEFAULT 0,
+        database_status TEXT DEFAULT ''
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_host_resource_samples_ts ON host_resource_samples(ts)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS device_health_samples (
-            ts TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            hostname TEXT,
-            status TEXT,
-            health_status TEXT NOT NULL,
-            health_score INTEGER NOT NULL,
-            open_alert_count INTEGER DEFAULT 0,
-            critical_open_alerts INTEGER DEFAULT 0,
-            major_open_alerts INTEGER DEFAULT 0,
-            warning_open_alerts INTEGER DEFAULT 0,
-            interface_down_count INTEGER DEFAULT 0,
-            interface_flap_count INTEGER DEFAULT 0,
-            high_util_interface_count INTEGER DEFAULT 0,
-            interface_error_count INTEGER DEFAULT 0,
-            health_summary TEXT DEFAULT '',
-            health_reasons_json TEXT DEFAULT '[]',
-            PRIMARY KEY (ts, device_id),
-            FOREIGN KEY (device_id) REFERENCES devices(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_health_samples_ts ON device_health_samples(ts)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_health_samples_device_ts ON device_health_samples(device_id, ts)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS device_health_samples (
+        ts TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        hostname TEXT,
+        status TEXT,
+        health_status TEXT NOT NULL,
+        health_score INTEGER NOT NULL,
+        open_alert_count INTEGER DEFAULT 0,
+        critical_open_alerts INTEGER DEFAULT 0,
+        major_open_alerts INTEGER DEFAULT 0,
+        warning_open_alerts INTEGER DEFAULT 0,
+        interface_down_count INTEGER DEFAULT 0,
+        interface_flap_count INTEGER DEFAULT 0,
+        high_util_interface_count INTEGER DEFAULT 0,
+        interface_error_count INTEGER DEFAULT 0,
+        health_summary TEXT DEFAULT '',
+        health_reasons_json TEXT DEFAULT '[]',
+        PRIMARY KEY (ts, device_id),
+        FOREIGN KEY (device_id) REFERENCES devices(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_health_samples_ts ON device_health_samples(ts)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_health_samples_device_ts ON device_health_samples(device_id, ts)')
 
-        # Migration: add columns to playbook_executions if missing
-        pb_cols = _table_columns(cursor, 'playbook_executions')
-        if 'platform' not in pb_cols:
-            cursor.execute("ALTER TABLE playbook_executions ADD COLUMN platform TEXT DEFAULT 'cisco_ios'")
-        if 'total_devices' not in pb_cols:
-            cursor.execute("ALTER TABLE playbook_executions ADD COLUMN total_devices INTEGER DEFAULT 0")
-        if 'success_count' not in pb_cols:
-            cursor.execute("ALTER TABLE playbook_executions ADD COLUMN success_count INTEGER DEFAULT 0")
-        if 'failed_count' not in pb_cols:
-            cursor.execute("ALTER TABLE playbook_executions ADD COLUMN failed_count INTEGER DEFAULT 0")
-        if 'partial_count' not in pb_cols:
-            cursor.execute("ALTER TABLE playbook_executions ADD COLUMN partial_count INTEGER DEFAULT 0")
+    # Migration: add columns to playbook_executions if missing
+    pb_cols = _table_columns(cursor, 'playbook_executions')
+    if 'platform' not in pb_cols:
+        cursor.execute("ALTER TABLE playbook_executions ADD COLUMN platform TEXT DEFAULT 'cisco_ios'")
+    if 'total_devices' not in pb_cols:
+        cursor.execute("ALTER TABLE playbook_executions ADD COLUMN total_devices INTEGER DEFAULT 0")
+    if 'success_count' not in pb_cols:
+        cursor.execute("ALTER TABLE playbook_executions ADD COLUMN success_count INTEGER DEFAULT 0")
+    if 'failed_count' not in pb_cols:
+        cursor.execute("ALTER TABLE playbook_executions ADD COLUMN failed_count INTEGER DEFAULT 0")
+    if 'partial_count' not in pb_cols:
+        cursor.execute("ALTER TABLE playbook_executions ADD COLUMN partial_count INTEGER DEFAULT 0")
 
-        device_health_columns = _table_columns(cursor, 'device_health_samples')
-        if device_health_columns and 'health_reasons_json' not in device_health_columns:
-            cursor.execute("ALTER TABLE device_health_samples ADD COLUMN health_reasons_json TEXT DEFAULT '[]'")
-            cursor.execute(
-                "UPDATE device_health_samples SET health_reasons_json = '[]' WHERE health_reasons_json IS NULL OR health_reasons_json = ''"
-            )
-
-        # Migration: Add new columns if they don't exist
-        columns = _table_columns(cursor, 'devices')
-        
-        if 'cpu_usage' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN cpu_usage INTEGER DEFAULT 0')
-        if 'memory_usage' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN memory_usage INTEGER DEFAULT 0')
-        if 'interface_data' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN interface_data TEXT DEFAULT "[]"')
-        if 'snmp_community' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN snmp_community TEXT DEFAULT "public"')
-        if 'snmp_port' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN snmp_port INTEGER DEFAULT 161')
-        if 'cpu_history' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN cpu_history TEXT DEFAULT "[]"')
-        if 'memory_history' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN memory_history TEXT DEFAULT "[]"')
-
-        # Migration: add alert workflow columns if they don't exist
-        alert_columns = _table_columns(cursor, 'alert_events')
-        if 'workflow_status' not in alert_columns:
-            cursor.execute("ALTER TABLE alert_events ADD COLUMN workflow_status TEXT NOT NULL DEFAULT 'open'")
-        if 'assignee' not in alert_columns:
-            cursor.execute('ALTER TABLE alert_events ADD COLUMN assignee TEXT')
-        if 'ack_by' not in alert_columns:
-            cursor.execute('ALTER TABLE alert_events ADD COLUMN ack_by TEXT')
-        if 'ack_at' not in alert_columns:
-            cursor.execute('ALTER TABLE alert_events ADD COLUMN ack_at TEXT')
-        if 'note' not in alert_columns:
-            cursor.execute("ALTER TABLE alert_events ADD COLUMN note TEXT DEFAULT ''")
-        if 'updated_at' not in alert_columns:
-            cursor.execute('ALTER TABLE alert_events ADD COLUMN updated_at TEXT')
+    device_health_columns = _table_columns(cursor, 'device_health_samples')
+    if device_health_columns and 'health_reasons_json' not in device_health_columns:
+        cursor.execute("ALTER TABLE device_health_samples ADD COLUMN health_reasons_json TEXT DEFAULT '[]'")
         cursor.execute(
-            "UPDATE alert_events SET workflow_status = CASE WHEN resolved_at IS NULL THEN 'open' ELSE 'resolved' END WHERE workflow_status IS NULL OR workflow_status = ''"
-        )
-        cursor.execute("UPDATE alert_events SET updated_at = COALESCE(updated_at, resolved_at, created_at)")
-
-        maintenance_columns = _table_columns(cursor, 'alert_maintenance_windows')
-        if 'target_ips_json' not in maintenance_columns:
-            cursor.execute("ALTER TABLE alert_maintenance_windows ADD COLUMN target_ips_json TEXT DEFAULT '[]'")
-        if 'selection_mode' not in maintenance_columns:
-            cursor.execute("ALTER TABLE alert_maintenance_windows ADD COLUMN selection_mode TEXT DEFAULT 'resources'")
-        if 'condition_logic' not in maintenance_columns:
-            cursor.execute("ALTER TABLE alert_maintenance_windows ADD COLUMN condition_logic TEXT DEFAULT 'all'")
-        if 'match_conditions_json' not in maintenance_columns:
-            cursor.execute("ALTER TABLE alert_maintenance_windows ADD COLUMN match_conditions_json TEXT DEFAULT '[]'")
-        cursor.execute(
-            f'''
-            UPDATE alert_maintenance_windows
-            SET target_ips_json = CASE
-                WHEN COALESCE(target_ips_json, '') = '' OR target_ips_json = '[]' THEN CAST({_JSON_ARRAY_FN}(target_ip) AS TEXT)
-                ELSE target_ips_json
-            END
-            WHERE COALESCE(target_ip, '') != ''
-            '''
-        )
-        cursor.execute(
-            '''
-            UPDATE alert_maintenance_windows
-            SET selection_mode = CASE
-                WHEN COALESCE(selection_mode, '') = '' AND (
-                    COALESCE(title_pattern, '') != '' OR COALESCE(message_pattern, '') != ''
-                ) THEN 'conditions'
-                WHEN COALESCE(selection_mode, '') = '' THEN 'resources'
-                ELSE selection_mode
-            END
-            '''
-        )
-        cursor.execute(
-            '''
-            UPDATE alert_maintenance_windows
-            SET condition_logic = CASE
-                WHEN COALESCE(condition_logic, '') IN ('all', 'any', 'none') THEN condition_logic
-                ELSE 'all'
-            END
-            '''
+            "UPDATE device_health_samples SET health_reasons_json = '[]' WHERE health_reasons_json IS NULL OR health_reasons_json = ''"
         )
 
-        rule_columns = _table_columns(cursor, 'alert_rule_settings')
-        if rule_columns:
-            if 'aggregation_mode' not in rule_columns:
-                cursor.execute("ALTER TABLE alert_rule_settings ADD COLUMN aggregation_mode TEXT DEFAULT 'dedupe_key'")
-            if 'notification_repeat_window_seconds' not in rule_columns:
-                cursor.execute('ALTER TABLE alert_rule_settings ADD COLUMN notification_repeat_window_seconds INTEGER DEFAULT 120')
-            if 'notify_on_active' not in rule_columns:
-                cursor.execute('ALTER TABLE alert_rule_settings ADD COLUMN notify_on_active INTEGER DEFAULT 1')
-            if 'notify_on_recovery' not in rule_columns:
-                cursor.execute('ALTER TABLE alert_rule_settings ADD COLUMN notify_on_recovery INTEGER DEFAULT 1')
-            if 'notify_on_reopen_after_maintenance' not in rule_columns:
-                cursor.execute('ALTER TABLE alert_rule_settings ADD COLUMN notify_on_reopen_after_maintenance INTEGER DEFAULT 1')
-            if 'updated_by' not in rule_columns:
-                cursor.execute("ALTER TABLE alert_rule_settings ADD COLUMN updated_by TEXT DEFAULT 'system'")
-            if 'updated_at' not in rule_columns:
-                cursor.execute("ALTER TABLE alert_rule_settings ADD COLUMN updated_at TEXT")
+    # Migration: Add new columns if they don't exist
+    columns = _table_columns(cursor, 'devices')
+    
+    if 'cpu_usage' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN cpu_usage INTEGER DEFAULT 0')
+    if 'memory_usage' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN memory_usage INTEGER DEFAULT 0')
+    if 'interface_data' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN interface_data TEXT DEFAULT "[]"')
+    if 'snmp_community' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN snmp_community TEXT DEFAULT "public"')
+    if 'snmp_port' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN snmp_port INTEGER DEFAULT 161')
+    if 'cpu_history' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN cpu_history TEXT DEFAULT "[]"')
+    if 'memory_history' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN memory_history TEXT DEFAULT "[]"')
 
+    # Migration: add alert workflow columns if they don't exist
+    alert_columns = _table_columns(cursor, 'alert_events')
+    if 'workflow_status' not in alert_columns:
+        cursor.execute("ALTER TABLE alert_events ADD COLUMN workflow_status TEXT NOT NULL DEFAULT 'open'")
+    if 'assignee' not in alert_columns:
+        cursor.execute('ALTER TABLE alert_events ADD COLUMN assignee TEXT')
+    if 'ack_by' not in alert_columns:
+        cursor.execute('ALTER TABLE alert_events ADD COLUMN ack_by TEXT')
+    if 'ack_at' not in alert_columns:
+        cursor.execute('ALTER TABLE alert_events ADD COLUMN ack_at TEXT')
+    if 'note' not in alert_columns:
+        cursor.execute("ALTER TABLE alert_events ADD COLUMN note TEXT DEFAULT ''")
+    if 'updated_at' not in alert_columns:
+        cursor.execute('ALTER TABLE alert_events ADD COLUMN updated_at TEXT')
+    
+    cursor.execute(
+        "UPDATE alert_events SET workflow_status = CASE WHEN resolved_at IS NULL THEN 'open' ELSE 'resolved' END WHERE workflow_status IS NULL OR workflow_status = ''"
+    )
+    cursor.execute("UPDATE alert_events SET updated_at = COALESCE(updated_at, resolved_at, created_at)")
+
+    maintenance_columns = _table_columns(cursor, 'alert_maintenance_windows')
+    if 'target_ips_json' not in maintenance_columns:
+        cursor.execute("ALTER TABLE alert_maintenance_windows ADD COLUMN target_ips_json TEXT DEFAULT '[]'")
+    if 'selection_mode' not in maintenance_columns:
+        cursor.execute("ALTER TABLE alert_maintenance_windows ADD COLUMN selection_mode TEXT DEFAULT 'resources'")
+    if 'condition_logic' not in maintenance_columns:
+        cursor.execute("ALTER TABLE alert_maintenance_windows ADD COLUMN condition_logic TEXT DEFAULT 'all'")
+    if 'match_conditions_json' not in maintenance_columns:
+        cursor.execute("ALTER TABLE alert_maintenance_windows ADD COLUMN match_conditions_json TEXT DEFAULT '[]'")
+    cursor.execute(
+        f'''
+        UPDATE alert_maintenance_windows
+        SET target_ips_json = CASE
+            WHEN COALESCE(target_ips_json, '') = '' OR target_ips_json = '[]' THEN CAST({_JSON_ARRAY_FN}(target_ip) AS TEXT)
+            ELSE target_ips_json
+        END
+        WHERE COALESCE(target_ip, '') != ''
+        '''
+    )
+    cursor.execute(
+        '''
+        UPDATE alert_maintenance_windows
+        SET selection_mode = CASE
+            WHEN COALESCE(selection_mode, '') = '' AND (
+                COALESCE(title_pattern, '') != '' OR COALESCE(message_pattern, '') != ''
+            ) THEN 'conditions'
+            WHEN COALESCE(selection_mode, '') = '' THEN 'resources'
+            ELSE selection_mode
+        END
+        '''
+    )
+    cursor.execute(
+        '''
+        UPDATE alert_maintenance_windows
+        SET condition_logic = CASE
+            WHEN COALESCE(condition_logic, '') IN ('all', 'any', 'none') THEN condition_logic
+            ELSE 'all'
+        END
+        '''
+    )
+
+    rule_columns = _table_columns(cursor, 'alert_rule_settings')
+    if rule_columns:
+        if 'aggregation_mode' not in rule_columns:
+            cursor.execute("ALTER TABLE alert_rule_settings ADD COLUMN aggregation_mode TEXT DEFAULT 'dedupe_key'")
+        if 'notification_repeat_window_seconds' not in rule_columns:
+            cursor.execute('ALTER TABLE alert_rule_settings ADD COLUMN notification_repeat_window_seconds INTEGER DEFAULT 120')
+        if 'notify_on_active' not in rule_columns:
+            cursor.execute('ALTER TABLE alert_rule_settings ADD COLUMN notify_on_active INTEGER DEFAULT 1')
+        if 'notify_on_recovery' not in rule_columns:
+            cursor.execute('ALTER TABLE alert_rule_settings ADD COLUMN notify_on_recovery INTEGER DEFAULT 1')
+        if 'notify_on_reopen_after_maintenance' not in rule_columns:
+            cursor.execute('ALTER TABLE alert_rule_settings ADD COLUMN notify_on_reopen_after_maintenance INTEGER DEFAULT 1')
+        if 'updated_by' not in rule_columns:
+            cursor.execute("ALTER TABLE alert_rule_settings ADD COLUMN updated_by TEXT DEFAULT 'system'")
+        if 'updated_at' not in rule_columns:
+            cursor.execute("ALTER TABLE alert_rule_settings ADD COLUMN updated_at TEXT")
+
+    cursor.execute(
+        '''
+        INSERT INTO alert_rule_settings (
+            id, interface_down_enabled, interface_util_threshold, cpu_threshold, memory_threshold,
+            aggregation_mode, notification_repeat_window_seconds,
+            notify_on_active, notify_on_recovery, notify_on_reopen_after_maintenance,
+            updated_by, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO NOTHING
+        ''',
+        (
+            'default',
+            1,
+            85,
+            90,
+            90,
+            'dedupe_key',
+            120,
+            1,
+            1,
+            1,
+            'system',
+            _utc_now_iso(),
+        ),
+    )
+    cursor.execute("UPDATE alert_rule_settings SET updated_at = COALESCE(updated_at, ?) WHERE updated_at IS NULL OR updated_at = ''", (_utc_now_iso(),))
+
+    alert_rule_columns = _table_columns(cursor, 'alert_rules')
+    if alert_rule_columns and 'scope_match_mode' not in alert_rule_columns:
+        cursor.execute("ALTER TABLE alert_rules ADD COLUMN scope_match_mode TEXT NOT NULL DEFAULT 'exact'")
+    if alert_rule_columns and 'for_duration_seconds' not in alert_rule_columns:
+        cursor.execute("ALTER TABLE alert_rules ADD COLUMN for_duration_seconds INTEGER DEFAULT 0")
+
+    legacy_rules = cursor.execute(
+        '''
+        SELECT interface_down_enabled, interface_util_threshold, cpu_threshold, memory_threshold,
+               aggregation_mode, notification_repeat_window_seconds,
+               notify_on_active, notify_on_recovery, notify_on_reopen_after_maintenance,
+               updated_by, updated_at
+        FROM alert_rule_settings
+        WHERE id = 'default'
+        LIMIT 1
+        '''
+    ).fetchone()
+    alert_rules_count = cursor.execute('SELECT COUNT(*) FROM alert_rules').fetchone()[0]
+    seeded_at = _utc_now_iso()
+    legacy_updated_at = legacy_rules['updated_at'] if legacy_rules and legacy_rules['updated_at'] else seeded_at
+    legacy_updated_by = legacy_rules['updated_by'] if legacy_rules and legacy_rules['updated_by'] else 'system'
+    legacy_aggregation_mode = legacy_rules['aggregation_mode'] if legacy_rules and legacy_rules['aggregation_mode'] else 'dedupe_key'
+    legacy_repeat_window = int(legacy_rules['notification_repeat_window_seconds']) if legacy_rules and legacy_rules['notification_repeat_window_seconds'] is not None else 120
+    legacy_notify_on_active = int(legacy_rules['notify_on_active']) if legacy_rules and legacy_rules['notify_on_active'] is not None else 1
+    legacy_notify_on_recovery = int(legacy_rules['notify_on_recovery']) if legacy_rules and legacy_rules['notify_on_recovery'] is not None else 1
+    legacy_notify_on_reopen = int(legacy_rules['notify_on_reopen_after_maintenance']) if legacy_rules and legacy_rules['notify_on_reopen_after_maintenance'] is not None else 1
+    seed_rules = [
+        ('builtin-cpu', 'CPU Usage High', 'cpu', 'major', float(legacy_rules['cpu_threshold']) if legacy_rules and legacy_rules['cpu_threshold'] is not None else 90.0, 1),
+        ('builtin-memory', 'Memory Usage High', 'memory', 'major', float(legacy_rules['memory_threshold']) if legacy_rules and legacy_rules['memory_threshold'] is not None else 90.0, 1),
+        ('builtin-if-util', 'Interface Utilization High', 'interface_util', 'warning', float(legacy_rules['interface_util_threshold']) if legacy_rules and legacy_rules['interface_util_threshold'] is not None else 85.0, 1),
+        ('builtin-if-down', 'Interface Down', 'interface_down', 'warning', None, int(legacy_rules['interface_down_enabled']) if legacy_rules and legacy_rules['interface_down_enabled'] is not None else 1),
+        ('builtin-interconnect-down', 'Interconnect Down', 'interconnect_down', 'major', None, 1),
+        ('builtin-temp-high', 'Temperature High', 'temperature_high', 'major', 75.0, 1),
+        ('builtin-snmp-unreachable', 'SNMP Unreachable', 'snmp_unreachable', 'major', None, 1),
+        ('builtin-lldp-neighbor-lost', 'LLDP Neighbor Lost', 'lldp_neighbor_lost', 'major', None, 1),
+        ('builtin-fan-failure', 'Fan Failure', 'fan_failure', 'critical', None, 1),
+        ('builtin-psu-failure', 'Power Supply Failure', 'power_supply_failure', 'critical', None, 1),
+        ('builtin-if-error-rate', 'Interface Error Rate High', 'interface_error_rate_high', 'major', 2.0, 1),
+        ('builtin-if-flap', 'Interface Flapping', 'interface_flap', 'major', None, 1),
+        ('builtin-bgp-neighbor-down', 'BGP Neighbor Down', 'bgp_neighbor_down', 'critical', None, 1),
+        ('builtin-ospf-neighbor-down', 'OSPF Neighbor Down', 'ospf_neighbor_down', 'critical', None, 1),
+        ('builtin-bfd-session-down', 'BFD Session Down', 'bfd_session_down', 'critical', None, 1),
+        ('builtin-ping-unreachable', 'Ping Unreachable', 'ping_unreachable', 'critical', None, 1),
+        ('builtin-host-cpu', 'Host CPU Usage High', 'host_cpu', 'major', 75.0, 1),
+        ('builtin-host-memory', 'Host Memory Usage High', 'host_memory', 'major', 80.0, 1),
+        ('builtin-host-disk', 'Host Disk Usage High', 'host_disk', 'major', 80.0, 1),
+    ]
+
+    def _insert_seed_rule(rule_id, name, metric_type, severity, threshold, enabled, created_at):
         cursor.execute(
             '''
-            INSERT INTO alert_rule_settings (
-                id, interface_down_enabled, interface_util_threshold, cpu_threshold, memory_threshold,
+            INSERT INTO alert_rules (
+                id, name, metric_type, scope_type, scope_match_mode, scope_value, severity, threshold, enabled,
                 aggregation_mode, notification_repeat_window_seconds,
                 notify_on_active, notify_on_recovery, notify_on_reopen_after_maintenance,
-                updated_by, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_by, created_at, updated_by, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO NOTHING
             ''',
             (
-                'default',
-                1,
-                85,
-                90,
-                90,
-                'dedupe_key',
-                120,
-                1,
-                1,
-                1,
-                'system',
-                _utc_now_iso(),
-            ),
-        )
-        cursor.execute("UPDATE alert_rule_settings SET updated_at = COALESCE(updated_at, ?) WHERE updated_at IS NULL OR updated_at = ''", (_utc_now_iso(),))
+                rule_id,
+            name,
+            metric_type,
+            'global',
+            'exact',
+            '',
+            severity,
+            threshold,
+            enabled,
+            legacy_aggregation_mode,
+            legacy_repeat_window,
+            legacy_notify_on_active,
+            legacy_notify_on_recovery,
+            legacy_notify_on_reopen,
+            legacy_updated_by,
+            created_at,
+            legacy_updated_by,
+            created_at,
+        ),
+    )
 
-        alert_rule_columns = _table_columns(cursor, 'alert_rules')
-        if alert_rule_columns and 'scope_match_mode' not in alert_rule_columns:
-            cursor.execute("ALTER TABLE alert_rules ADD COLUMN scope_match_mode TEXT NOT NULL DEFAULT 'exact'")
-        if alert_rule_columns and 'for_duration_seconds' not in alert_rule_columns:
-            cursor.execute("ALTER TABLE alert_rules ADD COLUMN for_duration_seconds INTEGER DEFAULT 0")
-
-        legacy_rules = cursor.execute(
-            '''
-            SELECT interface_down_enabled, interface_util_threshold, cpu_threshold, memory_threshold,
-                   aggregation_mode, notification_repeat_window_seconds,
-                   notify_on_active, notify_on_recovery, notify_on_reopen_after_maintenance,
-                   updated_by, updated_at
-            FROM alert_rule_settings
-            WHERE id = 'default'
-            LIMIT 1
-            '''
-        ).fetchone()
-        alert_rules_count = cursor.execute('SELECT COUNT(*) FROM alert_rules').fetchone()[0]
-        seeded_at = _utc_now_iso()
-        legacy_updated_at = legacy_rules['updated_at'] if legacy_rules and legacy_rules['updated_at'] else seeded_at
-        legacy_updated_by = legacy_rules['updated_by'] if legacy_rules and legacy_rules['updated_by'] else 'system'
-        legacy_aggregation_mode = legacy_rules['aggregation_mode'] if legacy_rules and legacy_rules['aggregation_mode'] else 'dedupe_key'
-        legacy_repeat_window = int(legacy_rules['notification_repeat_window_seconds']) if legacy_rules and legacy_rules['notification_repeat_window_seconds'] is not None else 120
-        legacy_notify_on_active = int(legacy_rules['notify_on_active']) if legacy_rules and legacy_rules['notify_on_active'] is not None else 1
-        legacy_notify_on_recovery = int(legacy_rules['notify_on_recovery']) if legacy_rules and legacy_rules['notify_on_recovery'] is not None else 1
-        legacy_notify_on_reopen = int(legacy_rules['notify_on_reopen_after_maintenance']) if legacy_rules and legacy_rules['notify_on_reopen_after_maintenance'] is not None else 1
-        seed_rules = [
-            ('builtin-cpu', 'CPU Usage High', 'cpu', 'major', float(legacy_rules['cpu_threshold']) if legacy_rules and legacy_rules['cpu_threshold'] is not None else 90.0, 1),
-            ('builtin-memory', 'Memory Usage High', 'memory', 'major', float(legacy_rules['memory_threshold']) if legacy_rules and legacy_rules['memory_threshold'] is not None else 90.0, 1),
-            ('builtin-if-util', 'Interface Utilization High', 'interface_util', 'warning', float(legacy_rules['interface_util_threshold']) if legacy_rules and legacy_rules['interface_util_threshold'] is not None else 85.0, 1),
-            ('builtin-if-down', 'Interface Down', 'interface_down', 'warning', None, int(legacy_rules['interface_down_enabled']) if legacy_rules and legacy_rules['interface_down_enabled'] is not None else 1),
-            ('builtin-interconnect-down', 'Interconnect Down', 'interconnect_down', 'major', None, 1),
-            ('builtin-temp-high', 'Temperature High', 'temperature_high', 'major', 75.0, 1),
-            ('builtin-snmp-unreachable', 'SNMP Unreachable', 'snmp_unreachable', 'major', None, 1),
-            ('builtin-lldp-neighbor-lost', 'LLDP Neighbor Lost', 'lldp_neighbor_lost', 'major', None, 1),
-            ('builtin-fan-failure', 'Fan Failure', 'fan_failure', 'critical', None, 1),
-            ('builtin-psu-failure', 'Power Supply Failure', 'power_supply_failure', 'critical', None, 1),
-            ('builtin-if-error-rate', 'Interface Error Rate High', 'interface_error_rate_high', 'major', 2.0, 1),
-            ('builtin-if-flap', 'Interface Flapping', 'interface_flap', 'major', None, 1),
-            ('builtin-bgp-neighbor-down', 'BGP Neighbor Down', 'bgp_neighbor_down', 'critical', None, 1),
-            ('builtin-ospf-neighbor-down', 'OSPF Neighbor Down', 'ospf_neighbor_down', 'critical', None, 1),
-            ('builtin-bfd-session-down', 'BFD Session Down', 'bfd_session_down', 'critical', None, 1),
-            ('builtin-ping-unreachable', 'Ping Unreachable', 'ping_unreachable', 'critical', None, 1),
-            ('builtin-host-cpu', 'Host CPU Usage High', 'host_cpu', 'major', 75.0, 1),
-            ('builtin-host-memory', 'Host Memory Usage High', 'host_memory', 'major', 80.0, 1),
-            ('builtin-host-disk', 'Host Disk Usage High', 'host_disk', 'major', 80.0, 1),
-        ]
-
-        def _insert_seed_rule(rule_id, name, metric_type, severity, threshold, enabled, created_at):
-            cursor.execute(
-                '''
-                INSERT INTO alert_rules (
-                    id, name, metric_type, scope_type, scope_match_mode, scope_value, severity, threshold, enabled,
-                    aggregation_mode, notification_repeat_window_seconds,
-                    notify_on_active, notify_on_recovery, notify_on_reopen_after_maintenance,
-                    created_by, created_at, updated_by, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO NOTHING
-                ''',
-                (
-                    rule_id,
-                    name,
-                    metric_type,
-                    'global',
-                    'exact',
-                    '',
-                    severity,
-                    threshold,
-                    enabled,
-                    legacy_aggregation_mode,
-                    legacy_repeat_window,
-                    legacy_notify_on_active,
-                    legacy_notify_on_recovery,
-                    legacy_notify_on_reopen,
-                    legacy_updated_by,
-                    created_at,
-                    legacy_updated_by,
-                    created_at,
-                ),
-            )
-
-        if alert_rules_count == 0:
-            for rule in seed_rules:
-                _insert_seed_rule(*rule, legacy_updated_at)
-
+    if alert_rules_count == 0:
         for rule in seed_rules:
-            _insert_seed_rule(*rule, seeded_at)
-        if 'temp' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN temp INTEGER DEFAULT 35')
-        if 'fan_status' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN fan_status TEXT DEFAULT "ok"')
-        if 'psu_status' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN psu_status TEXT DEFAULT "redundant"')
-        if 'sys_name' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN sys_name TEXT')
-        if 'sys_location' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN sys_location TEXT')
-        if 'sys_contact' not in columns:
-            cursor.execute('ALTER TABLE devices ADD COLUMN sys_contact TEXT')
+            _insert_seed_rule(*rule, legacy_updated_at)
 
-        # Migration for scripts table
-        script_columns = _table_columns(cursor, 'scripts')
-        if 'platform' not in script_columns:
-            cursor.execute('ALTER TABLE scripts ADD COLUMN platform TEXT')
-        if 'category' not in script_columns:
-            cursor.execute('ALTER TABLE scripts ADD COLUMN category TEXT DEFAULT "custom"')
+    for rule in seed_rules:
+        _insert_seed_rule(*rule, seeded_at)
+    if 'temp' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN temp INTEGER DEFAULT 35')
+    if 'fan_status' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN fan_status TEXT DEFAULT "ok"')
+    if 'psu_status' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN psu_status TEXT DEFAULT "redundant"')
+    if 'sys_name' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN sys_name TEXT')
+    if 'sys_location' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN sys_location TEXT')
+    if 'sys_contact' not in columns:
+        cursor.execute('ALTER TABLE devices ADD COLUMN sys_contact TEXT')
 
-        # Migration for users table
-        user_columns = _table_columns(cursor, 'users')
-        if 'avatar_url' not in user_columns:
-            cursor.execute('ALTER TABLE users ADD COLUMN avatar_url TEXT')
-        if 'group_name' not in user_columns:
-            cursor.execute("ALTER TABLE users ADD COLUMN group_name TEXT DEFAULT ''")
-        if 'change_groups_json' not in user_columns:
-            cursor.execute("ALTER TABLE users ADD COLUMN change_groups_json TEXT DEFAULT '[]'")
-        if 'notification_channels' not in user_columns:
-            cursor.execute("ALTER TABLE users ADD COLUMN notification_channels TEXT DEFAULT '{}'")
-        if 'preferred_language' not in user_columns:
-            cursor.execute("ALTER TABLE users ADD COLUMN preferred_language TEXT DEFAULT 'zh'")
+    # Migration for scripts table
+    script_columns = _table_columns(cursor, 'scripts')
+    if 'platform' not in script_columns:
+        cursor.execute('ALTER TABLE scripts ADD COLUMN platform TEXT')
+    if 'category' not in script_columns:
+        cursor.execute('ALTER TABLE scripts ADD COLUMN category TEXT DEFAULT "custom"')
 
-        finding_columns = _table_columns(cursor, 'compliance_findings')
-        if finding_columns:
-            if 'owner' not in finding_columns:
-                cursor.execute("ALTER TABLE compliance_findings ADD COLUMN owner TEXT DEFAULT ''")
-            if 'note' not in finding_columns:
-                cursor.execute("ALTER TABLE compliance_findings ADD COLUMN note TEXT DEFAULT ''")
+    # Migration for users table
+    user_columns = _table_columns(cursor, 'users')
+    if 'avatar_url' not in user_columns:
+        cursor.execute('ALTER TABLE users ADD COLUMN avatar_url TEXT')
+    if 'group_name' not in user_columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN group_name TEXT DEFAULT ''")
+    if 'change_groups_json' not in user_columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN change_groups_json TEXT DEFAULT '[]'")
+    if 'notification_channels' not in user_columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN notification_channels TEXT DEFAULT '{}'")
+    if 'preferred_language' not in user_columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN preferred_language TEXT DEFAULT 'zh'")
 
-        # Migration for interface_telemetry_raw table
-        raw_columns = _table_columns(cursor, 'interface_telemetry_raw')
-        if raw_columns:
-            if 'in_pkts' not in raw_columns:
-                cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN in_pkts INTEGER')
-            if 'out_pkts' not in raw_columns:
-                cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN out_pkts INTEGER')
+    finding_columns = _table_columns(cursor, 'compliance_findings')
+    if finding_columns:
+        if 'owner' not in finding_columns:
+            cursor.execute("ALTER TABLE compliance_findings ADD COLUMN owner TEXT DEFAULT ''")
+        if 'note' not in finding_columns:
+            cursor.execute("ALTER TABLE compliance_findings ADD COLUMN note TEXT DEFAULT ''")
 
-        # Migration for interface_telemetry_1m table
-        rollup_columns = _table_columns(cursor, 'interface_telemetry_1m')
-        if rollup_columns:
-            if 'in_pkts_sum' not in rollup_columns:
-                cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN in_pkts_sum INTEGER DEFAULT 0')
-            if 'out_pkts_sum' not in rollup_columns:
-                cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN out_pkts_sum INTEGER DEFAULT 0')
+    # Migration for interface_telemetry_raw table
+    raw_columns = _table_columns(cursor, 'interface_telemetry_raw')
+    if raw_columns:
+        if 'in_pkts' not in raw_columns:
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN in_pkts INTEGER')
+        if 'out_pkts' not in raw_columns:
+            cursor.execute('ALTER TABLE interface_telemetry_raw ADD COLUMN out_pkts INTEGER')
 
-        # ── Config drift detection results ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS config_drift_results (
-            id TEXT PRIMARY KEY,
-            device_id TEXT NOT NULL,
-            hostname TEXT,
-            baseline_snapshot_id TEXT,
-            current_snapshot_id TEXT,
-            drift_status TEXT NOT NULL DEFAULT 'unknown',
-            added_lines INTEGER DEFAULT 0,
-            removed_lines INTEGER DEFAULT 0,
-            changed_lines INTEGER DEFAULT 0,
-            diff_summary TEXT DEFAULT '',
-            checked_at TEXT NOT NULL,
-            FOREIGN KEY (device_id) REFERENCES devices(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_config_drift_device ON config_drift_results(device_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_config_drift_checked ON config_drift_results(checked_at)')
+    # Migration for interface_telemetry_1m table
+    rollup_columns = _table_columns(cursor, 'interface_telemetry_1m')
+    if rollup_columns:
+        if 'in_pkts_sum' not in rollup_columns:
+            cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN in_pkts_sum INTEGER DEFAULT 0')
+        if 'out_pkts_sum' not in rollup_columns:
+            cursor.execute('ALTER TABLE interface_telemetry_1m ADD COLUMN out_pkts_sum INTEGER DEFAULT 0')
 
-        # ── IP/VLAN resource management ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ip_subnets (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL DEFAULT '',
-            network TEXT NOT NULL,
-            prefix_len INTEGER NOT NULL,
-            vlan_id INTEGER,
-            vlan_name TEXT DEFAULT '',
-            gateway TEXT DEFAULT '',
-            description TEXT DEFAULT '',
-            site TEXT DEFAULT '',
-            status TEXT DEFAULT 'active',
-            total_ips INTEGER DEFAULT 0,
-            used_ips INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        ''')
-        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_subnets_network ON ip_subnets(network, prefix_len)')
+    # ── Config drift detection results ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS config_drift_results (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        hostname TEXT,
+        baseline_snapshot_id TEXT,
+        current_snapshot_id TEXT,
+        drift_status TEXT NOT NULL DEFAULT 'unknown',
+        added_lines INTEGER DEFAULT 0,
+        removed_lines INTEGER DEFAULT 0,
+        changed_lines INTEGER DEFAULT 0,
+        diff_summary TEXT DEFAULT '',
+        checked_at TEXT NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES devices(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_config_drift_device ON config_drift_results(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_config_drift_checked ON config_drift_results(checked_at)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ip_addresses (
-            id TEXT PRIMARY KEY,
-            subnet_id TEXT NOT NULL,
-            address TEXT NOT NULL,
-            hostname TEXT DEFAULT '',
-            device_id TEXT DEFAULT '',
-            interface_name TEXT DEFAULT '',
-            mac_address TEXT DEFAULT '',
-            device_type TEXT DEFAULT '',
-            status TEXT DEFAULT 'active',
-            description TEXT DEFAULT '',
-            last_seen TEXT DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (subnet_id) REFERENCES ip_subnets(id)
-        )
-        ''')
-        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_addr_unique ON ip_addresses(subnet_id, address)')
+    # ── IP/VLAN resource management ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ip_subnets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL DEFAULT '',
+        network TEXT NOT NULL,
+        prefix_len INTEGER NOT NULL,
+        vlan_id INTEGER,
+        vlan_name TEXT DEFAULT '',
+        gateway TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        site TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        total_ips INTEGER DEFAULT 0,
+        used_ips INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_subnets_network ON ip_subnets(network, prefix_len)')
 
-        # Migration: add device_type column if missing
-        ip_addr_cols = _table_columns(cursor, 'ip_addresses')
-        if 'device_type' not in ip_addr_cols:
-            cursor.execute("ALTER TABLE ip_addresses ADD COLUMN device_type TEXT DEFAULT ''")
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ip_addresses (
+        id TEXT PRIMARY KEY,
+        subnet_id TEXT NOT NULL,
+        address TEXT NOT NULL,
+        hostname TEXT DEFAULT '',
+        device_id TEXT DEFAULT '',
+        interface_name TEXT DEFAULT '',
+        mac_address TEXT DEFAULT '',
+        device_type TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        description TEXT DEFAULT '',
+        last_seen TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (subnet_id) REFERENCES ip_subnets(id)
+    )
+    ''')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_addr_unique ON ip_addresses(subnet_id, address)')
 
-        # ── Capacity planning snapshots (daily link/device utilization) ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS capacity_snapshots (
-            id TEXT PRIMARY KEY,
-            device_id TEXT NOT NULL,
-            hostname TEXT DEFAULT '',
-            interface_name TEXT DEFAULT '',
-            snapshot_date TEXT NOT NULL,
-            avg_in_util REAL DEFAULT 0,
-            avg_out_util REAL DEFAULT 0,
-            peak_in_util REAL DEFAULT 0,
-            peak_out_util REAL DEFAULT 0,
-            bandwidth_mbps REAL DEFAULT 0,
-            cpu_avg REAL DEFAULT 0,
-            memory_avg REAL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (device_id) REFERENCES devices(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_capacity_snap_device_date ON capacity_snapshots(device_id, snapshot_date)')
+    # Migration: add device_type column if missing
+    ip_addr_cols = _table_columns(cursor, 'ip_addresses')
+    if 'device_type' not in ip_addr_cols:
+        cursor.execute("ALTER TABLE ip_addresses ADD COLUMN device_type TEXT DEFAULT ''")
 
-        # ── Physical Asset Management ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS physical_assets (
-            id TEXT PRIMARY KEY,
-            asset_type TEXT NOT NULL DEFAULT 'server',
-            asset_tag TEXT DEFAULT '',
-            serial_number TEXT DEFAULT '',
-            vendor TEXT DEFAULT '',
-            model TEXT DEFAULT '',
-            hostname TEXT DEFAULT '',
-            datacenter TEXT DEFAULT '',
-            rack TEXT DEFAULT '',
-            rack_unit TEXT DEFAULT '',
-            management_ip TEXT DEFAULT '',
-            business_ip TEXT DEFAULT '',
-            device_role TEXT DEFAULT '',
-            vlan TEXT DEFAULT '',
-            uplink_switch TEXT DEFAULT '',
-            uplink_port TEXT DEFAULT '',
-            status TEXT DEFAULT 'active',
-            purchase_date TEXT DEFAULT '',
-            warranty_expiry TEXT DEFAULT '',
-            department TEXT DEFAULT '',
-            notes TEXT DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        ''')
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_tag ON physical_assets(asset_tag) WHERE asset_tag != ''")
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_asset_type ON physical_assets(asset_type)')
+    # ── Capacity planning snapshots (daily link/device utilization) ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS capacity_snapshots (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        hostname TEXT DEFAULT '',
+        interface_name TEXT DEFAULT '',
+        snapshot_date TEXT NOT NULL,
+        avg_in_util REAL DEFAULT 0,
+        avg_out_util REAL DEFAULT 0,
+        peak_in_util REAL DEFAULT 0,
+        peak_out_util REAL DEFAULT 0,
+        bandwidth_mbps REAL DEFAULT 0,
+        cpu_avg REAL DEFAULT 0,
+        memory_avg REAL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES devices(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_capacity_snap_device_date ON capacity_snapshots(device_id, snapshot_date)')
 
-        # Migration: add server-specific columns to physical_assets
-        ensure_column('physical_assets', 'vlan', "TEXT DEFAULT ''")
-        ensure_column('physical_assets', 'uplink_switch', "TEXT DEFAULT ''")
-        ensure_column('physical_assets', 'uplink_port', "TEXT DEFAULT ''")
-        ensure_column('physical_assets', 'lifecycle_status', "TEXT DEFAULT 'staging'")
+    # ── Physical Asset Management ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS physical_assets (
+        id TEXT PRIMARY KEY,
+        asset_type TEXT NOT NULL DEFAULT 'server',
+        asset_tag TEXT DEFAULT '',
+        serial_number TEXT DEFAULT '',
+        vendor TEXT DEFAULT '',
+        model TEXT DEFAULT '',
+        hostname TEXT DEFAULT '',
+        datacenter TEXT DEFAULT '',
+        rack TEXT DEFAULT '',
+        rack_unit TEXT DEFAULT '',
+        management_ip TEXT DEFAULT '',
+        business_ip TEXT DEFAULT '',
+        device_role TEXT DEFAULT '',
+        vlan TEXT DEFAULT '',
+        uplink_switch TEXT DEFAULT '',
+        uplink_port TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        purchase_date TEXT DEFAULT '',
+        warranty_expiry TEXT DEFAULT '',
+        department TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_tag ON physical_assets(asset_tag) WHERE asset_tag != ''")
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_asset_type ON physical_assets(asset_type)')
 
-        # Migration: add connection and credential columns for general assets (e.g. servers)
-        ensure_column('physical_assets', 'platform', "TEXT DEFAULT ''")
-        ensure_column('physical_assets', 'connection_method', "TEXT DEFAULT 'ssh'")
-        ensure_column('physical_assets', 'username', "TEXT DEFAULT ''")
-        ensure_column('physical_assets', 'password', "TEXT DEFAULT ''")
-        ensure_column('physical_assets', 'snmp_community', "TEXT DEFAULT 'public'")
-        ensure_column('physical_assets', 'snmp_port', "INTEGER DEFAULT 161")
+    # Migration: add server-specific columns to physical_assets
+    ensure_column('physical_assets', 'vlan', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'uplink_switch', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'uplink_port', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'lifecycle_status', "TEXT DEFAULT 'staging'")
 
-        # Rack planning on assets: device height (U) and optional planned start RU for DCIM install flow
-        ensure_column('physical_assets', 'u_height', 'INTEGER NOT NULL DEFAULT 1')
-        ensure_column('physical_assets', 'planned_start_u', 'INTEGER')
+    # Migration: add connection and credential columns for general assets (e.g. servers)
+    ensure_column('physical_assets', 'platform', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'connection_method', "TEXT DEFAULT 'ssh'")
+    ensure_column('physical_assets', 'username', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'password', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'snmp_community', "TEXT DEFAULT 'public'")
+    ensure_column('physical_assets', 'snmp_port', "INTEGER DEFAULT 161")
 
-        # Migration: link devices to physical_assets (Plan-A unification)
-        ensure_column('devices', 'asset_id', 'TEXT')
-        ensure_column('devices', 'vendor', "TEXT DEFAULT ''")
+    # Rack planning on assets: device height (U) and optional planned start RU for DCIM install flow
+    ensure_column('physical_assets', 'u_height', 'INTEGER NOT NULL DEFAULT 1')
+    ensure_column('physical_assets', 'planned_start_u', 'INTEGER')
 
-        # Migration: device lifecycle status (staging → production → maintenance → decommissioned)
-        ensure_column('devices', 'lifecycle_status', "TEXT DEFAULT 'staging'")
+    # Migration: link devices to physical_assets (Plan-A unification)
+    ensure_column('devices', 'asset_id', 'TEXT')
+    ensure_column('devices', 'vendor', "TEXT DEFAULT ''")
 
-        # Migration: dual-credential model (normal + privileged)
-        ensure_column('devices', 'enable_password', "TEXT DEFAULT ''")
-        ensure_column('devices', 'priv_username', "TEXT DEFAULT ''")
-        # Credential source: 'local' (Fernet-encrypted in DB) or 'vault' (HashiCorp Vault KV)
-        ensure_column('devices', 'credential_source', "TEXT DEFAULT 'local'")
-        # Vault KV path (e.g. 'netops/devices/core-sw-01'), only used when credential_source='vault'
-        ensure_column('devices', 'vault_path', "TEXT DEFAULT ''")
+    # Migration: device lifecycle status (staging → production → maintenance → decommissioned)
+    ensure_column('devices', 'lifecycle_status', "TEXT DEFAULT 'staging'")
 
-        # Migration: device onboarding status (口令上手 state machine)
-        ensure_column('devices', 'onboarding_status', "TEXT DEFAULT 'active'")
-        ensure_column('devices', 'onboarding_updated_at', "TEXT DEFAULT ''")
+    # Migration: dual-credential model (normal + privileged)
+    ensure_column('devices', 'enable_password', "TEXT DEFAULT ''")
+    ensure_column('devices', 'priv_username', "TEXT DEFAULT ''")
+    # Credential source: 'local' (Fernet-encrypted in DB) or 'vault' (HashiCorp Vault KV)
+    ensure_column('devices', 'credential_source', "TEXT DEFAULT 'local'")
+    # Vault KV path (e.g. 'netops/devices/core-sw-01'), only used when credential_source='vault'
+    ensure_column('devices', 'vault_path', "TEXT DEFAULT ''")
 
-        # Migration: password rotation tracking
-        ensure_column('devices', 'password_last_rotated', "TEXT DEFAULT ''")
-        ensure_column('devices', 'password_expires_at', "TEXT DEFAULT ''")
-        ensure_column('devices', 'rotation_status', "TEXT DEFAULT ''")  # rotating / completed / failed
+    # Migration: device onboarding status (口令上手 state machine)
+    ensure_column('devices', 'onboarding_status', "TEXT DEFAULT 'active'")
+    ensure_column('devices', 'onboarding_updated_at', "TEXT DEFAULT ''")
 
-        # Auto-link existing devices to matching assets, or create missing assets (Plan-A unification)
-        unlinked = cursor.execute(
-            "SELECT id, hostname, ip_address, sn, model, role, site, vendor, status, lifecycle_status FROM devices WHERE (asset_id IS NULL OR asset_id = '')"
-        ).fetchall()
-        if unlinked:
-            import uuid
-            for dev in unlinked:
-                # Check if there's a physical asset with the same hostname or IP
-                match = cursor.execute(
-                    "SELECT id FROM physical_assets WHERE asset_type='network_device' AND (hostname = ? OR management_ip = ?) LIMIT 1",
-                    (dev['hostname'], dev['ip_address'])
-                ).fetchone()
-                if match:
-                    cursor.execute('UPDATE devices SET asset_id = ? WHERE id = ?', (match['id'], dev['id']))
-                else:
-                    # Create a new physical_asset
-                    asset_id = f"asset-{uuid.uuid4().hex[:12]}"
-                    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                    
-                    cursor.execute('''
-                        INSERT INTO physical_assets (
-                            id, asset_type, asset_tag, serial_number, vendor, model, hostname,
-                            datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
-                            vlan, uplink_switch, uplink_port,
-                            status, purchase_date, warranty_expiry, department, notes, created_at, updated_at, lifecycle_status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        asset_id, 'network_device', '', dev['sn'] or '', dev['vendor'] or '',
-                        dev['model'] or '', dev['hostname'] or '',
-                        dev['site'] or '', '', '', 1, None,
-                        dev['ip_address'] or '', '', dev['role'] or '',
-                        '', '', '',
-                        dev['status'] or 'active', '', '', '', '', now, now,
-                        dev['lifecycle_status'] or 'staging'
-                    ))
-                    cursor.execute('UPDATE devices SET asset_id = ? WHERE id = ?', (asset_id, dev['id']))
+    # Migration: password rotation tracking
+    ensure_column('devices', 'password_last_rotated', "TEXT DEFAULT ''")
+    ensure_column('devices', 'password_expires_at', "TEXT DEFAULT ''")
+    ensure_column('devices', 'rotation_status', "TEXT DEFAULT ''")  # rotating / completed / failed
+
+    # Auto-link existing devices to matching assets, or create missing assets (Plan-A unification)
+    unlinked = cursor.execute(
+        "SELECT id, hostname, ip_address, sn, model, role, site, vendor, status, lifecycle_status FROM devices WHERE (asset_id IS NULL OR asset_id = '')"
+    ).fetchall()
+    if unlinked:
+        import uuid
+        for dev in unlinked:
+            # Check if there's a physical asset with the same hostname or IP
+            match = cursor.execute(
+                "SELECT id FROM physical_assets WHERE asset_type='network_device' AND (hostname = ? OR management_ip = ?) LIMIT 1",
+                (dev['hostname'], dev['ip_address'])
+            ).fetchone()
+            if match:
+                cursor.execute('UPDATE devices SET asset_id = ? WHERE id = ?', (match['id'], dev['id']))
+            else:
+                # Create a new physical_asset
+                asset_id = f"asset-{uuid.uuid4().hex[:12]}"
+                now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+                
+                cursor.execute('''
+                    INSERT INTO physical_assets (
+                        id, asset_type, asset_tag, serial_number, vendor, model, hostname,
+                        datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
+                        vlan, uplink_switch, uplink_port,
+                        status, purchase_date, warranty_expiry, department, notes, created_at, updated_at, lifecycle_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    asset_id, 'network_device', '', dev['sn'] or '', dev['vendor'] or '',
+                    dev['model'] or '', dev['hostname'] or '',
+                    dev['site'] or '', '', '', 1, None,
+                    dev['ip_address'] or '', '', dev['role'] or '',
+                    '', '', '',
+                    dev['status'] or 'active', '', '', '', '', now, now,
+                    dev['lifecycle_status'] or 'staging'
+                ))
+                cursor.execute('UPDATE devices SET asset_id = ? WHERE id = ?', (asset_id, dev['id']))
 
 
-        # ── Change Order / Ticket Management ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS change_orders (
-            id TEXT PRIMARY KEY,
-            order_number TEXT UNIQUE NOT NULL,
-            title TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            order_type TEXT NOT NULL DEFAULT 'config_change',
-            priority TEXT NOT NULL DEFAULT 'medium',
-            status TEXT NOT NULL DEFAULT 'draft',
-            requester_id TEXT DEFAULT '',
-            requester_username TEXT DEFAULT '',
-            approver_id TEXT DEFAULT '',
-            approver_username TEXT DEFAULT '',
-            target_devices_json TEXT DEFAULT '[]',
-            commands_json TEXT DEFAULT '[]',
-            rollback_plan TEXT DEFAULT '',
-            risk_level TEXT DEFAULT 'low',
-            scheduled_start TEXT DEFAULT '',
-            scheduled_end TEXT DEFAULT '',
-            authorization_exempt INTEGER NOT NULL DEFAULT 0,
-            actual_start TEXT DEFAULT '',
-            actual_end TEXT DEFAULT '',
-            result_summary TEXT DEFAULT '',
-            result_detail_json TEXT DEFAULT '{}',
-            approval_token TEXT DEFAULT '',
-            rejected_reason TEXT DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_status ON change_orders(status)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_created_at ON change_orders(created_at)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_requester ON change_orders(requester_username)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_order_number ON change_orders(order_number)')
-        ensure_column('change_orders', 'initial_reviewer_id', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'initial_reviewer_username', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'final_approver_id', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'final_approver_username', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'assigned_initial_reviewer_id', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'assigned_initial_reviewer_username', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'assigned_final_approver_id', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'assigned_final_approver_username', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'command_template_json', "TEXT DEFAULT '{}' ")
-        ensure_column('change_orders', 'initial_reviewer_id', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'initial_reviewer_username', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'final_approver_id', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'final_approver_username', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'authorization_exempt', "INTEGER DEFAULT 0")
-        ensure_column('change_orders', 'approval_token', "TEXT DEFAULT ''")
-        ensure_column('change_orders', 'rejected_reason', "TEXT DEFAULT ''")
+    # ── Change Order / Ticket Management ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS change_orders (
+        id TEXT PRIMARY KEY,
+        order_number TEXT UNIQUE NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        order_type TEXT NOT NULL DEFAULT 'config_change',
+        priority TEXT NOT NULL DEFAULT 'medium',
+        status TEXT NOT NULL DEFAULT 'draft',
+        requester_id TEXT DEFAULT '',
+        requester_username TEXT DEFAULT '',
+        approver_id TEXT DEFAULT '',
+        approver_username TEXT DEFAULT '',
+        target_devices_json TEXT DEFAULT '[]',
+        commands_json TEXT DEFAULT '[]',
+        rollback_plan TEXT DEFAULT '',
+        risk_level TEXT DEFAULT 'low',
+        scheduled_start TEXT DEFAULT '',
+        scheduled_end TEXT DEFAULT '',
+        authorization_exempt INTEGER NOT NULL DEFAULT 0,
+        actual_start TEXT DEFAULT '',
+        actual_end TEXT DEFAULT '',
+        result_summary TEXT DEFAULT '',
+        result_detail_json TEXT DEFAULT '{}',
+        approval_token TEXT DEFAULT '',
+        rejected_reason TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_status ON change_orders(status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_created_at ON change_orders(created_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_requester ON change_orders(requester_username)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_change_orders_order_number ON change_orders(order_number)')
+    ensure_column('change_orders', 'initial_reviewer_id', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'initial_reviewer_username', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'final_approver_id', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'final_approver_username', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'assigned_initial_reviewer_id', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'assigned_initial_reviewer_username', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'assigned_final_approver_id', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'assigned_final_approver_username', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'command_template_json', "TEXT DEFAULT '{}' ")
+    ensure_column('change_orders', 'initial_reviewer_id', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'initial_reviewer_username', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'final_approver_id', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'final_approver_username', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'authorization_exempt', "INTEGER DEFAULT 0")
+    ensure_column('change_orders', 'approval_token', "TEXT DEFAULT ''")
+    ensure_column('change_orders', 'rejected_reason', "TEXT DEFAULT ''")
 
-        # ── Change Order Bookmarks ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS change_order_bookmarks (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            order_id TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            UNIQUE(user_id, order_id)
-        )
-        ''')
+    # ── Change Order Bookmarks ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS change_order_bookmarks (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        order_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(user_id, order_id)
+    )
+    ''')
 
-        # ── Change Order Templates ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS change_order_templates (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            order_type TEXT NOT NULL DEFAULT 'config_change',
-            priority TEXT NOT NULL DEFAULT 'medium',
-            target_devices_json TEXT DEFAULT '[]',
-            commands_json TEXT DEFAULT '[]',
-            rollback_plan TEXT DEFAULT '',
-            risk_level TEXT DEFAULT 'low',
-            creator_id TEXT NOT NULL,
-            creator_username TEXT NOT NULL,
-            source_order_id TEXT DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        ''')
+    # ── Change Order Templates ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS change_order_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        order_type TEXT NOT NULL DEFAULT 'config_change',
+        priority TEXT NOT NULL DEFAULT 'medium',
+        target_devices_json TEXT DEFAULT '[]',
+        commands_json TEXT DEFAULT '[]',
+        rollback_plan TEXT DEFAULT '',
+        risk_level TEXT DEFAULT 'low',
+        creator_id TEXT NOT NULL,
+        creator_username TEXT NOT NULL,
+        source_order_id TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    ''')
 
-        # ── System Settings (for setup wizard state etc.) ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS system_settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL DEFAULT '',
-            updated_at TEXT
-        )
-        ''')
+    # ── System Settings (for setup wizard state etc.) ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS system_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT '',
+        updated_at TEXT
+    )
+    ''')
 
-        # ── Device Inspection (Patrol) ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS inspection_schedules (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            cron_expr TEXT NOT NULL,
-            scope_type TEXT NOT NULL DEFAULT 'all',
-            scope_filter TEXT DEFAULT '',
-            enabled INTEGER DEFAULT 1,
-            created_by TEXT DEFAULT 'system',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            last_run_at TEXT
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_schedules_enabled ON inspection_schedules(enabled)')
+    # ── Device Inspection (Patrol) ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS inspection_schedules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        cron_expr TEXT NOT NULL,
+        scope_type TEXT NOT NULL DEFAULT 'all',
+        scope_filter TEXT DEFAULT '',
+        enabled INTEGER DEFAULT 1,
+        created_by TEXT DEFAULT 'system',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_run_at TEXT
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_schedules_enabled ON inspection_schedules(enabled)')
 
-        # Migration: add time-range scheduling, description and check_items columns
-        for col, default in [('scheduled_at', "''"), ('expires_at', "''"), ('description', "''"), ('check_items', "'[]'")]:
-            try:
-                cursor.execute(f"ALTER TABLE inspection_schedules ADD COLUMN {col} TEXT DEFAULT {default}")
-            except Exception:
-                pass  # column already exists
+    # Migration: add time-range scheduling, description and check_items columns
+    for col, default in [('scheduled_at', "''"), ('expires_at', "''"), ('description', "''"), ('check_items', "'[]'")]:
+        ensure_column('inspection_schedules', col, f"TEXT DEFAULT {default}")
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS inspection_runs (
-            id TEXT PRIMARY KEY,
-            schedule_id TEXT,
-            trigger_type TEXT NOT NULL DEFAULT 'manual',
-            scope_type TEXT NOT NULL DEFAULT 'all',
-            scope_filter TEXT DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'pending',
-            started_at TEXT NOT NULL,
-            completed_at TEXT,
-            total_devices INTEGER DEFAULT 0,
-            success_count INTEGER DEFAULT 0,
-            failed_count INTEGER DEFAULT 0,
-            unreachable_count INTEGER DEFAULT 0,
-            healthy_count INTEGER DEFAULT 0,
-            warning_count INTEGER DEFAULT 0,
-            critical_count INTEGER DEFAULT 0,
-            avg_health_score REAL DEFAULT 0,
-            summary_json TEXT DEFAULT '{}',
-            created_by TEXT DEFAULT 'system',
-            FOREIGN KEY (schedule_id) REFERENCES inspection_schedules(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_runs_started_at ON inspection_runs(started_at)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_runs_status ON inspection_runs(status)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_runs_schedule_id ON inspection_runs(schedule_id)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS inspection_runs (
+        id TEXT PRIMARY KEY,
+        schedule_id TEXT,
+        trigger_type TEXT NOT NULL DEFAULT 'manual',
+        scope_type TEXT NOT NULL DEFAULT 'all',
+        scope_filter TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        total_devices INTEGER DEFAULT 0,
+        success_count INTEGER DEFAULT 0,
+        failed_count INTEGER DEFAULT 0,
+        unreachable_count INTEGER DEFAULT 0,
+        healthy_count INTEGER DEFAULT 0,
+        warning_count INTEGER DEFAULT 0,
+        critical_count INTEGER DEFAULT 0,
+        avg_health_score REAL DEFAULT 0,
+        summary_json TEXT DEFAULT '{}',
+        created_by TEXT DEFAULT 'system',
+        FOREIGN KEY (schedule_id) REFERENCES inspection_schedules(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_runs_started_at ON inspection_runs(started_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_runs_status ON inspection_runs(status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_runs_schedule_id ON inspection_runs(schedule_id)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS inspection_results (
-            id TEXT PRIMARY KEY,
-            run_id TEXT NOT NULL,
-            device_id TEXT NOT NULL,
-            hostname TEXT DEFAULT '',
-            ip_address TEXT DEFAULT '',
-            platform TEXT DEFAULT '',
-            role TEXT DEFAULT '',
-            site TEXT DEFAULT '',
-            ping_ok INTEGER DEFAULT 0,
-            ping_latency_ms REAL,
-            ssh_ok INTEGER DEFAULT 0,
-            ssh_error TEXT DEFAULT '',
-            health_score INTEGER,
-            health_status TEXT DEFAULT 'unknown',
-            cpu_usage REAL,
-            memory_usage REAL,
-            temperature REAL,
-            fan_status TEXT DEFAULT '',
-            psu_status TEXT DEFAULT '',
-            interface_total INTEGER DEFAULT 0,
-            interface_up INTEGER DEFAULT 0,
-            interface_down INTEGER DEFAULT 0,
-            interface_flapping INTEGER DEFAULT 0,
-            interface_high_util INTEGER DEFAULT 0,
-            interface_errors INTEGER DEFAULT 0,
-            open_alerts INTEGER DEFAULT 0,
-            critical_alerts INTEGER DEFAULT 0,
-            compliance_status TEXT DEFAULT 'unknown',
-            compliance_findings INTEGER DEFAULT 0,
-            findings_json TEXT DEFAULT '[]',
-            metrics_json TEXT DEFAULT '{}',
-            checked_at TEXT NOT NULL,
-            FOREIGN KEY (run_id) REFERENCES inspection_runs(id),
-            FOREIGN KEY (device_id) REFERENCES devices(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_run_id ON inspection_results(run_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_device_id ON inspection_results(device_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_health_status ON inspection_results(health_status)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS inspection_results (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        hostname TEXT DEFAULT '',
+        ip_address TEXT DEFAULT '',
+        platform TEXT DEFAULT '',
+        role TEXT DEFAULT '',
+        site TEXT DEFAULT '',
+        ping_ok INTEGER DEFAULT 0,
+        ping_latency_ms REAL,
+        ssh_ok INTEGER DEFAULT 0,
+        ssh_error TEXT DEFAULT '',
+        health_score INTEGER,
+        health_status TEXT DEFAULT 'unknown',
+        cpu_usage REAL,
+        memory_usage REAL,
+        temperature REAL,
+        fan_status TEXT DEFAULT '',
+        psu_status TEXT DEFAULT '',
+        interface_total INTEGER DEFAULT 0,
+        interface_up INTEGER DEFAULT 0,
+        interface_down INTEGER DEFAULT 0,
+        interface_flapping INTEGER DEFAULT 0,
+        interface_high_util INTEGER DEFAULT 0,
+        interface_errors INTEGER DEFAULT 0,
+        open_alerts INTEGER DEFAULT 0,
+        critical_alerts INTEGER DEFAULT 0,
+        compliance_status TEXT DEFAULT 'unknown',
+        compliance_findings INTEGER DEFAULT 0,
+        findings_json TEXT DEFAULT '[]',
+        metrics_json TEXT DEFAULT '{}',
+        checked_at TEXT NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES inspection_runs(id),
+        FOREIGN KEY (device_id) REFERENCES devices(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_run_id ON inspection_results(run_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_device_id ON inspection_results(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_health_status ON inspection_results(health_status)')
 
-        # ── Scheduled Jobs (定时作业 + 执行计划) ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS scheduled_jobs (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            job_type TEXT NOT NULL DEFAULT 'cron',
-            action_type TEXT NOT NULL DEFAULT 'command',
-            cron_expr TEXT DEFAULT '',
-            scheduled_at TEXT DEFAULT '',
-            device_scope TEXT NOT NULL DEFAULT 'all',
-            device_filter TEXT DEFAULT '',
-            commands TEXT DEFAULT '',
-            script_id TEXT DEFAULT '',
-            is_config INTEGER DEFAULT 0,
-            config_reason TEXT DEFAULT '',
-            enabled INTEGER DEFAULT 1,
-            status TEXT NOT NULL DEFAULT 'pending',
-            approved_by TEXT DEFAULT '',
-            approved_at TEXT DEFAULT '',
-            last_run_at TEXT DEFAULT '',
-            last_run_status TEXT DEFAULT '',
-            run_count INTEGER DEFAULT 0,
-            created_by TEXT DEFAULT 'system',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_job_type ON scheduled_jobs(job_type)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_status ON scheduled_jobs(status)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_enabled ON scheduled_jobs(enabled)')
+    # ── Scheduled Jobs (定时作业 + 执行计划) ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS scheduled_jobs (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        job_type TEXT NOT NULL DEFAULT 'cron',
+        action_type TEXT NOT NULL DEFAULT 'command',
+        cron_expr TEXT DEFAULT '',
+        scheduled_at TEXT DEFAULT '',
+        device_scope TEXT NOT NULL DEFAULT 'all',
+        device_filter TEXT DEFAULT '',
+        commands TEXT DEFAULT '',
+        script_id TEXT DEFAULT '',
+        is_config INTEGER DEFAULT 0,
+        config_reason TEXT DEFAULT '',
+        enabled INTEGER DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'pending',
+        approved_by TEXT DEFAULT '',
+        approved_at TEXT DEFAULT '',
+        last_run_at TEXT DEFAULT '',
+        last_run_status TEXT DEFAULT '',
+        run_count INTEGER DEFAULT 0,
+        created_by TEXT DEFAULT 'system',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_job_type ON scheduled_jobs(job_type)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_status ON scheduled_jobs(status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_enabled ON scheduled_jobs(enabled)')
 
-        # ── Tag System: definitions + device-tag junction ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS tag_definitions (
-            id TEXT PRIMARY KEY,
-            category TEXT NOT NULL,
-            value TEXT NOT NULL,
-            label TEXT NOT NULL,
-            label_zh TEXT DEFAULT '',
-            color TEXT DEFAULT '',
-            icon TEXT DEFAULT '',
-            description TEXT DEFAULT '',
-            sort_order INTEGER DEFAULT 0,
-            built_in INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT '',
-            UNIQUE(category, value)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_definitions_category ON tag_definitions(category)')
+    # ── Tag System: definitions + device-tag junction ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS tag_definitions (
+        id TEXT PRIMARY KEY,
+        category TEXT NOT NULL,
+        value TEXT NOT NULL,
+        label TEXT NOT NULL,
+        label_zh TEXT DEFAULT '',
+        color TEXT DEFAULT '',
+        icon TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        sort_order INTEGER DEFAULT 0,
+        built_in INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT '',
+        UNIQUE(category, value)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_definitions_category ON tag_definitions(category)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS device_tags (
-            device_id TEXT NOT NULL,
-            tag_id TEXT NOT NULL,
-            created_at TEXT DEFAULT '',
-            created_by TEXT DEFAULT '',
-            PRIMARY KEY (device_id, tag_id),
-            FOREIGN KEY (device_id) REFERENCES devices(id),
-            FOREIGN KEY (tag_id) REFERENCES tag_definitions(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_device_id ON device_tags(device_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_tag_id ON device_tags(tag_id)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS device_tags (
+        device_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        created_at TEXT DEFAULT '',
+        created_by TEXT DEFAULT '',
+        PRIMARY KEY (device_id, tag_id),
+        FOREIGN KEY (device_id) REFERENCES devices(id),
+        FOREIGN KEY (tag_id) REFERENCES tag_definitions(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_device_id ON device_tags(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_tag_id ON device_tags(tag_id)')
 
-        # ── Rack Management (机柜管理) ──
+    # ── Rack Management (机柜管理) ──
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS racks (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            datacenter TEXT DEFAULT '',
-            room TEXT DEFAULT '',
-            row TEXT DEFAULT '',
-            total_u INTEGER NOT NULL DEFAULT 42,
-            description TEXT DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'active',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        ''')
-        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_racks_name_dc ON racks(name, datacenter)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS racks (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        datacenter TEXT DEFAULT '',
+        room TEXT DEFAULT '',
+        row TEXT DEFAULT '',
+        total_u INTEGER NOT NULL DEFAULT 42,
+        description TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_racks_name_dc ON racks(name, datacenter)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS device_types (
-            id TEXT PRIMARY KEY,
-            model TEXT NOT NULL,
-            vendor TEXT DEFAULT '',
-            u_height INTEGER NOT NULL DEFAULT 1,
-            device_role TEXT NOT NULL DEFAULT 'switch',
-            is_full_depth INTEGER DEFAULT 1,
-            description TEXT DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        ''')
-        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_device_types_model_vendor ON device_types(model, vendor)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS device_types (
+        id TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        vendor TEXT DEFAULT '',
+        u_height INTEGER NOT NULL DEFAULT 1,
+        device_role TEXT NOT NULL DEFAULT 'switch',
+        is_full_depth INTEGER DEFAULT 1,
+        description TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_device_types_model_vendor ON device_types(model, vendor)')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS rack_devices (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            rack_id TEXT NOT NULL,
-            device_type_id TEXT NOT NULL,
-            start_u INTEGER NOT NULL,
-            position TEXT NOT NULL DEFAULT 'front',
-            status TEXT NOT NULL DEFAULT 'active',
-            serial_number TEXT DEFAULT '',
-            asset_id TEXT DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (rack_id) REFERENCES racks(id),
-            FOREIGN KEY (device_type_id) REFERENCES device_types(id)
-        )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_rack_devices_rack_id ON rack_devices(rack_id)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS rack_devices (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        rack_id TEXT NOT NULL,
+        device_type_id TEXT NOT NULL,
+        start_u INTEGER NOT NULL,
+        position TEXT NOT NULL DEFAULT 'front',
+        status TEXT NOT NULL DEFAULT 'active',
+        serial_number TEXT DEFAULT '',
+        asset_id TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (rack_id) REFERENCES racks(id),
+        FOREIGN KEY (device_type_id) REFERENCES device_types(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_rack_devices_rack_id ON rack_devices(rack_id)')
 
-        # ── Inspection Items (巡检指标项管理) ──
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS inspection_items (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            name_zh TEXT NOT NULL,
-            category TEXT NOT NULL,
-            check_key TEXT UNIQUE NOT NULL,
-            description TEXT DEFAULT '',
-            method TEXT DEFAULT 'SNMP', -- SNMP, SSH, Shell, Agent
-            command TEXT DEFAULT '',     -- Specific command or OID
-            script_id TEXT DEFAULT '',   -- Reference to scripts table
-            warning_threshold REAL,
-            critical_threshold REAL,
-            vendor TEXT DEFAULT '',
-            oid TEXT DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
+    # ── Inspection Items (巡检指标项管理) ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS inspection_items (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        name_zh TEXT NOT NULL,
+        category TEXT NOT NULL,
+        check_key TEXT UNIQUE NOT NULL,
+        description TEXT DEFAULT '',
+        method TEXT DEFAULT 'SNMP', -- SNMP, SSH, Shell, Agent
+        command TEXT DEFAULT '',     -- Specific command or OID
+        script_id TEXT DEFAULT '',   -- Reference to scripts table
+        warning_threshold REAL,
+        critical_threshold REAL,
+        vendor TEXT DEFAULT '',
+        oid TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
         ''')
         
-        # Migration: Add missing columns if they don't exist
-        for col, dtype in [('script_id', "TEXT DEFAULT ''"), ('warning_threshold', 'REAL'), ('critical_threshold', 'REAL'), ('method', "TEXT DEFAULT 'SNMP'"), ('command', "TEXT DEFAULT ''")]:
-            try:
-                cursor.execute(f'ALTER TABLE inspection_items ADD COLUMN {col} {dtype}')
-            except: pass
-            
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_items_cat ON inspection_items(category)')
-
-        # Migration for inspection_results
-        try:
-            cursor.execute("ALTER TABLE inspection_results ADD COLUMN metrics_json TEXT DEFAULT '{}'")
-        except: pass
-
-        # Seed standard scripts
-        std_scripts = [
-            ('std_linux_mem', 'Linux 内存使用率', '#!/bin/bash\n# 计算内存使用率 (已用/总计)\nmem_total=$(free | grep Mem | awk "{print $2}")\nmem_used=$(free | grep Mem | awk "{print $3}")\n[ "$mem_total" -gt 0 ] && echo | awk "{print ($mem_used/$mem_total)*100}" || echo 0', '计算系统内存使用百分比 (0-100)', 'Linux', 'standard'),
-            ('std_linux_cpu', 'Linux CPU 使用率', '#!/bin/bash\n# 提取系统 CPU 整体利用率\ntop -bn1 | grep "Cpu(s)" | sed "s/.*, *\\([0-9.]*\\)%* id.*/\\1/" | awk "{print 100 - $1}"', '计算系统整体 CPU 使用率 (0-100)', 'Linux', 'standard'),
-            ('std_linux_disk', 'Linux 全量磁盘空间', '#!/bin/bash\n# 扫描所有本地挂载点，过滤虚拟分区，按使用率排序\necho "Detailed Disk Usage (Top 10):"\ndf -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10\n# 提取全局最大利用率作为判定值\nmax_usage=$(df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk "{print $5}" | sed "s/%//" | sort -rn | head -1)\necho "MAX_UTILIZATION: ${max_usage:-0}"', '扫描所有本地分区，取最大利用率百分比', 'Linux', 'standard'),
-            ('std_linux_inode', 'Linux 全量磁盘 Inode', '#!/bin/bash\n# 扫描所有本地挂载点 Inode 使用率\necho "Detailed Inode Usage (Top 10):"\ndf -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10\nmax_inode=$(df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk "{print $5}" | sed "s/%//" | sort -rn | head -1)\necho "MAX_INODE_UTIL: ${max_inode:-0}"', '扫描所有本地分区，取最大 Inode 使用率', 'Linux', 'standard'),
-            ('std_linux_iowait', 'Linux IO Wait 延迟', '#!/bin/bash\n# 提取 CPU IO 等待比例\niostat -c 1 2 | grep -v "avg-cpu" | tail -1 | awk "{print $4}"', 'CPU 等待磁盘 IO 时间占比 (0-100)', 'Linux', 'standard'),
-            ('std_linux_swap', 'Linux Swap 使用率', '#!/bin/bash\nfree | grep Swap | awk "{if ($2>0) print ($3/$2)*100; else print 0}"', '交换分区使用百分比 (0-100)', 'Linux', 'standard'),
-            ('std_linux_load', 'Linux CPU 负载比例', '#!/bin/bash\n# 计算负载与核心数的比值\ncores=$(grep -c ^processor /proc/cpuinfo)\nload=$(uptime | awk -F "load average:" "{print $2}" | cut -d, -f1 | xargs)\necho | awk "{print ($load/$cores)*100}"', '系统 1min 负载相对于核心数的比例', 'Linux', 'standard'),
-            ('std_linux_conns', 'Linux TCP 连接数', '#!/bin/bash\nss -ant | grep ESTAB | wc -l', '统计系统 Established 状态的 TCP 连接总数', 'Linux', 'standard'),
-            ('std_linux_proc', 'Linux 关键进程巡检', '#!/bin/bash\n# 检查指定的多个关键进程，返回丢失的数量\nprocs=${1:-"sshd crond docker"}\nmissing=0\nfor p in $procs; do\n  if ! pgrep -f "$p" > /dev/null; then\n    echo "[CRITICAL] Process not found: $p"\n    missing=$((missing + 1))\n  fi\ndone\necho "MISSING_COUNT: $missing"', '检查进程存活状态，返回未运行的进程数', 'Linux', 'standard')
-        ]
-        cursor.executemany(
-            'INSERT INTO scripts (id, name, content, description, platform, category) VALUES (?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, description = EXCLUDED.description',
-            std_scripts
-        )
-
-        # Seed/Update default items
-        now = _beijing_now_iso()
-        default_items = [
-            # --- Network Device ---
-            ('net_ping', 'Connectivity (Ping)', '网络连通性 (Ping)', 'Network', 'ping', '检查设备 ICMP 响应时间与丢包率', 'ICMP', 'ping -c 3 {ip}', '', 100, 200, 'Generic', '', now, now),
-            ('net_ssh', 'SSH Accessibility', '管理通道 (SSH)', 'Network', 'ssh', '检查 22 端口可用性', 'TCP', 'socket.connect({ip}, 22)', '', 500, 2000, 'Generic', '', now, now),
-            ('net_cpu', 'CPU Utilization', 'CPU 利用率 (SNMP)', 'Network', 'cpu', '监控网络设备 CPU 负载', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.109.1.1.1.1.7', '', 85, 95, 'Cisco', '1.3.6.1.4.1.9.9.109.1.1.1.1.7', now, now),
-            ('net_mem', 'Memory Utilization', '内存利用率 (SNMP)', 'Network', 'memory', '监控网络设备内存消耗', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.48.1.1.1.5.1', '', 90, 98, 'Cisco', '1.3.6.1.4.1.9.9.48.1.1.1.5.1', now, now),
-            ('net_bgp', 'BGP Peer Status', 'BGP 邻居状态', 'Network', 'bgp_neighbor', '监控 BGP 状态机', 'SSH', 'show ip bgp summary', '', 0, 1, 'Generic', '', now, now),
- 
-            # --- Server / Host ( 精细化采集) ---
-            ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min 负载相对于核心数的比例', 'Shell', 'std_linux_load', 'std_linux_load', 80, 150, 'Linux', '', now, now),
-            ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (0-100)', 'Shell', 'std_linux_cpu', 'std_linux_cpu', 90, 95, 'Linux', '', now, now),
-            ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统内存使用百分比 (0-100)', 'Shell', 'std_linux_mem', 'std_linux_mem', 85, 95, 'Linux', '', now, now),
-            ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控交换分区使用百分比 (0-100)', 'Shell', 'std_linux_swap', 'std_linux_swap', 70, 90, 'Linux', '', now, now),
-            ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'std_linux_iowait', 'std_linux_iowait', 15, 30, 'Linux', '', now, now),
-            ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控根分区空间占用 (0-100)', 'Shell', 'std_linux_disk', 'std_linux_disk', 90, 95, 'Linux', '', now, now),
-            ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控根分区 Inode 占用 (0-100)', 'Shell', 'std_linux_inode', 'std_linux_inode', 90, 95, 'Linux', '', now, now),
-            ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
-            ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定进程是否存在', 'Shell', 'std_linux_proc', 'std_linux_proc', 1, 0, 'Linux', '', now, now),
-        ]
+    # Migration: Add missing columns if they don't exist
+    for col, dtype in [('script_id', "TEXT DEFAULT ''"), ('warning_threshold', 'REAL'), ('critical_threshold', 'REAL'), ('method', "TEXT DEFAULT 'SNMP'"), ('command', "TEXT DEFAULT ''")]:
+        ensure_column('inspection_items', col, dtype)
         
-        # ── Seed/Update default items ──
-        if _USE_PG:
-            # PostgreSQL: Atomic Upsert using ON CONFLICT
-            pg_sql = '''INSERT INTO inspection_items 
-                     (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at)
-                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                     ON CONFLICT (id) DO UPDATE SET
-                     name = EXCLUDED.name, name_zh = EXCLUDED.name_zh, category = EXCLUDED.category,
-                     check_key = EXCLUDED.check_key, description = EXCLUDED.description,
-                     method = EXCLUDED.method, command = EXCLUDED.command, script_id = EXCLUDED.script_id,
-                     warning_threshold = EXCLUDED.warning_threshold, critical_threshold = EXCLUDED.critical_threshold,
-                     vendor = EXCLUDED.vendor, oid = EXCLUDED.oid, updated_at = EXCLUDED.updated_at'''
-            cursor.executemany(pg_sql, default_items)
-        else:
-            # SQLite: INSERT OR REPLACE
-            for item in default_items:
-                cursor.execute('INSERT OR REPLACE INTO inspection_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', item)
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_items_cat ON inspection_items(category)')
 
-        # ── Seed Default Admin User ──
-        admin_exists = cursor.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone()
-        if not admin_exists:
-            import bcrypt
-            # Default password: admin
-            hashed = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
-            cursor.execute(
-                "INSERT INTO users (id, username, password, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), "admin", hashed, "Administrator", "active", now)
-            )
-            logger.info("[Database] Default admin user created (admin/admin)")
+    # Migration for inspection_results
+    ensure_column('inspection_results', 'metrics_json', "TEXT DEFAULT '{}'")
 
-        conn.commit()
-    finally:
-        if _USE_PG and _pg_raw is not None and _pg_prev_autocommit is not None:
-            try:
-                _pg_raw.autocommit = _pg_prev_autocommit
-            except Exception:
-                pass
-        conn.close()
+    # Seed standard scripts
+    std_scripts = [
+        ('std_linux_mem', 'Linux 内存使用率', '#!/bin/bash\n# 计算内存使用率 (已用/总计)\nmem_total=$(free | grep Mem | awk "{print $2}")\nmem_used=$(free | grep Mem | awk "{print $3}")\n[ "$mem_total" -gt 0 ] && echo | awk "{print ($mem_used/$mem_total)*100}" || echo 0', '计算系统内存使用百分比 (0-100)', 'Linux', 'standard'),
+        ('std_linux_cpu', 'Linux CPU 使用率', '#!/bin/bash\n# 提取系统 CPU 整体利用率\ntop -bn1 | grep "Cpu(s)" | sed "s/.*, *\\([0-9.]*\\)%* id.*/\\1/" | awk "{print 100 - $1}"', '计算系统整体 CPU 使用率 (0-100)', 'Linux', 'standard'),
+        ('std_linux_disk', 'Linux 全量磁盘空间', '#!/bin/bash\n# 扫描所有本地挂载点，过滤虚拟分区，按使用率排序\necho "Detailed Disk Usage (Top 10):"\ndf -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10\n# 提取全局最大利用率作为判定值\nmax_usage=$(df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk "{print $5}" | sed "s/%//" | sort -rn | head -1)\necho "MAX_UTILIZATION: ${max_usage:-0}"', '扫描所有本地分区，取最大利用率百分比', 'Linux', 'standard'),
+        ('std_linux_inode', 'Linux 全量磁盘 Inode', '#!/bin/bash\n# 扫描所有本地挂载点 Inode 使用率\necho "Detailed Inode Usage (Top 10):"\ndf -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10\nmax_inode=$(df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk "{print $5}" | sed "s/%//" | sort -rn | head -1)\necho "MAX_INODE_UTIL: ${max_inode:-0}"', '扫描所有本地分区，取最大 Inode 使用率', 'Linux', 'standard'),
+        ('std_linux_iowait', 'Linux IO Wait 延迟', '#!/bin/bash\n# 提取 CPU IO 等待比例\niostat -c 1 2 | grep -v "avg-cpu" | tail -1 | awk "{print $4}"', 'CPU 等待磁盘 IO 时间占比 (0-100)', 'Linux', 'standard'),
+        ('std_linux_swap', 'Linux Swap 使用率', '#!/bin/bash\nfree | grep Swap | awk "{if ($2>0) print ($3/$2)*100; else print 0}"', '交换分区使用百分比 (0-100)', 'Linux', 'standard'),
+        ('std_linux_load', 'Linux CPU 负载比例', '#!/bin/bash\n# 计算负载与核心数的比值\ncores=$(grep -c ^processor /proc/cpuinfo)\nload=$(uptime | awk -F "load average:" "{print $2}" | cut -d, -f1 | xargs)\necho | awk "{print ($load/$cores)*100}"', '系统 1min 负载相对于核心数的比例', 'Linux', 'standard'),
+        ('std_linux_conns', 'Linux TCP 连接数', '#!/bin/bash\nss -ant | grep ESTAB | wc -l', '统计系统 Established 状态的 TCP 连接总数', 'Linux', 'standard'),
+        ('std_linux_proc', 'Linux 关键进程巡检', '#!/bin/bash\n# 检查指定的多个关键进程，返回丢失的数量\nprocs=${1:-"sshd crond docker"}\nmissing=0\nfor p in $procs; do\n  if ! pgrep -f "$p" > /dev/null; then\n    echo "[CRITICAL] Process not found: $p"\n    missing=$((missing + 1))\n  fi\ndone\necho "MISSING_COUNT: $missing"', '检查进程存活状态，返回未运行的进程数', 'Linux', 'standard')
+    ]
+    cursor.executemany(
+        'INSERT INTO scripts (id, name, content, description, platform, category) VALUES (?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, description = EXCLUDED.description',
+        std_scripts
+    )
+
+    # Seed/Update default items
+    now = _beijing_now_iso()
+    default_items = [
+        # --- Network Device ---
+        ('net_ping', 'Connectivity (Ping)', '网络连通性 (Ping)', 'Network', 'ping', '检查设备 ICMP 响应时间与丢包率', 'ICMP', 'ping -c 3 {ip}', '', 100, 200, 'Generic', '', now, now),
+        ('net_ssh', 'SSH Accessibility', '管理通道 (SSH)', 'Network', 'ssh', '检查 22 端口可用性', 'TCP', 'socket.connect({ip}, 22)', '', 500, 2000, 'Generic', '', now, now),
+        ('net_cpu', 'CPU Utilization', 'CPU 利用率 (SNMP)', 'Network', 'cpu', '监控网络设备 CPU 负载', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.109.1.1.1.1.7', '', 85, 95, 'Cisco', '1.3.6.1.4.1.9.9.109.1.1.1.1.7', now, now),
+        ('net_mem', 'Memory Utilization', '内存利用率 (SNMP)', 'Network', 'memory', '监控网络设备内存消耗', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.48.1.1.1.5.1', '', 90, 98, 'Cisco', '1.3.6.1.4.1.9.9.48.1.1.1.5.1', now, now),
+        ('net_bgp', 'BGP Peer Status', 'BGP 邻居状态', 'Network', 'bgp_neighbor', '监控 BGP 状态机', 'SSH', 'show ip bgp summary', '', 0, 1, 'Generic', '', now, now),
+
+        # --- Server / Host ( 精细化采集) ---
+        ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min 负载相对于核心数的比例', 'Shell', 'std_linux_load', 'std_linux_load', 80, 150, 'Linux', '', now, now),
+        ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (0-100)', 'Shell', 'std_linux_cpu', 'std_linux_cpu', 90, 95, 'Linux', '', now, now),
+        ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统内存使用百分比 (0-100)', 'Shell', 'std_linux_mem', 'std_linux_mem', 85, 95, 'Linux', '', now, now),
+        ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控交换分区使用百分比 (0-100)', 'Shell', 'std_linux_swap', 'std_linux_swap', 70, 90, 'Linux', '', now, now),
+        ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'std_linux_iowait', 'std_linux_iowait', 15, 30, 'Linux', '', now, now),
+        ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控根分区空间占用 (0-100)', 'Shell', 'std_linux_disk', 'std_linux_disk', 90, 95, 'Linux', '', now, now),
+        ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控根分区 Inode 占用 (0-100)', 'Shell', 'std_linux_inode', 'std_linux_inode', 90, 95, 'Linux', '', now, now),
+        ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
+        ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定进程是否存在', 'Shell', 'std_linux_proc', 'std_linux_proc', 1, 0, 'Linux', '', now, now),
+    ]
+    
+    # ── Seed/Update default items ──
+    if _USE_PG:
+        # PostgreSQL: Atomic Upsert using ON CONFLICT
+        pg_sql = '''INSERT INTO inspection_items 
+                    (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name, name_zh = EXCLUDED.name_zh, category = EXCLUDED.category,
+                    check_key = EXCLUDED.check_key, description = EXCLUDED.description,
+                    method = EXCLUDED.method, command = EXCLUDED.command, script_id = EXCLUDED.script_id,
+                    warning_threshold = EXCLUDED.warning_threshold, critical_threshold = EXCLUDED.critical_threshold,
+                    vendor = EXCLUDED.vendor, oid = EXCLUDED.oid, updated_at = EXCLUDED.updated_at'''
+        cursor.executemany(pg_sql, default_items)
+    else:
+        # SQLite: INSERT OR REPLACE
+        for item in default_items:
+            cursor.execute('INSERT OR REPLACE INTO inspection_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', item)
+
+    # ── Seed Default Admin User ──
+    admin_exists = cursor.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone()
+    if not admin_exists:
+        import bcrypt
+        # Default password: admin
+        hashed = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
+        cursor.execute(
+            "INSERT INTO users (id, username, password, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "admin", hashed, "Administrator", "active", now)
+        )
+        logger.info("[Database] Default admin user created (admin/admin)")
+
+    conn.commit()
 
 if __name__ == "__main__":
     init_db()
