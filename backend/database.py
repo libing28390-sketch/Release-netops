@@ -25,6 +25,9 @@ DB_PATH = os.path.join(PROJECT_ROOT, 'data', 'netops.db')
 
 logger = logging.getLogger(__name__)
 
+# ── Init Guard ──
+_db_initialized = False
+
 # ── Backend Detection ───────────────────────────────────────
 # Priority: DATABASE_URL env > default SQLite
 _DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
@@ -265,6 +268,11 @@ def _table_columns(cursor, table_name: str) -> set[str]:
     return {row['name'] for row in cursor.execute(f'PRAGMA table_info({table_name})').fetchall()}
 
 def init_db():
+    global _db_initialized
+    if _db_initialized:
+        return
+    _db_initialized = True
+    
     conn = get_db_connection()
     _pg_raw = None
     _pg_prev_autocommit = None
@@ -1824,10 +1832,17 @@ def init_db():
         
         # ── Seed/Update default items ──
         if _USE_PG:
-            # PostgreSQL: DELETE then INSERT
-            cursor.execute("DELETE FROM inspection_items WHERE id IN (%s)" % ",".join(["'%s'" % x[0] for x in default_items]))
-            for item in default_items:
-                cursor.execute('INSERT INTO inspection_items (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', item)
+            # PostgreSQL: Atomic Upsert using ON CONFLICT
+            pg_sql = '''INSERT INTO inspection_items 
+                     (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at)
+                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     ON CONFLICT (id) DO UPDATE SET
+                     name = EXCLUDED.name, name_zh = EXCLUDED.name_zh, category = EXCLUDED.category,
+                     check_key = EXCLUDED.check_key, description = EXCLUDED.description,
+                     method = EXCLUDED.method, command = EXCLUDED.command, script_id = EXCLUDED.script_id,
+                     warning_threshold = EXCLUDED.warning_threshold, critical_threshold = EXCLUDED.critical_threshold,
+                     vendor = EXCLUDED.vendor, oid = EXCLUDED.oid, updated_at = EXCLUDED.updated_at'''
+            cursor.executemany(pg_sql, default_items)
         else:
             # SQLite: INSERT OR REPLACE
             for item in default_items:
