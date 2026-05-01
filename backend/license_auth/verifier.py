@@ -52,7 +52,13 @@ _GRACE_PERIOD_DAYS = 0  # hard cutoff: no grace period by default
 # Resolve paths relative to backend/ directory
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 _DEFAULT_LICENSE_PATH = _BACKEND_DIR.parent / "data" / "license.json"
+
+# Try license_auth first, then fallback to license if needed for legacy compatibility
 _DEFAULT_PUBLIC_KEY_PATH = _BACKEND_DIR / "license_auth" / "keys" / "public.pem"
+if not _DEFAULT_PUBLIC_KEY_PATH.exists():
+    _alt_path = _BACKEND_DIR / "license" / "keys" / "public.pem"
+    if _alt_path.exists():
+        _DEFAULT_PUBLIC_KEY_PATH = _alt_path
 
 
 class LicenseVerifier:

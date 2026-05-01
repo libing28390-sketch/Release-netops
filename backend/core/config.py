@@ -3,8 +3,8 @@ import os
 from pydantic_settings import BaseSettings
 
 
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(os.path.dirname(BACKEND_DIR))
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 DEFAULT_DATABASE_URL = f"sqlite:///{os.path.join(PROJECT_ROOT, 'data', 'netops.db').replace(os.sep, '/')}"
 _ENV_FILE = os.path.join(PROJECT_ROOT, '.env')
 
