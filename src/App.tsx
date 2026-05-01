@@ -146,8 +146,43 @@ const App: React.FC = () => {
     setShowNotifications,
   });
 
+  // ── License Management State ──
+  const [isLicenseValid, setIsLicenseValid] = useState(true);
+  const [licenseError, setLicenseError] = useState<string | null>(null);
+
+  const checkLicenseStatus = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('netops_token');
+      const resp = await fetch('/api/license/status', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setIsLicenseValid(data.valid);
+        setLicenseError(data.error || null);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      checkLicenseStatus();
+    }
+  }, [isAuthenticated, checkLicenseStatus]);
+
   const routeContext = useMemo(() => getRouteContext(location.pathname), [location.pathname]);
   const { activeTab, configPage, automationPage, inventorySubPage, changeOrderPage } = routeContext;
+
+  // ── Global License Enforcement ──
+  useEffect(() => {
+    if (isAuthenticated && !isLicenseValid) {
+      // If license is invalid, force user to license tab unless they are on health or setup
+      const allowedTabs = ['license', 'health', 'setup'];
+      if (!allowedTabs.includes(activeTab)) {
+        navigate('/license');
+      }
+    }
+  }, [isAuthenticated, isLicenseValid, activeTab, navigate]);
 
   const deviceFetchMode = useMemo<'light' | 'full'>(() => {
     if (activeTab === 'inventory') return 'full';
@@ -3271,7 +3306,9 @@ const App: React.FC = () => {
     setRetentionDays,
     saveScheduleConfig,
     configSnapshots,
-    handleRunBackupAllOnline,
+    // Global license check state
+    isLicenseValid,
+    licenseError,
     handleBackupSingleDevice,
     handleNavigateToConfigDiff,
     diffPreSelectedDeviceId,
