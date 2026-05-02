@@ -92,6 +92,7 @@ class IssueRequest(BaseModel):
     server_limit: int = 50
     features: List[str] = []
     machine_id: Optional[str] = None
+    max_version: str = "99.9.9"
     notes: Optional[str] = None  # Internal notes, not included in license
 
 
@@ -229,6 +230,7 @@ async def issue_license(req: IssueRequest, request: Request):
         server_limit=req.server_limit,
         features=req.features,
         machine_id=req.machine_id,
+        max_version=req.max_version,
     )
 
     # Sign
@@ -260,6 +262,7 @@ async def issue_license(req: IssueRequest, request: Request):
         "server_limit": req.server_limit,
         "features": req.features,
         "machine_id": req.machine_id,
+        "max_version": req.max_version,
         "notes": req.notes,
         "filename": filename,
     }

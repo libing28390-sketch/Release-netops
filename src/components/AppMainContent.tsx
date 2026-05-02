@@ -1,4 +1,5 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useMemo } from 'react';
+import { useSystem } from '../hooks/useSystem';
 
 const MonitoringCenter = lazy(() => import('./MonitoringCenter.tsx'));
 const DeviceHealthTab = lazy(() => import('../pages/DeviceHealthTab'));
@@ -48,6 +49,7 @@ const lazyPanelFallback = (
 );
 
 const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
+  const { isFeatureEnabled } = useSystem();
   const props = appProps as any;
   const {
     activeTab,
@@ -828,7 +830,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
         </Suspense>
       )}
 
-      {activeTab === 'compliance' && (
+      {activeTab === 'compliance' && isFeatureEnabled('compliance') && (
         <Suspense fallback={lazyPanelFallback}>
           <ComplianceTab
             complianceOverview={complianceOverview}
@@ -1003,7 +1005,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
         </Suspense>
       )}
 
-      {activeTab === 'users' && (
+      {activeTab === 'users' && isFeatureEnabled('user_management') && (
         <Suspense fallback={lazyPanelFallback}>
           <UsersTab
             users={users}
@@ -1029,7 +1031,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
         </Suspense>
       )}
 
-      {activeTab === 'history' && (
+      {activeTab === 'history' && isFeatureEnabled('audit_logs') && (
         <Suspense fallback={lazyPanelFallback}>
           <HistoryTab
             auditRows={auditRows}
@@ -1091,7 +1093,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
         </Suspense>
       )}
 
-      {activeTab === 'assets' && (
+      {activeTab === 'assets' && isFeatureEnabled('assets') && (
         <Suspense fallback={lazyPanelFallback}>
           <AssetManagementTab language={language} t={t} setActiveTab={setActiveTab} />
         </Suspense>

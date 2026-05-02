@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import CommandPalette from './CommandPalette';
 import ModuleSubNav from './ModuleSubNav';
 import TopHeader from './TopHeader';
+import VersionBanner from './VersionBanner';
 import ToastNotification, { type ToastState } from './ToastNotification';
 import type { NotificationItem, ThemeMode, User as UserType } from '../types';
 
@@ -104,6 +105,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   return (
     <div className="app-shell flex h-screen text-[#141414] font-sans overflow-hidden">
       <div className="flex-1 flex flex-col overflow-hidden">
+        <VersionBanner />
         <TopHeader
           language={language}
           resolvedTheme={resolvedTheme}
@@ -146,7 +148,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
 
         <footer className={`h-10 px-8 border-t flex items-center justify-between text-[11px] ${resolvedTheme === 'dark' ? 'border-white/10 text-white/45 bg-[#0b1320]' : 'border-black/8 text-black/45 bg-white/70'}`}>
           <span>Copyright (c) {new Date().getFullYear()} Nexora. All rights reserved.</span>
-          <span className="font-mono">NOC v2.0</span>
+          <span className="font-mono">v0.1.0</span>
         </footer>
       </div>
 

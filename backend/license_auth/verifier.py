@@ -30,6 +30,7 @@ from typing import List, Optional
 
 from .crypto import verify_signature, load_public_key_from_file
 from .models import LicenseFile, LicensePayload, LicenseStatus
+from core.version import VERSION, EDITION
 
 logger = logging.getLogger("license.verifier")
 
@@ -215,7 +216,10 @@ class LicenseVerifier:
         assert payload is not None
 
         # 1. Signature verification
-        payload_dict = payload.model_dump(mode="json")
+        # Use exclude_unset=True to only dump fields that were actually present in the license file.
+        # This prevents new fields with defaults (like max_version) from breaking the signature.
+        payload_dict = payload.model_dump(mode="json", exclude_unset=True)
+        
         if not verify_signature(payload_dict, self._license.signature, self._public_key_pem):
             status = LicenseStatus(
                 valid=False,
@@ -307,8 +311,20 @@ class LicenseVerifier:
                 self._last_validated = now
                 logger.error(f"[License] MACHINE ID MISMATCH for {payload.license_id}")
                 return status
+        
+        # 4. Version Check
+        from packaging import version
+        try:
+            current_v = version.parse(VERSION)
+            max_v = version.parse(payload.max_version or "99.9.9")
+            if current_v > max_v:
+                warn_msg = f"Platform version {VERSION} exceeds license authorized version {payload.max_version}"
+                warnings.append(warn_msg)
+                logger.warning(f"[License] {warn_msg}")
+        except Exception as e:
+            logger.warning(f"[License] Version check failed: {e}")
 
-        # 4. Build success status
+        # 5. Build success status
         status = LicenseStatus(
             valid=True,
             license_id=payload.license_id,
@@ -320,6 +336,8 @@ class LicenseVerifier:
             device_limit=payload.device_limit,
             server_limit=payload.server_limit,
             features=payload.features,
+            max_version=payload.max_version,
+            current_version=VERSION,
             warnings=warnings,
         )
         self._cached_status = status

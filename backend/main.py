@@ -36,6 +36,7 @@ from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
 from license_auth.api import router as license_router
+from api.system import router as system_router
 from license_auth.middleware import LicenseMiddleware
 from license_auth.verifier import get_license_verifier
 from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
@@ -240,6 +241,7 @@ app.include_router(tags_router, prefix="/api")
 app.include_router(scheduled_jobs_router, prefix="/api")
 app.include_router(racks_router, prefix="/api")
 app.include_router(license_router, prefix="/api")
+app.include_router(system_router, prefix="/api")
 
 # ── License Middleware (after CORS, before APScheduler) ──────────────
 app.add_middleware(LicenseMiddleware)
@@ -1886,10 +1888,10 @@ if __name__ == "__main__":
     
     if workers > 1:
         # Multi-worker: pass app as import string so each worker can import it
-        # On Windows, we still need to specify the loop if using uvicorn.run
-        loop_type = "proactor" if sys.platform == "win32" else "auto"
+        # On Windows, we already set the loop policy to Proactor, so we use 'asyncio'
+        loop_type = "asyncio" if sys.platform == "win32" else "auto"
         uvicorn.run("main:app", host="0.0.0.0", port=port, workers=workers, loop=loop_type)
     else:
         # Single worker: enable reload for dev convenience if not in production
-        loop_type = "proactor" if sys.platform == "win32" else "auto"
+        loop_type = "asyncio" if sys.platform == "win32" else "auto"
         uvicorn.run("main:app", host="0.0.0.0", port=port, reload=is_dev, loop=loop_type)

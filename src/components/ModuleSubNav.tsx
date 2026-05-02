@@ -234,6 +234,28 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
           {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
         </button>
       </div>
+
+      {/* Version Info Footer */}
+      {!collapsed && (
+        <div className="px-4 py-3 border-t border-black/5 bg-black/[0.02] flex flex-col gap-1 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] font-bold opacity-40 uppercase tracking-wider">
+              {zh ? '版本' : 'VER'}
+            </span>
+            <span className="text-[10px] font-mono font-bold text-cyan-600/80">
+              v0.1.0
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] font-bold opacity-40 uppercase tracking-wider">
+              {zh ? '授权' : 'ED'}
+            </span>
+            <span className="text-[10px] font-bold text-slate-500">
+              Standard
+            </span>
+          </div>
+        </div>
+      )}
     </aside>
   );
 };

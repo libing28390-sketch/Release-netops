@@ -22,7 +22,7 @@ from fastapi import Depends, HTTPException, Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from .verifier import LicenseVerifier, get_license_verifier
+from .verifier import LicenseVerifier, get_license_verifier, get_machine_id
 
 logger = logging.getLogger("license.middleware")
 
@@ -47,91 +47,68 @@ _EXEMPT_PREFIXES = (
 _READONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
-class LicenseMiddleware(BaseHTTPMiddleware):
+class LicenseMiddleware:
     """
-    ASGI middleware for license enforcement on every HTTP request.
-    
-    Behavior:
-      • Exempt paths pass through unconditionally.
-      • Valid license → pass through, inject X-License-Warning header if expiring.
-      • Expired license → allow GET (read-only), block POST/PUT/DELETE with 403.
-      • Invalid/missing → block with 403.
+    Stable ASGI middleware for license enforcement.
+    Avoids BaseHTTPMiddleware deadlocks on Windows/Proactor.
     """
+    def __init__(self, app):
+        self.app = app
 
-    async def dispatch(self, request: Request, call_next):
-        path = request.url.path
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
 
-        # Always allow exempt paths
+        # IMPORTANT: Extract path directly from scope. 
+        # Do NOT use Request(scope, receive) as it can consume the body stream and cause hangs.
+        path = scope.get("path", "")
+        method = scope.get("method", "GET")
+
+        # 1. Always allow exempt paths
         if any(path.startswith(prefix) for prefix in _EXEMPT_PREFIXES):
-            return await call_next(request)
+            logger.info(f"[LicenseMiddleware] PASS (Exempt): {path}")
+            return await self.app(scope, receive, send)
 
-        # Also allow if path is serving static frontend files (no /api prefix)
+        # 2. Allow non-API paths (static files)
         if not path.startswith("/api/"):
-            return await call_next(request)
+            return await self.app(scope, receive, send)
 
-        # Validate license
+        logger.info(f"[LicenseMiddleware] CHECK: {method} {path}")
+
+        # 3. Validate license
         verifier = get_license_verifier()
         lic_status = verifier.validate()
 
         if lic_status.valid:
-            # License is valid — pass through
-            response = await call_next(request)
+            # Valid - capture headers to inject warnings
+            async def send_wrapper(message):
+                if message["type"] == "http.response.start" and lic_status.warnings:
+                    headers = list(message.get("headers", []))
+                    warn_str = "; ".join(lic_status.warnings).replace("\u2014", "-")
+                    headers.append((b"x-license-warning", warn_str.encode("latin-1", "replace")))
+                    message["headers"] = headers
+                await send(message)
+            return await self.app(scope, receive, send_wrapper)
 
-            # Inject warning header if license is expiring soon
-            if lic_status.warnings:
-                clean_warnings = "; ".join(lic_status.warnings).replace("\u2014", "-")
-                clean_warnings = clean_warnings.encode("latin-1", "replace").decode("latin-1")
-                response.headers["X-License-Warning"] = clean_warnings
-                if lic_status.days_remaining is not None:
-                    response.headers["X-License-Days-Remaining"] = str(lic_status.days_remaining)
+        # 4. Invalid - logic for expiry vs hard block
+        error_msg = lic_status.error or "License invalid"
+        is_expired = "expired" in error_msg.lower()
 
-            return response
+        # Allow GET for expired (read-only)
+        if is_expired and method in _READONLY_METHODS:
+            return await self.app(scope, receive, send)
 
-        # License is invalid
-        error_msg = lic_status.error or "License validation failed"
-
-        # Check if it's an expiry case (softer policy: allow reads)
-        if "expired" in error_msg.lower():
-            if request.method in _READONLY_METHODS:
-                # Allow read-only access with warning
-                response = await call_next(request)
-                response.headers["X-License-Expired"] = "true"
-                clean_error = error_msg.replace("\u2014", "-").encode("latin-1", "replace").decode("latin-1")
-                response.headers["X-License-Error"] = clean_error
-                return response
-            else:
-                logger.warning(
-                    f"[License] Blocked write request {request.method} {path} — license expired"
-                )
-                return JSONResponse(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    content={
-                        "detail": "License has expired. Read-only access is available. "
-                                  "Please renew your license to resume full operations.",
-                        "license_error": error_msg,
-                        "code": "LICENSE_EXPIRED",
-                    },
-                )
-
-        # Hard block: invalid, corrupted, missing, tampered
-        # For GET requests, we allow them to pass through but add a header (graceful mode)
-        # This ensures the UI can load, users can login, and reach the license page.
-        if request.method == "GET":
-            response = await call_next(request)
-            response.headers["X-License-Status"] = "invalid"
-            response.headers["X-License-Error"] = error_msg
-            return response
-
-        logger.warning(f"[License] Blocked write request {request.method} {path} — {error_msg}")
-        return JSONResponse(
+        # Otherwise block
+        logger.warning(f"[License] BLOCKED: {path} - {error_msg}")
+        response = JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
             content={
-                "detail": f"License validation failed: {error_msg}. Write operations are blocked.",
-                "license_error": error_msg,
-                "code": "LICENSE_INVALID",
+                "detail": f"License Error: {error_msg}",
+                "code": "LICENSE_EXPIRED" if is_expired else "LICENSE_INVALID",
                 "machine_id": get_machine_id()
-            },
+            }
         )
+        return await response(scope, receive, send)
 
 
 # ── Route-level Dependencies ─────────────────────────────────────────

@@ -209,7 +209,11 @@ pre.license-json{background:#0f172a;border:1px solid rgba(255,255,255,.06);borde
           <input id="f-servers" type="number" value="50" min="1" max="100000" />
         </div>
       </div>
-      <div class="row">
+      <div class="row3">
+        <div class="field">
+          <label>最高授权版本 *</label>
+          <input id="f-max-version" value="99.9.9" placeholder="例：1.5.0" />
+        </div>
         <div class="field">
           <label>机器指纹 (可选)</label>
           <input id="f-machine" placeholder="留空则不绑定机器" />
@@ -566,6 +570,7 @@ async function issueLicense() {
       server_limit: parseInt(document.getElementById('f-servers').value) || 50,
       features: getSelectedFeatures(),
       machine_id: document.getElementById('f-machine').value.trim() || null,
+      max_version: document.getElementById('f-max-version').value.trim() || "99.9.9",
       notes: document.getElementById('f-notes').value.trim() || null,
     };
 
@@ -628,16 +633,16 @@ function renderHistoryTable() {
   const start = (historyPage - 1) * PAGE_SIZE;
   const pageRecords = filtered.slice(start, start + PAGE_SIZE);
 
-  let html = '<table><thead><tr><th>公司</th><th>类型</th><th>设备(网/服)</th><th>签发时间</th><th>到期</th><th>备注</th><th>操作</th></tr></thead><tbody>';
+  let html = '<table><thead><tr><th>公司</th><th>类型</th><th>版本限制</th><th>设备(网/服)</th><th>签发时间</th><th>到期</th><th>操作</th></tr></thead><tbody>';
   for (const r of pageRecords) {
     const tc = `type-${r.license_type}`;
     html += `<tr>
       <td style="font-weight:600">${r.company}</td>
       <td><span class="type-badge ${tc}">${r.license_type}</span></td>
+      <td style="font-size:.7rem;color:#0ea5e9;font-weight:600">≤ ${r.max_version || '99.9.9'}</td>
       <td>${r.device_limit} / ${r.server_limit || 0}</td>
       <td style="font-size:.7rem;color:#64748b">${new Date(r.issued_at).toLocaleString('zh-CN')}</td>
       <td>${r.expire_at?.split('T')[0] || '-'}</td>
-      <td style="font-size:.7rem;color:#475569;max-width:120px;overflow:hidden;text-overflow:ellipsis">${r.notes || '-'}</td>
       <td><button class="btn-sm dl" onclick="window.open(API+'/api/download/${r.filename}?token='+authToken)">下载</button></td>
     </tr>`;
   }
@@ -667,7 +672,8 @@ async function verifyLicense() {
         ${data.expired ? '<p style="color:#f59e0b;font-size:.8rem;margin-top:4px">⚠️ 此 License 已过期</p>' : ''}
         <div style="margin-top:10px;font-size:.75rem;color:#94a3b8;line-height:1.8">
           <div>公司: <strong>${p.company || '-'}</strong></div>
-          <div>类型: ${p.license_type || '-'} | 网络设备: ${p.device_limit || '-'} | 服务器: ${p.server_limit || '-'} | 剩余: ${data.days_remaining} 天</div>
+          <div>类型: ${p.license_type || '-'} | 版本授权: ≤ ${p.max_version || '-'}</div>
+          <div>网络设备: ${p.device_limit || '-'} | 服务器: ${p.server_limit || '-'} | 剩余: ${data.days_remaining} 天</div>
           <div>功能: ${(p.features || []).join(', ') || '-'}</div>
         </div>
       </div>`;

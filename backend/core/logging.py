@@ -11,7 +11,7 @@ LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 # 三方库噪声压制：只保留 WARNING 及以上
 _NOISY_LIBS = [
-    "uvicorn.access",
+    # "uvicorn.access",
     "uvicorn.error",
     "apscheduler",
     "netmiko",

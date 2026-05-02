@@ -437,6 +437,30 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
 
         {/* ── Navigation ── */}
         {effectiveMini ? renderMini() : renderFull()}
+
+        {/* ── Version Footer ── */}
+        {!effectiveMini && (
+          <div className="mt-auto px-4 py-4 border-t border-slate-800/60 bg-black/10 flex flex-col gap-1.5 flex-shrink-0">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">
+                {zh ? '当前版本' : 'VERSION'}
+              </span>
+              <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 text-[10px] font-mono font-bold border border-cyan-500/20 shadow-[0_0_8px_rgba(34,211,238,0.1)]">
+                v0.1.0
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">
+                {zh ? '授权版本' : 'EDITION'}
+              </span>
+              <span className={`text-[10px] font-bold ${
+                userRole === 'Administrator' ? 'text-amber-400' : 'text-slate-400'
+              }`}>
+                {userRole === 'Administrator' ? 'Enterprise' : 'Standard'}
+              </span>
+            </div>
+          </div>
+        )}
       </aside>
     </>
   );

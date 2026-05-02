@@ -36,6 +36,7 @@ class LicensePayload(BaseModel):
     features: List[str] = Field(default_factory=list, description="Enabled feature flags")
     # Extensible fields for future use
     machine_id: Optional[str] = Field(default=None, description="Bound machine fingerprint (CPU/MAC)")
+    max_version: str = Field(default="99.9.9", description="Maximum authorized version (e.g. 1.5.0)")
     metadata: Optional[dict] = Field(default=None, description="Arbitrary vendor metadata")
 
 
@@ -58,6 +59,8 @@ class LicenseStatus(BaseModel):
     issued_at: Optional[str] = None
     expire_at: Optional[str] = None
     days_remaining: Optional[int] = None
+    max_version: Optional[str] = None
+    current_version: Optional[str] = None
     device_limit: Optional[int] = None
     device_current: Optional[int] = None
     server_limit: Optional[int] = None

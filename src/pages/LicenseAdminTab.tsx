@@ -408,13 +408,14 @@ const LicenseAdminTab: React.FC<Props> = ({ language }) => {
       </div>
 
       {/* ── License Details ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      {/* ── License Details ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         {/* License Info */}
-        <div className="bg-white rounded-xl border border-black/5 shadow-sm p-4">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-black/30 mb-3 flex items-center gap-1.5">
-            <Key size={12} /> {zh ? '授权详情' : 'License Details'}
+        <div className="xl:col-span-1 bg-white rounded-2xl border border-black/5 shadow-sm p-5 flex flex-col">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-black/30 mb-4 flex items-center gap-1.5">
+            <Key size={14} className="text-cyan-500" /> {zh ? '授权详情' : 'License Details'}
           </h3>
-          <div className="space-y-2">
+          <div className="space-y-3 flex-1">
             {([
               { label: zh ? '服务器机器码' : 'Machine ID', value: machineId, mono: true, copyable: true },
               { label: zh ? 'License ID' : 'License ID', value: status?.license_id, mono: true },
@@ -422,20 +423,20 @@ const LicenseAdminTab: React.FC<Props> = ({ language }) => {
               { label: zh ? '版本类型' : 'Type', value: typeLabel },
               { label: zh ? '签发时间' : 'Issued At', value: fmtDate(status?.issued_at) },
               { label: zh ? '到期时间' : 'Expires At', value: fmtDate(status?.expire_at) },
-              { label: zh ? '设备上限 (网络设备)' : 'Device Limit (Network)', value: status?.device_limit?.toString() },
+              { label: zh ? '设备上限' : 'Device Limit', value: status?.device_limit?.toString() },
               { label: zh ? '服务器上限' : 'Server Limit', value: status?.server_limit?.toString() },
-              { label: zh ? '功能数量' : 'Feature Count', value: `${status?.features?.length || 0} ${zh ? '项' : 'items'}` },
+              { label: zh ? '功能权限' : 'Features', value: `${status?.features?.length || 0} ${zh ? '项已授权' : 'authorized'}` },
             ]).map(row => (
-              <div key={row.label} className="flex items-center justify-between py-1.5 border-b border-black/[0.03] last:border-0 group">
-                <span className="text-[11px] text-black/40">{row.label}</span>
-                <div className="flex items-center gap-2">
-                  <span className={`text-[11px] font-medium text-black/65 ${row.mono ? 'font-mono text-[10px]' : ''}`}>{row.value || '—'}</span>
+              <div key={row.label} className="flex items-center justify-between py-2 border-b border-black/[0.03] last:border-0 group">
+                <span className="text-[11px] text-black/40 font-medium">{row.label}</span>
+                <div className="flex items-center gap-2 max-w-[60%]">
+                  <span className={`text-[11px] font-semibold text-black/70 truncate ${row.mono ? 'font-mono text-[10px] bg-slate-50 px-1 rounded' : ''}`}>
+                    {row.value || '—'}
+                  </span>
                   {row.copyable && row.value && (
                     <button
-                      onClick={() => {
-                        copyToClipboard(row.value as string);
-                      }}
-                      className={`transition-colors ${copiedText === row.value ? 'text-emerald-500' : 'text-black/30 hover:text-cyan-600'}`}
+                      onClick={() => copyToClipboard(row.value as string)}
+                      className={`p-1 rounded hover:bg-black/5 transition-colors ${copiedText === row.value ? 'text-emerald-500' : 'text-black/20 hover:text-cyan-600'}`}
                       title={zh ? '复制' : 'Copy'}
                     >
                       {copiedText === row.value ? <CheckCircle2 size={12} /> : <Copy size={12} />}
@@ -445,92 +446,65 @@ const LicenseAdminTab: React.FC<Props> = ({ language }) => {
               </div>
             ))}
           </div>
+          <div className="mt-4 pt-4 border-t border-black/5">
+            <div className="flex items-center justify-between text-[10px] text-black/30">
+              <span>{zh ? '授权状态验证' : 'License verification'}</span>
+              <span className="flex items-center gap-1 text-emerald-500 font-bold">
+                <ShieldCheck size={10} /> {zh ? '已通过' : 'Passed'}
+              </span>
+            </div>
+          </div>
         </div>
 
         {/* Feature Flags */}
-        <div className="bg-white rounded-xl border border-black/5 shadow-sm">
-          <button
-            onClick={() => setShowFeatures(p => !p)}
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-black/[0.01] transition-colors rounded-t-xl"
-          >
+        <div className="xl:col-span-2 bg-white rounded-2xl border border-black/5 shadow-sm flex flex-col overflow-hidden">
+          <div className="px-5 py-4 border-b border-black/5 flex items-center justify-between bg-slate-50/50">
             <h3 className="text-xs font-bold uppercase tracking-wider text-black/30 flex items-center gap-1.5">
-              <ShieldCheck size={12} /> {zh ? '功能授权清单' : 'Licensed Features'} ({status?.features?.length ?? 0})
+              <Crown size={14} className="text-amber-500" /> {zh ? '功能授权清单' : 'Licensed Features'}
             </h3>
-            {showFeatures ? <ChevronUp size={14} className="text-black/25" /> : <ChevronDown size={14} className="text-black/25" />}
-          </button>
-          {showFeatures && (
-            <div className="px-4 pb-4 grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-              {Object.entries(FEATURE_LABELS).map(([key, meta]) => {
-                const enabled = status?.features?.includes(key) ?? false;
-                const Icon = meta.icon;
-                return (
-                  <div key={key} className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-colors ${
-                    enabled ? 'border-emerald-200 bg-emerald-50/50' : 'border-black/5 bg-black/[0.01] opacity-40'
-                  }`}>
-                    <Icon size={12} className={enabled ? 'text-emerald-500' : 'text-black/20'} />
-                    <span className={`text-[10px] font-medium ${enabled ? 'text-emerald-700' : 'text-black/30'}`}>
-                      {meta[zh ? 'zh' : 'en']}
-                    </span>
-                    {enabled ? <CheckCircle2 size={10} className="ml-auto text-emerald-400" /> : <X size={10} className="ml-auto text-black/15" />}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Audit Log ── */}
-      <div className="bg-white rounded-xl border border-black/5 shadow-sm">
-        <button
-          onClick={() => setShowAudit(p => !p)}
-          className="w-full flex items-center justify-between px-4 py-3 hover:bg-black/[0.01] transition-colors rounded-t-xl"
-        >
-          <h3 className="text-xs font-bold uppercase tracking-wider text-black/30 flex items-center gap-1.5">
-            <FileText size={12} /> {zh ? '操作审计日志' : 'Audit Log'} ({auditLog.length})
-          </h3>
-          {showAudit ? <ChevronUp size={14} className="text-black/25" /> : <ChevronDown size={14} className="text-black/25" />}
-        </button>
-        {showAudit && (
-          <div className="px-4 pb-4">
-            {auditLog.length === 0 ? (
-              <p className="text-xs text-black/30 text-center py-4">{zh ? '暂无审计记录' : 'No audit entries yet'}</p>
-            ) : (
-              <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
-                {auditLog.map((entry, i) => (
-                  <div key={i} className="flex items-start gap-2.5 py-1.5 border-b border-black/[0.03] last:border-0">
-                    <Clock size={11} className="text-black/20 mt-0.5 shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-black/30 font-mono">{fmtDate(entry.timestamp)}</span>
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
-                          entry.action === 'upload' ? 'bg-blue-50 text-blue-600' :
-                          entry.action === 'validate' ? 'bg-emerald-50 text-emerald-600' :
-                          entry.action === 'rejected' ? 'bg-red-50 text-red-600' :
-                          'bg-slate-50 text-slate-500'
-                        }`}>{entry.action}</span>
-                      </div>
-                      <p className="text-[11px] text-black/50 mt-0.5">{entry.detail}</p>
-                      {entry.ip && <p className="text-[9px] text-black/20 font-mono">IP: {entry.ip}</p>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <span className="px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 text-[10px] font-bold">
+              {status?.features?.length ?? 0} / {Object.keys(FEATURE_LABELS).length}
+            </span>
           </div>
-        )}
-      </div>
-
-      {/* ── Security Notice ── */}
-      <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100">
-        <Info size={16} className="text-slate-400 mt-0.5 shrink-0" />
-        <div className="text-[10px] text-slate-500 space-y-1">
-          <p className="font-semibold text-slate-600">{zh ? '安全提示' : 'Security Notice'}</p>
-          <p>{zh ? '• License 文件使用 RSA-2048 数字签名，任何篡改都会导致验证失败。' : '• License files are RSA-2048 digitally signed. Any tampering will cause validation failure.'}</p>
-          <p>{zh ? '• 上传接口受速率限制保护（每分钟 5 次），防止暴力破解。' : '• Upload endpoint is rate-limited (5/min) to prevent brute-force attacks.'}</p>
-          <p>{zh ? '• 所有 License 操作均会记录审计日志，包括来源 IP。' : '• All license operations are audit-logged, including source IP.'}</p>
+          <div className="p-5 grid grid-cols-2 md:grid-cols-3 gap-3 flex-1 overflow-y-auto">
+            {Object.entries(FEATURE_LABELS).map(([key, meta]) => {
+              const enabled = status?.features?.includes(key) ?? false;
+              const Icon = meta.icon;
+              return (
+                <div key={key} className={`group relative flex flex-col gap-2 p-3 rounded-xl border transition-all duration-300 ${
+                  enabled 
+                    ? 'border-emerald-100 bg-white shadow-sm hover:shadow-md hover:border-emerald-200' 
+                    : 'border-slate-100 bg-slate-50/50 opacity-50 grayscale hover:grayscale-0 transition-all'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div className={`p-2 rounded-lg ${enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-200 text-slate-400'}`}>
+                      <Icon size={16} />
+                    </div>
+                    {enabled ? (
+                      <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-500">
+                        <CheckCircle2 size={12} />
+                        {zh ? '已开启' : 'ON'}
+                      </div>
+                    ) : (
+                      <X size={12} className="text-slate-300" />
+                    )}
+                  </div>
+                  <div>
+                    <p className={`text-[13px] font-bold ${enabled ? 'text-slate-800' : 'text-slate-400'}`}>
+                      {meta[zh ? 'zh' : 'en']}
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">
+                      {enabled ? (zh ? '已获得永久授权' : 'Permanent access') : (zh ? '当前版本未包含' : 'Not included')}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
+
+
 
       {/* ── Overwrite Confirmation Modal ── */}
       <AnimatePresence>

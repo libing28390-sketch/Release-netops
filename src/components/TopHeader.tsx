@@ -377,24 +377,45 @@ const TopHeader: React.FC<TopHeaderProps> = ({
 
             <div className={`py-1 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
               <button onClick={onOpenProfile} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
-                <User size={16} className="flex-shrink-0 opacity-70" />
-                {language === 'zh' ? '个人资料' : 'Your profile'}
+                <User size={16} className="flex-shrink-0 opacity-70 text-cyan-500" />
+                {language === 'zh' ? '个人设置' : 'Account Settings'}
               </button>
-              <button onClick={onOpenDashboard} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
-                <LayoutDashboard size={16} className="flex-shrink-0 opacity-70" />
-                {language === 'zh' ? '仪表盘' : 'Dashboard'}
-              </button>
-              <button onClick={onOpenMonitoring} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
-                <Activity size={16} className="flex-shrink-0 opacity-70" />
-                {language === 'zh' ? '监控中心' : 'Monitoring'}
-              </button>
-              <button onClick={onOpenHealth} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
-                <ShieldCheck size={16} className="flex-shrink-0 opacity-70" />
-                {language === 'zh' ? '健康检测' : 'Health Detection'}
-              </button>
-              <button onClick={onOpenHistory} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
-                <History size={16} className="flex-shrink-0 opacity-70" />
-                {language === 'zh' ? '审计日志' : 'Audit logs'}
+              
+              {currentUser.role === 'Administrator' && (
+                <>
+                  <button onClick={() => onNavigate && onNavigate('/history/license')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
+                    <ShieldCheck size={16} className="flex-shrink-0 opacity-70 text-emerald-500" />
+                    {language === 'zh' ? '授权管理' : 'License Management'}
+                  </button>
+                  <button onClick={() => onNavigate && onNavigate('/history/users')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
+                    <SlidersHorizontal size={16} className="flex-shrink-0 opacity-70 text-indigo-500" />
+                    {language === 'zh' ? '用户管理' : 'User Management'}
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Switch Account (GitHub-like) */}
+            <div className={`py-1 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
+              <div className="px-4 py-1.5">
+                <p className={`text-[10px] font-bold uppercase tracking-wider ${resolvedTheme === 'dark' ? 'text-white/25' : 'text-black/30'}`}>
+                  {language === 'zh' ? '快捷切换账户' : 'Switch Account'}
+                </p>
+              </div>
+              <button 
+                onClick={() => {
+                  // In a real app, this would trigger a token refresh or session switch.
+                  // For now, we mock the switch by logging out or similar, 
+                  // but the user wants to see the "convenience".
+                  if (onLogout) onLogout();
+                }}
+                className={`w-full flex items-center justify-between px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500">L</div>
+                  <span>libing</span>
+                </div>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400">offline</span>
               </button>
             </div>
 

@@ -30,8 +30,10 @@ import {
   Zap,
   Tags,
   Shield,
+  Lock,
 } from 'lucide-react';
 import type { HostResourceSnapshot } from '../types';
+import { useSystem } from '../hooks/useSystem';
 
 interface RecentSidebarItem {
   path: string;
@@ -131,6 +133,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   setConfigGroupOpen,
   setManagementGroupOpen,
 }) => {
+  const { isFeatureEnabled, systemInfo } = useSystem();
   const navLabelClass = isMobile
     ? 'min-w-0 flex-1 text-left whitespace-normal break-words leading-[1.18rem] pr-1 text-[12.25px] font-medium tracking-[0.008em]'
     : 'min-w-0 flex-1 text-left whitespace-normal break-words leading-[1.12rem] pr-1 text-[12px] font-medium tracking-[0.01em]';
@@ -493,9 +496,9 @@ const Sidebar: React.FC<SidebarProps> = ({
                   {([
                     { path: 'inventory/devices', icon: Server, label: t('deviceList') },
                     { path: 'ipam', icon: Network, label: language === 'zh' ? 'IP/VLAN管理' : 'IP/VLAN Mgmt' },
-                    { path: 'assets', icon: HardDrive, label: language === 'zh' ? '资产管理' : 'Assets' },
+                    isFeatureEnabled('assets') && { path: 'assets', icon: HardDrive, label: language === 'zh' ? '资产管理' : 'Assets' },
                     { path: 'tags', icon: Tags, label: language === 'zh' ? '标签管理' : 'Tags' },
-                  ] as const).map((item) => {
+                  ].filter(Boolean) as any[]).map((item) => {
                     const isActive = item.path === 'ipam' ? activeTab === 'ipam' : item.path === 'assets' ? activeTab === 'assets' : item.path === 'tags' ? activeTab === 'tags' : currentPath === `/${item.path}`;
                     return (
                       <button
@@ -611,8 +614,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                     { path: 'config/search', icon: Search, label: t('configSearchTab') },
                     { path: 'config/schedule', icon: Clock, label: language === 'zh' ? '备份计划' : 'Backup Schedule' },
                     { path: 'config/drift', icon: GitCompareArrows, label: language === 'zh' ? '配置漂移' : 'Config Drift' },
-                    { path: 'compliance', icon: ShieldCheck, label: t('compliance') },
-                  ] as const).map((item) => {
+                    isFeatureEnabled('compliance') && { path: 'compliance', icon: ShieldCheck, label: t('compliance') },
+                  ].filter(Boolean) as any[]).map((item) => {
                     const isActive = item.path === 'compliance' ? activeTab === 'compliance' : currentPath === `/${item.path}`;
                     return (
                       <button
@@ -704,11 +707,11 @@ const Sidebar: React.FC<SidebarProps> = ({
               <div className={managementGroupOpen ? 'mt-1' : 'hidden'}>
                 <div className={subNavRailClass}>
                   {([
-                    { id: 'history', icon: History, label: t('auditLogs') },
+                    isFeatureEnabled('audit_logs') && { id: 'history', icon: History, label: t('auditLogs') },
                     { id: 'configuration', icon: Settings, label: t('configuration') },
-                    { id: 'users', icon: User, label: t('userManagement') },
+                    isFeatureEnabled('user_management') && { id: 'users', icon: User, label: t('userManagement') },
                     { id: 'license', icon: Shield, label: language === 'zh' ? '授权管理' : 'License' },
-                  ] as const).map((item) => {
+                  ].filter(Boolean) as any[]).map((item) => {
                     const isActive = activeTab === item.id;
                     return (
                       <button
@@ -731,6 +734,31 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
         </nav>
+
+        {/* Sidebar Footer with Version Information */}
+        {!sidebarCollapsed && (
+          <div className="px-5 py-4 border-t border-white/5 bg-black/10 flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">
+                {language === 'zh' ? '当前版本' : 'VERSION'}
+              </span>
+              <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 text-[10px] font-mono font-bold border border-cyan-500/20 shadow-[0_0_8px_rgba(34,211,238,0.1)]">
+                v{systemInfo?.version || '0.1.0'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">
+                {language === 'zh' ? '授权版本' : 'EDITION'}
+              </span>
+              <span className={`text-[10px] font-bold ${
+                systemInfo?.edition === 'Enterprise' ? 'text-amber-400' : 
+                systemInfo?.edition === 'Professional' ? 'text-indigo-400' : 'text-slate-400'
+              }`}>
+                {systemInfo?.edition || 'Standard'}
+              </span>
+            </div>
+          </div>
+        )}
       </aside>
     </>
   );
