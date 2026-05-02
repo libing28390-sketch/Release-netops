@@ -837,17 +837,19 @@ MOCK_IPS = {'127.0.0.1', '0.0.0.0', 'localhost'}
 
 async def run_scheduled_backup():
     """Backup all online devices. Called by APScheduler.
-    Skips mock/loopback IPs, uses 120s timeout with 1 retry, validates output.
+    Directly calls AutomationService to bypass HTTP authentication.
     Runs retention cleanup afterward.
     """
-    import httpx
     import asyncio
+    from services.automation_service import AutomationService
+    from core.crypto import decrypt_credential
+    from api.devices import _record_instant_execution
 
     logger.info("[Scheduled Backup] Starting daily config backup for all online devices...")
     conn = get_db_connection()
     try:
         devices = conn.execute(
-            "SELECT id, hostname, ip_address, platform FROM devices WHERE status = 'online'"
+            "SELECT id, hostname, ip_address, platform, username, password FROM devices WHERE status = 'online'"
         ).fetchall()
     finally:
         conn.close()
@@ -873,30 +875,37 @@ async def run_scheduled_backup():
 
         output = ''
         backup_ok = False
-        max_retries = 2
-
-        for attempt in range(max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=120) as client:
-                    resp = await client.post(
-                        'http://localhost:8003/api/execute',
-                        json={'device_id': device['id'], 'command': _backup_cmd, 'isConfig': False}
-                    )
-                    if resp.status_code == 200:
-                        output = resp.json().get('output', '')
-                    else:
-                        output = ''
-            except Exception as e:
-                logger.warning(f"[Scheduled Backup] Attempt {attempt + 1} failed for {device['hostname']}: {e}")
+        
+        try:
+            # Bypass HTTP by calling AutomationService directly
+            d = dict(device)
+            d['password'] = decrypt_credential(d.get('password')) or ''
+            driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
+            
+            service = AutomationService(driver_type=driver_type)
+            commands = [_backup_cmd]
+            
+            # run_in_executor to avoid blocking the event loop
+            results = await asyncio.get_event_loop().run_in_executor(
+                None, 
+                lambda: service.execute_commands(d, commands, is_config=False)
+            )
+            
+            if results and results[0].success:
+                output = results[0].output
+                _record_instant_execution(d['id'], "Scheduled Backup", commands, 'completed', platform=d.get('platform'), output=output)
+            else:
+                err = results[0].error if results else "Unknown error"
+                logger.warning(f"[Scheduled Backup] Execution failed for {device['hostname']}: {err}")
                 output = ''
 
-            # Validate: reject mock output, error placeholders, or empty
-            if output and not output.startswith('[Mock ') and not output.startswith('% '):
-                backup_ok = True
-                break
+        except Exception as e:
+            logger.warning(f"[Scheduled Backup] Logic error for {device['hostname']}: {e}")
+            output = ''
 
-            if attempt < max_retries - 1:
-                await asyncio.sleep(5)
+        # Validate: reject mock output, error placeholders, or empty
+        if output and not output.startswith('[Mock ') and not output.startswith('% '):
+            backup_ok = True
 
         if not backup_ok:
             failed += 1

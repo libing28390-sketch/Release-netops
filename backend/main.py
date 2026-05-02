@@ -58,6 +58,10 @@ from slowapi.errors import RateLimitExceeded
 
 # SNMP Imports removed for stability
 
+import sys
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 # 初始化日志配置
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -1875,12 +1879,17 @@ def seed_data():
 
 if __name__ == "__main__":
     import uvicorn
+    import sys
     port = int(os.environ.get("PORT", "8003"))
     workers = int(os.environ.get("WORKERS", "1"))
+    is_dev = os.environ.get("NODE_ENV") == "development"
+    
     if workers > 1:
         # Multi-worker: pass app as import string so each worker can import it
-        uvicorn.run("main:app", host="0.0.0.0", port=port, workers=workers)
+        # On Windows, we still need to specify the loop if using uvicorn.run
+        loop_type = "proactor" if sys.platform == "win32" else "auto"
+        uvicorn.run("main:app", host="0.0.0.0", port=port, workers=workers, loop=loop_type)
     else:
         # Single worker: enable reload for dev convenience if not in production
-        is_dev = os.environ.get("NODE_ENV") == "development"
-        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=is_dev)
+        loop_type = "proactor" if sys.platform == "win32" else "auto"
+        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=is_dev, loop=loop_type)
