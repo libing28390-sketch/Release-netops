@@ -325,6 +325,59 @@ def create_user(request: Request, user: dict = Body(...)):
     finally:
         conn.close()
 
+@router.post("/switch-user")
+def switch_user(request: Request, payload: dict = Body(...)):
+    """
+    GitHub-like account switcher. 
+    Allows an Administrator to switch to another user session without password.
+    """
+    target_username = payload.get('username')
+    auth = request.headers.get('Authorization', '')
+    token = auth.replace('Bearer ', '') if auth.startswith('Bearer ') else ''
+    current_sess = validate_session_token(token)
+    
+    if not current_sess or current_sess['role'] != 'Administrator':
+        raise HTTPException(status_code=403, detail="Only administrators can switch users")
+        
+    conn = get_db_connection()
+    try:
+        user = conn.execute('SELECT * FROM users WHERE username = ?', (target_username,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="Target user not found")
+            
+        user_dict = dict(user)
+        new_token = _create_token()
+        _store_session(new_token, user_dict)
+        
+        # Hydrate user data for frontend
+        profile_row = conn.execute(
+            'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
+            (user_dict['id'],),
+        ).fetchone()
+        profile = _hydrate_user_row(profile_row)
+        
+        log_audit_event(
+            event_type='USER_SWITCH',
+            category='identity',
+            severity='medium',
+            status='success',
+            summary=f"Admin {current_sess['username']} switched to user {target_username}",
+            actor_username=current_sess['username'],
+            actor_role='Administrator',
+            source_ip=request.client.host if request and request.client else None,
+            target_type='user',
+            target_name=target_username,
+        )
+        
+        return {
+            "success": True,
+            "token": new_token,
+            "user": profile,
+        }
+    finally:
+        conn.close()
+
+
 @router.post("/login")
 @limiter.limit("5/minute")
 def login(request: Request, payload: dict = Body(...)):

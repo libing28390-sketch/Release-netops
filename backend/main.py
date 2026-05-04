@@ -1,3 +1,13 @@
+import sys
+import asyncio
+
+if sys.platform == 'win32':
+    # This MUST be set before any other imports that might initialize a loop
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception:
+        pass
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,9 +69,6 @@ from slowapi.errors import RateLimitExceeded
 
 # SNMP Imports removed for stability
 
-import sys
-if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 # 初始化日志配置
 setup_logging()
@@ -100,6 +107,13 @@ async def lifespan(app: FastAPI):
         seed_builtin_tags(_tag_conn)
     finally:
         _tag_conn.close()
+    # Verify loop type on Windows
+    if sys.platform == 'win32':
+        loop = asyncio.get_running_loop()
+        logger.info(f"Active Event Loop: {type(loop).__name__}")
+        if "Proactor" not in type(loop).__name__:
+            logger.warning("NOT using ProactorEventLoop! Concurrency will be limited to 64 FDs.")
+
     asyncio.create_task(status_monitor())
     record_host_resource_snapshot(sync_alerts=True)
     schedule_cfg = _get_schedule_from_db()
@@ -1882,16 +1896,21 @@ def seed_data():
 if __name__ == "__main__":
     import uvicorn
     import sys
+    import os
+    
+    # Re-enforce Proactor on Windows before uvicorn starts
+    if sys.platform == 'win32':
+        import asyncio
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        
     port = int(os.environ.get("PORT", "8003"))
     workers = int(os.environ.get("WORKERS", "1"))
     is_dev = os.environ.get("NODE_ENV") == "development"
     
+    # Use "asyncio" loop which will pick up the policy we just set
+    loop_type = "asyncio" if sys.platform == "win32" else "auto"
+    
     if workers > 1:
-        # Multi-worker: pass app as import string so each worker can import it
-        # On Windows, we already set the loop policy to Proactor, so we use 'asyncio'
-        loop_type = "asyncio" if sys.platform == "win32" else "auto"
         uvicorn.run("main:app", host="0.0.0.0", port=port, workers=workers, loop=loop_type)
     else:
-        # Single worker: enable reload for dev convenience if not in production
-        loop_type = "asyncio" if sys.platform == "win32" else "auto"
         uvicorn.run("main:app", host="0.0.0.0", port=port, reload=is_dev, loop=loop_type)

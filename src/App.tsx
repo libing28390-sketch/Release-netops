@@ -133,6 +133,7 @@ const App: React.FC = () => {
     handleLogin,
     handleLogout,
     handleLanguagePreferenceChange,
+    handleSwitchUser,
     rememberMe,
     setRememberMe,
     showLoginPwd,
@@ -1071,6 +1072,21 @@ const App: React.FC = () => {
     createEmptyUserForm,
     handleAddUser, handleEditUser,
   } = useUserManagement({ currentUser, setCurrentUser, language, showToast });
+
+  // Fetch actual users for account switching AFTER setUsers is initialized
+  useEffect(() => {
+    if (isAuthenticated) {
+      const token = localStorage.getItem('netops_token');
+      fetch('/api/users', { 
+        headers: token ? { Authorization: `Bearer ${token}` } : {} 
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (Array.isArray(data)) setUsers(data);
+        })
+        .catch(() => {});
+    }
+  }, [isAuthenticated, setUsers]);
   const [trendDays, setTrendDays] = useState<7 | 30>(7);
   const [dashBannerCollapsed, setDashBannerCollapsed] = useState(false);
   const [dashLastRefresh, setDashLastRefresh] = useState<Date>(new Date());
@@ -3523,6 +3539,8 @@ const App: React.FC = () => {
         }}
         onThemeModeChange={setThemeMode}
         onLanguageChange={handleLanguagePreferenceChange}
+        onSwitchUser={handleSwitchUser}
+        availableUsers={users}
         onLogout={handleLogout}
         onMarkAllNotificationsRead={markAllNotificationsRead}
         onMarkNotificationRead={(id) => {

@@ -147,6 +147,35 @@ export const useAuth = ({
     }
   }, [currentUser.id, setLanguage]);
 
+  const handleSwitchUser = async (targetUsername: string) => {
+    const token = localStorage.getItem('netops_token');
+    if (!token) return;
+
+    try {
+      const resp = await fetch('/api/switch-user', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ username: targetUsername }),
+      });
+      
+      const data = await resp.json();
+      if (resp.ok && data.token) {
+        localStorage.setItem('netops_token', data.token);
+        setCurrentUser(data.user);
+        showToast(language === 'zh' ? `已切换到用户: ${targetUsername}` : `Switched to user: ${targetUsername}`, 'success');
+        // Force reload to refresh all context and states
+        window.location.reload();
+      } else {
+        showToast(data.detail || 'Switch failed', 'error');
+      }
+    } catch (err) {
+      showToast('Network error during switch', 'error');
+    }
+  };
+
   return {
     isAuthenticated,
     setIsAuthenticated,
@@ -163,6 +192,7 @@ export const useAuth = ({
     handleLogin,
     handleLogout,
     handleLanguagePreferenceChange,
+    handleSwitchUser,
     showLoginPwd,
     setShowLoginPwd,
   };

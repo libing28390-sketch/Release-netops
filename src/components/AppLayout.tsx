@@ -4,6 +4,7 @@ import CommandPalette from './CommandPalette';
 import ModuleSubNav from './ModuleSubNav';
 import TopHeader from './TopHeader';
 import VersionBanner from './VersionBanner';
+import VersionUpdateNotifier from './VersionUpdateNotifier';
 import ToastNotification, { type ToastState } from './ToastNotification';
 import type { NotificationItem, ThemeMode, User as UserType } from '../types';
 
@@ -40,6 +41,8 @@ interface AppLayoutProps {
   onOpenHistory: () => void;
   onThemeModeChange: (mode: ThemeMode) => void;
   onLanguageChange: (language: 'zh' | 'en') => void;
+  onSwitchUser: (username: string) => void;
+  availableUsers?: any[];
   onLogout: () => void;
   onMarkAllNotificationsRead: () => void;
   onMarkNotificationRead: (id: string) => void;
@@ -84,6 +87,8 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   onOpenHistory,
   onThemeModeChange,
   onLanguageChange,
+  onSwitchUser,
+  availableUsers,
   onLogout,
   onMarkAllNotificationsRead,
   onMarkNotificationRead,
@@ -132,6 +137,8 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           onOpenHistory={onOpenHistory}
           onThemeModeChange={onThemeModeChange}
           onLanguageChange={onLanguageChange}
+          onSwitchUser={onSwitchUser}
+          availableUsers={availableUsers}
           onLogout={onLogout}
           onMarkAllNotificationsRead={onMarkAllNotificationsRead}
           onMarkNotificationRead={onMarkNotificationRead}
@@ -169,6 +176,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       />
 
       <ToastNotification toast={toast} onClose={onCloseToast} />
+      <VersionUpdateNotifier language={language} />
     </div>
   );
 };

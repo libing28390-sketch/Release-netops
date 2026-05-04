@@ -24,6 +24,9 @@ import {
   Sun,
   User,
   Zap,
+  ArrowLeftRight,
+  PlusCircle,
+  ChevronLeft as BackIcon
 } from 'lucide-react';
 import type { NotificationItem, SessionUser, ThemeMode } from '../types';
 
@@ -53,6 +56,8 @@ interface TopHeaderProps {
   onOpenHistory: () => void;
   onThemeModeChange: (mode: ThemeMode) => void;
   onLanguageChange: (language: 'en' | 'zh') => void;
+  onSwitchUser?: (username: string) => void;
+  availableUsers?: any[];
   onLogout: () => void;
   onMarkAllNotificationsRead: () => void;
   onMarkNotificationRead: (id: string) => void;
@@ -86,6 +91,8 @@ const TopHeader: React.FC<TopHeaderProps> = ({
   onOpenHistory,
   onThemeModeChange,
   onLanguageChange,
+  onSwitchUser,
+  availableUsers,
   onLogout,
   onMarkAllNotificationsRead,
   onMarkNotificationRead,
@@ -94,6 +101,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
 }) => {
   /* ── App switcher dropdown state ── */
   const [appSwitcherOpen, setAppSwitcherOpen] = useState(false);
+  const [menuView, setMenuView] = useState<'main' | 'switch'>('main');
   const [appSearch, setAppSearch] = useState('');
   const appSwitcherRef = useRef<HTMLDivElement>(null);
   const appSearchRef = useRef<HTMLInputElement>(null);
@@ -132,6 +140,12 @@ const TopHeader: React.FC<TopHeaderProps> = ({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [appSwitcherOpen]);
+
+  useEffect(() => {
+    if (!showUserMenu) {
+      setMenuView('main');
+    }
+  }, [showUserMenu]);
 
   // Auto-focus search when opened
   useEffect(() => {
@@ -365,59 +379,98 @@ const TopHeader: React.FC<TopHeaderProps> = ({
             transition={{ duration: 0.16, ease: 'easeOut' }}
             className={`absolute top-14 right-0 w-[calc(100vw-2rem)] sm:w-[300px] max-w-[300px] rounded-xl shadow-2xl z-50 overflow-hidden ${resolvedTheme === 'dark' ? 'bg-[#161b22] border border-white/[0.12]' : 'bg-white border border-black/[0.12] shadow-lg'}`}
           >
-            <div className={`flex items-center gap-3 px-4 py-3 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
-              <div className={`w-9 h-9 rounded-full border overflow-hidden flex-shrink-0 flex items-center justify-center ${resolvedTheme === 'dark' ? 'bg-white/10 border-white/10 text-white/70' : 'bg-black/10 border-black/5 text-black/60'}`}>
-                {renderAvatarContent(currentAvatar, 18)}
-              </div>
-              <div className="min-w-0">
-                <p className={`text-[13px] font-semibold truncate leading-tight ${resolvedTheme === 'dark' ? 'text-white/90' : 'text-black/85'}`}>{currentUser.username}</p>
-                <p className={`text-[11px] truncate ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/45'}`}>{language === 'zh' ? (currentUser.role === 'Administrator' ? '管理员' : currentUser.role === 'Operator' ? '操作员' : currentUser.role === 'Viewer' ? '只读用户' : (currentUser.role || '管理员')) : (currentUser.role || 'Administrator')}</p>
-              </div>
-            </div>
-
-            <div className={`py-1 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
-              <button onClick={onOpenProfile} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
-                <User size={16} className="flex-shrink-0 opacity-70 text-cyan-500" />
-                {language === 'zh' ? '个人设置' : 'Account Settings'}
-              </button>
-              
-              {currentUser.role === 'Administrator' && (
-                <>
-                  <button onClick={() => onNavigate && onNavigate('/history/license')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
-                    <ShieldCheck size={16} className="flex-shrink-0 opacity-70 text-emerald-500" />
-                    {language === 'zh' ? '授权管理' : 'License Management'}
+            {menuView === 'main' ? (
+              <>
+                <div className={`flex items-center justify-between px-4 py-3 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-9 h-9 rounded-full border overflow-hidden flex-shrink-0 flex items-center justify-center ${resolvedTheme === 'dark' ? 'bg-white/10 border-white/10 text-white/70' : 'bg-black/10 border-black/5 text-black/60'}`}>
+                      {renderAvatarContent(currentAvatar, 18)}
+                    </div>
+                    <div className="min-w-0">
+                      <p className={`text-[13px] font-semibold truncate leading-tight ${resolvedTheme === 'dark' ? 'text-white/90' : 'text-black/85'}`}>{currentUser.username}</p>
+                      <p className={`text-[11px] truncate ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/45'}`}>{language === 'zh' ? (currentUser.role === 'Administrator' ? '管理员' : currentUser.role === 'Operator' ? '操作员' : currentUser.role === 'Viewer' ? '只读用户' : (currentUser.role || '管理员')) : (currentUser.role || 'Administrator')}</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setMenuView('switch')}
+                    title={language === 'zh' ? '切换账户' : 'Switch account'}
+                    className={`p-1.5 rounded-lg transition-colors ${resolvedTheme === 'dark' ? 'bg-white/5 hover:bg-white/10 text-white/60' : 'bg-black/[0.04] hover:bg-black/[0.08] text-black/50'}`}
+                  >
+                    <ArrowLeftRight size={14} />
                   </button>
-                  <button onClick={() => onNavigate && onNavigate('/history/users')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
-                    <SlidersHorizontal size={16} className="flex-shrink-0 opacity-70 text-indigo-500" />
-                    {language === 'zh' ? '用户管理' : 'User Management'}
-                  </button>
-                </>
-              )}
-            </div>
-
-            {/* Switch Account (GitHub-like) */}
-            <div className={`py-1 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
-              <div className="px-4 py-1.5">
-                <p className={`text-[10px] font-bold uppercase tracking-wider ${resolvedTheme === 'dark' ? 'text-white/25' : 'text-black/30'}`}>
-                  {language === 'zh' ? '快捷切换账户' : 'Switch Account'}
-                </p>
-              </div>
-              <button 
-                onClick={() => {
-                  // In a real app, this would trigger a token refresh or session switch.
-                  // For now, we mock the switch by logging out or similar, 
-                  // but the user wants to see the "convenience".
-                  if (onLogout) onLogout();
-                }}
-                className={`w-full flex items-center justify-between px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500">L</div>
-                  <span>libing</span>
                 </div>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400">offline</span>
-              </button>
-            </div>
+
+                <div className={`py-1 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
+                  <button onClick={onOpenProfile} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
+                    <User size={16} className="flex-shrink-0 opacity-70 text-cyan-500" />
+                    {language === 'zh' ? '个人设置' : 'Account Settings'}
+                  </button>
+                  
+                  {currentUser.role === 'Administrator' && (
+                    <>
+                      <button onClick={() => onNavigate && onNavigate('/history/license')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
+                        <ShieldCheck size={16} className="flex-shrink-0 opacity-70 text-emerald-500" />
+                        {language === 'zh' ? '授权管理' : 'License Management'}
+                      </button>
+                      <button onClick={() => onNavigate && onNavigate('/history/users')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
+                        <SlidersHorizontal size={16} className="flex-shrink-0 opacity-70 text-indigo-500" />
+                        {language === 'zh' ? '用户管理' : 'User Management'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
+            ) : (
+              /* GitHub-style Switch Account View */
+              <div className="flex flex-col max-h-[480px]">
+                <div className={`flex items-center gap-2 px-3 py-3 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
+                  <button 
+                    onClick={() => setMenuView('main')}
+                    className={`p-1 rounded-md transition-colors ${resolvedTheme === 'dark' ? 'hover:bg-white/10 text-white/60' : 'hover:bg-black/5 text-black/50'}`}
+                  >
+                    <BackIcon size={16} />
+                  </button>
+                  <span className={`text-[13px] font-bold ${resolvedTheme === 'dark' ? 'text-white/90' : 'text-black/80'}`}>
+                    {language === 'zh' ? '切换账户' : 'Switch account'}
+                  </span>
+                </div>
+                
+                <div className="overflow-y-auto py-1 flex-1">
+                  {(availableUsers || [])
+                    .filter(u => u.username !== currentUser.username)
+                    .map((acc, idx) => {
+                      const colors = ['bg-rose-500', 'bg-purple-500', 'bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-indigo-500', 'bg-cyan-500', 'bg-slate-500'];
+                      const colorClass = colors[idx % colors.length];
+                      return (
+                        <button 
+                          key={acc.id || acc.username}
+                          onClick={() => onSwitchUser?.(acc.username)}
+                          className={`w-full flex items-center gap-3 px-4 py-2 text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}
+                        >
+                          <div className={`w-6 h-6 rounded-md ${colorClass} flex items-center justify-center text-[10px] font-bold text-white uppercase`}>
+                            {acc.username.substring(0, 2)}
+                          </div>
+                          <span className="truncate flex-1 text-left">{acc.username}</span>
+                        </button>
+                      );
+                    })}
+                </div>
+
+                <div className={`py-1 border-t ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
+                  <button className={`w-full flex items-center gap-3 px-4 py-2 text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
+                    <PlusCircle size={15} className="text-slate-400" />
+                    {language === 'zh' ? '添加账户' : 'Add account'}
+                  </button>
+                  <button 
+                    onClick={onLogout}
+                    className={`w-full flex items-center gap-3 px-4 py-2 text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}
+                  >
+                    <LogOut size={15} className="text-slate-400" />
+                    {language === 'zh' ? '退出登录' : 'Sign out'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className={`py-1 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
               <div className={`w-full flex items-center justify-between px-4 py-[7px] text-[13px] ${resolvedTheme === 'dark' ? 'text-white/80' : 'text-black/70'}`}>
