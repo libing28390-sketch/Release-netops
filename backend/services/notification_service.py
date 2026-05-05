@@ -230,45 +230,49 @@ def send_feishu(webhook_url: str, alert: dict) -> tuple[bool, str]:
 def send_feishu_verification_code(webhook_url: str, username: str, code: str, expires_min: int = 5, lang: str = 'zh') -> tuple[bool, str]:
     """通过飞书 Webhook 发送密码重置验证码卡片。"""
     is_en = lang == 'en'
-    if is_en:
-        title = "🔐 Password Reset Verification Code"
-        fields = [
-            {"is_short": True, "text": {"tag": "lark_md", "content": f"**User:**\n{username}"}},
-            {"is_short": True, "text": {"tag": "lark_md", "content": f"**Verification Code:**\n**{code}**"}},
-            {"is_short": False, "text": {"tag": "lark_md", "content": f"⏱ This code expires in **{expires_min} minutes**. Do not share it with anyone."}},
-        ]
-    else:
-        title = "🔐 密码重置验证码"
-        fields = [
-            {"is_short": True, "text": {"tag": "lark_md", "content": f"**用户：**\n{username}"}},
-            {"is_short": True, "text": {"tag": "lark_md", "content": f"**验证码：**\n**{code}**"}},
-            {"is_short": False, "text": {"tag": "lark_md", "content": f"⏱ 验证码 **{expires_min} 分钟**内有效，请勿泄露给他人。"}},
-        ]
+    title = "🔐 " + ("Password Reset Code" if is_en else "密码重置验证码")
+    fields = [
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**User:**\n{username}"}},
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**Code:**\n**{code}**"}},
+    ]
     payload = {
         "msg_type": "interactive",
         "card": {
             "config": {"wide_screen_mode": True},
-            "header": {
-                "title": {"tag": "plain_text", "content": title},
-                "template": "blue",
-            },
+            "header": {"title": {"tag": "plain_text", "content": title}, "template": "blue"},
+            "elements": [{"tag": "div", "fields": fields}],
+        },
+    }
+    return _post_json(webhook_url, payload)
+
+def send_feishu_mfa_access_code(webhook_url: str, username: str, code: str, expires_min: int = 5, lang: str = 'zh') -> tuple[bool, str]:
+    """发送资产特权访问授权验证码。"""
+    is_en = lang == 'en'
+    title = "🛡️ " + ("Privileged Access Authorization" if is_en else "资产特权访问授权")
+    
+    user_label = "User" if is_en else "授权用户"
+    code_label = "Auth Code" if is_en else "授权验证码"
+    footer_text = (f"Expires in **{expires_min} min**. Audit active." if is_en else f"验证码 **{expires_min} 分钟**内有效。本次访问将被全程审计。")
+    
+    fields = [
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**{user_label}:**\n{username}"}},
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**{code_label}:**\n**{code}**"}},
+        {"is_short": False, "text": {"tag": "lark_md", "content": f"⏱ {footer_text}"}},
+    ]
+    
+    payload = {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {"title": {"tag": "plain_text", "content": title}, "template": "orange"},
             "elements": [
                 {"tag": "div", "fields": fields},
                 {"tag": "hr"},
-                {"tag": "note", "elements": [{"tag": "plain_text", "content": "NetOps / Nexora Platform" if is_en else "NetOps / Nexora 平台"}]},
+                {"tag": "note", "elements": [{"tag": "plain_text", "content": "NetOps Security Gateway"}]}
             ],
         },
     }
-    ok, resp = _post_json(webhook_url, payload)
-    if ok:
-        try:
-            body = json.loads(resp)
-            resp_code = body.get('code') if 'code' in body else body.get('StatusCode', 0)
-            if resp_code != 0:
-                return False, f"Feishu error code={resp_code} msg={body.get('msg', resp[:200])}"
-        except Exception:
-            pass
-    return ok, resp
+    return _post_json(webhook_url, payload)
 
 
 def send_dingtalk_verification_code(webhook_url: str, username: str, code: str, expires_min: int = 5, lang: str = 'zh', secret: str = '') -> tuple[bool, str]:

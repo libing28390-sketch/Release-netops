@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock } from 'lucide-react';
+import { Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock, Info } from 'lucide-react';
 import type { ThemeMode } from '../types';
 
 interface AvatarPreset {
@@ -74,33 +74,8 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   onTestNotificationChannel,
 }) => {
   const [localTerminalPath, setLocalTerminalPath] = React.useState(() => localStorage.getItem('local_terminal_path') || '');
+  const [terminalApp, setTerminalApp] = React.useState(() => localStorage.getItem('terminal_app') || 'xshell');
   
-  const handleDownloadReg = () => {
-    // Using a more robust Start-Process command with explicit FilePath and ArgumentList
-    const command = `powershell.exe -NoProfile -Command \\"$u='%1'; if ($u -match 'nexora://([^/?]+)\\\\?user=([^&]+)') { $h=$matches[1]; $usr=$matches[2]; Start-Process -FilePath '${localTerminalPath}' -ArgumentList \\\\\\"-url ssh://$usr@$h\\\\\\" } else { Write-Host 'Invalid Protocol URL: ' $u; Start-Sleep -Seconds 5 }\\"`;
-    
-    const regContent = `Windows Registry Editor Version 5.00
-
-[HKEY_CLASSES_ROOT\\nexora]
-@="URL:Nexora Protocol"
-"URL Protocol"=""
-
-[HKEY_CLASSES_ROOT\\nexora\\shell]
-
-[HKEY_CLASSES_ROOT\\nexora\\shell\\open]
-
-[HKEY_CLASSES_ROOT\\nexora\\shell\\open\\command]
-@="${command.replace(/\\/g, '\\\\')}"
-`;
-    const blob = new Blob([regContent], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'register_nexora.reg';
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
   if (!open) return null;
 
   const channels = [
@@ -152,7 +127,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
       <motion.div
         initial={{ opacity: 0, y: 12, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        className={`w-full max-w-lg rounded-2xl border shadow-2xl overflow-hidden ${isDark ? 'bg-[#121c2d] border-white/10' : 'bg-white border-black/10'}`}
+        className={`w-full max-w-2xl rounded-2xl border shadow-2xl overflow-hidden ${isDark ? 'bg-[#121c2d] border-white/10' : 'bg-white border-black/10'}`}
       >
         <div className={`px-6 py-4 border-b ${isDark ? 'border-white/10' : 'border-black/10'}`}>
           <h3 className={`text-lg font-bold ${isDark ? 'text-white/90' : 'text-[#0b2a3c]'}`}>个人信息</h3>
@@ -377,49 +352,73 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
             </p>
 
             <div className={`p-4 rounded-xl border ${isDark ? 'bg-white/[0.02] border-white/10' : 'bg-black/[0.01] border-black/5'}`}>
-              <div className="mb-4">
-                <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>本地可执行文件路径</label>
-                <div className="relative">
-                  <Terminal size={14} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/20' : 'text-black/20'}`} />
-                  <input 
-                    type="text"
-                    value={localTerminalPath}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setLocalTerminalPath(val);
-                      localStorage.setItem('local_terminal_path', val);
-                    }}
-                    placeholder={language === 'zh' ? '例如: D:\\NetSarang\\Xshell 7\\Xshell.exe' : 'e.g. C:\\Program Files\\Xshell.exe'}
-                    className={`w-full pl-9 pr-3 py-2 rounded-lg text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/15 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40'}`}
-                  />
+              <div className="flex flex-col gap-4">
+                <div className="flex gap-4">
+                  <div className="w-1/3">
+                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>终端工具</label>
+                    <select 
+                      value={terminalApp}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setTerminalApp(val);
+                        localStorage.setItem('terminal_app', val);
+                      }}
+                      className={`w-full px-3 py-2 rounded-lg text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white focus:border-cyan-500/50' : 'bg-white border-black/10 text-black focus:border-cyan-500/40'}`}
+                    >
+                      <option value="standard">{language === 'zh' ? '系统默认 (ssh://)' : 'System Default'}</option>
+                      <option value="xshell">Xshell</option>
+                      <option value="putty">PuTTY</option>
+                      <option value="securecrt">SecureCRT</option>
+                      <option value="mobaxterm">MobaXterm</option>
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>可执行程序绝对路径</label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Terminal size={14} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/20' : 'text-black/20'}`} />
+                        <input 
+                          type="text"
+                          disabled={terminalApp === 'standard'}
+                          value={localTerminalPath}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setLocalTerminalPath(val);
+                            localStorage.setItem('local_terminal_path', val);
+                          }}
+                          placeholder={terminalApp === 'standard' ? (language === 'zh' ? '标准模式无需路径' : 'No path needed') : (language === 'zh' ? '请选择程序路径...' : 'Select path...')}
+                          className={`w-full pl-9 pr-3 py-2 rounded-lg text-xs outline-none border transition-all ${terminalApp === 'standard' ? 'opacity-40 cursor-not-allowed bg-black/5' : (isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/30 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40')}`}
+                        />
+                      </div>
+                      {terminalApp !== 'standard' && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const res = await fetch('/api/system/file-picker');
+                              const data = await res.json();
+                              if (data.path) {
+                                setLocalTerminalPath(data.path);
+                                localStorage.setItem('local_terminal_path', data.path);
+                              }
+                            } catch (err) { console.error(err); }
+                          }}
+                          className={`px-3 py-2 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 shadow-sm`}
+                        >
+                          <MonitorSpeaker size={14} />
+                          {language === 'zh' ? '浏览' : 'Browse'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <p className={`mt-2 text-[9px] leading-relaxed ${isDark ? 'text-amber-400/60' : 'text-amber-600/70'}`}>
-                  {language === 'zh' 
-                    ? '⚠️ 由于浏览器安全限制，请手动粘贴或输入终端主程序的完整绝对路径。' 
-                    : '⚠️ Due to browser security restrictions, please manually paste or enter the full absolute path of your terminal.'}
+                
+                <p className={`text-[10px] leading-relaxed flex items-center gap-1.5 ${isDark ? 'text-white/30' : 'text-black/40'}`}>
+                  <Info size={12} className="text-cyan-500" />
+                  {terminalApp === 'standard' 
+                    ? (language === 'zh' ? '标准模式：直接调用系统默认 SSH 处理器。' : 'Standard Mode: Calls OS default SSH handler.')
+                    : (language === 'zh' ? '本地模式：直接通过后台启动程序，无需注册表脚本，安全快捷。' : 'Local Mode: Direct launch via backend, no scripts needed.')}
                 </p>
-                <p className={`mt-1 text-[9px] leading-relaxed ${isDark ? 'text-white/20' : 'text-black/25'}`}>
-                  提示：填入你常用的终端主程序绝对路径。
-                </p>
-              </div>
-
-              <div className={`p-3 rounded-lg flex items-start gap-3 ${isDark ? 'bg-cyan-500/5 border border-cyan-500/10' : 'bg-cyan-50 border border-cyan-100'}`}>
-                <div className="mt-0.5"><Shield size={14} className="text-cyan-500" /></div>
-                <div className="flex-1">
-                  <h4 className={`text-[11px] font-bold mb-0.5 ${isDark ? 'text-cyan-300' : 'text-cyan-700'}`}>协议激活</h4>
-                  <p className={`text-[10px] leading-relaxed mb-2 ${isDark ? 'text-cyan-300/50' : 'text-cyan-600/70'}`}>首次使用或路径变更后，请下载并运行注册脚本以启用 nexora:// 协议。</p>
-                  <button 
-                    onClick={handleDownloadReg}
-                    disabled={!localTerminalPath}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                      !localTerminalPath 
-                        ? 'opacity-30 cursor-not-allowed bg-gray-500/20' 
-                        : 'bg-cyan-500 text-white hover:bg-cyan-600 shadow-sm shadow-cyan-500/20'
-                    }`}
-                  >
-                    <Download size={12} /> 下载注册脚本 (.reg)
-                  </button>
-                </div>
               </div>
             </div>
           </div>

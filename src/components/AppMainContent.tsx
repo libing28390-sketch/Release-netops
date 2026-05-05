@@ -351,6 +351,15 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     activeTab === 'maintenance' || 
     (activeTab === 'automation' && automationPage === 'metrics');
 
+  const getDeviceFetchMode = () => {
+    if (activeTab === 'inventory') return 'full';
+    if (activeTab === 'automation') return 'full';
+    if (activeTab === 'config') return 'full';
+    if (activeTab === 'topology') return 'full';
+    if (activeTab === 'access') return 'full';
+    return 'light';
+  };
+
   const mainClassName = `relative flex-1 min-w-0 flex flex-col min-h-0 ${isStandaloneScrollTab ? 'overflow-hidden' : 'overflow-y-auto'}`;
 
   return (
@@ -457,7 +466,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
 
       {activeTab === 'access' && (
         <Suspense fallback={lazyPanelFallback}>
-          <AccessCenterTab devices={devices} showToast={showToast} />
+          <AccessCenterTab devices={devices} language={language} showToast={showToast} />
         </Suspense>
       )}
 

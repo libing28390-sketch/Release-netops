@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import type { Device } from '../types';
 
 export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
@@ -58,13 +58,21 @@ export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
     } as Device;
   }, []);
 
+  const lastFetchId = useRef(0);
+
   const fetchDevicesData = useCallback(async (assetType: string = 'all') => {
+    const fetchId = ++lastFetchId.current;
     try {
       const params = new URLSearchParams({ mode: deviceFetchMode });
       if (assetType !== 'all') params.append('asset_type', assetType);
+      
       const devicesRes = await fetch(`/api/devices?${params.toString()}`);
       if (!devicesRes.ok) return;
       const devs = await devicesRes.json();
+      
+      // Safety Check: Prevent older or mismatched mode requests from overwriting state
+      if (fetchId !== lastFetchId.current) return;
+
       setDevices((Array.isArray(devs) ? devs : []).map((d: any) => {
         const normalized = normalizeDeviceRecord(d);
         if (deviceFetchMode === 'light') {
@@ -77,9 +85,11 @@ export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
       }));
       setDevicesLastUpdatedAt(Date.now());
     } catch (error) {
-      console.error('Failed to fetch devices data:', error);
+      if (fetchId === lastFetchId.current) {
+        console.error('Failed to fetch devices data:', error);
+      }
     }
-  }, [deviceFetchMode]);
+  }, [deviceFetchMode, normalizeDeviceRecord]);
 
   return {
     devices,

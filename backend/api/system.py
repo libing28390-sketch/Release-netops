@@ -1,11 +1,54 @@
 from fastapi import APIRouter, Depends, BackgroundTasks
 from typing import Dict, Any, Optional
+import os
+import sys
 from core.version import VERSION, EDITION, BUILD_DATE
 from license_auth.verifier import get_license_verifier
 from license_auth.models import LicenseStatus
 from core.config import settings
 
+from services import notification_service
+from core.crypto import decrypt_credential
+import random
+import time
+from database import get_db_connection
+
 router = APIRouter(prefix="/system", tags=["System"])
+
+# In-memory storage for MFA codes (Simple implementation for now)
+mfa_store = {}
+
+@router.post("/request-mfa")
+async def request_mfa(data: Dict[str, Any]):
+    user_id = data.get("user_id")
+    username = data.get("username", "Admin")
+    
+    # 1. Generate 6-digit code
+    code = f"{random.randint(100000, 999999)}"
+    mfa_store[user_id] = {"code": code, "expire": time.time() + 300} # 5 min
+    
+    # 2. Get Feishu Webhook from DB
+    conn = get_db_connection()
+    feishu_url = ""
+    try:
+        row = conn.execute("SELECT webhook_url FROM global_notification_channels WHERE platform = 'feishu' AND enabled = 1").fetchone()
+        if row:
+            feishu_url = row['webhook_url']
+    finally:
+        conn.close()
+
+    if not feishu_url:
+        return {"success": False, "error": "飞书通知渠道未启用或未配置 Webhook URL"}
+
+    # 3. Send via Feishu
+    ok, msg = notification_service.send_feishu_mfa_access_code(
+        feishu_url, username, code, expires_min=5
+    )
+    
+    if ok:
+        return {"success": True, "message": "验证码已发送至飞书"}
+    else:
+        return {"success": False, "error": f"飞书推送失败: {msg}"}
 
 @router.get("/info")
 async def get_system_info() -> Dict[str, Any]:
@@ -86,3 +129,98 @@ async def trigger_upgrade(background_tasks: BackgroundTasks):
         "success": True, 
         "message": "升级指令已下发。系统正在后台更新镜像并重启，请稍后刷新页面。"
     }
+
+@router.get("/file-picker")
+async def open_file_picker() -> Dict[str, Any]:
+    """
+    Opens a native Windows file picker dialog on the host machine.
+    Works because the backend is running locally.
+    """
+    import tkinter as tk
+    from tkinter import filedialog
+    import asyncio
+    import concurrent.futures
+
+    def run_picker():
+        try:
+            root = tk.Tk()
+            root.withdraw()  # Hide main window
+            root.attributes("-topmost", True)  # Bring dialog to front
+            file_path = filedialog.askopenfilename(
+                title="选择终端程序可执行文件",
+                filetypes=[("可执行文件", "*.exe"), ("所有文件", "*.*")]
+            )
+            root.destroy()
+            return {"path": file_path.replace('/', '\\')} if file_path else {"path": ""}
+        except Exception as e:
+            return {"path": "", "error": str(e)}
+
+    # Run in a separate thread to avoid blocking the FastAPI event loop
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        result = await asyncio.get_event_loop().run_in_executor(pool, run_picker)
+    
+    return result
+
+@router.post("/launch-terminal")
+async def launch_terminal(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Directly launches a terminal application on the host machine.
+    Bypasses browser protocol restrictions because backend is local.
+    """
+    import subprocess
+    import logging
+    logger = logging.getLogger(__name__)
+
+    path = data.get("path")
+    app_type = data.get("app_type", "xshell")
+    host = data.get("host")
+    user = data.get("user", "root")
+    password = data.get("password")
+    
+    # MFA Check
+    mfa_code = data.get("mfa_code")
+    user_id = data.get("user_id", "default_user")
+    is_privileged = data.get("is_privileged", False)
+
+    if is_privileged:
+        fixed_pw = data.get("fixed_password")
+        if not fixed_pw or str(fixed_pw) != "123456":
+            return {"success": False, "error": "固定密码验证失败"}
+
+        if not mfa_code:
+            return {"success": False, "error": "特权登录需要提供飞书验证码"}
+        
+        stored = mfa_store.get(user_id)
+        if not stored or str(stored["code"]) != str(mfa_code) or time.time() > stored["expire"]:
+            return {"success": False, "error": "飞书验证码错误或已过期"}
+        
+        # Success - clean up code
+        del mfa_store[user_id]
+
+    if not path or not os.path.exists(path):
+        return {"success": False, "error": "Executable path not found"}
+
+    # CRITICAL FIX: Decrypt the password before passing it to Xshell/Putty
+    # The passwords stored in the DB (and sent to frontend) are encrypted with 'enc:v1:'
+    plain_password = decrypt_credential(password)
+    if not plain_password:
+        plain_password = password # Fallback if decryption fails or it's already plain
+
+    try:
+        # Use shell=True and manual quoting for maximum robustness with Windows paths and URLs
+        # Format: "C:\path\to\xshell.exe" -url "ssh://user:pass@host"
+        if app_type == "xshell":
+            cmd = f'"{path}" -url "ssh://{user}:{plain_password}@{host}"'
+        elif app_type == "putty":
+            cmd = f'"{path}" -ssh {user}@{host} -pw "{plain_password}"' if plain_password else f'"{path}" -ssh {user}@{host}'
+        elif app_type == "securecrt":
+            cmd = f'"{path}" /SSH2 /L {user} /PASSWORD "{plain_password}" {host}' if plain_password else f'"{path}" /SSH2 /L {user} {host}'
+        else:
+            cmd = f'"{path}" "{user}@{host}"'
+
+        logger.info(f"Executing: {cmd}")
+        subprocess.Popen(cmd, shell=True, stdin=None, stdout=None, stderr=None, close_fds=True)
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Launch failed: {str(e)}")
+        return {"success": False, "error": str(e)}
