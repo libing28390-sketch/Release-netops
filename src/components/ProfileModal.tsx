@@ -76,6 +76,9 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   const [localTerminalPath, setLocalTerminalPath] = React.useState(() => localStorage.getItem('local_terminal_path') || '');
   
   const handleDownloadReg = () => {
+    // Using a more robust Start-Process command with explicit FilePath and ArgumentList
+    const command = `powershell.exe -NoProfile -Command \\"$u='%1'; if ($u -match 'nexora://([^/?]+)\\\\?user=([^&]+)') { $h=$matches[1]; $usr=$matches[2]; Start-Process -FilePath '${localTerminalPath}' -ArgumentList \\\\\\"-url ssh://$usr@$h\\\\\\" } else { Write-Host 'Invalid Protocol URL: ' $u; Start-Sleep -Seconds 5 }\\"`;
+    
     const regContent = `Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\\nexora]
@@ -87,7 +90,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
 [HKEY_CLASSES_ROOT\\nexora\\shell\\open]
 
 [HKEY_CLASSES_ROOT\\nexora\\shell\\open\\command]
-@="\\"${localTerminalPath.replace(/\\/g, '\\\\')}\\" \\"%1\\""
+@="${command.replace(/\\/g, '\\\\')}"
 `;
     const blob = new Blob([regContent], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -390,7 +393,12 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     className={`w-full pl-9 pr-3 py-2 rounded-lg text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/15 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40'}`}
                   />
                 </div>
-                <p className={`mt-2 text-[9px] leading-relaxed ${isDark ? 'text-white/20' : 'text-black/25'}`}>
+                <p className={`mt-2 text-[9px] leading-relaxed ${isDark ? 'text-amber-400/60' : 'text-amber-600/70'}`}>
+                  {language === 'zh' 
+                    ? '⚠️ 由于浏览器安全限制，请手动粘贴或输入终端主程序的完整绝对路径。' 
+                    : '⚠️ Due to browser security restrictions, please manually paste or enter the full absolute path of your terminal.'}
+                </p>
+                <p className={`mt-1 text-[9px] leading-relaxed ${isDark ? 'text-white/20' : 'text-black/25'}`}>
                   提示：填入你常用的终端主程序绝对路径。
                 </p>
               </div>

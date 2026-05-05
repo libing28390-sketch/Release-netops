@@ -33,18 +33,18 @@ class TerminalSession:
 
         creds = resolve_device_credentials(device)
         
-        # 2. Logic to determine login creds (aligned with PAM rotation logic)
-        platform = (device.get('platform') or '').lower()
-        is_server = any(x in platform for x in ['linux', 'ubuntu', 'centos', 'debian'])
-        
-        # If server, we always use admin to log in (more reliable for subsequent su/sudo)
-        login_user = creds.get('admin_username') or creds.get('username')
-        login_pwd = creds.get('admin_password') or creds.get('password')
-        
-        # Override if specific role requested and it's not a server
-        if not is_server and self.role == 'normal':
-            login_user = creds.get('normal_username') or login_user
-            login_pwd = creds.get('normal_password') or login_pwd
+        # 2. Logic to determine login creds
+        if self.role == 'normal':
+            if not creds.get('normal_username'):
+                # Fail fast if requested role is not configured
+                await self.ws.send_text(json.dumps({"type": "error", "message": "Normal account not configured. Please set it in Asset Management."}))
+                await self.ws.close(code=4001)
+                return
+            login_user = creds.get('normal_username')
+            login_pwd = creds.get('normal_password')
+        else:
+            login_user = creds.get('admin_username') or creds.get('username')
+            login_pwd = creds.get('admin_password') or creds.get('password')
 
         try:
             # 3. Establish SSH Connection
@@ -56,12 +56,13 @@ class TerminalSession:
                 known_hosts=None, # Safety: ignore host key for now
                 client_factory=None
             )
-            self.ssh_chan, _ = await self.ssh_conn.create_session(
-                asyncssh.SSHClientProcess,
+            # create_process() without command starts a shell
+            self.ssh_chan = await self.ssh_conn.create_process(
                 term_type='xterm-256color',
                 term_size=(80, 24)
             )
-            logger.info(f"[Terminal] Connected successfully to {device['hostname']}")
+            
+            logger.info(f"[Terminal] xterm-256color Session established for {device['hostname']} as {login_user}")
             
             # Start IO tasks
             await asyncio.gather(
@@ -69,9 +70,12 @@ class TerminalSession:
                 self._downstream()
             )
         except Exception as e:
-            logger.error(f"[Terminal] Connection failed: {e}")
-            await self.ws.send_text(json.dumps({"type": "error", "message": str(e)}))
-            await self.ws.close(code=1011)
+            logger.error(f"[Terminal] Connection failed or terminated: {e}", exc_info=True)
+            try:
+                await self.ws.send_text(json.dumps({"type": "error", "message": str(e)}))
+                await self.ws.close(code=1011)
+            except:
+                pass
 
     async def _upstream(self):
         """Websocket -> SSH Stdin"""
@@ -79,24 +83,34 @@ class TerminalSession:
             async for message in self.ws.iter_text():
                 data = json.loads(message)
                 if data['type'] == 'input':
-                    self.ssh_chan.write(data['data'])
+                    # DEBUG: Log input characters
+                    logger.debug(f"[Terminal] Stdin write: {repr(data['data'])}")
+                    self.ssh_chan.stdin.write(data['data'])
+                    await self.ssh_chan.stdin.drain()
                 elif data['type'] == 'resize':
-                    self.ssh_chan.set_terminal_size(data['cols'], data['rows'])
-        except Exception:
-            pass
+                    try:
+                        self.ssh_chan.change_terminal_size(data['cols'], data['rows'])
+                    except Exception as e:
+                        logger.warning(f"[Terminal] Resize failed: {e}")
+        except Exception as e:
+            logger.error(f"[Terminal] Upstream error: {e}")
 
     async def _downstream(self):
         """SSH Stdout -> Websocket"""
         try:
-            while not self.ssh_chan.at_eof():
-                output = await self.ssh_chan.read(4096)
+            while not self.ssh_chan.stdout.at_eof():
+                output = await self.ssh_chan.stdout.read(4096)
                 if output:
                     await self.ws.send_text(json.dumps({"type": "output", "data": output}))
                 await asyncio.sleep(0.01)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[Terminal] Downstream error: {e}")
         finally:
-            await self.ws.close()
+            logger.info(f"[Terminal] Session closed for {self.device_id}")
+            try:
+                await self.ws.close()
+            except:
+                pass
 
 @router.websocket("/access/terminal/{device_id}")
 async def terminal_websocket(

@@ -457,7 +457,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
 
       {activeTab === 'access' && (
         <Suspense fallback={lazyPanelFallback}>
-          <AccessCenterTab />
+          <AccessCenterTab devices={devices} showToast={showToast} />
         </Suspense>
       )}
 

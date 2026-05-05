@@ -24,19 +24,60 @@ export default function TerminalWindow({ deviceId, role, hostname }: TerminalWin
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: '"Cascadia Code", Menlo, monospace',
-      fontSize: 13,
+      fontSize: 14,
       theme: {
         background: '#000000',
         foreground: '#cccccc',
         cursor: '#00ff00',
-      }
+      },
+      rightClickSelectsWord: true,
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(terminalRef.current);
     fitAddon.fit();
+    term.focus();
     xtermRef.current = term;
+
+    // Putty-style: Copy on select (Works fine on HTTP)
+    term.onSelectionChange(() => {
+      if (term.hasSelection()) {
+        const text = term.getSelection();
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(() => {});
+        } else {
+          try {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand("copy");
+            document.body.removeChild(textArea);
+          } catch (err) {}
+        }
+      }
+    });
+
+    // Native Paste Helper: Focus the hidden textarea on right-click 
+    // to ensure "Paste" appears in the browser's native context menu.
+    terminalRef.current.onmousedown = (e) => {
+      if (e.button === 2) { // Right click
+        const textarea = terminalRef.current?.querySelector('textarea');
+        if (textarea) {
+          textarea.focus();
+        }
+      }
+    };
+
+    // Global Paste Interceptor (Captures native paste commands)
+    terminalRef.current.onpaste = (e) => {
+      e.preventDefault();
+      const text = e.clipboardData?.getData('text');
+      if (text && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'input', data: text }));
+      }
+    };
 
     term.writeln(`\x1b[1;36m>>> Connecting to ${hostname} (${role})...\x1b[0m`);
 
@@ -66,9 +107,28 @@ export default function TerminalWindow({ deviceId, role, hostname }: TerminalWin
 
     // 3. Handle Input
     term.onData((data) => {
+      console.log('Terminal Input:', JSON.stringify(data));
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
       }
+    });
+
+    // 4. Handle Keyboard Shortcuts (Paste)
+    term.attachCustomKeyEventHandler((e) => {
+      // Ctrl+V or Shift+Insert
+      if ((e.ctrlKey && e.key === 'v') || (e.shiftKey && e.key === 'Insert')) {
+        if (e.type === 'keydown') {
+          navigator.clipboard.readText().then(text => {
+            if (text && wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({ type: 'input', data: text }));
+            }
+          }).catch(() => {
+            // If API blocked, let the browser handle it naturally or ignore
+          });
+        }
+        return false; // Prevent default
+      }
+      return true;
     });
 
     // 4. Handle Resize

@@ -2274,81 +2274,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
               </div>
             </div>
 
-            {/* IDENTITY & EXTERNAL CLIENT BAR */}
-            <div className="shrink-0 flex items-center justify-between bg-white/[0.03] px-4 py-2 border-b border-white/[0.08]">
-              <div className="flex items-center gap-3">
-                <span className="text-[10px] font-bold text-white/30 uppercase tracking-wider">{isZh ? '登录身份:' : 'IDENTITY:'}</span>
-                <div className="flex bg-black/40 rounded-lg p-0.5 border border-white/5">
-                  <button 
-                    onClick={() => {
-                      setSelectedAuthRole('normal');
-                      setIsApproved(false);
-                    }}
-                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-bold transition-all ${selectedAuthRole === 'normal' ? 'bg-[#00bceb] text-white shadow-sm' : 'text-white/30 hover:text-white/50'}`}
-                  >
-                    <User size={10} />{isZh ? '普通用户' : 'User'}
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (!isApproved) {
-                        setShowApprovalModal(true);
-                      } else {
-                        setSelectedAuthRole('admin');
-                      }
-                    }}
-                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-bold transition-all ${selectedAuthRole === 'admin' ? 'bg-orange-500 text-white shadow-sm' : 'text-white/30 hover:text-white/50'}`}
-                  >
-                    <ShieldCheck size={10} />{isZh ? '特权账号' : 'Privileged'}
-                    {isApproved && <Check size={8} className="ml-0.5 text-emerald-400" />}
-                  </button>
-                </div>
-              </div>
 
-              <div className="flex items-center gap-2">
-                <button 
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20"
-                  onClick={() => {
-                    const path = localStorage.getItem('local_terminal_path');
-                    if (!path) {
-                      showToast(isZh ? '请前往 [个人中心] 配置本地终端路径' : 'Please configure terminal path in [Profile Settings]', 'warning');
-                      return;
-                    }
-                    if (targetDevices.length > 0) {
-                      const dev = targetDevices[0];
-                      const ip = dev.ip_address;
-                      const role = selectedAuthRole;
-                      if (role === 'admin' && !isApproved) {
-                        setShowApprovalModal(true);
-                        return;
-                      }
-                      const user = role === 'admin' ? (dev.admin_username || 'admin') : (dev.normal_username || 'user');
-                      window.location.href = `nexora://${ip}?user=${encodeURIComponent(user)}&role=${role}&client=xshell`;
-                      showToast(isZh ? '正在拉起 Xshell...' : 'Launching Xshell...', 'info');
-                    }
-                  }}
-                >
-                  <MonitorSpeaker size={11} />
-                  {isZh ? '本地 Xshell' : 'Xshell'}
-                </button>
-              </div>
-            </div>
-
-            {/* Main Terminal Area */}
-            <div className="flex-1 bg-[#0d1117] relative overflow-hidden">
-              <div 
-                ref={el => {
-                  if (el) initTerminal(el, 'quick-query');
-                }}
-                className="absolute inset-0 p-2"
-              />
-              
-              {quickQueryRunning && (
-                <div className="absolute top-4 right-4 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/60 border border-white/10 backdrop-blur-md">
-                  <RotateCcw size={12} className="text-cyan-400 animate-spin" />
-                  <span className="text-[10px] font-bold text-white/70 uppercase tracking-widest">{isZh ? '正在执行' : 'Executing'}</span>
-                </div>
-              )}
-            </div>
 
             {/* Executed commands bar */}
             {!quickQueryRunning && quickQueryCommands.length > 0 && (
@@ -2472,11 +2398,26 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                   )}
                 </div>
               ) : (
-                <div className="p-5">
+                <div className="p-5 relative group/output">
                   <div className="mb-3 flex items-start gap-2 border-b border-white/[0.04] pb-3">
                     <span className="text-emerald-400/60 font-mono font-bold text-[11px] mt-0.5 select-none shrink-0">❯</span>
                     <code className="text-[11px] font-mono text-emerald-400/40 leading-relaxed whitespace-pre-wrap">{quickQueryLabel}</code>
                   </div>
+                  
+                  {/* GitHub-style Copy Button */}
+                  {quickQueryOutput && (
+                    <button
+                      onClick={async () => {
+                        const ok = await copyTextWithFallback(quickQueryOutput);
+                        showToast(ok ? (isZh ? '结果已复制' : 'Copied') : (isZh ? '复制失败' : 'Failed'), ok ? 'success' : 'error');
+                      }}
+                      className="absolute top-4 right-4 p-2 rounded-lg bg-white/5 border border-white/10 text-white/40 hover:text-white hover:bg-white/10 opacity-0 group-hover/output:opacity-100 transition-all z-10"
+                      title={isZh ? '复制结果' : 'Copy output'}
+                    >
+                      <Copy size={14} />
+                    </button>
+                  )}
+                  
                   <pre className="text-[13px] font-mono text-[#e6edf3] leading-[1.75] whitespace-pre-wrap break-all select-text">{quickQueryOutput}</pre>
                 </div>
               )}

@@ -3,10 +3,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, Server, ChevronRight, ChevronDown, Terminal, 
   X, Maximize2, Minimize2, Split, Monitor, Shield, User,
-  LayoutGrid, List, Activity, Settings, Plus, Info
+  LayoutGrid, List, Activity, Settings, Plus, Info, MonitorSpeaker
 } from 'lucide-react';
 import { useAccessStore } from '../store/useAccessStore';
 import TerminalWindow from '../components/access/TerminalWindow';
+import { useI18n } from '../i18n.tsx';
 
 // --- Mock/Logic for Tree ---
 interface TreeItem {
@@ -19,7 +20,9 @@ interface TreeItem {
   platform?: string;
 }
 
-export default function AccessCenterTab() {
+export default function AccessCenterTab({ devices: globalDevices = [], showToast }: { devices?: any[], showToast: (msg: string, type?: any) => void }) {
+  const { t, language } = useI18n();
+  const isZh = language === 'zh';
   const { 
     sessions, activeSessionId, addSession, removeSession, 
     setActiveSession, sidebarCollapsed, toggleSidebar 
@@ -27,27 +30,20 @@ export default function AccessCenterTab() {
 
   const [search, setSearch] = useState('');
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
-  const [devices, setDevices] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [devices, setDevices] = useState<any[]>(globalDevices);
 
-  // Fetch devices for the gallery
+  // Sync internal devices if globalDevices changes
   useEffect(() => {
-    const fetchDevices = async () => {
-      try {
-        const resp = await fetch('/api/devices?mode=light', {
-          headers: { Authorization: `Bearer ${localStorage.getItem('netops_token')}` }
-        });
-        const data = await resp.json();
-        // Backend returns { items: [...], total: ... }
-        setDevices(data.items || []);
-      } catch (err) {
-        console.error('Failed to fetch devices:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchDevices();
-  }, []);
+    if (globalDevices.length > 0) {
+      setDevices(globalDevices);
+    }
+  }, [globalDevices]);
+
+  const isLinux = (platform: string = '') => {
+    const p = platform.toLowerCase();
+    return ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'oracle', 'server'].some(k => p.includes(k));
+  };
+
 
   const filteredDevices = useMemo(() => {
     return devices.filter(d => 
@@ -75,13 +71,13 @@ export default function AccessCenterTab() {
           <div className="flex-1 overflow-y-auto p-2">
             {/* Tree Mockup */}
             <div className="space-y-1">
-              <TreeFolder label="Servers" count={devices.filter(d => d.platform?.includes('linux')).length}>
-                {devices.filter(d => d.platform?.includes('linux')).map(d => (
+              <TreeFolder label="Servers" count={devices.filter(d => isLinux(d.platform)).length}>
+                {devices.filter(d => isLinux(d.platform)).map(d => (
                   <TreeDevice key={d.id} label={d.hostname} onClick={() => setSelectedDeviceId(d.id)} isActive={selectedDeviceId === d.id} />
                 ))}
               </TreeFolder>
-              <TreeFolder label="Network Devices" count={devices.filter(d => !d.platform?.includes('linux')).length}>
-                {devices.filter(d => !d.platform?.includes('linux')).map(d => (
+              <TreeFolder label="Network Devices" count={devices.filter(d => !isLinux(d.platform)).length}>
+                {devices.filter(d => !isLinux(d.platform)).map(d => (
                   <TreeDevice key={d.id} label={d.hostname} onClick={() => setSelectedDeviceId(d.id)} isActive={selectedDeviceId === d.id} />
                 ))}
               </TreeFolder>
@@ -222,33 +218,44 @@ export default function AccessCenterTab() {
                <IdentityButton 
                   icon={User} 
                   role="Normal" 
-                  desc="Operational Access" 
-                  onClick={() => addSession({ 
-                    id: selectedDevice.id, 
-                    hostname: selectedDevice.hostname, 
-                    ip: selectedDevice.ip_address,
-                    role: 'normal',
-                    connectedAt: new Date().toISOString()
-                  })}
+                  desc="Web Terminal Access" 
+                  onClick={() => {
+                    const url = `/terminal/${selectedDevice.id}?role=normal&hostname=${encodeURIComponent(selectedDevice.hostname)}`;
+                    window.open(url, '_blank');
+                  }}
                />
-               <IdentityButton 
-                  icon={Shield} 
-                  role="Admin" 
-                  desc="Privileged Access" 
-                  color="text-orange-400"
-                  onClick={() => addSession({ 
-                    id: selectedDevice.id, 
-                    hostname: selectedDevice.hostname, 
-                    ip: selectedDevice.ip_address,
-                    role: 'admin',
-                    connectedAt: new Date().toISOString()
-                  })}
-               />
+               
+               {/* Native Client Support */}
+               <div className="pt-2 border-t border-white/5 mt-2">
+                 <button 
+                   onClick={() => {
+                     const path = localStorage.getItem('local_terminal_path');
+                     if (!path) {
+                       showToast(isZh ? '请前往 [个人中心] 配置本地终端路径' : 'Please configure terminal path in [Profile Settings]', 'warning');
+                       return;
+                     }
+                     const dev = selectedDevice;
+                     const user = dev.normal_username || 'user';
+                     const url = `nexora://${dev.ip_address}?user=${encodeURIComponent(user)}&role=normal&client=xshell`;
+                     window.location.href = url;
+                     showToast(isZh ? '正在拉起 Xshell...' : 'Launching Xshell...', 'info');
+                   }}
+                   className="w-full p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/10 hover:bg-emerald-500/10 transition-all flex items-center gap-3 group text-left"
+                 >
+                   <div className="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                     <MonitorSpeaker size={16} />
+                   </div>
+                   <div>
+                     <div className="text-[11px] font-bold text-white">{isZh ? '本地 Xshell' : 'Native Xshell'}</div>
+                     <div className="text-[9px] text-white/30">{isZh ? '使用本地客户端连接' : 'Connect via local client'}</div>
+                   </div>
+                 </button>
+               </div>
             </div>
             
             <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/10 text-[10px] text-blue-400/80 leading-relaxed">
                <Info size={12} className="mb-1" />
-               Clicking an identity will automatically inject PAM credentials and open a new terminal tab.
+               {isZh ? '点击身份进入 Web 终端，或点击绿色按钮调起本地 Xshell。' : 'Click identity for Web Terminal, or the green button for local Xshell.'}
             </div>
           </div>
         )}

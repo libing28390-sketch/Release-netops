@@ -20,6 +20,7 @@ import { AppRuntimeBoundary } from './components/AppRuntimeBoundary';
 import type { ToastState } from './components/ToastNotification';
 import ProfileModal from './components/ProfileModal';
 import CommandPreviewModal from './components/CommandPreviewModal';
+import TerminalWindow from './components/access/TerminalWindow';
 import ImportInventoryModal from './components/ImportInventoryModal';
 import HistoricalConfigModal from './components/HistoricalConfigModal';
 import ScheduleTaskModal from './components/ScheduleTaskModal';
@@ -3495,6 +3496,23 @@ const App: React.FC = () => {
     findMatchingPlatform,
     handleRerun,
   };
+
+  if (activeTab === 'terminal') {
+    const deviceId = location.pathname.split('/')[2];
+    const params = new URLSearchParams(location.search);
+    const role = params.get('role') || 'normal';
+    const hostname = params.get('hostname') || 'Terminal';
+
+    return (
+      <div className="w-screen h-screen bg-black overflow-hidden">
+        <TerminalWindow 
+          deviceId={deviceId} 
+          role={role} 
+          hostname={hostname} 
+        />
+      </div>
+    );
+  }
 
   return (
     <AppRuntimeBoundary language={language}>
