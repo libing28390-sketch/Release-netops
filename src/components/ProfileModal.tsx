@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Bell, Eye, EyeOff } from 'lucide-react';
+import { Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock } from 'lucide-react';
 import type { ThemeMode } from '../types';
 
 interface AvatarPreset {
@@ -73,6 +73,31 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   onNotificationSecretChange,
   onTestNotificationChannel,
 }) => {
+  const [localTerminalPath, setLocalTerminalPath] = React.useState(() => localStorage.getItem('local_terminal_path') || '');
+  
+  const handleDownloadReg = () => {
+    const regContent = `Windows Registry Editor Version 5.00
+
+[HKEY_CLASSES_ROOT\\nexora]
+@="URL:Nexora Protocol"
+"URL Protocol"=""
+
+[HKEY_CLASSES_ROOT\\nexora\\shell]
+
+[HKEY_CLASSES_ROOT\\nexora\\shell\\open]
+
+[HKEY_CLASSES_ROOT\\nexora\\shell\\open\\command]
+@="\\"${localTerminalPath.replace(/\\/g, '\\\\')}\\" \\"%1\\""
+`;
+    const blob = new Blob([regContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'register_nexora.reg';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   if (!open) return null;
 
   const channels = [
@@ -335,6 +360,60 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                 </div>
               );
             })}
+          </div>
+
+          <div className={`pt-3 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
+            <div className="flex items-center gap-2 mb-1">
+              <MonitorSpeaker size={13} className={isDark ? 'text-cyan-400' : 'text-cyan-600'} />
+              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-white/55' : 'text-black/45'}`}>
+                终端实验室 (Terminal Lab)
+              </span>
+            </div>
+            <p className={`text-[11px] mb-3 leading-relaxed ${isDark ? 'text-white/30' : 'text-black/35'}`}>
+              配置本地终端工具（Xshell/SecureCRT/Putty）的路径，实现从浏览器一键调起外部客户端。
+            </p>
+
+            <div className={`p-4 rounded-xl border ${isDark ? 'bg-white/[0.02] border-white/10' : 'bg-black/[0.01] border-black/5'}`}>
+              <div className="mb-4">
+                <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>本地可执行文件路径</label>
+                <div className="relative">
+                  <Terminal size={14} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/20' : 'text-black/20'}`} />
+                  <input 
+                    type="text"
+                    value={localTerminalPath}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setLocalTerminalPath(val);
+                      localStorage.setItem('local_terminal_path', val);
+                    }}
+                    placeholder={language === 'zh' ? '例如: D:\\NetSarang\\Xshell 7\\Xshell.exe' : 'e.g. C:\\Program Files\\Xshell.exe'}
+                    className={`w-full pl-9 pr-3 py-2 rounded-lg text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/15 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40'}`}
+                  />
+                </div>
+                <p className={`mt-2 text-[9px] leading-relaxed ${isDark ? 'text-white/20' : 'text-black/25'}`}>
+                  提示：填入你常用的终端主程序绝对路径。
+                </p>
+              </div>
+
+              <div className={`p-3 rounded-lg flex items-start gap-3 ${isDark ? 'bg-cyan-500/5 border border-cyan-500/10' : 'bg-cyan-50 border border-cyan-100'}`}>
+                <div className="mt-0.5"><Shield size={14} className="text-cyan-500" /></div>
+                <div className="flex-1">
+                  <h4 className={`text-[11px] font-bold mb-0.5 ${isDark ? 'text-cyan-300' : 'text-cyan-700'}`}>协议激活</h4>
+                  <p className={`text-[10px] leading-relaxed mb-2 ${isDark ? 'text-cyan-300/50' : 'text-cyan-600/70'}`}>首次使用或路径变更后，请下载并运行注册脚本以启用 nexora:// 协议。</p>
+                  <button 
+                    onClick={handleDownloadReg}
+                    disabled={!localTerminalPath}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                      !localTerminalPath 
+                        ? 'opacity-30 cursor-not-allowed bg-gray-500/20' 
+                        : 'bg-cyan-500 text-white hover:bg-cyan-600 shadow-sm shadow-cyan-500/20'
+                    }`}
+                  >
+                    <Download size={12} /> 下载注册脚本 (.reg)
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <p className={`text-[11px] ${isDark ? 'text-white/40' : 'text-black/40'}`}>上次登录时间：{currentUserLastLogin}</p>

@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # ── Init Guard ──
 _db_initialized = False
 
+# ── # TEST COMMENT - MULTI-ROLE PAM UPDATE
 # ── Backend Detection ───────────────────────────────────────
 # Priority: DATABASE_URL env > default SQLite
 _DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
@@ -185,19 +186,24 @@ if _USE_PG:
 # ── SQLite Wrappers ─────────────────────────────────────────
 else:
     _pool: queue.Queue = queue.Queue(maxsize=_POOL_SIZE)
+    _active_connections = 0
 
     class _PooledConnection:
         """Transparent wrapper: close() returns the real connection to the pool."""
         __slots__ = ('_conn',)
 
         def __init__(self, conn):
+            global _active_connections
             self._conn = conn
+            _active_connections += 1
 
         def close(self):
+            global _active_connections
             conn = self._conn
             if conn is None:
                 return
             self._conn = None
+            _active_connections = max(0, _active_connections - 1)
             try:
                 conn.rollback()
                 _pool.put_nowait(conn)
@@ -249,6 +255,12 @@ def _make_raw_connection():
         conn.execute('PRAGMA journal_mode=WAL;')
         conn.execute('PRAGMA synchronous=NORMAL;')
         conn.row_factory = sqlite3.Row
+        # Re-apply critical pragmas on pooled connections just in case
+        try:
+            conn.execute('PRAGMA journal_mode=WAL;')
+            conn.execute('PRAGMA synchronous=NORMAL;')
+        except Exception:
+            pass
         return _PooledConnection(conn)
 
 
@@ -272,6 +284,9 @@ def get_db_connection():
             except Exception:
                 pass
     except queue.Empty:
+        if _active_connections >= _POOL_SIZE:
+            logger.warning("SQLite pool exhausted (active=%d, max=%d). Creating overflow connection.", 
+                           _active_connections, _POOL_SIZE)
         pass
     try:
         return _make_raw_connection()
@@ -312,6 +327,7 @@ def init_db():
         if _USE_PG and hasattr(conn, 'autocommit'):
             conn.autocommit = True
         _init_db_logic(conn)
+        conn.commit()
         _db_initialized = True
         logger.info("Database initialization completed successfully.")
     except Exception as e:
@@ -405,6 +421,23 @@ def _init_db_logic(conn):
         updated_at TEXT
     )
     ''')
+
+    # Multi-role credential columns for PAM
+    for col, dtype in [
+        ('normal_username', "TEXT DEFAULT ''"),
+        ('normal_password', "TEXT DEFAULT ''"),
+        ('admin_username', "TEXT DEFAULT ''"),
+        ('admin_password', "TEXT DEFAULT ''"),
+        ('auth_model', "TEXT DEFAULT 'single'"),
+        ('normal_password_last_rotated', "TEXT DEFAULT ''"),
+        ('normal_password_expires_at', "TEXT DEFAULT ''"),
+        ('admin_password_last_rotated', "TEXT DEFAULT ''"),
+        ('admin_password_expires_at', "TEXT DEFAULT ''"),
+        ('enable_password_last_rotated', "TEXT DEFAULT ''"),
+        ('enable_password_expires_at', "TEXT DEFAULT ''")
+    ]:
+        ensure_column('devices', col, dtype)
+        ensure_column('physical_assets', col, dtype)
 
     # Migration for script management enhancements
     for col, dtype in [
@@ -1429,6 +1462,15 @@ def _init_db_logic(conn):
     ensure_column('physical_assets', 'connection_method', "TEXT DEFAULT 'ssh'")
     ensure_column('physical_assets', 'username', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'password', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'normal_username', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'normal_password', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'admin_username', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'admin_password', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'enable_password', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'auth_model', "TEXT DEFAULT 'single'")
+    ensure_column('physical_assets', 'credential_source', "TEXT DEFAULT 'local'")
+    ensure_column('physical_assets', 'vault_path', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'requires_strict_audit', "INTEGER DEFAULT 1")
     ensure_column('physical_assets', 'snmp_community', "TEXT DEFAULT 'public'")
     ensure_column('physical_assets', 'snmp_port', "INTEGER DEFAULT 161")
 
@@ -1459,6 +1501,56 @@ def _init_db_logic(conn):
     ensure_column('devices', 'password_last_rotated', "TEXT DEFAULT ''")
     ensure_column('devices', 'password_expires_at', "TEXT DEFAULT ''")
     ensure_column('devices', 'rotation_status', "TEXT DEFAULT ''")  # rotating / completed / failed
+
+    # Backfill for dual-auth assets created before normal_username column existed.
+    # Keep behavior predictable: normal access should use normal_username first.
+    cursor.execute(
+        '''
+        UPDATE physical_assets
+        SET normal_username = COALESCE(normal_username, username, '')
+        WHERE LOWER(COALESCE(auth_model, 'single')) = 'dual'
+          AND COALESCE(normal_username, '') = ''
+          AND COALESCE(username, '') != ''
+        '''
+    )
+
+    # PAM access workflow state
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS pam_access_requests (
+        id TEXT PRIMARY KEY,
+        asset_id TEXT NOT NULL,
+        device_id TEXT DEFAULT '',
+        requester_user_id TEXT DEFAULT '',
+        requester_username TEXT DEFAULT '',
+        access_level TEXT NOT NULL DEFAULT 'normal',  -- normal | admin
+        reason TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',        -- pending | approved | rejected | expired
+        reviewer_username TEXT DEFAULT '',
+        review_comment TEXT DEFAULT '',
+        expires_at TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (asset_id) REFERENCES physical_assets(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_req_asset ON pam_access_requests(asset_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_req_status ON pam_access_requests(status)')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS pam_session_tokens (
+        token TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        asset_id TEXT NOT NULL,
+        access_level TEXT NOT NULL DEFAULT 'normal',
+        username TEXT DEFAULT '',
+        expires_at TEXT NOT NULL,
+        consumed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (request_id) REFERENCES pam_access_requests(id),
+        FOREIGN KEY (asset_id) REFERENCES physical_assets(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_token_exp ON pam_session_tokens(expires_at)')
 
     # Auto-link existing devices to matching assets, or create missing assets (Plan-A unification)
     unlinked = cursor.execute(

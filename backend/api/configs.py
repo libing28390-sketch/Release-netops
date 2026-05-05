@@ -16,6 +16,8 @@ from pydantic import BaseModel
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from core.config import settings
+from core.scheduler_manager import scheduler
+from apscheduler.triggers.cron import CronTrigger
 
 logger = logging.getLogger(__name__)
 
@@ -681,12 +683,7 @@ def update_schedule(body: ScheduleUpdate):
         raise HTTPException(status_code=400, detail=f"Invalid cron expression: {cron_expr}")
     cfg = {'enabled': body.enabled, 'cron': cron_expr}
     _save_schedule_to_db(cfg)
-    # Reschedule in-process APScheduler job
-    try:
-        from main import reschedule_backup
-        reschedule_backup(cfg)
-    except Exception as e:
-        logger.warning(f"Could not reschedule: {e}")
+    reschedule_backup(cfg)
     return cfg
 
 
@@ -826,6 +823,42 @@ def _cleanup_expired_snapshots():
 
     if deleted:
         logger.info(f"[Retention Cleanup] Removed {deleted} expired snapshots")
+
+
+def reschedule_backup(cfg: dict):
+    """
+    Called when the user changes the schedule settings.
+    Updates the APScheduler job 'daily_backup'.
+    """
+    if scheduler.get_job('daily_backup'):
+        scheduler.remove_job('daily_backup')
+    
+    if cfg.get('enabled', True):
+        cron_expr = cfg.get('cron', '')
+        if not cron_expr:
+            # Fallback for old format
+            h = cfg.get('hour', 2)
+            m = cfg.get('minute', 0)
+            cron_expr = f'{m} {h} * * *'
+            
+        parts = cron_expr.split()
+        if len(parts) >= 5:
+            trigger = CronTrigger(
+                minute=parts[0], hour=parts[1],
+                day=parts[2], month=parts[3], day_of_week=parts[4],
+            )
+        else:
+            trigger = CronTrigger(hour=cfg.get('hour', 2), minute=cfg.get('minute', 0))
+            
+        scheduler.add_job(
+            run_scheduled_backup,
+            trigger,
+            id='daily_backup',
+            name='Scheduled Config Backup',
+            replace_existing=True,
+        )
+    else:
+        logger.info("[Scheduler] Scheduled backup disabled")
 
 
 # ──────────────────────────────────────────────

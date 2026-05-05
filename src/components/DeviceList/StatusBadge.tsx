@@ -87,17 +87,35 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
 
       {/* Row 2: Connection check result (compact) */}
       {chkBadge && (
-        <div className="flex items-center gap-1">
-          <span
-            className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[8px] font-bold leading-none ${chkBadge.cls}`}
-            title={connectionCheck?.checked_at ? formatCheckTime(connectionCheck.checked_at, language) : ''}
-          >
-            {zh ? chkBadge.zh : chkBadge.en}
-          </span>
-          {connectionCheck?.checked_at && (
-            <span className="text-[8px] text-black/20 dark:text-white/15">
-              {formatCheckTime(connectionCheck.checked_at, language)}
+        <div className="flex flex-col gap-1 mt-1">
+          <div className="flex items-center gap-1">
+            <span
+              className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[8px] font-bold leading-none ${chkBadge.cls}`}
+              title={connectionCheck?.checked_at ? formatCheckTime(connectionCheck.checked_at, language) : ''}
+            >
+              {zh ? chkBadge.zh : chkBadge.en}
             </span>
+            {connectionCheck?.checked_at && (
+              <span className="text-[8px] text-black/20 dark:text-white/15">
+                {formatCheckTime(connectionCheck.checked_at, language)}
+              </span>
+            )}
+          </div>
+
+          {/* PAM Roles */}
+          {connectionCheck?.auth_model === 'dual' && connectionCheck.roles && (
+            <div className="flex flex-wrap gap-1">
+              {Object.entries(connectionCheck.roles).map(([role, res]) => (
+                <div key={role} className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-black/[.03] dark:bg-white/[.05] border border-black/[.05] dark:border-white/[.08]">
+                  <span className="text-[7px] font-bold uppercase text-black/30 dark:text-white/30">{role[0]}</span>
+                  {res.success ? (
+                    <div className="w-1 h-1 rounded-full bg-emerald-500" />
+                  ) : (
+                    <div className="w-1 h-1 rounded-full bg-red-500" />
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}

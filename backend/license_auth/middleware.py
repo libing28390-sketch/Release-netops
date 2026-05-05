@@ -40,6 +40,7 @@ _EXEMPT_PREFIXES = (
     "/openapi.json",     # OpenAPI schema
     "/redoc",            # ReDoc
     "/assets",           # frontend static assets
+    "/api/system",       # platform info
     "/favicon",          # favicon
 )
 
@@ -54,19 +55,20 @@ class LicenseMiddleware:
     """
     def __init__(self, app):
         self.app = app
+        self.EXEMPT_PATHS = _EXEMPT_PREFIXES
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan":
+            return await self.app(scope, receive, send)
+            
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
-        # IMPORTANT: Extract path directly from scope. 
-        # Do NOT use Request(scope, receive) as it can consume the body stream and cause hangs.
         path = scope.get("path", "")
         method = scope.get("method", "GET")
 
-        # 1. Always allow exempt paths
+        # 1. Always allow exempt paths (Fast-path, no logging)
         if any(path.startswith(prefix) for prefix in _EXEMPT_PREFIXES):
-            logger.info(f"[LicenseMiddleware] PASS (Exempt): {path}")
             return await self.app(scope, receive, send)
 
         # 2. Allow non-API paths (static files)
@@ -80,15 +82,8 @@ class LicenseMiddleware:
         lic_status = verifier.validate()
 
         if lic_status.valid:
-            # Valid - capture headers to inject warnings
-            async def send_wrapper(message):
-                if message["type"] == "http.response.start" and lic_status.warnings:
-                    headers = list(message.get("headers", []))
-                    warn_str = "; ".join(lic_status.warnings).replace("\u2014", "-")
-                    headers.append((b"x-license-warning", warn_str.encode("latin-1", "replace")))
-                    message["headers"] = headers
-                await send(message)
-            return await self.app(scope, receive, send_wrapper)
+            # logger.debug(f"[LicenseMiddleware] VALID: {path}")
+            return await self.app(scope, receive, send)
 
         # 4. Invalid - logic for expiry vs hard block
         error_msg = lic_status.error or "License invalid"

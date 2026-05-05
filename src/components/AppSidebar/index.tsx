@@ -20,6 +20,9 @@ import {
   Clock,
   FileText,
   Home,
+  Key,
+  Lock,
+  Monitor,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
@@ -39,7 +42,7 @@ import NavSection from './NavSection';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
-  Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Server, Settings, Shield, User, Zap,
+  Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Key, Lock, Monitor, Server, Settings, Shield, User, Zap,
 };
 
 /** RBAC role hierarchy levels */

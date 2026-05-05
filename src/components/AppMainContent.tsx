@@ -6,7 +6,7 @@ const DeviceHealthTab = lazy(() => import('../pages/DeviceHealthTab'));
 const DashboardTab = lazy(() => import('../pages/DashboardTab'));
 const HomePage = lazy(() => import('../pages/HomePage'));
 const ComplianceTab = lazy(() => import('../pages/ComplianceTab'));
-const HistoryTab = lazy(() => import('../pages/HistoryTab'));
+const AuditTab = lazy(() => import('../pages/AuditTab'));
 const UsersTab = lazy(() => import('../pages/UsersTab'));
 const TopologyPage = lazy(() => import('../pages/TopologyPage'));
 const InventoryDevicesTab = lazy(() => import('../pages/InventoryDevicesTab'));
@@ -41,6 +41,7 @@ const TagManagementTab = lazy(() => import('../pages/TagManagementTab'));
 const LicenseAdminTab = lazy(() => import('../pages/LicenseAdminTab'));
 const ScriptManagementTab = lazy(() => import('../pages/ScriptManagementTab'));
 const ConfigScheduleTab = lazy(() => import('../pages/ConfigScheduleTab'));
+const AccessCenterTab = lazy(() => import('../pages/AccessCenterTab'));
 
 const lazyPanelFallback = (
   <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-black/5 bg-white/70 text-sm text-black/40">
@@ -451,6 +452,12 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             setMonitorRealtime={props.setMonitorRealtime}
             showToast={showToast}
           />
+        </Suspense>
+      )}
+
+      {activeTab === 'access' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <AccessCenterTab />
         </Suspense>
       )}
 
@@ -1031,9 +1038,9 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
         </Suspense>
       )}
 
-      {activeTab === 'history' && isFeatureEnabled('audit_logs') && (
+      {activeTab === 'audit' && isFeatureEnabled('audit_logs') && (
         <Suspense fallback={lazyPanelFallback}>
-          <HistoryTab
+          <AuditTab
             auditRows={auditRows}
             auditTotal={auditTotal}
             auditPage={auditPage}

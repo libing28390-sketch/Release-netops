@@ -115,7 +115,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
     { id: 'automation', label: '自动化',     labelEn: 'Automation',   icon: Zap,               path: '/automation/execute', accent: '#0891b2' },
     { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff' },
     { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      icon: BarChart2,         path: '/capacity',           accent: '#13c2c2' },
-    { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     icon: SlidersHorizontal, path: '/history',            accent: '#8c8c8c' },
+    { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     icon: SlidersHorizontal, path: '/audit',            accent: '#8c8c8c' },
   ], []);
 
   const filteredApps = useMemo(() => {
@@ -408,11 +408,11 @@ const TopHeader: React.FC<TopHeaderProps> = ({
                   
                   {currentUser.role === 'Administrator' && (
                     <>
-                      <button onClick={() => onNavigate && onNavigate('/history/license')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
+                      <button onClick={() => onNavigate && onNavigate('/license')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
                         <ShieldCheck size={16} className="flex-shrink-0 opacity-70 text-emerald-500" />
                         {language === 'zh' ? '授权管理' : 'License Management'}
                       </button>
-                      <button onClick={() => onNavigate && onNavigate('/history/users')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
+                      <button onClick={() => onNavigate && onNavigate('/users')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
                         <SlidersHorizontal size={16} className="flex-shrink-0 opacity-70 text-indigo-500" />
                         {language === 'zh' ? '用户管理' : 'User Management'}
                       </button>

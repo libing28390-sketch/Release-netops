@@ -51,6 +51,7 @@ export const useInventoryPageData = ({
           page_size: String(inventoryPageSize),
           sort_key: inventorySortConfig?.key || 'hostname',
           sort_direction: inventorySortConfig?.direction || 'asc',
+          asset_type: 'network_device',
         });
 
         const resp = await fetch(`/api/devices?${params.toString()}`);

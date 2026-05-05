@@ -183,7 +183,11 @@ const App: React.FC = () => {
         navigate('/license');
       }
     }
-  }, [isAuthenticated, isLicenseValid, activeTab, navigate]);
+    // Redirect old history path to audit
+    if (location.pathname === '/history') {
+      navigate('/audit', { replace: true });
+    }
+  }, [isAuthenticated, isLicenseValid, activeTab, navigate, location.pathname]);
 
   const deviceFetchMode = useMemo<'light' | 'full'>(() => {
     if (activeTab === 'inventory') return 'full';
@@ -310,7 +314,7 @@ const App: React.FC = () => {
   const [inventoryGroupOpen, setInventoryGroupOpen] = useState(() => location.pathname.startsWith('/inventory'));
   const [alertGroupOpen, setAlertGroupOpen] = useState(() => ['alerts', 'alert-rules', 'maintenance'].includes(location.pathname.split('/')[1] || 'dashboard'));
   const [monitoringGroupOpen, setMonitoringGroupOpen] = useState(() => location.pathname === '/monitoring' || location.pathname === '/inventory/interfaces');
-  const [managementGroupOpen, setManagementGroupOpen] = useState(() => ['history', 'configuration', 'users'].includes(location.pathname.split('/')[1] || 'dashboard'));
+  const [managementGroupOpen, setManagementGroupOpen] = useState(() => ['audit', 'configuration', 'users'].includes(location.pathname.split('/')[1] || 'dashboard'));
   const [realtimeSectionOpen, setRealtimeSectionOpen] = useState(true);
   const [alertsSectionOpen, setAlertsSectionOpen] = useState(true);
   const [assetsSectionOpen, setAssetsSectionOpen] = useState(true);
@@ -531,7 +535,7 @@ const App: React.FC = () => {
     if (path === '/compliance') return t('compliance');
     if (path === '/capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
     if (path === '/reports') return language === 'zh' ? '报表中心' : 'Reports';
-    if (path === '/history') return t('auditLogs');
+    if (path === '/audit') return t('auditLogs');
     if (path === '/configuration') return language === 'zh' ? '平台设置' : 'Platform Settings';
     if (path === '/users') return t('userManagement');
     return path.replace('/', '');
@@ -580,7 +584,7 @@ const App: React.FC = () => {
       { path: '/compliance', label: t('compliance'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/capacity', label: zh ? '容量规划' : 'Capacity Planning', group: zh ? '分析报告' : 'Analytics' },
       { path: '/reports', label: zh ? '报表中心' : 'Reports', group: zh ? '分析报告' : 'Analytics' },
-      { path: '/history', label: t('auditLogs'), group: zh ? '平台管理' : 'Management' },
+      { path: '/audit', label: t('auditLogs'), group: zh ? '平台管理' : 'Management' },
       { path: '/configuration', label: zh ? '平台设置' : 'Platform Settings', group: zh ? '平台管理' : 'Management' },
       { path: '/users', label: t('userManagement'), group: zh ? '平台管理' : 'Management' },
       { path: '/license', label: zh ? '授权管理' : 'License Management', group: zh ? '平台管理' : 'Management' },
@@ -655,7 +659,7 @@ const App: React.FC = () => {
     if (activeTab === 'alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
     if (activeTab === 'alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
     if (activeTab === 'maintenance') return language === 'zh' ? '维护期' : 'Maintenance';
-    if (activeTab === 'history') return t('auditLogs');
+    if (activeTab === 'history' || activeTab === 'audit') return t('auditLogs');
     if (activeTab === 'configuration') return language === 'zh' ? '平台设置' : 'Platform Settings';
     if (activeTab === 'reports') return language === 'zh' ? '报表中心' : 'Reports';
     if (activeTab === 'capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
@@ -3534,7 +3538,7 @@ const App: React.FC = () => {
           setShowUserMenu(false);
         }}
         onOpenHistory={() => {
-          setActiveTab('history');
+          setActiveTab('audit');
           setShowUserMenu(false);
         }}
         onThemeModeChange={setThemeMode}

@@ -532,50 +532,59 @@ def update_asset(asset_id: str, body: AssetUpdate):
                     def _bg_rotate(dev_id: str, a_id: str, old_lc: str):
                         try:
                             from services.password_rotation_service import rotate_password
-                            result = rotate_password(dev_id)
-                            bg_conn = get_db_connection()
+                            # Fetch current device state to check auth_model
+                            bg_conn_init = get_db_connection()
                             try:
-                                if result and result.get('success'):
+                                dev_state = bg_conn_init.execute('SELECT auth_model FROM devices WHERE id = ?', (dev_id,)).fetchone()
+                            finally:
+                                bg_conn_init.close()
+                                
+                            auth_model = dev_state['auth_model'] if dev_state else 'single'
+                            
+                            logger.info(f"[Lifecycle] Starting Admin rotation for {dev_id}")
+                            admin_result = rotate_password(dev_id, role='admin')
+                            
+                            if admin_result and admin_result.get('success'):
+                                logger.info(f"[Lifecycle] Admin rotation SUCCESS for {dev_id}")
+                                if auth_model == 'dual':
+                                    logger.info(f"[Lifecycle] Starting Normal rotation for {dev_id} using new admin credentials")
+                                    import time
+                                    time.sleep(1) 
+                                    normal_result = rotate_password(dev_id, role='normal')
+                                    if not normal_result.get('success'):
+                                        msg = normal_result.get('message', 'Unknown error')
+                                        logger.error(f"[Lifecycle] Normal rotation FAILED for {dev_id}: {msg}")
+                                        raise Exception(f"Normal user rotation failed: {msg}")
+                                    logger.info(f"[Lifecycle] Normal rotation SUCCESS for {dev_id}")
+                                
+                                # All good
+                                bg_conn = get_db_connection()
+                                try:
                                     bg_conn.execute(
                                         "UPDATE devices SET rotation_status = 'completed' WHERE id = ?",
                                         (dev_id,)
                                     )
                                     bg_conn.commit()
-                                    logger.info(
-                                        'Auto-rotated password for device %s on production transition (asset %s)',
-                                        dev_id, a_id
-                                    )
-                                else:
-                                    # Rotation failed - revert lifecycle + mark failed
-                                    bg_conn.execute(
-                                        "UPDATE devices SET rotation_status = 'failed', lifecycle_status = ? WHERE id = ?",
-                                        (old_lc, dev_id)
-                                    )
-                                    bg_conn.execute(
-                                        'UPDATE physical_assets SET lifecycle_status = ? WHERE id = ?',
-                                        (old_lc, a_id)
-                                    )
-                                    bg_conn.commit()
-                                    logger.warning(
-                                        'Auto-rotation failed for asset %s, lifecycle reverted to %s: %s',
-                                        a_id, old_lc, result.get('message', '') if result else 'no result'
-                                    )
-                            finally:
-                                bg_conn.close()
+                                finally:
+                                    bg_conn.close()
+                                logger.info(f'Auto-rotated all credentials for device {dev_id} successfully')
+                            else:
+                                err_msg = admin_result.get('message', 'Admin rotation failed') if admin_result else 'No response'
+                                raise Exception(err_msg)
                         except Exception as e:
-                            logger.warning('Auto-rotation exception for asset %s: %s', a_id, e)
+                            logger.error(f"[Lifecycle] Rotation FAILED for {dev_id}: {e}")
                             try:
-                                bg_conn2 = get_db_connection()
-                                bg_conn2.execute(
+                                bg_conn_fail = get_db_connection()
+                                bg_conn_fail.execute(
                                     "UPDATE devices SET rotation_status = 'failed', lifecycle_status = ? WHERE id = ?",
                                     (old_lc, dev_id)
                                 )
-                                bg_conn2.execute(
+                                bg_conn_fail.execute(
                                     'UPDATE physical_assets SET lifecycle_status = ? WHERE id = ?',
                                     (old_lc, a_id)
                                 )
-                                bg_conn2.commit()
-                                bg_conn2.close()
+                                bg_conn_fail.commit()
+                                bg_conn_fail.close()
                             except Exception:
                                 pass
 

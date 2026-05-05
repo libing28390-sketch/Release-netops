@@ -1,10 +1,10 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import Pagination from './Pagination';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   RefreshCw, Shield, AlertTriangle, CheckCircle2, Clock, Loader2, RotateCcw,
   Search, X, ShieldCheck, ShieldAlert, ShieldX, KeyRound, Server, Filter,
-  Eye, EyeOff, Copy, Check,
+  Eye, EyeOff, Copy, Check, ChevronDown, User,
 } from 'lucide-react';
 
 interface RotationDevice {
@@ -12,10 +12,27 @@ interface RotationDevice {
   hostname: string;
   ip_address: string;
   platform: string;
-  password_last_rotated: string;
-  password_expires_at: string;
-  days_remaining: number | null;
-  expired: boolean;
+  auth_model: string;
+  
+  // Normal
+  normal_username: string;
+  normal_password_last_rotated: string;
+  normal_password_expires_at: string;
+  normal_password_days_remaining: number | null;
+  normal_password_expired: boolean;
+  
+  // Admin
+  admin_username: string;
+  admin_password_last_rotated: string;
+  admin_password_expires_at: string;
+  admin_password_days_remaining: number | null;
+  admin_password_expired: boolean;
+  
+  // Enable
+  enable_password_last_rotated: string;
+  enable_password_expires_at: string;
+  enable_password_days_remaining: number | null;
+  enable_password_expired: boolean;
 }
 
 interface PasswordRotationPanelProps {
@@ -46,19 +63,25 @@ const platformColor = (p: string): string => {
   return 'bg-slate-50 text-slate-600 border-slate-200';
 };
 
+const isServer = (p: string): boolean => {
+  const platform = (p || '').toLowerCase();
+  return platform.includes('linux') || platform.includes('ubuntu') || platform.includes('centos') || platform.includes('server') || platform.includes('debian');
+};
+
 type StatusFilter = 'all' | 'healthy' | 'expiring' | 'expired' | 'unconfigured';
 
 export default function PasswordRotationPanel({ language }: PasswordRotationPanelProps) {
   const zh = language === 'zh';
   const [devices, setDevices] = useState<RotationDevice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [rotating, setRotating] = useState<string | null>(null);
+  const [rotating, setRotating] = useState<string | null>(null); // deviceId:role
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [revealId, setRevealId] = useState<string | null>(null);
+  const [revealKey, setRevealKey] = useState<string | null>(null); // deviceId:role
   const [revealedPwd, setRevealedPwd] = useState<string | null>(null);
   const [revealLoading, setRevealLoading] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -85,16 +108,22 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
   useEffect(() => { setPage(1); }, [search, statusFilter]);
 
-  const handleRotate = async (deviceId: string) => {
-    setRotating(deviceId);
+  const handleRotate = async (deviceId: string, role: string = 'admin') => {
+    const key = `${deviceId}:${role}`;
+    setRotating(key);
     try {
       const token = localStorage.getItem('netops_token') || '';
-      const resp = await fetch(`${API_BASE}/api/devices/${deviceId}/rotate-password`, {
+      const resp = await fetch(`${API_BASE}/api/devices/${deviceId}/rotate-password?role=${role}`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}` },
       });
       const data = await resp.json();
       if (!data.success) throw new Error(data.data?.message || 'Rotation failed');
-      await fetchStatus();
+      
+      setRevealKey(null); // Clear revealed password after rotation
+      setRevealedPwd(null);
+      
+      // Delay fetch to allow backend async tasks to settle
+      setTimeout(fetchStatus, 1500);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -102,23 +131,24 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
     }
   };
 
-  const handleReveal = async (deviceId: string) => {
-    if (revealId === deviceId) { setRevealId(null); setRevealedPwd(null); return; }
+  const handleReveal = async (deviceId: string, role: string = 'admin') => {
+    const key = `${deviceId}:${role}`;
+    if (revealKey === key) { setRevealKey(null); setRevealedPwd(null); return; }
     setRevealLoading(true);
-    setRevealId(deviceId);
+    setRevealKey(key);
     setRevealedPwd(null);
     setCopied(false);
     try {
       const token = localStorage.getItem('netops_token') || '';
-      const resp = await fetch(`${API_BASE}/api/devices/${deviceId}/reveal-password`, {
+      const resp = await fetch(`${API_BASE}/api/devices/${deviceId}/reveal-password?role=${role}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await resp.json();
       if (data.success) { setRevealedPwd(data.data.password); }
-      else { setError(data.message || (zh ? '获取密码失败' : 'Failed to reveal password')); setRevealId(null); }
+      else { setError(data.message || (zh ? '获取密码失败' : 'Failed to reveal password')); setRevealKey(null); }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
-      setRevealId(null);
+      setRevealKey(null);
     } finally {
       setRevealLoading(false);
     }
@@ -160,86 +190,103 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
 
   /* ── computed stats ── */
   const stats = useMemo(() => {
-    const total = devices.length;
-    const expired = devices.filter(d => d.expired).length;
-    const expiring = devices.filter(d => !d.expired && d.days_remaining !== null && d.days_remaining <= 14).length;
-    const unconfigured = devices.filter(d => !d.password_expires_at).length;
-    const healthy = total - expired - expiring - unconfigured;
-    return { total, healthy, expiring, expired, unconfigured };
+    let total = 0;
+    let expired = 0;
+    let healthy = 0;
+    let expiring = 0;
+
+    devices.forEach(d => {
+      ['normal', 'admin', 'enable'].forEach(role => {
+        const days = (d as any)[`${role}_password_days_remaining`];
+        const isExp = (d as any)[`${role}_password_expired`];
+        
+        if (days !== null || role === 'admin') {
+          total++;
+          if (isExp) expired++;
+          else if (days !== null && days <= 14) expiring++;
+          else healthy++;
+        }
+      });
+    });
+    
+    return { total, healthy, expiring, expired };
   }, [devices]);
 
-  /* ── filtering ── */
-  const filtered = useMemo(() => {
-    let list = devices;
-    if (statusFilter !== 'all') {
-      list = list.filter(d => {
-        if (statusFilter === 'expired') return d.expired;
-        if (statusFilter === 'expiring') return !d.expired && d.days_remaining !== null && d.days_remaining <= 14;
-        if (statusFilter === 'unconfigured') return !d.password_expires_at;
-        return !d.expired && (d.days_remaining === null || d.days_remaining > 14) && !!d.password_expires_at;
+  /* ── Flat account list computation & filtering ── */
+  const accountList = useMemo(() => {
+    const allAccounts: any[] = [];
+    
+    // 1. Flatten all devices into accounts
+    devices.forEach(dev => {
+      const roles = [
+        { key: 'normal', label: zh ? '普通账号' : 'Normal', icon: User, color: 'blue' },
+        { key: 'admin', label: zh ? '特权账号' : 'Privileged', icon: ShieldCheck, color: 'orange' },
+        { key: 'enable', label: zh ? '提权密码' : 'Enable', icon: KeyRound, color: 'emerald' },
+      ];
+
+      roles.forEach(role => {
+        const username = (dev as any)[`${role.key}_username`];
+        const days = (dev as any)[`${role.key}_password_days_remaining`];
+        const expired = (dev as any)[`${role.key}_password_expired`];
+        const last = (dev as any)[`${role.key}_password_last_rotated`];
+        const expiresAt = (dev as any)[`${role.key}_password_expires_at`];
+        
+        const platform = (dev.platform || '').toLowerCase();
+        const isServer = platform.includes('linux') || platform.includes('ubuntu') || platform.includes('centos') || platform.includes('server') || platform.includes('debian');
+        
+        // Show if:
+        // 1. It's an admin account (always show)
+        // 2. It's a server AND we are looking at the 'normal' role (always show for servers)
+        // 3. Or it has a username configured
+        // 4. Or it has rotation history
+        if (role.key === 'admin' || (isServer && role.key === 'normal') || username || days !== null) {
+          allAccounts.push({
+            ...dev,
+            roleKey: role.key,
+            roleLabel: role.label,
+            roleIcon: role.icon,
+            roleColor: role.color,
+            // Fallback: If role-specific username is empty, use the main dev.username
+            currentUsername: username || dev.username || (role.key === 'admin' ? 'admin' : ''),
+            currentDays: days,
+            currentExpired: expired,
+            currentLastRotated: last,
+            currentExpiresAt: expiresAt,
+          });
+        }
       });
-    }
+    });
+
+    // 2. Apply Filters
+    let list = allAccounts;
+
+    // Search filter
     if (search.trim()) {
       const q = search.toLowerCase();
-      list = list.filter(d =>
-        (d.hostname || '').toLowerCase().includes(q) ||
-        (d.ip_address || '').toLowerCase().includes(q) ||
-        (d.platform || '').toLowerCase().includes(q)
+      list = list.filter(acc => 
+        (acc.hostname || '').toLowerCase().includes(q) ||
+        (acc.ip_address || '').toLowerCase().includes(q) ||
+        (acc.currentUsername || '').toLowerCase().includes(q)
       );
     }
+
+    // Status filter
+    if (statusFilter !== 'all') {
+      list = list.filter(acc => {
+        if (statusFilter === 'expired') return acc.currentExpired;
+        if (statusFilter === 'expiring') return acc.currentDays !== null && acc.currentDays <= 14 && acc.currentDays >= 0;
+        if (statusFilter === 'healthy') return !acc.currentExpired && (acc.currentDays === null || acc.currentDays > 14);
+        return true;
+      });
+    }
+
     return list;
-  }, [devices, statusFilter, search]);
+  }, [devices, search, statusFilter, zh]);
 
-  const paginatedFiltered = useMemo(() => {
+  const paginatedAccounts = useMemo(() => {
     const start = (page - 1) * pageSize;
-    return filtered.slice(start, start + pageSize);
-  }, [filtered, page, pageSize]);
-
-  /* ── status badge ── */
-  const statusBadge = (dev: RotationDevice) => {
-    if (!dev.password_expires_at) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200">
-          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-          {zh ? '未配置' : 'Not Set'}
-        </span>
-      );
-    }
-    if (dev.expired) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-50 text-red-600 border border-red-200">
-          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-          {zh ? '已过期' : 'Expired'}
-        </span>
-      );
-    }
-    if (dev.days_remaining !== null && dev.days_remaining <= 14) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-600 border border-amber-200">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-          {zh ? '即将过期' : 'Expiring'}
-        </span>
-      );
-    }
-    return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-200">
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-        {zh ? '正常' : 'OK'}
-      </span>
-    );
-  };
-
-  /* ── days remaining display ── */
-  const daysCell = (dev: RotationDevice) => {
-    if (dev.days_remaining === null) return <span className="text-black/25">—</span>;
-    const d = dev.days_remaining;
-    const cls = d < 0 ? 'text-red-600 font-bold' : d <= 7 ? 'text-red-500' : d <= 14 ? 'text-amber-500' : 'text-black/50';
-    return (
-      <span className={cls}>
-        {d < 0 ? `${zh ? '已过期' : 'overdue'} ${Math.abs(d)}${zh ? '天' : 'd'}` : `${d}${zh ? '天' : 'd'}`}
-      </span>
-    );
-  };
+    return accountList.slice(start, start + pageSize);
+  }, [accountList, page, pageSize]);
 
   /* ══════════ Stat card data ══════════ */
   const statCards = [
@@ -303,254 +350,242 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
                   <c.Icon size={20} className={`${c.iconCls} ${c.pulse ? 'animate-pulse' : ''}`} />
                 </div>
               </div>
-              {isActive && <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20" />}
             </motion.button>
           );
         })}
       </div>
 
-      {/* ═══ Main Table Card ═══ */}
-      <div className="bg-white rounded-xl border border-black/5 shadow-sm overflow-hidden">
-        {/* Header / Toolbar */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-black/5 bg-black/[0.008]">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-cyan-50 border border-cyan-200 flex items-center justify-center">
-              <Shield size={16} className="text-cyan-600" />
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-black/80">{zh ? '凭据轮换明细' : 'Credential Rotation Details'}</h3>
-              <p className="text-[10px] text-black/30 mt-0.5">
-                {zh ? `共 ${filtered.length} 条记录` : `${filtered.length} record${filtered.length !== 1 ? 's' : ''}`}
-                {statusFilter !== 'all' && <span className="ml-1 text-cyan-600/60">• {zh ? '已筛选' : 'filtered'}</span>}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* Search */}
-            <div className="relative">
-              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/25 pointer-events-none" />
-              <input
-                type="text"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder={zh ? '搜索主机名 / IP...' : 'Search hostname / IP...'}
-                className="w-48 pl-7 pr-7 py-1.5 rounded-lg bg-black/[0.03] border border-black/[0.06]
-                  text-[11px] text-black/70 placeholder:text-black/25
-                  focus:outline-none focus:border-cyan-500/30 focus:ring-1 focus:ring-cyan-500/15 transition-colors"
-              />
-              {search && (
-                <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-black/25 hover:text-black/50">
-                  <X size={10} />
-                </button>
-              )}
-            </div>
-
-            {/* Status filter */}
-            {statusFilter !== 'all' && (
-              <button
-                onClick={() => setStatusFilter('all')}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-medium
-                  bg-cyan-500/10 border border-cyan-500/15 text-cyan-400 hover:bg-cyan-500/20 transition-colors"
-              >
-                <Filter size={10} />
-                {zh ? '清除筛选' : 'Clear'}
-                <X size={9} />
-              </button>
-            )}
-
-            {/* Refresh */}
-            <button
-              onClick={fetchStatus}
-              disabled={loading}
-              className="p-2 rounded-lg border border-black/[0.06] bg-black/[0.02] text-black/40
-                hover:text-black/70 hover:bg-black/[0.04] hover:border-black/[0.1] transition-all disabled:opacity-40"
-              title={zh ? '刷新' : 'Refresh'}
+      {/* ═══ Stats Cards (Compact) ═══ */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        {statCards.map((c, i) => {
+          const isActive = statusFilter === c.id;
+          return (
+            <motion.button
+              key={c.id}
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setStatusFilter(isActive ? 'all' : c.id)}
+              className={`relative overflow-hidden p-3 rounded-xl border transition-all text-left ${
+                isActive 
+                  ? 'bg-slate-900 border-slate-900 shadow-lg ring-2 ring-slate-900/10' 
+                  : 'bg-white border-black/[0.04] hover:border-black/[0.1] shadow-sm'
+              }`}
             >
-              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            </button>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${isActive ? 'text-white/40' : 'text-black/30'}`}>{c.title}</p>
+                  <p className={`text-xl font-black ${isActive ? 'text-white' : 'text-slate-800'}`}>{c.value}</p>
+                </div>
+                <div className={`p-2 rounded-lg ${isActive ? 'bg-white/10 text-white' : 'bg-black/[0.02] text-black/20'}`}>
+                  <c.Icon size={16} />
+                </div>
+              </div>
+            </motion.button>
+          );
+        })}
+      </div>
+
+      {/* ═══ Pro Toolbar ═══ */}
+      <div className="flex items-center justify-between gap-3 mb-3 bg-white p-2 rounded-xl border border-black/[0.04] shadow-sm">
+        <div className="flex items-center gap-2">
+          <div className="h-7 px-2 rounded-lg bg-cyan-500 text-white flex items-center gap-1.5 shadow-sm shadow-cyan-500/20">
+            <Shield size={12} />
+            <span className="text-[10px] font-black uppercase tracking-tighter">{zh ? '凭据中心' : 'VAULT'}</span>
+          </div>
+          <div className="h-4 w-[1px] bg-black/5 mx-1" />
+          <div className="flex items-center gap-3">
+             <div className="relative">
+                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/20" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder={zh ? '快速搜索设备或账号...' : 'Quick search...'}
+                  className="w-48 pl-8 pr-3 py-1.5 rounded-lg bg-black/[0.02] border-none text-[11px] text-black/70 placeholder:text-black/20 focus:ring-1 focus:ring-cyan-500/20"
+                />
+             </div>
           </div>
         </div>
 
-        {/* Error Banner */}
-        <AnimatePresence>
-          {error && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="mx-4 mt-3 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                <AlertTriangle size={14} className="text-red-500 shrink-0" />
-                <span className="text-xs text-red-600 flex-1">{error}</span>
-                <button onClick={() => setError(null)} className="text-red-400/50 hover:text-red-500"><X size={12} /></button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <button
+          onClick={fetchStatus}
+          disabled={loading}
+          className="h-7 px-2.5 rounded-lg bg-black/[0.02] border border-black/[0.04] text-black/40 hover:bg-black/[0.05] hover:text-cyan-600 transition-all"
+        >
+          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
 
-        {/* Table */}
+      {/* ═══ High-Density Pro Table ═══ */}
+      <div className="bg-white rounded-xl border border-black/[0.06] shadow-md overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-left border-collapse table-fixed">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-black/35 border-b border-black/[0.06]">
-                <th className="px-5 py-2.5 font-semibold">{zh ? '设备' : 'Device'}</th>
-                <th className="px-3 py-2.5 font-semibold">{zh ? '平台' : 'Platform'}</th>
-                <th className="px-3 py-2.5 font-semibold">IP</th>
-                <th className="px-3 py-2.5 font-semibold">{zh ? '上次轮换' : 'Last Rotated'}</th>
-                <th className="px-3 py-2.5 font-semibold">{zh ? '到期时间' : 'Expires'}</th>
-                <th className="px-3 py-2.5 font-semibold">{zh ? '剩余' : 'Remaining'}</th>
-                <th className="px-3 py-2.5 font-semibold">{zh ? '状态' : 'Status'}</th>
-                <th className="px-3 py-2.5 font-semibold text-right">{zh ? '操作' : 'Action'}</th>
+              <tr className="bg-slate-50 border-b border-black/[0.05]">
+                <th className="w-[220px] px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '设备资产' : 'DEVICE ASSET'}</th>
+                <th className="px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '普通账号 (Normal)' : 'NORMAL IDENTITY'}</th>
+                <th className="px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '特权账号 (Admin)' : 'PRIVILEGED IDENTITY'}</th>
+                <th className="px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">{zh ? '提权凭据 (Enable)' : 'ENABLE SECRET'}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-black/[0.04]">
-              {/* Loading */}
-              {loading && !devices.length && (
-                <tr>
-                  <td colSpan={8} className="px-6 py-16 text-center">
-                    <div className="inline-block w-6 h-6 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin mb-3" />
-                    <p className="text-sm text-black/30">{zh ? '正在加载凭据状态…' : 'Loading credential status...'}</p>
-                  </td>
-                </tr>
-              )}
+            <tbody className="divide-y divide-black/[0.03]">
+              {loading && !accountList.length ? (
+                <tr><td colSpan={4} className="py-20 text-center"><Loader2 className="inline animate-spin text-cyan-500" size={24} /></td></tr>
+              ) : accountList.length === 0 ? (
+                <tr><td colSpan={4} className="py-20 text-center text-[11px] text-black/20 font-medium">{zh ? '未检索到凭据数据' : 'No data records found'}</td></tr>
+              ) : (
+                (() => {
+                  const deviceGroups: Record<string, any[]> = {};
+                  accountList.forEach(acc => {
+                    if (!deviceGroups[acc.id]) deviceGroups[acc.id] = [];
+                    deviceGroups[acc.id].push(acc);
+                  });
 
-              {/* Empty */}
-              {!loading && filtered.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-6 py-16 text-center">
-                    <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-black/[0.03] border border-black/[0.06] mb-4">
-                      <KeyRound size={24} className="text-black/15" />
-                    </div>
-                    <p className="text-sm text-black/30 mb-1">
-                      {search || statusFilter !== 'all'
-                        ? (zh ? '没有匹配的设备凭据' : 'No credentials match current filters')
-                        : (zh ? '暂无纳管设备' : 'No managed devices yet')}
-                    </p>
-                    <p className="text-[11px] text-black/20">
-                      {search || statusFilter !== 'all'
-                        ? (zh ? '尝试调整搜索或筛选条件' : 'Try adjusting search or filter criteria')
-                        : (zh ? '设备投产后将自动纳入凭据管理' : 'Devices will appear here after going to production')}
-                    </p>
-                  </td>
-                </tr>
-              )}
+                  const groupIds = Object.keys(deviceGroups);
+                  const paginatedGroupIds = groupIds.slice((page - 1) * pageSize, page * pageSize);
 
-              {/* Data rows */}
-              {!loading && paginatedFiltered.map((dev, i) => (
-                <motion.tr
-                  key={dev.id}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.02 }}
-                  className="group hover:bg-black/[0.015] transition-colors"
-                >
-                  <td className="px-5 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="h-7 w-7 rounded-lg bg-black/[0.03] border border-black/[0.06] flex items-center justify-center shrink-0">
-                        <Server size={13} className="text-black/30" />
-                      </div>
-                      <span className="text-[13px] font-medium text-black/80">{dev.hostname || '—'}</span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium border ${platformColor(dev.platform)}`}>
-                      {platformLabel(dev.platform)}
-                    </span>
-                  </td>
-                  <td className="px-3 py-3">
-                    <span className="text-xs font-mono text-black/45">{dev.ip_address}</span>
-                  </td>
-                  <td className="px-3 py-3">
-                    <span className="text-xs text-black/40">
-                      {dev.password_last_rotated ? new Date(dev.password_last_rotated).toLocaleDateString() : '—'}
-                    </span>
-                  </td>
-                  <td className="px-3 py-3">
-                    <span className="text-xs text-black/40">
-                      {dev.password_expires_at ? new Date(dev.password_expires_at).toLocaleDateString() : '—'}
-                    </span>
-                  </td>
-                  <td className="px-3 py-3 text-xs tabular-nums">
-                    {daysCell(dev)}
-                  </td>
-                  <td className="px-3 py-3">
-                    {statusBadge(dev)}
-                  </td>
-                  <td className="px-3 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      {/* Reveal password */}
-                      <button
-                        onClick={() => handleReveal(dev.id)}
-                        disabled={revealLoading && revealId === dev.id}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium
-                          bg-amber-50 border border-amber-200 text-amber-600
-                          hover:bg-amber-100 hover:border-amber-300
-                          active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={zh ? '查看密码' : 'Reveal password'}
-                      >
-                        {revealLoading && revealId === dev.id
-                          ? <Loader2 size={12} className="animate-spin" />
-                          : revealId === dev.id ? <EyeOff size={12} /> : <Eye size={12} />}
-                      </button>
-                      {/* Rotate */}
-                      <button
-                        onClick={() => handleRotate(dev.id)}
-                        disabled={rotating === dev.id}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium
-                          bg-cyan-50 border border-cyan-200 text-cyan-600
-                          hover:bg-cyan-100 hover:border-cyan-300
-                          active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        {rotating === dev.id
-                          ? <Loader2 size={12} className="animate-spin" />
-                          : <RotateCcw size={12} />}
-                        {zh ? '立即轮换' : 'Rotate Now'}
-                      </button>
-                    </div>
-                    {/* Revealed password inline */}
-                    <AnimatePresence>
-                      {revealId === dev.id && revealedPwd && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="mt-1.5 flex items-center gap-1.5 justify-end"
-                        >
-                          <code className="px-2 py-1 rounded bg-slate-100 border border-black/10 text-[11px] font-mono text-amber-700 select-all">
-                            {revealedPwd}
-                          </code>
-                          <button
-                            onClick={handleCopyPwd}
-                            className="p-1 rounded hover:bg-black/5 transition-colors"
-                            title={zh ? '复制' : 'Copy'}
-                          >
-                            {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} className="text-black/40" />}
-                          </button>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </td>
-                </motion.tr>
-              ))}
+                  return paginatedGroupIds.map((devId) => {
+                    const accounts = deviceGroups[devId];
+                    const first = accounts[0];
+                    
+                    // Map accounts to specific columns
+                    const roles = {
+                      normal: accounts.find(a => a.roleKey === 'normal'),
+                      admin: accounts.find(a => a.roleKey === 'admin'),
+                      enable: accounts.find(a => a.roleKey === 'enable')
+                    };
+
+                    const isDevServer = isServer(first.platform || '');
+
+                    return (
+                      <tr key={devId} className="group hover:bg-slate-50/50 transition-colors">
+                        {/* Device Info */}
+                        <td className="px-4 py-2 border-r border-black/[0.02]">
+                          <div className="flex items-center gap-2.5">
+                            <div className="h-8 w-8 rounded-lg bg-white border border-black/5 shadow-sm flex items-center justify-center text-slate-300 group-hover:text-cyan-500 transition-colors">
+                              <Server size={14} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-[12px] font-bold text-slate-700 truncate leading-tight tracking-tight">{first.hostname}</div>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="text-[10px] font-mono text-slate-400">{first.ip_address}</span>
+                                <span className={`px-1 rounded text-[8px] font-black uppercase ${platformColor(first.platform)}`}>
+                                  {platformLabel(first.platform)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Account Columns */}
+                        {['normal', 'admin', 'enable'].map((role) => {
+                          const acc = roles[role as keyof typeof roles];
+                          
+                          // Optimization: Hide Enable column for servers
+                          if (role === 'enable' && isDevServer) {
+                            return (
+                              <td key={role} className="px-4 py-2 border-r border-black/[0.02] bg-black/[0.01]">
+                                <div className="flex items-center justify-center gap-1.5 opacity-20 grayscale">
+                                  <Shield size={10} />
+                                  <span className="text-[9px] font-black tracking-widest">{zh ? '不适用' : 'N/A'}</span>
+                                </div>
+                              </td>
+                            );
+                          }
+
+                          if (!acc) return <td key={role} className="px-4 py-2 border-r border-black/[0.02] text-center"><span className="text-[10px] text-black/5 font-black">N/A</span></td>;
+
+                          const key = `${acc.id}:${acc.roleKey}`;
+                          const isRevealed = revealKey === key;
+                          const isRotating = rotating === key;
+
+                          return (
+                            <td key={role} className={`px-4 py-2 border-r border-black/[0.02] ${acc.currentExpired ? 'bg-red-50/20' : ''}`}>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[11px] font-mono font-bold text-slate-600 truncate">{acc.currentUsername || '—'}</span>
+                                    {acc.currentExpiresAt && (
+                                      <span className={`text-[9px] font-black ${acc.currentExpired ? 'text-red-500' : 'text-emerald-500/60'}`}>
+                                        {acc.currentExpired ? 'EXP' : `${acc.currentDays}d`}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center justify-between text-[8px] font-bold uppercase tracking-tighter mt-0.5">
+                                    <span className="text-slate-300">
+                                      {acc.currentLastRotated 
+                                        ? `ROT: ${new Date(acc.currentLastRotated).toLocaleDateString()}` 
+                                        : (zh ? '未曾轮换' : 'NOT ROTATED')}
+                                    </span>
+                                    <span className={acc.currentExpired ? 'text-red-400' : 'text-slate-300'}>
+                                      {acc.currentExpiresAt 
+                                        ? `EXP: ${new Date(acc.currentExpiresAt).toLocaleDateString()}` 
+                                        : (zh ? '到期时间待定' : 'EXP: PENDING')}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={() => handleReveal(acc.id, acc.roleKey)}
+                                    className={`h-6 w-6 rounded-md flex items-center justify-center transition-all ${isRevealed ? 'bg-cyan-500 text-white shadow-sm' : 'bg-black/[0.03] text-black/20 hover:text-black/60 hover:bg-black/[0.06]'}`}
+                                  >
+                                    {revealLoading && revealKey === key ? <Loader2 size={10} className="animate-spin" /> : (isRevealed ? <EyeOff size={10} /> : <Eye size={10} />)}
+                                  </button>
+                                  <button
+                                    onClick={() => handleRotate(acc.id, acc.roleKey)}
+                                    disabled={isRotating}
+                                    className={`h-6 px-1.5 rounded-md border text-[9px] font-bold transition-all ${isRotating ? 'bg-black/5 text-black/10' : 'bg-white border-cyan-500/40 text-cyan-600 hover:bg-cyan-500 hover:text-white active:scale-95'}`}
+                                  >
+                                    {isRotating ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
+                                  </button>
+                                </div>
+                              </div>
+                              
+                              {isRevealed && revealedPwd && (
+                                <motion.div 
+                                  initial={{ opacity: 0, scale: 0.9 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  className="absolute mt-1 z-10 flex items-center gap-2 bg-slate-900 px-2 py-1 rounded-md text-cyan-400 font-mono text-[10px] shadow-2xl border border-white/10"
+                                >
+                                  {revealedPwd}
+                                  <button onClick={handleCopyPwd} className="hover:text-white transition-colors">
+                                    {copied ? <Check size={10} /> : <Copy size={10} />}
+                                  </button>
+                                </motion.div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  });
+                })()
+              )}
             </tbody>
           </table>
         </div>
 
-        {/* Pagination */}
-        {filtered.length > 0 && (
-          <div>
-            <Pagination
-              currentPage={page}
-              totalItems={filtered.length}
-              itemsPerPage={pageSize}
-              onItemsPerPageChange={(v) => { setPage(1); setPageSize(v); }}
-              onPageChange={setPage}
-              language={language}
-            />
+        {/* Footer Info & Pagination */}
+        <div className="px-4 py-2.5 bg-slate-50 border-t border-black/[0.05] flex items-center justify-between">
+          <div className="flex items-center gap-4">
+             <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-400 uppercase">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" /> {zh ? '监控正常' : 'Healthy'}
+             </div>
+             <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-400 uppercase">
+                <span className="w-2 h-2 rounded-full bg-red-500" /> {zh ? '凭据过期' : 'Expired'}
+             </div>
           </div>
-        )}
+          
+          <Pagination
+            currentPage={page}
+            totalItems={Object.keys(accountList.reduce((acc, curr) => ({...acc, [curr.id]: 1}), {})).length}
+            itemsPerPage={pageSize}
+            onItemsPerPageChange={(v) => { setPage(1); setPageSize(v); }}
+            onPageChange={setPage}
+            language={language}
+          />
+        </div>
       </div>
     </div>
   );

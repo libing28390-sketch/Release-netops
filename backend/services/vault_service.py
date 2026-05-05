@@ -9,7 +9,8 @@ Vault KV v2 path convention:
   e.g. secret/data/netops/devices/core-sw-01
 
 Each secret contains keys:
-  username, password, enable_password, priv_username
+  username, password, enable_password, priv_username,
+  normal_username, normal_password, admin_username, admin_password
 """
 
 import logging
@@ -80,6 +81,10 @@ def read_credentials(vault_path: str) -> dict[str, str] | None:
             'password': data.get('password', ''),
             'enable_password': data.get('enable_password', ''),
             'priv_username': data.get('priv_username', ''),
+            'normal_username': data.get('normal_username', ''),
+            'normal_password': data.get('normal_password', ''),
+            'admin_username': data.get('admin_username', ''),
+            'admin_password': data.get('admin_password', ''),
         }
     except Exception as exc:
         logger.error("Failed to read Vault secret at %s: %s", path, exc)
@@ -105,6 +110,10 @@ def write_credentials(vault_path: str, creds: dict[str, str]) -> bool:
                 'password': creds.get('password', ''),
                 'enable_password': creds.get('enable_password', ''),
                 'priv_username': creds.get('priv_username', ''),
+                'normal_username': creds.get('normal_username', ''),
+                'normal_password': creds.get('normal_password', ''),
+                'admin_username': creds.get('admin_username', ''),
+                'admin_password': creds.get('admin_password', ''),
             },
             mount_point=settings.VAULT_MOUNT,
         )
@@ -159,4 +168,8 @@ def resolve_device_credentials(device: dict[str, Any]) -> dict[str, str]:
         'password': decrypt_credential(device.get('password')) or '',
         'enable_password': decrypt_credential(device.get('enable_password')) or '',
         'priv_username': device.get('priv_username') or '',
+        'normal_username': device.get('normal_username') or '',
+        'normal_password': decrypt_credential(device.get('normal_password')) or '',
+        'admin_username': device.get('admin_username') or '',
+        'admin_password': decrypt_credential(device.get('admin_password')) or '',
     }

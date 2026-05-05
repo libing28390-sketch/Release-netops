@@ -50,7 +50,7 @@ export function useSystem() {
         return edition === 'Professional' || edition === 'Enterprise';
       case 'user_management':
       case 'audit_logs':
-        return edition === 'Enterprise';
+        return edition === 'Standard' || edition === 'Professional' || edition === 'Enterprise';
       default:
         return true;
     }

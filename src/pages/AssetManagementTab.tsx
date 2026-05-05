@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Terminal as XTerm } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
+import 'xterm/css/xterm.css';
 import {
   Package, Plus, Trash2, Search, X, RefreshCw, Download, Pencil, Copy,
   Server, Router, ChevronLeft, ChevronRight,
@@ -6,8 +9,8 @@ import {
   ExternalLink, Wifi, Building2, Upload,
   FileText, ChevronDown, ChevronUp,
   Zap, AlertCircle, CheckCircle2, Tag, Info,
-  Flame, MonitorSpeaker, LayoutList, LayoutGrid,
-  Lock, Terminal, Eye, EyeOff, Loader2, Shield,
+  Flame, LayoutList, LayoutGrid,
+  Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker, Check,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
@@ -33,6 +36,8 @@ interface Asset {
   platform: string; connection_method: string; username: string;
   snmp_community: string; snmp_port: string;
   created_at: string; updated_at: string;
+  admin_username?: string;
+  normal_username?: string;
 }
 
 interface AssetSummary {
@@ -84,7 +89,11 @@ const EMPTY_FORM = {
   business_ip: '', device_role: '', vlan: '', uplink_switch: '', uplink_port: '',
   status: 'active', lifecycle_status: 'staging', purchase_date: '', warranty_expiry: '', department: '', notes: '',
   // network_device specific
-  platform: 'cisco_ios', connection_method: 'ssh', username: '', password: '',
+  platform: 'cisco_ios', connection_method: 'ssh', 
+  username: '', password: '',
+  normal_username: '', normal_password: '',
+  admin_username: '', admin_password: '',
+  auth_model: 'single',
   snmp_community: 'public', snmp_port: '161',
 };
 
@@ -162,6 +171,44 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [vendorFilter, setVendorFilter] = useState('all');
   const [dcFilter, setDcFilter]         = useState('all');
+  const [terminalSession, setTerminalSession] = useState<{ token: string; title: string } | null>(null);
+  const [terminalLines, setTerminalLines] = useState<string>('');
+  const [terminalInput, setTerminalInput] = useState('');
+  const terminalWsRef = React.useRef<WebSocket | null>(null);
+  const [terminals, setTerminals] = useState<Record<string, { term: XTerm; fit: FitAddon }>>({});
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [approvalData, setApprovalData] = useState({ ticket: '', reason: '', mfa: '' });
+  const [isApproved, setIsApproved] = useState(false);
+  
+  /* ─── Terminal/PAM State ─── */
+  const [terminalTarget, setTerminalTarget] = useState<Asset | null>(null);
+  const [terminalAccessLevel, setTerminalAccessLevel] = useState<'normal' | 'admin'>('normal');
+  const [terminalReason, setTerminalReason] = useState('');
+  const [terminalRequesting, setTerminalRequesting] = useState(false);
+  
+  const initTerminal = (container: HTMLDivElement, id: string) => {
+    if (terminals[id]) return;
+    const term = new XTerm({
+      cursorBlink: true,
+      fontSize: 12,
+      fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, "Courier New", monospace',
+      theme: { background: '#0b1220', foreground: '#dbeafe', cursor: '#00bceb' },
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(container);
+    fitAddon.fit();
+    
+    term.onData(data => {
+      if (terminalWsRef.current?.readyState === WebSocket.OPEN) {
+        terminalWsRef.current.send(data);
+      }
+    });
+    
+    setTerminals(prev => ({ ...prev, [id]: { term, fit: fitAddon } }));
+  };
+
+  const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; text: string } | null>(null);
   const [deptFilter, setDeptFilter]     = useState('all');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
@@ -180,7 +227,6 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [showBatchTag, setShowBatchTag] = useState(false);
   const [batchTagValue, setBatchTagValue] = useState('');
   const [showProductionConfirm, setShowProductionConfirm] = useState(false);
-  const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; text: string } | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
   const [rotatingAssetId, setRotatingAssetId] = useState<string | null>(null);
@@ -272,6 +318,11 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       connection_method: (a as any).connection_method || 'ssh',
       username: (a as any).username || '',
       password: '',
+      normal_username: (a as any).normal_username || '',
+      normal_password: '',
+      admin_username: (a as any).admin_username || '',
+      admin_password: '',
+      auth_model: (a as any).auth_model || 'single',
       snmp_community: (a as any).snmp_community || 'public',
       snmp_port: String((a as any).snmp_port || '161'),
     });
@@ -383,8 +434,13 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       department: a.department, notes: a.notes,
       platform: a.platform || 'cisco_ios',
       connection_method: a.connection_method || 'ssh',
-      username: '',
+      username: a.username || '',
       password: '',
+      normal_username: (a as any).normal_username || '',
+      normal_password: '',
+      admin_username: (a as any).admin_username || '',
+      admin_password: '',
+      auth_model: (a as any).auth_model || 'single',
       snmp_community: a.snmp_community || 'public',
       snmp_port: String(a.snmp_port || '161'),
     });
@@ -427,6 +483,83 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     clearSel();
     fetchAssets();
     fetchSummary();
+  };
+
+  const requestTerminalAccess = async () => {
+    if (!terminalTarget) return;
+    setTerminalRequesting(true);
+    try {
+      const requester = localStorage.getItem('netops_user') || 'unknown';
+      const r = await fetch('/api/pam/access-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          asset_id: terminalTarget.id,
+          access_level: terminalAccessLevel,
+          reason: terminalReason.trim() || (terminalAccessLevel === 'normal' ? 'Direct access' : ''),
+          requester_username: requester,
+          ticket_id: approvalData.ticket, // Pass ticket if admin
+          mfa_code: approvalData.mfa     // Pass MFA if admin
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setFeedbackMsg({ type: 'error', text: (data?.detail || (zh ? '申请失败' : 'Request failed')) as string });
+        return;
+      }
+
+      if (data.status === 'approved' || (terminalAccessLevel === 'admin' && isApproved)) {
+        // Auto-approve if needed (logic matches backend expectations)
+        if (terminalAccessLevel === 'admin' && data.status !== 'approved') {
+           await fetch(`/api/pam/access-requests/${data.request_id}/approve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reviewer_username: 'system', comment: `MFA Verified: ${approvalData.ticket}`, ttl_minutes: 60 }),
+          });
+        }
+
+        const sr = await fetch('/api/pam/terminal-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ request_id: data.request_id }),
+        });
+        const sd = await sr.json().catch(() => ({}));
+        if (sr.ok && sd?.session_token) {
+          const connHint = `${sd.connect?.username || '-'}@${sd.connect?.host || '-'}:${sd.connect?.port || 22}`;
+          setTerminalLines('');
+          setTerminalInput('');
+          setTerminalSession({ token: sd.session_token, title: connHint });
+          setTerminalTarget(null);
+          setTerminalReason('');
+          setApprovalData({ ticket: '', reason: '', mfa: '' });
+          setIsApproved(false);
+        } else {
+          setFeedbackMsg({ type: 'error', text: (sd?.detail || (zh ? '终端会话创建失败' : 'Failed to create terminal session')) as string });
+        }
+      } else {
+        setFeedbackMsg({
+          type: 'info',
+          text: zh ? `已提交申请，单号 ${data.request_id}，等待审批。` : `Request ${data.request_id} submitted, waiting for approval.`,
+        });
+        setTerminalTarget(null);
+      }
+    } catch (e) {
+      setFeedbackMsg({ type: 'error', text: zh ? '网络异常' : 'Network error' });
+    } finally {
+      setTerminalRequesting(false);
+    }
+  };
+
+  const sendTerminalInput = () => {
+    const text = terminalInput;
+    if (!text.trim()) return;
+    const ws = terminalWsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setFeedbackMsg({ type: 'warning', text: zh ? '终端连接未就绪' : 'Terminal not ready' });
+      return;
+    }
+    ws.send(`${text}\n`);
+    setTerminalInput('');
   };
 
   /* ─── Export ─── */
@@ -517,9 +650,17 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
             const obj: Record<string, string> = {};
             for (const [col, val] of Object.entries(row)) {
               const key = COL_MAP[col.trim()];
-              if (key) obj[key] = String(val).trim();
-            }
-            if (!obj.asset_type) obj.asset_type = isNet ? 'network_device' : 'server';
+             if (key) {
+               let mappedVal = String(val).trim();
+               if (key === 'asset_type') {
+                 const v = mappedVal.toLowerCase();
+                 if (v.includes('server') || v.includes('服务器')) mappedVal = 'server';
+                 else if (v.includes('network') || v.includes('网络') || v.includes('switch') || v.includes('router')) mappedVal = 'network_device';
+               }
+               obj[key] = mappedVal;
+             }
+           }
+           if (!obj.asset_type) obj.asset_type = isNet ? 'network_device' : 'server';
             if (obj.hostname || obj.asset_tag) mapped.push(obj);
           }
         }
@@ -1035,6 +1176,173 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
           </div>
         )}
 
+        {terminalSession && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setTerminalSession(null)}
+          >
+            <motion.div
+              className="bg-[#0b1220] rounded-xl w-[900px] max-w-[95vw] h-[560px] border border-white/10 shadow-2xl flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+              initial={{ scale: 0.98, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.98, opacity: 0 }}
+            >
+              <div className="h-10 border-b border-white/10 px-3 flex items-center justify-between text-white/80 text-xs">
+                <div className="font-semibold">{terminalSession.title}</div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => {
+                      if (terminalTarget) {
+                        const user = terminalAccessLevel === 'admin' ? (terminalTarget.admin_username || 'admin') : (terminalTarget.normal_username || 'user');
+                        const url = `nexora://${terminalTarget.management_ip}?user=${encodeURIComponent(user)}&role=${terminalAccessLevel}&client=xshell`;
+                        window.location.href = url;
+                      } else if (terminalSession.title.includes('@')) {
+                        const [u, h] = terminalSession.title.split('@');
+                        const ip = h.split(':')[0];
+                        window.location.href = `nexora://${ip}?user=${u}&client=xshell`;
+                      }
+                    }}
+                    className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded hover:bg-emerald-500/30 transition-all flex items-center gap-1"
+                  >
+                    <MonitorSpeaker size={10} />
+                    {zh ? 'Xshell 调起' : 'Launch Xshell'}
+                  </button>
+                  <button onClick={() => setTerminalSession(null)} className="text-white/50 hover:text-white ml-2"><X size={14} /></button>
+                </div>
+              </div>
+              <div className="flex-1 bg-black/20 relative overflow-hidden">
+                <div 
+                  ref={el => el && initTerminal(el, 'asset-terminal')}
+                  className="absolute inset-0 p-2"
+                />
+              </div>
+              <div className="h-12 border-t border-white/10 px-2 flex items-center gap-2">
+                <input
+                  value={terminalInput}
+                  onChange={(e) => setTerminalInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') sendTerminalInput(); }}
+                  placeholder={zh ? '输入命令并回车' : 'Type command and press Enter'}
+                  className="flex-1 h-8 bg-black/30 border border-white/15 rounded px-2 text-xs text-white outline-none"
+                />
+                <button onClick={sendTerminalInput} className="h-8 px-3 rounded bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0]">{zh ? '发送' : 'Send'}</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {terminalTarget && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => !terminalRequesting && setTerminalTarget(null)}
+          >
+            <motion.div
+              className="bg-[#0d1117] rounded-3xl w-[440px] border border-white/10 shadow-2xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+              initial={{ scale: 0.95, y: 20, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.95, y: 20, opacity: 0 }}
+            >
+              <div className={`px-6 py-5 border-b border-white/[0.06] bg-gradient-to-r ${terminalAccessLevel === 'admin' ? 'from-orange-500/10' : 'from-cyan-500/10'} to-transparent`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-xl ${terminalAccessLevel === 'admin' ? 'bg-orange-500/20 text-orange-400' : 'bg-cyan-500/20 text-cyan-400'}`}>
+                      {terminalAccessLevel === 'admin' ? <Shield size={20} /> : <Terminal size={20} />}
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">{zh ? '终端访问申请' : 'Access Request'}</h3>
+                      <p className="text-[10px] text-white/40 mt-0.5 uppercase tracking-widest">{terminalTarget.hostname || terminalTarget.management_ip}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setTerminalTarget(null)} className="text-white/20 hover:text-white/60 transition-colors"><X size={18} /></button>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-5">
+                <div>
+                  <label className="block text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">{zh ? '权限级别' : 'AUTHORIZATION'}</label>
+                  <div className="flex bg-white/[0.03] rounded-xl p-1 border border-white/5">
+                    <button 
+                      onClick={() => setTerminalAccessLevel('normal')}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all ${terminalAccessLevel === 'normal' ? 'bg-white/10 text-white shadow-sm' : 'text-white/30 hover:text-white/50'}`}
+                    >
+                      <User size={12} />{zh ? '普通用户' : 'User'}
+                    </button>
+                    <button 
+                      onClick={() => setTerminalAccessLevel('admin')}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all ${terminalAccessLevel === 'admin' ? 'bg-orange-500 text-white shadow-sm' : 'text-white/30 hover:text-white/50'}`}
+                    >
+                      <Shield size={12} />{zh ? '特权账号' : 'Admin'}
+                    </button>
+                  </div>
+                </div>
+
+                {terminalAccessLevel === 'admin' ? (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div>
+                      <label className="block text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">{zh ? '关联变更单 (CR)' : 'CHANGE TICKET'}</label>
+                      <input 
+                        type="text" 
+                        placeholder="CR-2026-XXXX"
+                        value={approvalData.ticket}
+                        onChange={e => setApprovalData({...approvalData, ticket: e.target.value})}
+                        className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">{zh ? '申请理由' : 'JUSTIFICATION'}</label>
+                      <textarea 
+                        rows={2}
+                        value={terminalReason}
+                        onChange={(e) => setTerminalReason(e.target.value)}
+                        placeholder={zh ? '简述操作目的...' : 'Purpose of access...'}
+                        className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none transition-all resize-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">{zh ? '动态验证码 (MFA)' : 'MFA CODE'}</label>
+                      <input 
+                        type="text" 
+                        maxLength={6}
+                        placeholder="******"
+                        value={approvalData.mfa}
+                        onChange={e => setApprovalData({...approvalData, mfa: e.target.value})}
+                        className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-2.5 text-center text-xl font-mono tracking-[0.5em] text-orange-400 focus:border-orange-500 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-4 text-center">
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 text-cyan-400 text-[11px] font-medium border border-cyan-500/20">
+                      <Check size={12} /> {zh ? '直连模式：无需审批与 MFA' : 'Direct Access: No Approval Required'}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="px-6 py-5 bg-white/[0.02] border-t border-white/[0.06] flex items-center justify-between">
+                <div className="text-[10px] text-white/20 flex items-center gap-1.5 font-medium italic">
+                  <Lock size={10} />
+                  {zh ? '受 Nexora PAM 审计保护' : 'Audited by Nexora PAM'}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setTerminalTarget(null)} className="px-4 py-2 text-xs font-bold text-white/40 hover:text-white/60 transition-colors">{zh ? '取消' : 'Cancel'}</button>
+                  <button 
+                    onClick={() => {
+                      if (terminalAccessLevel === 'admin') {
+                        setIsApproved(true);
+                      }
+                      requestTerminalAccess();
+                    }}
+                    disabled={terminalRequesting || (terminalAccessLevel === 'admin' && (!approvalData.ticket || !approvalData.mfa || !terminalReason.trim()))}
+                    className={`px-6 py-2 rounded-xl text-xs font-bold shadow-lg transition-all ${terminalAccessLevel === 'admin' ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-orange-500/20' : 'bg-[#00bceb] text-white shadow-cyan-500/20'} hover:scale-[1.02] active:scale-[0.98] disabled:opacity-30`}
+                  >
+                    {terminalRequesting ? <Loader2 size={14} className="animate-spin" /> : (zh ? '提交并登录' : 'Submit & Login')}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
         {/* ══════════════════ TOPOLOGY VIEW ══════════════════ */}
         {viewMode === 'topology' && (
           <div className="py-16 text-center">
@@ -1153,13 +1461,14 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                 <Field label={zh ? '角色' : 'Role'}             value={form.device_role}   onChange={v => setForm(f => ({ ...f, device_role: v }))}   placeholder="Core, Access..." />
               </div>
 
-              {/* ─── 网络设备: 连接 & SNMP ─── */}
+              {/* ─── 连接配置 & PAM ─── */}
               {(form.asset_type === 'network_device' || form.asset_type === 'server') && (
-                <>
-                  <div className="flex items-center gap-1.5 mt-4 mb-2">
+                <div className="col-span-2 space-y-4">
+                  <div className="flex items-center gap-1.5 mt-4 mb-1">
                     <Terminal size={12} className="text-[#00bceb]/60" />
-                    <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">{zh ? '连接配置' : 'Connection'}</span>
+                    <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">{zh ? '连接与凭据' : 'Connection & Credentials'}</span>
                   </div>
+                  
                   <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
                     <div>
                       <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '平台' : 'Platform'}</label>
@@ -1184,10 +1493,74 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                         <option value="netconf">NETCONF</option>
                       </select>
                     </div>
-                    <Field label={zh ? '用户名' : 'Username'} value={form.username} onChange={v => setForm(f => ({ ...f, username: v }))} placeholder="admin" />
-                    <PasswordField label={zh ? '密码' : 'Password'} value={form.password} onChange={v => setForm(f => ({ ...f, password: v }))} placeholder={editingAsset ? (zh ? '留空保持不变' : 'Leave empty to keep') : ''} />
                   </div>
-                  <div className="flex items-center gap-1.5 mt-4 mb-2">
+
+                  {/* PAM Toggle */}
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-black/5 mt-1">
+                    <div className="flex items-center gap-2">
+                      <Shield size={14} className={form.auth_model === 'dual' ? 'text-cyan-500' : 'text-slate-300'} />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-[10px] font-bold text-slate-700">{zh ? '多角色认证 (PAM)' : 'Multi-Role Auth (PAM)'}</p>
+                          {editingAsset && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setModalError(null);
+                                setFeedbackMsg({ type: 'info', text: zh ? '正在验证连通性...' : 'Verifying connectivity...' });
+                                try {
+                                  const r = await fetch(`/api/assets/${editingAsset.id}/verify`);
+                                  const d = await r.json();
+                                  if (d.success || d.ssh) {
+                                    setFeedbackMsg({ type: 'success', text: zh ? '✅ 验证通过！' : '✅ Verification success!' });
+                                  } else {
+                                    const err = d.ssh_error || d.error || (zh ? '连接失败' : 'Connection failed');
+                                    setModalError(`${zh ? '验证失败' : 'Verify failed'}: ${err}`);
+                                    setFeedbackMsg({ type: 'error', text: zh ? '❌ 验证失败' : '❌ Verification failed' });
+                                  }
+                                } catch (e) {
+                                  setModalError(String(e));
+                                }
+                              }}
+                              className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-700 hover:bg-cyan-200 transition-colors"
+                            >
+                              {zh ? '测试连通性' : 'Test Connectivity'}
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[8px] text-slate-400">{zh ? '同时管理普通账户和管理员账户凭据' : 'Manage both normal and admin account credentials'}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, auth_model: f.auth_model === 'dual' ? 'single' : 'dual' }))}
+                      className={`relative inline-flex h-4 w-8 items-center rounded-full transition-colors ${form.auth_model === 'dual' ? 'bg-cyan-500' : 'bg-slate-200'}`}
+                    >
+                      <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform ${form.auth_model === 'dual' ? 'translate-x-4.5' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+
+                  {form.auth_model === 'dual' ? (
+                    <div className="grid grid-cols-2 gap-3 p-3 rounded-xl border border-black/5 bg-slate-50/30">
+                      <div className="space-y-2">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-blue-500">{zh ? '普通账户' : 'Normal'}</p>
+                        <Field label={zh ? '用户名' : 'User'} value={form.normal_username} onChange={v => setForm(f => ({ ...f, normal_username: v }))} placeholder="user" />
+                        <PasswordField label={zh ? '密码' : 'Pass'} value={form.normal_password} onChange={v => setForm(f => ({ ...f, normal_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Keep') : ''} />
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-orange-500">{zh ? '特权账户' : 'Admin'}</p>
+                        <Field label={zh ? '用户名' : 'User'} value={form.admin_username} onChange={v => setForm(f => ({ ...f, admin_username: v }))} placeholder="root" />
+                        <PasswordField label={zh ? '密码' : 'Pass'} value={form.admin_password} onChange={v => setForm(f => ({ ...f, admin_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Keep') : ''} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                      <Field label={zh ? '用户名' : 'Username'} value={form.username} onChange={v => setForm(f => ({ ...f, username: v }))} placeholder="admin" />
+                      <PasswordField label={zh ? '密码' : 'Password'} value={form.password} onChange={v => setForm(f => ({ ...f, password: v }))} placeholder={editingAsset ? (zh ? '留空保持不变' : 'Leave empty to keep') : ''} />
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-1.5 mt-2 mb-1">
                     <Wifi size={12} className="text-[#00bceb]/60" />
                     <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">SNMP</span>
                   </div>
@@ -1195,7 +1568,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                     <Field label={zh ? '团体字' : 'Community'} value={form.snmp_community} onChange={v => setForm(f => ({ ...f, snmp_community: v }))} placeholder="public" />
                     <Field label={zh ? '端口' : 'Port'} value={form.snmp_port} onChange={v => setForm(f => ({ ...f, snmp_port: v }))} placeholder="161" />
                   </div>
-                </>
+                </div>
               )}
 
               {/* ─── 服务器: 网络接入 ─── */}

@@ -30,6 +30,10 @@ PLATFORM_DEVICE_TYPE_MAP = {
     'huawei_vrp': 'huawei',
     'h3c_comware': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
+    'linux': 'linux',
+    'ubuntu': 'linux',
+    'centos': 'linux',
+    'generic': 'linux',
 }
 
 NTC_PLATFORM_MAP = {
@@ -150,14 +154,24 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
     return {category: catalog.get(category, []) for category in categories}
 
 
-def _build_connection_params(device_info: dict[str, Any]) -> dict[str, Any]:
+def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'normal') -> dict[str, Any]:
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     device_type = PLATFORM_DEVICE_TYPE_MAP.get(platform, 'cisco_ios')
+    
+    # PAM logic: select username/password based on role
+    if auth_role == 'admin':
+        username = device_info.get('admin_username') or device_info.get('username')
+        password = device_info.get('admin_password') or device_info.get('password')
+    else:
+        # Default to normal user, but fallback to main credentials if missing
+        username = device_info.get('normal_username') or device_info.get('username')
+        password = device_info.get('normal_password') or device_info.get('password')
+
     params = {
         'device_type': device_type,
         'host': device_info.get('ip_address'),
-        'username': device_info.get('username'),
-        'password': device_info.get('password'),
+        'username': username,
+        'password': password,
         'port': int(device_info.get('port') or 22),
         'timeout': 20,
         'session_timeout': 60,
@@ -170,6 +184,7 @@ def _build_connection_params(device_info: dict[str, Any]) -> dict[str, Any]:
     if secret:
         params['secret'] = secret
     return params
+
 
 
 def _resolve_ntc_platform(platform: str) -> str:
@@ -261,12 +276,13 @@ def _build_base_payload(device_info: dict[str, Any], platform: str) -> dict[str,
     }
 
 
-def collect_operational_data(device_info: dict[str, Any], categories: list[str] | None = None) -> dict[str, Any]:
+def collect_operational_data(device_info: dict[str, Any], categories: list[str] | None = None, auth_role: str = 'normal') -> dict[str, Any]:
     role = str(device_info.get('role') or '').strip()
     selected_categories = _resolve_categories(categories, role=role)
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     commands_by_category = _resolve_commands(platform, selected_categories)
-    conn_params = _build_connection_params(device_info)
+    conn_params = _build_connection_params(device_info, auth_role=auth_role)
+
 
     payload: dict[str, Any] = _build_base_payload(device_info, platform)
 
@@ -330,9 +346,10 @@ def collect_operational_data(device_info: dict[str, Any], categories: list[str] 
     return payload
 
 
-def collect_custom_command_data(device_info: dict[str, Any], command: str) -> dict[str, Any]:
+def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_role: str = 'normal') -> dict[str, Any]:
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
-    conn_params = _build_connection_params(device_info)
+    conn_params = _build_connection_params(device_info, auth_role=auth_role)
+
     commands = [line.strip() for line in str(command or '').splitlines() if line.strip()]
     if not commands:
         raise ValueError('Command cannot be empty')

@@ -80,7 +80,7 @@ export const useHistoryAuditCompliance = ({
   useEffect(() => { setAuditPage(1); }, [auditCategoryFilter, auditSeverityFilter, auditStatusFilter, auditTimeFilter, auditPageSize]);
 
   useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'history') return;
+    if (!isAuthenticated || activeTab !== 'audit') return;
     let cancelled = false;
     const loadAuditEvents = async () => {
       setAuditLoading(true);

@@ -6,7 +6,7 @@ import { sectionHeaderRowClass, severityBadgeClass, auditStatusBadgeClass } from
 import Pagination from '../components/Pagination';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 
-interface HistoryTabProps {
+interface AuditTabProps {
   auditRows: AuditEvent[];
   auditTotal: number;
   auditPage: number;
@@ -27,7 +27,7 @@ interface HistoryTabProps {
   t: (key: string) => string;
 }
 
-const HistoryTab: React.FC<HistoryTabProps> = ({
+const AuditTab: React.FC<AuditTabProps> = ({
   auditRows, auditTotal, auditPage, setAuditPage,
   auditPageSize, setAuditPageSize, auditLoading,
   auditCategoryFilter, setAuditCategoryFilter,
@@ -258,4 +258,4 @@ const HistoryTab: React.FC<HistoryTabProps> = ({
   );
 };
 
-export default HistoryTab;
+export default AuditTab;

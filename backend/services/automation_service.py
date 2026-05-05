@@ -1,19 +1,31 @@
 from typing import List, Dict, Any
-from engine.factory import get_execution_provider
+from engine.orchestrator import get_orchestrator
 from drivers.base import CommandResult
 
 class AutomationService:
     """
-    Business logic layer for automation tasks.
-    Now uses ExecutionProvider abstraction to decouple command execution from backend logic.
+    业务逻辑层，现在通过 Orchestrator 调用 V3 引擎。
     """
     
-    def __init__(self, driver_type: str = 'netmiko'):
-        # For P2 phase, we use the local provider but routed through the new engine
-        self.provider = get_execution_provider()
+    def __init__(self, driver_type: str = "netmiko", **_: Any):
+        # driver_type is kept for backward compatibility with existing callers.
+        self.driver_type = driver_type
+        self.orchestrator = get_orchestrator()
 
-    def execute_commands(self, device_info: Dict[str, Any], commands: List[str], is_config: bool = False) -> List[CommandResult]:
-        return self.provider.execute(device_info, commands, is_config)
+    def execute_commands(self, device_info: Dict[str, Any], commands: List[str], is_config: bool = False) -> List[Any]:
+        # 为了兼容旧接口，这里循环调用或根据场景封装
+        mode = "config" if is_config else "command"
+        content = commands if is_config else "\n".join(commands)
+        
+        result = self.orchestrator.execute_single(device_info, mode, content)
+        return [result] # 返回列表以匹配旧接口预期
 
-    def check_connectivity(self, device_info: Dict[str, Any]) -> tuple[bool, str]:
-        return self.provider.check_connectivity(device_info)
+    def test_connectivity(self, ip_address: str, username: str, password: str, platform: str) -> bool:
+        device = {
+            "ip": ip_address,
+            "username": username,
+            "password": password,
+            "platform": platform
+        }
+        res = self.orchestrator.execute_single(device, "command", "exit")
+        return res.get("success", False)

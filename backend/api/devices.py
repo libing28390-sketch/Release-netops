@@ -285,11 +285,17 @@ def read_devices(
     sort_direction: Optional[str] = Query(default='asc'),
     page: Optional[int] = Query(default=None, ge=1),
     page_size: Optional[int] = Query(default=None, ge=1, le=200),
+    asset_type: Optional[str] = Query(default='all'),
 ):
     conn = get_db_connection()
     try:
         where_clauses = []
         params = []
+
+        if asset_type and asset_type != 'all':
+            # Default unlinked devices to 'network_device'
+            where_clauses.append("(CASE WHEN pa.asset_type IS NOT NULL THEN pa.asset_type ELSE 'network_device' END) = ?")
+            params.append(asset_type)
 
         if search and search.strip():
             q = f"%{search.strip()}%"
@@ -346,10 +352,10 @@ def read_devices(
             )
 
         # Backward-compatible mode: no pagination params -> return array.
-        # Safety cap: never return more than 200 rows without explicit pagination.
+        # Safety cap: never return more than 200 rows without explicit pagination to prevent UI hangs.
         if page is None or page_size is None:
             devices = conn.execute(
-                f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT 5000',
+                f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT 200',
                 tuple(params)
             ).fetchall()
             items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d) for d in devices]
@@ -396,21 +402,35 @@ def create_device(device: dict = Body(...)):
     # If Vault mode, push creds to Vault and store empty in DB
     local_password = ''
     local_enable = ''
+    local_normal_pwd = ''
+    local_admin_pwd = ''
+    
     if cred_source == 'vault' and vault_available() and vault_path:
         vault_write(vault_path, {
             'username': device.get('username', ''),
             'password': device.get('password', ''),
             'enable_password': device.get('enable_password', ''),
             'priv_username': device.get('priv_username', ''),
+            'normal_username': device.get('normal_username', ''),
+            'normal_password': device.get('normal_password', ''),
+            'admin_username': device.get('admin_username', ''),
+            'admin_password': device.get('admin_password', ''),
         })
     else:
         local_password = encrypt_credential(device.get('password'))
         local_enable = encrypt_credential(device.get('enable_password')) if device.get('enable_password') else ''
+        local_normal_pwd = encrypt_credential(device.get('normal_password')) if device.get('normal_password') else ''
+        local_admin_pwd = encrypt_credential(device.get('admin_password')) if device.get('admin_password') else ''
 
     try:
         conn.execute('''
-            INSERT INTO devices (id, hostname, ip_address, platform, status, compliance, username, password, sn, model, version, role, site, uptime, connection_method, snmp_community, snmp_port, lifecycle_status, enable_password, priv_username, credential_source, vault_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO devices (
+                id, hostname, ip_address, platform, status, compliance, username, password, 
+                sn, model, version, role, site, uptime, connection_method, snmp_community, 
+                snmp_port, lifecycle_status, enable_password, priv_username, credential_source, 
+                vault_path, normal_username, normal_password, admin_username, admin_password, auth_model
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             device_id,
             device.get('hostname'),
@@ -434,6 +454,11 @@ def create_device(device: dict = Body(...)):
             device.get('priv_username', ''),
             cred_source,
             vault_path,
+            device.get('normal_username', ''),
+            local_normal_pwd,
+            device.get('admin_username', ''),
+            local_admin_pwd,
+            device.get('auth_model', 'single'),
         ))
         # Plan-A: auto-create linked physical_assets record
         _create_linked_asset_for_device(conn, device_id, device)
@@ -501,6 +526,8 @@ def update_device(device_id: str, device: dict = Body(...)):
 
         submitted_password = device.get('password')
         submitted_enable = device.get('enable_password')
+        submitted_normal = device.get('normal_password')
+        submitted_admin = device.get('admin_password')
 
         if cred_source == 'vault' and vault_available() and vault_path:
             # Push credentials to Vault; store empty in DB
@@ -509,9 +536,15 @@ def update_device(device_id: str, device: dict = Body(...)):
                 'password': submitted_password or '',
                 'enable_password': submitted_enable or '',
                 'priv_username': device.get('priv_username', ''),
+                'normal_username': device.get('normal_username', ''),
+                'normal_password': submitted_normal or '',
+                'admin_username': device.get('admin_username', ''),
+                'admin_password': submitted_admin or '',
             })
             stored_password = ''
             stored_enable = ''
+            stored_normal = ''
+            stored_admin = ''
         else:
             if submitted_password in (None, ''):
                 stored_password = existing_row['password']
@@ -523,11 +556,28 @@ def update_device(device_id: str, device: dict = Body(...)):
             else:
                 stored_enable = encrypt_credential(submitted_enable)
 
+            if submitted_normal in (None, ''):
+                # We need to fetch current normal_password if we want to preserve it
+                # For brevity, let's assume update_device payload includes it or we fetch it
+                row = conn.execute('SELECT normal_password, admin_password FROM devices WHERE id = ?', (device_id,)).fetchone()
+                stored_normal = row['normal_password'] if row else ''
+            else:
+                stored_normal = encrypt_credential(submitted_normal)
+
+            if submitted_admin in (None, ''):
+                row = conn.execute('SELECT admin_password FROM devices WHERE id = ?', (device_id,)).fetchone()
+                stored_admin = row['admin_password'] if row else ''
+            else:
+                stored_admin = encrypt_credential(submitted_admin)
+
         new_lifecycle = device.get('lifecycle_status') or existing_row['lifecycle_status'] or 'staging'
 
         conn.execute('''
             UPDATE devices 
-            SET hostname = ?, ip_address = ?, platform = ?, sn = ?, model = ?, version = ?, role = ?, site = ?, connection_method = ?, username = ?, password = ?, current_config = ?, config_history = ?, snmp_community = ?, snmp_port = ?, lifecycle_status = ?, enable_password = ?, priv_username = ?, credential_source = ?, vault_path = ?
+            SET hostname = ?, ip_address = ?, platform = ?, sn = ?, model = ?, version = ?, role = ?, site = ?, connection_method = ?, 
+                username = ?, password = ?, current_config = ?, config_history = ?, snmp_community = ?, snmp_port = ?, 
+                lifecycle_status = ?, enable_password = ?, priv_username = ?, credential_source = ?, vault_path = ?,
+                normal_username = ?, normal_password = ?, admin_username = ?, admin_password = ?, auth_model = ?
             WHERE id = ?
         ''', (
             device.get('hostname', ''),
@@ -550,6 +600,11 @@ def update_device(device_id: str, device: dict = Body(...)):
             device.get('priv_username', ''),
             cred_source,
             vault_path,
+            device.get('normal_username', ''),
+            stored_normal,
+            device.get('admin_username', ''),
+            stored_admin,
+            device.get('auth_model', 'single'),
             device_id
         ))
         conn.commit()
@@ -765,10 +820,10 @@ def rotation_expiring(days: int = Query(default=14), user=require_role("Administ
 
 
 @router.post("/devices/{device_id}/rotate-password")
-def rotate_device_password(device_id: str, user=require_role("Administrator")):
-    """手动触发单台设备密码轮换（仅管理员）。"""
+def rotate_device_password(device_id: str, role: str = Query(default='admin'), user: dict = require_role("Administrator")):
+    """手动触发单台设备指定角色的密码轮换（仅管理员）。"""
     from services.password_rotation_service import rotate_password
-    result = rotate_password(device_id)
+    result = rotate_password(device_id, role=role)
     if result['success']:
         log_audit_event(
             event_type='PASSWORD_ROTATE',
@@ -782,22 +837,53 @@ def rotate_device_password(device_id: str, user=require_role("Administrator")):
             target_id=device_id,
             device_id=device_id,
         )
-    return {"success": result['success'], "data": result}
+        return {"success": True, "data": result}
+    else:
+        # Log failure audit
+        log_audit_event(
+            event_type='PASSWORD_ROTATE',
+            category='security',
+            severity='high',
+            status='failure',
+            summary=result.get('message', ''),
+            actor_username=user.get('username', 'admin'),
+            actor_role=user.get('role', 'Administrator'),
+            target_type='device',
+            target_id=device_id,
+            device_id=device_id,
+        )
+        raise HTTPException(status_code=422, detail=result.get('message', 'Rotation failed'))
 
 
 @router.get("/devices/{device_id}/reveal-password")
-def reveal_device_password(device_id: str, user=require_role("Administrator")):
-    """解密并返回设备当前密码（仅管理员，审计记录）。"""
+def reveal_device_password(device_id: str, role: str = Query(default='admin'), user: dict = require_role("Administrator")):
+    """解密并返回设备指定角色的当前密码（仅管理员，审计记录）。"""
     from core.crypto import decrypt_credential
     conn = get_db_connection()
     try:
+        # Map role to column name
+        col_map = {
+            'normal': 'normal_password',
+            'admin': 'admin_password',
+            'enable': 'enable_password'
+        }
+        target_col = col_map.get(role)
+        if not target_col:
+             return {"success": False, "message": f"无效的角色类型: {role}"}
+        
         row = conn.execute(
-            'SELECT hostname, ip_address, password FROM devices WHERE id = ?',
+            f'SELECT hostname, ip_address, {target_col} as target_pwd FROM devices WHERE id = ?',
             (device_id,),
         ).fetchone()
         if not row:
             return {"success": False, "message": "设备不存在"}
-        decrypted = decrypt_credential(row['password'])
+        
+        pwd_to_decrypt = row['target_pwd']
+        
+        if not pwd_to_decrypt:
+            return {"success": False, "message": f"该角色 ({role}) 尚未设置或轮换密码"}
+
+        decrypted = decrypt_credential(pwd_to_decrypt)
         if decrypted is None:
             return {"success": False, "message": "密码解密失败，可能密钥不匹配"}
         log_audit_event(
@@ -805,14 +891,14 @@ def reveal_device_password(device_id: str, user=require_role("Administrator")):
             category='security',
             severity='high',
             status='success',
-            summary=f"管理员查看了设备 {row['hostname']}({row['ip_address']}) 的明文密码",
+            summary=f"管理员查看了设备 {row['hostname']} 的 {role} 账号明文密码",
             actor_username=user.get('username', 'admin'),
             actor_role=user.get('role', 'Administrator'),
             target_type='device',
             target_id=device_id,
             device_id=device_id,
         )
-        return {"success": True, "data": {"password": decrypted}}
+        return {"success": True, "data": {"password": decrypted, "role": role}}
     finally:
         conn.close()
 
@@ -1160,11 +1246,16 @@ def collect_device_operational_data(device_id: str, payload: dict = Body(default
 
     device_info = dict(row)
     device_info['password'] = decrypt_credential(device_info.get('password')) or ''
+    device_info['normal_password'] = decrypt_credential(device_info.get('normal_password')) or ''
+    device_info['admin_password'] = decrypt_credential(device_info.get('admin_password')) or ''
+    device_info['enable_password'] = decrypt_credential(device_info.get('enable_password')) or ''
+
     categories = payload.get('categories') if isinstance(payload, dict) else None
+    auth_role = payload.get('auth_role', 'normal') if isinstance(payload, dict) else 'normal'
     query_name = payload.get('name') or f"Quick Query: {', '.join(categories or [])}"
 
     try:
-        res = collect_operational_data(device_info, categories=categories)
+        res = collect_operational_data(device_info, categories=categories, auth_role=auth_role)
         _record_instant_execution(device_id, query_name, [], 'completed', platform=device_info.get('platform', 'unknown'))
         return res
     except ValueError as exc:
@@ -1173,6 +1264,7 @@ def collect_device_operational_data(device_id: str, payload: dict = Body(default
     except Exception as exc:
         _record_instant_execution(device_id, query_name, [], 'failed', platform=device_info.get('platform', 'unknown'), error=str(exc))
         raise HTTPException(status_code=500, detail=f'Operational data collection failed: {exc}')
+
 
 
 @router.post("/devices/{device_id}/parsed-command")
@@ -1188,11 +1280,16 @@ def collect_device_parsed_command(device_id: str, payload: dict = Body(default={
 
     device_info = dict(row)
     device_info['password'] = decrypt_credential(device_info.get('password')) or ''
+    device_info['normal_password'] = decrypt_credential(device_info.get('normal_password')) or ''
+    device_info['admin_password'] = decrypt_credential(device_info.get('admin_password')) or ''
+    device_info['enable_password'] = decrypt_credential(device_info.get('enable_password')) or ''
+
     command = payload.get('command') if isinstance(payload, dict) else None
+    auth_role = payload.get('auth_role', 'normal') if isinstance(payload, dict) else 'normal'
     query_name = payload.get('name') or "Custom Command Query"
 
     try:
-        res = collect_custom_command_data(device_info, command=command)
+        res = collect_custom_command_data(device_info, command=command, auth_role=auth_role)
         _record_instant_execution(device_id, query_name, [command] if command else [], 'completed', platform=device_info.get('platform', 'unknown'))
         return res
     except ValueError as exc:

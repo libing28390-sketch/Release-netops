@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Search, Plus, Download, Upload, Trash2, Pencil,
   Server, ChevronDown, ChevronUp, ChevronRight,
-  CheckCircle2, XCircle, AlertTriangle, Wrench, X, Activity, ShieldCheck, ShieldAlert, RefreshCw,
+  CheckCircle2, XCircle, AlertTriangle, Wrench, X, Activity, ShieldCheck, ShieldAlert, RefreshCw, Key,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../components/Pagination';
@@ -298,6 +298,30 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
     });
   };
 
+  const handleRotate = async (server: ServerAsset) => {
+    if (!window.confirm(zh ? `确定要手动触发服务器 ${server.hostname} 的密码轮换吗？` : `Confirm manual password rotation for ${server.hostname}?`)) return;
+    
+    setVerifyingIds(prev => new Set(prev).add(server.id));
+    try {
+      const r = await fetch(`/api/assets/${server.id}/rotate`, { method: 'POST' });
+      if (r.ok) {
+        const data = await r.json();
+        if (data.rotation_pending) {
+          // Update local status immediately
+          setVerifyResults(prev => ({ 
+            ...prev, 
+            [server.id]: { ...(prev[server.id] || {}), rotating: true } 
+          }));
+        }
+      }
+    } catch { /* noop */ }
+    setVerifyingIds(prev => {
+      const next = new Set(prev);
+      next.delete(server.id);
+      return next;
+    });
+  };
+
   /* ─── Selection ─── */
   const allChecked = displayRows.length > 0 && displayRows.every(s => selectedIds.has(s.id));
   const someChecked = selectedIds.size > 0 && !allChecked;
@@ -520,23 +544,49 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
                         </span>
                         
                         {verifyResults[server.id] && (
-                          <div className="flex flex-wrap gap-1">
-                            <div 
-                              title={verifyResults[server.id].ping_error || (zh ? 'Ping 正常' : 'Ping OK')}
-                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight
-                                ${verifyResults[server.id].ping 
-                                  ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' 
-                                  : 'bg-red-500/10 text-red-600 border border-red-500/20'}`}>
-                              PING: {verifyResults[server.id].ping ? 'OK' : 'FAIL'}
+                          <div className="flex flex-col gap-1 w-full max-w-[200px]">
+                            {/* General Ping/SSH status */}
+                            <div className="flex flex-wrap gap-1">
+                              <div 
+                                title={verifyResults[server.id].ping_error || (zh ? 'Ping 正常' : 'Ping OK')}
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight
+                                  ${verifyResults[server.id].ping 
+                                    ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' 
+                                    : 'bg-red-500/10 text-red-600 border border-red-500/20'}`}>
+                                PING: {verifyResults[server.id].ping ? 'OK' : 'FAIL'}
+                              </div>
+                              <div 
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight
+                                  ${verifyResults[server.id].ssh 
+                                    ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' 
+                                    : 'bg-red-500/10 text-red-600 border border-red-500/20'}`}>
+                                SSH: {verifyResults[server.id].ssh ? 'OK' : 'FAIL'}
+                              </div>
                             </div>
-                            <div 
-                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight
-                                ${verifyResults[server.id].ssh 
-                                  ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' 
-                                  : 'bg-red-500/10 text-red-600 border border-red-500/20'}`}>
-                              SSH: {verifyResults[server.id].ssh ? 'OK' : 'FAIL'}
-                            </div>
-                            {verifyResults[server.id].ssh && verifyResults[server.id].ssh_summary && (
+
+                            {/* Role-specific details if Dual Auth */}
+                            {verifyResults[server.id].auth_model === 'dual' && verifyResults[server.id].roles && (
+                              <div className="flex flex-col gap-1 mt-1 p-1.5 rounded bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5">
+                                {Object.entries(verifyResults[server.id].roles).map(([role, res]: [string, any]) => (
+                                  <div key={role} className="flex items-center justify-between gap-2">
+                                    <span className="text-[8px] font-bold uppercase text-black/40 dark:text-white/40">{role}</span>
+                                    <div className="flex items-center gap-1">
+                                      {res.success ? (
+                                        <CheckCircle2 size={10} className="text-emerald-500" />
+                                      ) : (
+                                        <XCircle size={10} className="text-red-500" />
+                                      )}
+                                      <span className={`text-[8px] font-medium ${res.success ? 'text-emerald-600' : 'text-red-500'}`}>
+                                        {res.success ? (zh ? '成功' : 'OK') : (zh ? '失败' : 'FAIL')}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Summary / Error */}
+                            {verifyResults[server.id].ssh_summary && (
                               <div className="w-full flex items-center gap-1 mt-0.5">
                                 <span className="w-1 h-1 rounded-full bg-emerald-400" />
                                 <p className="text-[9px] text-emerald-600/80 leading-tight">
@@ -547,7 +597,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
                             {verifyResults[server.id].ssh_error && (
                               <div className="w-full flex items-center gap-1 mt-0.5 group/err">
                                 <AlertTriangle size={10} className="text-red-400 shrink-0" />
-                                <p className="text-[9px] text-red-500/80 leading-tight truncate max-w-[120px] cursor-help" title={verifyResults[server.id].ssh_error}>
+                                <p className="text-[9px] text-red-500/80 leading-tight truncate cursor-help" title={verifyResults[server.id].ssh_error}>
                                   {verifyResults[server.id].ssh_error}
                                 </p>
                               </div>
@@ -583,6 +633,14 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
                           ) : (
                             <Activity size={13} />
                           )}
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleRotate(server); }}
+                          disabled={verifyingIds.has(server.id)}
+                          title={zh ? '手动轮换密码' : 'Manual Password Rotation'}
+                          className={`inline-flex items-center justify-center w-7 h-7 rounded-md transition-all
+                            ${verifyingIds.has(server.id) ? 'bg-black/5 text-black/20' : 'text-black/30 dark:text-white/25 hover:bg-amber-500/10 hover:text-amber-500'}`}>
+                          <Key size={13} />
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); setDeleteTarget(server); }}

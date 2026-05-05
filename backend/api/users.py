@@ -11,6 +11,7 @@ import hashlib
 import time
 import bcrypt
 from datetime import datetime
+import asyncio
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services import notification_service
@@ -29,16 +30,23 @@ _login_failures: dict[str, dict] = {}
 _MAX_LOGIN_ATTEMPTS = 5
 _LOCKOUT_SECONDS = 900  # 15 minutes initial lockout
 
-def _hash_password(plain: str) -> str:
-    """Hash a plaintext password with bcrypt."""
-    return bcrypt.hashpw(plain.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+async def _hash_password(plain: str) -> str:
+    """Hash a plaintext password with bcrypt (offloaded to thread)."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, 
+        lambda: bcrypt.hashpw(plain.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    )
 
-def _verify_password(plain: str, hashed: str) -> bool:
-    """Verify a plaintext password against a bcrypt hash.
-    Also handles legacy plaintext passwords by direct comparison."""
+async def _verify_password(plain: str, hashed: str) -> bool:
+    """Verify a plaintext password against a bcrypt hash (offloaded to thread)."""
     if hashed.startswith('$2b$') or hashed.startswith('$2a$'):
-        return bcrypt.checkpw(plain.encode('utf-8'), hashed.encode('utf-8'))
-    # Legacy plaintext comparison — will be migrated on successful login
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: bcrypt.checkpw(plain.encode('utf-8'), hashed.encode('utf-8'))
+        )
+    # Legacy plaintext comparison
     return plain == hashed
 
 def _is_bcrypt_hash(value: str) -> bool:
@@ -274,7 +282,7 @@ def read_users():
         conn.close()
 
 @router.post("/users")
-def create_user(request: Request, user: dict = Body(...)):
+async def create_user(request: Request, user: dict = Body(...)):
     conn = get_db_connection()
     user_id = user.get('id') or str(uuid.uuid4())
     raw_password = user.get('password', '')
@@ -283,7 +291,7 @@ def create_user(request: Request, user: dict = Body(...)):
     strength_err = _validate_password_strength(raw_password)
     if strength_err:
         raise HTTPException(status_code=400, detail=strength_err)
-    hashed = _hash_password(raw_password)
+    hashed = await _hash_password(raw_password)
     try:
         conn.execute(
             'INSERT INTO users (id, username, password, role, status, last_login, avatar_url, group_name, change_groups_json) '
@@ -347,6 +355,7 @@ def switch_user(request: Request, payload: dict = Body(...)):
             
         user_dict = dict(user)
         new_token = _create_token()
+        # await _store_session is not async yet but we can keep it as is or wrap it
         _store_session(new_token, user_dict)
         
         # Hydrate user data for frontend
@@ -380,7 +389,7 @@ def switch_user(request: Request, payload: dict = Body(...)):
 
 @router.post("/login")
 @limiter.limit("5/minute")
-def login(request: Request, payload: dict = Body(...)):
+async def login(request: Request, payload: dict = Body(...)):
     username = payload.get('username')
     password = payload.get('password')
     safe_username = (username or '')[:64]  # truncate for logging safety
@@ -410,13 +419,13 @@ def login(request: Request, payload: dict = Body(...)):
     conn = get_db_connection()
     try:
         user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
-        if user and _verify_password(password, user['password']):
+        if user and await _verify_password(password, user['password']):
             logger.info(f"Login successful for user: {safe_username}")
             last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Migrate legacy plaintext password to bcrypt on the fly
             if not _is_bcrypt_hash(user['password']):
-                hashed = _hash_password(password)
+                hashed = await _hash_password(password)
                 conn.execute('UPDATE users SET last_login = ?, password = ? WHERE id = ?', (last_login, hashed, user['id']))
                 logger.info(f"Migrated password to bcrypt for user: {safe_username}")
             else:
@@ -606,7 +615,7 @@ def forgot_password_send_code(request: Request, payload: dict = Body(...)):
 
 @router.post("/forgot-password/reset")
 @limiter.limit("5/minute")
-def forgot_password_reset(request: Request, payload: dict = Body(...)):
+async def forgot_password_reset(request: Request, payload: dict = Body(...)):
     """Verify code and reset password."""
     username = (payload.get('username') or '').strip()
     code = (payload.get('code') or '').strip()
@@ -643,7 +652,7 @@ def forgot_password_reset(request: Request, payload: dict = Body(...)):
         conn.execute("UPDATE password_reset_codes SET used = 1 WHERE id = ?", (row['id'],))
 
         # Update password
-        hashed = _hash_password(new_password)
+        hashed = await _hash_password(new_password)
         conn.execute("UPDATE users SET password = ? WHERE username = ?", (hashed, username))
 
         # Clear login failures / lockout
@@ -674,7 +683,7 @@ def forgot_password_reset(request: Request, payload: dict = Body(...)):
 
 
 @router.put("/users/{user_id}")
-def update_user(user_id: str, request: Request, user: dict = Body(...)):
+async def update_user(user_id: str, request: Request, user: dict = Body(...)):
     conn = get_db_connection()
     try:
         existing = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
@@ -752,7 +761,7 @@ def update_user(user_id: str, request: Request, user: dict = Body(...)):
             strength_err = _validate_password_strength(password)
             if strength_err:
                 raise HTTPException(status_code=400, detail=strength_err)
-            hashed = _hash_password(password)
+            hashed = await _hash_password(password)
             conn.execute(
                 'UPDATE users SET username = ?, role = ?, password = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ? WHERE id = ?',
                 (username, role, hashed, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, user_id)

@@ -18,6 +18,16 @@ export const useAuth = ({
   setShowUserMenu,
   setShowNotifications,
 }: UseAuthProps) => {
+  const fetchWithTimeout = useCallback(async (url: string, options: RequestInit = {}, timeoutMs = 12000) => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }, []);
+
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
   const [currentUser, setCurrentUser] = useState<SessionUser>({ username: 'admin' });
@@ -25,20 +35,20 @@ export const useAuth = ({
   const [loginError, setLoginError] = useState<string | null>(null);
   const [rememberMe, setRememberMe] = useState(() => localStorage.getItem('netops_remember') === 'true');
   const [showLoginPwd, setShowLoginPwd] = useState(false);
-  
+
   const [loginForm, setLoginForm] = useState(() => {
     const saved = localStorage.getItem('netops_user');
     return { username: saved || '', password: '' };
   });
 
-  // Check session token on mount
   useEffect(() => {
     const token = localStorage.getItem('netops_token');
     if (!token) {
       setAuthChecking(false);
       return;
     }
-    fetch('/api/session', { headers: { Authorization: `Bearer ${token}` } })
+
+    fetchWithTimeout('/api/session', { headers: { Authorization: `Bearer ${token}` } }, 10000)
       .then(async (r) => {
         if (r.ok) {
           const data = await r.json();
@@ -49,9 +59,8 @@ export const useAuth = ({
               setLanguage(data.user.preferred_language);
             }
           }
-          // Check if setup wizard is needed
           try {
-            const sr = await fetch('/api/setup/status', { headers: { Authorization: `Bearer ${token}` } });
+            const sr = await fetchWithTimeout('/api/setup/status', { headers: { Authorization: `Bearer ${token}` } }, 8000);
             if (sr.ok) {
               const sd = await sr.json();
               if (!sd.setup_completed && data?.user?.role === 'Administrator') {
@@ -59,7 +68,7 @@ export const useAuth = ({
               }
             }
           } catch {
-            /* ignore */
+            // ignore setup-status errors
           }
         } else {
           localStorage.removeItem('netops_token');
@@ -68,8 +77,10 @@ export const useAuth = ({
       .catch(() => {
         localStorage.removeItem('netops_token');
       })
-      .finally(() => setAuthChecking(false));
-  }, [setLanguage, setShowSetupWizard]);
+      .finally(() => {
+        setAuthChecking(false);
+      });
+  }, [fetchWithTimeout, setLanguage, setShowSetupWizard]);
 
   const handleLogout = useCallback(() => {
     localStorage.removeItem('netops_token');
@@ -86,15 +97,20 @@ export const useAuth = ({
 
     setIsAuthenticating(true);
     setLoginError(null);
+
     try {
-      const response = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: loginForm.username.trim(),
-          password: loginForm.password,
-        }),
-      });
+      const response = await fetchWithTimeout(
+        '/api/login',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: loginForm.username.trim(),
+            password: loginForm.password,
+          }),
+        },
+        12000
+      );
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
@@ -116,9 +132,8 @@ export const useAuth = ({
       setLoginForm((prev) => ({ ...prev, password: '' }));
       showToast(language === 'zh' ? '登录成功' : 'Login successful', 'success');
 
-      // Check setup wizard after login
       try {
-        const sr = await fetch('/api/setup/status', { headers: { Authorization: `Bearer ${data.token}` } });
+        const sr = await fetchWithTimeout('/api/setup/status', { headers: { Authorization: `Bearer ${data.token}` } }, 8000);
         if (sr.ok) {
           const sd = await sr.json();
           if (!sd.setup_completed && data.user?.role === 'Administrator') {
@@ -126,10 +141,14 @@ export const useAuth = ({
           }
         }
       } catch {
-        /* ignore */
+        // ignore setup-status errors
       }
-    } catch {
-      setLoginError(language === 'zh' ? '连接失败，请稍后重试' : 'Connection failed, please try again later');
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        setLoginError(language === 'zh' ? '登录超时，请检查后端状态后重试' : 'Login timed out. Please verify backend status and retry');
+      } else {
+        setLoginError(language === 'zh' ? '连接失败，请稍后重试' : 'Connection failed, please try again later');
+      }
     } finally {
       setIsAuthenticating(false);
     }
@@ -141,7 +160,7 @@ export const useAuth = ({
       const token = localStorage.getItem('netops_token');
       fetch(`/api/users/${currentUser.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ preferred_language: nextLanguage }),
       }).catch(() => {});
     }
@@ -154,24 +173,23 @@ export const useAuth = ({
     try {
       const resp = await fetch('/api/switch-user', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ username: targetUsername }),
       });
-      
+
       const data = await resp.json();
       if (resp.ok && data.token) {
         localStorage.setItem('netops_token', data.token);
         setCurrentUser(data.user);
         showToast(language === 'zh' ? `已切换到用户: ${targetUsername}` : `Switched to user: ${targetUsername}`, 'success');
-        // Force reload to refresh all context and states
         window.location.reload();
       } else {
         showToast(data.detail || 'Switch failed', 'error');
       }
-    } catch (err) {
+    } catch {
       showToast('Network error during switch', 'error');
     }
   };

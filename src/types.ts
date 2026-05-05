@@ -29,6 +29,11 @@ export interface Device {
   username?: string;
   password?: string;
   enable_password?: string;
+  normal_username?: string;
+  normal_password?: string;
+  admin_username?: string;
+  admin_password?: string;
+  auth_model?: 'single' | 'dual';
   priv_username?: string;
   credential_source?: 'local' | 'vault';
   vault_path?: string;
@@ -93,6 +98,18 @@ export interface DeviceConnectionCheckSummary {
   mode: 'quick' | 'deep';
   checked_at: string;
   error_code?: string;
+  auth_model?: 'single' | 'dual';
+  ssh?: boolean;
+  ssh_summary?: string;
+  ssh_error?: string;
+  ping?: boolean;
+  ping_error?: string;
+  roles?: Record<string, {
+    success: boolean;
+    error?: string;
+    summary?: string;
+    error_code?: string;
+  }>;
 }
 
 export interface Job {

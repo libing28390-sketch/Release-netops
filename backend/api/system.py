@@ -5,7 +5,7 @@ from license_auth.verifier import get_license_verifier
 from license_auth.models import LicenseStatus
 from core.config import settings
 
-router = APIRouter(prefix="/api/system", tags=["System"])
+router = APIRouter(prefix="/system", tags=["System"])
 
 @router.get("/info")
 async def get_system_info() -> Dict[str, Any]:

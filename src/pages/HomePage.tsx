@@ -68,7 +68,7 @@ const apps: AppEntry[] = [
   { id: 'automation', label: '自动化',     labelEn: 'Automation',   desc: '作业执行与编排',     descEn: 'Jobs & orchestration', icon: Zap,               path: '/automation/execute', accent: '#0891b2' },
   { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      desc: '变更审批与跟踪',     descEn: 'Change & approval',    icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff' },
   { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      desc: '趋势分析与报表',     descEn: 'Trends & reports',     icon: BarChart2,         path: '/capacity',           accent: '#13c2c2' },
-  { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     desc: '用户、日志与审计',   descEn: 'Users, logs & audit',  icon: SlidersHorizontal, path: '/history',            accent: '#8c8c8c' },
+  { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     desc: '用户、日志与审计',   descEn: 'Users, logs & audit',  icon: SlidersHorizontal, path: '/audit',            accent: '#8c8c8c' },
 ];
 
 /* ─────────────── Helpers ─────────────── */

@@ -150,12 +150,12 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
 
   const token = localStorage.getItem('netops_token') || '';
 
-  // 加载设备列表用于设备侧探测
+  // 加载设备列表用于设备侧探测 (使用 mode=light 和 page_size=500 防止加载过慢)
   useEffect(() => {
-    fetch('/api/devices', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : [])
+    fetch('/api/devices?mode=light&page_size=500', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : { items: [] })
       .then(data => {
-        const list = Array.isArray(data) ? data : data?.data || data?.devices || [];
+        const list = Array.isArray(data) ? data : data?.items || data?.data || [];
         setDevices(list.filter((d: any) => d.status === 'online' && d.username));
       })
       .catch(() => {});

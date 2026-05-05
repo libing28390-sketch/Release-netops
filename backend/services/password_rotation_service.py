@@ -20,6 +20,7 @@ Password Rotation Service - 设备密码自动轮换。
 import logging
 import secrets
 import string
+import shlex
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -144,171 +145,210 @@ def check_expiring(days_ahead: int | None = None) -> list[dict[str, Any]]:
         conn.close()
 
 
-def rotate_password(device_id: str) -> dict[str, Any]:
+def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
     """
-    对单台设备执行密码轮换。
-    流程: SSH → 改密命令 → 验证新密码 → 更新数据库/Vault
-    返回: { success, message, rotated_at }
+    对单台设备的指定角色执行密码轮换。
+    role: 'normal' | 'admin' | 'enable'
     """
     from drivers.factory import DriverFactory
 
     conn = get_db_connection()
     try:
         row = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
+        if not row:
+            return {'success': False, 'message': 'Device not found'}
+        device = dict(row)
+        
+        # Fallback IP resolution from physical_assets if missing in devices
+        if not device.get('ip_address'):
+            pa_row = conn.execute('SELECT management_ip FROM physical_assets WHERE id = ?', (device.get('asset_id'),)).fetchone()
+            if pa_row and pa_row['management_ip']:
+                device['ip_address'] = pa_row['management_ip']
+                logger.info(f"[Rotation] Resolved missing IP from physical_assets: {device['ip_address']}")
+
+        # Fallback platform from physical_assets if missing in devices
+        if not device.get('platform'):
+            pa_row = conn.execute('SELECT platform FROM physical_assets WHERE id = ?', (device.get('asset_id'),)).fetchone()
+            if pa_row and pa_row['platform']:
+                device['platform'] = pa_row['platform']
+                logger.info(f"[Rotation] Resolved missing platform from physical_assets: {device['platform']}")
     finally:
         conn.close()
 
-    if not row:
-        return {'success': False, 'message': 'Device not found'}
-
-    device = dict(row)
-
-    # ── Diagnostic: trace credential resolution ──────────────────────
-    raw_pwd = device.get('password') or ''
-    logger.info(
-        "rotate_password diagnostic - device=%s ip=%s raw_pwd_prefix=%s raw_pwd_len=%d",
-        device_id,
-        device.get('ip_address', ''),
-        raw_pwd[:7] if raw_pwd else '(empty)',
-        len(raw_pwd),
-    )
-
     creds = resolve_device_credentials(device)
     
-    # FORCE linux platform for servers regardless of what's in the DB
-    if device.get('asset_id'):
-        conn_check = get_db_connection()
-        try:
-            asset_row = conn_check.execute('SELECT asset_type FROM physical_assets WHERE id = ?', (device['asset_id'],)).fetchone()
-            if asset_row and asset_row['asset_type'] == 'server':
-                platform = 'linux'
-            else:
-                platform = (device.get('platform') or 'cisco_ios').lower()
-        finally:
-            conn_check.close()
+    # [LOGIC] Determine login credentials vs target credentials
+    platform = (device.get('platform') or 'cisco_ios').lower()
+    is_server = any(tag in platform for tag in ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'])
+    
+    logger.info(f"[Rotation] Starting: host={device.get('ip_address')}, platform={platform}, is_server={is_server}")
+    
+    # 1. Fallback / Auto-Ingestion: If PAM creds are missing, use main device creds
+    current_admin_user = creds.get('admin_username') or creds.get('username')
+    current_admin_pwd = creds.get('admin_password') or creds.get('password')
+    
+    # 2. Select target for rotation
+    if role == 'normal':
+        target_username = device.get('normal_username') or 'user'
+        # If normal_password is empty, we assume it matches the main password or is unknown
+        current_target_pwd = creds.get('normal_password') or creds.get('password')
+    elif role == 'admin':
+        target_username = device.get('admin_username') or device.get('username')
+        current_target_pwd = creds.get('admin_password') or creds.get('password')
+    else: # enable
+        target_username = 'enable'
+        current_target_pwd = creds.get('enable_password')
+
+    # Generate new random password
+    new_password = _generate_password(20)
+
+    # 3. Choose login strategy
+    # For servers, we ALWAYS use admin to change passwords (more reliable)
+    auth_model = device.get('auth_model') or 'single'
+    
+    if is_server:
+        # In dual mode, we MUST use admin credentials to login for rotation
+        if auth_model == 'dual':
+            login_user = creds.get('admin_username') or current_admin_user
+            login_pwd = creds.get('admin_password') or current_admin_pwd
+        else:
+            login_user = current_admin_user
+            login_pwd = current_admin_pwd
     else:
-        platform = (device.get('platform') or 'cisco_ios').lower()
+        # For network devices, we might need to login as the target or as admin
+        if role in ['admin', 'enable']:
+            login_user = current_admin_user
+            login_pwd = current_admin_pwd
+        else:
+            # For normal role, try normal user first, fallback to admin
+            login_user = creds.get('normal_username') or current_admin_user
+            login_pwd = creds.get('normal_password') or current_admin_pwd
 
-    # Pre-flight: validate credentials before attempting SSH
-    username = creds.get('username', '').strip()
-    password = creds.get('password', '').strip()
-
-    logger.info(
-        "rotate_password diagnostic - resolved username=%s password_len=%d password_is_encrypted=%s platform=%s",
-        username,
-        len(password),
-        password.startswith('enc:v1:'),
-        platform,
-    )
-    if not username or not password:
-        missing = []
-        if not username:
-            missing.append('username')
-        if not password:
-            missing.append('password')
-        return {
-            'success': False,
-            'message': f'设备凭据未配置（缺少 {", ".join(missing)}），请先在口令上手流程中设置凭据',
-        }
-
-    ip_address = (device.get('ip_address') or '').strip()
-    if not ip_address:
-        return {'success': False, 'message': '设备管理 IP 未配置'}
-
+    # 4. Generate commands
     handler = _CHANGE_PASSWORD_HANDLERS.get(platform)
-    if not handler:
-        return {'success': False, 'message': f'Unsupported platform for rotation: {platform}'}
+    if not handler and not is_server:
+        return {'success': False, 'message': f'No password change handler for platform: {platform}'}
 
-    new_password = _generate_password()
-    commands = handler(username, new_password)
+    if role == 'enable':
+        if 'cisco' in platform:
+            commands = [f'enable secret 0 {new_password}']
+        elif 'huawei' in platform or 'h3c' in platform:
+            commands = [f'super password role privilege 3 cipher {new_password}']
+        else:
+            return {'success': False, 'message': 'Enable password rotation not supported for this platform'}
+    else:
+        if is_server:
+            # Servers use shell commands, generated later in step 5
+            commands = []
+        else:
+            commands = handler(target_username, new_password)
+
     save_cmd = _SAVE_COMMANDS.get(platform, 'write memory')
 
-    # Phase 1: Execute change password commands + save
+    # 5. Execute with robustness
     device_info = {
-        'ip_address': ip_address,
-        'username': username,
-        'password': password,
+        'ip_address': (device.get('ip_address') or '').strip(),
+        'username': login_user,
+        'password': login_pwd,
         'platform': platform,
-        'port': device.get('port') or 22,
-        'enable_password': creds.get('enable_password', ''),
+        'port': device.get('ssh_port') or 22,
+        'secret': current_admin_pwd if 'cisco' in platform else '',
     }
 
     try:
-        with DriverFactory.get_driver('netmiko', device_info) as driver:
-            result = driver.send_config(commands)
-            if not result.success:
-                raise Exception(result.error or 'send_config failed')
-            # Save config in exec mode (send_config_set already exited config mode)
-            save_result = driver.send_command(save_cmd)
-            if not save_result.success:
-                logger.warning("Save command failed on %s: %s (password may still be changed in running-config)",
-                               device_id, save_result.error)
-    except Exception as exc_netmiko:
-        # If it's a linux/server, don't even try scrapli as it's often more problematic for shell
-        if platform in ('linux', 'ubuntu', 'centos', 'debian', 'server'):
-            logger.error("Rotation phase-1 failed for %s (linux): %s", device_id, exc_netmiko)
-            return {'success': False, 'message': f'Failed to execute change commands (Netmiko): {exc_netmiko}'}
-            
-        logger.warning("Rotation phase-1 netmiko failed for %s: %s - trying scrapli", device_id, exc_netmiko)
+        from drivers.factory import DriverFactory
+        logger.info(f"[Rotation] Attempting login to {device.get('hostname')} as {login_user}")
+        
+        # Try primary login_user first, fallback to target_user for Linux if failed
+        conn_attempt = None
         try:
-            with DriverFactory.get_driver('scrapli', device_info) as driver:
-                result = driver.send_config(commands)
-                if not result.success:
-                    raise Exception(result.error or 'send_config failed')
-                save_result = driver.send_command(save_cmd)
-                if not save_result.success:
-                    logger.warning("Save command failed on %s (scrapli): %s", device_id, save_result.error)
-        except Exception as exc_scrapli:
-            logger.error("Rotation phase-1 failed for %s: %s", device_id, exc_scrapli)
-            return {'success': False, 'message': f'Failed to execute change commands: {exc_scrapli}'}
+            conn_attempt = DriverFactory.get_driver('netmiko', device_info)
+            driver = conn_attempt.__enter__()
+        except Exception as e:
+            if is_server and login_user != target_username:
+                logger.warning(f"[Rotation] Primary login ({login_user}) failed, retrying as target ({target_username})...")
+                device_info['username'] = target_username
+                device_info['password'] = current_target_pwd
+                conn_attempt = DriverFactory.get_driver('netmiko', device_info)
+                driver = conn_attempt.__enter__()
+            else:
+                raise e
 
-    # Phase 2: Verify new credentials by attempting login
-    verify_info = {**device_info, 'password': new_password}
-    try:
-        with DriverFactory.get_driver('netmiko', verify_info) as verify_driver:
-            pass  # successful connect = password verified
-    except Exception as exc:
-        logger.error("Rotation phase-2 verify failed for %s: %s - attempting rollback", device_id, exc)
-        # Cannot rollback easily - log critical and keep old password
-        return {
-            'success': False,
-            'message': f'Password changed on device but verification failed: {exc}. Manual intervention required.',
-        }
+        try:
+            # If server, use the highly reliable chpasswd method
+            if is_server:
+                # We use sudo -S if not root to pass the login password to sudo's stdin
+                if login_user == 'root':
+                    change_cmd = f'echo {shlex.quote(target_username + ":" + new_password)} | chpasswd'
+                else:
+                    # Construct a payload that feeds password to sudo, then user:new_pwd to chpasswd
+                    # Note: Using printf is often more reliable than echo -e
+                    change_cmd = (
+                        f'printf "%s\\n%s:%s\\n" '
+                        f'{shlex.quote(login_pwd)} '
+                        f'{shlex.quote(target_username)} '
+                        f'{shlex.quote(new_password)} '
+                        f'| sudo -S chpasswd'
+                    )
+                
+                logger.info(f"[Rotation] Executing server password change for {target_username}")
+                # For shell commands with pipes, send_command is required
+                driver.send_command(change_cmd)
+            else:
+                driver.send_config(commands)
+            
+            if not is_server:
+                driver.send_command(save_cmd)
+                
+            logger.info(f"[Rotation] Success for {device.get('hostname')} ({role})")
+        finally:
+            if conn_attempt:
+                conn_attempt.__exit__(None, None, None)
+    except Exception as e:
+        logger.error(f"Rotation failed for {device.get('hostname')}: {e}")
+        return {'success': False, 'message': f"Rotation failed: {str(e)}"}
 
-    # Phase 3: Update stored credentials
-    now = datetime.now(timezone.utc)
-    expires = now + timedelta(days=settings.PASSWORD_ROTATION_INTERVAL_DAYS)
-    now_str = now.isoformat()
-    expires_str = expires.isoformat()
-
-    cred_source = (device.get('credential_source') or 'local').lower()
-    vault_path = device.get('vault_path', '')
-
-    if cred_source == 'vault' and vault_available() and vault_path:
-        vault_write(vault_path, {
-            'username': username,
-            'password': new_password,
-            'enable_password': creds.get('enable_password', ''),
-            'priv_username': creds.get('priv_username', ''),
-        })
-        enc_new = ''
-    else:
-        enc_new = encrypt_credential(new_password)
+    # Update DB
+    now_str = datetime.now(timezone.utc).isoformat()
+    expires_str = (datetime.now(timezone.utc) + timedelta(days=settings.PASSWORD_ROTATION_INTERVAL_DAYS)).isoformat()
+    enc_new = encrypt_credential(new_password)
 
     conn2 = get_db_connection()
     try:
-        # Update devices table
-        conn2.execute(
-            'UPDATE devices SET password = ?, password_last_rotated = ?, password_expires_at = ? WHERE id = ?',
-            (enc_new, now_str, expires_str, device_id)
-        )
+        if role == 'normal':
+            conn2.execute(
+                'UPDATE devices SET normal_password = ?, normal_password_last_rotated = ?, normal_password_expires_at = ? WHERE id = ?',
+                (enc_new, now_str, expires_str, device_id)
+            )
+        elif role == 'admin':
+            conn2.execute(
+                'UPDATE devices SET admin_password = ?, admin_password_last_rotated = ?, admin_password_expires_at = ?, username = ?, password = ? WHERE id = ?',
+                (enc_new, now_str, expires_str, target_username, enc_new, device_id)
+            )
+        else:
+            conn2.execute(
+                'UPDATE devices SET enable_password = ?, enable_password_last_rotated = ?, enable_password_expires_at = ? WHERE id = ?',
+                (enc_new, now_str, expires_str, device_id)
+            )
+        
         # ALSO update physical_assets table if linked
         asset_id = device.get('asset_id')
         if asset_id:
-            conn2.execute(
-                'UPDATE physical_assets SET username = ?, password = ? WHERE id = ?',
-                (username, enc_new, asset_id)
-            )
+            if role == 'normal':
+                conn2.execute(
+                    'UPDATE physical_assets SET normal_username = ?, normal_password = ? WHERE id = ?',
+                    (target_username, enc_new, asset_id)
+                )
+            elif role == 'admin':
+                conn2.execute(
+                    'UPDATE physical_assets SET admin_username = ?, admin_password = ?, username = ?, password = ? WHERE id = ?',
+                    (target_username, enc_new, target_username, enc_new, asset_id)
+                )
+            elif role == 'enable':
+                conn2.execute(
+                    'UPDATE physical_assets SET enable_password = ? WHERE id = ?',
+                    (enc_new, asset_id)
+                )
         conn2.commit()
     finally:
         conn2.close()
@@ -324,28 +364,56 @@ def rotate_password(device_id: str) -> dict[str, Any]:
 
 
 def get_rotation_status() -> list[dict[str, Any]]:
-    """获取所有设备的密码轮换状态概览。"""
+    """获取所有设备的密码轮换状态概览（包含 User/Admin 双凭据）。"""
     conn = get_db_connection()
     try:
-        rows = conn.execute(
-            "SELECT id, hostname, ip_address, platform, password_last_rotated, password_expires_at "
-            "FROM devices WHERE status != 'decommissioned'"
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                "SELECT id, hostname, ip_address, platform, auth_model, "
+                "normal_username, normal_password_last_rotated, normal_password_expires_at, "
+                "admin_username, admin_password_last_rotated, admin_password_expires_at, "
+                "enable_password_last_rotated, enable_password_expires_at, "
+                "password_last_rotated, password_expires_at "
+                "FROM devices WHERE status != 'decommissioned'"
+            ).fetchall()
+        except Exception as e:
+            # Fallback to basic columns if PAM columns are missing
+            logger.warning(f"Failed to fetch detailed rotation status (likely missing columns): {e}")
+            rows = conn.execute(
+                "SELECT id, hostname, ip_address, platform, "
+                "password_last_rotated, password_expires_at "
+                "FROM devices WHERE status != 'decommissioned'"
+            ).fetchall()
+
         now = datetime.now(timezone.utc)
         result = []
         for r in rows:
             d = dict(r)
-            if d.get('password_expires_at'):
-                try:
-                    exp = datetime.fromisoformat(d['password_expires_at'].replace('Z', '+00:00'))
-                    d['days_remaining'] = (exp - now).days
-                    d['expired'] = d['days_remaining'] < 0
-                except Exception:
-                    d['days_remaining'] = None
-                    d['expired'] = False
-            else:
-                d['days_remaining'] = None
-                d['expired'] = False
+            # Support legacy password field as 'admin'/'normal' if role-specific ones are empty
+            if not d.get('admin_password_expires_at') and d.get('password_expires_at'):
+                 d['admin_password_last_rotated'] = d['password_last_rotated']
+                 d['admin_password_expires_at'] = d['password_expires_at']
+            if not d.get('normal_password_expires_at') and d.get('password_expires_at'):
+                 d['normal_password_last_rotated'] = d['password_last_rotated']
+                 d['normal_password_expires_at'] = d['password_expires_at']
+            
+            # Add remaining days for each role
+            for prefix in ['normal_password', 'admin_password', 'enable_password']:
+                exp_key = f"{prefix}_expires_at"
+                days_key = f"{prefix}_days_remaining"
+                expired_key = f"{prefix}_expired"
+                
+                if d.get(exp_key):
+                    try:
+                        exp = datetime.fromisoformat(d[exp_key].replace('Z', '+00:00'))
+                        d[days_key] = (exp - now).days
+                        d[expired_key] = d[days_key] < 0
+                    except Exception:
+                        d[days_key] = None
+                        d[expired_key] = False
+                else:
+                    d[days_key] = None
+                    d[expired_key] = False
             result.append(d)
         return result
     finally:

@@ -1,0 +1,12 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CLASSES_ROOT\nexora]
+@="URL:Nexora Protocol"
+"URL Protocol"=""
+
+[HKEY_CLASSES_ROOT\nexora\shell]
+
+[HKEY_CLASSES_ROOT\nexora\shell\open]
+
+[HKEY_CLASSES_ROOT\nexora\shell\open\command]
+@="python \"D:\\tools\\netops\\scripts\\nexora_handler.py\" \"%1\""

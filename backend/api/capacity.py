@@ -17,6 +17,24 @@ def _utc_now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _get_table_columns(conn, table: str) -> set[str]:
+    try:
+        rows = conn.execute(
+            '''
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = ?
+            ''',
+            (table,),
+        ).fetchall()
+        if rows:
+            return {r['column_name'] for r in rows}
+    except Exception:
+        pass
+    cols = conn.execute(f'PRAGMA table_info({table})').fetchall()
+    return {c['name'] for c in cols} if cols else set()
+
+
 # ──────────────────────────────────────────────
 # Capacity Planning endpoints
 # ──────────────────────────────────────────────
@@ -39,20 +57,29 @@ def capacity_overview():
         high_cpu = [dict(d) for d in devices if (d['cpu_usage'] or 0) >= 80]
         high_mem = [dict(d) for d in devices if (d['memory_usage'] or 0) >= 80]
 
-        # Get top utilized interfaces from recent telemetry
+        # Get top utilized interfaces from recent telemetry (schema-compatible)
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        raw_cols = _get_table_columns(conn, 'interface_telemetry_raw')
+        in_col = 'bw_in_pct' if 'bw_in_pct' in raw_cols else 'avg_in_util'
+        out_col = 'bw_out_pct' if 'bw_out_pct' in raw_cols else 'avg_out_util'
+        speed_col = 'speed_mbps' if 'speed_mbps' in raw_cols else 'bandwidth_mbps'
         hot_interfaces = conn.execute('''
             SELECT device_id, interface_name,
-                   AVG(bw_in_pct) as avg_in_util, AVG(bw_out_pct) as avg_out_util,
-                   MAX(bw_in_pct) as peak_in_util, MAX(bw_out_pct) as peak_out_util,
-                   MAX(speed_mbps) as bandwidth_mbps
+                   AVG(COALESCE({in_col}, 0)) as avg_in_util, AVG(COALESCE({out_col}, 0)) as avg_out_util,
+                   MAX(COALESCE({in_col}, 0)) as peak_in_util, MAX(COALESCE({out_col}, 0)) as peak_out_util,
+                   MAX(COALESCE({speed_col}, 0)) as bandwidth_mbps
             FROM interface_telemetry_raw
             WHERE ts >= ?
             GROUP BY device_id, interface_name
-            HAVING AVG(bw_in_pct) > 50 OR AVG(bw_out_pct) > 50
-            ORDER BY GREATEST(MAX(COALESCE(bw_in_pct, 0)), MAX(COALESCE(bw_out_pct, 0))) DESC
+            HAVING AVG(COALESCE({in_col}, 0)) > 50 OR AVG(COALESCE({out_col}, 0)) > 50
+            ORDER BY
+                CASE
+                    WHEN MAX(COALESCE({in_col}, 0)) > MAX(COALESCE({out_col}, 0))
+                    THEN MAX(COALESCE({in_col}, 0))
+                    ELSE MAX(COALESCE({out_col}, 0))
+                END DESC
             LIMIT 20
-        ''', (cutoff,)).fetchall()
+        '''.format(in_col=in_col, out_col=out_col, speed_col=speed_col), (cutoff,)).fetchall()
 
         # Enrich with hostname
         dev_map = {d['id']: d['hostname'] for d in devices}
@@ -98,16 +125,26 @@ def device_capacity_trend(device_id: str, days: int = Query(default=30, ge=1, le
             ORDER BY day
         ''', (device_id, cutoff)).fetchall()
 
-        # From interface telemetry (1m rollup)
+        # From interface telemetry (1m rollup, schema-compatible)
+        rollup_cols = _get_table_columns(conn, 'interface_telemetry_1m')
+        avg_in_col = 'avg_bw_in_pct' if 'avg_bw_in_pct' in rollup_cols else 'avg_in_util'
+        avg_out_col = 'avg_bw_out_pct' if 'avg_bw_out_pct' in rollup_cols else 'avg_out_util'
+        peak_in_col = 'max_bw_in_pct' if 'max_bw_in_pct' in rollup_cols else 'peak_in_util'
+        peak_out_col = 'max_bw_out_pct' if 'max_bw_out_pct' in rollup_cols else 'peak_out_util'
         intf_rows = conn.execute('''
             SELECT DATE(ts_minute) as day, interface_name,
-                   AVG(avg_bw_in_pct) as avg_in, AVG(avg_bw_out_pct) as avg_out,
-                   MAX(max_bw_in_pct) as peak_in, MAX(max_bw_out_pct) as peak_out
+                   AVG(COALESCE({avg_in_col}, 0)) as avg_in, AVG(COALESCE({avg_out_col}, 0)) as avg_out,
+                   MAX(COALESCE({peak_in_col}, 0)) as peak_in, MAX(COALESCE({peak_out_col}, 0)) as peak_out
             FROM interface_telemetry_1m
             WHERE device_id = ? AND ts_minute >= ?
             GROUP BY DATE(ts_minute), interface_name
             ORDER BY day
-        ''', (device_id, cutoff)).fetchall()
+        '''.format(
+            avg_in_col=avg_in_col,
+            avg_out_col=avg_out_col,
+            peak_in_col=peak_in_col,
+            peak_out_col=peak_out_col,
+        ), (device_id, cutoff)).fetchall()
 
         # Aggregate interface data per day (pick the busiest interface)
         day_intf = {}
@@ -196,15 +233,19 @@ def capacity_forecast_all():
 
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
 
+        rollup_cols = _get_table_columns(conn, 'interface_telemetry_1m')
+        avg_in_col = 'avg_bw_in_pct' if 'avg_bw_in_pct' in rollup_cols else 'avg_in_util'
+        peak_in_col = 'max_bw_in_pct' if 'max_bw_in_pct' in rollup_cols else 'peak_in_util'
+
         warnings = []
         for dev in devices:
             # Get recent peak interface utilization
             intf_data = conn.execute('''
-                SELECT AVG(COALESCE(avg_bw_in_pct, 0)) as avg_util,
-                       MAX(COALESCE(max_bw_in_pct, 0)) as peak_util
+                SELECT AVG(COALESCE({avg_in_col}, 0)) as avg_util,
+                       MAX(COALESCE({peak_in_col}, 0)) as peak_util
                 FROM interface_telemetry_1m
                 WHERE device_id = ? AND ts_minute >= ?
-            ''', (dev['id'], cutoff)).fetchone()
+            '''.format(avg_in_col=avg_in_col, peak_in_col=peak_in_col), (dev['id'], cutoff)).fetchone()
 
             cpu = dev['cpu_usage'] or 0
             mem = dev['memory_usage'] or 0

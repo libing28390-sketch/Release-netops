@@ -25,3 +25,5 @@ slowapi
 psutil
 psycopg2-binary
 packaging
+websockets
+wsproto

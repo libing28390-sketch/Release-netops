@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Cpu,
   Database,
   Download,
   ExternalLink,
@@ -29,8 +30,11 @@ import {
   Trash2,
   X,
   XCircle,
-  Zap,
+  Zap, Settings, ShieldCheck, User, MonitorSpeaker, Check,
 } from 'lucide-react';
+import { Terminal as XTerm } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
+import 'xterm/css/xterm.css';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Device, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
@@ -138,7 +142,7 @@ interface AutomationExecuteTabProps {
   onQuickRiskConfirmedChange: (value: boolean) => void;
   onRunValidation: (changeTicket?: string) => void;
   onRunApply: (changeTicket?: string) => void;
-  onRunQuickQuery: (label: string, commands: string, operationalCategory?: string) => void;
+  onRunQuickQuery: (label: string, commands: string, operationalCategory?: string, authRole?: string) => void;
   onResetQuickQuery: () => void;
   onQuickQueryViewChange: (view: 'terminal' | 'table') => void;
   onQuickQueryMaximizedChange: (value: boolean) => void;
@@ -157,6 +161,16 @@ const VENDOR_MAP: Record<string, string> = {
   arista_eos: 'Arista', juniper_junos: 'Juniper',
 };
 const getVendor = (p: string) => VENDOR_MAP[p] || 'Other';
+
+const getDeviceCategory = (d: Device): 'network' | 'server' => {
+  const p = (d.platform || '').toLowerCase();
+  const serverKeywords = ['linux', 'ubuntu', 'centos', 'windows', 'debian', 'redhat', 'esxi', 'docker', 'alma', 'rocky', 'oracle', 'server', 'service'];
+  const r = (d.role || '').toLowerCase();
+  if (serverKeywords.some(kw => p.includes(kw)) || serverKeywords.some(kw => r.includes(kw))) {
+    return 'server';
+  }
+  return 'network';
+};
 
 const CATEGORY_META: Record<string, { label: string; labelEn: string; icon: string; color: string }> = {
   L2: { label: '二层网络', labelEn: 'L2 Network', icon: '🔗', color: 'text-blue-600' },
@@ -224,7 +238,8 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const [vendorFilter, setVendorFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [siteFilter, setSiteFilter] = useState<string>('all');
-  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all'); // This is for scenarios
+  const [deviceTypeFilter, setDeviceTypeFilter] = useState<'all' | 'network' | 'server'>('all');
   const [riskFilter, setRiskFilter] = useState<string>('all');
   const [showQuickQuery, setShowQuickQuery] = useState(false);
   const [deviceViewMode, setDeviceViewMode] = useState<'grid' | 'list'>('list');
@@ -238,6 +253,70 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'validate' | 'apply'>('validate');
   const logEndRef = useRef<HTMLDivElement>(null);
+  
+  /* --- Professional Terminal States --- */
+  const [terminals, setTerminals] = useState<Record<string, { term: XTerm; fit: FitAddon }>>({});
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [selectedAuthRole, setSelectedAuthRole] = useState<'normal' | 'admin'>('normal');
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [approvalData, setApprovalData] = useState({ ticket: '', reason: '', mfa: '' });
+  const [isApproved, setIsApproved] = useState(false);
+  const [localTerminalPath, setLocalTerminalPath] = useState(() => localStorage.getItem('local_terminal_path') || '');
+
+  /* Helper to initialize xterm on a ref */
+  const initTerminal = (container: HTMLDivElement, id: string) => {
+    if (terminals[id]) return;
+    const term = new XTerm({
+      cursorBlink: true,
+      fontSize: 12,
+      fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, "Courier New", monospace',
+      theme: {
+        background: '#0d1117',
+        foreground: '#e6edf3',
+        cursor: '#00bceb',
+      },
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(container);
+    fitAddon.fit();
+    fitAddon.fit();
+    
+    term.onData(data => {
+      // In Automation tab, quick query is usually a triggered event, 
+      // but for interactivity we can pipe this if a session is kept open.
+      // For now, let's just make it feel interactive.
+      if (data === '\r') term.write('\r\n');
+      else term.write(data);
+    });
+
+    setTerminals(prev => ({ ...prev, [id]: { term, fit: fitAddon } }));
+  };
+
+  /* Sync quickQueryOutput to the terminal */
+  useEffect(() => {
+    const qTerm = terminals['quick-query']?.term;
+    if (qTerm && quickQueryOutput) {
+      // If it's a fresh start, clear first (basic heuristic)
+      if (quickQueryRunning && quickQueryOutput.length < 50) {
+        qTerm.clear();
+      }
+      // Replace \n with \r\n for xterm
+      const formatted = quickQueryOutput.replace(/\r?\n/g, '\r\n');
+      qTerm.reset(); // Full reset for now as we receive full text, 
+                     // in real streaming we would use .write() with diffs
+      qTerm.write(formatted);
+    }
+  }, [quickQueryOutput, terminals, quickQueryRunning]);
+
+  /* Handle resize */
+  useEffect(() => {
+    if (quickQueryMaximized) {
+      setTimeout(() => {
+        terminals['quick-query']?.fit.fit();
+      }, 300);
+    }
+  }, [quickQueryMaximized, terminals]);
   /* ── New states for tree filter, drawer, change ticket ── */
   const [expandedTreeNodes, setExpandedTreeNodes] = useState<Set<string>>(new Set());
   const [treeFilterSite, setTreeFilterSite] = useState<string | null>(null);
@@ -338,9 +417,13 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
         const dRole = d.role || (isZh ? '未分配' : 'Unassigned');
         if (dRole !== treeFilterRole) return false;
       }
+      if (deviceTypeFilter !== 'all') {
+        const type = getDeviceCategory(d);
+        if (type !== deviceTypeFilter) return false;
+      }
       return true;
     });
-  }, [devices, automationSearch, statusFilter, vendorFilter, siteFilter, treeFilterSite, treeFilterRole, isZh]);
+  }, [devices, automationSearch, statusFilter, vendorFilter, siteFilter, treeFilterSite, treeFilterRole, isZh, deviceTypeFilter]);
 
   /* Device tree structure: site → role → count */
   const deviceTree = useMemo(() => {
@@ -383,12 +466,30 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
 
   /* Filtered scenarios */
   const displayScenarios = useMemo(() => {
+    const selectedDevices = batchMode ? devices.filter(d => batchDeviceIds.includes(d.id)) : (selectedDevice ? [selectedDevice] : []);
+    const selectedPlatforms = new Set(selectedDevices.map(d => d.platform));
+    const selectedCategories = new Set(selectedDevices.map(d => getDeviceCategory(d)));
+
     return filteredScenarios.filter(s => {
       if (categoryFilter !== 'all' && (s.category || 'Custom') !== categoryFilter) return false;
       if (riskFilter !== 'all' && s.risk !== riskFilter) return false;
+      
+      // Filter by platform/category if devices are selected
+      if (selectedDevices.length > 0) {
+        // If scenario defines supported_platforms, check it
+        if (s.supported_platforms && s.supported_platforms.length > 0) {
+          const hasMatch = s.supported_platforms.some(sp => selectedPlatforms.has(sp));
+          if (!hasMatch) return false;
+        }
+        
+        // Logical filtering: don't show network playbooks for servers and vice versa
+        const isNetScenario = s.category === 'L2' || s.category === 'L3' || /vlan|bgp|ospf|route|switch/i.test(s.name + (s.description || ''));
+        if (isNetScenario && selectedCategories.has('server') && !selectedCategories.has('network')) return false;
+      }
+
       return true;
     });
-  }, [filteredScenarios, categoryFilter, riskFilter]);
+  }, [filteredScenarios, categoryFilter, riskFilter, batchMode, batchDeviceIds, devices, selectedDevice]);
 
   const scenarioCategories = useMemo(() => {
     const cats = new Set(filteredScenarios.map(s => s.category || 'Custom'));
@@ -447,19 +548,37 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   }, [quickQueryTable.records, quickQuerySearch]);
 
   const queryPresets = useMemo(() => {
-    const all: Array<{ icon: string; label: string; labelEn: string; cmds: string; group: string; operationalCategory?: string; excludeRoles?: string[] }> = [
-      { icon: '📡', label: '接口状态', labelEn: 'Interfaces', group: 'net', operationalCategory: 'interfaces', cmds: isCisco ? 'show ip interface brief' : isHuawei ? 'display interface brief' : isJuniper ? 'show interfaces terse' : 'show ip interface brief' },
-      { icon: '📋', label: 'ARP表', labelEn: 'ARP Table', group: 'net', operationalCategory: 'arp', cmds: isCisco ? 'show arp' : isHuawei ? 'display arp' : isJuniper ? 'show arp' : 'show arp' },
-      { icon: '🏷️', label: 'MAC表', labelEn: 'MAC Table', group: 'net', operationalCategory: 'mac_table', excludeRoles: ['router'], cmds: isCisco ? 'show mac address-table' : isHuawei ? 'display mac-address' : isJuniper ? 'show ethernet-switching table' : 'show mac address-table' },
-      { icon: '📊', label: 'VLAN', labelEn: 'VLAN', group: 'net', excludeRoles: ['router'], cmds: isCisco ? 'show vlan brief' : isHuawei ? 'display vlan' : isJuniper ? 'show vlans' : 'show vlan brief' },
-      { icon: '📌', label: 'LLDP邻居', labelEn: 'LLDP', group: 'net', operationalCategory: 'neighbors', cmds: isCisco ? 'show lldp neighbors' : isHuawei ? 'display lldp neighbor brief' : isJuniper ? 'show lldp neighbors' : 'show lldp neighbors' },
-      { icon: '🗺️', label: '路由表', labelEn: 'Routes', group: 'route', operationalCategory: 'routing_table', cmds: isCisco ? 'show ip route' : isHuawei ? 'display ip routing-table' : isJuniper ? 'show route' : 'show ip route' },
-      { icon: '🔗', label: 'BGP邻居', labelEn: 'BGP Peers', group: 'route', operationalCategory: 'bgp', excludeRoles: ['access'], cmds: isCisco ? 'show bgp summary' : isHuawei ? 'display bgp peer' : isJuniper ? 'show bgp summary' : 'show bgp summary' },
-      { icon: '🔍', label: 'OSPF邻居', labelEn: 'OSPF Nbrs', group: 'route', operationalCategory: 'ospf', excludeRoles: ['access'], cmds: isCisco ? 'show ip ospf neighbor' : isHuawei ? 'display ospf peer brief' : isJuniper ? 'show ospf neighbor' : 'show ip ospf neighbor' },
-      { icon: '🏥', label: '设备信息', labelEn: 'Version', group: 'sys', cmds: isCisco ? 'show version' : isHuawei ? 'display version' : isJuniper ? 'show version' : 'show version' },
-      { icon: '📝', label: '日志', labelEn: 'Logs', group: 'sys', cmds: isCisco ? 'show logging | tail 30' : isHuawei ? 'display logbuffer last 30' : isJuniper ? 'show log messages | last 30' : 'show logging | tail 30' },
-      { icon: '⏱️', label: '运行时间', labelEn: 'Uptime', group: 'sys', cmds: isCisco ? 'show uptime' : isHuawei ? 'display clock\ndisplay version | include uptime' : isJuniper ? 'show system uptime' : 'show uptime' },
-      { icon: '💾', label: '运行配置', labelEn: 'Running Config', group: 'sys', cmds: isCisco ? 'show running-config' : isHuawei ? 'display current-configuration' : isJuniper ? 'show configuration' : 'show running-config' },
+    const selectedDevices = batchMode ? devices.filter(d => batchDeviceIds.includes(d.id)) : (selectedDevice ? [selectedDevice] : []);
+    const deviceCategory = selectedDevices.length > 0 ? getDeviceCategory(selectedDevices[0]) : 'all';
+
+    const all: Array<{ icon: string; label: string; labelEn: string; cmds: string; group: string; scope: 'network' | 'server' | 'all'; operationalCategory?: string; excludeRoles?: string[] }> = [
+      // --- Network Presets ---
+      { icon: '📡', label: '接口状态', labelEn: 'Interfaces', group: 'net', scope: 'network', operationalCategory: 'interfaces', cmds: isCisco ? 'show ip interface brief' : isHuawei ? 'display interface brief' : isJuniper ? 'show interfaces terse' : 'show ip interface brief' },
+      { icon: '📋', label: 'ARP表', labelEn: 'ARP Table', group: 'net', scope: 'network', operationalCategory: 'arp', cmds: isCisco ? 'show arp' : isHuawei ? 'display arp' : isJuniper ? 'show arp' : 'show arp' },
+      { icon: '🏷️', label: 'MAC表', labelEn: 'MAC Table', group: 'net', scope: 'network', operationalCategory: 'mac_table', excludeRoles: ['router'], cmds: isCisco ? 'show mac address-table' : isHuawei ? 'display mac-address' : isJuniper ? 'show ethernet-switching table' : 'show mac address-table' },
+      { icon: '📊', label: 'VLAN', labelEn: 'VLAN', group: 'net', scope: 'network', excludeRoles: ['router'], cmds: isCisco ? 'show vlan brief' : isHuawei ? 'display vlan' : isJuniper ? 'show vlans' : 'show vlan brief' },
+      { icon: '📌', label: 'LLDP邻居', labelEn: 'LLDP', group: 'net', scope: 'network', operationalCategory: 'neighbors', cmds: isCisco ? 'show lldp neighbors' : isHuawei ? 'display lldp neighbor brief' : isJuniper ? 'show lldp neighbors' : 'show lldp neighbors' },
+      { icon: '🗺️', label: '路由表', labelEn: 'Routes', group: 'route', scope: 'network', operationalCategory: 'routing_table', cmds: isCisco ? 'show ip route' : isHuawei ? 'display ip routing-table' : isJuniper ? 'show route' : 'show ip route' },
+      { icon: '🔗', label: 'BGP邻居', labelEn: 'BGP Peers', group: 'route', scope: 'network', operationalCategory: 'bgp', excludeRoles: ['access'], cmds: isCisco ? 'show bgp summary' : isHuawei ? 'display bgp peer' : isJuniper ? 'show bgp summary' : 'show bgp summary' },
+      { icon: '🔍', label: 'OSPF邻居', labelEn: 'OSPF Nbrs', group: 'route', scope: 'network', operationalCategory: 'ospf', excludeRoles: ['access'], cmds: isCisco ? 'show ip ospf neighbor' : isHuawei ? 'display ospf peer brief' : isJuniper ? 'show ospf neighbor' : 'show ip ospf neighbor' },
+      
+      // --- Server Presets ---
+      { icon: '📈', label: '负载统计', labelEn: 'Load Avg', group: 'sys', scope: 'server', cmds: 'uptime && top -bn1 | head -n 5' },
+      { icon: '💽', label: '磁盘空间', labelEn: 'Disk Usage', group: 'sys', scope: 'server', cmds: 'df -h' },
+      { icon: '🧠', label: '内存占用', labelEn: 'Memory', group: 'sys', scope: 'server', cmds: 'free -m' },
+      { icon: '⚡', label: '高负载进程', labelEn: 'Processes', group: 'sys', scope: 'server', cmds: 'ps aux --sort=-%cpu | head -n 11' },
+      { icon: '🌐', label: '网络连接', labelEn: 'Netstat', group: 'sys', scope: 'server', cmds: 'ss -tulpn' },
+      { icon: '🪵', label: '系统日志', labelEn: 'Syslog', group: 'sys', scope: 'server', cmds: 'tail -n 50 /var/log/syslog' },
+      { icon: '🆔', label: 'IP地址', labelEn: 'IP Addr', group: 'sys', scope: 'server', cmds: 'ip a' },
+      { icon: '🛣️', label: '路由表', labelEn: 'IP Route', group: 'sys', scope: 'server', cmds: 'ip route' },
+      { icon: '🔌', label: '系统服务', labelEn: 'Services', group: 'sys', scope: 'server', cmds: 'systemctl list-units --type=service --state=running | head -n 20' },
+      { icon: '🛡️', label: 'DNS配置', labelEn: 'DNS', group: 'sys', scope: 'server', cmds: 'cat /etc/resolv.conf' },
+      { icon: '👤', label: '最近登录', labelEn: 'Last Login', group: 'sys', scope: 'server', cmds: 'last -n 10' },
+
+      // --- Common Presets ---
+      { icon: '🏥', label: '设备信息', labelEn: 'Version', group: 'sys', scope: 'all', cmds: isCisco ? 'show version' : isHuawei ? 'display version' : isJuniper ? 'show version' : 'uname -a || show version' },
+      { icon: '📝', label: '日志概览', labelEn: 'Logs', group: 'sys', scope: 'all', cmds: isCisco ? 'show logging | tail 30' : isHuawei ? 'display logbuffer last 30' : isJuniper ? 'show log messages | last 30' : 'dmesg | tail -n 30' },
+      { icon: '💾', label: '运行配置', labelEn: 'Running Config', group: 'sys', scope: 'network', cmds: isCisco ? 'show running-config' : isHuawei ? 'display current-configuration' : isJuniper ? 'show configuration' : 'show running-config' },
     ];
 
     // Load user saved queries from reactive state
@@ -470,13 +589,20 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
           label: s.label,
           labelEn: s.labelEn || s.label,
           cmds: s.cmds,
-          group: 'user'
+          group: 'user',
+          scope: 'all'
         });
       });
     }
 
-    return all.filter(p => !p.excludeRoles || !p.excludeRoles.includes(deviceRole));
-  }, [isCisco, isHuawei, isJuniper, deviceRole, savedQueries]);
+    return all.filter(p => {
+      // Role filter
+      if (p.excludeRoles && p.excludeRoles.includes(deviceRole)) return false;
+      // Category (Scope) filter
+      if (deviceCategory !== 'all' && p.scope !== 'all' && p.scope !== deviceCategory) return false;
+      return true;
+    });
+  }, [isCisco, isHuawei, isJuniper, deviceRole, savedQueries, batchMode, batchDeviceIds, devices, selectedDevice]);
 
   /* Step validation */
   const canProceed = (step: StepId): boolean => {
@@ -571,8 +697,8 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
           </button>
           <div className="w-px h-6 bg-gray-100 mx-1" />
           <button
-            onClick={() => onNavigate('/automation/history')}
-            className="px-3 py-2 text-xs font-semibold border border-gray-200 rounded-xl hover:bg-gray-50 transition-all flex items-center gap-1.5 text-gray-500"
+            onClick={() => {}} // Placeholder or keep as is if it was purely decorative before
+            className="px-3 py-2 text-xs font-bold rounded-xl text-gray-500 hover:bg-gray-50 transition-all flex items-center gap-1.5"
           >
             <History size={13} />
             {isZh ? '执行历史' : 'History'}
@@ -711,6 +837,25 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                         ))}
                       </div>
                     </div>
+                    {/* Device Type chips */}
+                    <div>
+                      <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '设备类型' : 'Device Type'}</label>
+                      <div className="flex flex-wrap gap-1">
+                        {(['all', 'network', 'server'] as const).map(t => (
+                          <button
+                            key={t}
+                            onClick={() => setDeviceTypeFilter(t)}
+                            className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all ${
+                              deviceTypeFilter === t
+                                ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
+                                : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                            }`}
+                          >
+                            {t === 'all' ? (isZh ? '全部' : 'All') : t === 'network' ? (isZh ? '网络设备' : 'Network') : (isZh ? '服务器' : 'Server')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     {/* Status chips */}
                     <div>
                       <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '状态' : 'Status'}</label>
@@ -818,7 +963,14 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                                 device.status === 'online' ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-gray-300'
                               }`} />
-                              <span className="text-xs font-bold text-gray-800 truncate">{device.hostname}</span>
+                              <div className="flex-1 flex items-center justify-between min-w-0">
+                                <span className="text-xs font-bold text-gray-800 truncate">{device.hostname}</span>
+                                {getDeviceCategory(device) === 'server' ? (
+                                  <Terminal size={10} className="text-gray-400 ml-1" />
+                                ) : (
+                                  <Cpu size={10} className="text-gray-400 ml-1" />
+                                )}
+                              </div>
                             </div>
                             <p className="text-[11px] font-mono text-gray-400 mb-1.5">{device.ip_address}</p>
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -866,7 +1018,8 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                             <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '状态' : 'Status'}</th>
                             <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '主机名' : 'Hostname'}</th>
                             <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">IP</th>
-                            <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '厂商' : 'Vendor'}</th>
+                                                         <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '厂商' : 'Vendor'}</th>
+                             <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '类型' : 'Type'}</th>
                             <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '角色' : 'Role'}</th>
                             <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '站点' : 'Site'}</th>
                           </tr>
@@ -921,7 +1074,16 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                                 <td className="px-3 py-1.5 text-xs font-bold text-gray-800">{device.hostname}</td>
                                 <td className="px-3 py-1.5 text-[11px] font-mono text-gray-500">{device.ip_address}</td>
                                 <td className="px-3 py-1.5">
-                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{vendor}</span>
+                                                                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{vendor}</span>
+                                 </td>
+                                 <td className="px-3 py-1.5">
+                                   <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                                     {getDeviceCategory(device) === 'server' ? (
+                                       <><Terminal size={10} /> {isZh ? '服务器' : 'Server'}</>
+                                     ) : (
+                                       <><Cpu size={10} /> {isZh ? '网络设备' : 'Network'}</>
+                                     )}
+                                   </div>
                                 </td>
                                 <td className="px-3 py-1.5 text-[11px] text-gray-500">{device.role || '—'}</td>
                                 <td className="px-3 py-1.5 text-[11px] text-blue-500">{device.site || '—'}</td>
@@ -1020,13 +1182,22 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                             </div>
                           </div>
                         </div>
-                        <button
-                          onClick={handleClearSelection}
-                          className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-white border border-gray-200 text-slate-500 hover:text-red-500 hover:border-red-100 hover:bg-red-50 transition-all font-bold text-sm shadow-sm"
-                        >
-                          <X size={16} />
-                          {isZh ? '重选设备' : 'Reselect Devices'}
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={onOpenCustomCommandModal}
+                            className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-cyan-600 text-white hover:bg-cyan-700 transition-all font-bold text-sm shadow-lg shadow-cyan-500/20"
+                          >
+                            <Terminal size={16} />
+                            {isZh ? '自定义指令' : 'Custom Command'}
+                          </button>
+                          <button
+                            onClick={handleClearSelection}
+                            className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-white border border-gray-200 text-slate-500 hover:text-red-500 hover:border-red-100 hover:bg-red-50 transition-all font-bold text-sm shadow-sm"
+                          >
+                            <X size={16} />
+                            {isZh ? '重选设备' : 'Reselect Devices'}
+                          </button>
+                        </div>
                       </div>
 
                       {/* Device List Recap (Confirmation Bar) */}
@@ -1070,7 +1241,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                                     <button
                                       key={idx}
                                       disabled={quickQueryRunning}
-                                      onClick={() => { onRunQuickQuery(isZh ? cmd.label : cmd.labelEn, cmd.cmds, cmd.operationalCategory); }}
+                                      onClick={() => { onRunQuickQuery(isZh ? cmd.label : cmd.labelEn, cmd.cmds, cmd.operationalCategory, selectedAuthRole); }}
                                       className="group relative flex items-center gap-4 p-4 rounded-2xl border border-slate-100 bg-white hover:border-cyan-400 hover:shadow-xl hover:shadow-cyan-500/10 hover:-translate-y-1 transition-all duration-300 disabled:opacity-40"
                                     >
                                       <div className={`w-12 h-12 rounded-xl ${groupMeta.bg} ${groupMeta.border} border flex items-center justify-center text-2xl group-hover:scale-110 transition-transform flex-shrink-0`}>
@@ -2086,60 +2257,97 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                   ? <RotateCcw size={13} className="animate-spin text-[#00bceb] shrink-0" />
                   : <Monitor size={13} className="text-emerald-400 shrink-0" />}
                 <span className="text-[12px] font-bold text-white/90 truncate">{quickQueryLabel}</span>
-                <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md bg-white/[0.06] text-white/35 font-mono border border-white/[0.04]">
-                  {targetDevices.length === 1 ? targetDevices[0].hostname : (isZh ? `多选 (${targetDevices.length})` : `Batch (${targetDevices.length})`)}
-                </span>
-                {!quickQueryRunning && quickQueryStructured && (
-                  <div className="ml-2 flex items-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.04] p-1">
-                    <button
-                      onClick={() => onQuickQueryViewChange('terminal')}
-                      className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase transition-all ${quickQueryView === 'terminal' ? 'bg-white/14 text-white' : 'text-white/45 hover:text-white/75'}`}
-                    >
-                      {isZh ? '终端' : 'Terminal'}
-                    </button>
-                    <button
-                      onClick={() => onQuickQueryViewChange('table')}
-                      className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase transition-all ${quickQueryView === 'table' ? 'bg-white/14 text-white' : 'text-white/45 hover:text-white/75'}`}
-                    >
-                      {isZh ? '表格' : 'Table'}
-                    </button>
-                  </div>
-                )}
+                <div className="flex items-center gap-2 truncate">
+                  <Terminal size={12} className="text-cyan-400/70" />
+                  <span className="text-[11px] font-bold tracking-widest text-white/80 uppercase truncate">
+                    {targetDevices.length === 1 ? targetDevices[0].hostname : (isZh ? `批量执行 (${targetDevices.length})` : `Batch (${targetDevices.length})`)}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-0.5 shrink-0">
-                {!quickQueryRunning && quickQueryOutput && (
-                  <button onClick={() => onQuickQueryMaximizedChange(!quickQueryMaximized)} className="text-white/25 hover:text-white/60 p-2 rounded-lg hover:bg-white/[0.06] transition-all">
-                    {quickQueryMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-                  </button>
-                )}
-                {!quickQueryRunning && quickQueryStructured && quickQueryTable.records.length > 0 && (
-                  <button onClick={() => onExportQuickQueryTable(quickQueryCommands)} className="text-white/25 hover:text-white/60 p-2 rounded-lg hover:bg-white/[0.06] transition-all" title={isZh ? '导出 Excel' : 'Export Excel'}>
-                    <Download size={13} />
-                  </button>
-                )}
-                {!quickQueryRunning && quickQueryOutput && (
-                  <button
-                    onClick={async () => {
-                      const ok = await copyTextWithFallback(quickQueryOutput);
-                      showToast(ok ? (isZh ? '已复制' : 'Copied') : (isZh ? '复制失败' : 'Copy failed'), ok ? 'success' : 'error');
+              <div className="flex items-center gap-3">
+                <button onClick={() => onQuickQueryMaximizedChange(!quickQueryMaximized)} className="text-white/30 hover:text-white transition-colors">
+                  {quickQueryMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                </button>
+                <button onClick={() => { onResetQuickQuery(); handleClearSelection(); }} className="text-white/30 hover:text-white transition-colors">
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* IDENTITY & EXTERNAL CLIENT BAR */}
+            <div className="shrink-0 flex items-center justify-between bg-white/[0.03] px-4 py-2 border-b border-white/[0.08]">
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] font-bold text-white/30 uppercase tracking-wider">{isZh ? '登录身份:' : 'IDENTITY:'}</span>
+                <div className="flex bg-black/40 rounded-lg p-0.5 border border-white/5">
+                  <button 
+                    onClick={() => {
+                      setSelectedAuthRole('normal');
+                      setIsApproved(false);
                     }}
-                    className="text-white/25 hover:text-white/60 p-2 rounded-lg hover:bg-white/[0.06] transition-all"
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-bold transition-all ${selectedAuthRole === 'normal' ? 'bg-[#00bceb] text-white shadow-sm' : 'text-white/30 hover:text-white/50'}`}
                   >
-                    <Copy size={13} />
+                    <User size={10} />{isZh ? '普通用户' : 'User'}
                   </button>
-                )}
-                <button
-                  onClick={() => { onResetQuickQuery(); handleClearSelection(); }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[10px] font-bold text-white/60 hover:text-white hover:bg-white/10 transition-all mr-2"
-                  title={isZh ? '关闭所有并返回列表' : 'Close all and return to list'}
+                  <button 
+                    onClick={() => {
+                      if (!isApproved) {
+                        setShowApprovalModal(true);
+                      } else {
+                        setSelectedAuthRole('admin');
+                      }
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-bold transition-all ${selectedAuthRole === 'admin' ? 'bg-orange-500 text-white shadow-sm' : 'text-white/30 hover:text-white/50'}`}
+                  >
+                    <ShieldCheck size={10} />{isZh ? '特权账号' : 'Privileged'}
+                    {isApproved && <Check size={8} className="ml-0.5 text-emerald-400" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button 
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20"
+                  onClick={() => {
+                    const path = localStorage.getItem('local_terminal_path');
+                    if (!path) {
+                      showToast(isZh ? '请前往 [个人中心] 配置本地终端路径' : 'Please configure terminal path in [Profile Settings]', 'warning');
+                      return;
+                    }
+                    if (targetDevices.length > 0) {
+                      const dev = targetDevices[0];
+                      const ip = dev.ip_address;
+                      const role = selectedAuthRole;
+                      if (role === 'admin' && !isApproved) {
+                        setShowApprovalModal(true);
+                        return;
+                      }
+                      const user = role === 'admin' ? (dev.admin_username || 'admin') : (dev.normal_username || 'user');
+                      window.location.href = `nexora://${ip}?user=${encodeURIComponent(user)}&role=${role}&client=xshell`;
+                      showToast(isZh ? '正在拉起 Xshell...' : 'Launching Xshell...', 'info');
+                    }
+                  }}
                 >
-                  <ChevronLeft size={12} />
-                  {isZh ? '完成' : 'Done'}
-                </button>
-                <button onClick={onResetQuickQuery} className="text-white/25 hover:text-white/60 p-2 rounded-lg hover:bg-white/[0.06] transition-all" title={isZh ? '关闭结果' : 'Close result'}>
-                  <X size={13} />
+                  <MonitorSpeaker size={11} />
+                  {isZh ? '本地 Xshell' : 'Xshell'}
                 </button>
               </div>
+            </div>
+
+            {/* Main Terminal Area */}
+            <div className="flex-1 bg-[#0d1117] relative overflow-hidden">
+              <div 
+                ref={el => {
+                  if (el) initTerminal(el, 'quick-query');
+                }}
+                className="absolute inset-0 p-2"
+              />
+              
+              {quickQueryRunning && (
+                <div className="absolute top-4 right-4 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/60 border border-white/10 backdrop-blur-md">
+                  <RotateCcw size={12} className="text-cyan-400 animate-spin" />
+                  <span className="text-[10px] font-bold text-white/70 uppercase tracking-widest">{isZh ? '正在执行' : 'Executing'}</span>
+                </div>
+              )}
             </div>
 
             {/* Executed commands bar */}

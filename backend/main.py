@@ -1,13 +1,16 @@
 import sys
-import asyncio
+import os
 
+# --- CRITICAL WINDOWS FIX ---
+# This MUST happen before ANY other imports (especially fastapi/uvicorn)
 if sys.platform == 'win32':
-    # This MUST be set before any other imports that might initialize a loop
+    import asyncio
     try:
+        # Force ProactorEventLoop to bypass the 64 file descriptor limit in select()
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     except Exception:
         pass
-
+# ----------------------------
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +25,7 @@ from api.templates import router as templates_router
 from api.automation import router as automation_router
 from api.users import router as users_router
 from api.topology import router as topology_router, discover_lldp_neighbors
-from api.configs import router as configs_router, run_scheduled_backup, _get_schedule_from_db
+from api.configs import router as configs_router, run_scheduled_backup, _get_schedule_from_db, reschedule_backup
 from api.playbooks import router as playbooks_router
 from services import notification_service
 from services import alert_maintenance_service
@@ -38,6 +41,7 @@ from api.config_drift import router as config_drift_router
 from api.capacity import router as capacity_router
 from api.ipam import router as ipam_router
 from api.assets import router as assets_router
+from api.pam import router as pam_router
 from api.change_orders import router as change_orders_router
 from api.setup import router as setup_router
 from api.ip_locator import router as ip_locator_router
@@ -47,6 +51,7 @@ from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
 from license_auth.api import router as license_router
 from api.system import router as system_router
+from api.access import router as access_router
 from license_auth.middleware import LicenseMiddleware
 from license_auth.verifier import get_license_verifier
 from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
@@ -72,9 +77,22 @@ from slowapi.errors import RateLimitExceeded
 
 # 初始化日志配置
 setup_logging()
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) 
 
 # ── Startup ──
+
+async def _bg_init():
+    """
+    Background initialization to avoid blocking startup.
+    """
+    try:
+        # Sync dynamic scheduled jobs from database
+        sync_scheduler_jobs(scheduler)
+        # Start status monitor (infinite loop)
+        asyncio.create_task(status_monitor())
+        logger.info("[Background] Core background tasks initialized.")
+    except Exception as e:
+        logger.error(f"[Background] Initialization failed: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -83,6 +101,19 @@ async def lifespan(app: FastAPI):
     
     # Initialize Database once
     init_db()
+    
+    # --- TEMPORARY DATA FIX (v2) ---
+    try:
+        from database import get_db_connection
+        conn_fix = get_db_connection()
+        # Fix platform if it was misdetected or manually set incorrectly
+        conn_fix.execute("UPDATE physical_assets SET platform = 'linux' WHERE hostname = 'ubuntu-server2' AND platform = 'huawei_vrp'")
+        conn_fix.execute("UPDATE devices SET platform = 'linux' WHERE hostname = 'ubuntu-server2' AND platform = 'huawei_vrp'")
+        conn_fix.commit()
+        conn_fix.close()
+        logger.info("[Startup Fix] Corrected platform for ubuntu-server2 to 'linux'")
+    except Exception as e:
+        logger.error(f"[Startup Fix] Data repair failed: {e}")
 
     # License validation at startup
     _lic = get_license_verifier()
@@ -92,94 +123,30 @@ async def lifespan(app: FastAPI):
         logger.info(f"[License] [OK] Valid - {_lic_status.company} ({_lic_status.license_type}), "
                      f"expires in {_lic_status.days_remaining}d, "
                      f"devices: {_lic_status.device_limit}")
-        if _lic_status.warnings:
-            for w in _lic_status.warnings:
-                logger.warning(f"[License] ⚠ {w}")
-    else:
-        logger.error(f"[License] [X] INVALID - {_lic_status.error}")
-
-    configure_ntc_templates()
-    seed_data()
-    # Seed built-in tag definitions
-    from services.tag_service import seed_builtin_tags
-    _tag_conn = get_db_connection()
-    try:
-        seed_builtin_tags(_tag_conn)
-    finally:
-        _tag_conn.close()
-    # Verify loop type on Windows
-    if sys.platform == 'win32':
-        loop = asyncio.get_running_loop()
-        logger.info(f"Active Event Loop: {type(loop).__name__}")
-        if "Proactor" not in type(loop).__name__:
-            logger.warning("NOT using ProactorEventLoop! Concurrency will be limited to 64 FDs.")
-
-    asyncio.create_task(status_monitor())
-    record_host_resource_snapshot(sync_alerts=True)
+    
+    # Start core components immediately
     schedule_cfg = _get_schedule_from_db()
     scheduler.start()
-    scheduler.add_job(
-        record_host_resource_snapshot,
-        'interval',
-        minutes=1,
-        id='host_resource_sampler',
-        name='Host Resource Sampler',
-        replace_existing=True,
-        max_instances=1,
-    )
-    record_device_health_snapshot()
-    scheduler.add_job(
-        record_device_health_snapshot,
-        'interval',
-        minutes=1,
-        id='device_health_sampler',
-        name='Device Health Sampler',
-        replace_existing=True,
-        max_instances=1,
-    )
+    
+    # Register periodic jobs
+    scheduler.add_job(record_host_resource_snapshot, 'interval', minutes=1, id='host_resource_sampler', replace_existing=True)
+    scheduler.add_job(record_device_health_snapshot, 'interval', minutes=1, id='device_health_sampler', replace_existing=True)
+    
     reschedule_backup(schedule_cfg)
-    # Schedule daily DB maintenance: clean expired sessions, VACUUM
-    scheduler.add_job(
-        _daily_db_maintenance,
-        CronTrigger(hour=3, minute=30),
-        id='daily_db_maintenance',
-        name='Daily DB Maintenance',
-        replace_existing=True,
-    )
-    # Schedule periodic ARP sweep for IP Locator cache
+    
     from services.ip_locator_service import run_arp_sweep, ARP_SWEEP_INTERVAL_SECONDS
-    scheduler.add_job(
-        run_arp_sweep,
-        'interval',
-        seconds=ARP_SWEEP_INTERVAL_SECONDS,
-        id='arp_cache_sweep',
-        name='ARP Cache Sweep',
-        replace_existing=True,
-        max_instances=1,
-    )
-    # Schedule inspection runner (checks cron plans every 30 minutes)
+    scheduler.add_job(run_arp_sweep, 'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='arp_cache_sweep', replace_existing=True)
+    
     from services.inspection_service import run_scheduled_inspections
-    scheduler.add_job(
-        run_scheduled_inspections,
-        CronTrigger(minute='0,30'),
-        id='inspection_scheduler',
-        name='Inspection Scheduler',
-        replace_existing=True,
-        max_instances=1,
-    )
-    # Schedule password rotation sweep (daily at 02:00)
+    scheduler.add_job(run_scheduled_inspections, CronTrigger(minute='0,30'), id='inspection_scheduler', replace_existing=True)
+    
     from services.password_rotation_service import run_rotation_sweep
-    scheduler.add_job(
-        run_rotation_sweep,
-        CronTrigger(hour=2, minute=0),
-        id='password_rotation_sweep',
-        name='Password Rotation Sweep',
-        replace_existing=True,
-        max_instances=1,
-    )
-    # Sync dynamic scheduled jobs from database
-    sync_scheduler_jobs(scheduler)
-    logger.info("[Scheduler] APScheduler started")
+    scheduler.add_job(run_rotation_sweep, CronTrigger(hour=2, minute=0), id='password_rotation_sweep', replace_existing=True)
+
+    # Launch background tasks
+    asyncio.create_task(_bg_init())
+    logger.info("[Scheduler] APScheduler started (background init pending)")
+
     yield
     # ── shutdown ──
     scheduler.shutdown(wait=False)
@@ -194,8 +161,17 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-from fastapi.exceptions import RequestValidationError
+from fastapi import Request
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global unhandled exception on {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal Server Error: {str(exc)}", "type": type(exc).__name__},
+    )
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
@@ -204,15 +180,10 @@ async def validation_exception_handler(request, exc):
         content={"detail": exc.errors(), "body": exc.body},
     )
 
-# ── Rate Limiting ────────────────────────────────────────────────────
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
 # CORS - restrict to known origins in production; permissive in dev
 _cors_origins = ["*"] if os.environ.get("NODE_ENV") == "development" else [
-    f"http://localhost:{os.environ.get('PORT', '8003')}",
-    f"http://127.0.0.1:{os.environ.get('PORT', '8003')}",
+    f"http://localhost:{os.environ.get('PORT', '9003')}",
+    f"http://127.0.0.1:{os.environ.get('PORT', '9003')}",
 ]
 # In production, set CORS_ORIGINS env var to a comma-separated list of allowed origins
 _env_origins = os.environ.get("CORS_ORIGINS", "").strip()
@@ -247,6 +218,7 @@ app.include_router(config_drift_router, prefix="/api")
 app.include_router(capacity_router, prefix="/api")
 app.include_router(ipam_router, prefix="/api")
 app.include_router(assets_router, prefix="/api")
+app.include_router(pam_router, prefix="/api")
 app.include_router(change_orders_router, prefix="/api")
 app.include_router(setup_router, prefix="/api")
 app.include_router(ip_locator_router, prefix="/api")
@@ -256,8 +228,9 @@ app.include_router(scheduled_jobs_router, prefix="/api")
 app.include_router(racks_router, prefix="/api")
 app.include_router(license_router, prefix="/api")
 app.include_router(system_router, prefix="/api")
+app.include_router(access_router, prefix="/api")
 
-# ── License Middleware (after CORS, before APScheduler) ──────────────
+# ── License Middleware (after CORS) ──────────────
 app.add_middleware(LicenseMiddleware)
 
 # ── APScheduler ──────────────────────────────────────────────────────
@@ -285,34 +258,6 @@ def _daily_db_maintenance():
             conn2.close()
     logger.info("[Maintenance] Daily DB maintenance completed")
 
-def reschedule_backup(cfg: dict):
-    """Called by configs.py when the user changes the schedule settings."""
-    if scheduler.get_job('daily_backup'):
-        scheduler.remove_job('daily_backup')
-    if cfg.get('enabled', True):
-        cron_expr = cfg.get('cron', '')
-        if not cron_expr:
-            # 兼容旧格式
-            h = cfg.get('hour', 2)
-            m = cfg.get('minute', 0)
-            cron_expr = f'{m} {h} * * *'
-        parts = cron_expr.split()
-        if len(parts) >= 5:
-            trigger = CronTrigger(
-                minute=parts[0], hour=parts[1],
-                day=parts[2], month=parts[3], day_of_week=parts[4],
-            )
-        else:
-            trigger = CronTrigger(hour=cfg.get('hour', 2), minute=cfg.get('minute', 0))
-        scheduler.add_job(
-            run_scheduled_backup,
-            trigger,
-            id='daily_backup',
-            name='Scheduled Config Backup',
-            replace_existing=True,
-        )
-    else:
-        logger.info("[Scheduler] Scheduled backup disabled")
 
 # Serve static files from dist directory if it exists
 if os.path.exists("dist"):
@@ -484,8 +429,8 @@ async def status_monitor():
     lldp_counter = 0
     monitor_cycle = 0
     maintenance_counter = 0
-    monitor_concurrency = 4
-    monitor_batch_size = 20
+    monitor_concurrency = 10 if sys.platform != 'win32' else 2
+    monitor_batch_size = 30 if sys.platform != 'win32' else 5
     sem = asyncio.Semaphore(monitor_concurrency)
     # Store previous interface octets for bandwidth calculation { device_id: { ifname: {in_octets, out_octets, ts} } }
     prev_intf_octets: dict = {}
@@ -502,7 +447,11 @@ async def status_monitor():
     COUNTER64_MAX = 2**64
     # Track currently open alerts to avoid duplicates.
     open_alerts: dict = {}
-    # 启动时从数据库恢复未解决的告警，防止重启后丢失恢复通知
+    
+    # Delay alert restoration to let API stabilize on Windows
+    if sys.platform == 'win32':
+        await asyncio.sleep(8)
+        
     try:
         _open_rows = _db_quick(
             "SELECT dedupe_key, created_at FROM alert_events WHERE resolved_at IS NULL",
@@ -512,7 +461,6 @@ async def status_monitor():
             for _row in _open_rows:
                 _ts_raw = _row['created_at']
                 try:
-                    # 转换为本地时间字符串，与新告警格式保持一致
                     _dt = datetime.fromisoformat(_ts_raw).astimezone(_CST)
                     _ts_local = _dt.strftime('%Y-%m-%d %H:%M:%S')
                 except Exception:
@@ -1903,14 +1851,26 @@ if __name__ == "__main__":
         import asyncio
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
         
-    port = int(os.environ.get("PORT", "8003"))
+    port = int(os.environ.get("PORT", "9003"))
     workers = int(os.environ.get("WORKERS", "1"))
     is_dev = os.environ.get("NODE_ENV") == "development"
     
-    # Use "asyncio" loop which will pick up the policy we just set
+    if sys.platform == 'win32':
+        import asyncio
+        # Reinforce policy just before uvicorn launch
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    
+    # On modern uvicorn versions, loop must be one of: auto/asyncio/uvloop/none.
+    # Windows Proactor is already enforced via event loop policy above.
     loop_type = "asyncio" if sys.platform == "win32" else "auto"
     
+    # Windows + reload subprocess may fall back to select() loop and hit FD limit.
+    # Force-disable reload on Windows for stability.
+    effective_reload = is_dev and sys.platform != "win32"
+
     if workers > 1:
         uvicorn.run("main:app", host="0.0.0.0", port=port, workers=workers, loop=loop_type)
     else:
-        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=is_dev, loop=loop_type)
+        # For development, we must ensure the loop is clean
+        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=effective_reload, loop=loop_type)
+# Trigger Reload

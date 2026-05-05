@@ -202,13 +202,36 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
 
         batch_results = {}
         for dev_id in device_ids:
-            device = conn.execute('SELECT * FROM devices WHERE id = ?', (dev_id,)).fetchone()
-            if device:
-                d = dict(device)
-                d['password'] = decrypt_credential(d.get('password')) or ''
+            device_row = conn.execute('SELECT * FROM devices WHERE id = ?', (dev_id,)).fetchone()
+            if device_row:
+                d = dict(device_row)
+                # Resolve credentials based on auth_role
+                auth_role = payload.get('auth_role') or payload.get('role') or 'admin'
+                
+                exec_username = d.get('username')
+                exec_password = d.get('password')
+                
+                if auth_role == 'normal':
+                    if d.get('normal_username'): exec_username = d.get('normal_username')
+                    if d.get('normal_password'): exec_password = d.get('normal_password')
+                elif auth_role == 'admin':
+                    if d.get('admin_username'): exec_username = d.get('admin_username')
+                    if d.get('admin_password'): exec_password = d.get('admin_password')
+
+                d['username'] = exec_username
+                decrypted_pwd = decrypt_credential(exec_password) or ''
+                d['password'] = decrypted_pwd
+                
+                logger.info(f"[Automation] Executing for {d.get('hostname')} ({d.get('ip_address')}) with role={auth_role}, username={exec_username}")
+                
                 driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
-                service = AutomationService(driver_type=driver_type)
-                result = await asyncio.get_event_loop().run_in_executor(None, lambda: "\n".join([r.output if r.success else f"Error: {r.error}" for r in service.execute_commands(d, commands, is_config=is_config)]))
+                service = AutomationService()
+                def _parse_res(r):
+                    if r.get('success'): return r.get('output', r.get('stdout', ''))
+                    err = r.get('error') or r.get('stderr') or r.get('exception') or 'Unknown'
+                    return f"Error: {err}"
+                
+                result = await asyncio.get_event_loop().run_in_executor(None, lambda: "\n".join([_parse_res(r) for r in service.execute_commands(d, commands, is_config=is_config)]))
                 _record_instant_execution(d['id'], task_name, commands, 'completed', platform=d.get('platform'), output=result)
                 batch_results[d['id']] = {'status': 'success', 'output': result}
         

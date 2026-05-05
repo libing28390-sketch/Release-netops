@@ -7,7 +7,7 @@ import re
 from logging.handlers import TimedRotatingFileHandler
 
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "logs")
-LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+LOG_FORMAT = "%(asctime)s [%(levelname)s] (PID:%(process)d) %(name)s: %(message)s"
 
 # 三方库噪声压制：只保留 WARNING 及以上
 _NOISY_LIBS = [
@@ -47,6 +47,8 @@ def setup_logging():
     log_file = os.path.join(LOG_DIR, "netops.log")
 
     root = logging.getLogger()
+    if root.handlers:
+        return
     root.setLevel(logging.INFO)
     root.addFilter(SanitizeFilter())
 

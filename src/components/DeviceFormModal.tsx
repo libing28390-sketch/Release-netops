@@ -58,8 +58,9 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   const isAdd = mode === 'add';
   const [enablePwdVisible, setEnablePwdVisible] = useState(false);
   const [showAdvancedCred, setShowAdvancedCred] = useState(
-    !!(form.enable_password || form.priv_username || (form.credential_source && form.credential_source !== 'local') || form.vault_path)
+    !!(form.enable_password || form.priv_username || (form.credential_source && form.credential_source !== 'local') || form.vault_path || form.auth_model === 'dual')
   );
+  const [pamMode, setPamMode] = useState(form.auth_model === 'dual');
 
   /* ── Tag Selection State ── */
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);
@@ -396,89 +397,165 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
           </div>
 
           {/* Advanced Credentials Section */}
-          <div className="col-span-1 sm:col-span-2">
+          <div className="col-span-1 sm:col-span-2 border-t border-black/5 pt-4">
             <button
               type="button"
               onClick={() => setShowAdvancedCred(!showAdvancedCred)}
               className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-black/50 transition-colors hover:text-black/80"
             >
               {showAdvancedCred ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              {language === 'zh' ? 'Enable 特权凭据 / Vault' : 'Enable / Vault Credentials'}
+              {language === 'zh' ? '特权凭据 / PAM / Vault' : 'Privileged / PAM / Vault Credentials'}
             </button>
           </div>
+          
           {showAdvancedCred && (
-            <>
-              <div>
-                <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
-                  {language === 'zh' ? '特权用户名' : 'Privileged Username'}
-                </label>
-                <input
-                  type="text"
-                  value={form.priv_username || ''}
-                  title={language === 'zh' ? '特权用户名（用于 enable 模式）' : 'Privileged username (for enable mode)'}
-                  onChange={(event) => handleFieldChange('priv_username', event.target.value)}
-                  className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
-                  placeholder={language === 'zh' ? '留空则使用普通用户名' : 'Leave blank to use login username'}
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
-                  {language === 'zh' ? 'Enable Secret（特权密码）' : 'Enable Secret'}
-                </label>
-                <div className="relative">
-                  <input
-                    type={enablePwdVisible ? 'text' : 'password'}
-                    value={form.enable_password || ''}
-                    title={language === 'zh' ? '设备特权提权密码' : 'Device privilege escalation password'}
-                    onChange={(event) => handleFieldChange('enable_password', event.target.value)}
-                    placeholder={isAdd ? (language === 'zh' ? '输入特权提权密码' : 'Enter enable secret') : (language === 'zh' ? '留空则保持不变' : 'Leave blank to keep unchanged')}
-                    className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 pr-10 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
-                  />
-                  <button
-                    type="button"
-                    title={enablePwdVisible ? 'Hide' : 'Show'}
-                    onClick={() => setEnablePwdVisible(!enablePwdVisible)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 transition-colors hover:text-black/60"
-                  >
-                    {enablePwdVisible ? <EyeOff size={15} /> : <Eye size={15} />}
-                  </button>
-                </div>
-                <p className="mt-1 text-[11px] text-black/40">
-                  {language === 'zh'
-                    ? '设备特权提权密码（如 Cisco enable、Huawei super），与上方登录密码不同'
-                    : 'Privilege escalation (e.g. Cisco enable, Huawei super), differs from login password above'}
-                </p>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
-                  {language === 'zh' ? '凭据来源' : 'Credential Source'}
-                </label>
-                <select
-                  value={form.credential_source || 'local'}
-                  title={language === 'zh' ? '凭据存储方式' : 'Credential storage method'}
-                  onChange={(event) => handleFieldChange('credential_source', event.target.value as Device['credential_source'])}
-                  className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
-                >
-                  <option value="local">{language === 'zh' ? '本地加密' : 'Local Encrypted'}</option>
-                  <option value="vault">{language === 'zh' ? 'HashiCorp Vault' : 'HashiCorp Vault'}</option>
-                </select>
-              </div>
-              {form.credential_source === 'vault' && (
+            <div className="col-span-1 sm:col-span-2 space-y-6 pt-2">
+              {/* PAM Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-black/5">
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
-                    {language === 'zh' ? 'Vault 路径' : 'Vault Path'}
-                  </label>
-                  <input
-                    type="text"
-                    value={form.vault_path || ''}
-                    title={language === 'zh' ? 'Vault KV 路径' : 'Vault KV path'}
-                    onChange={(event) => handleFieldChange('vault_path', event.target.value)}
-                    className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
-                    placeholder="netops/devices/core-sw-01"
-                  />
+                   <p className="text-xs font-bold text-slate-700">{language === 'zh' ? '多角色认证 (PAM)' : 'Multi-Role Auth (PAM)'}</p>
+                   <p className="text-[10px] text-slate-400">{language === 'zh' ? '同时管理普通账户和管理员账户凭据' : 'Manage both normal and admin account credentials'}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !pamMode;
+                    setPamMode(next);
+                    handleFieldChange('auth_model', next ? 'dual' : 'single');
+                  }}
+                  className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${pamMode ? 'bg-cyan-500' : 'bg-slate-200'}`}
+                >
+                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${pamMode ? 'translate-x-5.5' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              {pamMode ? (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {/* Normal Account */}
+                  <div className="p-3 rounded-xl border border-black/5 bg-blue-50/20">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-3">{language === 'zh' ? '普通账户 (Normal)' : 'Normal Account'}</p>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="mb-1 block text-[10px] font-medium text-black/40">Username</label>
+                        <input
+                          type="text"
+                          value={form.normal_username || ''}
+                          onChange={(e) => handleFieldChange('normal_username', e.target.value)}
+                          className="w-full rounded-lg border border-black/5 bg-white px-3 py-1.5 text-xs outline-none focus:border-blue-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-medium text-black/40">Password</label>
+                        <input
+                          type={passwordVisible ? 'text' : 'password'}
+                          value={form.normal_password || ''}
+                          onChange={(e) => handleFieldChange('normal_password', e.target.value)}
+                          placeholder={!isAdd ? (language === 'zh' ? '留空保持不变' : 'Leave blank') : ''}
+                          className="w-full rounded-lg border border-black/5 bg-white px-3 py-1.5 text-xs outline-none focus:border-blue-200"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Admin Account */}
+                  <div className="p-3 rounded-xl border border-black/5 bg-orange-50/20">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-orange-600 mb-3">{language === 'zh' ? '特权账户 (Admin)' : 'Admin Account'}</p>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="mb-1 block text-[10px] font-medium text-black/40">Username</label>
+                        <input
+                          type="text"
+                          value={form.admin_username || ''}
+                          onChange={(e) => handleFieldChange('admin_username', e.target.value)}
+                          className="w-full rounded-lg border border-black/5 bg-white px-3 py-1.5 text-xs outline-none focus:border-orange-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-medium text-black/40">Password</label>
+                        <input
+                          type={passwordVisible ? 'text' : 'password'}
+                          value={form.admin_password || ''}
+                          onChange={(e) => handleFieldChange('admin_password', e.target.value)}
+                          placeholder={!isAdd ? (language === 'zh' ? '留空保持不变' : 'Leave blank') : ''}
+                          className="w-full rounded-lg border border-black/5 bg-white px-3 py-1.5 text-xs outline-none focus:border-orange-200"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                      {language === 'zh' ? '特权用户名' : 'Privileged Username'}
+                    </label>
+                    <input
+                      type="text"
+                      value={form.priv_username || ''}
+                      title={language === 'zh' ? '特权用户名（用于 enable 模式）' : 'Privileged username (for enable mode)'}
+                      onChange={(event) => handleFieldChange('priv_username', event.target.value)}
+                      className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+                      placeholder={language === 'zh' ? '留空则使用普通用户名' : 'Leave blank to use login username'}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                      {language === 'zh' ? 'Enable Secret（特权密码）' : 'Enable Secret'}
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={enablePwdVisible ? 'text' : 'password'}
+                        value={form.enable_password || ''}
+                        title={language === 'zh' ? '设备特权提权密码' : 'Device privilege escalation password'}
+                        onChange={(event) => handleFieldChange('enable_password', event.target.value)}
+                        placeholder={isAdd ? (language === 'zh' ? '输入特权提权密码' : 'Enter enable secret') : (language === 'zh' ? '留空则保持不变' : 'Leave blank to keep unchanged')}
+                        className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 pr-10 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+                      />
+                      <button
+                        type="button"
+                        title={enablePwdVisible ? 'Hide' : 'Show'}
+                        onClick={() => setEnablePwdVisible(!enablePwdVisible)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 transition-colors hover:text-black/60"
+                      >
+                        {enablePwdVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
-            </>
+
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 border-t border-black/5 pt-4">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                    {language === 'zh' ? '凭据来源' : 'Credential Source'}
+                  </label>
+                  <select
+                    value={form.credential_source || 'local'}
+                    title={language === 'zh' ? '凭据存储方式' : 'Credential storage method'}
+                    onChange={(event) => handleFieldChange('credential_source', event.target.value as Device['credential_source'])}
+                    className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+                  >
+                    <option value="local">{language === 'zh' ? '本地加密' : 'Local Encrypted'}</option>
+                    <option value="vault">{language === 'zh' ? 'HashiCorp Vault' : 'HashiCorp Vault'}</option>
+                  </select>
+                </div>
+                {form.credential_source === 'vault' && (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                      {language === 'zh' ? 'Vault 路径' : 'Vault Path'}
+                    </label>
+                    <input
+                      type="text"
+                      value={form.vault_path || ''}
+                      title={language === 'zh' ? 'Vault KV 路径' : 'Vault KV path'}
+                      onChange={(event) => handleFieldChange('vault_path', event.target.value)}
+                      className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
+                      placeholder="netops/devices/core-sw-01"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
 

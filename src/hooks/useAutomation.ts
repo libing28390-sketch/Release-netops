@@ -934,7 +934,7 @@ export const useAutomation = ({
     showToast(language === 'zh' ? '已导出 Excel' : 'Excel exported', 'success');
   }, [quickQueryStructured, quickQueryLabel, language, showToast]);
 
-  const runQuickQuery = useCallback(async (label: string, commands: string, operationalCategory?: string) => {
+  const runQuickQuery = useCallback(async (label: string, commands: string, operationalCategory?: string, authRole: string = 'normal') => {
     const targets = batchMode
       ? devices.filter(d => batchDeviceIds.includes(d.id))
       : (selectedDevice ? [selectedDevice] : []);
@@ -958,7 +958,11 @@ export const useAutomation = ({
               const resp = await fetch(`/api/devices/${device.id}/operational-data`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
-                body: JSON.stringify({ categories: [operationalCategory], name: label }),
+                body: JSON.stringify({
+                  categories: [operationalCategory],
+                  name: label,
+                  auth_role: authRole,
+                }),
               });
               if (!resp.ok) {
                 const errData = await resp.json().catch(() => ({}));
@@ -1028,6 +1032,7 @@ export const useAutomation = ({
                 author: currentUser.username || 'admin',
                 actor_id: currentUser.id,
                 actor_role: currentUser.role || 'Administrator',
+                auth_role: authRole,
               }),
             });
             if (!resp.ok) {

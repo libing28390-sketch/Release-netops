@@ -58,9 +58,10 @@ export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
     } as Device;
   }, []);
 
-  const fetchDevicesData = useCallback(async () => {
+  const fetchDevicesData = useCallback(async (assetType: string = 'all') => {
     try {
       const params = new URLSearchParams({ mode: deviceFetchMode });
+      if (assetType !== 'all') params.append('asset_type', assetType);
       const devicesRes = await fetch(`/api/devices?${params.toString()}`);
       if (!devicesRes.ok) return;
       const devs = await devicesRes.json();
