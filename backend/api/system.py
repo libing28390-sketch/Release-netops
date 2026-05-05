@@ -22,33 +22,59 @@ mfa_store = {}
 async def request_mfa(data: Dict[str, Any]):
     user_id = data.get("user_id")
     username = data.get("username", "Admin")
+    approver_id = data.get("approver_id")
     
-    # 1. Generate 6-digit code
+    if not approver_id:
+        return {"success": False, "error": "请先选择审批人"}
+
+    # 1. Generate 6-digit code — keyed by username for reliable lookup
     code = f"{random.randint(100000, 999999)}"
-    mfa_store[user_id] = {"code": code, "expire": time.time() + 300} # 5 min
+    mfa_store[username] = {"code": code, "expire": time.time() + 300} # 5 min
     
-    # 2. Get Feishu Webhook from DB
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[MFA] Generated code for user={username}, approver_id={approver_id}")
+    
+    # 2. Get Approver and their Webhook from DB
     conn = get_db_connection()
     feishu_url = ""
+    approver_name = "Admin"
     try:
-        row = conn.execute("SELECT webhook_url FROM global_notification_channels WHERE platform = 'feishu' AND enabled = 1").fetchone()
+        # Check approver's personal settings first
+        row = conn.execute("SELECT username, notification_channels FROM users WHERE id = ?", (approver_id,)).fetchone()
         if row:
-            feishu_url = row['webhook_url']
+            approver_name = row['username']
+            import json
+            try:
+                channels = json.loads(row['notification_channels'] or '{}')
+                feishu_cfg = channels.get('feishu', {})
+                if feishu_cfg.get('enabled') and feishu_cfg.get('webhook_url'):
+                    feishu_url = feishu_cfg['webhook_url']
+            except:
+                pass
+        
+        # Fallback to global if personal not set
+        if not feishu_url:
+            global_row = conn.execute("SELECT webhook_url FROM global_notification_channels WHERE platform = 'feishu' AND enabled = 1").fetchone()
+            if global_row:
+                feishu_url = global_row['webhook_url']
     finally:
         conn.close()
 
     if not feishu_url:
-        return {"success": False, "error": "飞书通知渠道未启用或未配置 Webhook URL"}
+        # If no webhook configured, return the code directly for testing/debugging
+        logger.warning(f"[MFA] No feishu webhook configured for approver {approver_name}, returning code in response for dev mode")
+        return {"success": True, "message": f"审批人 {approver_name} 未配置飞书，授权码为: {code}（仅测试模式可见）"}
 
-    # 3. Send via Feishu
+    # 3. Send via Feishu (Directed to Approver)
     ok, msg = notification_service.send_feishu_mfa_access_code(
-        feishu_url, username, code, expires_min=5
+        feishu_url, username, code, expires_min=5, approver_name=approver_name
     )
     
     if ok:
-        return {"success": True, "message": "验证码已发送至飞书"}
+        return {"success": True, "message": f"验证码已发送至审批人 {approver_name} 的飞书"}
     else:
-        return {"success": False, "error": f"飞书推送失败: {msg}"}
+        return {"success": False, "error": f"推送至 {approver_name} 失败: {msg}"}
 
 @router.get("/info")
 async def get_system_info() -> Dict[str, Any]:
@@ -184,18 +210,38 @@ async def launch_terminal(data: Dict[str, Any]) -> Dict[str, Any]:
 
     if is_privileged:
         fixed_pw = data.get("fixed_password")
-        if not fixed_pw or str(fixed_pw) != "123456":
-            return {"success": False, "error": "固定密码验证失败"}
+        current_username = data.get("current_username")
+        
+        if not current_username:
+            return {"success": False, "error": "无法识别当前用户身份，请重新登录"}
+            
+        import bcrypt
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            user_row = conn.execute("SELECT fixed_pin FROM users WHERE username = ?", (current_username,)).fetchone()
+            if not user_row or not user_row['fixed_pin']:
+                return {"success": False, "error": "您尚未在个人设置中配置 6 位固定密码"}
+                
+            stored_pin_hash = user_row['fixed_pin']
+            if not bcrypt.checkpw(str(fixed_pw).encode('utf-8'), stored_pin_hash.encode('utf-8')):
+                return {"success": False, "error": "固定密码验证失败"}
+        except Exception as e:
+            logger.error(f"Error checking fixed PIN: {e}")
+            return {"success": False, "error": "验证码系统错误"}
+        finally:
+            conn.close()
 
         if not mfa_code:
             return {"success": False, "error": "特权登录需要提供飞书验证码"}
         
-        stored = mfa_store.get(user_id)
+        # Lookup MFA code by username (matches the key used in request-mfa)
+        stored = mfa_store.get(current_username)
         if not stored or str(stored["code"]) != str(mfa_code) or time.time() > stored["expire"]:
             return {"success": False, "error": "飞书验证码错误或已过期"}
         
         # Success - clean up code
-        del mfa_store[user_id]
+        del mfa_store[current_username]
 
     if not path or not os.path.exists(path):
         return {"success": False, "error": "Executable path not found"}

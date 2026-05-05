@@ -29,6 +29,7 @@ import {
   Server,
   Settings,
   Shield,
+  Terminal,
   User,
   X,
   Zap,
@@ -42,7 +43,7 @@ import NavSection from './NavSection';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
-  Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Key, Lock, Monitor, Server, Settings, Shield, User, Zap,
+  Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Key, Lock, Monitor, Server, Settings, Shield, Terminal, User, Zap,
 };
 
 /** RBAC role hierarchy levels */

@@ -3635,10 +3635,10 @@ async def _exec_commands(service, device: dict, commands: list, is_config: bool)
             output_lines = []
             all_ok = True
             for r in results:
-                if r.success:
-                    output_lines.append(r.output)
+                if r.get('success', False):
+                    output_lines.append(r.get('output', ''))
                 else:
-                    output_lines.append(f"ERROR: {r.error}")
+                    output_lines.append(f"ERROR: {r.get('error', '')}")
                     all_ok = False
             return {"success": all_ok, "output": "\n".join(output_lines), "commands": commands}
         except Exception as e:

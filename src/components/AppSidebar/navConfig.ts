@@ -22,6 +22,15 @@ export const navConfig: NavGroup[] = [
     ],
   },
   {
+    id: 'terminal-access',
+    label: '终端接入',
+    labelEn: 'TERMINAL ACCESS',
+    icon: 'Terminal',
+    children: [
+      { id: 'access-center', label: '接入中心', labelEn: 'Access Center', path: '/access' },
+    ],
+  },
+  {
     id: 'alerts',
     label: '告警处置',
     labelEn: 'ALERTS',
@@ -40,7 +49,6 @@ export const navConfig: NavGroup[] = [
     icon: 'Server',
     children: [
       { id: 'assets',   label: '资产管理',     labelEn: 'Assets',               path: '/assets' },
-      { id: 'access-center', label: '接入中心',  labelEn: 'Access Center',     icon: 'Monitor', path: '/access' },
       { id: 'devices',  label: '网络设备',     labelEn: 'Network Devices',      path: '/inventory/devices' },
       { id: 'servers',  label: '服务器',       labelEn: 'Servers',              path: '/inventory/servers' },
       { id: 'ipam',     label: 'IP/VLAN管理',  labelEn: 'IP/VLAN Mgmt',        path: '/ipam' },

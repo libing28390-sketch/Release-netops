@@ -108,6 +108,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
 
   const appEntries = useMemo(() => [
     { id: 'dashboard',  label: '首页',       labelEn: 'Dashboard',    icon: LayoutDashboard, path: '/dashboard',          accent: '#06b6d4' },
+    { id: 'access',     label: '接入中心',   labelEn: 'Access Center', icon: Globe,           path: '/access',             accent: '#13c2c2' },
     { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   icon: Activity,          path: '/overview',           accent: '#1677ff' },
     { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       icon: Bell,              path: '/alerts',             accent: '#fa8c16' },
     { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       icon: Server,            path: '/assets',             accent: '#1677ff' },

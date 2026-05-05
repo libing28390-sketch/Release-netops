@@ -483,6 +483,11 @@ def _init_db_logic(conn):
         avatar_url TEXT
     )
     ''')
+    ensure_column('users', 'group_name', "TEXT DEFAULT ''")
+    ensure_column('users', 'change_groups_json', "TEXT DEFAULT '[]'")
+    ensure_column('users', 'notification_channels', "TEXT DEFAULT '{}'")
+    ensure_column('users', 'preferred_language', "TEXT DEFAULT 'zh'")
+    ensure_column('users', 'fixed_pin', "TEXT DEFAULT ''")
 
     # Store user-defined scenario templates for playbooks
     cursor.execute('''

@@ -245,18 +245,20 @@ def send_feishu_verification_code(webhook_url: str, username: str, code: str, ex
     }
     return _post_json(webhook_url, payload)
 
-def send_feishu_mfa_access_code(webhook_url: str, username: str, code: str, expires_min: int = 5, lang: str = 'zh') -> tuple[bool, str]:
+def send_feishu_mfa_access_code(webhook_url: str, username: str, code: str, expires_min: int = 5, lang: str = 'zh', approver_name: str = "Admin") -> tuple[bool, str]:
     """发送资产特权访问授权验证码。"""
     is_en = lang == 'en'
     title = "🛡️ " + ("Privileged Access Authorization" if is_en else "资产特权访问授权")
     
-    user_label = "User" if is_en else "授权用户"
+    user_label = "Requester" if is_en else "申请用户"
+    approver_label = "Approver" if is_en else "审批人"
     code_label = "Auth Code" if is_en else "授权验证码"
     footer_text = (f"Expires in **{expires_min} min**. Audit active." if is_en else f"验证码 **{expires_min} 分钟**内有效。本次访问将被全程审计。")
     
     fields = [
         {"is_short": True, "text": {"tag": "lark_md", "content": f"**{user_label}:**\n{username}"}},
-        {"is_short": True, "text": {"tag": "lark_md", "content": f"**{code_label}:**\n**{code}**"}},
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**{approver_label}:**\n{approver_name}"}},
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**{code_label}:**\n<font color='red'>**{code}**</font>"}},
         {"is_short": False, "text": {"tag": "lark_md", "content": f"⏱ {footer_text}"}},
     ]
     

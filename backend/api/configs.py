@@ -924,11 +924,11 @@ async def run_scheduled_backup():
                 lambda: service.execute_commands(d, commands, is_config=False)
             )
             
-            if results and results[0].success:
-                output = results[0].output
+            if results and results[0].get('success', False):
+                output = results[0].get('output', '')
                 _record_instant_execution(d['id'], "Scheduled Backup", commands, 'completed', platform=d.get('platform'), output=output)
             else:
-                err = results[0].error if results else "Unknown error"
+                err = results[0].get('error', "Unknown error") if results else "Unknown error"
                 logger.warning(f"[Scheduled Backup] Execution failed for {device['hostname']}: {err}")
                 output = ''
 

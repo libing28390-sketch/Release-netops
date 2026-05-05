@@ -116,7 +116,22 @@ async def run_scheduled_automation_job(job_id: str):
             if not device: continue
             
             d = dict(device)
-            d['password'] = decrypt_credential(d.get('password')) or ''
+            # Scheduled jobs require elevated access — prefer admin credentials when available
+            admin_user = d.get('admin_username', '').strip()
+            admin_pass = d.get('admin_password', '').strip()
+            if admin_user and admin_pass:
+                d['username'] = admin_user
+                d['password'] = decrypt_credential(admin_pass) or ''
+                logger.info(f"[Scheduler] Using admin credentials for device {d.get('hostname', d.get('ip_address'))}")
+            else:
+                # Default logic: 'root' for servers, 'admin' for network devices
+                platform = str(d.get('platform') or '').lower()
+                is_server = 'linux' in platform or 'windows' in platform or 'server' in platform
+                default_admin = 'root' if is_server else 'admin'
+                
+                d['username'] = default_admin
+                d['password'] = decrypt_credential(d.get('password')) or ''
+                logger.info(f"[Scheduler] No admin credentials, using default username '{default_admin}' for device {d.get('hostname', d.get('ip_address'))}")
             
             # 记录设备开始执行
             dev_started_at = datetime.now().isoformat()
@@ -134,7 +149,7 @@ async def run_scheduled_automation_job(job_id: str):
                 exec_results = await loop.run_in_executor(None, lambda: service.execute_commands(d, commands, is_config=bool(job['is_config'])))
                 
                 # 判断是否全部成功
-                success = all(r.success for r in exec_results)
+                success = all(r.get('success', False) for r in exec_results)
                 
                 # 铁腕清洗：使用双锚点隔离法，绝对过滤回显和杂质
                 processed_commands = []
@@ -145,7 +160,7 @@ async def run_scheduled_automation_job(job_id: str):
                 end_mark = "---NETOPS_END---"
                 
                 for r in exec_results:
-                    out = r.output
+                    out = str(r.get('output', ''))
                     if is_shell_script:
                         if begin_mark in out and end_mark in out:
                             # 精准提取两个锚点之间的内容

@@ -12,10 +12,11 @@ router = APIRouter(tags=["access"])
 logger = logging.getLogger(__name__)
 
 class TerminalSession:
-    def __init__(self, websocket: WebSocket, device_id: str, role: str = 'admin'):
+    def __init__(self, websocket: WebSocket, device_id: str, role: str = 'admin', identity: str = 'normal'):
         self.ws = websocket
         self.device_id = device_id
-        self.role = role
+        self.role = role        # Display username (e.g. 'user', 'root', 'admin')
+        self.identity = identity  # Access level: 'normal' or 'privileged'
         self.ssh_conn = None
         self.ssh_chan = None
 
@@ -33,22 +34,23 @@ class TerminalSession:
 
         creds = resolve_device_credentials(device)
         
-        # 2. Logic to determine login creds
-        if self.role == 'normal':
+        # 2. Determine login credentials based on identity (not role string)
+        is_normal = self.identity == 'normal'
+        if is_normal:
             if not creds.get('normal_username'):
-                # Fail fast if requested role is not configured
                 await self.ws.send_text(json.dumps({"type": "error", "message": "Normal account not configured. Please set it in Asset Management."}))
                 await self.ws.close(code=4001)
                 return
             login_user = creds.get('normal_username')
             login_pwd = creds.get('normal_password')
         else:
+            # Privileged access: use admin credentials
             login_user = creds.get('admin_username') or creds.get('username')
             login_pwd = creds.get('admin_password') or creds.get('password')
 
         try:
             # 3. Establish SSH Connection
-            logger.info(f"[Terminal] Connecting to {device['ip_address']} as {login_user}...")
+            logger.info(f"[Terminal] Connecting to {device['ip_address']} as {login_user} (identity={self.identity})...")
             self.ssh_conn = await asyncssh.connect(
                 device['ip_address'],
                 username=login_user,
@@ -116,8 +118,9 @@ class TerminalSession:
 async def terminal_websocket(
     websocket: WebSocket, 
     device_id: str, 
-    role: str = Query('admin')
+    role: str = Query('admin'),
+    identity: str = Query('normal')
 ):
     await websocket.accept()
-    session = TerminalSession(websocket, device_id, role)
+    session = TerminalSession(websocket, device_id, role, identity)
     await session.connect()

@@ -14,6 +14,7 @@ interface ProfileFormState {
   username: string;
   password: string;
   confirmPassword: string;
+  fixedPin: string;
 }
 
 interface NotificationChannelsState {
@@ -75,6 +76,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
 }) => {
   const [localTerminalPath, setLocalTerminalPath] = React.useState(() => localStorage.getItem('local_terminal_path') || '');
   const [terminalApp, setTerminalApp] = React.useState(() => localStorage.getItem('terminal_app') || 'xshell');
+  const [showFixedPin, setShowFixedPin] = React.useState(false);
   
   if (!open) return null;
 
@@ -223,6 +225,34 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
               className={`w-full rounded-xl px-3 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
             />
           </div>
+
+          {(currentRole === 'Administrator' || currentRole === 'admin') && (
+            <div className={`p-4 rounded-xl border ${isDark ? 'bg-orange-500/5 border-orange-500/20' : 'bg-orange-50 border-orange-200'}`}>
+              <div className="flex items-center gap-2 mb-3">
+                <Shield size={16} className={isDark ? 'text-orange-400' : 'text-orange-600'} />
+                <span className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-orange-400' : 'text-orange-700'}`}>
+                  MFA 双人审批固定安全码 (Fixed PIN)
+                </span>
+              </div>
+              <div className="relative">
+                <input
+                  type={showFixedPin ? 'text' : 'password'}
+                  maxLength={6}
+                  value={profileForm.fixedPin || ''}
+                  onChange={(event) => onProfileFormChange((prev) => ({ ...prev, fixedPin: event.target.value.replace(/\D/g, '') }))}
+                  title="Fixed PIN for MFA"
+                  placeholder="6位数字密码 (留空保持不变)"
+                  className={`w-full rounded-xl px-3 pr-10 py-2.5 text-lg font-black tracking-widest outline-none border transition-all ${isDark ? 'bg-black/20 border-orange-500/30 text-white placeholder-white/20 focus:border-orange-500/60' : 'bg-white border-orange-300 text-orange-900 placeholder-black/20 focus:border-orange-500/60'}`}
+                />
+                <button type="button" title={showFixedPin ? '隐藏' : '显示'} onClick={() => setShowFixedPin(!showFixedPin)} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-orange-500 hover:text-orange-700'}`}>
+                  {showFixedPin ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+              <p className={`text-[10px] mt-2 leading-relaxed ${isDark ? 'text-orange-300/60' : 'text-orange-800/70'}`}>
+                该密码用于特权终端登录的 MFA 二步验证。由于采取加密存储，仅在发起验证时比对。请妥善保管。
+              </p>
+            </div>
+          )}
 
           <div className={`pt-3 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
             <div className="flex items-center gap-2 mb-1">

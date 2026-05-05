@@ -1,10 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Search, Terminal, Monitor, Lock, Info, 
   Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight,
-  Database, Server, Cpu, Key
+  Database, Server, Cpu, Key, Globe, X, Send, ChevronDown, UserCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import TerminalWindow from '../components/access/TerminalWindow';
+import Pagination from '../components/Pagination';
 
 interface Device {
   id: string;
@@ -16,7 +18,13 @@ interface Device {
   normal_password?: string;
   admin_username?: string;
   admin_password?: string;
-  tags?: string[];
+}
+
+interface User {
+  id: string;
+  username: string;
+  role: string;
+  avatar_url?: string;
 }
 
 interface AccessCenterTabProps {
@@ -34,17 +42,62 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   
   // --- MFA Logic ---
   const [showMFAModal, setShowMFAModal] = useState(false);
-  const [mfaCode, setMfaCode] = useState('');
   const [fixedPassword, setFixedPassword] = useState('');
-  const [mfaTarget, setMfaTarget] = useState<{device: Device, appType: string} | null>(null);
+  const [dynamicCode, setDynamicCode] = useState('');
+  const [mfaTarget, setMfaTarget] = useState<{device: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged'} | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const [approvers, setApprovers] = useState<User[]>([]);
+  const [selectedApproverId, setSelectedApproverId] = useState('');
 
-  // Helper to determine protocol
+  // Real current username from session
+  const [currentUsername, setCurrentUsername] = useState<string>('');
+
+  // Countdown timer for MFA code
+  useEffect(() => {
+    let timer: any;
+    if (countdown > 0) {
+      timer = setInterval(() => setCountdown(c => c - 1), 1000);
+    }
+    return () => clearInterval(timer);
+  }, [countdown]);
+
+  // Fetch approvers (Admins only, exclude self)
+  useEffect(() => {
+    const fetchApprovers = async () => {
+      try {
+        const token = localStorage.getItem('netops_token');
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        
+        // 1. Get real current user from session
+        const sessionRes = await fetch('/api/session', { headers });
+        let loggedInUser = '';
+        if (sessionRes.ok) {
+          const sessionData = await sessionRes.json();
+          loggedInUser = sessionData.user?.username || '';
+          setCurrentUsername(loggedInUser);
+        }
+
+        // 2. Fetch all users
+        const res = await fetch('/api/users', { headers });
+        const data = await res.json();
+        
+        if (Array.isArray(data)) {
+          // Strict: only Administrator role, never the current user
+          const admins = data.filter((u: any) => u.role === 'Administrator' && u.username !== loggedInUser);
+          setApprovers(admins);
+          if (admins.length > 0) setSelectedApproverId(admins[0].id);
+        }
+      } catch (err) {
+        console.error('Failed to fetch approvers', err);
+      }
+    };
+    fetchApprovers();
+  }, []);
+
   const getProtocol = (dev: Device) => {
     const platform = (dev.platform || '').toLowerCase();
     if (platform.includes('windows')) return 'RDP';
-    if (platform.includes('linux') || platform.includes('ubuntu') || platform.includes('centos')) return 'SSH';
-    if (platform.includes('cisco') || platform.includes('huawei') || platform.includes('h3c')) return 'SSH';
     return 'SSH'; 
   };
 
@@ -69,21 +122,45 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     return filteredDevices.slice(start, start + pageSize);
   }, [filteredDevices, currentPage, pageSize]);
 
-  const requestMFACode = async (dev: Device, appType: string, silent = false) => {
+  const handleAccessRequest = (dev: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged') => {
+    if (identity === 'normal') {
+      if (appType === 'xshell') {
+        launchTerminal(dev, 'xshell', 'normal');
+      } else {
+        // Normal web login: explicitly use normal_username identity
+        window.open(`/terminal/${dev.id}?role=${encodeURIComponent(dev.normal_username || 'user')}&hostname=${encodeURIComponent(dev.name)}&identity=normal`, '_blank');
+      }
+      return;
+    }
+
+    // Privileged: require MFA
+    setMfaTarget({ device: dev, appType, identity });
+    setFixedPassword('');
+    setDynamicCode('');
+    setShowMFAModal(true);
+  };
+
+  const sendMFACode = async () => {
+    if (!selectedApproverId) {
+      showToast(isZh ? '请先选择审批人' : 'Select approver first', 'info');
+      return;
+    }
+    if (isSending || countdown > 0) return;
     setIsSending(true);
     try {
       const res = await fetch('/api/system/request-mfa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: 'current_user', username: 'Admin' })
+        body: JSON.stringify({ 
+          user_id: 'current_user', 
+          username: currentUsername || 'Admin',
+          approver_id: selectedApproverId 
+        })
       });
       const result = await res.json();
       if (result.success) {
         showToast(result.message, 'success');
-        if (!silent) {
-          setMfaTarget({ device: dev, appType });
-          setShowMFAModal(true);
-        }
+        setCountdown(60);
       } else {
         showToast(result.error, 'error');
       }
@@ -95,26 +172,28 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   };
 
   const handleMFAVerify = () => {
-    if (!mfaCode || mfaCode.length !== 6) {
-      showToast(isZh ? '请输入6位动态验证码' : 'Enter 6-digit code', 'warning');
+    if (fixedPassword.length < 6 || dynamicCode.length < 6) {
+      showToast(isZh ? '请输入完整的验证码' : 'Enter complete code', 'info');
       return;
     }
-    if (!fixedPassword) {
-      showToast(isZh ? '请输入固定密码' : 'Enter fixed password', 'warning');
-      return;
-    }
+    
     if (mfaTarget) {
-      launchTerminal(mfaTarget.device, mfaTarget.appType, 'privileged', mfaCode, fixedPassword);
+      if (mfaTarget.appType === 'xshell') {
+        launchTerminal(mfaTarget.device, 'xshell', 'privileged', dynamicCode, fixedPassword);
+      } else {
+        // Privileged web login: use admin_username identity
+        window.open(`/terminal/${mfaTarget.device.id}?role=${encodeURIComponent(mfaTarget.device.admin_username || 'root')}&hostname=${encodeURIComponent(mfaTarget.device.name)}&identity=privileged`, '_blank');
+        setShowMFAModal(false);
+      }
     }
   };
 
   const launchTerminal = async (dev: Device, appType: string, identity: 'normal' | 'privileged', code?: string, fixedPw?: string) => {
     const user = identity === 'normal' ? (dev.normal_username || 'user') : (dev.admin_username || 'admin');
-    const password = identity === 'normal' ? dev.normal_password : dev.admin_password;
-    
     const path = localStorage.getItem('local_terminal_path');
-    if (!path) {
-      showToast(isZh ? '请先配置终端路径' : 'Configure path in Profile', 'warning');
+    
+    if (appType === 'xshell' && !path) {
+      showToast(isZh ? '请先配置终端路径' : 'Configure path in Profile', 'info');
       return;
     }
 
@@ -123,20 +202,18 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          path, app_type: appType, host: dev.ip_address, user, password,
+          path, app_type: appType, host: dev.ip_address, user, 
+          password: identity === 'normal' ? dev.normal_password : dev.admin_password,
           is_privileged: identity === 'privileged',
           mfa_code: code,
           fixed_password: fixedPw,
-          user_id: 'current_user'
+          user_id: 'current_user',
+          current_username: currentUsername || ''
         })
       });
       const result = await res.json();
       if (result.success) {
-        if (identity === 'privileged') {
-          setShowMFAModal(false);
-          setMfaCode('');
-          setFixedPassword('');
-        }
+        if (identity === 'privileged') setShowMFAModal(false);
       } else {
         showToast(result.error, 'error');
       }
@@ -146,44 +223,43 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   };
 
   return (
-    <div className="flex flex-col h-full bg-white animate-in fade-in duration-500 overflow-hidden">
-      {/* Header */}
-      <div className="bg-slate-50/50 border-b border-slate-100 p-6 space-y-6 shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-600/20">
+    <div className="flex flex-col h-full bg-[#f8fafc] animate-in fade-in duration-500 overflow-hidden text-slate-700 font-sans">
+      {/* Header Section */}
+      <div className="bg-white border-b border-slate-200 p-6 shadow-sm shrink-0">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/20">
               <Database className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-xl font-black text-slate-800 tracking-tight">接入中心</h2>
-              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 flex items-center gap-2">
-                <span className="flex h-2 w-2 rounded-full bg-emerald-500"></span>
-                {totalCount} Total Devices
-              </div>
+              <h2 className="text-xl font-bold text-slate-800 tracking-tight">接入中心</h2>
+              <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] mt-0.5">{totalCount} Total Assets</p>
             </div>
           </div>
 
-          <div className="relative w-80 group">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 group-focus-within:text-blue-500 transition-colors" />
-            <input
-              type="text"
-              placeholder="搜索资产..."
-              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm outline-none transition-all text-sm font-medium"
-              value={searchQuery}
-              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-            />
+          <div className="flex items-center gap-3">
+            <div className="relative group">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 group-focus-within:text-blue-500 transition-colors" />
+              <input
+                type="text"
+                placeholder="搜索资产名称或 IP 地址..."
+                className="w-80 pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/5 transition-all text-sm font-medium"
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+              />
+            </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {['ALL', 'SSH', 'RDP', 'TELNET', 'VNC'].map((proto) => (
+          {['ALL', 'SSH', 'RDP'].map((proto) => (
             <button
               key={proto}
               onClick={() => { setActiveProtocol(proto); setCurrentPage(1); }}
-              className={`px-5 py-2 rounded-xl text-xs font-black tracking-widest transition-all ${
+              className={`px-5 py-2 rounded-xl text-[10px] font-black tracking-widest transition-all uppercase ${
                 activeProtocol === proto 
-                ? 'bg-blue-600 text-white shadow-lg' 
-                : 'bg-white text-slate-400 border border-slate-200 hover:text-blue-500'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' 
+                : 'bg-white text-slate-400 border border-slate-200 hover:border-blue-500 hover:text-blue-500'
               }`}
             >
               {proto}
@@ -192,59 +268,74 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         </div>
       </div>
 
-      {/* List Body */}
-      <div className="flex-1 overflow-y-auto p-6 min-h-0 custom-scrollbar">
-        <div className="bg-white border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm">
+      {/* Table Section */}
+      <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+        <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50/50 border-b border-slate-100">
-                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">资产信息</th>
-                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">网络地址</th>
-                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">登录类型</th>
-                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">状态</th>
-                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">操作</th>
+              <tr className="bg-slate-50/50 border-b border-slate-200">
+                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">资产信息</th>
+                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">网络地址</th>
+                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">协议类型</th>
+                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] text-right">终端登录 (本地)</th>
+                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] text-right">Web 登录</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50">
+            <tbody className="divide-y divide-slate-100">
               {currentData.map((dev) => (
                 <tr key={dev.id} className="hover:bg-blue-50/30 transition-colors group">
-                  <td className="px-6 py-5">
-                    <div className="flex items-center gap-3">
-                      <Server className="w-4 h-4 text-slate-400" />
+                  <td className="px-8 py-5">
+                    <div className="flex items-center gap-4">
+                      <div className="p-2.5 bg-slate-50 rounded-xl group-hover:bg-blue-100 transition-colors">
+                        <Server className="w-4 h-4 text-slate-400 group-hover:text-blue-600" />
+                      </div>
                       <div>
                         <div className="text-sm font-bold text-slate-800">{dev.name}</div>
-                        <div className="text-[10px] text-slate-400 font-medium">{dev.platform}</div>
+                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter mt-0.5">{dev.platform || 'General Linux'}</div>
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-5 font-mono text-sm text-slate-500">{dev.ip_address}</td>
-                  <td className="px-6 py-5">
-                    <span className="px-2 py-1 bg-slate-100 text-slate-500 text-[10px] font-black rounded uppercase">
+                  <td className="px-8 py-5">
+                    <span className="font-mono text-xs font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-md">{dev.ip_address}</span>
+                  </td>
+                  <td className="px-8 py-5">
+                    <span className="px-2.5 py-1 bg-slate-100 text-slate-500 text-[10px] font-black rounded-lg uppercase tracking-wider">
                       {getProtocol(dev)}
                     </span>
                   </td>
-                  <td className="px-6 py-5">
-                    <div className={`flex items-center gap-1.5 text-[10px] font-black uppercase ${
-                      dev.status === 'online' ? 'text-emerald-500' : 'text-slate-300'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${dev.status === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-200'}`} />
-                      {dev.status}
-                    </div>
-                  </td>
-                  <td className="px-6 py-5 text-right">
-                    <div className="flex items-center justify-end gap-2">
+                  <td className="px-8 py-5 text-right">
+                    <div className="flex items-center justify-end gap-2.5">
                       <button 
-                        onClick={() => launchTerminal(dev, 'xshell', 'normal')}
-                        className="p-2 bg-slate-50 hover:bg-emerald-500 text-slate-400 hover:text-white rounded-xl transition-all"
+                        onClick={() => handleAccessRequest(dev, 'xshell', 'normal')}
+                        className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 text-slate-600 text-[10px] font-black rounded-xl transition-all"
                       >
-                        <Terminal className="w-4 h-4" />
+                        <Terminal className="w-3.5 h-3.5" />
+                        {dev.normal_username || 'user'}
                       </button>
                       <button 
-                        onClick={() => requestMFACode(dev, 'xshell')}
-                        className="px-3 py-1.5 bg-slate-50 hover:bg-orange-500 text-orange-500 hover:text-white text-[10px] font-black rounded-lg transition-all flex items-center gap-1.5"
+                        onClick={() => handleAccessRequest(dev, 'xshell', 'privileged')}
+                        className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-orange-500 hover:text-orange-600 hover:bg-orange-50 text-slate-600 text-[10px] font-black rounded-xl transition-all"
                       >
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                        PRIVILEGED
+                        <Lock className="w-3.5 h-3.5" />
+                        {dev.admin_username || 'root'}
+                      </button>
+                    </div>
+                  </td>
+                  <td className="px-8 py-5 text-right">
+                    <div className="flex items-center justify-end gap-2.5">
+                      <button 
+                        onClick={() => handleAccessRequest(dev, 'web', 'normal')}
+                        className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 text-slate-600 text-[10px] font-black rounded-xl transition-all"
+                      >
+                        <Globe className="w-3.5 h-3.5" />
+                        {dev.normal_username || 'user'}
+                      </button>
+                      <button 
+                        onClick={() => handleAccessRequest(dev, 'web', 'privileged')}
+                        className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-orange-500 hover:text-orange-600 hover:bg-orange-50 text-slate-600 text-[10px] font-black rounded-xl transition-all"
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        {dev.admin_username || 'root'}
                       </button>
                     </div>
                   </td>
@@ -255,100 +346,112 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         </div>
       </div>
 
-      {/* Pagination */}
-      <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between">
-        <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">
-          {totalCount} Total Entries
-        </span>
-        <div className="flex items-center gap-2">
-          <button 
-            disabled={currentPage === 1}
-            onClick={() => setCurrentPage(prev => prev - 1)}
-            className="p-1.5 rounded-lg border border-slate-200 text-slate-400 disabled:opacity-20"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <span className="text-xs font-black text-slate-600 px-2">{currentPage} / {totalPages || 1}</span>
-          <button 
-            disabled={currentPage === totalPages || totalPages === 0}
-            onClick={() => setCurrentPage(prev => prev + 1)}
-            className="p-1.5 rounded-lg border border-slate-200 text-slate-400 disabled:opacity-20"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+      {/* Pagination Bar */}
+      <Pagination
+        currentPage={currentPage}
+        totalItems={totalCount}
+        itemsPerPage={pageSize}
+        onItemsPerPageChange={(size) => { setPageSize(size); setCurrentPage(1); }}
+        onPageChange={setCurrentPage}
+        language={language}
+      />
 
-      {/* MFA Modal with Two-Factor Inputs */}
+      {/* MFA Modal with Approver Selection */}
       <AnimatePresence>
         {showMFAModal && (
-          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-md">
             <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="w-full max-w-[360px] bg-white rounded-[2.5rem] shadow-2xl overflow-hidden p-8"
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="w-full max-w-[460px] bg-white rounded-[3rem] shadow-2xl overflow-hidden border border-slate-100"
             >
-              <div className="text-center mb-8">
-                <div className="w-14 h-14 bg-orange-50 text-orange-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <ShieldCheck className="w-8 h-8" />
+              <div className="bg-slate-50 border-b border-slate-100 px-8 py-6 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center shadow-inner">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 tracking-tight">资产特权访问授权</h3>
+                    <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mt-0.5">Dual-Control Audit required</p>
+                  </div>
                 </div>
-                <h3 className="text-xl font-black text-slate-800 tracking-tight">特权访问授权</h3>
-                <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mt-1">Multi-Factor Authentication</p>
+                <button onClick={() => setShowMFAModal(false)} className="p-2 hover:bg-white rounded-xl transition-colors text-slate-300 hover:text-slate-500">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              <div className="space-y-6">
-                <div>
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block ml-1">固定密码 (6位)</label>
-                  <div className="relative">
-                    <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
-                    <input 
-                      type="password"
-                      maxLength={6}
-                      value={fixedPassword}
-                      onChange={(e) => setFixedPassword(e.target.value)}
-                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold tracking-widest outline-none focus:border-orange-400 transition-all"
-                      placeholder="••••••"
-                    />
+              <div className="p-10 space-y-8">
+                {/* 1. Approver Selection */}
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">第一步：选择授权审批人</label>
+                  <div className="relative group">
+                    <UserCheck className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 group-focus-within:text-blue-500" />
+                    <select 
+                      value={selectedApproverId}
+                      onChange={(e) => setSelectedApproverId(e.target.value)}
+                      className="w-full pl-11 pr-10 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/5 transition-all text-sm font-bold text-slate-700 appearance-none cursor-pointer"
+                    >
+                      <option value="" disabled>请选择具备授权权限的管理员...</option>
+                      {approvers.map(u => (
+                        <option key={u.id} value={u.id}>{u.username} (Administrator)</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block ml-1">飞书动态验证码</label>
-                  <input 
-                    type="text"
-                    maxLength={6}
-                    value={mfaCode}
-                    onChange={(e) => setMfaCode(e.target.value)}
-                    className="w-full py-4 bg-slate-50 border border-slate-100 rounded-xl text-center text-2xl font-black tracking-[0.4em] outline-none focus:border-orange-400 transition-all"
-                    placeholder="000000"
-                  />
+                {/* Step 2 & 3: Fixed Password & Dynamic Code (Same Row) */}
+                <div className="flex gap-4">
+                  <div className="flex-1 space-y-3">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">第二步：个人固定码</label>
+                    <div className="relative group">
+                      <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 group-focus-within:text-blue-500" />
+                      <input 
+                        type="password"
+                        maxLength={6}
+                        value={fixedPassword}
+                        onChange={(e) => setFixedPassword(e.target.value.replace(/\D/g, ''))}
+                        className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/5 transition-all text-xl font-black tracking-[0.4em] text-slate-800 placeholder:text-slate-200"
+                        placeholder="••••••"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex-1 space-y-3">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">第三步：动态授权码</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text"
+                        maxLength={6}
+                        value={dynamicCode}
+                        onChange={(e) => setDynamicCode(e.target.value.replace(/\D/g, ''))}
+                        className="w-full px-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/5 transition-all text-xl font-black tracking-[0.4em] text-center text-slate-800 placeholder:text-slate-200"
+                        placeholder="000000"
+                      />
+                      <button 
+                        onClick={sendMFACode}
+                        disabled={isSending || countdown > 0 || !selectedApproverId}
+                        className="px-4 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 disabled:bg-slate-100 disabled:text-slate-300 transition-all flex items-center gap-1 whitespace-nowrap shadow-xl shadow-blue-600/10"
+                        title={isZh ? '发送至审批人' : 'Send to approver'}
+                      >
+                        {countdown > 0 ? `${countdown}s` : <Send className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="pt-2">
+                <div className="pt-6 space-y-4">
                   <button 
                     onClick={handleMFAVerify}
-                    className="w-full py-4 bg-orange-500 text-white font-black rounded-xl hover:bg-orange-600 shadow-lg shadow-orange-500/30 transition-all text-sm uppercase tracking-widest"
+                    className="w-full py-5 bg-slate-900 text-white font-black rounded-[1.5rem] hover:bg-black shadow-2xl shadow-slate-900/20 transition-all flex items-center justify-center gap-3 text-sm uppercase tracking-widest"
                   >
-                    验证并登录
+                    解锁并验证身份
                   </button>
-                  <button 
-                    onClick={() => setShowMFAModal(false)}
-                    className="w-full py-3 mt-2 text-slate-400 font-bold hover:text-slate-600 transition-colors text-xs"
-                  >
-                    取消
-                  </button>
-                </div>
-
-                <div className="flex justify-center border-t border-slate-50 pt-4">
-                  <button 
-                    onClick={() => requestMFACode(mfaTarget!.device, mfaTarget!.appType, true)}
-                    disabled={isSending}
-                    className="flex items-center gap-2 text-[10px] font-black text-blue-500 hover:text-blue-600 disabled:text-slate-300 uppercase tracking-widest"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${isSending ? 'animate-spin' : ''}`} />
-                    {isSending ? 'Sending...' : 'Resend Feishu Code'}
-                  </button>
+                  <p className="text-[9px] text-center text-slate-400 leading-relaxed font-bold">
+                    * 验证码将发送至选中审批人的飞书，请向其获取。<br/>
+                    本次操作将记录于特权访问审计日志中。
+                  </p>
                 </div>
               </div>
             </motion.div>

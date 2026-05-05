@@ -757,19 +757,25 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         notification_channels_str = json.dumps(notification_channels_raw) if notification_channels_raw is not None else (existing['notification_channels'] or '{}')
         change_groups_str = json.dumps(change_groups, ensure_ascii=False)
         password = user.get('password')
+        fixed_pin = user.get('fixedPin')
+        
+        hashed_pin = existing.get('fixed_pin', '')
+        if fixed_pin:
+            hashed_pin = await _hash_password(str(fixed_pin))
+            
         if password:
             strength_err = _validate_password_strength(password)
             if strength_err:
                 raise HTTPException(status_code=400, detail=strength_err)
             hashed = await _hash_password(password)
             conn.execute(
-                'UPDATE users SET username = ?, role = ?, password = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ? WHERE id = ?',
-                (username, role, hashed, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, user_id)
+                'UPDATE users SET username = ?, role = ?, password = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ? WHERE id = ?',
+                (username, role, hashed, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, user_id)
             )
         else:
             conn.execute(
-                'UPDATE users SET username = ?, role = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ? WHERE id = ?',
-                (username, role, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, user_id)
+                'UPDATE users SET username = ?, role = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ? WHERE id = ?',
+                (username, role, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, user_id)
             )
         conn.commit()
         result = conn.execute(
