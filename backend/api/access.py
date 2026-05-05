@@ -44,8 +44,12 @@ class TerminalSession:
             login_user = creds.get('normal_username')
             login_pwd = creds.get('normal_password')
         else:
-            # Privileged access: use admin credentials
-            login_user = creds.get('admin_username') or creds.get('username')
+            # Privileged access: use admin credentials with platform-aware defaults
+            platform = (device.get('platform') or '').lower()
+            is_server = any(p in platform for p in ['linux', 'windows', 'server'])
+            default_user = 'root' if is_server else 'admin'
+            
+            login_user = creds.get('admin_username') or default_user
             login_pwd = creds.get('admin_password') or creds.get('password')
 
         try:

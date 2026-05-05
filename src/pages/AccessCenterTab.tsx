@@ -181,15 +181,44 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       if (mfaTarget.appType === 'xshell') {
         launchTerminal(mfaTarget.device, 'xshell', 'privileged', dynamicCode, fixedPassword);
       } else {
-        // Privileged web login: use admin_username identity
-        window.open(`/terminal/${mfaTarget.device.id}?role=${encodeURIComponent(mfaTarget.device.admin_username || 'root')}&hostname=${encodeURIComponent(mfaTarget.device.name)}&identity=privileged`, '_blank');
-        setShowMFAModal(false);
+        // Privileged web login: MUST verify MFA first
+        const verify = async () => {
+          try {
+            const vRes = await fetch('/api/system/verify-mfa', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                mfa_code: dynamicCode, 
+                fixed_password: fixedPassword,
+                current_username: currentUsername || '' 
+              })
+            });
+            const vData = await vRes.json();
+            if (vData.success) {
+              const plat = (mfaTarget.device.platform || '').toLowerCase();
+              const isSrv = plat.includes('linux') || plat.includes('windows') || plat.includes('server');
+              const dPriv = isSrv ? 'root' : 'admin';
+              window.open(`/terminal/${mfaTarget.device.id}?role=${encodeURIComponent(mfaTarget.device.admin_username || dPriv)}&hostname=${encodeURIComponent(mfaTarget.device.name)}&identity=privileged`, '_blank');
+              setShowMFAModal(false);
+            } else {
+              showToast(vData.error, 'error');
+            }
+          } catch {
+            showToast('Verification failed', 'error');
+          }
+        };
+        verify();
       }
     }
   };
 
   const launchTerminal = async (dev: Device, appType: string, identity: 'normal' | 'privileged', code?: string, fixedPw?: string) => {
-    const user = identity === 'normal' ? (dev.normal_username || 'user') : (dev.admin_username || 'admin');
+    // Logic for default privileged user: root for servers, admin for network
+    const platform = (dev.platform || '').toLowerCase();
+    const isServer = platform.includes('linux') || platform.includes('windows') || platform.includes('server');
+    const defaultPrivUser = isServer ? 'root' : 'admin';
+    
+    const user = identity === 'normal' ? (dev.normal_username || 'user') : (dev.admin_username || defaultPrivUser);
     const path = localStorage.getItem('local_terminal_path');
     
     if (appType === 'xshell' && !path) {
@@ -359,7 +388,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       {/* MFA Modal with Approver Selection */}
       <AnimatePresence>
         {showMFAModal && (
-          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-md">
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-md">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}

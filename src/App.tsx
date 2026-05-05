@@ -1351,6 +1351,7 @@ const App: React.FC = () => {
         role: (currentUserRecord?.role || currentUser.role || 'Operator') as string,
         avatar_url: profileAvatarPreview,
         notification_channels: notificationChannels,
+        fixedPin: profileForm.fixedPin,
       };
       if (profileForm.password) payload.password = profileForm.password;
 

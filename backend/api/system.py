@@ -187,6 +187,46 @@ async def open_file_picker() -> Dict[str, Any]:
     
     return result
 
+@router.post("/verify-mfa")
+async def verify_mfa(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Verification-only endpoint for Web Terminal security."""
+    mfa_code = data.get("mfa_code")
+    fixed_pw = data.get("fixed_password")
+    current_username = data.get("current_username")
+    
+    if not current_username:
+        return {"success": False, "error": "无法识别当前用户身份"}
+        
+    import bcrypt
+    from database import get_db_connection
+    conn = get_db_connection()
+    try:
+        user_row = conn.execute("SELECT fixed_pin, mfa_fixed_password FROM users WHERE username = ?", (current_username,)).fetchone()
+        if not user_row:
+            return {"success": False, "error": "用户不存在"}
+        
+        stored_pin_hash = user_row['fixed_pin'] or user_row['mfa_fixed_password']
+        if not stored_pin_hash:
+            return {"success": False, "error": "您尚未在个人设置中配置 6 位固定密码"}
+            
+        if not bcrypt.checkpw(str(fixed_pw).encode('utf-8'), stored_pin_hash.encode('utf-8')):
+            return {"success": False, "error": "固定密码验证失败"}
+    except Exception:
+        return {"success": False, "error": "系统错误"}
+    finally:
+        conn.close()
+
+    if not mfa_code:
+        return {"success": False, "error": "需要提供动态验证码"}
+    
+    stored = mfa_store.get(current_username)
+    if not stored or str(stored["code"]) != str(mfa_code) or time.time() > stored["expire"]:
+        return {"success": False, "error": "验证码错误或已过期"}
+    
+    # Success - clean up code
+    del mfa_store[current_username]
+    return {"success": True}
+
 @router.post("/launch-terminal")
 async def launch_terminal(data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -219,11 +259,14 @@ async def launch_terminal(data: Dict[str, Any]) -> Dict[str, Any]:
         from database import get_db_connection
         conn = get_db_connection()
         try:
-            user_row = conn.execute("SELECT fixed_pin FROM users WHERE username = ?", (current_username,)).fetchone()
-            if not user_row or not user_row['fixed_pin']:
+            user_row = conn.execute("SELECT fixed_pin, mfa_fixed_password FROM users WHERE username = ?", (current_username,)).fetchone()
+            if not user_row:
+                return {"success": False, "error": "无法识别当前用户身份"}
+            
+            stored_pin_hash = user_row['fixed_pin'] or user_row['mfa_fixed_password']
+            if not stored_pin_hash:
                 return {"success": False, "error": "您尚未在个人设置中配置 6 位固定密码"}
                 
-            stored_pin_hash = user_row['fixed_pin']
             if not bcrypt.checkpw(str(fixed_pw).encode('utf-8'), stored_pin_hash.encode('utf-8')):
                 return {"success": False, "error": "固定密码验证失败"}
         except Exception as e:
