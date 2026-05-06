@@ -70,11 +70,23 @@ class TerminalSession:
             
             logger.info(f"[Terminal] xterm-256color Session established for {device['hostname']} as {login_user}")
             
-            # Start IO tasks
-            await asyncio.gather(
-                self._upstream(),
-                self._downstream()
-            )
+            # Start IO tasks with proper cleanup
+            tasks = [
+                asyncio.create_task(self._upstream()),
+                asyncio.create_task(self._downstream())
+            ]
+            
+            # Wait for either task to complete (e.g. socket close or SSH exit)
+            _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            
+            # Cancel the remaining task immediately
+            for task in pending:
+                task.cancel()
+                
+            # Wait for cancellations to complete
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
         except Exception as e:
             logger.error(f"[Terminal] Connection failed or terminated: {e}", exc_info=True)
             try:
@@ -113,6 +125,10 @@ class TerminalSession:
             logger.error(f"[Terminal] Downstream error: {e}")
         finally:
             logger.info(f"[Terminal] Session closed for {self.device_id}")
+            if self.ssh_chan:
+                self.ssh_chan.close()
+            if self.ssh_conn:
+                self.ssh_conn.close()
             try:
                 await self.ws.close()
             except:

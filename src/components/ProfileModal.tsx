@@ -10,7 +10,7 @@ interface AvatarPreset {
   bgClass: string;
 }
 
-interface ProfileFormState {
+export interface ProfileFormState {
   username: string;
   password: string;
   confirmPassword: string;

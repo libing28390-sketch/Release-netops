@@ -173,7 +173,7 @@ const getDeviceCategory = (d: Device): 'network' | 'server' => {
 };
 
 const CATEGORY_META: Record<string, { label: string; labelEn: string; icon: string; color: string }> = {
-  L2: { label: '二层网络', labelEn: 'L2 Network', icon: '🔗', color: 'text-blue-600' },
+  L2: { label: '二层网络', labelEn: 'L2 Network', icon: '🔗', color: 'text-cyan-600' },
   L3: { label: '三层路由', labelEn: 'L3 Routing', icon: '🗺️', color: 'text-violet-600' },
   Security: { label: '安全策略', labelEn: 'Security', icon: '🛡️', color: 'text-rose-600' },
   Operations: { label: '运维工具', labelEn: 'Operations', icon: '🔧', color: 'text-amber-600' },
@@ -323,6 +323,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const [treeFilterRole, setTreeFilterRole] = useState<string | null>(null);
   const [showSelectedDrawer, setShowSelectedDrawer] = useState(false);
   const [quickQuerySearch, setQuickQuerySearch] = useState('');
+
 
   const [ticketValidation, setTicketValidation] = useState<{
     loading: boolean;
@@ -667,6 +668,47 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
     return isZh ? '⚙️ 通用参数' : '⚙️ General';
   };
 
+  /* ESC key handling for modals and overlays */
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // 1. Close secondary confirmation modals first
+        if (confirmModalOpen) {
+          setConfirmModalOpen(false);
+          return;
+        }
+        
+        // 2. Close terminal/query overlays
+        if (quickQueryRunning || quickQueryOutput) {
+          onResetQuickQuery();
+          handleClearSelection();
+          return;
+        }
+
+        // 3. Close the "Confirm target and select operation" modal
+        if (hasTargets) {
+          handleClearSelection();
+          return;
+        }
+
+        // 4. Close the selected devices drawer
+        if (showSelectedDrawer) {
+          setShowSelectedDrawer(false);
+          return;
+        }
+
+        // 5. Navigate back in steps
+        if (currentStep > 1) {
+          if (currentStep === 2) setCurrentStep(1);
+          else if (currentStep === 3) setCurrentStep(2);
+          // We don't auto-exit step 4 to avoid losing execution results
+        }
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [confirmModalOpen, quickQueryRunning, quickQueryOutput, hasTargets, showSelectedDrawer, currentStep, onResetQuickQuery, handleClearSelection]);
+
   /* ═══════════════════════════════════════════════════════════════════
      RENDER
      ═══════════════════════════════════════════════════════════════════ */
@@ -742,7 +784,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                 >
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${
                     isRunning
-                      ? 'bg-blue-500 text-white'
+                      ? 'bg-cyan-500 text-white'
                       : isDone && !isActive
                         ? 'bg-emerald-500 text-white'
                         : isActive
@@ -764,7 +806,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                     <span className="text-[10px] text-cyan-600 font-bold">{targetCount}</span>
                   )}
                   {step.id === 4 && isRunning && (
-                    <span className="text-[10px] text-blue-500 font-bold animate-pulse">{isZh ? '执行中' : 'Running'}</span>
+                    <span className="text-[10px] text-cyan-500 font-bold animate-pulse">{isZh ? '执行中' : 'Running'}</span>
                   )}
                 </button>
               </React.Fragment>
@@ -1086,7 +1128,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                                    </div>
                                 </td>
                                 <td className="px-3 py-1.5 text-[11px] text-gray-500">{device.role || '—'}</td>
-                                <td className="px-3 py-1.5 text-[11px] text-blue-500">{device.site || '—'}</td>
+                                <td className="px-3 py-1.5 text-[11px] text-cyan-500">{device.site || '—'}</td>
                               </tr>
                             );
                           })}
@@ -1223,7 +1265,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                               return acc;
                             }, {})
                           ).map(([groupId, items]) => {
-                            const groupMeta = groupId === 'net' ? { label: isZh ? '基础网络查询' : 'Network', icon: '🌐', bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100' }
+                            const groupMeta = groupId === 'net' ? { label: isZh ? '基础网络查询' : 'Network', icon: '🌐', bg: 'bg-cyan-50', text: 'text-cyan-600', border: 'border-cyan-100' }
                               : groupId === 'route' ? { label: isZh ? '路由协议分析' : 'Routing', icon: '🗺️', bg: 'bg-indigo-50', text: 'text-indigo-600', border: 'border-indigo-100' }
                               : groupId === 'sys' ? { label: isZh ? '系统状态监控' : 'System', icon: '⚙️', bg: 'bg-slate-50', text: 'text-slate-600', border: 'border-slate-100' }
                               : { label: isZh ? '个人常用收藏' : 'Favorites', icon: '⭐', bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100' };
@@ -1859,12 +1901,12 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                       overallStatus === 'success' ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200'
                         : overallStatus === 'partial' ? 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200'
                           : overallStatus === 'failed' ? 'bg-gradient-to-r from-red-50 to-rose-50 border-red-200'
-                            : 'bg-gradient-to-r from-blue-50 to-cyan-50 border-blue-200'
+                            : 'bg-gradient-to-r from-cyan-50 to-cyan-100/50 border-cyan-200'
                     }`}>
                       <div className="px-5 py-3 flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           {isQuickPlaybookRunning ? (
-                            <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center">
+                            <div className="w-8 h-8 rounded-lg bg-cyan-500 flex items-center justify-center">
                               <RotateCcw size={16} className="text-white animate-spin" />
                             </div>
                           ) : overallStatus === 'success' ? (
@@ -1906,7 +1948,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                               </span>
                             )}
                             {runningCount > 0 && (
-                              <span className="flex items-center gap-1.5 text-xs font-bold text-blue-700 bg-blue-100 px-2.5 py-1 rounded-lg">
+                              <span className="flex items-center gap-1.5 text-xs font-bold text-cyan-700 bg-cyan-100 px-2.5 py-1 rounded-lg">
                                 <RotateCcw size={12} className="animate-spin" /> {runningCount}
                               </span>
                             )}
@@ -1934,9 +1976,9 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                       </div>
                       {/* Progress bar */}
                       {isQuickPlaybookRunning && (
-                        <div className="h-1 bg-blue-100">
+                        <div className="h-1 bg-cyan-100">
                           <div
-                            className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-500 ease-out"
+                            className="h-full bg-gradient-to-r from-cyan-500 to-teal-400 transition-all duration-500 ease-out"
                             style={{ width: `${Math.max(progressPct, 5)}%` }}
                           />
                         </div>
@@ -1956,7 +1998,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                         <div className="flex-1 min-h-0 overflow-auto p-3 space-y-2">
                           {deviceEntries.length === 0 && isQuickPlaybookRunning && (
                             <div className="flex flex-col items-center justify-center h-32 gap-3">
-                              <RotateCcw size={24} className="text-blue-400 animate-spin" />
+                              <RotateCcw size={24} className="text-cyan-400 animate-spin" />
                               <p className="text-xs text-gray-400">{isZh ? '等待设备响应...' : 'Waiting for device response...'}</p>
                             </div>
                           )}
@@ -1979,7 +2021,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                             <div
                               key={deviceId}
                               className={`rounded-xl border-2 p-3 transition-all ${
-                                deviceState.status === 'running' ? 'border-blue-200 bg-blue-50/40'
+                                deviceState.status === 'running' ? 'border-cyan-200 bg-cyan-50/40'
                                   : deviceState.status === 'success' ? 'border-emerald-200 bg-emerald-50/40'
                                     : deviceState.status === 'partial_failure' ? 'border-amber-200 bg-amber-50/40'
                                       : 'border-red-200 bg-red-50/40'
@@ -1987,7 +2029,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                             >
                               <div className="flex items-center gap-2 mb-1.5">
                                 {deviceState.status === 'running' ? (
-                                  <RotateCcw size={13} className="text-blue-500 animate-spin flex-shrink-0" />
+                                  <RotateCcw size={13} className="text-cyan-500 animate-spin flex-shrink-0" />
                                 ) : deviceState.status === 'success' ? (
                                   <CheckCircle2 size={13} className="text-emerald-500 flex-shrink-0" />
                                 ) : deviceState.status === 'partial_failure' ? (
@@ -2031,8 +2073,8 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                               {isZh ? '执行日志' : 'Execution Log'}
                             </span>
                             {isQuickPlaybookRunning && (
-                              <span className="flex items-center gap-1 text-[10px] text-blue-400 font-bold">
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                              <span className="flex items-center gap-1 text-[10px] text-cyan-400 font-bold">
+                                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
                                 LIVE
                               </span>
                             )}
@@ -2053,13 +2095,13 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                               <div key={deviceId} className="mb-4 last:mb-0">
                                 <div className="flex items-center gap-2 mb-1.5">
                                   <span className={`w-2 h-2 rounded-full ${
-                                    ds.status === 'running' ? 'bg-blue-400 animate-pulse'
+                                    ds.status === 'running' ? 'bg-cyan-400 animate-pulse'
                                       : ds.status === 'success' ? 'bg-emerald-400'
                                         : 'bg-red-400'
                                   }`} />
                                   <span className="text-cyan-300 font-bold">[{ds.hostname}]</span>
                                   <span className={`text-[10px] uppercase font-bold ${
-                                    ds.status === 'running' ? 'text-blue-400' : ds.status === 'success' ? 'text-emerald-400' : 'text-red-400'
+                                    ds.status === 'running' ? 'text-cyan-400' : ds.status === 'success' ? 'text-emerald-400' : 'text-red-400'
                                   }`}>
                                     {ds.status}
                                   </span>
@@ -2140,7 +2182,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm"
-              onClick={() => setConfirmModalOpen(false)}
+              onClick={() => { setConfirmModalOpen(false); }}
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
@@ -2151,7 +2193,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
               <div className={`px-6 py-4 ${
                 confirmAction === 'apply'
                   ? (quickPlaybookScenario?.risk === 'high' ? 'bg-gradient-to-r from-red-50 to-rose-50' : 'bg-gradient-to-r from-cyan-50 to-teal-50')
-                  : 'bg-gradient-to-r from-blue-50 to-cyan-50'
+                  : 'bg-gradient-to-r from-cyan-50 to-cyan-100/50'
               }`}>
                 <div className="flex items-center gap-3">
                   {confirmAction === 'apply' && quickPlaybookScenario?.risk === 'high' ? (
@@ -2201,7 +2243,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                   </div>
                 )}
                 {confirmAction === 'validate' && (
-                  <div className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">
+                  <div className="flex items-center gap-2 rounded-lg bg-cyan-50 border border-cyan-100 px-3 py-2 text-xs text-cyan-700">
                     <span>ℹ</span>
                     {isZh ? '校验模式：仅检查，不下发实际配置' : 'Validation mode: check only, no actual config push'}
                   </div>

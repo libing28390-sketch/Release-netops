@@ -74,6 +74,7 @@ interface ScheduledJob {
   run_count: number;
   created_by: string;
   created_at: string;
+  major_type?: string;
 }
 
 interface EligibleApprover {
@@ -98,6 +99,7 @@ interface FormState {
   script_id: string;
   is_config: boolean;
   config_reason: string;
+  major_type: string;
 }
 
 interface ValidatedDevice {

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import DateTimePicker from '../components/DateTimePicker';
+import type { Device } from '../types';
 
 /* ═══════════════════════════════════════════════════════ */
 /*  Types                                                  */

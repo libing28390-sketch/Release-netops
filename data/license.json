@@ -1,10 +1,10 @@
 {
   "payload": {
-    "license_id": "5cd8caed-5e84-491d-bfd1-9bba9a7de4bc",
-    "company": "cisco",
+    "license_id": "a534423c-e0b2-49d6-b105-5813fb66179c",
+    "company": "new-cisco",
     "license_type": "enterprise",
-    "issued_at": "2026-04-30T12:46:15.290081+00:00",
-    "expire_at": "2027-04-30T23:59:59",
+    "issued_at": "2026-05-06T15:03:18.251497+00:00",
+    "expire_at": "2027-05-06T23:59:59",
     "device_limit": 1000,
     "server_limit": 1000,
     "features": [
@@ -22,10 +22,12 @@
       "reports",
       "api_access",
       "scheduled_jobs",
-      "password_rotation"
+      "password_rotation",
+      "access_center"
     ],
     "machine_id": "7294-18BB-E08A-5D49",
+    "max_version": "99.9.9",
     "metadata": null
   },
-  "signature": "hoA8fVgljwQJpRKUxcY/KTP+xCZgZjlmutDmME5WcpePROFYRIZ5fnj8LgqogOgrHupivZkUMo24Po1xUZ/7fj35/zNshXKBNdWrTE4N/NJ80MNnaKq0BNd4nTM+nDuqAobdjH8WtyA/KXo9PYUKDmBIdgWB2gGjXj/OedA7/b1Rnk4jyrT+zHn1zh5MyUqAUkrribXgIRcZAihIyZgBBXCm27EozJ59jG5q6Y1nJZsXNtWqkYvraxBr1e3uPrk+592Zqri4e4OQy674vVpn7jsT7EHJAu8/lH1ODff8VokmJyeTpLlal+tBp8o1zW8YE9RqiPP1wmTNdpVRCWbwJg=="
+  "signature": "Xbrsu0wzLYV+6NanJ0IEwz3vi9+PKuS1BeVw1sE7uUu4OQlE5VDpNO7IDASJZAdGpgptkPO8ErFZGZFADAuuIcAD+GsggJu67MNvt0bw1e5l7ZCdkzU+g9yQMFA9LokNUUpg4YUmoBa0zLci1UX8nHgArJvH4cKsyAV2UpLQrtNc0l2OmUaST9RwaULJdeZ4ZGLi01pKf+M7vFGAA1Oc9ueE0TAQb4vBboKi7YaNSI+GMQoRMNVZs8qbAfoguk88tAKSEiTwGpOlWI+7q7bjNz6baDS0dbPfpclCMQX7/BzhFK8RRO/rDbJw1wyx59MdeKsy+ZJEtQIGyKPbZyqXRA=="
 }

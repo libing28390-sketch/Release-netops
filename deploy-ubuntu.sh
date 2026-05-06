@@ -170,11 +170,22 @@ npm run build --silent
 ok "前端构建完成 (dist/)"
 
 # ============================================================
-# 7. 环境文件
+# 7. 环境文件 (.env)
 # ============================================================
-if [ ! -f "$PROJECT_DIR/.env" ] && [ -f "$PROJECT_DIR/.env.example" ]; then
-    cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
-    ok "已从 .env.example 创建 .env（请按需修改）"
+if [ ! -f "$PROJECT_DIR/.env" ]; then
+    if [ -f "$PROJECT_DIR/.env.example" ]; then
+        info "正在生成 .env 配置文件..."
+        cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+        
+        # 随机生成 SECRET_KEY
+        NEW_SECRET=$(LC_ALL=C tr -dc 'a-zA-Z0-9' < /dev/urandom | fold -w 32 | head -n 1)
+        sed -i "s/SECRET_KEY=.*/SECRET_KEY=$NEW_SECRET/" "$PROJECT_DIR/.env"
+        
+        ok "已从 .env.example 创建 .env"
+        warn "注意: 默认配置使用本地 PostgreSQL。如果你的数据库在其他服务器，请手动修改 .env"
+    else
+        warn "未找到 .env.example，跳过环境文件自动生成"
+    fi
 fi
 
 # ============================================================
@@ -360,6 +371,7 @@ Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
 Environment=PYTHONPATH=$PROJECT_DIR/backend
+EnvironmentFile=-$PROJECT_DIR/.env
 AmbientCapabilities=CAP_NET_RAW
 
 # Security hardening

@@ -62,6 +62,7 @@ interface InspectionResult {
   critical_alerts: number;
   compliance_status: string;
   findings_json: string;
+  metrics_json: string;
   checked_at: string;
 }
 
@@ -615,7 +616,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                                 {Object.entries(metrics).map(([key, val]) => (
                                   <div key={key} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${typeof val === 'number' ? 'bg-slate-50 border-slate-200 text-slate-700' : 'bg-red-50 border-red-100 text-red-600'}`}>
                                     <span className="opacity-50 mr-1">{key}:</span>
-                                    <span className="font-mono">{typeof val === 'number' ? val.toFixed(1) + (key.includes('util') || key.includes('avail') ? '%' : '') : val}</span>
+                                    <span className="font-mono">{typeof val === 'number' ? val.toFixed(1) + (key.includes('util') || key.includes('avail') ? '%' : '') : String(val)}</span>
                                   </div>
                                 ))}
                                 {Object.keys(metrics).length === 0 && <span className="text-black/20 text-[10px] italic">No metrics collected</span>}

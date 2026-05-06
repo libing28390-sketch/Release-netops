@@ -6,6 +6,7 @@ services:
     image: postgres:17-alpine
     container_name: netops-db
     environment:
+      # These variables can be overridden in the .env file
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-netops}

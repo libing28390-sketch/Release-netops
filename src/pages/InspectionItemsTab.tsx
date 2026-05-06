@@ -25,6 +25,8 @@ interface InspectionItem {
   created_at: string;
   updated_at: string;
   script_id: string;
+  warning_threshold?: number | null;
+  critical_threshold?: number | null;
 }
 
 

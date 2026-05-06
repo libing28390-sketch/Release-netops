@@ -18,7 +18,7 @@ import AppLayout from './components/AppLayout';
 import AppMainContent from './components/AppMainContent';
 import { AppRuntimeBoundary } from './components/AppRuntimeBoundary';
 import type { ToastState } from './components/ToastNotification';
-import ProfileModal from './components/ProfileModal';
+import ProfileModal, { ProfileFormState } from './components/ProfileModal';
 import CommandPreviewModal from './components/CommandPreviewModal';
 import TerminalWindow from './components/access/TerminalWindow';
 import ImportInventoryModal from './components/ImportInventoryModal';
@@ -178,9 +178,18 @@ const App: React.FC = () => {
   // ── Global License Enforcement ──
   useEffect(() => {
     if (isAuthenticated && !isLicenseValid) {
-      // If license is invalid, force user to license tab unless they are on health or setup
-      const allowedTabs = ['license', 'health', 'setup'];
-      if (!allowedTabs.includes(activeTab)) {
+      // Allow basic read-only or low-risk tabs without a license
+      const basicAllowedTabs = [
+        'dashboard',
+        'inventory',
+        'monitoring',
+        'topology',
+        'license',
+        'health',
+        'setup'
+      ];
+      if (!basicAllowedTabs.includes(activeTab)) {
+        showToast(language === 'zh' ? '该功能属于高级特性，请激活有效授权以继续使用' : 'This is an advanced feature. Please activate a valid license to continue.', 'info');
         navigate('/license');
       }
     }
@@ -188,7 +197,7 @@ const App: React.FC = () => {
     if (location.pathname === '/history') {
       navigate('/audit', { replace: true });
     }
-  }, [isAuthenticated, isLicenseValid, activeTab, navigate, location.pathname]);
+  }, [isAuthenticated, isLicenseValid, activeTab, navigate, location.pathname, showToast, language]);
 
   const deviceFetchMode = useMemo<'light' | 'full'>(() => {
     if (activeTab === 'inventory') return 'full';
@@ -608,19 +617,6 @@ const App: React.FC = () => {
     );
   }, [allNavItems, cmdPaletteQuery]);
 
-  // Ctrl+K 全局快捷键
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        e.preventDefault();
-        setCmdPaletteOpen((v) => !v);
-        setCmdPaletteQuery('');
-      }
-      if (e.key === 'Escape') setCmdPaletteOpen(false);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
 
   const pageTitle = useMemo(() => {
     if (activeTab === 'automation') {
@@ -1102,7 +1098,7 @@ const App: React.FC = () => {
   const [lifecycleConfirmChecked, setLifecycleConfirmChecked] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showProfilePwd, setShowProfilePwd] = useState(false);
-  const [profileForm, setProfileForm] = useState({ username: '', password: '', confirmPassword: '' });
+  const [profileForm, setProfileForm] = useState<ProfileFormState>({ username: '', password: '', confirmPassword: '', fixedPin: '' });
   const [notificationChannels, setNotificationChannels] = useState<{
     feishu:   { webhook_url: string; enabled: boolean; creator_username?: string };
     dingtalk: { webhook_url: string; enabled: boolean; secret: string; creator_username?: string };
@@ -1291,6 +1287,7 @@ const App: React.FC = () => {
       username: currentUser.username || currentUserRecord?.username || '',
       password: '',
       confirmPassword: '',
+      fixedPin: '',
     });
     setProfileAvatarPreview(currentAvatar);
     setShowProfilePwd(false);
@@ -1805,6 +1802,61 @@ const App: React.FC = () => {
     inventorySortConfig,
     normalizeDeviceRecord,
   });
+
+  // 全局快捷键处理 (ESC / Ctrl+K)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setCmdPaletteOpen((v) => !v);
+        setCmdPaletteQuery('');
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        // Order of precedence for closing global modals
+        if (cmdPaletteOpen) {
+          setCmdPaletteOpen(false);
+          return;
+        }
+        if (showCustomCommandModal) {
+          setShowCustomCommandModal(false);
+          return;
+        }
+        if (showCmdPreviewModal) {
+          setShowCmdPreviewModal(false);
+          return;
+        }
+        if (showAddScenarioModal) {
+          setShowAddScenarioModal(false);
+          return;
+        }
+        if (saveQuickQueryModalOpen) {
+          setSaveQuickQueryModalOpen(false);
+          return;
+        }
+        if (showProfileModal) {
+          setShowProfileModal(false);
+          return;
+        }
+        if (showNotifications) {
+          setShowNotifications(false);
+          return;
+        }
+        if (showUserMenu) {
+          setShowUserMenu(false);
+          return;
+        }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [
+    cmdPaletteOpen, showCustomCommandModal, showCmdPreviewModal, showAddScenarioModal, 
+    saveQuickQueryModalOpen, showProfileModal, showNotifications, showUserMenu,
+    setShowCustomCommandModal, setShowCmdPreviewModal, setSaveQuickQueryModalOpen,
+    setShowAddScenarioModal, setShowProfileModal, setShowNotifications, setShowUserMenu
+  ]);
 
   useEffect(() => {
     const totalInventoryPages = Math.max(1, Math.ceil(inventoryTotal / inventoryPageSize));
@@ -3498,6 +3550,7 @@ const App: React.FC = () => {
     findMatchingPlatform,
     handleRerun,
   };
+
 
   if (activeTab === 'terminal') {
     const deviceId = location.pathname.split('/')[2];

@@ -182,8 +182,8 @@ async def validation_exception_handler(request, exc):
 
 # CORS - restrict to known origins in production; permissive in dev
 _cors_origins = ["*"] if os.environ.get("NODE_ENV") == "development" else [
-    f"http://localhost:{os.environ.get('PORT', '9003')}",
-    f"http://127.0.0.1:{os.environ.get('PORT', '9003')}",
+    f"http://localhost:{os.environ.get('PORT', '9010')}",
+    f"http://127.0.0.1:{os.environ.get('PORT', '9010')}",
 ]
 # In production, set CORS_ORIGINS env var to a comma-separated list of allowed origins
 _env_origins = os.environ.get("CORS_ORIGINS", "").strip()
@@ -1198,6 +1198,17 @@ async def status_monitor():
             except Exception as snmp_err:
                 logger.debug(f"[SNMP] {ip} metrics failed: {snmp_err}")
 
+            # Fallback: if standard metrics failed (e.g. Linux servers lacking specific OIDs),
+            # verify true reachability via standard sysUpTime before marking unreachable.
+            if not snmp_available:
+                try:
+                    from services.snmp_service import _snmp_get, SYS_UPTIME
+                    test_val = await _snmp_get(ip, snmp_community, SYS_UPTIME, snmp_port, timeout=1.5)
+                    if test_val is not None:
+                        snmp_available = True
+                except Exception:
+                    pass
+
             # Only append to history if we got data
             if cpu_usage is not None:
                 cpu_history.append(cpu_usage)
@@ -1851,7 +1862,7 @@ if __name__ == "__main__":
         import asyncio
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
         
-    port = int(os.environ.get("PORT", "9003"))
+    port = int(os.environ.get("PORT", "9010"))
     workers = int(os.environ.get("WORKERS", "1"))
     is_dev = os.environ.get("NODE_ENV") == "development"
     

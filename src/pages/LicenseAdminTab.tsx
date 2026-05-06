@@ -3,7 +3,7 @@ import {
   Shield, Upload, AlertTriangle, CheckCircle2, Clock, Server,
   Cpu, Key, RefreshCw, X, Lock, Unlock, ChevronDown, ChevronUp,
   Zap, Eye, EyeOff, FileText, AlertCircle, Info, Calendar,
-  Hash, Building2, Crown, Loader2, ShieldCheck, ShieldAlert, Copy,
+  Hash, Building2, Crown, Loader2, ShieldCheck, ShieldAlert, Copy, Database,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 
@@ -66,6 +66,7 @@ const FEATURE_LABELS: Record<string, { zh: string; en: string; icon: any }> = {
   api_access:         { zh: 'API 接口',     en: 'API Access',          icon: Key },
   scheduled_jobs:     { zh: '定时任务',     en: 'Scheduled Jobs',      icon: Clock },
   password_rotation:  { zh: '密码轮换',     en: 'Password Rotation',   icon: RefreshCw },
+  access_center:      { zh: '接入中心',     en: 'Access Center',       icon: Database },
 };
 
 const TYPE_COLORS: Record<string, string> = {

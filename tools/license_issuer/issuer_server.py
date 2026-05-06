@@ -69,15 +69,17 @@ FEATURE_CATALOG = {
     "api_access":        "API接口 / API Access",
     "scheduled_jobs":    "定时任务 / Scheduled Jobs",
     "password_rotation": "密码轮换 / Password Rotation",
+    "access_center":     "接入中心 / Access Center",
 }
 
 # Preset feature bundles
 FEATURE_PRESETS = {
-    "trial": ["automation", "monitoring", "config_management"],
-    "standard": ["automation", "monitoring", "config_management", "alerting", "rbac", "topology"],
+    "trial": ["automation", "monitoring", "config_management", "access_center"],
+    "standard": ["automation", "monitoring", "config_management", "alerting", "rbac", "topology", "access_center"],
     "professional": [
         "automation", "monitoring", "config_management", "alerting", "rbac",
         "topology", "change_orders", "inspections", "ipam", "compliance", "reports",
+        "access_center"
     ],
     "enterprise": list(FEATURE_CATALOG.keys()),
 }
