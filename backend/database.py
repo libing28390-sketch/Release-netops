@@ -437,7 +437,6 @@ def _init_db_logic(conn):
         ('enable_password_expires_at', "TEXT DEFAULT ''")
     ]:
         ensure_column('devices', col, dtype)
-        ensure_column('physical_assets', col, dtype)
 
     # Migration for script management enhancements
     for col, dtype in [
@@ -1473,6 +1472,12 @@ def _init_db_logic(conn):
     ensure_column('physical_assets', 'admin_password', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'enable_password', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'auth_model', "TEXT DEFAULT 'single'")
+    ensure_column('physical_assets', 'normal_password_last_rotated', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'normal_password_expires_at', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'admin_password_last_rotated', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'admin_password_expires_at', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'enable_password_last_rotated', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'enable_password_expires_at', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'credential_source', "TEXT DEFAULT 'local'")
     ensure_column('physical_assets', 'vault_path', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'requires_strict_audit', "INTEGER DEFAULT 1")

@@ -66,6 +66,46 @@ sudo apt-get install -y -qq \
 ok "系统依赖安装完成（含 Nginx、Git）"
 
 # ============================================================
+# 1.1 PostgreSQL 数据库安装与配置
+# ============================================================
+info "检查并安装 PostgreSQL..."
+if ! command -v psql &> /dev/null; then
+    sudo apt-get install -y -qq postgresql postgresql-contrib > /dev/null 2>&1
+    sudo systemctl enable postgresql > /dev/null 2>&1
+    sudo systemctl start postgresql
+    ok "PostgreSQL 安装完成"
+else
+    ok "PostgreSQL 已安装"
+fi
+
+PG_USER="netops"
+PG_DB="netops"
+PG_PASS=""
+
+info "等待 PostgreSQL 服务就绪..."
+for i in {1..30}; do
+    if sudo -u postgres psql -c '\q' > /dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+if ! sudo -u postgres psql -c '\q' > /dev/null 2>&1; then
+    fail "PostgreSQL 服务未能正常响应，请检查服务状态: systemctl status postgresql"
+fi
+
+# 检查用户是否已存在，如果不存在则自动创建数据库和用户
+ROLE_EXISTS=$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$PG_USER'" || echo "0")
+if [ "$ROLE_EXISTS" != "1" ]; then
+    PG_PASS=$(openssl rand -hex 16)
+    sudo -u postgres psql -c "CREATE USER $PG_USER WITH PASSWORD '$PG_PASS';" > /dev/null || fail "创建数据库用户失败"
+    sudo -u postgres psql -c "CREATE DATABASE $PG_DB OWNER $PG_USER;" > /dev/null || fail "创建数据库失败"
+    ok "PostgreSQL 数据库 ($PG_DB) 与用户 ($PG_USER) 创建完成"
+else
+    ok "PostgreSQL 用户 ($PG_USER) 已存在，跳过自动创建"
+fi
+
+# ============================================================
 # 1.5 如果不在项目目录中，则从 Git 克隆
 # ============================================================
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -178,11 +218,17 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
         cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
         
         # 随机生成 SECRET_KEY
-        NEW_SECRET=$(LC_ALL=C tr -dc 'a-zA-Z0-9' < /dev/urandom | fold -w 32 | head -n 1)
-        sed -i "s/SECRET_KEY=.*/SECRET_KEY=$NEW_SECRET/" "$PROJECT_DIR/.env"
+        NEW_SECRET=$(openssl rand -hex 32)
+        sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$NEW_SECRET/" "$PROJECT_DIR/.env"
         
-        ok "已从 .env.example 创建 .env"
-        warn "注意: 默认配置使用本地 PostgreSQL。如果你的数据库在其他服务器，请手动修改 .env"
+        # 写入本地 PostgreSQL 配置
+        if [ -n "$PG_PASS" ]; then
+            sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://$PG_USER:$PG_PASS@localhost:5432/$PG_DB|" "$PROJECT_DIR/.env"
+            ok "已从 .env.example 创建 .env (并配置了生成的 PostgreSQL 访问凭证)"
+        else
+            sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://$PG_USER:YOUR_PASSWORD@localhost:5432/$PG_DB|" "$PROJECT_DIR/.env"
+            warn "注意: .env 已创建，但数据库密码需要您手动更新 (DATABASE_URL)"
+        fi
     else
         warn "未找到 .env.example，跳过环境文件自动生成"
     fi
