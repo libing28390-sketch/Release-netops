@@ -2,6 +2,7 @@ import os
 import re
 import queue
 import logging
+import uuid
 from datetime import datetime, timezone, timedelta
 
 _BEIJING_TZ = timezone(timedelta(hours=8))
@@ -1567,7 +1568,6 @@ def _init_db_logic(conn):
         "SELECT id, hostname, ip_address, sn, model, role, site, vendor, status, lifecycle_status FROM devices WHERE (asset_id IS NULL OR asset_id = '')"
     ).fetchall()
     if unlinked:
-        import uuid
         for dev in unlinked:
             # Check if there's a physical asset with the same hostname or IP
             match = cursor.execute(
