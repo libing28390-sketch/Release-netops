@@ -178,8 +178,27 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
     creds = resolve_device_credentials(device)
     
     # [LOGIC] Determine login credentials vs target credentials
-    platform = (device.get('platform') or 'cisco_ios').lower()
-    is_server = any(tag in platform for tag in ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'])
+    platform = (device.get('platform') or '').lower()
+    
+    # Smart fallback: if platform is empty or 'cisco_ios' (common default), 
+    # check if it's actually a server to avoid using network drivers on Linux.
+    asset_type = 'network_device'
+    conn3 = get_db_connection()
+    try:
+        pa_row = conn3.execute('SELECT asset_type FROM physical_assets WHERE id = ?', (device.get('asset_id'),)).fetchone()
+        if pa_row:
+            asset_type = pa_row['asset_type']
+    finally:
+        conn3.close()
+
+    if not platform or platform == 'cisco_ios':
+        if asset_type == 'server':
+            platform = 'linux'
+            logger.info(f"[Rotation] Overriding default platform to 'linux' because asset_type is 'server'")
+        else:
+            platform = 'cisco_ios'
+
+    is_server = asset_type == 'server' or any(tag in platform for tag in ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'])
     
     logger.info(f"[Rotation] Starting: host={device.get('ip_address')}, platform={platform}, is_server={is_server}")
     
@@ -293,9 +312,14 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
                 
                 logger.info(f"[Rotation] Executing server password change for {target_username}")
                 # For shell commands with pipes, send_command is required
-                driver.send_command(change_cmd)
+                # Using a generic '#' expect_string to avoid issues with complex prompts
+                res = driver.send_command(change_cmd, expect_string=r'#')
+                if not res.success:
+                    raise Exception(f"Server password change failed: {res.error}")
             else:
-                driver.send_config(commands)
+                res = driver.send_config(commands)
+                if not res.success:
+                    raise Exception(f"Config change failed: {res.error}")
             
             if not is_server:
                 driver.send_command(save_cmd)

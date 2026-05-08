@@ -89,7 +89,7 @@ const EMPTY_FORM = {
   business_ip: '', device_role: '', vlan: '', uplink_switch: '', uplink_port: '',
   status: 'active', lifecycle_status: 'staging', purchase_date: '', warranty_expiry: '', department: '', notes: '',
   // network_device specific
-  platform: 'cisco_ios', connection_method: 'ssh', 
+  platform: '', connection_method: 'ssh', 
   username: '', password: '',
   normal_username: '', normal_password: '',
   admin_username: '', admin_password: '',
@@ -365,7 +365,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
           setRotatingAssetId(null);
           setFeedbackMsg({ type: 'warning', text: zh ? '⚠️ 口令自动轮换失败，投产已回滚。' : '⚠️ Auto-rotation failed, production reverted.' });
           fetchAssets();
-        } else if (attempts >= 30) {
+        } else if (attempts >= 60) {
           clearInterval(rotationPollRef.current);
           rotationPollRef.current = undefined;
           setRotatingAssetId(null);
@@ -1403,7 +1403,11 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
 
               <div className="flex gap-2 mb-4">
                 {TYPES.map(t => (
-                  <button key={t.value} onClick={() => setForm(f => ({ ...f, asset_type: t.value }))}
+                  <button key={t.value} onClick={() => setForm(f => ({ 
+                      ...f, 
+                      asset_type: t.value,
+                      platform: t.value === 'server' ? 'linux' : 'cisco_ios'
+                    }))}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                       form.asset_type === t.value ? 'bg-[#00bceb]/10 border-[#00bceb]/25 text-[#0088b0] font-semibold' : 'bg-black/[0.01] border-black/5 text-black/30 hover:bg-black/[0.02]'
                     }`}>

@@ -4,15 +4,14 @@ import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 
 interface TerminalWindowProps {
-  deviceId: string;
-  role: string;
+  sessionToken: string;
   hostname: string;
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 const WS_BASE = API_BASE.replace('http', 'ws');
 
-export default function TerminalWindow({ deviceId, role, hostname }: TerminalWindowProps) {
+export default function TerminalWindow({ sessionToken, hostname }: TerminalWindowProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -79,10 +78,10 @@ export default function TerminalWindow({ deviceId, role, hostname }: TerminalWin
       }
     };
 
-    term.writeln(`\x1b[1;36m>>> Connecting to ${hostname} (${role})...\x1b[0m`);
+    term.writeln(`\x1b[1;36m>>> Connecting to ${hostname}...\x1b[0m`);
 
     // 2. Establish WebSocket
-    const wsUrl = `${WS_BASE}/api/access/terminal/${deviceId}?role=${role}`;
+    const wsUrl = `${WS_BASE}/api/pam/ws/${sessionToken}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -107,7 +106,6 @@ export default function TerminalWindow({ deviceId, role, hostname }: TerminalWin
 
     // 3. Handle Input
     term.onData((data) => {
-      console.log('Terminal Input:', JSON.stringify(data));
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
       }
@@ -149,7 +147,7 @@ export default function TerminalWindow({ deviceId, role, hostname }: TerminalWin
       ws.close();
       term.dispose();
     };
-  }, [deviceId, role, hostname]);
+  }, [sessionToken, hostname]);
 
   return (
     <div className="w-full h-full bg-black">

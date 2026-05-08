@@ -261,6 +261,7 @@ export interface User {
   change_groups?: string[];
   notification_channels?: NotificationChannels;
   preferred_language?: 'zh' | 'en';
+  fixed_pin?: string;
 }
 
 export type ThemeMode = 'light' | 'dark';

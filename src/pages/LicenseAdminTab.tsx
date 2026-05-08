@@ -66,7 +66,7 @@ const FEATURE_LABELS: Record<string, { zh: string; en: string; icon: any }> = {
   api_access:         { zh: 'API 接口',     en: 'API Access',          icon: Key },
   scheduled_jobs:     { zh: '定时任务',     en: 'Scheduled Jobs',      icon: Clock },
   password_rotation:  { zh: '密码轮换',     en: 'Password Rotation',   icon: RefreshCw },
-  access_center:      { zh: '接入中心',     en: 'Access Center',       icon: Database },
+  access_center:      { zh: '操作工作台',   en: 'Operation Workspace', icon: Database },
 };
 
 const TYPE_COLORS: Record<string, string> = {

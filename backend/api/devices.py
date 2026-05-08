@@ -491,6 +491,10 @@ def delete_device(device_id: str):
         row = conn.execute('SELECT hostname, asset_id FROM devices WHERE id = ?', (device_id,)).fetchone()
         # Plan-A: cascade-delete linked asset
         if row and row['asset_id']:
+            # PAM: clean up sessions, tokens and requests linked to this asset before deletion
+            conn.execute('DELETE FROM pam_sessions WHERE asset_id = ?', (row['asset_id'],))
+            conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (row['asset_id'],))
+            conn.execute('DELETE FROM pam_access_requests WHERE asset_id = ?', (row['asset_id'],))
             conn.execute('DELETE FROM physical_assets WHERE id = ?', (row['asset_id'],))
         conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
         conn.commit()
@@ -852,7 +856,8 @@ def rotate_device_password(device_id: str, role: str = Query(default='admin'), u
             target_id=device_id,
             device_id=device_id,
         )
-        raise HTTPException(status_code=422, detail=result.get('message', 'Rotation failed'))
+        # Fix: Don't raise 422, return success: False with detail
+        return {"success": False, "message": result.get('message', 'Rotation failed')}
 
 
 @router.get("/devices/{device_id}/reveal-password")

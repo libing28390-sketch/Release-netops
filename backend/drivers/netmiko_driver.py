@@ -184,7 +184,7 @@ class NetmikoDriver(BaseDriver):
                 line = next_line
         return line or None
 
-    def send_command(self, command: str) -> CommandResult:
+    def send_command(self, command: str, **kwargs) -> CommandResult:
         import logging
         logger = logging.getLogger(__name__)
         start_time = time.time()
@@ -192,15 +192,19 @@ class NetmikoDriver(BaseDriver):
             if not self.conn:
                 raise Exception("Not connected")
             logger.debug(f"[send_command] {self.host} | {command[:60]}")
-            # 极度耐心模式：大幅增加超时和延时系数，确保慢脚本也能读完
-            output = self.conn.send_command(
-                command,
-                cmd_verify=False,
-                strip_prompt=True,
-                strip_command=True,
-                read_timeout=120,
-                delay_factor=2
-            )
+            
+            # Default params
+            params = {
+                'cmd_verify': False,
+                'strip_prompt': True,
+                'strip_command': True,
+                'read_timeout': 120,
+                'delay_factor': 2
+            }
+            # Override with kwargs (e.g. expect_string)
+            params.update(kwargs)
+            
+            output = self.conn.send_command(command, **params)
             elapsed = time.time() - start_time
             err_line = self._check_cli_errors(output)
             if err_line:

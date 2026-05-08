@@ -42,6 +42,7 @@ const LicenseAdminTab = lazy(() => import('../pages/LicenseAdminTab'));
 const ScriptManagementTab = lazy(() => import('../pages/ScriptManagementTab'));
 const ConfigScheduleTab = lazy(() => import('../pages/ConfigScheduleTab'));
 const AccessCenterTab = lazy(() => import('../pages/AccessCenterTab'));
+const PAMAuditTab = lazy(() => import('../pages/PAMAuditTab'));
 
 const lazyPanelFallback = (
   <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-black/5 bg-white/70 text-sm text-black/40">
@@ -467,6 +468,12 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
       {activeTab === 'access' && (
         <Suspense fallback={lazyPanelFallback}>
           <AccessCenterTab devices={devices} language={language} showToast={showToast} />
+        </Suspense>
+      )}
+
+      {activeTab === 'pam-audit' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <PAMAuditTab language={language} showToast={showToast} />
         </Suspense>
       )}
 

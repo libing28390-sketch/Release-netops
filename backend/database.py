@@ -16,7 +16,7 @@ def _beijing_now_iso() -> str:
 try:
     from dotenv import load_dotenv
     _env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
-    load_dotenv(_env_path, override=False)
+    load_dotenv(_env_path, override=True)
 except ImportError:
     pass
 
@@ -1541,7 +1541,7 @@ def _init_db_logic(conn):
         expires_at TEXT DEFAULT '',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY (asset_id) REFERENCES physical_assets(id)
+        FOREIGN KEY (asset_id) REFERENCES physical_assets(id) ON DELETE CASCADE
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_req_asset ON pam_access_requests(asset_id)')
@@ -1558,10 +1558,48 @@ def _init_db_logic(conn):
         consumed INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         FOREIGN KEY (request_id) REFERENCES pam_access_requests(id),
-        FOREIGN KEY (asset_id) REFERENCES physical_assets(id)
+        FOREIGN KEY (asset_id) REFERENCES physical_assets(id) ON DELETE CASCADE
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_token_exp ON pam_session_tokens(expires_at)')
+
+    # ── PAM Controlled Sessions (受控会话生命周期) ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS pam_sessions (
+        id TEXT PRIMARY KEY,
+        request_id TEXT DEFAULT '',
+        asset_id TEXT NOT NULL,
+        device_id TEXT DEFAULT '',
+        requester_username TEXT NOT NULL,
+        access_level TEXT NOT NULL DEFAULT 'normal',
+        login_username TEXT DEFAULT '',
+        connect_method TEXT DEFAULT 'web',
+        target_ip TEXT DEFAULT '',
+        target_port INTEGER DEFAULT 22,
+        status TEXT NOT NULL DEFAULT 'connecting',
+        connected_at TEXT,
+        closed_at TEXT,
+        close_reason TEXT DEFAULT '',
+        duration_seconds INTEGER DEFAULT 0,
+        command_count INTEGER DEFAULT 0,
+        recording_path TEXT DEFAULT '',
+        session_token TEXT UNIQUE,
+        token_expires_at TEXT NOT NULL,
+        token_consumed INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (asset_id) REFERENCES physical_assets(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_sessions_status ON pam_sessions(status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_sessions_user ON pam_sessions(requester_username)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_sessions_asset ON pam_sessions(asset_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_sessions_created ON pam_sessions(created_at)')
+
+    # Migration: add session_id to pam_access_requests if missing
+    pam_req_cols = _table_columns(cursor, 'pam_access_requests')
+    if pam_req_cols and 'session_id' not in pam_req_cols:
+        cursor.execute("ALTER TABLE pam_access_requests ADD COLUMN session_id TEXT DEFAULT ''")
 
     # Auto-link existing devices to matching assets, or create missing assets (Plan-A unification)
     unlinked = cursor.execute(

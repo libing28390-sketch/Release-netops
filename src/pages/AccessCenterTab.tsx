@@ -10,14 +10,13 @@ import Pagination from '../components/Pagination';
 
 interface Device {
   id: string;
-  name: string;
+  asset_id?: string;
+  hostname: string;
   ip_address: string;
   status: 'online' | 'offline';
   platform?: string;
   normal_username?: string;
-  normal_password?: string;
   admin_username?: string;
-  admin_password?: string;
 }
 
 interface User {
@@ -108,7 +107,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     return list.filter(d => {
       const proto = getProtocol(d);
       const matchesProtocol = activeProtocol === 'ALL' || proto === activeProtocol;
-      const name = (d?.name || '').toLowerCase();
+      const name = (d?.hostname || '').toLowerCase();
       const ip = (d?.ip_address || '').toLowerCase();
       const matchesSearch = name.includes(query) || ip.includes(query);
       return matchesProtocol && matchesSearch;
@@ -123,18 +122,17 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   }, [filteredDevices, currentPage, pageSize]);
 
   const handleAccessRequest = (dev: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged') => {
+    if (appType === 'xshell') {
+      showToast(isZh ? '本地终端已弃用，将为您启动安全的 Web 终端' : 'Local terminal deprecated, launching Web Terminal', 'info');
+    }
+
     if (identity === 'normal') {
-      if (appType === 'xshell') {
-        launchTerminal(dev, 'xshell', 'normal');
-      } else {
-        // Normal web login: explicitly use normal_username identity
-        window.open(`/terminal/${dev.id}?role=${encodeURIComponent(dev.normal_username || 'user')}&hostname=${encodeURIComponent(dev.name)}&identity=normal`, '_blank');
-      }
+      requestSession(dev, 'normal');
       return;
     }
 
     // Privileged: require MFA
-    setMfaTarget({ device: dev, appType, identity });
+    setMfaTarget({ device: dev, appType: 'web', identity });
     setFixedPassword('');
     setDynamicCode('');
     setShowMFAModal(true);
@@ -148,7 +146,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     if (isSending || countdown > 0) return;
     setIsSending(true);
     try {
-      const res = await fetch('/api/system/request-mfa', {
+      const res = await fetch('/api/pam/mfa/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -178,76 +176,49 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     }
     
     if (mfaTarget) {
-      if (mfaTarget.appType === 'xshell') {
-        launchTerminal(mfaTarget.device, 'xshell', 'privileged', dynamicCode, fixedPassword);
-      } else {
-        // Privileged web login: MUST verify MFA first
-        const verify = async () => {
-          try {
-            const vRes = await fetch('/api/system/verify-mfa', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                mfa_code: dynamicCode, 
-                fixed_password: fixedPassword,
-                current_username: currentUsername || '' 
-              })
-            });
-            const vData = await vRes.json();
-            if (vData.success) {
-              const plat = (mfaTarget.device.platform || '').toLowerCase();
-              const isSrv = plat.includes('linux') || plat.includes('windows') || plat.includes('server');
-              const dPriv = isSrv ? 'root' : 'admin';
-              window.open(`/terminal/${mfaTarget.device.id}?role=${encodeURIComponent(mfaTarget.device.admin_username || dPriv)}&hostname=${encodeURIComponent(mfaTarget.device.name)}&identity=privileged`, '_blank');
-              setShowMFAModal(false);
-            } else {
-              showToast(vData.error, 'error');
-            }
-          } catch {
-            showToast('Verification failed', 'error');
-          }
-        };
-        verify();
-      }
+      // Privileged web login via PAM Session Gateway
+      requestSession(mfaTarget.device, 'admin', dynamicCode, fixedPassword);
+      setShowMFAModal(false);
     }
   };
 
-  const launchTerminal = async (dev: Device, appType: string, identity: 'normal' | 'privileged', code?: string, fixedPw?: string) => {
-    // Logic for default privileged user: root for servers, admin for network
-    const platform = (dev.platform || '').toLowerCase();
-    const isServer = platform.includes('linux') || platform.includes('windows') || platform.includes('server');
-    const defaultPrivUser = isServer ? 'root' : 'admin';
+  const requestSession = async (dev: Device, accessLevel: 'normal' | 'admin', mfaCode?: string, fixedPw?: string) => {
+    const assetId = dev.asset_id || dev.id; // Fallback to id if asset_id is not mapped in UI properly yet
     
-    const user = identity === 'normal' ? (dev.normal_username || 'user') : (dev.admin_username || defaultPrivUser);
-    const path = localStorage.getItem('local_terminal_path');
-    
-    if (appType === 'xshell' && !path) {
-      showToast(isZh ? '请先配置终端路径' : 'Configure path in Profile', 'info');
-      return;
-    }
-
     try {
-      const res = await fetch('/api/system/launch-terminal', {
+      const res = await fetch('/api/pam/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          path, app_type: appType, host: dev.ip_address, user, 
-          password: identity === 'normal' ? dev.normal_password : dev.admin_password,
-          is_privileged: identity === 'privileged',
-          mfa_code: code,
-          fixed_password: fixedPw,
-          user_id: 'current_user',
-          current_username: currentUsername || ''
+        body: JSON.stringify({
+          asset_id: assetId,
+          access_level: accessLevel,
+          connect_method: 'web',
+          mfa_code: mfaCode,
+          fixed_pin: fixedPw,
+          requester_username: currentUsername || 'Admin',
         })
       });
       const result = await res.json();
-      if (result.success) {
-        if (identity === 'privileged') setShowMFAModal(false);
-      } else {
-        showToast(result.error, 'error');
+      
+      if (!res.ok) {
+        showToast(result.detail || result.error || 'Failed to request session', 'error');
+        return;
+      }
+      
+      if (result.requires_mfa) {
+        // Only trigger MFA if the backend says we need it (should only happen for admin without provided codes)
+        setMfaTarget({ device: dev, appType: 'web', identity: 'privileged' });
+        setFixedPassword('');
+        setDynamicCode('');
+        setShowMFAModal(true);
+        return;
+      }
+
+      if (result.session_token) {
+        window.open(`/terminal?session=${result.session_token}&hostname=${encodeURIComponent(dev.hostname || 'Terminal')}`, '_blank');
       }
     } catch (err) {
-      showToast('Launch failed', 'error');
+      showToast('Session request failed', 'error');
     }
   };
 
@@ -261,8 +232,12 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
               <Database className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-slate-800 tracking-tight">接入中心</h2>
-              <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] mt-0.5">{totalCount} Total Assets</p>
+              <h1 className="text-xl font-bold text-slate-900">
+                {isZh ? '操作工作台' : 'Operation Workspace'}
+              </h1>
+              <p className="text-sm text-slate-500">
+                {isZh ? '受控访问、动态授权及安全合规' : 'Controlled access, dynamic authorization, and security compliance'}
+              </p>
             </div>
           </div>
 
@@ -319,7 +294,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
                         <Server className="w-4 h-4 text-slate-400 group-hover:text-[#00bceb]" />
                       </div>
                       <div>
-                        <div className="text-sm font-bold text-slate-800">{dev.name}</div>
+                        <div className="text-sm font-bold text-slate-800">{dev.hostname}</div>
                         <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter mt-0.5">{dev.platform || 'General Linux'}</div>
                       </div>
                     </div>

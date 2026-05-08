@@ -104,18 +104,24 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
         'role': body.device_role,
         'site': body.datacenter,
         'vendor': body.vendor,
-        'platform': body.platform if hasattr(body, 'platform') else None,
-        'connection_method': body.connection_method if hasattr(body, 'connection_method') else None,
-        'snmp_community': body.snmp_community if hasattr(body, 'snmp_community') else None,
-        'snmp_port': body.snmp_port if hasattr(body, 'snmp_port') else None,
+        'platform': getattr(body, 'platform', None),
+        'connection_method': getattr(body, 'connection_method', None),
+        'snmp_community': getattr(body, 'snmp_community', None),
+        'snmp_port': getattr(body, 'snmp_port', None),
+        'auth_model': getattr(body, 'auth_model', None),
     }
-    # Handle username/password specially
-    uname = getattr(body, 'username', None)
-    pwd = getattr(body, 'password', None)
-    if uname is not None:
-        updates['username'] = uname
-    if pwd is not None and pwd != '':
-        updates['password'] = _safe_encrypt(pwd)
+    # Handle username/password specially (including PAM)
+    u_fields = [
+        ('username', 'password'),
+        ('normal_username', 'normal_password'),
+        ('admin_username', 'admin_password')
+    ]
+    for u_f, p_f in u_fields:
+        uname = getattr(body, u_f, None)
+        pwd = getattr(body, p_f, None)
+        if uname is not None: updates[u_f] = uname
+        if pwd is not None and pwd != '':
+            updates[p_f] = _safe_encrypt(pwd)
     # Only update non-None values (AssetUpdate has Optional fields)
     set_parts = []
     params = []
@@ -181,6 +187,12 @@ class AssetCreate(BaseModel):
     connection_method: str = 'ssh'
     username: str = ''
     password: str = ''
+    # PAM fields
+    normal_username: str = ''
+    normal_password: str = ''
+    admin_username: str = ''
+    admin_password: str = ''
+    auth_model: str = 'single'
     snmp_community: str = 'public'
     snmp_port: int = 161
 
@@ -229,6 +241,12 @@ class AssetUpdate(BaseModel):
     connection_method: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
+    # PAM fields
+    normal_username: Optional[str] = None
+    normal_password: Optional[str] = None
+    admin_username: Optional[str] = None
+    admin_password: Optional[str] = None
+    auth_model: Optional[str] = None
     snmp_community: Optional[str] = None
     snmp_port: Optional[int] = None
 
@@ -452,22 +470,30 @@ def update_asset(asset_id: str, body: AssetUpdate):
                 # Also check credentials exist - merge values from request body
                 # (body may carry new username/password that hasn't been persisted yet)
                 from core.crypto import decrypt_credential
-                db_ip = (device_row['ip_address'] or '').strip()
-                db_uname = (device_row['username'] or '').strip()
-                db_pwd = (decrypt_credential(device_row['password']) or '').strip()
-                body_ip = (getattr(body, 'management_ip', None) or '').strip()
-                body_uname = (getattr(body, 'username', None) or '').strip()
-                body_pwd = (getattr(body, 'password', None) or '').strip()
-                ip = body_ip or db_ip
-                uname = body_uname or db_uname
-                pwd = body_pwd or db_pwd
+                
+                auth_model = getattr(body, 'auth_model', None) or device_row.get('auth_model', 'single')
+                
+                ip = (getattr(body, 'management_ip', None) or device_row.get('ip_address', '') or '').strip()
+                
                 missing = []
-                if not uname:
-                    missing.append('用户名')
-                if not pwd:
-                    missing.append('密码')
                 if not ip:
                     missing.append('管理IP')
+
+                if auth_model == 'dual':
+                    n_uname = (getattr(body, 'normal_username', None) or device_row.get('normal_username', '') or '').strip()
+                    n_pwd = (getattr(body, 'normal_password', None) or decrypt_credential(device_row.get('normal_password')) or '').strip()
+                    a_uname = (getattr(body, 'admin_username', None) or device_row.get('admin_username', '') or '').strip()
+                    a_pwd = (getattr(body, 'admin_password', None) or decrypt_credential(device_row.get('admin_password')) or '').strip()
+                    if not n_uname: missing.append('普通用户名')
+                    if not n_pwd: missing.append('普通密码')
+                    if not a_uname: missing.append('特权用户名')
+                    if not a_pwd: missing.append('特权密码')
+                else:
+                    uname = (getattr(body, 'username', None) or device_row.get('username', '') or '').strip()
+                    pwd = (getattr(body, 'password', None) or decrypt_credential(device_row.get('password')) or '').strip()
+                    if not uname: missing.append('用户名')
+                    if not pwd: missing.append('密码')
+
                 if missing:
                     raise HTTPException(
                         status_code=422,
@@ -481,7 +507,9 @@ def update_asset(asset_id: str, body: AssetUpdate):
             'datacenter', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
             'vlan', 'uplink_switch', 'uplink_port',
             'status', 'lifecycle_status', 'purchase_date', 'warranty_expiry', 'department', 'notes',
-            'platform', 'connection_method', 'username', 'password', 'snmp_community', 'snmp_port'
+            'platform', 'connection_method', 'username', 'password',
+            'normal_username', 'normal_password', 'admin_username', 'admin_password', 'auth_model',
+            'snmp_community', 'snmp_port'
         ]
         for field in updatable:
             val = getattr(body, field, None)
@@ -503,7 +531,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
 
             # Plan-A: sync basic info to linked device
             current_type = body.asset_type if body.asset_type is not None else row['asset_type']
-            if current_type == 'network_device':
+            if current_type in ('network_device', 'server'):
                 _sync_device_from_asset(conn, asset_id, body)
                 # Also sync lifecycle_status to linked device
                 if body.lifecycle_status is not None:
@@ -541,22 +569,22 @@ def update_asset(asset_id: str, body: AssetUpdate):
                                 
                             auth_model = dev_state['auth_model'] if dev_state else 'single'
                             
+                            if auth_model == 'dual':
+                                logger.info(f"[Lifecycle] Starting Normal rotation first for {dev_id}")
+                                normal_result = rotate_password(dev_id, role='normal')
+                                if not normal_result.get('success'):
+                                    msg = normal_result.get('message', 'Normal rotation failed')
+                                    logger.error(f"[Lifecycle] Normal rotation FAILED for {dev_id}: {msg}")
+                                    raise Exception(msg)
+                                logger.info(f"[Lifecycle] Normal rotation SUCCESS for {dev_id}")
+                                import time
+                                time.sleep(1)
+
                             logger.info(f"[Lifecycle] Starting Admin rotation for {dev_id}")
                             admin_result = rotate_password(dev_id, role='admin')
                             
                             if admin_result and admin_result.get('success'):
                                 logger.info(f"[Lifecycle] Admin rotation SUCCESS for {dev_id}")
-                                if auth_model == 'dual':
-                                    logger.info(f"[Lifecycle] Starting Normal rotation for {dev_id} using new admin credentials")
-                                    import time
-                                    time.sleep(1) 
-                                    normal_result = rotate_password(dev_id, role='normal')
-                                    if not normal_result.get('success'):
-                                        msg = normal_result.get('message', 'Unknown error')
-                                        logger.error(f"[Lifecycle] Normal rotation FAILED for {dev_id}: {msg}")
-                                        raise Exception(f"Normal user rotation failed: {msg}")
-                                    logger.info(f"[Lifecycle] Normal rotation SUCCESS for {dev_id}")
-                                
                                 # All good
                                 bg_conn = get_db_connection()
                                 try:
@@ -617,6 +645,12 @@ def delete_asset(asset_id: str):
             raise HTTPException(status_code=404, detail='Asset not found')
         # Plan-A: cascade-delete linked device first
         _delete_linked_device(conn, asset_id)
+        
+        # PAM: clean up sessions, tokens and requests linked to this asset
+        conn.execute('DELETE FROM pam_sessions WHERE asset_id = ?', (asset_id,))
+        conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (asset_id,))
+        conn.execute('DELETE FROM pam_access_requests WHERE asset_id = ?', (asset_id,))
+        
         conn.execute('DELETE FROM physical_assets WHERE id = ?', (asset_id,))
         conn.commit()
         return {'ok': True}

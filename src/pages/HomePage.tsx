@@ -61,7 +61,7 @@ interface AppEntry {
 /* ─────────────── App definitions ─────────────── */
 
 const apps: AppEntry[] = [
-  { id: 'access',     label: '接入中心',   labelEn: 'Access Center', desc: '终端接入与登录',     descEn: 'Terminal access',      icon: Activity,          path: '/access',             accent: '#13c2c2' },
+  { id: 'access',     label: '操作工作台', labelEn: 'Operation Workspace', desc: '终端接入与登录',     descEn: 'Terminal access',      icon: Activity,          path: '/access',             accent: '#13c2c2' },
   { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   desc: '设备状态与流量',     descEn: 'Status & traffic',     icon: Activity,          path: '/overview',           accent: '#1677ff' },
   { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       desc: '告警查看与处置',     descEn: 'View & handle alerts', icon: Bell,              path: '/alerts',             accent: '#fa8c16' },
   { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       desc: '设备台账与资产',     descEn: 'Inventory & assets',   icon: Server,            path: '/assets',             accent: '#1677ff' },

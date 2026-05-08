@@ -27,7 +27,8 @@ export const navConfig: NavGroup[] = [
     labelEn: 'TERMINAL ACCESS',
     icon: 'Terminal',
     children: [
-      { id: 'access-center', label: '接入中心', labelEn: 'Access Center', path: '/access' },
+      { id: 'access-center', label: '操作工作台', labelEn: 'Operation Workspace', path: '/access' },
+      { id: 'pam-audit', label: '受控审计', labelEn: 'PAM Audit', path: '/pam-audit', requiredRole: 'Administrator' },
     ],
   },
   {

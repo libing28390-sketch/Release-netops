@@ -530,11 +530,13 @@ const App: React.FC = () => {
     if (path === '/alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
     if (path === '/maintenance') return language === 'zh' ? '维护期' : 'Maintenance';
     if (path === '/inventory/devices') return t('deviceList');
+    if (path === '/pam-audit') return language === 'zh' ? '受控审计' : 'PAM Audit';
     if (path === '/inventory/servers') return language === 'zh' ? '服务器' : 'Servers';
     if (path === '/inventory/interfaces') return t('interfaceMonitoring');
     if (path === '/ipam') return language === 'zh' ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt';
-    if (path === '/ip-locator') return language === 'zh' ? 'IP 定位' : 'IP Locator';
+    if (path === '/ip-locator') return language === 'zh' ? 'IP 定位' : 'IP Toolbox';
     if (path === '/assets') return language === 'zh' ? '资产管理' : 'Assets';
+    if (path === '/access') return language === 'zh' ? '操作工作台' : 'Operation Workspace';
     if (path === '/automation/execute') return t('directExecution');
     if (path === '/automation/scenarios') return t('scenarioLibrary');
     if (path === '/automation/queries' || path === '/automation/schedule-history') return language === 'zh' ? '执行历史' : 'Execution History';
@@ -571,12 +573,14 @@ const App: React.FC = () => {
       { path: '/overview', label: zh ? '运营总览' : 'Overview', group: zh ? '实时监控' : 'Real-time' },
       { path: '/monitoring', label: zh ? '监控中心' : 'Monitoring Center', group: zh ? '实时监控' : 'Real-time' },
       { path: '/topology', label: zh ? '网络拓扑' : 'Topology', group: zh ? '实时监控' : 'Real-time' },
+      { path: '/pam-audit', label: zh ? '受控审计' : 'PAM Audit', group: zh ? '终端接入' : 'Access' },
       { path: '/inventory/devices', label: t('deviceList'), group: zh ? '设备清单' : 'Inventory' },
       { path: '/inventory/servers', label: zh ? '服务器' : 'Servers', group: zh ? '设备清单' : 'Inventory' },
       { path: '/inventory/interfaces', label: t('interfaceMonitoring'), group: zh ? '设备清单' : 'Inventory' },
       { path: '/ipam', label: zh ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt', group: zh ? '设备清单' : 'Inventory' },
-      { path: '/ip-locator', label: zh ? 'IP 定位' : 'IP Locator', group: zh ? '设备清单' : 'Inventory' },
+      { path: '/ip-locator', label: zh ? 'IP 定位' : 'IP Toolbox', group: zh ? '设备清单' : 'Inventory' },
       { path: '/assets', label: zh ? '资产管理' : 'Assets', group: zh ? '设备清单' : 'Inventory' },
+      { path: '/access', label: zh ? '操作工作台' : 'Operation Workspace', group: zh ? '终端接入' : 'Access' },
       { path: '/alerts', label: zh ? '告警信息' : 'Alert Desk', group: zh ? '告警管理' : 'Alerts' },
       { path: '/alert-history', label: zh ? '历史告警' : 'Alert History', group: zh ? '告警管理' : 'Alerts' },
       { path: '/alert-rules', label: zh ? '告警规则' : 'Alert Rules', group: zh ? '告警管理' : 'Alerts' },
@@ -3553,16 +3557,14 @@ const App: React.FC = () => {
 
 
   if (activeTab === 'terminal') {
-    const deviceId = location.pathname.split('/')[2];
     const params = new URLSearchParams(location.search);
-    const role = params.get('role') || 'normal';
+    const sessionToken = params.get('session') || '';
     const hostname = params.get('hostname') || 'Terminal';
 
     return (
       <div className="w-screen h-screen bg-black overflow-hidden">
         <TerminalWindow 
-          deviceId={deviceId} 
-          role={role} 
+          sessionToken={sessionToken} 
           hostname={hostname} 
         />
       </div>
