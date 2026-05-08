@@ -24,7 +24,7 @@ interface InspectionItem {
   oid: string;
   created_at: string;
   updated_at: string;
-  script_id: string;
+  script_id?: string | null;
   warning_threshold?: number | null;
   critical_threshold?: number | null;
 }
@@ -55,9 +55,10 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<Partial<InspectionItem>>({
     name: '', name_zh: '', category: 'Network', check_key: '', description: '',
-    method: 'SNMP', command: '', vendor: '', oid: ''
+    method: 'SNMP', command: '', vendor: '', oid: '', script_id: '',
+    warning_threshold: undefined, critical_threshold: undefined
   });
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -145,7 +146,8 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
         setShowAdd(false);
         setForm({ 
           name: '', name_zh: '', category: 'Network', check_key: '', 
-          description: '', method: 'SNMP', command: '', vendor: '', oid: '' 
+          description: '', method: 'SNMP', command: '', vendor: '', oid: '',
+          script_id: '', warning_threshold: undefined, critical_threshold: undefined
         });
         fetchItems();
       }
@@ -442,12 +444,28 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                     <div>
                       <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? 'OID' : 'OID'}</label>
                       <input
-                        type="text" value={form.oid} onChange={e => setForm({ ...form, oid: e.target.value })}
+                        type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })}
                         className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
                         placeholder={zh ? "请输入 OID" : "1.3.6.1..."}
                       />
                     </div>
                   )}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '告警阈值 (%)' : 'Warn Threshold (%)'}</label>
+                    <input
+                      type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                      className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
+                      placeholder="80"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '严重阈值 (%)' : 'Crit Threshold (%)'}</label>
+                    <input
+                      type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                      className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
+                      placeholder="95"
+                    />
+                  </div>
                   <div className="lg:col-span-2">
                     <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '采集指令' : 'Command'}</label>
                     <input
@@ -617,11 +635,21 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                             </select>
                                             {form.method === 'SNMP' && (
                                               <input
-                                                type="text" value={form.oid} onChange={e => setForm({ ...form, oid: e.target.value })}
+                                                type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })}
                                                 className="flex-1 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
                                                 placeholder="OID"
                                               />
                                             )}
+                                            <input
+                                              type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                                              className="w-16 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                              placeholder="W%"
+                                            />
+                                            <input
+                                              type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                                              className="w-16 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                              placeholder="C%"
+                                            />
                                           </div>
                                           <textarea
                                             value={form.command} onChange={e => setForm({ ...form, command: e.target.value })}

@@ -1287,7 +1287,7 @@ const App: React.FC = () => {
       username: currentUser.username || currentUserRecord?.username || '',
       password: '',
       confirmPassword: '',
-      fixedPin: '',
+      fixedPin: currentUserRecord?.fixed_pin || '',
     });
     setProfileAvatarPreview(currentAvatar);
     setShowProfilePwd(false);

@@ -1,9 +1,9 @@
 {
   "payload": {
-    "license_id": "a534423c-e0b2-49d6-b105-5813fb66179c",
-    "company": "new-cisco",
+    "license_id": "3af83bff-7a10-401e-9ba9-4bff7a488baf",
+    "company": "testtte",
     "license_type": "enterprise",
-    "issued_at": "2026-05-06T15:03:18.251497+00:00",
+    "issued_at": "2026-05-06T05:28:08.025986+00:00",
     "expire_at": "2027-05-06T23:59:59",
     "device_limit": 1000,
     "server_limit": 1000,
@@ -22,12 +22,11 @@
       "reports",
       "api_access",
       "scheduled_jobs",
-      "password_rotation",
-      "access_center"
+      "password_rotation"
     ],
-    "machine_id": "7294-18BB-E08A-5D49",
+    "machine_id": "F2CA-0BD8-D5B4-6E63",
     "max_version": "99.9.9",
     "metadata": null
   },
-  "signature": "Xbrsu0wzLYV+6NanJ0IEwz3vi9+PKuS1BeVw1sE7uUu4OQlE5VDpNO7IDASJZAdGpgptkPO8ErFZGZFADAuuIcAD+GsggJu67MNvt0bw1e5l7ZCdkzU+g9yQMFA9LokNUUpg4YUmoBa0zLci1UX8nHgArJvH4cKsyAV2UpLQrtNc0l2OmUaST9RwaULJdeZ4ZGLi01pKf+M7vFGAA1Oc9ueE0TAQb4vBboKi7YaNSI+GMQoRMNVZs8qbAfoguk88tAKSEiTwGpOlWI+7q7bjNz6baDS0dbPfpclCMQX7/BzhFK8RRO/rDbJw1wyx59MdeKsy+ZJEtQIGyKPbZyqXRA=="
+  "signature": "aeA2++RnjXa0B2l6IKBAtILcj4ySGfL72e/C5tOq4IGAGOFyEw6RH9GUDKOoCIeL/vjFNWlBJI/nykWPWIzvJ3fkj+AvHJMItUVHzUV9j5m+zQ0u8HaniluqXThyKsJnWTVFNdnY1bJ3GsPXUftS/YoJdc9BhuxocNfhSMW0NyKeTRzlxTV1mZ8NXcaNjBb5yXjKqYn6wWcW/6Rka55/LBigx+FQcpWW8lutkqO0KlvU9VtnuksJqDLvUtNvhLNZNuNHoYz0sFXlLAGv8mQHwhjU6XTu6gNO/EMgG3ZenTNyYe5r7H64YhNmYbR6WYpeXqWVK71gHUvRnJPzCJDY+w=="
 }

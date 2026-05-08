@@ -87,10 +87,10 @@
     "filename": "license_AI-KEBOS_20260501_171027.json"
   },
   {
-    "license_id": "a534423c-e0b2-49d6-b105-5813fb66179c",
-    "company": "new-cisco",
+    "license_id": "b35a587b-3b08-4e4d-ae59-ce37e33bb1ce",
+    "company": "test",
     "license_type": "enterprise",
-    "issued_at": "2026-05-06T15:03:18.251497+00:00",
+    "issued_at": "2026-05-06T05:25:26.135611+00:00",
     "expire_at": "2027-05-06T23:59:59",
     "device_limit": 1000,
     "server_limit": 1000,
@@ -109,12 +109,41 @@
       "reports",
       "api_access",
       "scheduled_jobs",
-      "password_rotation",
-      "access_center"
+      "password_rotation"
     ],
-    "machine_id": "7294-18BB-E08A-5D49",
+    "machine_id": "F2CA-0BD8-D5B4-6E63",
     "max_version": "99.9.9",
     "notes": null,
-    "filename": "license_new-cisco_20260506_230318.json"
+    "filename": "license_test_20260506_132526.json"
+  },
+  {
+    "license_id": "3af83bff-7a10-401e-9ba9-4bff7a488baf",
+    "company": "testtte",
+    "license_type": "enterprise",
+    "issued_at": "2026-05-06T05:28:08.025986+00:00",
+    "expire_at": "2027-05-06T23:59:59",
+    "device_limit": 1000,
+    "server_limit": 1000,
+    "features": [
+      "automation",
+      "config_management",
+      "monitoring",
+      "alerting",
+      "rbac",
+      "change_orders",
+      "inspections",
+      "topology",
+      "ipam",
+      "capacity",
+      "compliance",
+      "reports",
+      "api_access",
+      "scheduled_jobs",
+      "password_rotation"
+    ],
+    "machine_id": "F2CA-0BD8-D5B4-6E63",
+    "max_version": "99.9.9",
+    "notes": null,
+    "filename": "license_testtte_20260506_132808.json"
   }
 ]
