@@ -3636,9 +3636,14 @@ async def _exec_commands(service, device: dict, commands: list, is_config: bool)
             all_ok = True
             for r in results:
                 if r.get('success', False):
-                    output_lines.append(r.get('output', ''))
+                    # Different drivers use different output keys:
+                    # NetmikoDriver (engine) → 'stdout'
+                    # Legacy drivers         → 'output'
+                    out = r.get('output') or r.get('stdout') or ''
+                    output_lines.append(out)
                 else:
-                    output_lines.append(f"ERROR: {r.get('error', '')}")
+                    err = r.get('error') or r.get('stderr') or ''
+                    output_lines.append(f"ERROR: {err}")
                     all_ok = False
             return {"success": all_ok, "output": "\n".join(output_lines), "commands": commands}
         except Exception as e:

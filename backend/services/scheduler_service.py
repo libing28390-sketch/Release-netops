@@ -65,31 +65,15 @@ async def run_scheduled_automation_job(job_id: str):
         if not is_shell_script and commands_str.strip().startswith('#!'):
             is_shell_script = True
 
-        if is_shell_script:
-            import uuid
-            tmp_file = f"/tmp/netops_{uuid.uuid4().hex}.sh"
-            import base64
-            encoded_script = base64.b64encode(commands_str.encode()).decode()
-            sentinel_begin = "---NETOPS_BEGIN---"
-            sentinel_end = "---NETOPS_END---"
-            res_file = f"{tmp_file}.log"
-            
-            # 决战方案：
-            # 1. Base64 编码传输：彻底消除脚本内容中 #, >, $ 等字符对 Netmiko 提示符识别的干扰
-            # 2. 管道解码：直接通过 base64 -d 还原文件，极其稳健
-            # 3. 结果重定向：依然使用文件落地，确保 cat 时能一气呵成
-            wrapped_command = (
-                f"echo '{encoded_script}' | base64 -d > {tmp_file}; "
-                f"printf '\\n{sentinel_begin}\\n'; "
-                f"/bin/bash {tmp_file} > {res_file} 2>&1; "
-                f"sleep 1; "
-                f"cat {res_file}; "
-                f"printf '\\n{sentinel_end}\\n'; "
-                f"rm -f {tmp_file} {res_file}"
-            )
-            commands = [wrapped_command]
-        else:
+        # NOTE: We do NOT pre-wrap shell scripts here.
+        # The execution path branches per device based on asset_type:
+        #   - Linux/server  → LinuxDriver (Paramiko exec_command, native script support)
+        #   - Network device → NetmikoDriver (Netmiko send_command, needs base64 wrapping)
+        # Wrapping is done per-device inside the loop below.
+        if not is_shell_script:
             commands = [c.strip() for c in commands_str.split('\n') if c.strip()]
+        else:
+            commands = []  # shell scripts are executed via per-device path below
         
         # 3. 初始化执行历史记录 (Surface in Execution History)
         execution_id = str(uuid.uuid4())
@@ -100,7 +84,11 @@ async def run_scheduled_automation_job(job_id: str):
                (id, scenario_id, scenario_name, platform, device_ids, variables, status, dry_run, author, concurrency, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (execution_id, f"scheduled:{job_id}", job['name'], 'mixed', 
-             json.dumps(device_ids), '{}', 'running', 0, job['created_by'] or 'system', 5, now_iso, now_iso)
+             json.dumps(device_ids), '{}', 'running', 0,
+             # Use 'scheduler' as author so the frontend can reliably identify
+             # these records as scheduled-job executions (not manual runs).
+             'scheduler',
+             5, now_iso, now_iso)
         )
         conn.commit()
 
@@ -116,22 +104,26 @@ async def run_scheduled_automation_job(job_id: str):
             if not device: continue
             
             d = dict(device)
-            # Scheduled jobs require elevated access — prefer admin credentials when available
-            admin_user = d.get('admin_username', '').strip()
-            admin_pass = d.get('admin_password', '').strip()
-            if admin_user and admin_pass:
-                d['username'] = admin_user
-                d['password'] = decrypt_credential(admin_pass) or ''
-                logger.info(f"[Scheduler] Using admin credentials for device {d.get('hostname', d.get('ip_address'))}")
+            # Use normal (least-privilege) credentials for scheduled command execution.
+            # Admin credentials are only needed for config changes; read-only health
+            # checks and monitoring scripts should run as the normal user.
+            normal_user = d.get('normal_username', '').strip()
+            normal_pass = d.get('normal_password', '').strip()
+            if normal_user and normal_pass:
+                d['username'] = normal_user
+                d['password'] = decrypt_credential(normal_pass) or ''
+                logger.info(f"[Scheduler] Using normal credentials for device {d.get('hostname', d.get('ip_address'))}")
             else:
-                # Default logic: 'root' for servers, 'admin' for network devices
-                platform = str(d.get('platform') or '').lower()
-                is_server = 'linux' in platform or 'windows' in platform or 'server' in platform
-                default_admin = 'root' if is_server else 'admin'
-                
-                d['username'] = default_admin
-                d['password'] = decrypt_credential(d.get('password')) or ''
-                logger.info(f"[Scheduler] No admin credentials, using default username '{default_admin}' for device {d.get('hostname', d.get('ip_address'))}")
+                # Fallback: no normal creds configured, use whatever is available
+                fallback_user = d.get('username', '').strip()
+                fallback_pass = decrypt_credential(d.get('password') or '') or ''
+                if not fallback_user or not fallback_pass:
+                    # Last resort: admin creds
+                    fallback_user = d.get('admin_username', '').strip() or fallback_user
+                    fallback_pass = decrypt_credential(d.get('admin_password') or '') or fallback_pass
+                d['username'] = fallback_user
+                d['password'] = fallback_pass
+                logger.info(f"[Scheduler] No normal credentials, falling back to '{fallback_user}' for device {d.get('hostname', d.get('ip_address'))}")
             
             # 记录设备开始执行
             dev_started_at = datetime.now().isoformat()
@@ -146,28 +138,77 @@ async def run_scheduled_automation_job(job_id: str):
 
             try:
                 loop = asyncio.get_event_loop()
-                exec_results = await loop.run_in_executor(None, lambda: service.execute_commands(d, commands, is_config=bool(job['is_config'])))
-                
-                # 判断是否全部成功
+
+                # ── Per-device execution path ────────────────────────────────
+                platform = str(d.get('platform') or '').lower()
+                is_server = any(t in platform for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'))
+
+                if is_shell_script and is_server:
+                    # Linux/server: use LinuxDriver via SCRIPT mode.
+                    # Paramiko exec_command handles the full script natively —
+                    # no base64 wrapping, no sentinel markers needed.
+                    d['asset_type'] = 'server'
+                    exec_results = await loop.run_in_executor(
+                        None,
+                        lambda: service.orchestrator.execute_single(d, 'script', commands_str)
+                    )
+                    # Normalise to list[dict] with 'output' key
+                    exec_results = [{
+                        'success': exec_results.get('success', False),
+                        'output': exec_results.get('stdout', '') or exec_results.get('output', ''),
+                        'error': exec_results.get('stderr', '') or exec_results.get('error', ''),
+                    }]
+
+                elif is_shell_script and not is_server:
+                    # Network device: must use base64 wrapping + sentinel markers
+                    import base64 as _b64
+                    tmp_file = f"/tmp/netops_{uuid.uuid4().hex}.sh"
+                    res_file = f"{tmp_file}.log"
+                    encoded_script = _b64.b64encode(commands_str.encode()).decode()
+                    _sentinel_begin = "---NETOPS_BEGIN---"
+                    _sentinel_end   = "---NETOPS_END---"
+                    wrapped = (
+                        f"echo '{encoded_script}' | base64 -d > {tmp_file}; "
+                        f"printf '\\n{_sentinel_begin}\\n'; "
+                        f"/bin/bash {tmp_file} > {res_file} 2>&1; "
+                        f"sleep 1; cat {res_file}; "
+                        f"printf '\\n{_sentinel_end}\\n'; "
+                        f"rm -f {tmp_file} {res_file}"
+                    )
+                    exec_results = await loop.run_in_executor(
+                        None,
+                        lambda: service.execute_commands(d, [wrapped], is_config=False)
+                    )
+
+                else:
+                    # Plain CLI commands (both Linux and network devices)
+                    exec_results = await loop.run_in_executor(
+                        None,
+                        lambda: service.execute_commands(d, commands, is_config=bool(job['is_config']))
+                    )
+
+                # ── Normalise output ─────────────────────────────────────────
+                # Different drivers return different keys: 'output', 'stdout', etc.
+                def _get_output(r: dict) -> str:
+                    return r.get('output') or r.get('stdout') or ''
+
                 success = all(r.get('success', False) for r in exec_results)
                 
-                # 铁腕清洗：使用双锚点隔离法，绝对过滤回显和杂质
                 processed_commands = []
                 business_anomaly = False
                 anomaly_msg = ""
-                
-                begin_mark = "---NETOPS_BEGIN---"
-                end_mark = "---NETOPS_END---"
+                _sentinel_begin = "---NETOPS_BEGIN---"
+                _sentinel_end   = "---NETOPS_END---"
                 
                 for r in exec_results:
-                    out = str(r.get('output', ''))
-                    if is_shell_script:
-                        if begin_mark in out and end_mark in out:
-                            # 精准提取两个锚点之间的内容
-                            out = out.split(begin_mark)[-1].split(end_mark)[0].strip()
-                        elif begin_mark in out:
-                            # 如果只有起始锚点，说明执行到一半截断了
-                            out = out.split(begin_mark)[-1].strip() + "\n[Warning: Execution might be incomplete]"
+                    out = str(_get_output(r))
+                    if is_shell_script and not is_server:
+                        # Network device path: extract between sentinel markers
+                        if _sentinel_begin in out and _sentinel_end in out:
+                            out = out.split(_sentinel_begin)[-1].split(_sentinel_end)[0].strip()
+                        elif _sentinel_begin in out:
+                            out = out.split(_sentinel_begin)[-1].strip() + "\n[Warning: Execution might be incomplete]"
+                    # For Linux server path, output is already clean (no markers needed)
                     
                     processed_commands.append(out)
                     
@@ -205,10 +246,14 @@ async def run_scheduled_automation_job(job_id: str):
                         failure_details.append(f"设备 {d['hostname'] or d['ip_address']} 执行失败")
                 
                 # 格式化输出为 phases_json 兼容格式
+                combined_output = '\n'.join(processed_commands).strip()
+                # For display: show script name or actual CLI commands, not the base64 wrapper
+                display_commands = [script_name] if is_shell_script else (commands or [])
                 phase_data = {
                     "execute": {
                         "status": phase_status,
-                        "commands": processed_commands
+                        "commands": display_commands,
+                        "output": combined_output
                     }
                 }
                 

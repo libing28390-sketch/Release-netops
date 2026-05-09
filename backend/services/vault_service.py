@@ -148,28 +148,49 @@ def resolve_device_credentials(device: dict[str, Any]) -> dict[str, str]:
     Unified credential resolver.
     - If credential_source='vault' and Vault is available, fetch from Vault.
     - Otherwise, decrypt from local DB fields.
-    Returns dict: {username, password, enable_password, priv_username}
+    Returns dict: {username, password, enable_password, priv_username,
+                    normal_username, normal_password, admin_username, admin_password}
+
+    Enable-secret fallback policy:
+      If `enable_password` is not explicitly set, fall back to the admin password
+      (then the generic password). This matches the UI contract "Enable Secret
+      toggle ON but blank = use admin password as enable secret".
     """
     from core.crypto import decrypt_credential
 
     source = (device.get('credential_source') or 'local').lower()
 
+    resolved: dict[str, str] | None = None
     if source == 'vault' and vault_available():
         vault_path = device.get('vault_path', '')
         if vault_path:
-            creds = read_credentials(vault_path)
-            if creds:
-                return creds
-            logger.warning("Vault read failed for %s, falling back to local", vault_path)
+            resolved = read_credentials(vault_path)
+            if resolved is None:
+                logger.warning("Vault read failed for %s, falling back to local", vault_path)
 
-    # Local decryption fallback
-    return {
-        'username': device.get('username') or '',
-        'password': decrypt_credential(device.get('password')) or '',
-        'enable_password': decrypt_credential(device.get('enable_password')) or '',
-        'priv_username': device.get('priv_username') or '',
-        'normal_username': device.get('normal_username') or '',
-        'normal_password': decrypt_credential(device.get('normal_password')) or '',
-        'admin_username': device.get('admin_username') or '',
-        'admin_password': decrypt_credential(device.get('admin_password')) or '',
-    }
+    if resolved is None:
+        # Local decryption fallback
+        resolved = {
+            'username': device.get('username') or '',
+            'password': decrypt_credential(device.get('password')) or '',
+            'enable_password': decrypt_credential(device.get('enable_password')) or '',
+            'priv_username': device.get('priv_username') or '',
+            'normal_username': device.get('normal_username') or '',
+            'normal_password': decrypt_credential(device.get('normal_password')) or '',
+            'admin_username': device.get('admin_username') or '',
+            'admin_password': decrypt_credential(device.get('admin_password')) or '',
+        }
+
+    # ── Enable-secret fallback ─────────────────────────────────────────
+    # If no explicit enable_password is configured, use admin_password
+    # (or the generic password as a last resort). This is what users
+    # expect when the "Enable Secret" UI toggle is ON but the input is
+    # left blank — the system should automatically use the admin creds.
+    if not resolved.get('enable_password'):
+        resolved['enable_password'] = (
+            resolved.get('admin_password') or
+            resolved.get('password') or
+            ''
+        )
+
+    return resolved

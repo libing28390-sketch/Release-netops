@@ -212,7 +212,8 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
       }));
 
       const normalizedPlaybooks: UnifiedExecutionLog[] = playbooks.map(pb => {
-        const isScheduled = pb.author === 'scheduler' || pb.author === 'system';
+        const isScheduled = pb.author === 'scheduler' || pb.author === 'system'
+                            || (pb.scenario_id && String(pb.scenario_id).startsWith('scheduled:'));
         return {
           id: pb.id,
           source: 'playbook',
@@ -1351,7 +1352,13 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                 ))}
                               </div>
                             )}
-                            {output.output || '—'}
+                            {/* output field = actual device response text
+                                fallback: if no output field, treat commands array as raw output lines */}
+                            {output.output
+                              ? output.output
+                              : (output.commands && output.commands.length > 0
+                                  ? output.commands.join('\n')
+                                  : '—')}
                           </div>
                         </div>
                       ))
