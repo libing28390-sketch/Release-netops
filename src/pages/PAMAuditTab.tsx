@@ -1,18 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   ShieldCheck, 
   Terminal, 
   Clock, 
   Activity, 
   User, 
-  Monitor, 
   Trash2, 
   Download, 
   PlayCircle, 
   StopCircle,
   Search,
   RefreshCw,
-  MoreVertical
+  MoreVertical,
+  History,
+  Wifi,
+  WifiOff,
+  AlertCircle,
+  Timer
 } from 'lucide-react';
 import CastPlayer from '../components/access/CastPlayer';
 
@@ -23,15 +27,25 @@ interface PAMSession {
   requester_username: string;
   access_level: 'normal' | 'admin';
   login_username: string;
+  connect_method: 'web' | 'local';
   target_ip: string;
   status: 'connecting' | 'active' | 'closed' | 'error' | 'timeout';
   connected_at: string | null;
   closed_at: string | null;
+  close_reason: string;
   duration_seconds: number;
   command_count: number;
   recording_path: string;
   created_at: string;
 }
+
+const STATUS_CONFIG = {
+  active:     { dot: 'bg-emerald-500 animate-pulse', text: 'text-emerald-700', bg: 'bg-emerald-50', label: '在线', labelEn: 'Online' },
+  connecting: { dot: 'bg-amber-400 animate-pulse',  text: 'text-amber-700',   bg: 'bg-amber-50',   label: '连接中', labelEn: 'Connecting' },
+  closed:     { dot: 'bg-slate-300',                text: 'text-slate-500',   bg: 'bg-slate-50',   label: '已关闭', labelEn: 'Closed' },
+  error:      { dot: 'bg-rose-500',                 text: 'text-rose-700',    bg: 'bg-rose-50',    label: '错误',   labelEn: 'Error' },
+  timeout:    { dot: 'bg-orange-400',               text: 'text-orange-700',  bg: 'bg-orange-50',  label: '超时',   labelEn: 'Timeout' },
+};
 
 const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 'success'|'error'|'info') => void }> = ({ language, showToast }) => {
   const isZh = language === 'zh';
@@ -40,13 +54,16 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [searchQuery, setSearchQuery] = useState('');
   const [showPlayback, setShowPlayback] = useState(false);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedSession, setSelectedSession] = useState<PAMSession | null>(null);
 
-  const fetchSessions = async () => {
+  const fetchSessions = useCallback(async () => {
     setLoading(true);
     try {
+      // Active tab: query status=active (backend also returns 'connecting')
+      // History tab: no status filter → returns ALL sessions (including closed)
       const statusFilter = activeTab === 'active' ? 'active' : '';
-      const res = await fetch(`/api/pam/sessions?status=${statusFilter}&page_size=100`);
+      const res = await fetch(`/api/pam/sessions?status=${statusFilter}&page_size=200`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.items) {
         setSessions(data.items);
@@ -56,15 +73,16 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeTab, isZh, showToast]);
 
   useEffect(() => {
     fetchSessions();
-    const timer = setInterval(() => {
-      if (activeTab === 'active') fetchSessions();
-    }, 10000);
-    return () => clearInterval(timer);
-  }, [activeTab]);
+    // Auto-refresh active sessions every 8 seconds
+    if (activeTab === 'active') {
+      const timer = setInterval(fetchSessions, 8000);
+      return () => clearInterval(timer);
+    }
+  }, [activeTab, fetchSessions]);
 
   const handleKill = async (sessionId: string) => {
     if (!window.confirm(isZh ? '确定要强制断开此会话吗？' : 'Are you sure you want to terminate this session?')) return;
@@ -84,21 +102,40 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   };
 
   const formatDuration = (sec: number) => {
-    if (!sec) return '0s';
-    const m = Math.floor(sec / 60);
+    if (!sec || sec <= 0) return '—';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
     const s = sec % 60;
+    if (h > 0) return `${h}h ${m}m`;
     return m > 0 ? `${m}m ${s}s` : `${s}s`;
   };
 
-  const filteredSessions = sessions.filter(s => 
-    s.asset_hostname?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    s.requester_username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    s.target_ip?.includes(searchQuery)
-  );
+  const formatTime = (ts: string | null) => {
+    if (!ts) return '—';
+    try {
+      return new Date(ts).toLocaleString(isZh ? 'zh-CN' : 'en-US', {
+        month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      });
+    } catch { return ts; }
+  };
+
+  const filteredSessions = sessions.filter(s => {
+    const q = searchQuery.toLowerCase();
+    return (
+      (s.asset_hostname || '').toLowerCase().includes(q) ||
+      (s.requester_username || '').toLowerCase().includes(q) ||
+      (s.login_username || '').toLowerCase().includes(q) ||
+      (s.target_ip || '').includes(q)
+    );
+  });
+
+  const activeCnt  = sessions.filter(s => s.status === 'active' || s.status === 'connecting').length;
+  const historyCnt = sessions.filter(s => !['active', 'connecting'].includes(s.status)).length;
 
   return (
     <div className="flex flex-col h-full bg-slate-50/50">
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="px-8 py-6 bg-white border-b border-slate-200">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -110,40 +147,53 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
                 {isZh ? 'PAM 受控会话审计' : 'PAM Session Audit'}
               </h1>
               <p className="text-sm text-slate-500">
-                {isZh ? '实时监控、强制断开及录制回放' : 'Real-time monitoring, termination, and playback'}
+                {isZh ? '实时监控、强制断开及录制回放' : 'Real-time monitoring, termination & playback'}
               </p>
             </div>
           </div>
-          <button 
+          <button
             onClick={fetchSessions}
             className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+            title={isZh ? '刷新' : 'Refresh'}
           >
             <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
 
-        {/* Filters & Tabs */}
+        {/* Tabs + Search */}
         <div className="flex items-center justify-between">
-          <div className="flex p-1 bg-slate-100 rounded-lg">
+          <div className="flex p-1 bg-slate-100 rounded-lg gap-1">
             <button
               onClick={() => setActiveTab('active')}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-                activeTab === 'active' 
-                ? 'bg-white text-cyan-600 shadow-sm' 
-                : 'text-slate-600 hover:text-slate-900'
+              className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+                activeTab === 'active'
+                  ? 'bg-white text-cyan-600 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-800'
               }`}
             >
+              <Wifi className="w-3.5 h-3.5" />
               {isZh ? '活跃会话' : 'Active Sessions'}
+              {activeCnt > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full">
+                  {activeCnt}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setActiveTab('history')}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-                activeTab === 'history' 
-                ? 'bg-white text-cyan-600 shadow-sm' 
-                : 'text-slate-600 hover:text-slate-900'
+              className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+                activeTab === 'history'
+                  ? 'bg-white text-cyan-600 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-800'
               }`}
             >
+              <History className="w-3.5 h-3.5" />
               {isZh ? '历史记录' : 'Session History'}
+              {activeTab === 'history' && historyCnt > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 bg-slate-200 text-slate-600 text-[10px] font-bold rounded-full">
+                  {historyCnt}
+                </span>
+              )}
             </button>
           </div>
 
@@ -151,135 +201,220 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
-              placeholder={isZh ? '搜索设备、用户...' : 'Search device, user...'}
+              placeholder={isZh ? '搜索设备、用户、IP...' : 'Search device, user, IP...'}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all"
+              className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all outline-none"
             />
           </div>
         </div>
       </div>
 
-      {/* Content Area */}
+      {/* ── Table ── */}
       <div className="flex-1 overflow-auto p-8">
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '状态' : 'Status'}</th>
-                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '设备 / 资产' : 'Device / Asset'}</th>
-                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '请求者' : 'Requester'}</th>
-                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '权限级别' : 'Access'}</th>
-                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '连接时间' : 'Connected At'}</th>
-                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '时长' : 'Duration'}</th>
-                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">{isZh ? '操作' : 'Actions'}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredSessions.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400 italic text-sm">
-                    {loading ? '...' : (isZh ? '暂无会话记录' : 'No sessions found')}
-                  </td>
+          {filteredSessions.length === 0 && !loading ? (
+            /* Empty state */
+            <div className="flex flex-col items-center justify-center py-20 gap-4 text-slate-400">
+              {activeTab === 'active' ? (
+                <>
+                  <WifiOff className="w-12 h-12 text-slate-200" />
+                  <p className="text-sm font-medium">{isZh ? '当前没有活跃的受控会话' : 'No active sessions right now'}</p>
+                  <p className="text-xs text-slate-300">
+                    {isZh ? '通过"操作工作台"发起 Web 登录后，会话将在此显示' : 'Sessions appear here after launching a Web login from the Workspace'}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <History className="w-12 h-12 text-slate-200" />
+                  <p className="text-sm font-medium">{isZh ? '暂无历史会话记录' : 'No session history yet'}</p>
+                  <p className="text-xs text-slate-300">
+                    {isZh ? '已关闭的会话将在此归档' : 'Closed sessions will be archived here'}
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider w-28">{isZh ? '状态' : 'Status'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '设备 / 资产' : 'Device / Asset'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '请求者' : 'Requester'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '登录账号' : 'Login Account'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '权限级别' : 'Access Level'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '连接时间' : 'Connected At'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '时长' : 'Duration'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">{isZh ? '操作' : 'Actions'}</th>
                 </tr>
-              ) : filteredSessions.map(s => (
-                <tr key={s.id} className="hover:bg-slate-50/80 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${
-                        s.status === 'active' ? 'bg-emerald-500 animate-pulse' :
-                        s.status === 'error' ? 'bg-rose-500' :
-                        s.status === 'timeout' ? 'bg-amber-500' : 'bg-slate-300'
-                      }`} />
-                      <span className="text-sm font-medium text-slate-700 capitalize">
-                        {s.status === 'active' ? (isZh ? '在线' : 'Online') : s.status}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex flex-col">
-                      <span className="text-sm font-semibold text-slate-900">{s.asset_hostname || 'Unknown Host'}</span>
-                      <span className="text-xs text-slate-500 font-mono">{s.target_ip}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 bg-slate-100 rounded-full flex items-center justify-center">
-                        <User className="w-4 h-4 text-slate-500" />
-                      </div>
-                      <span className="text-sm text-slate-700">{s.requester_username}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider ${
-                      s.access_level === 'admin' 
-                      ? 'bg-rose-50 text-rose-600' 
-                      : 'bg-blue-50 text-blue-600'
-                    }`}>
-                      {s.access_level}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2 text-sm text-slate-500">
-                      <Clock className="w-4 h-4 text-slate-300" />
-                      {s.connected_at ? new Date(s.connected_at).toLocaleString() : '-'}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2 text-sm text-slate-600">
-                      <Activity className="w-4 h-4 text-slate-300" />
-                      {s.status === 'active' ? (isZh ? '连接中' : 'Active') : formatDuration(s.duration_seconds)}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {s.status === 'active' ? (
-                        <button
-                          onClick={() => handleKill(s.id)}
-                          className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                          title={isZh ? '强制切断' : 'Kill Session'}
-                        >
-                          <StopCircle className="w-5 h-5" />
-                        </button>
-                      ) : s.recording_path ? (
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => handleDownload(s.id)}
-                            className="p-2 text-cyan-500 hover:bg-cyan-50 rounded-lg transition-colors"
-                            title={isZh ? '下载录像' : 'Download Cast'}
-                          >
-                            <Download className="w-5 h-5" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedSessionId(s.id);
-                              setShowPlayback(true);
-                            }}
-                            className="p-2 text-cyan-500 hover:bg-cyan-50 rounded-lg transition-colors"
-                            title={isZh ? '回溯回放' : 'Backtrack Playback'}
-                          >
-                            <PlayCircle className="w-5 h-5" />
-                          </button>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {loading && filteredSessions.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-6 py-12 text-center text-slate-400 text-sm">
+                      <RefreshCw className="w-5 h-5 animate-spin inline-block mr-2" />
+                      {isZh ? '加载中...' : 'Loading...'}
+                    </td>
+                  </tr>
+                ) : filteredSessions.map(s => {
+                  const cfg = STATUS_CONFIG[s.status] || STATUS_CONFIG.closed;
+                  const isActive = s.status === 'active' || s.status === 'connecting';
+                  return (
+                    <tr key={s.id} className="hover:bg-slate-50/80 transition-colors group">
+                      {/* Status */}
+                      <td className="px-6 py-4">
+                        <div className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full ${cfg.bg}`}>
+                          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot}`} />
+                          <span className={`text-xs font-semibold ${cfg.text}`}>
+                            {isZh ? cfg.label : cfg.labelEn}
+                          </span>
                         </div>
-                      ) : null}
-                      <button className="p-2 text-slate-400 hover:bg-slate-50 rounded-lg transition-colors">
-                        <MoreVertical className="w-5 h-5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      </td>
+
+                      {/* Device */}
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-semibold text-slate-900">{s.asset_hostname || '—'}</span>
+                          <span className="text-xs text-slate-400 font-mono mt-0.5">{s.target_ip}</span>
+                        </div>
+                      </td>
+
+                      {/* Requester */}
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 bg-cyan-50 rounded-full flex items-center justify-center flex-shrink-0">
+                            <User className="w-3.5 h-3.5 text-cyan-500" />
+                          </div>
+                          <span className="text-sm text-slate-700">{s.requester_username || '—'}</span>
+                        </div>
+                      </td>
+
+                      {/* Login account */}
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-xs text-slate-600 bg-slate-100 px-2 py-1 rounded">
+                            {s.login_username || '—'}
+                          </span>
+                          {(s as any).connect_method === 'local' && (
+                            <span className="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                              {isZh ? '本地' : 'Local'}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Access level */}
+                      <td className="px-6 py-4">
+                        <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider ${
+                          s.access_level === 'admin'
+                            ? 'bg-rose-50 text-rose-600'
+                            : 'bg-blue-50 text-blue-600'
+                        }`}>
+                          {s.access_level === 'admin' ? (isZh ? '特权' : 'Admin') : (isZh ? '普通' : 'Normal')}
+                        </span>
+                      </td>
+
+                      {/* Connected at */}
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1.5 text-sm text-slate-500">
+                          <Clock className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />
+                          {formatTime(s.connected_at || s.created_at)}
+                        </div>
+                      </td>
+
+                      {/* Duration */}
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1.5 text-sm text-slate-600">
+                          <Timer className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />
+                          {isActive ? (
+                            <span className="text-emerald-600 font-medium">{isZh ? '进行中' : 'Live'}</span>
+                          ) : (
+                            formatDuration(s.duration_seconds)
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {isActive ? (
+                            <button
+                              onClick={() => handleKill(s.id)}
+                              className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+                              title={isZh ? '强制切断' : 'Kill Session'}
+                            >
+                              <StopCircle className="w-4 h-4" />
+                            </button>
+                          ) : s.recording_path ? (
+                            <>
+                              <button
+                                onClick={() => handleDownload(s.id)}
+                                className="p-2 text-cyan-500 hover:bg-cyan-50 rounded-lg transition-colors"
+                                title={isZh ? '下载录像' : 'Download Cast'}
+                              >
+                                <Download className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedSession(s);
+                                  setShowPlayback(true);
+                                }}
+                                className="p-2 text-cyan-500 hover:bg-cyan-50 rounded-lg transition-colors"
+                                title={isZh ? '回溯回放' : 'Playback'}
+                              >
+                                <PlayCircle className="w-4 h-4" />
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-[10px] text-slate-300 px-2">
+                              {s.connect_method === 'local'
+                                ? (isZh ? '本地终端·无录像' : 'Local · No recording')
+                                : (isZh ? '无录像' : 'No recording')}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
+
+        {/* Summary bar */}
+        {filteredSessions.length > 0 && (
+          <div className="mt-3 flex items-center justify-between text-xs text-slate-400 px-1">
+            <span>
+              {isZh
+                ? `共 ${filteredSessions.length} 条记录${searchQuery ? `（已过滤）` : ''}`
+                : `${filteredSessions.length} session${filteredSessions.length !== 1 ? 's' : ''}${searchQuery ? ' (filtered)' : ''}`}
+            </span>
+            {activeTab === 'active' && (
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {isZh ? '每 8 秒自动刷新' : 'Auto-refresh every 8s'}
+              </span>
+            )}
+          </div>
+        )}
       </div>
-      {showPlayback && selectedSessionId && (
-        <CastPlayer 
-          sessionId={selectedSessionId} 
-          totalDuration={sessions.find(s => s.id === selectedSessionId)?.duration_seconds || 0}
+
+      {/* ── CastPlayer Modal ── */}
+      {showPlayback && selectedSession && (
+        <CastPlayer
+          sessionId={selectedSession.id}
+          totalDuration={selectedSession.duration_seconds || 0}
+          sessionMeta={{
+            hostname: selectedSession.asset_hostname,
+            ip: selectedSession.target_ip,
+            loginUser: selectedSession.login_username,
+            requester: selectedSession.requester_username,
+            connectedAt: selectedSession.connected_at,
+          }}
           onClose={() => {
             setShowPlayback(false);
-            setSelectedSessionId(null);
+            setSelectedSession(null);
           }}
           isZh={isZh}
         />

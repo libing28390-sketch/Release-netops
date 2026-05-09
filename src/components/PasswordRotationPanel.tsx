@@ -13,6 +13,7 @@ interface RotationDevice {
   ip_address: string;
   platform: string;
   auth_model: string;
+  username?: string;
   
   // Normal
   normal_username: string;
@@ -358,13 +359,13 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
       {/* ═══ Stats Cards (Compact) ═══ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {statCards.map((c, i) => {
-          const isActive = statusFilter === c.id;
+          const isActive = statusFilter === c.filter;
           return (
             <motion.button
-              key={c.id}
+              key={c.key}
               whileHover={{ y: -2 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => setStatusFilter(isActive ? 'all' : c.id)}
+              onClick={() => setStatusFilter(isActive ? 'all' : c.filter)}
               className={`relative overflow-hidden p-3 rounded-xl border transition-all text-left ${
                 isActive 
                   ? 'bg-slate-900 border-slate-900 shadow-lg ring-2 ring-slate-900/10' 
@@ -373,7 +374,7 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${isActive ? 'text-white/40' : 'text-black/30'}`}>{c.title}</p>
+                  <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${isActive ? 'text-white/40' : 'text-black/30'}`}>{c.label}</p>
                   <p className={`text-xl font-black ${isActive ? 'text-white' : 'text-slate-800'}`}>{c.value}</p>
                 </div>
                 <div className={`p-2 rounded-lg ${isActive ? 'bg-white/10 text-white' : 'bg-black/[0.02] text-black/20'}`}>

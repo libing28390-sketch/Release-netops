@@ -122,6 +122,10 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
         if uname is not None: updates[u_f] = uname
         if pwd is not None and pwd != '':
             updates[p_f] = _safe_encrypt(pwd)
+    # Sync enable_password separately (no paired username)
+    ep = getattr(body, 'enable_password', None)
+    if ep is not None and ep != '':
+        updates['enable_password'] = _safe_encrypt(ep)
     # Only update non-None values (AssetUpdate has Optional fields)
     set_parts = []
     params = []
@@ -246,6 +250,7 @@ class AssetUpdate(BaseModel):
     normal_password: Optional[str] = None
     admin_username: Optional[str] = None
     admin_password: Optional[str] = None
+    enable_password: Optional[str] = None   # Cisco enable secret / privilege exec password
     auth_model: Optional[str] = None
     snmp_community: Optional[str] = None
     snmp_port: Optional[int] = None
@@ -360,8 +365,21 @@ def list_assets(
             params + [page_size, offset]
         ).fetchall()
 
+        # Sanitise sensitive fields: convert encrypted password columns into
+        # boolean *_set flags so the frontend can show "configured/not configured"
+        # without exposing ciphertext.
+        items = []
+        for r in rows:
+            item = dict(r)
+            for sensitive in ('password', 'normal_password', 'admin_password', 'enable_password'):
+                if sensitive in item:
+                    item[f'{sensitive}_set'] = bool(item.get(sensitive))
+                    # Keep the ciphertext out of the response payload
+                    item[sensitive] = ''
+            items.append(item)
+
         return {
-            'items': [dict(r) for r in rows],
+            'items': items,
             'total': total,
             'page': page,
             'page_size': page_size,
@@ -379,7 +397,13 @@ def get_asset(asset_id: str):
         row = conn.execute('SELECT * FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Asset not found')
-        return dict(row)
+        item = dict(row)
+        # Sanitise sensitive password fields
+        for sensitive in ('password', 'normal_password', 'admin_password', 'enable_password'):
+            if sensitive in item:
+                item[f'{sensitive}_set'] = bool(item.get(sensitive))
+                item[sensitive] = ''
+        return item
     finally:
         conn.close()
 
@@ -457,7 +481,9 @@ def update_asset(asset_id: str, body: AssetUpdate):
         # ── Pre-flight: block production transition if onboarding not complete ──
         if transitioning_to_production and row['asset_type'] in ('network_device', 'server'):
             device_row = conn.execute(
-                'SELECT id, onboarding_status, username, password, ip_address FROM devices WHERE asset_id = ?',
+                'SELECT id, onboarding_status, username, password, ip_address, '
+                'normal_username, normal_password, admin_username, admin_password, auth_model '
+                'FROM devices WHERE asset_id = ?',
                 (asset_id,)
             ).fetchone()
             if device_row:
@@ -485,19 +511,34 @@ def update_asset(asset_id: str, body: AssetUpdate):
                     missing.append('管理IP')
 
                 if auth_model == 'dual':
+                    # For dual mode: body password fields take priority; if left blank (edit mode),
+                    # fall back to existing DB values. Also accept legacy 'password' field as fallback
+                    # for normal_password so old single-mode records don't block production transition.
                     n_uname = (getattr(body, 'normal_username', None) or device_row.get('normal_username', '') or '').strip()
-                    n_pwd = (getattr(body, 'normal_password', None) or decrypt_credential(device_row.get('normal_password')) or '').strip()
+                    n_pwd_body = getattr(body, 'normal_password', None)
+                    n_pwd = (n_pwd_body if n_pwd_body else None) or \
+                            decrypt_credential(device_row.get('normal_password')) or \
+                            decrypt_credential(device_row.get('password')) or ''
+                    n_pwd = n_pwd.strip()
+
                     a_uname = (getattr(body, 'admin_username', None) or device_row.get('admin_username', '') or '').strip()
-                    a_pwd = (getattr(body, 'admin_password', None) or decrypt_credential(device_row.get('admin_password')) or '').strip()
+                    a_pwd_body = getattr(body, 'admin_password', None)
+                    a_pwd = (a_pwd_body if a_pwd_body else None) or \
+                            decrypt_credential(device_row.get('admin_password')) or ''
+                    a_pwd = a_pwd.strip()
+
                     if not n_uname: missing.append('普通用户名')
-                    if not n_pwd: missing.append('普通密码')
+                    if not n_pwd:   missing.append('普通密码')
                     if not a_uname: missing.append('特权用户名')
-                    if not a_pwd: missing.append('特权密码')
+                    if not a_pwd:   missing.append('特权密码')
                 else:
                     uname = (getattr(body, 'username', None) or device_row.get('username', '') or '').strip()
-                    pwd = (getattr(body, 'password', None) or decrypt_credential(device_row.get('password')) or '').strip()
+                    pwd_body = getattr(body, 'password', None)
+                    pwd = (pwd_body if pwd_body else None) or \
+                          decrypt_credential(device_row.get('password')) or ''
+                    pwd = pwd.strip()
                     if not uname: missing.append('用户名')
-                    if not pwd: missing.append('密码')
+                    if not pwd:   missing.append('密码')
 
                 if missing:
                     raise HTTPException(
@@ -513,15 +554,16 @@ def update_asset(asset_id: str, body: AssetUpdate):
             'vlan', 'uplink_switch', 'uplink_port',
             'status', 'lifecycle_status', 'purchase_date', 'warranty_expiry', 'department', 'notes',
             'platform', 'connection_method', 'username', 'password',
-            'normal_username', 'normal_password', 'admin_username', 'admin_password', 'auth_model',
+            'normal_username', 'normal_password', 'admin_username', 'admin_password', 'enable_password', 'auth_model',
             'snmp_community', 'snmp_port', 'management_port'
         ]
         for field in updatable:
             val = getattr(body, field, None)
             if val is not None:
-                if field == 'password':
+                if field in ('password', 'normal_password', 'admin_password', 'enable_password'):
+                    # Empty string = "keep existing" — skip the update
                     if val != '':
-                        updates.append('password = ?')
+                        updates.append(f'{field} = ?')
                         params.append(_safe_encrypt(val))
                 else:
                     updates.append(f'{field} = ?')

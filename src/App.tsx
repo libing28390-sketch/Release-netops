@@ -684,6 +684,8 @@ const App: React.FC = () => {
     }
     if (activeTab === 'compliance') return t('compliance');
     if (activeTab === 'monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
+    if (activeTab === 'access') return language === 'zh' ? '操作工作台' : 'Operation Workspace';
+    if (activeTab === 'pam-audit') return language === 'zh' ? 'PAM 受控审计' : 'PAM Session Audit';
 
     if (activeTab === 'topology') return language === 'zh' ? '网络拓扑' : 'Topology';
     return t('dashboard');

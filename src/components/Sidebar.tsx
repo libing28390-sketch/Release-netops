@@ -638,6 +638,36 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
 
+          {/* ── PAM / Access Control section ── */}
+          <button
+            onClick={() => setActiveTab('access')}
+            className={sectionToggleClass}
+          >
+            <span className="flex h-5 w-5 items-center justify-center rounded-md border border-cyan-300/12 bg-slate-950/24 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+              <Lock size={10} className="text-white/34 shrink-0" />
+            </span>
+            <p className={sectionLabelClass}>{language === 'zh' ? '特权访问管理' : 'Privileged Access'}</p>
+          </button>
+          <div className="space-y-1">
+            {([
+              { id: 'access',    icon: Lock,        label: language === 'zh' ? '操作工作台' : 'Workspace' },
+              { id: 'pam-audit', icon: ShieldCheck,  label: language === 'zh' ? '受控审计'   : 'Session Audit' },
+            ] as const).map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`${navButtonClass} ${
+                  activeTab === item.id
+                    ? activePrimaryNavClass
+                    : inactivePrimaryNavClass
+                }`}
+              >
+                <item.icon size={17} className={`shrink-0 ${activeTab === item.id ? 'text-[#5fe6ff]' : 'text-white/72'}`} />
+                <span className={navLabelClass}>{item.label}</span>
+              </button>
+            ))}
+          </div>
+
           <button
             onClick={() => setCapacitySectionOpen((value) => !value)}
             className={sectionToggleClass}
@@ -647,7 +677,6 @@ const Sidebar: React.FC<SidebarProps> = ({
             </span>
             <p className={sectionLabelClass}>{language === 'zh' ? '容量与报表' : 'Capacity & Reports'}</p>
           </button>
-          <div className={sectionDividerClass} />
           <div className={capacitySectionOpen ? 'space-y-1' : 'hidden'}>
             <button
               onClick={() => setActiveTab('capacity')}

@@ -96,7 +96,8 @@ const EMPTY_FORM = {
   username: '', password: '',
   normal_username: '', normal_password: '',
   admin_username: '', admin_password: '',
-  auth_model: 'single',
+  enable_password: '',   // Cisco enable secret (privilege exec password)
+  auth_model: 'dual',
   snmp_community: 'public', snmp_port: '161',
   management_port: '22',
 };
@@ -232,6 +233,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [batchTagValue, setBatchTagValue] = useState('');
   const [showProductionConfirm, setShowProductionConfirm] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [showEnableSecret, setShowEnableSecret] = useState(false);
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
   const [rotatingAssetId, setRotatingAssetId] = useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -302,10 +304,19 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   }, [assets, severityFilter, lifecycleFilter]);
 
   /* ─── CRUD ─── */
-  const openAdd = () => { setEditingAsset(null); setForm({ ...EMPTY_FORM }); setModalError(null); setShowModal(true); };
+  const openAdd = () => {
+    setEditingAsset(null);
+    setForm({ ...EMPTY_FORM });
+    setModalError(null);
+    setShowEnableSecret(false);
+    setShowModal(true);
+  };
   const openEdit = (a: Asset) => {
     setEditingAsset(a);
     setModalError(null);
+    // If device already has an enable_password configured, open the toggle so
+    // the user can see & optionally change it.
+    setShowEnableSecret(!!(a as any).enable_password_set || !!(a as any).enable_password);
     setForm({
       asset_type: a.asset_type, asset_tag: a.asset_tag, serial_number: a.serial_number,
       vendor: a.vendor, model: a.model, hostname: a.hostname, datacenter: a.datacenter,
@@ -326,7 +337,8 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       normal_password: '',
       admin_username: (a as any).admin_username || '',
       admin_password: '',
-      auth_model: (a as any).auth_model || 'single',
+      enable_password: '',   // always blank on edit — leave empty to keep existing
+      auth_model: 'dual',
       snmp_community: (a as any).snmp_community || 'public',
       snmp_port: String((a as any).snmp_port || '161'),
     });
@@ -393,6 +405,8 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
         ...form,
         u_height: Math.max(1, Math.min(60, parseInt(String(form.u_height), 10) || 1)),
         planned_start_u,
+        // Trim enable_password: a single space means "toggle open but no value entered" → treat as empty
+        enable_password: (form.enable_password || '').trim(),
       };
       const r = await fetch(url, { method: editingAsset ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (r.ok) {
@@ -444,7 +458,8 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       normal_password: '',
       admin_username: (a as any).admin_username || '',
       admin_password: '',
-      auth_model: (a as any).auth_model || 'single',
+      enable_password: '',
+      auth_model: 'dual',
       snmp_community: a.snmp_community || 'public',
       snmp_port: String(a.snmp_port || '161'),
     });
@@ -1434,15 +1449,18 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
           <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowModal(false)}>
             <motion.div
-              className="relative bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5 shadow-2xl border border-black/5"
+              className="relative bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl border border-black/5"
               onClick={e => e.stopPropagation()}
               initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}
             >
-              <div className="flex items-center justify-between mb-4">
+              {/* ── Modal header (fixed) ── */}
+              <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
                 <h3 className="text-sm font-bold text-black/80">{editingAsset ? (zh ? '编辑资产' : 'Edit Asset') : (zh ? '新增资产' : 'Add Asset')}</h3>
                 <button onClick={() => setShowModal(false)} title="Close" className="p-1 text-black/15 hover:text-black/35"><X size={16} /></button>
               </div>
 
+              {/* ── Scrollable form body ── */}
+              <div className="flex-1 overflow-y-auto px-5 pb-2">
               <div className="flex gap-2 mb-4">
                 {TYPES.map(t => (
                   <button key={t.value} onClick={() => setForm(f => ({ 
@@ -1542,13 +1560,16 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                     </div>
                   </div>
 
-                  {/* PAM Toggle */}
-                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-black/5 mt-1">
+                  {/* PAM Toggle — always ON, not user-toggleable */}
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-cyan-50 border border-cyan-200/60 mt-1">
                     <div className="flex items-center gap-2">
-                      <Shield size={14} className={form.auth_model === 'dual' ? 'text-cyan-500' : 'text-slate-300'} />
+                      <Shield size={14} className="text-cyan-500" />
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="text-[10px] font-bold text-slate-700">{zh ? '多角色认证 (PAM)' : 'Multi-Role Auth (PAM)'}</p>
+                          <span className="text-[8px] px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-700 font-bold border border-cyan-200">
+                            {zh ? '强制启用' : 'Required'}
+                          </span>
                           {editingAsset && (
                             <button
                               type="button"
@@ -1575,35 +1596,68 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                             </button>
                           )}
                         </div>
-                        <p className="text-[8px] text-slate-400">{zh ? '同时管理普通账户和管理员账户凭据' : 'Manage both normal and admin account credentials'}</p>
+                        <p className="text-[8px] text-slate-400">{zh ? '必须同时录入普通账户和管理员账户凭据，不允许单用户模式' : 'Both normal and admin credentials are required — single-user mode is not allowed'}</p>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setForm(f => ({ ...f, auth_model: f.auth_model === 'dual' ? 'single' : 'dual' }))}
-                      className={`relative inline-flex h-4 w-8 items-center rounded-full transition-colors ${form.auth_model === 'dual' ? 'bg-cyan-500' : 'bg-slate-200'}`}
-                    >
-                      <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform ${form.auth_model === 'dual' ? 'translate-x-4.5' : 'translate-x-1'}`} />
-                    </button>
+                    {/* Lock icon instead of toggle — always dual */}
+                    <div className="p-1.5 rounded-full bg-cyan-100 text-cyan-600" title={zh ? 'PAM 双账户模式已强制启用' : 'PAM dual-account mode is enforced'}>
+                      <Lock size={12} />
+                    </div>
                   </div>
 
-                  {form.auth_model === 'dual' ? (
-                    <div className="grid grid-cols-2 gap-3 p-3 rounded-xl border border-black/5 bg-slate-50/30">
-                      <div className="space-y-2">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-blue-500">{zh ? '普通账户' : 'Normal'}</p>
-                        <Field label={zh ? '用户名' : 'User'} value={form.normal_username} onChange={v => setForm(f => ({ ...f, normal_username: v }))} placeholder="user" />
-                        <PasswordField label={zh ? '密码' : 'Pass'} value={form.normal_password} onChange={v => setForm(f => ({ ...f, normal_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Keep') : ''} />
-                      </div>
-                      <div className="space-y-2">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-orange-500">{zh ? '特权账户' : 'Admin'}</p>
-                        <Field label={zh ? '用户名' : 'User'} value={form.admin_username} onChange={v => setForm(f => ({ ...f, admin_username: v }))} placeholder="root" />
-                        <PasswordField label={zh ? '密码' : 'Pass'} value={form.admin_password} onChange={v => setForm(f => ({ ...f, admin_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Keep') : ''} />
-                      </div>
+                  {/* Dual-account credential inputs — always shown */}
+                  <div className="grid grid-cols-2 gap-3 p-3 rounded-xl border border-black/5 bg-slate-50/30">
+                    <div className="space-y-2">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-blue-500">{zh ? '普通账户' : 'Normal Account'}</p>
+                      <Field label={zh ? '用户名' : 'Username'} value={form.normal_username} onChange={v => setForm(f => ({ ...f, normal_username: v }))} placeholder="user" />
+                      <PasswordField label={zh ? '密码' : 'Password'} value={form.normal_password} onChange={v => setForm(f => ({ ...f, normal_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : ''} />
                     </div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
-                      <Field label={zh ? '用户名' : 'Username'} value={form.username} onChange={v => setForm(f => ({ ...f, username: v }))} placeholder="admin" />
-                      <PasswordField label={zh ? '密码' : 'Password'} value={form.password} onChange={v => setForm(f => ({ ...f, password: v }))} placeholder={editingAsset ? (zh ? '留空保持不变' : 'Leave empty to keep') : ''} />
+                    <div className="space-y-2">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-orange-500">{zh ? '特权账户' : 'Admin Account'}</p>
+                      {/* Network devices default to 'admin', servers default to 'root' */}
+                      <Field label={zh ? '用户名' : 'Username'} value={form.admin_username} onChange={v => setForm(f => ({ ...f, admin_username: v }))} placeholder={form.asset_type === 'network_device' ? 'admin' : 'root'} />
+                      <PasswordField label={zh ? '密码' : 'Password'} value={form.admin_password} onChange={v => setForm(f => ({ ...f, admin_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : ''} />
+                    </div>
+                  </div>
+
+                  {/* Enable Secret — Cisco platforms only, optional toggle */}
+                  {form.asset_type === 'network_device' && form.platform.startsWith('cisco') && (
+                    <div className="rounded-xl border border-amber-100 bg-amber-50/40 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowEnableSecret(prev => {
+                            const next = !prev;
+                            // When toggling off, clear the password value
+                            if (!next) setForm(f => ({ ...f, enable_password: '' }));
+                            return next;
+                          });
+                        }}
+                        className="w-full flex items-center justify-between px-3 py-2 hover:bg-amber-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Lock size={11} className="text-amber-500" />
+                          <span className="text-[9px] font-black uppercase tracking-widest text-amber-600">
+                            Enable Secret
+                          </span>
+                          <span className="text-[8px] text-amber-400/80">
+                            {zh ? '（可选，不填则与特权账户密码相同）' : '(optional — defaults to admin password if blank)'}
+                          </span>
+                        </div>
+                        <div className={`relative inline-flex h-3.5 w-7 items-center rounded-full transition-colors ${showEnableSecret ? 'bg-amber-400' : 'bg-slate-200'}`}>
+                          <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform shadow-sm ${showEnableSecret ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                        </div>
+                      </button>
+                      {showEnableSecret && (
+                        <div className="px-3 pb-2.5">
+                          <PasswordField
+                            label={zh ? '密码' : 'Password'}
+                            value={form.enable_password}
+                            onChange={v => setForm(f => ({ ...f, enable_password: v }))}
+                            placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : (zh ? '输入 enable secret' : 'Enter enable secret')}
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1655,21 +1709,26 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                 </div>
               </div>
 
-              {/* ─── Inline validation error ─── */}
-              {modalError && (
-                <div className="flex items-center gap-2 mt-4 px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700">
-                  <AlertCircle size={14} className="shrink-0 text-red-500" />
-                  <span className="text-xs font-medium">{modalError}</span>
-                  <button onClick={() => setModalError(null)} title="Dismiss" className="ml-auto p-0.5 text-red-400 hover:text-red-600"><X size={12} /></button>
-                </div>
-              )}
+              {/* ─── Inline validation error (moved to sticky footer below) ─── */}
 
-              <div className="flex justify-end gap-2 mt-5">
-                <button onClick={() => setShowModal(false)} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
-                <button onClick={() => { setModalError(null); handleSave(); }} disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim())}
-                  className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20">
-                  {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
-                </button>
+              </div>{/* end scrollable body */}
+
+              {/* ── Sticky footer: error + action buttons ── */}
+              <div className="shrink-0 border-t border-black/5 bg-white rounded-b-2xl px-5 py-3">
+                {modalError && (
+                  <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700">
+                    <AlertCircle size={13} className="shrink-0 text-red-500" />
+                    <span className="text-xs font-medium flex-1">{modalError}</span>
+                    <button onClick={() => setModalError(null)} title="Dismiss" className="p-0.5 text-red-400 hover:text-red-600 shrink-0"><X size={12} /></button>
+                  </div>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setShowModal(false)} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
+                  <button onClick={() => { setModalError(null); handleSave(); }} disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim())}
+                    className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20">
+                    {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
+                  </button>
+                </div>
               </div>
 
               {/* Production confirmation overlay */}

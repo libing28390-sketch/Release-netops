@@ -1,12 +1,12 @@
 {
   "payload": {
-    "license_id": "3af83bff-7a10-401e-9ba9-4bff7a488baf",
-    "company": "testtte",
-    "license_type": "enterprise",
-    "issued_at": "2026-05-06T05:28:08.025986+00:00",
-    "expire_at": "2027-05-06T23:59:59",
-    "device_limit": 1000,
-    "server_limit": 1000,
+    "license_id": "88feb9d1-0d4b-45c2-98e6-8cba5b93619c",
+    "company": "test",
+    "license_type": "standard",
+    "issued_at": "2026-05-09T13:34:05.774705+00:00",
+    "expire_at": "2027-05-09T23:59:59",
+    "device_limit": 50,
+    "server_limit": 50,
     "features": [
       "automation",
       "config_management",
@@ -22,11 +22,12 @@
       "reports",
       "api_access",
       "scheduled_jobs",
-      "password_rotation"
+      "password_rotation",
+      "access_center"
     ],
-    "machine_id": "F2CA-0BD8-D5B4-6E63",
+    "machine_id": "7294-18BB-E08A-5D49",
     "max_version": "99.9.9",
     "metadata": null
   },
-  "signature": "aeA2++RnjXa0B2l6IKBAtILcj4ySGfL72e/C5tOq4IGAGOFyEw6RH9GUDKOoCIeL/vjFNWlBJI/nykWPWIzvJ3fkj+AvHJMItUVHzUV9j5m+zQ0u8HaniluqXThyKsJnWTVFNdnY1bJ3GsPXUftS/YoJdc9BhuxocNfhSMW0NyKeTRzlxTV1mZ8NXcaNjBb5yXjKqYn6wWcW/6Rka55/LBigx+FQcpWW8lutkqO0KlvU9VtnuksJqDLvUtNvhLNZNuNHoYz0sFXlLAGv8mQHwhjU6XTu6gNO/EMgG3ZenTNyYe5r7H64YhNmYbR6WYpeXqWVK71gHUvRnJPzCJDY+w=="
+  "signature": "hOo4SYDm377+4PYyxHYJ7C0ErnPA/6xHoiNhIB19g1Ao39MmauEe5P0mynrpiJ56mUj0yVU7D+HjMSO0aCKXCkX8dY0Bzp909LdJ4/CwqGas/N0+4GTRVAfqYdScFXParDh+A5+JvTCpWOmUGFsgycWzVSH70wMFPp5Pll14YcgB0pvp5Piw8QzRnsFgaJuwNGUWcvP7ML3rNVAz/xykUikPQv3Jlmicb9Q+gGKZbSoX9lD1CFhjvbWc0cApwY7ZQiaK1sR9Q9qXhxaGWoIRQ4dnk1PD/WCDUUhjSEW6m9yTKnqTkGzpjeMT2t8DhdIPnQsVPgPZocxJ/IaAGQ8KVg=="
 }

@@ -283,11 +283,44 @@ def list_sessions(
     """List PAM sessions for admin monitoring."""
     conn = get_db_connection()
     try:
+        # ── Stale-session recovery ──────────────────────────────────────
+        # Sessions stuck in 'connecting' or 'active' but no longer in the
+        # in-memory WebSocket map are orphaned (e.g. after a server restart).
+        # Mark them as 'closed' so they appear in history correctly.
+        now = _utc_now()
+        orphaned = conn.execute(
+            "SELECT id, connected_at FROM pam_sessions WHERE status IN ('connecting', 'active')"
+        ).fetchall()
+        for orphan in orphaned:
+            oid = orphan['id']
+            if oid not in _active_sessions:
+                # Calculate duration if we have a connected_at timestamp
+                duration = 0
+                if orphan['connected_at']:
+                    try:
+                        start = datetime.fromisoformat(orphan['connected_at'].replace('Z', '+00:00'))
+                        duration = int((datetime.now(timezone.utc) - start).total_seconds())
+                    except Exception:
+                        pass
+                conn.execute(
+                    "UPDATE pam_sessions SET status='closed', closed_at=?, close_reason='server_restart', "
+                    "duration_seconds=?, updated_at=? WHERE id=?",
+                    (now, duration, now, oid),
+                )
+        if orphaned:
+            conn.commit()
+        # ────────────────────────────────────────────────────────────────
+
         conditions = []
         params = []
         if status:
-            conditions.append('status = ?')
-            params.append(status.strip().lower())
+            # 'active' tab: show sessions that are currently live in memory
+            # (status = active OR connecting with a live WS)
+            if status.strip().lower() == 'active':
+                conditions.append("status IN ('active', 'connecting')")
+            else:
+                conditions.append('status = ?')
+                params.append(status.strip().lower())
         if requester_username:
             conditions.append('requester_username = ?')
             params.append(requester_username.strip())
@@ -314,6 +347,9 @@ def list_sessions(
                 'SELECT hostname FROM physical_assets WHERE id = ?', (item['asset_id'],)
             ).fetchone()
             item['asset_hostname'] = asset_row['hostname'] if asset_row else ''
+            # Normalise: if session is in memory map, always report as 'active'
+            if item['id'] in _active_sessions:
+                item['status'] = 'active'
             items.append(item)
 
         return {'items': items, 'total': total, 'page': page, 'page_size': page_size}

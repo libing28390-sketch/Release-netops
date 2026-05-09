@@ -136,17 +136,41 @@ class NetmikoDriver(BaseDriver):
             'blocking_timeout':   30,
         }
         device_params.update(build_netmiko_compatibility_kwargs())
-        # 若设备有 enable secret，传入以支持 privilege exec 提升
-        secret = self.device_info.get('enable_password') or self.device_info.get('secret') or ''
+        # enable secret: use explicit field, then fall back to login password for Cisco
+        # (many Cisco devices share the same enable secret and SSH password)
+        secret = (
+            self.device_info.get('enable_password') or
+            self.device_info.get('secret') or
+            (self.password if self.device_type in ('cisco_ios', 'cisco_nxos', 'cisco_iosxr') else '')
+        )
         if secret:
             device_params['secret'] = secret
 
         try:
             logger.debug(f"Connecting to {self.host}:{self.port} type={self.device_type} fast_cli={device_params['fast_cli']}")
             self.conn = ConnectHandler(**device_params)
-            # 若提供了 secret，自动进入特权模式
-            if secret:
-                self.conn.enable()
+
+            # For Cisco devices: always call enable() so Netmiko's internal state
+            # is correctly set to privilege exec mode (prompt = '#').
+            # - privilege 15 accounts: enable() is a no-op (already at '#')
+            # - privilege 1 accounts: enable() uses the secret to elevate
+            # Without this, send_config_set() → config_mode() fails even for priv-15 accounts
+            # because Netmiko thinks the session is still at '>'.
+            if self.device_type in ('cisco_ios', 'cisco_nxos', 'cisco_iosxr') and secret:
+                try:
+                    self.conn.enable()
+                except Exception as en_err:
+                    # If enable() fails, the account may already be at '#' (priv 15).
+                    # Check the current prompt — if it ends with '#' we're fine.
+                    try:
+                        prompt = self.conn.find_prompt()
+                        if prompt.strip().endswith('#'):
+                            logger.debug(f"enable() raised but prompt is '#' on {self.host} — already privileged, continuing")
+                        else:
+                            raise en_err
+                    except Exception:
+                        raise en_err
+
             logger.info(f"Connected to {self.host} (type={self.device_type})")
         except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
             logger.error(f"Netmiko connection failed to {self.host}: {e}", exc_info=True)

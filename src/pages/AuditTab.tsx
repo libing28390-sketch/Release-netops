@@ -66,6 +66,12 @@ const AuditTab: React.FC<AuditTabProps> = ({
     TEMPLATE_CREATE: '创建模板', TEMPLATE_UPDATE: '更新模板',
     COMPLIANCE_RUN: '合规检查', COMPLIANCE_REMEDIATE: '合规修复',
     PASSWORD_ROTATE: '密码轮换', CREDENTIAL_UPDATE: '凭据更新',
+    // PAM events
+    'PAM.SESSION.CREATED':       'PAM 会话创建',
+    'PAM.SESSION.CONNECTED':     'PAM 会话连接',
+    'PAM.SESSION.CLOSED':        'PAM 会话关闭',
+    'PAM.SESSION.KILLED':        'PAM 会话强制终止',
+    'PAM.SESSION.LOCAL_LAUNCH':  'PAM 本地终端拉起',
   };
   const fmtEventType = (v: string) => zh ? (eventTypeMap[v?.toUpperCase()] || v) : v;
   const summaryPatterns: Array<[RegExp, (...m: string[]) => string]> = [
@@ -84,6 +90,12 @@ const AuditTab: React.FC<AuditTabProps> = ({
     [/^Deleted device (\S+)$/i, (_, d) => `删除设备 ${d}`],
     [/^Ran compliance audit$/i, () => '执行合规审计'],
     [/^Ran playbook (.+) on (.+)$/i, (_, p, d) => `在 ${d} 执行剧本 ${p}`],
+    // PAM patterns
+    [/^PAM session created for (.+) \((\w+)\)$/i, (_, h, l) => `PAM 会话创建: ${h}（${l === 'admin' ? '特权' : '普通'}）`],
+    [/^PAM terminal connected: (\S+)@(\S+)/i, (_, u, h) => `PAM 终端连接: ${u}@${h}`],
+    [/^PAM terminal closed: session (\S+)/i, (_, s) => `PAM 会话关闭: ${s}`],
+    [/^PAM session (\S+) force-terminated/i, (_, s) => `PAM 会话强制终止: ${s}`],
+    [/^Local terminal launched: (\S+)@(\S+) via (\S+)/i, (_, u, h, app) => `本地终端拉起: ${u}@${h}（${app}）`],
   ];
   const fmtSummary = (v: string) => {
     if (!zh) return v;

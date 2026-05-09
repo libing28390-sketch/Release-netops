@@ -242,35 +242,212 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
             login_user = current_admin_user
             login_pwd = current_admin_pwd
     else:
-        # For network devices, we might need to login as the target or as admin
-        if role in ['admin', 'enable']:
-            login_user = current_admin_user
-            login_pwd = current_admin_pwd
-        else:
-            # For normal role, try normal user first, fallback to admin
+        # For network devices: ALWAYS login as admin (privilege 15) to run config commands.
+        # Using a low-privilege account (e.g. user/privilege 1) requires enable, which
+        # needs a separate enable secret. Logging in as admin avoids this entirely.
+        login_user = current_admin_user
+        login_pwd = current_admin_pwd
+        if not login_user or not login_pwd:
+            # Fallback: if no admin creds, try normal creds
             login_user = creds.get('normal_username') or current_admin_user
             login_pwd = creds.get('normal_password') or current_admin_pwd
+        logger.info(f"[Rotation] Network device: using admin login ({login_user}) to avoid enable requirement")
 
-    # 4. Generate commands
+    # ── Network device: write-ahead rotation ──────────────────────────────────
+    #
+    # Reliability guarantee (防止密码丢失):
+    #   1. Generate new passwords
+    #   2. Write them to DB first with status='pending' (commit immediately)
+    #      ← even if everything fails after this, passwords are NOT lost
+    #   3. SSH to device and change both accounts
+    #   4. write memory on device
+    #   5. Mark DB record as 'active' (verified/committed)
+    #   6. On SSH failure: keep the pending passwords in DB + set takeover_error
+    #      ← user can see what the new password was and recover manually
+    #
+    # The previous flow changed the device FIRST, then wrote DB — if SQL failed,
+    # the device's password was silently lost.
+    if not is_server:
+        handler = _CHANGE_PASSWORD_HANDLERS.get(platform)
+        if not handler:
+            return {'success': False, 'message': f'No password change handler for platform: {platform}'}
+
+        save_cmd = _SAVE_COMMANDS.get(platform, 'write memory')
+
+        new_normal_pwd = _generate_password(20)
+        new_admin_pwd = _generate_password(20)
+
+        normal_user = creds.get('normal_username') or device.get('normal_username') or 'user'
+        admin_user = current_admin_user or 'admin'
+
+        if role == 'enable':
+            if 'cisco' in platform:
+                commands = [f'enable secret 0 {new_admin_pwd}']
+            elif 'huawei' in platform or 'h3c' in platform:
+                commands = [f'super password role privilege 3 cipher {new_admin_pwd}']
+            else:
+                return {'success': False, 'message': 'Enable password rotation not supported for this platform'}
+            new_normal_pwd = None
+        else:
+            commands = (
+                handler(normal_user, new_normal_pwd) +
+                handler(admin_user, new_admin_pwd)
+            )
+
+        now_str = datetime.now(timezone.utc).isoformat()
+        expires_str = (datetime.now(timezone.utc) + timedelta(days=settings.PASSWORD_ROTATION_INTERVAL_DAYS)).isoformat()
+        asset_id = device.get('asset_id')
+
+        # ─ Step 1: Write new passwords to DB with 'pending' status ──────────
+        # If anything downstream fails, these values remain and can be used for
+        # manual recovery (console access to the device).
+        conn_pre = get_db_connection()
+        try:
+            if role != 'enable':
+                enc_normal_pending = encrypt_credential(new_normal_pwd)
+                enc_admin_pending = encrypt_credential(new_admin_pwd)
+                conn_pre.execute(
+                    "UPDATE devices SET "
+                    "normal_password=?, admin_password=?, "
+                    "username=?, password=?, "
+                    "rotation_status=?, takeover_error=? "
+                    "WHERE id=?",
+                    (enc_normal_pending, enc_admin_pending,
+                     admin_user, enc_admin_pending,
+                     'rotating', 'new credentials staged, SSH change in progress',
+                     device_id)
+                )
+            else:
+                enc_enable_pending = encrypt_credential(new_admin_pwd)
+                conn_pre.execute(
+                    "UPDATE devices SET enable_password=?, rotation_status=?, takeover_error=? WHERE id=?",
+                    (enc_enable_pending, 'rotating',
+                     'enable secret staged, SSH change in progress', device_id)
+                )
+            conn_pre.commit()
+            logger.info(
+                f"[Rotation] Staged new credentials in DB for {device.get('hostname')} "
+                f"(pending SSH apply)"
+            )
+        finally:
+            conn_pre.close()
+
+        # ─ Step 2: SSH and apply to device ──────────────────────────────────
+        device_info = {
+            'ip_address': (device.get('ip_address') or '').strip(),
+            'username': login_user,
+            'password': login_pwd,
+            'platform': platform,
+            'port': device.get('management_port') or device.get('ssh_port') or 22,
+            'secret': (
+                decrypt_credential(device.get('enable_password') or '') or
+                current_admin_pwd or
+                login_pwd
+            ) if 'cisco' in platform else '',
+        }
+
+        ssh_error = None
+        try:
+            from drivers.factory import DriverFactory
+            logger.info(
+                f"[Rotation] SSH to {device.get('hostname')} as {login_user} "
+                f"(dual-role rotation via single session)"
+            )
+            with DriverFactory.get_driver('netmiko', device_info) as driver:
+                res = driver.send_config(commands)
+                if not res.success:
+                    raise Exception(f"Config change failed: {res.error}")
+                save_res = driver.send_command(save_cmd)
+                if not save_res.success:
+                    logger.warning(
+                        f"[Rotation] Device changed but save failed: {save_res.error}. "
+                        "Running-config has new passwords, but they won't survive a reboot."
+                    )
+            logger.info(f"[Rotation] Device updated for {device.get('hostname')}")
+        except Exception as e:
+            ssh_error = str(e)
+            logger.error(f"[Rotation] SSH apply failed for {device.get('hostname')}: {ssh_error}")
+
+        # ─ Step 3: Finalize DB state based on SSH outcome ───────────────────
+        conn_post = get_db_connection()
+        try:
+            if ssh_error is None:
+                # Success: mark as active, sync to physical_assets
+                if role != 'enable':
+                    conn_post.execute(
+                        "UPDATE devices SET "
+                        "normal_password_last_rotated=?, normal_password_expires_at=?, "
+                        "admin_password_last_rotated=?,  admin_password_expires_at=?, "
+                        "rotation_status=?, takeover_error=?, is_managed=? "
+                        "WHERE id=?",
+                        (now_str, expires_str,
+                         now_str, expires_str,
+                         'completed', '', 1,
+                         device_id)
+                    )
+                    if asset_id:
+                        conn_post.execute(
+                            "UPDATE physical_assets SET "
+                            "normal_username=?, normal_password=?, "
+                            "admin_username=?,  admin_password=?, "
+                            "username=?, password=?, "
+                            "is_managed=?, takeover_error=? "
+                            "WHERE id=?",
+                            (normal_user, encrypt_credential(new_normal_pwd),
+                             admin_user, encrypt_credential(new_admin_pwd),
+                             admin_user, encrypt_credential(new_admin_pwd),
+                             1, '',
+                             asset_id)
+                        )
+                else:
+                    conn_post.execute(
+                        "UPDATE devices SET "
+                        "enable_password_last_rotated=?, enable_password_expires_at=?, "
+                        "rotation_status=?, takeover_error=? "
+                        "WHERE id=?",
+                        (now_str, expires_str, 'completed', '', device_id)
+                    )
+                    if asset_id:
+                        conn_post.execute(
+                            "UPDATE physical_assets SET enable_password=? WHERE id=?",
+                            (encrypt_credential(new_admin_pwd), asset_id)
+                        )
+                conn_post.commit()
+                logger.info(
+                    f"[Rotation] Completed for {device.get('hostname')} "
+                    f"(normal + admin written to DB and device)"
+                )
+                return {
+                    'success': True,
+                    'message': f"Passwords rotated for {device.get('hostname', device_id)} (normal + admin)",
+                    'rotated_at': now_str,
+                    'expires_at': expires_str,
+                }
+            else:
+                # SSH failed: keep staged passwords in DB, mark failure clearly
+                conn_post.execute(
+                    "UPDATE devices SET rotation_status=?, takeover_error=? WHERE id=?",
+                    ('failed',
+                     f'SSH apply failed: {ssh_error[:400]}. '
+                     f'New passwords are staged in DB but device may still hold old credentials. '
+                     f'Recover via console if necessary.',
+                     device_id)
+                )
+                conn_post.commit()
+                return {'success': False, 'message': f"Rotation failed: {ssh_error}"}
+        finally:
+            conn_post.close()
+
+    # ── Server: use chpasswd ──────────────────────────────────────────────────
+
+    # 4. Generate commands (server path only — network path handled above)
     handler = _CHANGE_PASSWORD_HANDLERS.get(platform)
     if not handler and not is_server:
         return {'success': False, 'message': f'No password change handler for platform: {platform}'}
 
-    if role == 'enable':
-        if 'cisco' in platform:
-            commands = [f'enable secret 0 {new_password}']
-        elif 'huawei' in platform or 'h3c' in platform:
-            commands = [f'super password role privilege 3 cipher {new_password}']
-        else:
-            return {'success': False, 'message': 'Enable password rotation not supported for this platform'}
-    else:
-        if is_server:
-            # Servers use shell commands, generated later in step 5
-            commands = []
-        else:
-            commands = handler(target_username, new_password)
+    commands = []  # servers don't use pre-built config commands
 
-    save_cmd = _SAVE_COMMANDS.get(platform, 'write memory')
+    save_cmd = _SAVE_COMMANDS.get(platform, 'sync')
 
     # 5. Execute with robustness
     device_info = {
@@ -383,9 +560,9 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
                 )
         
         # Mark as managed on success
-        conn2.execute('UPDATE devices SET is_managed = 1, takeover_error = "" WHERE id = ?', (device_id,))
+        conn2.execute("UPDATE devices SET is_managed = 1, takeover_error = '' WHERE id = ?", (device_id,))
         if asset_id:
-            conn2.execute('UPDATE physical_assets SET is_managed = 1, takeover_error = "" WHERE id = ?', (asset_id,))
+            conn2.execute("UPDATE physical_assets SET is_managed = 1, takeover_error = '' WHERE id = ?", (asset_id,))
             
         conn2.commit()
     finally:

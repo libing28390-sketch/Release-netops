@@ -142,6 +142,8 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
             path: terminalPath,
             host: dev.ip_address,
             user: identity === 'privileged' ? (dev.admin_username || 'root') : (dev.normal_username || 'user'),
+            requester_username: currentUsername || 'unknown',
+            access_level: identity === 'privileged' ? 'admin' : 'normal',
           })
         });
         const result = await res.json();
@@ -266,7 +268,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
                 {isZh ? '操作工作台' : 'Operation Workspace'}
               </h1>
               <p className="text-sm text-slate-500">
-                {isZh ? '受控访问、动态授权及安全合规' : 'Controlled access, dynamic authorization, and security compliance'}
+                {isZh ? '资产统一入口 · 安全受控访问' : 'Unified asset gateway · Controlled secure access'}
               </p>
             </div>
           </div>
@@ -309,9 +311,9 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
             <thead>
               <tr className="bg-slate-50/50 border-b border-slate-200">
                 <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">资产信息</th>
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">网络地址</th>
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">协议类型</th>
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] text-right">终端登录 (本地)</th>
+                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">连接地址</th>
+                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">协议</th>
+                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] text-right">终端登录（本地）</th>
                 <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] text-right">Web 登录</th>
               </tr>
             </thead>

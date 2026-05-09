@@ -73,33 +73,95 @@ async def open_file_picker() -> Dict[str, Any]:
 async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
     import subprocess
     import logging
+    import uuid
+    from datetime import datetime, timezone
+    from services.audit_service import log_audit_event
+
     logger = logging.getLogger(__name__)
 
     app_type = payload.get("app_type")
     path = payload.get("path")
     host = payload.get("host")
     user = payload.get("user")
-    
+    requester_username = payload.get("requester_username", "unknown")
+    access_level = payload.get("access_level", "normal")  # 'normal' | 'admin'
+
     # 1. Fetch the password from DB
     conn = get_db_connection()
     try:
         res = conn.execute("SELECT * FROM devices WHERE ip_address = ? LIMIT 1", (host,)).fetchone()
         if not res:
             res = conn.execute("SELECT * FROM physical_assets WHERE management_ip = ? LIMIT 1", (host,)).fetchone()
-        
+
         if not res:
             return {"success": False, "error": f"Device/Asset with IP {host} not found in database"}
-        
+
         device_data = dict(res)
         password = ""
         if user == device_data.get("username") or user == device_data.get("admin_username"):
             password = device_data.get("password") or device_data.get("admin_password")
         elif user == device_data.get("normal_username"):
             password = device_data.get("normal_password")
-        
+
         if not password:
             return {"success": False, "error": f"Password for user {user} on {host} not found"}
-            
+
+        # ── PAM audit record for local terminal ──────────────────────
+        # We cannot intercept or record local terminal traffic, but we
+        # can at least create an audit trail so the session appears in
+        # the PAM history with connect_method='local'.
+        asset_id = device_data.get("asset_id") or device_data.get("id") or ""
+        device_id = device_data.get("id") or ""
+        hostname = device_data.get("hostname") or host
+
+        session_id = f"session-{uuid.uuid4().hex[:12]}"
+        now_str = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+
+        try:
+            conn.execute('''
+                INSERT INTO pam_sessions (
+                    id, asset_id, device_id, requester_username, access_level,
+                    login_username, connect_method, target_ip, target_port,
+                    status, connected_at, closed_at, close_reason,
+                    duration_seconds, recording_path,
+                    session_token, token_expires_at, token_consumed,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                session_id, asset_id, device_id, requester_username, access_level,
+                user, 'local', host, 22,
+                # Local sessions are immediately 'closed' — we have no way to track
+                # when the user actually disconnects from their local client.
+                'closed', now_str, now_str, 'local_client_launched',
+                0, '',  # no recording for local sessions
+                '', now_str, 1,
+                now_str, now_str,
+            ))
+            conn.commit()
+        except Exception as db_err:
+            logger.warning(f"[System] Failed to write PAM audit record for local session: {db_err}")
+
+        log_audit_event(
+            event_type='pam.session.local_launch',
+            category='access',
+            severity='info' if access_level == 'normal' else 'warning',
+            status='open',
+            summary=f'Local terminal launched: {user}@{host} via {app_type} ({access_level})',
+            actor_username=requester_username,
+            target_type='asset',
+            target_id=asset_id,
+            target_name=hostname,
+            device_id=device_id,
+            details={
+                'session_id': session_id,
+                'app_type': app_type,
+                'login_username': user,
+                'access_level': access_level,
+                'note': 'Local terminal — no recording available',
+            },
+        )
+        # ─────────────────────────────────────────────────────────────
+
     finally:
         conn.close()
 
@@ -108,7 +170,7 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     plain_password = decrypt_credential(password)
     if not plain_password:
-        plain_password = password 
+        plain_password = password
 
     try:
         if app_type == "xshell":
@@ -122,7 +184,7 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         logger.info(f"[System] Launching terminal: {app_type} on {host}")
         subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
-        return {"success": True}
+        return {"success": True, "session_id": session_id}
     except Exception as e:
         logger.error(f"[System] Launch failed: {str(e)}")
         return {"success": False, "error": str(e)}
