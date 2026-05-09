@@ -18,9 +18,6 @@ router = APIRouter(prefix="/system", tags=["System"])
 
 @router.get("/info")
 async def get_system_info() -> Dict[str, Any]:
-    """
-    Returns core platform information including version and license status.
-    """
     verifier = get_license_verifier()
     license_status = verifier.validate()
     
@@ -34,14 +31,7 @@ async def get_system_info() -> Dict[str, Any]:
 
 @router.get("/check-update")
 async def check_for_updates() -> Dict[str, Any]:
-    """
-    Checks for available updates. 
-    Currently returns a mock response for the P1 phase.
-    """
-    # In a real scenario, this would query a central update server
-    # For now, we mock a "new version" if the current version is 0.1.0
     latest_version = "0.1.1" if VERSION == "0.1.0" else VERSION
-    
     return {
         "current_version": VERSION,
         "latest_version": latest_version,
@@ -55,53 +45,8 @@ async def check_for_updates() -> Dict[str, Any]:
         "release_date": "2026-05-10"
     }
 
-@router.post("/upgrade")
-async def trigger_upgrade(background_tasks: BackgroundTasks):
-    """
-    Priority 3: Docker-based upgrade implementation.
-    Executes 'docker compose pull && docker compose up -d' in the background.
-    """
-    import subprocess
-    import os
-    import logging
-    logger = logging.getLogger(__name__)
-
-    def run_docker_upgrade():
-        try:
-            # Note: This assumes the environment has docker-compose installed and 
-            # the backend has permissions to execute it.
-            logger.info("Starting system upgrade via Docker...")
-            
-            # Step 1: Pull latest images
-            pull_cmd = ["docker", "compose", "pull"]
-            logger.info(f"Executing: {' '.join(pull_cmd)}")
-            subprocess.run(pull_cmd, capture_output=True, text=True, check=True)
-            
-            # Step 2: Restart containers
-            up_cmd = ["docker", "compose", "up", "-d"]
-            logger.info(f"Executing: {' '.join(up_cmd)}")
-            # Note: This will likely kill the current process as the container restarts
-            subprocess.run(up_cmd, capture_output=True, text=True, check=True)
-            
-            logger.info("Upgrade command sent successfully.")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Upgrade failed: {e.stderr}")
-        except Exception as e:
-            logger.error(f"Unexpected upgrade error: {str(e)}")
-
-    background_tasks.add_task(run_docker_upgrade)
-    
-    return {
-        "success": True, 
-        "message": "升级指令已下发。系统正在后台更新镜像并重启，请稍后刷新页面。"
-    }
-
 @router.get("/file-picker")
 async def open_file_picker() -> Dict[str, Any]:
-    """
-    Opens a native Windows file picker dialog on the host machine.
-    Works because the backend is running locally.
-    """
     import tkinter as tk
     from tkinter import filedialog
     import asyncio
@@ -110,8 +55,8 @@ async def open_file_picker() -> Dict[str, Any]:
     def run_picker():
         try:
             root = tk.Tk()
-            root.withdraw()  # Hide main window
-            root.attributes("-topmost", True)  # Bring dialog to front
+            root.withdraw()
+            root.attributes("-topmost", True)
             file_path = filedialog.askopenfilename(
                 title="选择终端程序可执行文件",
                 filetypes=[("可执行文件", "*.exe"), ("所有文件", "*.*")]
@@ -121,22 +66,51 @@ async def open_file_picker() -> Dict[str, Any]:
         except Exception as e:
             return {"path": "", "error": str(e)}
 
-    # Run in a separate thread to avoid blocking the FastAPI event loop
     with concurrent.futures.ThreadPoolExecutor() as pool:
-        result = await asyncio.get_event_loop().run_in_executor(pool, run_picker)
-    
-    if not path or not os.path.exists(path):
-        return {"success": False, "error": "Executable path not found"}
+        return await asyncio.get_event_loop().run_in_executor(pool, run_picker)
 
-    # CRITICAL FIX: Decrypt the password before passing it to Xshell/Putty
-    # The passwords stored in the DB (and sent to frontend) are encrypted with 'enc:v1:'
+@router.post("/launch-terminal")
+async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
+    import subprocess
+    import logging
+    logger = logging.getLogger(__name__)
+
+    app_type = payload.get("app_type")
+    path = payload.get("path")
+    host = payload.get("host")
+    user = payload.get("user")
+    
+    # 1. Fetch the password from DB
+    conn = get_db_connection()
+    try:
+        res = conn.execute("SELECT * FROM devices WHERE ip_address = ? LIMIT 1", (host,)).fetchone()
+        if not res:
+            res = conn.execute("SELECT * FROM physical_assets WHERE management_ip = ? LIMIT 1", (host,)).fetchone()
+        
+        if not res:
+            return {"success": False, "error": f"Device/Asset with IP {host} not found in database"}
+        
+        device_data = dict(res)
+        password = ""
+        if user == device_data.get("username") or user == device_data.get("admin_username"):
+            password = device_data.get("password") or device_data.get("admin_password")
+        elif user == device_data.get("normal_username"):
+            password = device_data.get("normal_password")
+        
+        if not password:
+            return {"success": False, "error": f"Password for user {user} on {host} not found"}
+            
+    finally:
+        conn.close()
+
+    if not path or not os.path.exists(path):
+        return {"success": False, "error": f"Executable path not found: {path}"}
+
     plain_password = decrypt_credential(password)
     if not plain_password:
-        plain_password = password # Fallback if decryption fails or it's already plain
+        plain_password = password 
 
     try:
-        # Use shell=True and manual quoting for maximum robustness with Windows paths and URLs
-        # Format: "C:\path\to\xshell.exe" -url "ssh://user:pass@host"
         if app_type == "xshell":
             cmd = f'"{path}" -url "ssh://{user}:{plain_password}@{host}"'
         elif app_type == "putty":
@@ -146,9 +120,9 @@ async def open_file_picker() -> Dict[str, Any]:
         else:
             cmd = f'"{path}" "{user}@{host}"'
 
-        logger.info(f"Executing: {cmd}")
-        subprocess.Popen(cmd, shell=True, stdin=None, stdout=None, stderr=None, close_fds=True)
+        logger.info(f"[System] Launching terminal: {app_type} on {host}")
+        subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
         return {"success": True}
     except Exception as e:
-        logger.error(f"Launch failed: {str(e)}")
+        logger.error(f"[System] Launch failed: {str(e)}")
         return {"success": False, "error": str(e)}

@@ -559,9 +559,13 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
       { icon: '🏷️', label: 'MAC表', labelEn: 'MAC Table', group: 'net', scope: 'network', operationalCategory: 'mac_table', excludeRoles: ['router'], cmds: isCisco ? 'show mac address-table' : isHuawei ? 'display mac-address' : isJuniper ? 'show ethernet-switching table' : 'show mac address-table' },
       { icon: '📊', label: 'VLAN', labelEn: 'VLAN', group: 'net', scope: 'network', excludeRoles: ['router'], cmds: isCisco ? 'show vlan brief' : isHuawei ? 'display vlan' : isJuniper ? 'show vlans' : 'show vlan brief' },
       { icon: '📌', label: 'LLDP邻居', labelEn: 'LLDP', group: 'net', scope: 'network', operationalCategory: 'neighbors', cmds: isCisco ? 'show lldp neighbors' : isHuawei ? 'display lldp neighbor brief' : isJuniper ? 'show lldp neighbors' : 'show lldp neighbors' },
+      { icon: '💎', label: '光模块状态', labelEn: 'Transceiver', group: 'net', scope: 'network', cmds: isCisco ? 'show inventory | include Transceiver\nshow interfaces transceiver' : isHuawei ? 'display transceiver verbose' : isJuniper ? 'show interfaces diagnostics transceiver' : 'show interface transceiver' },
+      
+      // --- Routing & Advanced ---
       { icon: '🗺️', label: '路由表', labelEn: 'Routes', group: 'route', scope: 'network', operationalCategory: 'routing_table', cmds: isCisco ? 'show ip route' : isHuawei ? 'display ip routing-table' : isJuniper ? 'show route' : 'show ip route' },
       { icon: '🔗', label: 'BGP邻居', labelEn: 'BGP Peers', group: 'route', scope: 'network', operationalCategory: 'bgp', excludeRoles: ['access'], cmds: isCisco ? 'show bgp summary' : isHuawei ? 'display bgp peer' : isJuniper ? 'show bgp summary' : 'show bgp summary' },
       { icon: '🔍', label: 'OSPF邻居', labelEn: 'OSPF Nbrs', group: 'route', scope: 'network', operationalCategory: 'ospf', excludeRoles: ['access'], cmds: isCisco ? 'show ip ospf neighbor' : isHuawei ? 'display ospf peer brief' : isJuniper ? 'show ospf neighbor' : 'show ip ospf neighbor' },
+      { icon: '⏱️', label: 'NTP同步', labelEn: 'NTP Status', group: 'route', scope: 'network', cmds: isCisco ? 'show ntp status\nshow ntp associations' : isHuawei ? 'display ntp-service status' : isJuniper ? 'show ntp status' : 'show ntp status' },
       
       // --- Server Presets ---
       { icon: '📈', label: '负载统计', labelEn: 'Load Avg', group: 'sys', scope: 'server', cmds: 'uptime && top -bn1 | head -n 5' },
@@ -571,13 +575,15 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
       { icon: '🌐', label: '网络连接', labelEn: 'Netstat', group: 'sys', scope: 'server', cmds: 'ss -tulpn' },
       { icon: '🪵', label: '系统日志', labelEn: 'Syslog', group: 'sys', scope: 'server', cmds: 'tail -n 50 /var/log/syslog' },
       { icon: '🆔', label: 'IP地址', labelEn: 'IP Addr', group: 'sys', scope: 'server', cmds: 'ip a' },
-      { icon: '🛣️', label: '路由表', labelEn: 'IP Route', group: 'sys', scope: 'server', cmds: 'ip route' },
+      { icon: '🛤️', label: '路由表', labelEn: 'IP Route', group: 'sys', scope: 'server', cmds: 'ip route' },
       { icon: '🔌', label: '系统服务', labelEn: 'Services', group: 'sys', scope: 'server', cmds: 'systemctl list-units --type=service --state=running | head -n 20' },
       { icon: '🛡️', label: 'DNS配置', labelEn: 'DNS', group: 'sys', scope: 'server', cmds: 'cat /etc/resolv.conf' },
       { icon: '👤', label: '最近登录', labelEn: 'Last Login', group: 'sys', scope: 'server', cmds: 'last -n 10' },
+      { icon: '🧱', label: '环境变量', labelEn: 'Env Vars', group: 'sys', scope: 'server', cmds: 'env | sort | head -n 30' },
 
       // --- Common Presets ---
       { icon: '🏥', label: '设备信息', labelEn: 'Version', group: 'sys', scope: 'all', cmds: isCisco ? 'show version' : isHuawei ? 'display version' : isJuniper ? 'show version' : 'uname -a || show version' },
+      { icon: '🔋', label: '电源风扇', labelEn: 'Environment', group: 'sys', scope: 'all', cmds: isCisco ? 'show environment' : isHuawei ? 'display environment' : isJuniper ? 'show chassis environment' : 'sensors || cat /proc/acpi/thermal_zone/*/temperature' },
       { icon: '📝', label: '日志概览', labelEn: 'Logs', group: 'sys', scope: 'all', cmds: isCisco ? 'show logging | tail 30' : isHuawei ? 'display logbuffer last 30' : isJuniper ? 'show log messages | last 30' : 'dmesg | tail -n 30' },
       { icon: '💾', label: '运行配置', labelEn: 'Running Config', group: 'sys', scope: 'network', cmds: isCisco ? 'show running-config' : isHuawei ? 'display current-configuration' : isJuniper ? 'show configuration' : 'show running-config' },
     ];
@@ -726,20 +732,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={onOpenCustomCommandModal}
-            disabled={targetCount === 0}
-            className={`px-3 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 border ${
-              targetCount > 0 
-                ? 'border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 shadow-sm' 
-                : 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed opacity-50'
-            }`}
-          >
-            <Plus size={13} />
-            {isZh ? '自定义命令' : 'Custom Command'}
-          </button>
-          <div className="w-px h-6 bg-gray-100 mx-1" />
-          <button
-            onClick={() => {}} // Placeholder or keep as is if it was purely decorative before
+            onClick={() => {}} 
             className="px-3 py-2 text-xs font-bold rounded-xl text-gray-500 hover:bg-gray-50 transition-all flex items-center gap-1.5"
           >
             <History size={13} />
@@ -1226,13 +1219,6 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                         </div>
                         <div className="flex items-center gap-3">
                           <button
-                            onClick={onOpenCustomCommandModal}
-                            className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-cyan-600 text-white hover:bg-cyan-700 transition-all font-bold text-sm shadow-lg shadow-cyan-500/20"
-                          >
-                            <Terminal size={16} />
-                            {isZh ? '自定义指令' : 'Custom Command'}
-                          </button>
-                          <button
                             onClick={handleClearSelection}
                             className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-white border border-gray-200 text-slate-500 hover:text-red-500 hover:border-red-100 hover:bg-red-50 transition-all font-bold text-sm shadow-sm"
                           >
@@ -1283,7 +1269,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                                     <button
                                       key={idx}
                                       disabled={quickQueryRunning}
-                                      onClick={() => { onRunQuickQuery(isZh ? cmd.label : cmd.labelEn, cmd.cmds, cmd.operationalCategory, selectedAuthRole); }}
+                                      onClick={() => { onRunQuickQuery(isZh ? cmd.label : cmd.labelEn, cmd.cmds, cmd.operationalCategory, 'normal'); }}
                                       className="group relative flex items-center gap-4 p-4 rounded-2xl border border-slate-100 bg-white hover:border-cyan-400 hover:shadow-xl hover:shadow-cyan-500/10 hover:-translate-y-1 transition-all duration-300 disabled:opacity-40"
                                     >
                                       <div className={`w-12 h-12 rounded-xl ${groupMeta.bg} ${groupMeta.border} border flex items-center justify-center text-2xl group-hover:scale-110 transition-transform flex-shrink-0`}>
@@ -1305,7 +1291,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                       {/* Footer: Tips */}
                       <div className="flex-shrink-0 px-8 py-4 bg-slate-50 text-[11px] text-slate-400 flex items-center gap-2 border-t border-slate-100">
                         <Zap size={12} className="text-amber-400" />
-                        {isZh ? '点击上方图标将立即开始执行查询。如需执行自定义命令，请点击右上角按钮。' : 'Click any icon to execute. For custom commands, use the button in the top right.'}
+                        {isZh ? '点击上方图标将立即开始执行快捷查询。' : 'Click any icon to execute a quick query.'}
                       </div>
                     </div>
                   </motion.div>

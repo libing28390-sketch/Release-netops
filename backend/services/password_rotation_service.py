@@ -172,6 +172,14 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
             if pa_row and pa_row['platform']:
                 device['platform'] = pa_row['platform']
                 logger.info(f"[Rotation] Resolved missing platform from physical_assets: {device['platform']}")
+        
+        # Load management_port
+        if not device.get('management_port'):
+            pa_row = conn.execute('SELECT management_port FROM physical_assets WHERE id = ?', (device.get('asset_id'),)).fetchone()
+            if pa_row and pa_row['management_port']:
+                device['management_port'] = pa_row['management_port']
+            else:
+                device['management_port'] = 22
     finally:
         conn.close()
 
@@ -270,7 +278,7 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
         'username': login_user,
         'password': login_pwd,
         'platform': platform,
-        'port': device.get('ssh_port') or 22,
+        'port': device.get('management_port') or device.get('ssh_port') or 22,
         'secret': current_admin_pwd if 'cisco' in platform else '',
     }
 
@@ -373,6 +381,12 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
                     'UPDATE physical_assets SET enable_password = ? WHERE id = ?',
                     (enc_new, asset_id)
                 )
+        
+        # Mark as managed on success
+        conn2.execute('UPDATE devices SET is_managed = 1, takeover_error = "" WHERE id = ?', (device_id,))
+        if asset_id:
+            conn2.execute('UPDATE physical_assets SET is_managed = 1, takeover_error = "" WHERE id = ?', (asset_id,))
+            
         conn2.commit()
     finally:
         conn2.close()

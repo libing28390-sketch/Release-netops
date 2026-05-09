@@ -92,16 +92,26 @@ export default function TerminalWindow({ sessionToken, hostname }: TerminalWindo
     };
 
     ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.type === 'output') {
-        term.write(msg.data);
-      } else if (msg.type === 'error') {
-        term.writeln(`\r\n\x1b[1;31m[ERROR] ${msg.message}\x1b[0m`);
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'output') {
+          term.write(msg.data);
+        } else if (msg.type === 'error') {
+          term.writeln(`\r\n\x1b[1;31m[ERROR] ${msg.message}\x1b[0m`);
+        }
+      } catch (err) {
+        console.error('Failed to parse WS message', err);
       }
     };
 
-    ws.onclose = () => {
-      term.writeln('\r\n\x1b[1;33m[Disconnected]\x1b[0m');
+    ws.onerror = (err) => {
+      term.writeln(`\r\n\x1b[1;31m[WebSocket Error] Failed to connect to gateway.\x1b[0m`);
+      console.error('WS Error:', err);
+    };
+
+    ws.onclose = (event) => {
+      const reason = event.reason ? `: ${event.reason}` : '';
+      term.writeln(`\r\n\x1b[1;33m[Disconnected] Session closed${reason} (Code: ${event.code})\x1b[0m`);
     };
 
     // 3. Handle Input

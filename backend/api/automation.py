@@ -205,8 +205,8 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
             device_row = conn.execute('SELECT * FROM devices WHERE id = ?', (dev_id,)).fetchone()
             if device_row:
                 d = dict(device_row)
-                # Resolve credentials based on auth_role
-                auth_role = payload.get('auth_role') or payload.get('role') or 'admin'
+                # Resolve credentials based on auth_role: Default to 'normal' for least privilege
+                auth_role = payload.get('auth_role') or payload.get('role') or 'normal'
                 
                 exec_username = d.get('username')
                 exec_password = d.get('password')

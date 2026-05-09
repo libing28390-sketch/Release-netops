@@ -38,6 +38,9 @@ interface Asset {
   created_at: string; updated_at: string;
   admin_username?: string;
   normal_username?: string;
+  management_port?: number;
+  is_managed?: number;
+  takeover_error?: string;
 }
 
 interface AssetSummary {
@@ -95,6 +98,7 @@ const EMPTY_FORM = {
   admin_username: '', admin_password: '',
   auth_model: 'single',
   snmp_community: 'public', snmp_port: '161',
+  management_port: '22',
 };
 
 const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
@@ -484,6 +488,34 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
     fetchAssets();
     fetchSummary();
   };
+  
+  const handleBatchTakeover = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(zh ? `确定要批量上收这 ${selectedIds.size} 台资产的口令并投产吗？（方案A：将执行改密与回连测试）` : `Confirm batch takeover and production for ${selectedIds.size} assets? (Scheme A: Rotation and post-check will be executed)`)) return;
+    
+    setLoading(true);
+    try {
+      const r = await fetch('/api/assets/takeover/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset_ids: Array.from(selectedIds) })
+      });
+      if (r.ok) {
+        const data = await r.json();
+        const errors = data.results.filter((res: any) => res.status === 'error');
+        if (errors.length > 0) {
+          setFeedbackMsg({ type: 'warning', text: zh ? `部分上收任务启动失败 (${errors.length}台)` : `Some takeover tasks failed to start (${errors.length})` });
+        } else {
+          setFeedbackMsg({ type: 'success', text: zh ? '批量上收任务已在后台启动，请刷新列表查看进度。' : 'Batch takeover tasks started in background. Refresh to see progress.' });
+        }
+        clearSel();
+        fetchAssets();
+      }
+    } catch (e) {
+      setFeedbackMsg({ type: 'error', text: zh ? '批量操作失败' : 'Batch operation failed' });
+    }
+    setLoading(false);
+  };
 
   const requestTerminalAccess = async () => {
     if (!terminalTarget) return;
@@ -859,6 +891,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                 <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} className="flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-black/8">
                   <span className="text-[10px] font-bold text-[#00bceb] tabular-nums mr-1">{selectedIds.size}</span>
                   <BatchBtn icon={Tag}       label={zh ? '标签' : 'Tag'}     onClick={() => setShowBatchTag(true)} hoverCls="hover:bg-blue-50 hover:text-blue-600" />
+                  <BatchBtn icon={Shield}    label={zh ? '批量上收' : 'Takeover'} onClick={handleBatchTakeover} hoverCls="hover:bg-cyan-50 hover:text-cyan-600 text-cyan-500" />
                   <BatchBtn icon={Trash2}    label={zh ? '删除' : 'Delete'}  onClick={handleBatchDelete} hoverCls="hover:bg-red-50 hover:text-red-600" />
                   <button onClick={clearSel} className="p-0.5 ml-0.5 text-black/20 hover:text-black/45" title="Clear"><X size={10} /></button>
                 </motion.div>
@@ -1050,20 +1083,29 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                             {zh ? '上收中' : 'Rotating'}
                           </span>
                         ) : (
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${
-                            a.lifecycle_status === 'production' ? 'text-emerald-600' :
-                            a.lifecycle_status === 'decommissioned' ? 'text-slate-400' :
-                            a.lifecycle_status === 'maintenance' ? 'text-amber-600' :
-                            'text-blue-500'
-                          }`}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${
-                              a.lifecycle_status === 'production' ? 'bg-emerald-500' :
-                              a.lifecycle_status === 'decommissioned' ? 'bg-slate-400' :
-                              a.lifecycle_status === 'maintenance' ? 'bg-amber-500' :
-                              'bg-blue-400'
-                            }`} />
-                            {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}
-                          </span>
+                          <div className="flex flex-col gap-0.5">
+                            <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${
+                              a.lifecycle_status === 'production' ? 'text-emerald-600' :
+                              a.lifecycle_status === 'decommissioned' ? 'text-slate-400' :
+                              a.lifecycle_status === 'maintenance' ? 'text-amber-600' :
+                              'text-blue-500'
+                            }`}>
+                              <span className={`h-1.5 w-1.5 rounded-full ${
+                                a.lifecycle_status === 'production' ? 'bg-emerald-500' :
+                                a.lifecycle_status === 'decommissioned' ? 'bg-slate-400' :
+                                a.lifecycle_status === 'maintenance' ? 'bg-amber-500' :
+                                'bg-blue-400'
+                              }`} />
+                              {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}
+                              {a.is_managed === 1 && <Lock size={8} className="text-emerald-500/50" title={zh ? '凭据受管' : 'Managed'} />}
+                            </span>
+                            {a.takeover_error && (
+                              <div className="flex items-center gap-1 text-[8px] text-red-500 font-medium bg-red-50 px-1 rounded animate-in fade-in slide-in-from-left-1" title={a.takeover_error}>
+                                <AlertTriangle size={8} />
+                                <span className="truncate max-w-[60px]">{a.takeover_error}</span>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </td>
                       {/* Role */}
@@ -1462,6 +1504,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                   </select>
                 </div>
                 <Field label={zh ? '管理IP' : 'Mgmt IP'}        value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="10.0.0.1" />
+                <Field label={zh ? '管理端口 (SSH)' : 'Mgmt Port'} value={form.management_port || '22'} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder="22" />
                 <Field label={zh ? '角色' : 'Role'}             value={form.device_role}   onChange={v => setForm(f => ({ ...f, device_role: v }))}   placeholder="Core, Access..." />
               </div>
 

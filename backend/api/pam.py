@@ -17,6 +17,7 @@ import uuid
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -298,7 +299,7 @@ def list_sessions(
             SELECT id, asset_id, device_id, requester_username, access_level,
                    login_username, connect_method, target_ip, status,
                    connected_at, closed_at, close_reason, duration_seconds,
-                   command_count, created_at, updated_at
+                   command_count, recording_path, created_at, updated_at
             FROM pam_sessions {where}
             ORDER BY created_at DESC LIMIT ? OFFSET ?
             ''',
@@ -388,8 +389,8 @@ async def _safe_close_ws(ws: WebSocket):
 #  CORE: WebSocket Terminal (Session-Token Gated)
 # ══════════════════════════════════════════════════════════════════════
 
-def _validate_and_consume_token(token: str) -> dict | None:
-    """Validate session token: must exist, not consumed, not expired."""
+def _validate_token(token: str) -> dict | None:
+    """Check if token is valid without consuming it."""
     conn = get_db_connection()
     try:
         row = conn.execute(
@@ -405,21 +406,23 @@ def _validate_and_consume_token(token: str) -> dict | None:
             try:
                 exp_dt = datetime.fromisoformat(expires.replace('Z', '+00:00'))
                 if exp_dt < datetime.now(timezone.utc):
-                    conn.execute(
-                        "UPDATE pam_sessions SET status='timeout', close_reason='token_expired', updated_at=? WHERE id=?",
-                        (_utc_now(), data['id']),
-                    )
-                    conn.commit()
                     return None
             except ValueError:
                 pass
-        # Consume token
+        return data
+    finally:
+        conn.close()
+
+
+def _consume_token(session_id: str):
+    """Mark token as consumed."""
+    conn = get_db_connection()
+    try:
         conn.execute(
             "UPDATE pam_sessions SET token_consumed=1, updated_at=? WHERE id=?",
-            (_utc_now(), data['id']),
+            (_utc_now(), session_id),
         )
         conn.commit()
-        return data
     finally:
         conn.close()
 
@@ -431,13 +434,17 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
     User connects with a one-time session_token.
     Backend resolves credentials internally and proxies SSH.
     """
-    # 1. Validate token
-    session = _validate_and_consume_token(session_token)
+    # 1. Validate token (don't consume yet to allow for proxy retries)
+    session = _validate_token(session_token)
     if not session:
-        await websocket.close(code=1008, reason='Invalid or expired session token')
+        # If not accepted yet, Starlette might return 403/404. Let's just accept and close with reason.
+        await websocket.accept()
+        await websocket.send_text(json.dumps({'type': 'error', 'message': 'Invalid or expired session token'}))
+        await websocket.close(code=1008)
         return
 
     session_id = session['id']
+    await websocket.accept()
 
     # 2. Resolve credentials (INTERNAL)
     conn = get_db_connection()
@@ -460,6 +467,7 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
     username = creds['username']
     password = creds['password']
     ip = session['target_ip'] or device.get('ip_address') or ''
+    port = device.get('management_port') or 22
 
     if not ip or not username or not password:
         _update_session_status(session_id, 'error', close_reason='missing_credentials')
@@ -469,18 +477,27 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
     # 3. SSH connection
     try:
         import asyncssh
+        logger.info(f"[PAM] Attempting SSH connection to {ip}:{port} as {username}...")
         ssh_conn = await asyncssh.connect(
-            ip, username=username, password=password,
+            ip, port=port, username=username, password=password,
             known_hosts=None, client_factory=None,
+            login_timeout=15
         )
+        logger.info(f"[PAM] SSH connection established to {ip}:{port}")
+        
         ssh_proc = await ssh_conn.create_process(
-            term_type='xterm-256color', term_size=(80, 24),
+            term_type='xterm-256color', 
+            term_size=(80, 24),
+            request_pty=True,
+            encoding=None  # Get raw bytes to handle decoding manually
         )
+        logger.info(f"[PAM] SSH process created for session {session_id}")
+        # SSH Established! Now consume the token.
+        _consume_token(session_id)
     except Exception as e:
         logger.error(f'[PAM] SSH connection failed for session {session_id}: {e}')
         _update_session_status(session_id, 'error', close_reason=f'ssh_error: {e}')
         try:
-            await websocket.accept()
             await websocket.send_text(json.dumps({'type': 'error', 'message': f'SSH connection failed: {e}'}))
             await websocket.close(code=1011)
         except Exception:
@@ -531,7 +548,7 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
             async for message in websocket.iter_text():
                 data = json.loads(message)
                 if data.get('type') == 'input':
-                    ssh_proc.stdin.write(data['data'])
+                    ssh_proc.stdin.write(data['data'].encode('utf-8'))
                     await ssh_proc.stdin.drain()
                 elif data.get('type') == 'resize':
                     try:
@@ -542,21 +559,29 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
         async def downstream():
             """SSH stdout → WebSocket & Recorder"""
             while not ssh_proc.stdout.at_eof():
-                output = await ssh_proc.stdout.read(4096)
-                if output:
-                    # Relay to UI
-                    await websocket.send_text(json.dumps({'type': 'output', 'data': output}))
-                    
-                    # Record to file (Asciinema format: [rel_time, "o", "data"])
-                    if recording_path:
-                        try:
-                            rel_time = time.time() - start_time
-                            entry = [rel_time, "o", output]
-                            with open(recording_path, 'a', encoding='utf-8') as f:
-                                f.write(json.dumps(entry) + "\n")
-                        except Exception:
-                            pass
+                try:
+                    output_bytes = await ssh_proc.stdout.read(4096)
+                    if output_bytes:
+                        # CRITICAL: output is bytes, must decode for JSON
+                        output_str = output_bytes.decode('utf-8', errors='replace')
+                        
+                        # Relay to UI
+                        await websocket.send_text(json.dumps({'type': 'output', 'data': output_str}))
+                        
+                        # Record to file (Asciinema format)
+                        if recording_path:
+                            try:
+                                rel_time = time.time() - start_time
+                                entry = [rel_time, "o", output_str]
+                                with open(recording_path, 'a', encoding='utf-8') as f:
+                                    f.write(json.dumps(entry) + "\n")
+                            except Exception:
+                                pass
+                except Exception as e:
+                    logger.error(f"[PAM] Downstream error for session {session_id}: {e}")
+                    break
                 await asyncio.sleep(0.01)
+            logger.info(f"[PAM] Downstream loop exited for session {session_id} (EOF={ssh_proc.stdout.at_eof()})")
 
         tasks = [asyncio.create_task(upstream()), asyncio.create_task(downstream())]
         _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

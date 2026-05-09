@@ -435,7 +435,10 @@ def _init_db_logic(conn):
         ('admin_password_last_rotated', "TEXT DEFAULT ''"),
         ('admin_password_expires_at', "TEXT DEFAULT ''"),
         ('enable_password_last_rotated', "TEXT DEFAULT ''"),
-        ('enable_password_expires_at', "TEXT DEFAULT ''")
+        ('enable_password_expires_at', "TEXT DEFAULT ''"),
+        ('management_port', "INTEGER DEFAULT 22"),
+        ('is_managed', "INTEGER DEFAULT 0"),
+        ('takeover_error', "TEXT DEFAULT ''")
     ]:
         ensure_column('devices', col, dtype)
 
@@ -1484,6 +1487,9 @@ def _init_db_logic(conn):
     ensure_column('physical_assets', 'requires_strict_audit', "INTEGER DEFAULT 1")
     ensure_column('physical_assets', 'snmp_community', "TEXT DEFAULT 'public'")
     ensure_column('physical_assets', 'snmp_port', "INTEGER DEFAULT 161")
+    ensure_column('physical_assets', 'management_port', "INTEGER DEFAULT 22")
+    ensure_column('physical_assets', 'is_managed', "INTEGER DEFAULT 0")
+    ensure_column('physical_assets', 'takeover_error', "TEXT DEFAULT ''")
 
     # Rack planning on assets: device height (U) and optional planned start RU for DCIM install flow
     ensure_column('physical_assets', 'u_height', 'INTEGER NOT NULL DEFAULT 1')

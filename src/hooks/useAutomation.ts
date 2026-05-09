@@ -744,7 +744,7 @@ export const useAutomation = ({
           'Content-Type': 'application/json',
           ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
         },
-        body: JSON.stringify({ command, name: label }),
+        body: JSON.stringify({ command, name: label, auth_role: 'normal' }),
       });
       const data = await resp.json();
       if (!resp.ok) {

@@ -14,6 +14,7 @@ import {
   RefreshCw,
   MoreVertical
 } from 'lucide-react';
+import CastPlayer from '../components/access/CastPlayer';
 
 interface PAMSession {
   id: string;
@@ -38,6 +39,8 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showPlayback, setShowPlayback] = useState(false);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
   const fetchSessions = async () => {
     setLoading(true);
@@ -99,7 +102,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
       <div className="px-8 py-6 bg-white border-b border-slate-200">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-600 rounded-xl">
+            <div className="p-2 bg-cyan-600 rounded-xl">
               <ShieldCheck className="w-6 h-6 text-white" />
             </div>
             <div>
@@ -126,7 +129,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
               onClick={() => setActiveTab('active')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
                 activeTab === 'active' 
-                ? 'bg-white text-indigo-600 shadow-sm' 
+                ? 'bg-white text-cyan-600 shadow-sm' 
                 : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -136,7 +139,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
               onClick={() => setActiveTab('history')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
                 activeTab === 'history' 
-                ? 'bg-white text-indigo-600 shadow-sm' 
+                ? 'bg-white text-cyan-600 shadow-sm' 
                 : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -151,7 +154,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
               placeholder={isZh ? '搜索设备、用户...' : 'Search device, user...'}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 w-64 transition-all"
+              className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all"
             />
           </div>
         </div>
@@ -242,14 +245,18 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleDownload(s.id)}
-                            className="p-2 text-indigo-500 hover:bg-indigo-50 rounded-lg transition-colors"
+                            className="p-2 text-cyan-500 hover:bg-cyan-50 rounded-lg transition-colors"
                             title={isZh ? '下载录像' : 'Download Cast'}
                           >
                             <Download className="w-5 h-5" />
                           </button>
                           <button
-                            className="p-2 text-slate-400 cursor-not-allowed rounded-lg"
-                            title={isZh ? '播放功能建设中' : 'Playback coming soon'}
+                            onClick={() => {
+                              setSelectedSessionId(s.id);
+                              setShowPlayback(true);
+                            }}
+                            className="p-2 text-cyan-500 hover:bg-cyan-50 rounded-lg transition-colors"
+                            title={isZh ? '回溯回放' : 'Backtrack Playback'}
                           >
                             <PlayCircle className="w-5 h-5" />
                           </button>
@@ -266,6 +273,17 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
           </table>
         </div>
       </div>
+      {showPlayback && selectedSessionId && (
+        <CastPlayer 
+          sessionId={selectedSessionId} 
+          totalDuration={sessions.find(s => s.id === selectedSessionId)?.duration_seconds || 0}
+          onClose={() => {
+            setShowPlayback(false);
+            setSelectedSessionId(null);
+          }}
+          isZh={isZh}
+        />
+      )}
     </div>
   );
 };

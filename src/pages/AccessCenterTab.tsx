@@ -121,9 +121,39 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     return filteredDevices.slice(start, start + pageSize);
   }, [filteredDevices, currentPage, pageSize]);
 
-  const handleAccessRequest = (dev: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged') => {
+  const handleAccessRequest = async (dev: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged') => {
     if (appType === 'xshell') {
-      showToast(isZh ? '本地终端已弃用，将为您启动安全的 Web 终端' : 'Local terminal deprecated, launching Web Terminal', 'info');
+      // 1. Get saved path from Profile Settings (localStorage keys: local_terminal_path, terminal_app)
+      let terminalPath = localStorage.getItem('local_terminal_path');
+      let terminalType = localStorage.getItem('terminal_app') || 'xshell';
+
+      if (!terminalPath || terminalPath === '') {
+        showToast(isZh ? '请先在个人信息中配置终端路径' : 'Please configure terminal path in Profile first', 'info');
+        return;
+      }
+
+      // 2. Resolve identity and trigger launch
+      try {
+        const res = await fetch('/api/system/launch-terminal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            app_type: terminalType,
+            path: terminalPath,
+            host: dev.ip_address,
+            user: identity === 'privileged' ? (dev.admin_username || 'root') : (dev.normal_username || 'user'),
+          })
+        });
+        const result = await res.json();
+        if (result.success) {
+          showToast(isZh ? '正在拉起本地客户端...' : 'Launching native client...', 'success');
+        } else {
+          showToast(result.error || 'Launch failed', 'error');
+        }
+      } catch (err) {
+        showToast('Native launch request failed', 'error');
+      }
+      return;
     }
 
     if (identity === 'normal') {

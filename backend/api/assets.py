@@ -249,6 +249,11 @@ class AssetUpdate(BaseModel):
     auth_model: Optional[str] = None
     snmp_community: Optional[str] = None
     snmp_port: Optional[int] = None
+    management_port: Optional[int] = None
+
+
+class BatchTakeoverRequest(BaseModel):
+    asset_ids: list[str]
 
 
 # ── Summary ──────────────────────────────────────────────────────────
@@ -509,7 +514,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
             'status', 'lifecycle_status', 'purchase_date', 'warranty_expiry', 'department', 'notes',
             'platform', 'connection_method', 'username', 'password',
             'normal_username', 'normal_password', 'admin_username', 'admin_password', 'auth_model',
-            'snmp_community', 'snmp_port'
+            'snmp_community', 'snmp_port', 'management_port'
         ]
         for field in updatable:
             val = getattr(body, field, None)
@@ -560,56 +565,59 @@ def update_asset(asset_id: str, body: AssetUpdate):
                     def _bg_rotate(dev_id: str, a_id: str, old_lc: str):
                         try:
                             from services.password_rotation_service import rotate_password
-                            # Fetch current device state to check auth_model
+                            # Fetch current device state to check auth_model and management_port
                             bg_conn_init = get_db_connection()
                             try:
-                                dev_state = bg_conn_init.execute('SELECT auth_model FROM devices WHERE id = ?', (dev_id,)).fetchone()
+                                dev_state = bg_conn_init.execute('SELECT auth_model, hostname FROM devices WHERE id = ?', (dev_id,)).fetchone()
                             finally:
                                 bg_conn_init.close()
                                 
                             auth_model = dev_state['auth_model'] if dev_state else 'single'
+                            hostname = dev_state['hostname'] if dev_state else dev_id
                             
+                            # Scheme A: Start atomic takeover
                             if auth_model == 'dual':
-                                logger.info(f"[Lifecycle] Starting Normal rotation first for {dev_id}")
+                                logger.info(f"[Takeover] Starting Normal role for {hostname}")
                                 normal_result = rotate_password(dev_id, role='normal')
                                 if not normal_result.get('success'):
-                                    msg = normal_result.get('message', 'Normal rotation failed')
-                                    logger.error(f"[Lifecycle] Normal rotation FAILED for {dev_id}: {msg}")
-                                    raise Exception(msg)
-                                logger.info(f"[Lifecycle] Normal rotation SUCCESS for {dev_id}")
-                                import time
-                                time.sleep(1)
+                                    raise Exception(f"普通账号改密失败: {normal_result.get('message')}")
+                                logger.info(f"[Takeover] Normal role success for {hostname}")
 
-                            logger.info(f"[Lifecycle] Starting Admin rotation for {dev_id}")
+                            logger.info(f"[Takeover] Starting Admin role for {hostname}")
                             admin_result = rotate_password(dev_id, role='admin')
                             
                             if admin_result and admin_result.get('success'):
-                                logger.info(f"[Lifecycle] Admin rotation SUCCESS for {dev_id}")
-                                # All good
+                                logger.info(f"[Takeover] Admin role success for {hostname}. Transitioning to production.")
+                                # SUCCESS: Commit lifecycle change and clear errors
                                 bg_conn = get_db_connection()
                                 try:
                                     bg_conn.execute(
-                                        "UPDATE devices SET rotation_status = 'completed' WHERE id = ?",
+                                        "UPDATE devices SET rotation_status = 'completed', is_managed = 1, takeover_error = '' WHERE id = ?",
                                         (dev_id,)
+                                    )
+                                    bg_conn.execute(
+                                        "UPDATE physical_assets SET is_managed = 1, takeover_error = '' WHERE id = ?",
+                                        (a_id,)
                                     )
                                     bg_conn.commit()
                                 finally:
                                     bg_conn.close()
-                                logger.info(f'Auto-rotated all credentials for device {dev_id} successfully')
                             else:
-                                err_msg = admin_result.get('message', 'Admin rotation failed') if admin_result else 'No response'
-                                raise Exception(err_msg)
+                                raise Exception(f"特权账号改密失败: {admin_result.get('message') if admin_result else '连接超时'}")
+
                         except Exception as e:
-                            logger.error(f"[Lifecycle] Rotation FAILED for {dev_id}: {e}")
+                            err_msg = str(e)
+                            logger.error(f"[Takeover] FAILED for {dev_id}: {err_msg}")
                             try:
                                 bg_conn_fail = get_db_connection()
+                                # Rollback lifecycle status on failure
                                 bg_conn_fail.execute(
-                                    "UPDATE devices SET rotation_status = 'failed', lifecycle_status = ? WHERE id = ?",
-                                    (old_lc, dev_id)
+                                    "UPDATE devices SET rotation_status = 'failed', lifecycle_status = ?, takeover_error = ? WHERE id = ?",
+                                    (old_lc, err_msg, dev_id)
                                 )
                                 bg_conn_fail.execute(
-                                    'UPDATE physical_assets SET lifecycle_status = ? WHERE id = ?',
-                                    (old_lc, a_id)
+                                    'UPDATE physical_assets SET lifecycle_status = ?, takeover_error = ? WHERE id = ?',
+                                    (old_lc, err_msg, a_id)
                                 )
                                 bg_conn_fail.commit()
                                 bg_conn_fail.close()
@@ -869,3 +877,34 @@ async def verify_asset_connectivity(asset_id: str):
         return results
     finally:
         conn.close()
+
+
+@router.post('/assets/takeover/batch')
+def batch_takeover(body: BatchTakeoverRequest):
+    """
+    Batch transition multiple assets to production state, triggering atomic takeover.
+    """
+    results = []
+    for asset_id in body.asset_ids:
+        try:
+            # Re-use the existing update logic for each asset
+            # This handles the lifecycle transition and triggers the background rotation
+            res = update_asset(asset_id, AssetUpdate(lifecycle_status='production'))
+            results.append({
+                'id': asset_id,
+                'status': 'triggered',
+                'message': 'Takeover process started in background'
+            })
+        except HTTPException as e:
+            results.append({
+                'id': asset_id,
+                'status': 'error',
+                'message': str(e.detail)
+            })
+        except Exception as e:
+            results.append({
+                'id': asset_id,
+                'status': 'error',
+                'message': str(e)
+            })
+    return {'results': results}
