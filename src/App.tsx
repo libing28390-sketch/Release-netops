@@ -3568,6 +3568,7 @@ const App: React.FC = () => {
         <TerminalWindow 
           sessionToken={sessionToken} 
           hostname={hostname} 
+          language={language}
         />
       </div>
     );

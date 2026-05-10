@@ -102,6 +102,15 @@ async def lifespan(app: FastAPI):
     # Initialize Database once
     init_db()
     
+    # ── One-time PAM stale-session recovery ──
+    # After a server restart, sessions that were 'active' or 'connecting'
+    # are orphaned (no WebSocket is alive for them). Close them once here.
+    try:
+        from api.pam import recover_stale_sessions_on_startup
+        recover_stale_sessions_on_startup()
+    except Exception as e:
+        logger.warning(f"[PAM] Stale session recovery failed: {e}")
+
     # --- TEMPORARY DATA FIX (v2) ---
     try:
         from database import get_db_connection

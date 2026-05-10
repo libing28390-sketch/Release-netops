@@ -1,5 +1,27 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Activity, AlertCircle, AlertTriangle, ChevronDown, ChevronUp, Copy, Database, FileText, Filter, FolderOpen, Globe, Plus, Search, Server, Settings, ShieldCheck, CheckCircle2, X } from 'lucide-react';
+import {
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  Code2,
+  Copy,
+  Download,
+  FileCog,
+  FileText,
+  FolderOpen,
+  Layers,
+  Play,
+  Plus,
+  Rocket,
+  Search,
+  Send,
+  Server,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import type { ConfigTemplate, Device } from '../types';
 
 type ConfigWorkspaceView = 'source' | 'rendered' | 'checks';
@@ -59,6 +81,23 @@ interface PlatformSettingsTabProps {
   showToast: (message: string, tone: ToastTone) => void;
 }
 
+/** Visual brand metadata per vendor. Used to colorize template cards. */
+const VENDOR_BRAND: Record<string, { label: string; gradient: string; border: string; chip: string; icon: string }> = {
+  Cisco:   { label: 'Cisco',   gradient: 'from-[#049fd9] to-[#00bceb]', border: 'border-[#049fd9]/30', chip: 'bg-[#049fd9]/10 text-[#067db5]',  icon: '🅒' },
+  Juniper: { label: 'Juniper', gradient: 'from-[#10b981] to-[#059669]', border: 'border-emerald-500/30', chip: 'bg-emerald-50 text-emerald-700', icon: 'Ⓙ' },
+  Huawei:  { label: 'Huawei',  gradient: 'from-[#e60012] to-[#c41428]', border: 'border-rose-500/30',  chip: 'bg-rose-50 text-rose-700',       icon: 'Ⓗ' },
+  H3C:     { label: 'H3C',     gradient: 'from-[#d4a017] to-[#b8860b]', border: 'border-amber-500/30', chip: 'bg-amber-50 text-amber-700',     icon: '③' },
+  Arista:  { label: 'Arista',  gradient: 'from-[#fb923c] to-[#ea580c]', border: 'border-orange-500/30',chip: 'bg-orange-50 text-orange-700',   icon: 'Ⓐ' },
+  Ruijie:  { label: 'Ruijie',  gradient: 'from-[#7c3aed] to-[#6d28d9]', border: 'border-violet-500/30',chip: 'bg-violet-50 text-violet-700',   icon: 'Ⓡ' },
+  Other:   { label: 'Other',   gradient: 'from-slate-500 to-slate-700', border: 'border-slate-400/30',  chip: 'bg-slate-100 text-slate-700',    icon: '◯' },
+  Custom:  { label: 'Custom',  gradient: 'from-slate-400 to-slate-600', border: 'border-slate-300/40',  chip: 'bg-slate-100 text-slate-600',    icon: '✎' },
+};
+
+function vendorBrand(name?: string) {
+  if (!name) return VENDOR_BRAND.Custom;
+  return VENDOR_BRAND[name] || VENDOR_BRAND.Custom;
+}
+
 const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   t,
   language,
@@ -105,11 +144,13 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   onConfigScopeSiteChange,
   showToast,
 }) => {
+  const zh = language === 'zh';
   const [tplSearch, setTplSearch] = useState('');
   const [tplVendorFilter, setTplVendorFilter] = useState<string>('all');
-  const [devicePreviewExpanded, setDevicePreviewExpanded] = useState(false);
-  const [governanceExpanded, setGovernanceExpanded] = useState(false);
+  const [showSidebar, setShowSidebar] = useState<'scope' | 'vars' | null>(null);
   const lineNumRef = useRef<HTMLDivElement>(null);
+
+  /* ── Derived lists ─────────────────────────────────────── */
 
   const vendorList = useMemo(() => {
     const vendors = new Set<string>();
@@ -133,614 +174,754 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     return list;
   }, [configTemplates, tplVendorFilter, tplSearch]);
 
-  const groupedTemplates = useMemo<[string, ConfigTemplate[]][]>(() => Object.entries(
-    filteredTemplates.reduce<Record<string, ConfigTemplate[]>>((acc, tpl) => {
-      const vendor = tpl.vendor || 'Custom';
-      if (!acc[vendor]) acc[vendor] = [];
-      acc[vendor].push(tpl);
-      return acc;
-    }, {})
-  ), [filteredTemplates]);
-
-  const officialCount = useMemo(() => configTemplates.filter((tpl) => tpl.category === 'official').length, [configTemplates]);
-  const customCount = configTemplates.length - officialCount;
-
   const templateVarsMap = useMemo(() => {
     const map = new Map<string, string[]>();
-    filteredTemplates.forEach((tpl) => map.set(tpl.id, extractVars(tpl.content)));
+    configTemplates.forEach((tpl) => map.set(tpl.id, extractVars(tpl.content)));
     return map;
-  }, [filteredTemplates, extractVars]);
+  }, [configTemplates, extractVars]);
+
+  const officialCount = useMemo(
+    () => configTemplates.filter((tpl) => tpl.category === 'official').length,
+    [configTemplates]
+  );
+  const customCount = configTemplates.length - officialCount;
+
+  /* ── Download rendered as .txt ─────────────────────────── */
+  const handleDownloadRendered = () => {
+    if (!configRenderedPreview) return;
+    const blob = new Blob([configRenderedPreview], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const name = (selectedConfigTemplate?.name || 'config')
+      .replace(/[^a-zA-Z0-9_-]+/g, '_');
+    a.href = url;
+    a.download = `${name}_rendered.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 200);
+  };
+
+  /* ── Render ────────────────────────────────────────────── */
+
+  const readinessColor =
+    configReadinessScore >= 85
+      ? 'text-emerald-600'
+      : configReadinessScore >= 60
+      ? 'text-amber-600'
+      : 'text-rose-600';
 
   return (
-    <div className="h-full flex flex-col gap-5 overflow-hidden">
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-medium tracking-tight">{t('configManagement')}</h2>
-          <p className="text-sm text-black/40">
-            {language === 'zh'
-              ? '把模板资产、渲染预览、发布范围和发布检查放到同一个工作台里。'
-              : 'Bring template assets, rendered preview, release scope, and preflight checks into one workspace.'}
-          </p>
+    <div className="h-full flex flex-col gap-4 overflow-hidden bg-gradient-to-br from-slate-50 to-cyan-50/30">
+      {/* ═════════ HERO HEADER ═════════ */}
+      <div className={`${sectionHeaderRowClass} flex-shrink-0`}>
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#06b6d4] via-[#0891b2] to-[#164e63] flex items-center justify-center shadow-lg shadow-cyan-500/30">
+            <FileCog size={26} className="text-white" strokeWidth={2} />
+          </div>
+          <div>
+            <h2 className="text-[28px] font-bold tracking-tight text-[#0f172a] leading-tight">
+              {t('configManagement')}
+            </h2>
+            <p className="text-sm text-slate-500 mt-0.5">
+              {zh
+                ? '多厂商网络设备配置模板 · 渲染预览 · 发布范围与下发'
+                : 'Multi-vendor network config templates · Render · Scope · Deploy'}
+            </p>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-3">
-          <label className="cursor-pointer px-4 py-2 border border-black/10 rounded-xl text-sm font-medium hover:bg-black/5 transition-all">
+        <div className="flex flex-wrap gap-2.5">
+          <label className="cursor-pointer px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:border-[#06b6d4] hover:text-[#0891b2] transition-all flex items-center gap-2 shadow-sm">
+            <Upload size={15} />
             {t('importVars')}
             <input type="file" className="hidden" accept=".xlsx, .xls, .csv" onChange={(e) => { onImportVars(e); e.target.value = ''; }} />
           </label>
           <button
             onClick={onCreateTemplate}
-            className="bg-[#00bceb] text-white px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-[#0096bd] transition-all shadow-lg shadow-[#00bceb]/20"
+            className="bg-gradient-to-r from-[#06b6d4] to-[#0891b2] text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 hover:shadow-lg hover:shadow-cyan-500/30 transition-all"
           >
-            <Plus size={18} />
+            <Plus size={16} />
             {t('newTemplate')}
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 flex-shrink-0">
-        <div className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-[0.24em] text-black/35 font-bold">
-              {language === 'zh' ? '模板资产' : 'Template Assets'}
-            </span>
-            <FolderOpen size={14} className="text-black/25" />
-          </div>
-          <p className="mt-3 text-3xl font-semibold text-black">{configTemplates.length}</p>
-          <p className="mt-1 text-xs text-black/45">
-            {language === 'zh'
-              ? `${officialCount} 个官方模板，${customCount} 个自定义模板`
-              : `${officialCount} official, ${customCount} custom`}
-          </p>
-        </div>
-        <div className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-[0.24em] text-black/35 font-bold">
-              {language === 'zh' ? '变量完备度' : 'Variable Coverage'}
-            </span>
-            <Database size={14} className="text-black/25" />
-          </div>
-          <p className={`mt-3 text-3xl font-semibold ${configMissingVariables.length === 0 ? 'text-emerald-600' : 'text-amber-600'}`}>{configVariableKeys.length - configMissingVariables.length}/{configVariableKeys.length || 0}</p>
-          <p className="mt-1 text-xs text-black/45">
-            {configMissingVariables.length === 0
-              ? (language === 'zh' ? '当前模板变量已全部赋值' : 'All variables are populated for the selected template')
-              : (language === 'zh' ? `缺失 ${configMissingVariables.length} 个变量` : `${configMissingVariables.length} variables missing`)}
-          </p>
-        </div>
-        <div className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-[0.24em] text-black/35 font-bold">
-              {language === 'zh' ? '匹配设备' : 'Matched Targets'}
-            </span>
-            <Server size={14} className="text-black/25" />
-          </div>
-          <p className="mt-3 text-3xl font-semibold text-[#0891b2]">{configScopedDevices.length}</p>
-          <p className="mt-1 text-xs text-black/45">
-            {language === 'zh'
-              ? `${configScopedOnlineCount} 台在线，可用于当前发布范围`
-              : `${configScopedOnlineCount} online devices in current release scope`}
-          </p>
-        </div>
-        <div className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-[0.24em] text-black/35 font-bold">
-              {language === 'zh' ? '发布就绪度' : 'Release Readiness'}
-            </span>
-            <ShieldCheck size={14} className="text-black/25" />
-          </div>
-          <p className={`mt-3 text-3xl font-semibold ${configReadinessScore >= 80 ? 'text-emerald-600' : configReadinessScore >= 50 ? 'text-amber-600' : 'text-red-500'}`}>{configReadinessScore}</p>
-          <p className="mt-1 text-xs text-black/45">
-            {configValidationIssues.length === 0
-              ? (language === 'zh' ? '通过基础校验，可进入发布动作' : 'Base checks passed. Ready for release actions')
-              : (language === 'zh' ? `${configValidationIssues.length} 个阻断项待处理` : `${configValidationIssues.length} blocking issues to resolve`)}
-          </p>
-        </div>
+      {/* ═════════ METRICS STRIP ═════════ */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 flex-shrink-0">
+        <MetricCard
+          icon={<FolderOpen size={16} />}
+          tone="slate"
+          label={zh ? '模板资产' : 'Template Assets'}
+          value={String(configTemplates.length)}
+          sub={zh ? `官方 ${officialCount} · 自定义 ${customCount}` : `${officialCount} official · ${customCount} custom`}
+        />
+        <MetricCard
+          icon={<Sparkles size={16} />}
+          tone={configMissingVariables.length === 0 ? 'emerald' : 'amber'}
+          label={zh ? '变量完备度' : 'Variable Coverage'}
+          value={`${configVariableKeys.length - configMissingVariables.length}/${configVariableKeys.length || 0}`}
+          sub={
+            configMissingVariables.length === 0
+              ? (zh ? '已全部赋值' : 'All variables set')
+              : (zh ? `缺失 ${configMissingVariables.length} 个` : `${configMissingVariables.length} missing`)
+          }
+        />
+        <MetricCard
+          icon={<Server size={16} />}
+          tone="cyan"
+          label={zh ? '匹配设备' : 'Target Devices'}
+          value={String(configScopedDevices.length)}
+          sub={zh ? `${configScopedOnlineCount} 台在线` : `${configScopedOnlineCount} online`}
+        />
+        <MetricCard
+          icon={<ShieldCheck size={16} />}
+          tone={configReadinessScore >= 85 ? 'emerald' : configReadinessScore >= 60 ? 'amber' : 'rose'}
+          label={zh ? '发布就绪度' : 'Release Readiness'}
+          value={`${configReadinessScore}`}
+          sub={
+            configValidationIssues.length === 0
+              ? (zh ? '基础校验已通过' : 'Checks passed')
+              : (zh ? `${configValidationIssues.length} 个阻断项` : `${configValidationIssues.length} blocking`)
+          }
+        />
       </div>
 
-      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-4 overflow-hidden">
-        <div className="xl:col-span-3 flex flex-col gap-4 min-h-0 overflow-auto pr-1">
-          <div className="bg-[#ecfeff] rounded-xl border border-[#06b6d4]/15 px-4 py-2.5 shadow-sm">
-            <div className="flex items-center gap-2.5">
-              <div className="p-1.5 rounded-lg bg-[#06b6d4]/10 text-[#0891b2]">
-                <Activity size={14} />
+      {/* ═════════ MAIN WORKSPACE ═════════ */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-4 overflow-hidden">
+        {/* ═════ LEFT: Template Library ═════ */}
+        <aside className="lg:col-span-3 min-h-0 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-br from-slate-50 to-white">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers size={15} className="text-[#06b6d4]" />
+                <h3 className="text-sm font-bold text-[#0f172a]">{zh ? '模板库' : 'Template Library'}</h3>
               </div>
-              <p className="text-xs text-[#164e63]">
-                {language === 'zh'
-                  ? '先选模板 → 完成变量渲染和范围确认 → 发布前检查后再下发'
-                  : 'Select template → Complete variables & scope → Preflight check → Deploy'}
-              </p>
+              <span className="text-[10px] font-bold text-slate-400 px-2 py-0.5 rounded-full bg-slate-100">
+                {filteredTemplates.length}
+              </span>
+            </div>
+            <div className="mt-3 relative">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={tplSearch}
+                onChange={(e) => setTplSearch(e.target.value)}
+                placeholder={zh ? '搜索模板或厂商...' : 'Search templates or vendors...'}
+                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-[#06b6d4] focus:bg-white focus:shadow-[0_0_0_3px_rgba(6,182,212,0.1)] transition-all placeholder:text-slate-400"
+              />
+            </div>
+            {/* Vendor chips */}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <button
+                onClick={() => setTplVendorFilter('all')}
+                className={`text-[10px] font-bold px-2 py-1 rounded-full transition-all ${
+                  tplVendorFilter === 'all'
+                    ? 'bg-[#0f172a] text-white'
+                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                }`}
+              >
+                {zh ? '全部' : 'All'} · {configTemplates.length}
+              </button>
+              {vendorList.map((vendor) => {
+                const brand = vendorBrand(vendor);
+                const count = configTemplates.filter((tpl) => (tpl.vendor || 'Custom') === vendor).length;
+                const isActive = tplVendorFilter === vendor;
+                return (
+                  <button
+                    key={vendor}
+                    onClick={() => setTplVendorFilter(vendor)}
+                    className={`text-[10px] font-bold px-2 py-1 rounded-full transition-all ${
+                      isActive
+                        ? `bg-gradient-to-r ${brand.gradient} text-white shadow-sm`
+                        : `${brand.chip} hover:ring-1 hover:ring-slate-300`
+                    }`}
+                  >
+                    {vendor} · {count}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-black/5 p-5 shadow-sm min-h-0 flex flex-col">
-            <div className="mb-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-black/40">{t('templates')}</h3>
-            </div>
-            <div className="flex gap-2 mb-3">
-              <div className="relative flex-1 min-w-0">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/25" />
-                <input
-                  type="text"
-                  value={tplSearch}
-                  onChange={(e) => setTplSearch(e.target.value)}
-                  placeholder={language === 'zh' ? '搜索模板...' : 'Search...'}
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-black/[0.03] border border-black/5 rounded-xl outline-none focus:border-[#06b6d4] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.08)] transition-all placeholder:text-black/25"
-                />
+          <div className="flex-1 overflow-auto p-3 space-y-2">
+            {filteredTemplates.length === 0 ? (
+              <div className="py-10 text-center text-xs text-slate-300 italic">
+                {zh ? '没有匹配的模板' : 'No matching templates'}
               </div>
-              <select
-                value={tplVendorFilter}
-                onChange={(e) => setTplVendorFilter(e.target.value)}
-                title={language === 'zh' ? '按厂商筛选' : 'Filter by vendor'}
-                className="px-2.5 py-2 text-xs bg-black/[0.03] border border-black/5 rounded-xl outline-none focus:border-[#06b6d4] transition-all text-black/60 cursor-pointer flex-shrink-0"
-              >
-                <option value="all">{language === 'zh' ? '全部厂商' : 'All vendors'} ({configTemplates.length})</option>
-                {vendorList.map((vendor) => {
-                  const count = configTemplates.filter((tpl) => (tpl.vendor || 'Custom') === vendor).length;
-                  return (
-                    <option key={vendor} value={vendor}>{vendor} ({count})</option>
-                  );
-                })}
-              </select>
-            </div>
-            {filteredTemplates.length === 0 && (
-              <div className="py-6 text-center text-xs text-black/30">
-                {language === 'zh' ? '没有匹配的模板' : 'No matching templates'}
-              </div>
-            )}
-            <div className="space-y-5 overflow-auto pr-1">
-              {groupedTemplates.map(([vendor, templates]) => (
-                <div key={vendor} className="space-y-2">
-                  <div className="flex items-center justify-between px-1">
-                    <h4 className="text-[10px] font-bold uppercase tracking-[0.22em] text-black/30">{vendor}</h4>
-                    <span className="text-[10px] text-black/25">{templates.length}</span>
-                  </div>
-                  <div className="space-y-2">
-                    {templates.map((tpl) => {
-                      const templateVars = templateVarsMap.get(tpl.id) || [];
-                      const isSelected = selectedTemplateId === tpl.id;
-                      return (
-                        <button
-                          key={tpl.id}
-                          onClick={() => onSelectTemplateIdChange(tpl.id)}
-                          className={`w-full rounded-xl border p-3 text-left transition-all ${isSelected
-                            ? 'border-[#06b6d4] bg-[#06b6d4] text-white shadow-md shadow-[#06b6d4]/20'
-                            : 'border-black/5 bg-white hover:border-[#06b6d4]/25 hover:bg-[#ecfeff]/50 text-black/75'}`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-sm font-semibold">{tpl.name}</span>
-                                {tpl.category === 'official' && (
-                                  <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase ${isSelected ? 'bg-white/10 text-white/70' : 'bg-blue-100 text-blue-700'}`}>
-                                    {t('official')}
-                                  </span>
-                                )}
-                              </div>
-                              <p className={`mt-1 text-[10px] ${isSelected ? 'text-white/45' : 'text-black/35'}`}>
-                                {language === 'zh' ? `最近使用 ${tpl.lastUsed}` : `Last used ${tpl.lastUsed}`}
-                              </p>
-                            </div>
-                            <span className={`text-[10px] font-bold uppercase ${isSelected ? 'text-white/45' : 'text-black/30'}`}>{tpl.type}</span>
-                          </div>
-                          <div className="mt-3 flex items-center gap-2 flex-wrap text-[10px]">
-                            <span className={`px-2 py-1 rounded-full ${isSelected ? 'bg-white/10 text-white/60' : 'bg-black/[0.04] text-black/45'}`}>
-                              {templateVars.length} {language === 'zh' ? '变量' : 'vars'}
-                            </span>
-                            <span className={`px-2 py-1 rounded-full ${isSelected ? 'bg-white/10 text-white/60' : 'bg-black/[0.04] text-black/45'}`}>
+            ) : (
+              filteredTemplates.map((tpl) => {
+                const brand = vendorBrand(tpl.vendor || 'Custom');
+                const templateVars = templateVarsMap.get(tpl.id) || [];
+                const isSelected = selectedTemplateId === tpl.id;
+                return (
+                  <button
+                    key={tpl.id}
+                    onClick={() => onSelectTemplateIdChange(tpl.id)}
+                    className={`w-full text-left rounded-xl border transition-all overflow-hidden group ${
+                      isSelected
+                        ? `border-transparent shadow-lg ring-2 ring-[#06b6d4]/40`
+                        : `${brand.border} bg-white hover:border-slate-300 hover:shadow-sm`
+                    }`}
+                  >
+                    <div
+                      className={`h-1 bg-gradient-to-r ${brand.gradient} ${isSelected ? 'opacity-100' : 'opacity-70'}`}
+                    />
+                    <div className="p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${brand.chip}`}>
                               {tpl.vendor || 'Custom'}
                             </span>
+                            {tpl.category === 'official' && (
+                              <span className="text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase bg-blue-50 text-blue-700 border border-blue-100">
+                                {t('official')}
+                              </span>
+                            )}
                           </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
+                          <p className="mt-1.5 text-sm font-bold text-[#0f172a] truncate">{tpl.name}</p>
+                          <p className="mt-0.5 text-[10px] text-slate-400">
+                            {zh ? `最近使用 ${tpl.lastUsed}` : `Last used ${tpl.lastUsed}`}
+                          </p>
+                        </div>
+                        <span className="text-[9px] font-bold uppercase text-slate-400 tracking-wider">
+                          {tpl.type}
+                        </span>
+                      </div>
+                      <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-50 text-slate-500">
+                          {templateVars.length} {zh ? '变量' : 'vars'}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })
+            )}
           </div>
-        </div>
+        </aside>
 
-        <div className="xl:col-span-6 min-h-0 bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden flex flex-col">
-          <div className="px-5 py-3.5 border-b border-black/5 bg-black/[0.015]">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="p-1.5 bg-black/5 rounded-lg text-black/60">
-                <Settings size={16} />
+        {/* ═════ RIGHT: Editor / Rendered / Checks ═════ */}
+        <section className="lg:col-span-9 min-h-0 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+          {/* Top bar: template header */}
+          <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-br from-slate-50 to-white flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-1 min-w-[260px]">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-sm bg-gradient-to-br ${vendorBrand(selectedConfigTemplate?.vendor).gradient} shadow-sm`}
+              >
+                {selectedConfigTemplate?.vendor ? selectedConfigTemplate.vendor.slice(0, 2).toUpperCase() : '✎'}
               </div>
               <input
                 type="text"
                 value={selectedConfigTemplate?.name || ''}
-                title={language === 'zh' ? '模板名称' : 'Template name'}
+                title={zh ? '模板名称' : 'Template name'}
                 onChange={(event) => onSelectedTemplateNameChange(event.target.value)}
-                className="bg-black/5 px-3 py-1.5 rounded-xl font-medium border border-black/5 focus:border-black/20 outline-none transition-all min-w-[180px] max-w-[240px]"
-                placeholder="Template Name"
+                className="flex-1 min-w-0 bg-transparent px-3 py-2 rounded-xl text-base font-bold text-[#0f172a] border border-transparent hover:border-slate-200 focus:border-[#06b6d4] focus:bg-white outline-none transition-all"
+                placeholder={zh ? '模板名称' : 'Template name'}
               />
+            </div>
+            <div className="flex items-center gap-2">
               <select
                 value={selectedConfigTemplate?.vendor || 'Custom'}
-                title={language === 'zh' ? '模板厂商' : 'Template vendor'}
+                title={zh ? '模板厂商' : 'Template vendor'}
                 onChange={(event) => onSelectedTemplateVendorChange(event.target.value)}
-                className="bg-black/5 text-xs px-2.5 py-1.5 rounded-xl outline-none"
+                className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none cursor-pointer hover:bg-white hover:border-[#06b6d4] transition-all"
               >
-                {['Cisco', 'Juniper', 'Huawei', 'H3C', 'Arista', 'Other', 'Custom'].map((vendor) => (
+                {['Cisco', 'Juniper', 'Huawei', 'H3C', 'Arista', 'Ruijie', 'Other', 'Custom'].map((vendor) => (
                   <option key={vendor} value={vendor}>{vendor}</option>
                 ))}
               </select>
               <select
                 value={selectedConfigTemplate?.type || 'Jinja2'}
-                title={language === 'zh' ? '模板类型' : 'Template type'}
+                title={zh ? '模板类型' : 'Template type'}
                 onChange={(event) => onSelectedTemplateTypeChange(event.target.value as TemplateType)}
-                className="bg-black/5 text-xs font-bold uppercase px-2.5 py-1.5 rounded-xl outline-none"
+                className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none cursor-pointer hover:bg-white hover:border-[#06b6d4] transition-all"
               >
                 <option value="Jinja2">Jinja2</option>
                 <option value="YAML">YAML</option>
               </select>
-              <span className="text-black/15 mx-0.5">|</span>
+              <div className="w-px h-6 bg-slate-200" />
               <button
                 onClick={onDiscardChanges}
-                className="px-2 py-1 text-xs text-black/40 hover:text-black/70 transition-all"
+                className="px-3 py-2 text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all"
               >
                 {t('discard')}
               </button>
               <button
                 onClick={onSaveTemplate}
-                className="px-2 py-1 text-xs font-medium text-[#0891b2] hover:underline transition-all"
+                className="px-3 py-2 text-xs font-bold text-[#0891b2] hover:bg-cyan-50 rounded-lg transition-all"
               >
                 {t('saveChanges')}
               </button>
             </div>
-            <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2">
-              <div className="flex gap-1.5">
-                {[
-                  { key: 'source', label: language === 'zh' ? '源模板' : 'Source' },
-                  { key: 'rendered', label: language === 'zh' ? '渲染结果' : 'Rendered' },
-                  { key: 'checks', label: language === 'zh' ? '发布检查' : 'Checks' },
-                ].map((tab) => (
+          </div>
+
+          {/* View tabs + action row */}
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+            <div className="inline-flex p-1 rounded-xl bg-slate-100">
+              {[
+                { key: 'source', label: zh ? '源模板' : 'Source', icon: <Code2 size={13} /> },
+                { key: 'rendered', label: zh ? '渲染结果' : 'Rendered', icon: <Play size={13} /> },
+                { key: 'checks', label: zh ? '发布检查' : 'Preflight', icon: <ShieldCheck size={13} /> },
+              ].map((tab) => {
+                const active = configWorkspaceView === tab.key;
+                return (
                   <button
                     key={tab.key}
                     onClick={() => onConfigWorkspaceViewChange(tab.key as ConfigWorkspaceView)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${configWorkspaceView === tab.key
-                      ? 'bg-[#06b6d4] text-white shadow-sm shadow-[#06b6d4]/20'
-                      : 'bg-black/[0.04] text-black/55 hover:bg-[#06b6d4]/10 hover:text-[#0891b2]'}`}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      active
+                        ? 'bg-white text-[#0f172a] shadow-sm'
+                        : 'text-slate-500 hover:text-[#0f172a]'
+                    }`}
                   >
+                    {tab.icon}
                     {tab.label}
                   </button>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={onValidate}
-                  className="px-3 py-1.5 text-xs font-medium text-[#0891b2] border border-[#06b6d4]/25 rounded-xl hover:bg-[#ecfeff] transition-all flex items-center gap-1.5"
-                >
-                  <ShieldCheck size={13} />
-                  {language === 'zh' ? '检查' : 'Preflight'}
-                </button>
-                <button
-                  onClick={onCreateScenarioDraft}
-                  className="px-3 py-1.5 text-xs font-medium text-black/50 border border-black/10 rounded-xl hover:bg-black/[0.03] transition-all"
-                >
-                  {language === 'zh' ? '转草稿' : 'To Draft'}
-                </button>
-                <button
-                  onClick={onSendToAutomation}
-                  className="px-3 py-1.5 bg-[#06b6d4] text-white rounded-xl text-xs font-medium hover:bg-[#0891b2] transition-all shadow-sm shadow-[#06b6d4]/20"
-                >
-                  {language === 'zh' ? '提交下发' : 'Deploy'}
-                </button>
-              </div>
+                );
+              })}
             </div>
-          </div>
-
-          <div className="px-5 py-3 border-b border-black/5 bg-amber-50/70 text-[11px] text-amber-900/80">
-            {configMissingVariables.length > 0
-              ? (language === 'zh'
-                ? `当前仍有未赋值变量: ${configMissingVariables.join('、')}。渲染预览会保留占位符。`
-                : `Variables still missing: ${configMissingVariables.join(', ')}. Rendered preview will keep placeholders.`)
-              : (language === 'zh'
-                ? '渲染预览仅基于全局变量替换，不会连接设备拉取运行态配置。'
-                : 'Rendered preview uses global variables only and does not connect to devices for runtime config.')}
-          </div>
-
-          {configWorkspaceView === 'source' && (
-            <div className="flex-1 flex bg-[#1E1E1E] overflow-hidden min-h-0">
-              <div
-                ref={lineNumRef}
-                className="w-12 py-6 bg-black/30 text-white/35 select-none text-right pr-3 font-mono text-sm leading-6 overflow-hidden"
-              >
-                {editorContent.split('\n').map((_, index) => <div key={index}>{index + 1}</div>)}
-              </div>
-              <textarea
-                value={editorContent}
-                onChange={(event) => onEditorContentChange(event.target.value)}
-                onScroll={(e) => { if (lineNumRef.current) lineNumRef.current.scrollTop = e.currentTarget.scrollTop; }}
-                title={language === 'zh' ? '模板源码编辑器' : 'Template source editor'}
-                placeholder={language === 'zh' ? '在这里编辑模板源码' : 'Edit template source here'}
-                className="flex-1 p-6 bg-transparent font-mono text-sm text-[#D4D4D4] outline-none resize-none leading-6"
-                spellCheck={false}
+            <div className="flex items-center gap-2">
+              <SidebarToggle
+                active={showSidebar === 'scope'}
+                onClick={() => setShowSidebar(showSidebar === 'scope' ? null : 'scope')}
+                icon={<Server size={13} />}
+                label={zh ? '发布范围' : 'Scope'}
+                badge={configScopedDevices.length}
               />
+              <SidebarToggle
+                active={showSidebar === 'vars'}
+                onClick={() => setShowSidebar(showSidebar === 'vars' ? null : 'vars')}
+                icon={<Sparkles size={13} />}
+                label={zh ? '变量' : 'Variables'}
+                badge={globalVars.length}
+              />
+              <div className="w-px h-5 bg-slate-200 mx-1" />
+              <button
+                onClick={onValidate}
+                className="px-3 py-1.5 text-xs font-bold text-[#0891b2] border border-[#06b6d4]/30 bg-cyan-50 rounded-lg hover:bg-cyan-100 transition-all flex items-center gap-1.5"
+              >
+                <ShieldCheck size={13} />
+                {zh ? '检查' : 'Preflight'}
+              </button>
+              <button
+                onClick={onCreateScenarioDraft}
+                className="px-3 py-1.5 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-all"
+              >
+                {zh ? '转草稿' : 'To Draft'}
+              </button>
+              <button
+                onClick={onSendToAutomation}
+                className="px-4 py-1.5 bg-gradient-to-r from-[#06b6d4] to-[#0891b2] text-white rounded-lg text-xs font-bold hover:shadow-lg hover:shadow-cyan-500/30 transition-all flex items-center gap-1.5"
+              >
+                <Rocket size={13} />
+                {zh ? '提交下发' : 'Deploy'}
+              </button>
+            </div>
+          </div>
+
+          {/* Missing vars banner */}
+          {configMissingVariables.length > 0 && (
+            <div className="px-5 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-[11px] text-amber-900">
+              <AlertTriangle size={13} className="flex-shrink-0" />
+              <span>
+                {zh
+                  ? `尚有 ${configMissingVariables.length} 个变量未赋值：${configMissingVariables.slice(0, 5).join('、')}${configMissingVariables.length > 5 ? ' ...' : ''}`
+                  : `${configMissingVariables.length} variables missing: ${configMissingVariables.slice(0, 5).join(', ')}${configMissingVariables.length > 5 ? ' ...' : ''}`}
+              </span>
             </div>
           )}
 
-          {configWorkspaceView === 'rendered' && (
-            <div className="flex-1 min-h-0 overflow-auto bg-[#101820] text-[#d6e2ea] font-mono text-sm leading-6 p-6">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.22em] text-white/35">
-                    {language === 'zh' ? '渲染结果' : 'Rendered Result'}
-                  </p>
-                  <p className="mt-1 text-[11px] text-white/45">
-                    {language === 'zh' ? '用于人工预览、Review 和发布前核对。' : 'Use this for operator preview, review, and pre-release verification.'}
-                  </p>
+          {/* Content area — flex 1, optional sidebar on right */}
+          <div className="flex-1 min-h-0 flex overflow-hidden">
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+              {configWorkspaceView === 'source' && (
+                <div className="flex-1 min-h-0 flex bg-[#1E1E1E] overflow-hidden">
+                  <div
+                    ref={lineNumRef}
+                    className="w-12 py-6 bg-black/30 text-white/30 select-none text-right pr-3 font-mono text-sm leading-6 overflow-hidden"
+                  >
+                    {editorContent.split('\n').map((_, index) => <div key={index}>{index + 1}</div>)}
+                  </div>
+                  <textarea
+                    value={editorContent}
+                    onChange={(event) => onEditorContentChange(event.target.value)}
+                    onScroll={(e) => { if (lineNumRef.current) lineNumRef.current.scrollTop = e.currentTarget.scrollTop; }}
+                    title={zh ? '模板源码编辑器' : 'Template source editor'}
+                    placeholder={zh ? '在这里编辑模板源码' : 'Edit template source here'}
+                    className="flex-1 p-6 bg-transparent font-mono text-sm text-[#D4D4D4] outline-none resize-none leading-6"
+                    spellCheck={false}
+                  />
                 </div>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(configRenderedPreview);
-                    showToast(t('copied'), 'success');
-                  }}
-                  className="px-3 py-1.5 rounded-xl border border-white/10 text-xs text-white/70 hover:text-white hover:border-white/20 flex items-center gap-1.5"
-                >
-                  <Copy size={13} />
-                  {language === 'zh' ? '复制渲染结果' : 'Copy rendered output'}
-                </button>
-              </div>
-              <pre className="whitespace-pre-wrap break-words">{configRenderedPreview || (language === 'zh' ? '暂无内容' : 'No content')}</pre>
-            </div>
-          )}
+              )}
 
-          {configWorkspaceView === 'checks' && (
-            <div className="flex-1 min-h-0 overflow-auto p-5 bg-[#fafafa]">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-white rounded-2xl border border-black/5 p-5 shadow-sm">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck size={16} className="text-emerald-600" />
-                    <h3 className="text-sm font-semibold text-black">
-                      {language === 'zh' ? '阻断项' : 'Blocking Checks'}
-                    </h3>
-                  </div>
-                  <div className="mt-4 space-y-2">
-                    {configValidationIssues.length === 0 ? (
-                      <div className="flex items-start gap-2 text-sm text-emerald-700">
-                        <CheckCircle2 size={16} className="mt-0.5 flex-shrink-0" />
-                        <span>{language === 'zh' ? '基础检查全部通过，可以执行发布。' : 'All base checks passed. Release can proceed.'}</span>
-                      </div>
-                    ) : configValidationIssues.map((issue) => (
-                      <div key={issue} className="flex items-start gap-2 text-sm text-red-600">
-                        <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
-                        <span>{issue}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl border border-black/5 p-5 shadow-sm">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle size={16} className="text-amber-600" />
-                    <h3 className="text-sm font-semibold text-black">
-                      {language === 'zh' ? '发布提醒' : 'Release Advisories'}
-                    </h3>
-                  </div>
-                  <div className="mt-4 space-y-2">
-                    {configValidationWarnings.length === 0 ? (
-                      <div className="flex items-start gap-2 text-sm text-slate-600">
-                        <CheckCircle2 size={16} className="mt-0.5 flex-shrink-0 text-emerald-600" />
-                        <span>{language === 'zh' ? '没有额外风险提醒。' : 'No additional advisories.'}</span>
-                      </div>
-                    ) : configValidationWarnings.map((warning) => (
-                      <div key={warning} className="flex items-start gap-2 text-sm text-amber-700">
-                        <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
-                        <span>{warning}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl border border-black/5 p-5 shadow-sm md:col-span-2">
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
+              {configWorkspaceView === 'rendered' && (
+                <div className="flex-1 min-h-0 overflow-auto bg-[#0f172a] text-[#e2e8f0] font-mono text-sm leading-6 p-6">
+                  <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
                     <div>
-                      <h3 className="text-sm font-semibold text-black">
-                        {language === 'zh' ? '推荐的内网发布顺序' : 'Recommended Internal Release Flow'}
-                      </h3>
-                      <p className="mt-1 text-xs text-black/45">
-                        {language === 'zh'
-                          ? '适合当前内网使用场景，不强依赖审批系统或外部工单平台。'
-                          : 'Optimized for internal-only use without depending on approval portals or external ticketing systems.'}
+                      <p className="text-xs uppercase tracking-widest text-white/40 font-bold">
+                        {zh ? '渲染结果' : 'Rendered Output'}
+                      </p>
+                      <p className="mt-1 text-[11px] text-white/50">
+                        {zh ? '模板应用全局变量后的纯文本结果，不连接设备。' : 'Template output after variable substitution. No device connection.'}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(configRenderedPreview || '');
+                          showToast(t('copied'), 'success');
+                        }}
+                        disabled={!configRenderedPreview}
+                        className="px-3 py-1.5 rounded-lg border border-white/10 text-xs font-semibold text-white/70 hover:text-white hover:bg-white/5 disabled:opacity-30 flex items-center gap-1.5 transition-all"
+                      >
+                        <Copy size={12} />
+                        {zh ? '复制' : 'Copy'}
+                      </button>
+                      <button
+                        onClick={handleDownloadRendered}
+                        disabled={!configRenderedPreview}
+                        className="px-3 py-1.5 rounded-lg border border-white/10 text-xs font-semibold text-white/70 hover:text-white hover:bg-white/5 disabled:opacity-30 flex items-center gap-1.5 transition-all"
+                      >
+                        <Download size={12} />
+                        {zh ? '下载' : 'Download'}
+                      </button>
+                    </div>
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words text-[13px] leading-[1.7]">
+                    {configRenderedPreview || (
+                      <span className="text-white/30 italic">{zh ? '暂无内容' : 'No content to render'}</span>
+                    )}
+                  </pre>
+                </div>
+              )}
+
+              {configWorkspaceView === 'checks' && (
+                <div className="flex-1 min-h-0 overflow-auto p-5 bg-slate-50/80 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Blocking */}
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-4">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${configValidationIssues.length === 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                          <ShieldCheck size={15} />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-[#0f172a]">{zh ? '阻断项' : 'Blocking'}</h3>
+                          <p className="text-[11px] text-slate-400">{zh ? '必须解决后才能下发' : 'Must resolve before deploying'}</p>
+                        </div>
+                        <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${configValidationIssues.length === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                          {configValidationIssues.length}
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {configValidationIssues.length === 0 ? (
+                          <div className="flex items-start gap-2 text-sm text-emerald-700">
+                            <CheckCircle2 size={15} className="mt-0.5 flex-shrink-0" />
+                            <span>{zh ? '全部通过，可以执行发布。' : 'All checks passed. Release is ready.'}</span>
+                          </div>
+                        ) : configValidationIssues.map((issue) => (
+                          <div key={issue} className="flex items-start gap-2 text-sm text-rose-700 bg-rose-50/50 rounded-lg px-3 py-2">
+                            <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                            <span>{issue}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Advisories */}
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-4">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${configValidationWarnings.length === 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                          <AlertCircle size={15} />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-[#0f172a]">{zh ? '建议项' : 'Advisories'}</h3>
+                          <p className="text-[11px] text-slate-400">{zh ? '可以继续，但建议关注' : 'Not blocking, worth reviewing'}</p>
+                        </div>
+                        <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${configValidationWarnings.length === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                          {configValidationWarnings.length}
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {configValidationWarnings.length === 0 ? (
+                          <div className="flex items-start gap-2 text-sm text-slate-600">
+                            <CheckCircle2 size={15} className="mt-0.5 flex-shrink-0 text-emerald-500" />
+                            <span>{zh ? '没有额外建议。' : 'No additional advisories.'}</span>
+                          </div>
+                        ) : configValidationWarnings.map((warning) => (
+                          <div key={warning} className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50/50 rounded-lg px-3 py-2">
+                            <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                            <span>{warning}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Release Flow */}
+                  <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-8 h-8 rounded-lg bg-cyan-50 text-cyan-600 flex items-center justify-center">
+                        <Send size={15} />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-[#0f172a]">{zh ? '推荐发布流程' : 'Recommended Release Flow'}</h3>
+                        <p className="text-[11px] text-slate-400">
+                          {zh ? '先小范围验证 → 再批量下发 → 最后核对结果' : 'Canary first → bulk deploy → verify outcomes'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                      {[
+                        { n: '1', t: zh ? '锁定模板与变量' : 'Freeze template & vars' },
+                        { n: '2', t: zh ? '按平台/角色/站点筛目标' : 'Scope by platform/role/site' },
+                        { n: '3', t: zh ? '挑 1 台在线设备做 canary' : 'Canary on 1 online device' },
+                        { n: '4', t: zh ? '批量下发并核对结果' : 'Bulk deploy & verify' },
+                      ].map((s) => (
+                        <div key={s.n} className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white px-3 py-3">
+                          <div className="w-6 h-6 rounded-full bg-[#0f172a] text-white text-[10px] font-black flex items-center justify-center mb-2">
+                            {s.n}
+                          </div>
+                          <p className="text-xs font-semibold text-slate-700 leading-snug">{s.t}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Readiness Summary */}
+                  <div className="bg-gradient-to-br from-[#0f172a] to-[#1e293b] rounded-2xl p-6 text-white flex items-center gap-5 shadow-lg">
+                    <div className="w-20 h-20 rounded-full bg-white/5 border-4 border-white/10 flex items-center justify-center">
+                      <span className={`text-3xl font-black ${readinessColor}`}>{configReadinessScore}</span>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">
+                        {zh ? '发布就绪度' : 'Release Readiness'}
+                      </p>
+                      <p className="mt-1 text-lg font-bold">
+                        {configReadinessScore >= 85
+                          ? (zh ? '可以发布' : 'Ready to deploy')
+                          : configReadinessScore >= 60
+                          ? (zh ? '基本就绪，建议复核' : 'Mostly ready, review first')
+                          : (zh ? '暂不建议发布' : 'Not ready for release')}
+                      </p>
+                      <p className="mt-1 text-[11px] text-white/50">
+                        {zh
+                          ? `已匹配 ${configScopedDevices.length} 台设备（${configScopedOnlineCount} 在线）`
+                          : `${configScopedDevices.length} matched (${configScopedOnlineCount} online)`}
                       </p>
                     </div>
                   </div>
-                  <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
-                    {[
-                      language === 'zh' ? '1. 锁定模板与变量版本' : '1. Freeze template and variables',
-                      language === 'zh' ? '2. 按平台/角色/站点筛目标' : '2. Narrow targets by platform/role/site',
-                      language === 'zh' ? '3. 先挑在线设备做小范围验证' : '3. Start with a small online canary set',
-                      language === 'zh' ? '4. 再执行批量下发和回溯核查' : '4. Then deploy broadly and review outcomes',
-                    ].map((item) => (
-                      <div key={item} className="rounded-xl border border-black/5 bg-black/[0.02] px-3 py-3 text-black/70">{item}</div>
-                    ))}
-                  </div>
                 </div>
-              </div>
+              )}
             </div>
-          )}
-        </div>
 
-        <div className="xl:col-span-3 flex flex-col gap-3 min-h-0 overflow-auto pl-1">
-          {/* Release Scope + Target Preview merged */}
-          <div className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-3">
-              <Filter size={14} className="text-black/40" />
-              <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/35">
-                {language === 'zh' ? '发布范围' : 'Release Scope'}
-              </h3>
-              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-[#06b6d4]/10 text-[#0891b2] font-medium">
-                {configScopedOnlineCount}/{configScopedDevices.length} {language === 'zh' ? '在线' : 'online'}
-              </span>
-            </div>
-            <div className="grid grid-cols-3 gap-2 mb-3">
-              <select
-                value={configScopePlatform}
-                title={language === 'zh' ? '平台' : 'Platform'}
-                onChange={(event) => onConfigScopePlatformChange(event.target.value)}
-                className="w-full px-2 py-1.5 rounded-lg border border-black/8 bg-black/[0.02] text-xs outline-none focus:border-[#06b6d4] transition-all"
-              >
-                <option value="all">{language === 'zh' ? '全平台' : 'All'}</option>
-                {configPlatformOptions.map((platform) => (
-                  <option key={platform} value={platform}>{getPlatformLabel(platform)}</option>
-                ))}
-              </select>
-              <select
-                value={configScopeRole}
-                title={language === 'zh' ? '角色' : 'Role'}
-                onChange={(event) => onConfigScopeRoleChange(event.target.value)}
-                className="w-full px-2 py-1.5 rounded-lg border border-black/8 bg-black/[0.02] text-xs outline-none focus:border-[#06b6d4] transition-all"
-              >
-                <option value="all">{language === 'zh' ? '全角色' : 'All'}</option>
-                {configRoleOptions.map((role) => (
-                  <option key={role} value={role}>{role}</option>
-                ))}
-              </select>
-              <select
-                value={configScopeSite}
-                title={language === 'zh' ? '站点' : 'Site'}
-                onChange={(event) => onConfigScopeSiteChange(event.target.value)}
-                className="w-full px-2 py-1.5 rounded-lg border border-black/8 bg-black/[0.02] text-xs outline-none focus:border-[#06b6d4] transition-all"
-              >
-                <option value="all">{language === 'zh' ? '全站点' : 'All'}</option>
-                {configSiteOptions.map((site) => (
-                  <option key={site} value={site}>{site}</option>
-                ))}
-              </select>
-            </div>
-            <p className="text-[10px] text-black/40 mb-3">
-              {language === 'zh'
-                ? `厂商：${selectedConfigTemplate?.vendor || 'Custom'}｜范围内 ${configScopedDevices.length} 台设备`
-                : `Vendor: ${selectedConfigTemplate?.vendor || 'Custom'} | ${configScopedDevices.length} device(s) in scope`}
-            </p>
-            {configScopedDevices.length > 0 && (
-              <div className="border-t border-black/5 pt-3">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-[10px] font-bold uppercase tracking-[0.18em] text-black/30">
-                    {language === 'zh' ? '目标设备' : 'Target Devices'}
-                  </h4>
-                </div>
-                <div className="space-y-1.5">
-                  {(devicePreviewExpanded ? configScopedDevices : configScopedDevices.slice(0, 5)).map((device) => (
-                    <div key={device.id} className="flex items-center justify-between gap-2 rounded-lg border border-black/5 px-2.5 py-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium text-black/80 truncate">{device.hostname}</p>
-                        <p className="text-[10px] text-black/35 font-mono truncate">{device.ip_address}</p>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-black/[0.04] text-black/40">{getPlatformLabel(device.platform)}</span>
-                        <span className={`w-1.5 h-1.5 rounded-full ${device.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {configScopedDevices.length > 5 && (
+            {/* ═════ SIDE DRAWER (scope / vars) ═════ */}
+            {showSidebar && (
+              <aside className="w-80 border-l border-slate-100 bg-slate-50/60 flex flex-col overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-white">
+                  <div className="flex items-center gap-2">
+                    {showSidebar === 'scope' ? <Server size={14} className="text-[#06b6d4]" /> : <Sparkles size={14} className="text-[#06b6d4]" />}
+                    <h4 className="text-sm font-bold text-[#0f172a]">
+                      {showSidebar === 'scope'
+                        ? (zh ? '发布范围' : 'Release Scope')
+                        : (zh ? '全局变量' : 'Global Variables')}
+                    </h4>
+                  </div>
                   <button
-                    onClick={() => setDevicePreviewExpanded(!devicePreviewExpanded)}
-                    className="mt-2 text-[10px] text-[#0891b2] hover:underline"
+                    onClick={() => setShowSidebar(null)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all"
+                    title={zh ? '关闭' : 'Close'}
                   >
-                    {devicePreviewExpanded
-                      ? (language === 'zh' ? '收起' : 'Collapse')
-                      : (language === 'zh' ? `展开全部 ${configScopedDevices.length} 台` : `Show all ${configScopedDevices.length}`)}
+                    <X size={14} />
                   </button>
-                )}
-              </div>
-            )}
-            {configScopedDevices.length === 0 && (
-              <div className="border-t border-black/5 pt-3 text-center text-xs text-black/30 py-4">
-                {language === 'zh' ? '无匹配设备，请调整范围' : 'No devices match. Adjust scope.'}
-              </div>
-            )}
-          </div>
+                </div>
 
-          {/* Global Variables */}
-          <div className="bg-white rounded-2xl border border-black/5 p-4 shadow-sm min-h-0 flex flex-col">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/35">{t('globalVars')}</h3>
-              <button
-                onClick={onAddVar}
-                className="text-[10px] text-[#0891b2] font-bold hover:underline uppercase"
-              >
-                {t('addVar')}
-              </button>
-            </div>
-            <div className="space-y-1 overflow-auto pr-1">
-              {globalVars.map((item, index) => (
-                <div key={item.id || index} className="group relative flex justify-between items-center py-1.5 border-b border-black/5">
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-mono text-black/60 truncate">{item.key}</span>
-                    <span className="text-[10px] text-black/30 font-mono">{'{{ ' + item.key + ' }}'}</span>
-                  </div>
-                  <div className="flex items-center gap-2 ml-2">
-                    <span className="text-xs font-medium max-w-[100px] truncate">{item.value}</span>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText('{{ ' + item.key + ' }}');
-                          showToast(t('copied'), 'success');
-                        }}
-                        className="bg-white shadow-sm border border-black/5 p-1 rounded text-black/40 hover:text-black"
-                        title="Copy reference"
-                      >
-                        <FileText size={11} />
-                      </button>
-                      <button
-                        onClick={() => item.id && onDeleteVar(item.id)}
-                        disabled={!item.id}
-                        className={`bg-white shadow-sm border border-black/5 p-1 rounded ${item.id ? 'text-red-400 hover:text-red-600 cursor-pointer' : 'text-black/15 cursor-not-allowed'}`}
-                        title="Delete variable"
-                      >
-                        <X size={11} />
-                      </button>
+                {showSidebar === 'scope' && (
+                  <div className="flex-1 overflow-auto p-4 space-y-3">
+                    <ScopeSelect
+                      label={zh ? '平台' : 'Platform'}
+                      value={configScopePlatform}
+                      options={[{ value: 'all', label: zh ? '全部' : 'All' }, ...configPlatformOptions.map(p => ({ value: p, label: getPlatformLabel(p) }))]}
+                      onChange={onConfigScopePlatformChange}
+                    />
+                    <ScopeSelect
+                      label={zh ? '角色' : 'Role'}
+                      value={configScopeRole}
+                      options={[{ value: 'all', label: zh ? '全部' : 'All' }, ...configRoleOptions.map(r => ({ value: r, label: r }))]}
+                      onChange={onConfigScopeRoleChange}
+                    />
+                    <ScopeSelect
+                      label={zh ? '站点' : 'Site'}
+                      value={configScopeSite}
+                      options={[{ value: 'all', label: zh ? '全部' : 'All' }, ...configSiteOptions.map(s => ({ value: s, label: s }))]}
+                      onChange={onConfigScopeSiteChange}
+                    />
+
+                    <div className="mt-4 rounded-xl bg-white border border-slate-200 p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                          {zh ? '匹配到' : 'Matched'}
+                        </span>
+                        <span className="text-xs font-bold text-[#0891b2]">
+                          {configScopedOnlineCount}/{configScopedDevices.length} {zh ? '在线' : 'online'}
+                        </span>
+                      </div>
+                      {configScopedDevices.length === 0 ? (
+                        <p className="text-[11px] text-slate-400 italic py-2 text-center">
+                          {zh ? '无匹配设备，请调整范围' : 'No devices match. Adjust scope.'}
+                        </p>
+                      ) : (
+                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
+                          {configScopedDevices.map((device) => (
+                            <div key={device.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5">
+                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${device.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-semibold text-slate-700 truncate">{device.hostname}</p>
+                                <p className="text-[10px] text-slate-400 font-mono truncate">{device.ip_address}</p>
+                              </div>
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-500 flex-shrink-0">
+                                {getPlatformLabel(device.platform)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
+                )}
 
-          {/* Governance Notes — collapsible */}
-          <div className="bg-white rounded-2xl border border-black/5 shadow-sm">
-            <button
-              onClick={() => setGovernanceExpanded(!governanceExpanded)}
-              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-black/[0.02] transition-all rounded-2xl"
-            >
-              <div className="flex items-center gap-2">
-                <Globe size={14} className="text-black/40" />
-                <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/35">
-                  {language === 'zh' ? '治理提示' : 'Governance Notes'}
-                </h3>
-              </div>
-              {governanceExpanded ? <ChevronUp size={14} className="text-black/30" /> : <ChevronDown size={14} className="text-black/30" />}
-            </button>
-            {governanceExpanded && (
-              <div className="px-4 pb-4 space-y-2">
-                <div className="rounded-xl bg-black/[0.03] px-3 py-2.5">
-                  <p className="text-xs font-medium text-black">
-                    {language === 'zh' ? '建议动作' : 'Recommended Action'}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-black/50">
-                    {configReadinessScore >= 85
-                      ? (language === 'zh' ? '先挑一台在线设备验证，再逐步扩大范围。' : 'Validate on one online device first, then expand gradually.')
-                      : (language === 'zh' ? '先补全变量或缩小发布范围，再执行下发。' : 'Complete variables or narrow the scope before deployment.')}
-                  </p>
-                </div>
-                <div className="rounded-xl bg-black/[0.03] px-3 py-2.5">
-                  <p className="text-xs font-medium text-black">
-                    {language === 'zh' ? '能力边界' : 'Capability Boundary'}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-black/50">
-                    {language === 'zh'
-                      ? '当前支持渲染预览、范围筛选和单设备下发；审批签发和回滚编排建议后续补充。'
-                      : 'Supports preview, scoping, and single-device deploy. Approval and rollback workflows to be added.'}
-                  </p>
-                </div>
-              </div>
+                {showSidebar === 'vars' && (
+                  <div className="flex-1 overflow-auto p-4">
+                    <button
+                      onClick={onAddVar}
+                      className="w-full mb-3 px-3 py-2 rounded-xl border-2 border-dashed border-[#06b6d4]/40 text-[#0891b2] text-xs font-bold hover:bg-cyan-50 transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <Plus size={13} />
+                      {t('addVar')}
+                    </button>
+                    <div className="space-y-1.5">
+                      {globalVars.length === 0 && (
+                        <p className="text-[11px] text-slate-400 italic py-4 text-center">
+                          {zh ? '暂无全局变量' : 'No variables defined yet'}
+                        </p>
+                      )}
+                      {globalVars.map((item, index) => (
+                        <div key={item.id || index} className="group bg-white rounded-lg border border-slate-200 p-2.5 hover:border-[#06b6d4]/30 transition-all">
+                          <div className="flex items-center justify-between gap-2">
+                            <code className="text-xs font-bold text-[#0f172a] font-mono truncate flex-1">{item.key}</code>
+                            <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText('{{ ' + item.key + ' }}');
+                                  showToast(t('copied'), 'success');
+                                }}
+                                className="p-1 rounded text-slate-400 hover:text-[#0891b2] hover:bg-cyan-50 transition-all"
+                                title={zh ? '复制引用' : 'Copy reference'}
+                              >
+                                <FileText size={11} />
+                              </button>
+                              <button
+                                onClick={() => item.id && onDeleteVar(item.id)}
+                                disabled={!item.id}
+                                className={`p-1 rounded transition-all ${item.id ? 'text-slate-400 hover:text-rose-500 hover:bg-rose-50' : 'text-slate-200 cursor-not-allowed'}`}
+                                title={zh ? '删除' : 'Delete'}
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="mt-1 text-[10px] text-slate-400 font-mono truncate">{`{{ ${item.key} }} = ${item.value}`}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </aside>
             )}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );
 };
+
+/* ═════════════════════════════════════════════════════════ */
+/*  Small helper components                                  */
+/* ═════════════════════════════════════════════════════════ */
+
+const METRIC_TONE: Record<string, { bg: string; text: string; ring: string }> = {
+  slate:   { bg: 'bg-slate-100',  text: 'text-slate-700',   ring: 'ring-slate-200' },
+  cyan:    { bg: 'bg-cyan-100',   text: 'text-[#0891b2]',   ring: 'ring-cyan-200' },
+  emerald: { bg: 'bg-emerald-100',text: 'text-emerald-700', ring: 'ring-emerald-200' },
+  amber:   { bg: 'bg-amber-100',  text: 'text-amber-700',   ring: 'ring-amber-200' },
+  rose:    { bg: 'bg-rose-100',   text: 'text-rose-700',    ring: 'ring-rose-200' },
+};
+
+const MetricCard: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub: string;
+  tone: keyof typeof METRIC_TONE;
+}> = ({ icon, label, value, sub, tone }) => {
+  const t = METRIC_TONE[tone] || METRIC_TONE.slate;
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-all">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</span>
+        <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${t.bg} ${t.text}`}>
+          {icon}
+        </div>
+      </div>
+      <p className={`mt-3 text-3xl font-bold ${t.text}`}>{value}</p>
+      <p className="mt-1 text-[11px] text-slate-500 truncate">{sub}</p>
+    </div>
+  );
+};
+
+const SidebarToggle: React.FC<{
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+  badge?: number;
+}> = ({ active, onClick, icon, label, badge }) => (
+  <button
+    onClick={onClick}
+    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+      active
+        ? 'bg-[#0f172a] text-white shadow-sm'
+        : 'text-slate-600 border border-slate-200 hover:border-[#06b6d4] hover:text-[#0891b2] bg-white'
+    }`}
+    title={label}
+  >
+    {icon}
+    {label}
+    {typeof badge === 'number' && (
+      <span className={`ml-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full ${active ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-500'}`}>
+        {badge}
+      </span>
+    )}
+  </button>
+);
+
+const ScopeSelect: React.FC<{
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (v: string) => void;
+}> = ({ label, value, options, onChange }) => (
+  <div>
+    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 block mb-1.5">{label}</label>
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 outline-none focus:border-[#06b6d4] transition-all"
+    >
+      {options.map((opt) => (
+        <option key={opt.value} value={opt.value}>{opt.label}</option>
+      ))}
+    </select>
+  </div>
+);
 
 export default PlatformSettingsTab;

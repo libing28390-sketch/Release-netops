@@ -42,39 +42,95 @@ def _vendor_from_platform(platform: str) -> str:
     return ''
   
   
-def _record_instant_execution(device_id: str, name: str, commands: list[str], status: str, platform: str = 'unknown', error: str = '', output: str = ''):
-    """Log a one-off query execution into the playbook_executions table so it shows up in history."""
+def _record_instant_execution(
+    device_id: str,
+    name: str,
+    commands: list[str],
+    status: str,
+    platform: str = 'unknown',
+    error: str = '',
+    output: str = '',
+    result_payload: dict | None = None,
+    device_info: dict | None = None,
+):
+    """Log a one-off query execution into the playbook_executions table so it shows up in history.
+
+    If ``result_payload`` (the dict returned by ``collect_operational_data``) is provided,
+    commands and outputs are derived from it so the history view shows the actual device
+    response instead of an empty panel.
+    """
+    # Derive commands + output from the collect_operational_data payload when given.
+    derived_commands: list[str] = list(commands or [])
+    derived_output_parts: list[str] = []
+    if result_payload and isinstance(result_payload.get('categories'), list):
+        for cat in result_payload['categories']:
+            if not isinstance(cat, dict):
+                continue
+            cat_key = cat.get('key') or ''
+            for cmd in cat.get('commands') or []:
+                if cmd and cmd not in derived_commands:
+                    derived_commands.append(cmd)
+            # Prefer raw_outputs (direct device response) for display in history.
+            for ro in cat.get('raw_outputs') or []:
+                if not isinstance(ro, dict):
+                    continue
+                cmd = ro.get('command') or ''
+                out = ro.get('output') or ''
+                header = f"# {cat_key}: {cmd}" if cat_key else f"# {cmd}"
+                derived_output_parts.append(f"{header}\n{out}".rstrip())
+            # If a category failed, surface the error in the output panel.
+            if not cat.get('success', True) and cat.get('error'):
+                derived_output_parts.append(f"# ERROR [{cat_key}]: {cat['error']}")
+
+    if derived_output_parts and not output:
+        output = '\n\n'.join(derived_output_parts).strip()
+
+    # Fallback: if nothing was derived but we got a payload, serialise it so at least
+    # something is visible in history.
+    if not output and result_payload:
+        try:
+            output = json.dumps(result_payload, ensure_ascii=False, indent=2)
+        except Exception:
+            output = ''
+
+    if not derived_commands:
+        derived_commands = list(commands or [])
+
+    # Determine hostname/ip for history display
+    host = (device_info or {}).get('hostname') or ''
+    ip = (device_info or {}).get('ip_address') or ''
+
     conn = get_db_connection()
     try:
         exec_id = str(uuid.uuid4())
-        # Use simple ISO format for consistency with playbook history
         now = datetime.now(timezone.utc).isoformat()
-        
+
         # 1. Create Playbook Execution (status: 'completed' or 'failed')
         conn.execute('''
-            INSERT INTO playbook_executions 
+            INSERT INTO playbook_executions
             (id, scenario_id, scenario_name, platform, device_ids, variables, status, dry_run, author, concurrency, phases_json, created_at, updated_at, total_devices, success_count, failed_count)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             exec_id, 'instant', name, platform, json.dumps([device_id]), '{}',
-            status, 0, 'admin', 1, json.dumps({'execute': commands}),
+            status, 0, 'admin', 1, json.dumps({'execute': derived_commands}),
             now, now, 1, 1 if status == 'completed' else 0, 0 if status == 'completed' else 1
         ))
-        
-        # 2. Create Device Result
+
+        # 2. Create Device Result (include hostname + ip_address so the history list
+        # can render them correctly)
         conn.execute('''
             INSERT INTO execution_device_results
-            (id, execution_id, device_id, status, error_message, phases_json, started_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, execution_id, device_id, hostname, ip_address, status, error_message, phases_json, started_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            str(uuid.uuid4()), exec_id, device_id, status, error,
+            str(uuid.uuid4()), exec_id, device_id, host, ip, status, error,
             json.dumps({
                 'execute': {
                     'success': status == 'completed',
                     'output': output or error or ('' if status == 'completed' else 'Unknown error'),
-                    'commands': commands
+                    'commands': derived_commands,
                 }
-            }),
+            }, ensure_ascii=False),
             now, now
         ))
         conn.commit()
@@ -1261,13 +1317,26 @@ def collect_device_operational_data(device_id: str, payload: dict = Body(default
 
     try:
         res = collect_operational_data(device_info, categories=categories, auth_role=auth_role)
-        _record_instant_execution(device_id, query_name, [], 'completed', platform=device_info.get('platform', 'unknown'))
+        _record_instant_execution(
+            device_id, query_name, [], 'completed',
+            platform=device_info.get('platform', 'unknown'),
+            result_payload=res,
+            device_info=device_info,
+        )
         return res
     except ValueError as exc:
-        _record_instant_execution(device_id, query_name, [], 'failed', platform=device_info.get('platform', 'unknown'), error=str(exc))
+        _record_instant_execution(
+            device_id, query_name, [], 'failed',
+            platform=device_info.get('platform', 'unknown'),
+            error=str(exc), device_info=device_info,
+        )
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        _record_instant_execution(device_id, query_name, [], 'failed', platform=device_info.get('platform', 'unknown'), error=str(exc))
+        _record_instant_execution(
+            device_id, query_name, [], 'failed',
+            platform=device_info.get('platform', 'unknown'),
+            error=str(exc), device_info=device_info,
+        )
         raise HTTPException(status_code=500, detail=f'Operational data collection failed: {exc}')
 
 
@@ -1295,11 +1364,23 @@ def collect_device_parsed_command(device_id: str, payload: dict = Body(default={
 
     try:
         res = collect_custom_command_data(device_info, command=command, auth_role=auth_role)
-        _record_instant_execution(device_id, query_name, [command] if command else [], 'completed', platform=device_info.get('platform', 'unknown'))
+        _record_instant_execution(
+            device_id, query_name, [command] if command else [], 'completed',
+            platform=device_info.get('platform', 'unknown'),
+            result_payload=res, device_info=device_info,
+        )
         return res
     except ValueError as exc:
-        _record_instant_execution(device_id, query_name, [command] if command else [], 'failed', platform=device_info.get('platform', 'unknown'), error=str(exc))
+        _record_instant_execution(
+            device_id, query_name, [command] if command else [], 'failed',
+            platform=device_info.get('platform', 'unknown'),
+            error=str(exc), device_info=device_info,
+        )
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        _record_instant_execution(device_id, query_name, [command] if command else [], 'failed', platform=device_info.get('platform', 'unknown'), error=str(exc))
+        _record_instant_execution(
+            device_id, query_name, [command] if command else [], 'failed',
+            platform=device_info.get('platform', 'unknown'),
+            error=str(exc), device_info=device_info,
+        )
         raise HTTPException(status_code=500, detail=f'Parsed command execution failed: {exc}')

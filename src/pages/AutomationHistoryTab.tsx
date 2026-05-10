@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { Device } from '../types';
 import Pagination from '../components/Pagination';
+import OutputActions from '../components/OutputActions';
 
 type WsMessage = {
   type?: string;
@@ -632,37 +633,32 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                         {selectedDeviceDetail.duration_ms >= 1000 ? `${(selectedDeviceDetail.duration_ms / 1000).toFixed(2)} s` : `${selectedDeviceDetail.duration_ms} ms`}
                                       </span>
                                     )}
-                                    <button
-                                      onClick={() => {
-                                        if (!selectedDeviceDetail) return;
-                                        let logText = "";
-                                        try {
-                                          const phases = JSON.parse(selectedDeviceDetail.phases_json || '{}');
-                                          Object.entries(phases).forEach(([name, p]: [string, any]) => {
-                                            logText += `[PHASE: ${name.toUpperCase()}]\n`;
-                                            if (p.commands && Array.isArray(p.commands)) {
-                                              logText += p.commands.join('\n\n') + '\n\n';
-                                            } else if (p.output) {
-                                              logText += (typeof p.output === 'string' ? p.output : JSON.stringify(p.output, null, 2)) + '\n\n';
-                                            }
-                                          });
-                                        } catch (e) {
-                                          logText = selectedDeviceDetail.phases_json || "";
-                                        }
-                                        const blob = new Blob([logText], { type: 'text/plain' });
-                                        const url = URL.createObjectURL(blob);
-                                        const a = document.createElement('a');
-                                        a.href = url;
-                                        a.download = `log_${selectedDeviceDetail.hostname}_${new Date().toISOString().slice(0,10)}.txt`;
-                                        a.click();
-                                        URL.revokeObjectURL(url);
-                                      }}
-                                      className="p-1.5 rounded-lg text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-all flex items-center gap-1 shadow-sm border border-indigo-100"
-                                      title={isZh ? '下载此设备日志' : 'Download this log'}
-                                    >
-                                      <Download size={14} />
-                                      <span className="text-[9px] font-bold uppercase">{isZh ? '下载日志' : 'Download'}</span>
-                                    </button>
+                                    {(() => {
+                                      let logText = '';
+                                      try {
+                                        const phases = JSON.parse(selectedDeviceDetail.phases_json || '{}');
+                                        Object.entries(phases).forEach(([name, p]: [string, any]) => {
+                                          logText += `[PHASE: ${String(name).toUpperCase()}]\n`;
+                                          if (p?.commands && Array.isArray(p.commands) && p.commands.length > 0) {
+                                            logText += p.commands.map((c: string) => `> ${c}`).join('\n') + '\n';
+                                          }
+                                          if (p?.output) {
+                                            logText += (typeof p.output === 'string' ? p.output : JSON.stringify(p.output, null, 2)) + '\n';
+                                          }
+                                          logText += '\n';
+                                        });
+                                      } catch {
+                                        logText = selectedDeviceDetail.phases_json || '';
+                                      }
+                                      return (
+                                        <OutputActions
+                                          text={logText}
+                                          filename={`log_${selectedDeviceDetail.hostname || selectedDeviceDetail.device_id || 'device'}`}
+                                          theme="light"
+                                          zh={isZh}
+                                        />
+                                      );
+                                    })()}
                                   </div>
                                 </div>
 
@@ -723,49 +719,58 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                       )}
                                     </div>
                                     <div className="px-4 py-3 space-y-3">
-                                      {data?.commands && Array.isArray(data.commands) && data.commands.map((cmdOutput, idx) => {
-                                        const [copied, setCopied] = React.useState(false);
-                                        return (
-                                          <div key={idx} className="group/code relative">
-                                            <div className="absolute right-2 top-2 z-10 transition-opacity">
-                                              <button
-                                                onClick={() => {
-                                                  const textArea = document.createElement("textarea");
-                                                  textArea.value = cmdOutput;
-                                                  document.body.appendChild(textArea);
-                                                  textArea.select();
-                                                  try {
-                                                    document.execCommand('copy');
-                                                    setCopied(true);
-                                                    setTimeout(() => setCopied(false), 2000);
-                                                  } catch (err) {
-                                                    console.error('Copy failed', err);
-                                                  }
-                                                  document.body.removeChild(textArea);
-                                                }}
-                                                className={`p-1.5 rounded-md border transition-all shadow-sm ${
-                                                  copied 
-                                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-600' 
-                                                    : 'bg-white/80 backdrop-blur-sm border-black/10 text-black/40 hover:text-indigo-600 hover:border-indigo-200'
-                                                }`}
-                                                title={isZh ? '复制内容' : 'Copy output'}
-                                              >
-                                                {copied ? <Check size={12} /> : <Copy size={12} />}
-                                              </button>
-                                            </div>
-                                            <pre className="text-[11px] font-mono text-black/70 bg-black/[0.03] rounded-xl p-4 max-h-[500px] overflow-auto whitespace-pre-wrap border border-black/5">
-                                              {cmdOutput}
-                                            </pre>
-                                          </div>
-                                        );
-                                      })}
-                                      {(!data?.commands || data.commands.length === 0) && !data?.output && (
-                                        <p className="text-[10px] text-black/20 italic">{isZh ? '无输出' : 'No output'}</p>
+                                      {/* Show command names as labels */}
+                                      {data?.commands && Array.isArray(data.commands) && data.commands.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 mb-2">
+                                          {data.commands.map((cmd, idx) => (
+                                            <span key={idx} className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100">
+                                              {cmd}
+                                            </span>
+                                          ))}
+                                        </div>
                                       )}
-                                      {data?.output && !data?.commands && (
-                                        <pre className="text-[11px] font-mono text-black/60 bg-black/[0.02] rounded-lg p-3 max-h-48 overflow-auto whitespace-pre-wrap">
-                                          {typeof data.output === 'string' ? data.output : JSON.stringify(data.output, null, 2)}
-                                        </pre>
+                                      {/* Show output content */}
+                                      {data?.output && (
+                                        (() => {
+                                          const [copied, setCopied] = React.useState(false);
+                                          const outputStr = typeof data.output === 'string' ? data.output : JSON.stringify(data.output, null, 2);
+                                          return (
+                                            <div className="group/code relative">
+                                              <div className="absolute right-2 top-2 z-10 transition-opacity">
+                                                <button
+                                                  onClick={() => {
+                                                    const textArea = document.createElement("textarea");
+                                                    textArea.value = outputStr;
+                                                    document.body.appendChild(textArea);
+                                                    textArea.select();
+                                                    try {
+                                                      document.execCommand('copy');
+                                                      setCopied(true);
+                                                      setTimeout(() => setCopied(false), 2000);
+                                                    } catch (err) {
+                                                      console.error('Copy failed', err);
+                                                    }
+                                                    document.body.removeChild(textArea);
+                                                  }}
+                                                  className={`p-1.5 rounded-md border transition-all shadow-sm ${
+                                                    copied 
+                                                      ? 'bg-emerald-50 border-emerald-200 text-emerald-600' 
+                                                      : 'bg-white/80 backdrop-blur-sm border-black/10 text-black/40 hover:text-indigo-600 hover:border-indigo-200'
+                                                  }`}
+                                                  title={isZh ? '复制内容' : 'Copy output'}
+                                                >
+                                                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                                                </button>
+                                              </div>
+                                              <pre className="text-[11px] font-mono text-black/70 bg-black/[0.03] rounded-xl p-4 max-h-[500px] overflow-auto whitespace-pre-wrap border border-black/5">
+                                                {outputStr}
+                                              </pre>
+                                            </div>
+                                          );
+                                        })()
+                                      )}
+                                      {(!data?.output) && (!data?.commands || data.commands.length === 0) && (
+                                        <p className="text-[10px] text-black/20 italic">{isZh ? '无输出' : 'No output'}</p>
                                       )}
                                     </div>
                                   </div>

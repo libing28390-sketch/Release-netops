@@ -6,15 +6,130 @@ import 'xterm/css/xterm.css';
 interface TerminalWindowProps {
   sessionToken: string;
   hostname: string;
+  language?: string;
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 const WS_BASE = API_BASE.replace('http', 'ws');
 
-export default function TerminalWindow({ sessionToken, hostname }: TerminalWindowProps) {
+// Translate server-side error messages and WebSocket close reasons into
+// human-friendly guidance. Returns { title, detail, hint? } for rendering.
+function humanizeError(raw: string, isZh: boolean): { title: string; detail?: string; hint?: string } {
+  const s = String(raw || '').toLowerCase();
+  if (!s) {
+    return isZh ? { title: '连接出错' } : { title: 'Connection error' };
+  }
+  if (s.includes('invalid') && s.includes('token')) {
+    return isZh
+      ? {
+          title: '会话令牌无效或已过期',
+          detail: '令牌仅一次性有效（默认 5 分钟），或连接已在其他页面打开。',
+          hint: '请回到设备列表重新申请一个新会话再试。',
+        }
+      : {
+          title: 'Session token is invalid or expired',
+          detail: 'Session tokens are single-use and expire after 5 minutes, or the session is already open in another tab.',
+          hint: 'Please return to the device list and request a new session.',
+        };
+  }
+  if (s.includes('superseded')) {
+    return isZh
+      ? {
+          title: '该会话已在另一处接管',
+          detail: '同一个令牌被另一个连接使用，当前窗口已被自动关闭以保障审计合规。',
+          hint: '如需继续操作，请申请一个新会话。',
+        }
+      : {
+          title: 'This session was taken over elsewhere',
+          detail: 'The same token was consumed by another connection; this window was closed for audit integrity.',
+          hint: 'Request a new session to continue.',
+        };
+  }
+  if (s.includes('idle_timeout') || s.includes('idle timeout')) {
+    return isZh
+      ? {
+          title: '会话已因超过空闲时长被自动断开',
+          detail: '连续 5 分钟没有键盘输入，系统已按策略自动结束该会话。',
+          hint: '如需继续，请重新申请一个新会话。',
+        }
+      : {
+          title: 'Session auto-disconnected due to idle timeout',
+          detail: 'No keyboard input for 5 minutes; the session was ended by policy.',
+          hint: 'Request a new session to continue.',
+        };
+  }
+  if (s.includes('admin_kill') || s.includes('terminated by administrator')) {
+    return isZh
+      ? {
+          title: '会话已被管理员强制断开',
+          detail: '管理员在受控审计页面手动终止了该会话。',
+        }
+      : {
+          title: 'Session was force-terminated by an administrator',
+          detail: 'An administrator ended this session from the PAM audit page.',
+        };
+  }
+  if (s.includes('missing_credentials') || s.includes('missing ssh credentials')) {
+    return isZh
+      ? {
+          title: '凭据缺失',
+          detail: '无法找到该设备的登录账号或密码。',
+          hint: '请联系管理员在 PAM 凭据库中补齐账号信息。',
+        }
+      : {
+          title: 'Credentials missing',
+          detail: 'No login account or password is configured for this device.',
+          hint: 'Ask an administrator to populate the PAM credential vault.',
+        };
+  }
+  if (s.includes('ssh_error') || s.includes('ssh connection failed') || s.includes('authentication failed')) {
+    return isZh
+      ? {
+          title: 'SSH 连接失败',
+          detail: raw,
+          hint: '请确认设备在线、账号密码正确，并检查目标端口（默认 22）是否可达。',
+        }
+      : {
+          title: 'SSH connection failed',
+          detail: raw,
+          hint: 'Verify the device is online, credentials are correct, and port 22 is reachable.',
+        };
+  }
+  return { title: raw };
+}
+
+// Human-friendly mapping for WebSocket close codes.
+function explainClose(code: number, reason: string, isZh: boolean): { title: string; detail?: string } {
+  const reasonLower = reason.toLowerCase();
+  if (reasonLower.includes('superseded')) {
+    return humanizeError('superseded', isZh);
+  }
+  if (code === 1000) {
+    return isZh
+      ? { title: '会话已正常结束', detail: reason || undefined }
+      : { title: 'Session ended normally', detail: reason || undefined };
+  }
+  if (code === 1008) {
+    return humanizeError(reason || 'invalid token', isZh);
+  }
+  if (code === 1011) {
+    return humanizeError(reason || 'ssh_error', isZh);
+  }
+  if (code === 1006) {
+    return isZh
+      ? { title: '与网关失去连接', detail: '浏览器、代理或后端进程可能已异常关闭。' }
+      : { title: 'Lost connection to the gateway', detail: 'The browser, proxy, or backend process may have closed unexpectedly.' };
+  }
+  return isZh
+    ? { title: `会话已关闭 (代码 ${code})`, detail: reason || undefined }
+    : { title: `Session closed (code ${code})`, detail: reason || undefined };
+}
+
+export default function TerminalWindow({ sessionToken, hostname, language }: TerminalWindowProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const isZh = (language || 'zh') === 'zh';
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -78,7 +193,23 @@ export default function TerminalWindow({ sessionToken, hostname }: TerminalWindo
       }
     };
 
-    term.writeln(`\x1b[1;36m>>> Connecting to ${hostname}...\x1b[0m`);
+    term.writeln(`\x1b[1;36m>>> ${isZh ? '正在连接' : 'Connecting to'} ${hostname}...\x1b[0m`);
+
+    // Render a multi-line error card into the xterm terminal using ANSI colors.
+    const writeErrorCard = (kind: 'error' | 'warning' | 'info', title: string, detail?: string, hint?: string) => {
+      const color = kind === 'error' ? '\x1b[1;31m' : kind === 'warning' ? '\x1b[1;33m' : '\x1b[1;36m';
+      const icon = kind === 'error' ? '✗' : kind === 'warning' ? '⚠' : 'ℹ';
+      term.writeln('');
+      term.writeln(`${color}${'─'.repeat(60)}\x1b[0m`);
+      term.writeln(`${color}${icon} ${title}\x1b[0m`);
+      if (detail) {
+        term.writeln(`\x1b[37m  ${detail}\x1b[0m`);
+      }
+      if (hint) {
+        term.writeln(`\x1b[36m  ${isZh ? '建议' : 'Hint'}: ${hint}\x1b[0m`);
+      }
+      term.writeln(`${color}${'─'.repeat(60)}\x1b[0m`);
+    };
 
     // 2. Establish WebSocket
     const wsUrl = `${WS_BASE}/api/pam/ws/${sessionToken}`;
@@ -96,8 +227,13 @@ export default function TerminalWindow({ sessionToken, hostname }: TerminalWindo
         const msg = JSON.parse(event.data);
         if (msg.type === 'output') {
           term.write(msg.data);
+        } else if (msg.type === 'notice') {
+          // Backend emits human-readable terminal notices (e.g. idle warning, timeout).
+          // The message is already ANSI-colored; just forward it.
+          if (msg.message) term.write(msg.message);
         } else if (msg.type === 'error') {
-          term.writeln(`\r\n\x1b[1;31m[ERROR] ${msg.message}\x1b[0m`);
+          const h = humanizeError(msg.message || '', isZh);
+          writeErrorCard('error', h.title, h.detail, h.hint);
         }
       } catch (err) {
         console.error('Failed to parse WS message', err);
@@ -105,13 +241,19 @@ export default function TerminalWindow({ sessionToken, hostname }: TerminalWindo
     };
 
     ws.onerror = (err) => {
-      term.writeln(`\r\n\x1b[1;31m[WebSocket Error] Failed to connect to gateway.\x1b[0m`);
+      writeErrorCard(
+        'error',
+        isZh ? '无法连接到受控网关' : 'Unable to reach the controlled gateway',
+        isZh ? '请检查网络连接或代理配置，然后重试。' : 'Check your network connection or proxy settings, then retry.'
+      );
       console.error('WS Error:', err);
     };
 
     ws.onclose = (event) => {
-      const reason = event.reason ? `: ${event.reason}` : '';
-      term.writeln(`\r\n\x1b[1;33m[Disconnected] Session closed${reason} (Code: ${event.code})\x1b[0m`);
+      const h = explainClose(event.code, event.reason || '', isZh);
+      // Friendly-close codes render as info/warning; 1011/1008 stay as error.
+      const kind = event.code === 1000 ? 'info' : (event.code === 1008 || event.code === 1011 || event.code === 1006) ? 'error' : 'warning';
+      writeErrorCard(kind, h.title, h.detail);
     };
 
     // 3. Handle Input

@@ -3327,8 +3327,8 @@ async def _save_device_result_to_db(
                  completed_at=excluded.completed_at, duration_ms=excluded.duration_ms''',
             (
                 str(uuid.uuid4()), execution_id, device_id,
-                device.get('hostname', device_id),
-                device.get('ip_address', ''),
+                device.get('hostname') or device_id,
+                device.get('ip_address') or device.get('ip') or '',
                 device_result.get('status', 'success'),
                 device_result.get('error', ''),
                 json.dumps(device_result.get('phases', {})),
@@ -3473,7 +3473,19 @@ async def _run_playbook(
                             "type": "phase_start", "device_id": device_id,
                             "phase": "execute", "commands": exec_cmds,
                         })
-                        exec_output = await _exec_commands(service, device, exec_cmds, is_config=True)
+                        # Determine if commands need config mode.
+                        # Show/display/ping commands are exec-mode only; config commands
+                        # (interface, vlan, router, etc.) need config mode.
+                        _show_prefixes = (
+                            'show ', 'display ', 'ping ', 'traceroute ', 'tracert ',
+                            'dir ', 'more ', 'terminal ', 'debug ', 'undebug ',
+                        )
+                        _needs_config = not all(
+                            any(cmd.lower().strip().startswith(p) for p in _show_prefixes)
+                            for cmd in exec_cmds
+                            if cmd.strip()
+                        )
+                        exec_output = await _exec_commands(service, device, exec_cmds, is_config=_needs_config)
                         device_result["phases"]["execute"] = exec_output
                         await ws_manager.emit(execution_id, {
                             "type": "phase_done", "device_id": device_id,

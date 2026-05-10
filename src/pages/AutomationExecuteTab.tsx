@@ -39,6 +39,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { Device, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
 import TagFilterDropdown from '../components/TagFilterDropdown';
+import OutputActions from '../components/OutputActions';
 
 /* ─────────── Types ─────────── */
 interface ScenarioVariable {
@@ -585,7 +586,12 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
       { icon: '🏥', label: '设备信息', labelEn: 'Version', group: 'sys', scope: 'all', cmds: isCisco ? 'show version' : isHuawei ? 'display version' : isJuniper ? 'show version' : 'uname -a || show version' },
       { icon: '🔋', label: '电源风扇', labelEn: 'Environment', group: 'sys', scope: 'all', cmds: isCisco ? 'show environment' : isHuawei ? 'display environment' : isJuniper ? 'show chassis environment' : 'sensors || cat /proc/acpi/thermal_zone/*/temperature' },
       { icon: '📝', label: '日志概览', labelEn: 'Logs', group: 'sys', scope: 'all', cmds: isCisco ? 'show logging | tail 30' : isHuawei ? 'display logbuffer last 30' : isJuniper ? 'show log messages | last 30' : 'dmesg | tail -n 30' },
-      { icon: '💾', label: '运行配置', labelEn: 'Running Config', group: 'sys', scope: 'network', cmds: isCisco ? 'show running-config' : isHuawei ? 'display current-configuration' : isJuniper ? 'show configuration' : 'show running-config' },
+      // NOTE: 运行配置 (show running-config) removed — requires privileged exec
+      // on most platforms. Use the approved Change Center workflow or a PAM
+      // session with admin role to collect the full running-config.
+      // Interface-level snippets that work at user-exec level:
+      { icon: '🧩', label: '接口配置', labelEn: 'Intf Config', group: 'sys', scope: 'network', cmds: isCisco ? 'show interfaces description\nshow interfaces status' : isHuawei ? 'display interface description' : isJuniper ? 'show interfaces descriptions' : 'show interfaces description' },
+      { icon: '🕒', label: '系统运行时间', labelEn: 'Uptime', group: 'sys', scope: 'all', cmds: isCisco ? 'show version | include uptime' : isHuawei ? 'display version | include uptime' : isJuniper ? 'show system uptime' : 'uptime' },
     ];
 
     // Load user saved queries from reactive state
@@ -2355,9 +2361,9 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
               ) : quickQueryStructured && quickQueryView === 'table' ? (
                 <div className="p-5 space-y-4">
                   <div className="flex items-center justify-between gap-3 border-b border-white/[0.04] pb-3">
-                    <div className="flex items-center gap-4">
-                      <div>
-                        <p className="text-[12px] font-bold text-white/90">{quickQueryLabel}</p>
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="min-w-0">
+                        <p className="text-[12px] font-bold text-white/90 truncate">{quickQueryLabel}</p>
                         <p className="mt-1 text-[10px] text-white/35">{quickQueryTable.category?.parser || 'ntc-templates'} · {isZh ? '记录数' : 'Records'} {filteredQuickQueryRecords.length} / {Number(quickQueryTable.category?.count || 0)}</p>
                       </div>
                       <div className="relative">
@@ -2379,9 +2385,18 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                         )}
                       </div>
                     </div>
-                    {quickQueryTable.category?.parse_errors?.length > 0 && (
-                      <span className="rounded-full bg-amber-500/12 px-2 py-1 text-[10px] font-bold uppercase text-amber-300">{isZh ? '部分回退' : 'Partial Fallback'}</span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {quickQueryTable.category?.parse_errors?.length > 0 && (
+                        <span className="rounded-full bg-amber-500/12 px-2 py-1 text-[10px] font-bold uppercase text-amber-300">{isZh ? '部分回退' : 'Partial Fallback'}</span>
+                      )}
+                      <OutputActions
+                        text={quickQueryOutput}
+                        csvRows={filteredQuickQueryRecords as Array<Record<string, unknown>>}
+                        filename={`${(quickQueryLabel || 'query').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40) || 'query'}`}
+                        theme="dark"
+                        zh={isZh}
+                      />
+                    </div>
                   </div>
                   {quickQueryTable.records.length > 0 ? (
                     <div className={quickQueryMaximized ? 'overflow-auto rounded-xl border border-white/[0.06] bg-black/20 max-h-[calc(84vh-12rem)]' : 'overflow-auto rounded-xl border border-white/[0.06] bg-black/20 min-h-[24rem] max-h-[58vh]'}>
@@ -2427,25 +2442,20 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
                 </div>
               ) : (
                 <div className="p-5 relative group/output">
-                  <div className="mb-3 flex items-start gap-2 border-b border-white/[0.04] pb-3">
-                    <span className="text-emerald-400/60 font-mono font-bold text-[11px] mt-0.5 select-none shrink-0">❯</span>
-                    <code className="text-[11px] font-mono text-emerald-400/40 leading-relaxed whitespace-pre-wrap">{quickQueryLabel}</code>
+                  <div className="mb-3 flex items-start justify-between gap-2 border-b border-white/[0.04] pb-3">
+                    <div className="flex items-start gap-2 flex-1 min-w-0">
+                      <span className="text-emerald-400/60 font-mono font-bold text-[11px] mt-0.5 select-none shrink-0">❯</span>
+                      <code className="text-[11px] font-mono text-emerald-400/40 leading-relaxed whitespace-pre-wrap break-all">{quickQueryLabel}</code>
+                    </div>
+                    {quickQueryOutput && (
+                      <OutputActions
+                        text={quickQueryOutput}
+                        filename={`${(quickQueryLabel || 'query').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40) || 'query'}`}
+                        theme="dark"
+                        zh={isZh}
+                      />
+                    )}
                   </div>
-                  
-                  {/* GitHub-style Copy Button */}
-                  {quickQueryOutput && (
-                    <button
-                      onClick={async () => {
-                        const ok = await copyTextWithFallback(quickQueryOutput);
-                        showToast(ok ? (isZh ? '结果已复制' : 'Copied') : (isZh ? '复制失败' : 'Failed'), ok ? 'success' : 'error');
-                      }}
-                      className="absolute top-4 right-4 p-2 rounded-lg bg-white/5 border border-white/10 text-white/40 hover:text-white hover:bg-white/10 opacity-0 group-hover/output:opacity-100 transition-all z-10"
-                      title={isZh ? '复制结果' : 'Copy output'}
-                    >
-                      <Copy size={14} />
-                    </button>
-                  )}
-                  
                   <pre className="text-[13px] font-mono text-[#e6edf3] leading-[1.75] whitespace-pre-wrap break-all select-text">{quickQueryOutput}</pre>
                 </div>
               )}

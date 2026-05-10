@@ -19,6 +19,7 @@ import {
   Timer
 } from 'lucide-react';
 import CastPlayer from '../components/access/CastPlayer';
+import Pagination from '../components/Pagination';
 
 interface PAMSession {
   id: string;
@@ -55,6 +56,12 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const [searchQuery, setSearchQuery] = useState('');
   const [showPlayback, setShowPlayback] = useState(false);
   const [selectedSession, setSelectedSession] = useState<PAMSession | null>(null);
+  // Kill confirmation modal
+  const [killTarget, setKillTarget] = useState<PAMSession | null>(null);
+  const [isKilling, setIsKilling] = useState(false);
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const fetchSessions = useCallback(async () => {
     setLoading(true);
@@ -84,16 +91,48 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
     }
   }, [activeTab, fetchSessions]);
 
-  const handleKill = async (sessionId: string) => {
-    if (!window.confirm(isZh ? '确定要强制断开此会话吗？' : 'Are you sure you want to terminate this session?')) return;
+  // ESC to dismiss kill confirmation modal
+  useEffect(() => {
+    if (!killTarget) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isKilling) {
+        e.preventDefault();
+        setKillTarget(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [killTarget, isKilling]);
+
+  const confirmKill = async () => {
+    if (!killTarget) return;
+    setIsKilling(true);
     try {
-      const res = await fetch(`/api/pam/sessions/${sessionId}/kill`, { method: 'POST' });
+      const res = await fetch(`/api/pam/sessions/${killTarget.id}/kill`, { method: 'POST' });
       if (res.ok) {
         showToast(isZh ? '会话已终止' : 'Session terminated', 'success');
         fetchSessions();
+      } else {
+        let detail = '';
+        try {
+          const body = await res.json();
+          detail = body?.detail || body?.message || '';
+        } catch {
+          try { detail = await res.text(); } catch { /* ignore */ }
+        }
+        showToast(
+          (isZh ? '操作失败' : 'Action failed') + (detail ? `: ${detail}` : ` (HTTP ${res.status})`),
+          'error'
+        );
       }
     } catch (err) {
-      showToast('Action failed', 'error');
+      showToast(
+        (isZh ? '网络错误' : 'Network error') + `: ${err instanceof Error ? err.message : String(err)}`,
+        'error'
+      );
+    } finally {
+      setIsKilling(false);
+      setKillTarget(null);
     }
   };
 
@@ -129,6 +168,19 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
       (s.target_ip || '').includes(q)
     );
   });
+
+  // Reset to first page whenever filter or tab changes
+  useEffect(() => {
+    setPage(1);
+  }, [activeTab, searchQuery]);
+
+  // Clamp page if total items shrink
+  const totalPages = Math.max(1, Math.ceil(filteredSessions.length / pageSize));
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const paginatedSessions = filteredSessions.slice((page - 1) * pageSize, page * pageSize);
 
   const activeCnt  = sessions.filter(s => s.status === 'active' || s.status === 'connecting').length;
   const historyCnt = sessions.filter(s => !['active', 'connecting'].includes(s.status)).length;
@@ -256,7 +308,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
                       {isZh ? '加载中...' : 'Loading...'}
                     </td>
                   </tr>
-                ) : filteredSessions.map(s => {
+                ) : paginatedSessions.map(s => {
                   const cfg = STATUS_CONFIG[s.status] || STATUS_CONFIG.closed;
                   const isActive = s.status === 'active' || s.status === 'connecting';
                   return (
@@ -339,7 +391,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           {isActive ? (
                             <button
-                              onClick={() => handleKill(s.id)}
+                              onClick={() => setKillTarget(s)}
                               className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
                               title={isZh ? '强制切断' : 'Kill Session'}
                             >
@@ -382,20 +434,26 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
           )}
         </div>
 
-        {/* Summary bar */}
+        {/* Pagination (matching style used across the app) */}
         {filteredSessions.length > 0 && (
-          <div className="mt-3 flex items-center justify-between text-xs text-slate-400 px-1">
-            <span>
-              {isZh
-                ? `共 ${filteredSessions.length} 条记录${searchQuery ? `（已过滤）` : ''}`
-                : `${filteredSessions.length} session${filteredSessions.length !== 1 ? 's' : ''}${searchQuery ? ' (filtered)' : ''}`}
+          <div className="mt-4 rounded-2xl bg-white border border-slate-200 overflow-hidden">
+            <Pagination
+              currentPage={page}
+              totalItems={filteredSessions.length}
+              onPageChange={setPage}
+              itemsPerPage={pageSize}
+              onItemsPerPageChange={(n) => { setPageSize(n); setPage(1); }}
+              language={language}
+            />
+          </div>
+        )}
+
+        {activeTab === 'active' && filteredSessions.length > 0 && (
+          <div className="mt-2 flex items-center justify-end text-[11px] text-slate-400 px-2">
+            <span className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              {isZh ? '每 8 秒自动刷新' : 'Auto-refresh every 8s'}
             </span>
-            {activeTab === 'active' && (
-              <span className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                {isZh ? '每 8 秒自动刷新' : 'Auto-refresh every 8s'}
-              </span>
-            )}
           </div>
         )}
       </div>
@@ -418,6 +476,98 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
           }}
           isZh={isZh}
         />
+      )}
+
+      {/* ── Kill Session Confirmation Modal ── */}
+      {killTarget && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => !isKilling && setKillTarget(null)}
+          />
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden border border-rose-100">
+            {/* Warning header */}
+            <div className="bg-gradient-to-r from-rose-500 to-red-600 px-6 py-4 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                <AlertCircle className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">
+                  {isZh ? '强制断开会话' : 'Terminate Session'}
+                </h3>
+                <p className="text-xs text-rose-100 mt-0.5">
+                  {isZh ? '此操作不可撤销' : 'This action cannot be undone'}
+                </p>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-4">
+              <p className="text-sm text-slate-700 leading-relaxed">
+                {isZh
+                  ? '确定要强制断开以下会话吗？用户当前的操作将被立即中断，已执行的命令不会回滚。'
+                  : 'Are you sure you want to terminate the following session? The user\'s current operation will be interrupted immediately. Executed commands cannot be rolled back.'}
+              </p>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2 text-xs">
+                <div className="flex items-start justify-between gap-4">
+                  <span className="text-slate-400 font-medium">{isZh ? '目标设备' : 'Device'}</span>
+                  <span className="font-mono font-bold text-slate-700 text-right truncate">
+                    {killTarget.asset_hostname || killTarget.target_ip}
+                  </span>
+                </div>
+                <div className="flex items-start justify-between gap-4">
+                  <span className="text-slate-400 font-medium">{isZh ? 'IP 地址' : 'IP Address'}</span>
+                  <span className="font-mono text-slate-600">{killTarget.target_ip}</span>
+                </div>
+                <div className="flex items-start justify-between gap-4">
+                  <span className="text-slate-400 font-medium">{isZh ? '登录账号' : 'Login User'}</span>
+                  <span className="font-mono text-slate-600">{killTarget.login_username}</span>
+                </div>
+                <div className="flex items-start justify-between gap-4">
+                  <span className="text-slate-400 font-medium">{isZh ? '请求者' : 'Requester'}</span>
+                  <span className="font-mono text-slate-600">{killTarget.requester_username}</span>
+                </div>
+                <div className="flex items-start justify-between gap-4">
+                  <span className="text-slate-400 font-medium">{isZh ? '权限级别' : 'Access Level'}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    killTarget.access_level === 'admin' ? 'bg-amber-100 text-amber-700' : 'bg-cyan-100 text-cyan-700'
+                  }`}>
+                    {killTarget.access_level.toUpperCase()}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setKillTarget(null)}
+                disabled={isKilling}
+                className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {isZh ? '取消' : 'Cancel'}
+              </button>
+              <button
+                onClick={confirmKill}
+                disabled={isKilling}
+                className="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 rounded-lg shadow-md shadow-rose-500/30 transition-all disabled:opacity-50 flex items-center gap-2"
+              >
+                {isKilling ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    {isZh ? '断开中...' : 'Terminating...'}
+                  </>
+                ) : (
+                  <>
+                    <StopCircle className="w-4 h-4" />
+                    {isZh ? '确认强制断开' : 'Confirm Terminate'}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

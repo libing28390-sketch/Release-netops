@@ -32,8 +32,12 @@ from services.audit_service import log_audit_event
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Track active WebSocket sessions for admin kill
-_active_sessions: dict[str, WebSocket] = {}
+# Track active WebSocket sessions for admin kill.
+# Value shape: { 'ws': WebSocket, 'loop': asyncio.AbstractEventLoop }
+# The loop reference lets us schedule close operations safely from any thread
+# (FastAPI may run sync handlers on AnyIO worker threads where there is no
+# current event loop).
+_active_sessions: dict[str, dict] = {}
 
 # In-memory storage for MFA codes
 mfa_store: dict[str, dict] = {}
@@ -41,6 +45,41 @@ mfa_store: dict[str, dict] = {}
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+
+
+def recover_stale_sessions_on_startup():
+    """
+    One-time recovery at server startup: close sessions that were left
+    in 'connecting' or 'active' state from a previous server instance.
+    This is safe because at startup, no WebSocket connections exist yet.
+    """
+    conn = get_db_connection()
+    try:
+        now = _utc_now()
+        orphaned = conn.execute(
+            "SELECT id, connected_at FROM pam_sessions WHERE status IN ('connecting', 'active')"
+        ).fetchall()
+        for orphan in orphaned:
+            oid = orphan['id']
+            duration = 0
+            if orphan['connected_at']:
+                try:
+                    start = datetime.fromisoformat(orphan['connected_at'].replace('Z', '+00:00'))
+                    duration = int((datetime.now(timezone.utc) - start).total_seconds())
+                except Exception:
+                    pass
+            conn.execute(
+                "UPDATE pam_sessions SET status='closed', closed_at=?, close_reason='server_restart', "
+                "duration_seconds=?, updated_at=? WHERE id=?",
+                (now, duration, now, oid),
+            )
+        if orphaned:
+            conn.commit()
+            logger.info(f"[PAM] Recovered {len(orphaned)} stale session(s) from previous server instance")
+    except Exception as e:
+        logger.warning(f"[PAM] Stale session recovery error: {e}")
+    finally:
+        conn.close()
 
 
 # ── Models ───────────────────────────────────────────────────────────
@@ -283,39 +322,20 @@ def list_sessions(
     """List PAM sessions for admin monitoring."""
     conn = get_db_connection()
     try:
-        # ── Stale-session recovery ──────────────────────────────────────
-        # Sessions stuck in 'connecting' or 'active' but no longer in the
-        # in-memory WebSocket map are orphaned (e.g. after a server restart).
-        # Mark them as 'closed' so they appear in history correctly.
-        now = _utc_now()
-        orphaned = conn.execute(
-            "SELECT id, connected_at FROM pam_sessions WHERE status IN ('connecting', 'active')"
-        ).fetchall()
-        for orphan in orphaned:
-            oid = orphan['id']
-            if oid not in _active_sessions:
-                # Calculate duration if we have a connected_at timestamp
-                duration = 0
-                if orphan['connected_at']:
-                    try:
-                        start = datetime.fromisoformat(orphan['connected_at'].replace('Z', '+00:00'))
-                        duration = int((datetime.now(timezone.utc) - start).total_seconds())
-                    except Exception:
-                        pass
-                conn.execute(
-                    "UPDATE pam_sessions SET status='closed', closed_at=?, close_reason='server_restart', "
-                    "duration_seconds=?, updated_at=? WHERE id=?",
-                    (now, duration, now, oid),
-                )
-        if orphaned:
-            conn.commit()
+        # NOTE: Stale-session recovery has been moved to server startup
+        # (_recover_stale_sessions_on_startup). We no longer close sessions
+        # during list queries because the in-memory _active_sessions dict
+        # is unreliable for detecting truly active sessions (e.g. after
+        # server restart, or when WebSocket is on a different worker).
+        # Sessions are only closed by:
+        #   1. WebSocket disconnect (normal flow)
+        #   2. Admin kill
+        #   3. One-time startup recovery (for sessions orphaned by crash)
         # ────────────────────────────────────────────────────────────────
 
         conditions = []
         params = []
         if status:
-            # 'active' tab: show sessions that are currently live in memory
-            # (status = active OR connecting with a live WS)
             if status.strip().lower() == 'active':
                 conditions.append("status IN ('active', 'connecting')")
             else:
@@ -358,7 +378,7 @@ def list_sessions(
 
 
 @router.post('/pam/sessions/{session_id}/kill')
-def kill_session(session_id: str):
+async def kill_session(session_id: str):
     """Admin force-terminate an active session."""
     conn = get_db_connection()
     try:
@@ -366,6 +386,8 @@ def kill_session(session_id: str):
         if not row:
             raise HTTPException(status_code=404, detail='Session not found')
         if row['status'] in ('closed', 'error'):
+            # Still pop from memory map in case of leftover WS
+            _active_sessions.pop(session_id, None)
             return {'ok': True, 'message': 'Session already closed'}
 
         now = _utc_now()
@@ -375,10 +397,23 @@ def kill_session(session_id: str):
         )
         conn.commit()
 
-        # Close WebSocket if still active
-        ws = _active_sessions.pop(session_id, None)
-        if ws:
-            asyncio.get_event_loop().create_task(_safe_close_ws(ws))
+        # Close WebSocket if still active. Use the event loop we captured
+        # when the WS was established so this works regardless of which
+        # thread FastAPI chose to run the handler on.
+        entry = _active_sessions.pop(session_id, None)
+        if entry:
+            ws = entry.get('ws') if isinstance(entry, dict) else entry
+            loop = entry.get('loop') if isinstance(entry, dict) else None
+            if ws is not None:
+                try:
+                    if loop is not None and loop.is_running():
+                        # Thread-safe schedule on the WebSocket's event loop.
+                        asyncio.run_coroutine_threadsafe(_safe_close_ws(ws), loop)
+                    else:
+                        # Last resort: try the current running loop (we are async).
+                        asyncio.create_task(_safe_close_ws(ws))
+                except Exception as close_err:
+                    logger.warning(f"[PAM] kill_session: failed to schedule WS close for {session_id}: {close_err}")
 
         log_audit_event(
             event_type='pam.session.killed',
@@ -482,6 +517,20 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
     session_id = session['id']
     await websocket.accept()
 
+    # Previous-instance takeover:
+    # If there's an existing WebSocket for this session_id (e.g. from a prior
+    # connection attempt that the proxy aborted before FastAPI noticed), gracefully
+    # close it so this fresh WS becomes the live one. Rejecting the new WS breaks
+    # legitimate first-time connections behind flaky proxies.
+    prev_entry = _active_sessions.pop(session_id, None)
+    if prev_entry is not None:
+        prev_ws = prev_entry.get('ws') if isinstance(prev_entry, dict) else prev_entry
+        if prev_ws is not None and prev_ws is not websocket:
+            try:
+                await prev_ws.close(code=1000, reason='Superseded by new connection')
+            except Exception:
+                pass
+
     # 2. Resolve credentials (INTERNAL)
     conn = get_db_connection()
     try:
@@ -562,7 +611,12 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
         recording_path = ""
 
     _update_session_status(session_id, 'active', recording_path=recording_path)
-    _active_sessions[session_id] = websocket
+    # Store both the WS and the running loop so kill_session can schedule
+    # close operations from any thread.
+    _active_sessions[session_id] = {
+        'ws': websocket,
+        'loop': asyncio.get_running_loop(),
+    }
 
     log_audit_event(
         event_type='pam.session.connected',
@@ -578,12 +632,16 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
 
     # 6. IO relay
     close_reason = 'user_disconnect'
+    # Track last user activity (keyboard input) for idle timeout enforcement
+    last_activity_ts = [time.time()]
+    IDLE_TIMEOUT_SECONDS = 5 * 60  # 5 minutes
     try:
         async def upstream():
             """WebSocket → SSH stdin"""
             async for message in websocket.iter_text():
                 data = json.loads(message)
                 if data.get('type') == 'input':
+                    last_activity_ts[0] = time.time()
                     ssh_proc.stdin.write(data['data'].encode('utf-8'))
                     await ssh_proc.stdin.drain()
                 elif data.get('type') == 'resize':
@@ -601,8 +659,13 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
                         # CRITICAL: output is bytes, must decode for JSON
                         output_str = output_bytes.decode('utf-8', errors='replace')
                         
-                        # Relay to UI
-                        await websocket.send_text(json.dumps({'type': 'output', 'data': output_str}))
+                        # Relay to UI — if WebSocket send fails, the session
+                        # is truly dead (client disconnected). Break out.
+                        try:
+                            await websocket.send_text(json.dumps({'type': 'output', 'data': output_str}))
+                        except Exception as ws_err:
+                            logger.info(f"[PAM] WebSocket send failed for session {session_id}, client disconnected: {ws_err}")
+                            break
                         
                         # Record to file (Asciinema format)
                         if recording_path:
@@ -613,14 +676,60 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
                                     f.write(json.dumps(entry) + "\n")
                             except Exception:
                                 pass
+                    else:
+                        # read returned empty bytes but not EOF — brief pause
+                        await asyncio.sleep(0.05)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
-                    logger.error(f"[PAM] Downstream error for session {session_id}: {e}")
+                    # SSH read error — connection truly broken
+                    logger.error(f"[PAM] SSH read error for session {session_id}: {e}")
                     break
                 await asyncio.sleep(0.01)
             logger.info(f"[PAM] Downstream loop exited for session {session_id} (EOF={ssh_proc.stdout.at_eof()})")
 
-        tasks = [asyncio.create_task(upstream()), asyncio.create_task(downstream())]
+        async def idle_watchdog():
+            """Disconnect the session after IDLE_TIMEOUT_SECONDS of no keyboard input."""
+            warned = False
+            while True:
+                await asyncio.sleep(10)
+                idle_seconds = time.time() - last_activity_ts[0]
+                # Warn the user 60s before timeout so they can save their work
+                if not warned and idle_seconds >= (IDLE_TIMEOUT_SECONDS - 60):
+                    try:
+                        await websocket.send_text(json.dumps({
+                            'type': 'notice',
+                            'level': 'warning',
+                            'message': (
+                                '\r\n\x1b[33m[系统提示] 会话已空闲 4 分钟，1 分钟内无操作将被自动断开。\x1b[0m\r\n'
+                            ),
+                        }))
+                    except Exception:
+                        pass
+                    warned = True
+                if idle_seconds >= IDLE_TIMEOUT_SECONDS:
+                    try:
+                        await websocket.send_text(json.dumps({
+                            'type': 'notice',
+                            'level': 'error',
+                            'message': '\r\n\x1b[31m[系统提示] 会话空闲超时（5 分钟），已自动断开。\x1b[0m\r\n',
+                        }))
+                    except Exception:
+                        pass
+                    logger.info(f"[PAM] Session {session_id} idle timeout ({IDLE_TIMEOUT_SECONDS}s), disconnecting")
+                    return  # Triggers FIRST_COMPLETED → full cleanup
+
+        tasks = [
+            asyncio.create_task(upstream()),
+            asyncio.create_task(downstream()),
+            asyncio.create_task(_session_heartbeat(session_id)),
+            asyncio.create_task(idle_watchdog()),
+        ]
         _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        # Detect which task finished first to set a meaningful close reason
+        finished_via_idle = any(t for t in tasks if t.done() and t.get_coro().__name__ == 'idle_watchdog')
+        if finished_via_idle:
+            close_reason = 'idle_timeout'
         for t in pending:
             t.cancel()
         if pending:
@@ -658,6 +767,25 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
             target_id=session_id,
             device_id=session['device_id'],
         )
+
+
+async def _session_heartbeat(session_id: str):
+    """Periodically update updated_at so stale-session recovery doesn't close active sessions."""
+    try:
+        while True:
+            await asyncio.sleep(60)  # Update every 60 seconds
+            try:
+                conn = get_db_connection()
+                conn.execute(
+                    "UPDATE pam_sessions SET updated_at=? WHERE id=? AND status='active'",
+                    (_utc_now(), session_id),
+                )
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
+    except asyncio.CancelledError:
+        pass
 
 
 def _update_session_status(session_id: str, status: str, close_reason: str = '', recording_path: str = ''):

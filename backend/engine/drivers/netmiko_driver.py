@@ -36,18 +36,40 @@ class NetmikoDriver(BaseDriver):
             self.conn = existing
             return
 
+        # Resolve enable secret: explicit field → admin password → login password
+        # For accounts with privilege 15, enable() is a no-op but Netmiko still
+        # needs a secret set so it can call enable() to confirm the '#' prompt.
+        from core.crypto import decrypt_credential as _dec
+        enable_pwd = (
+            _dec(self.device_info.get('enable_password') or '') or
+            self.device_info.get('enable_password') or  # already plaintext
+            _dec(self.device_info.get('admin_password') or '') or
+            self.password  # last resort: use login password
+        )
+
         device_params = {
             'device_type': self.device_type,
             'host': self.ip,
             'username': self.username,
             'password': self.password,
             'port': self.port,
-            'secret': self.secret,
+            'secret': enable_pwd or self.password,
             'timeout': 15,
         }
         self.conn = ConnectHandler(**device_params)
-        if self.secret:
-            self.conn.enable()
+        # Always call enable() for Cisco devices so Netmiko's internal state
+        # is set to privilege exec ('#'). For privilege-15 accounts this is a
+        # no-op; for privilege-1 accounts it uses the secret to elevate.
+        # If enable() fails (wrong secret or account lacks privilege), we
+        # continue anyway — show commands work fine at '>' level.
+        if self.device_type in ('cisco_ios', 'cisco_nxos', 'cisco_iosxr'):
+            try:
+                self.conn.enable()
+            except Exception:
+                # enable() failed — stay at '>' level.
+                # Query commands (show, display, ping) work fine without enable.
+                # Config commands will fail later if the account lacks privilege.
+                pass
         
         pool.set_connection(self.device_info, self.conn)
 

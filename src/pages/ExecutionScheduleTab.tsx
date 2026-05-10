@@ -6,6 +6,7 @@ import {
   Eye, Download, Search
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
+import OutputActions from '../components/OutputActions';
 import DateTimePicker from '../components/DateTimePicker';
 import type { Device } from '../types';
 
@@ -255,6 +256,20 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   useEffect(() => {
     setInspRunPage(1);
   }, [executionTypeFilter, unifiedLogs.length]);
+
+  // ESC to close the execution detail modal and the schedule detail modal
+  useEffect(() => {
+    if (!isDetailModalOpen && !showScheduleDetail) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (isDetailModalOpen) setIsDetailModalOpen(false);
+        if (showScheduleDetail) setShowScheduleDetail(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isDetailModalOpen, showScheduleDetail]);
 
   const paginatedLogs = useMemo(() => {
     const start = (inspRunPage - 1) * inspRunPageSize;
@@ -1289,10 +1304,14 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                     {pbDevices.map((dev) => {
                       const stMap: Record<string, { cls: string; label: string }> = {
                         success: { cls: 'bg-emerald-500', label: zh ? '成功' : 'Pass' },
+                        completed: { cls: 'bg-emerald-500', label: zh ? '成功' : 'Pass' },
                         failed: { cls: 'bg-red-500', label: zh ? '失败' : 'Fail' },
+                        error: { cls: 'bg-red-500', label: zh ? '失败' : 'Fail' },
+                        partial: { cls: 'bg-amber-500', label: zh ? '部分成功' : 'Partial' },
+                        partial_failure: { cls: 'bg-amber-500', label: zh ? '部分成功' : 'Partial' },
                         running: { cls: 'bg-cyan-500 animate-pulse', label: zh ? '运行中' : 'Live' },
                       };
-                      const dst = stMap[dev.status || ''] || { cls: 'bg-red-500', label: zh ? '失败' : 'Fail' };
+                      const dst = stMap[dev.status || ''] || { cls: 'bg-slate-400', label: dev.status || (zh ? '未知' : 'Unknown') };
                       const isSelected = selectedPbDevice === dev.device_id;
 
                       return (
@@ -1339,29 +1358,47 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                       })()}
                     </div>
                   </div>
-                  <div className="flex-1 p-6 font-mono text-xs text-[#d4d4d4] overflow-auto whitespace-pre-wrap select-text">
+                  <div className="flex-1 p-6 font-mono text-xs text-[#d4d4d4] overflow-auto whitespace-pre-wrap select-text relative">
                     {pbDeviceDetail?.phases ? (
-                      Object.entries(pbDeviceDetail.phases).map(([phase, output]: any) => (
-                        <div key={phase} className="mb-4">
-                          <span className="text-[#a170e8] block mb-1 font-bold"># PHASE: {phase.toUpperCase()}</span>
-                          <div className="pl-4 border-l border-[#a170e8]/20 text-[#e0e0e0]">
-                            {output.commands && output.commands.length > 0 && (
-                              <div className="text-cyan-400/50 mb-2 font-bold italic">
-                                {output.commands.map((cmd: string, i: number) => (
-                                  <div key={i}>&gt; {cmd}</div>
-                                ))}
-                              </div>
-                            )}
-                            {/* output field = actual device response text
-                                fallback: if no output field, treat commands array as raw output lines */}
-                            {output.output
-                              ? output.output
-                              : (output.commands && output.commands.length > 0
-                                  ? output.commands.join('\n')
-                                  : '—')}
+                      Object.entries(pbDeviceDetail.phases).map(([phase, output]: any) => {
+                        const cmds = (output?.commands || []).map((c: string) => `> ${c}`).join('\n');
+                        const body = output?.output
+                          || ((output?.commands && output.commands.length > 0) ? output.commands.join('\n') : '');
+                        const phaseText = `${cmds ? cmds + '\n' : ''}${body || '—'}`;
+                        const dev = devices.find(d => d.id === selectedPbDevice);
+                        const phaseFilename = `${dev?.hostname || selectedPbDevice || 'device'}_${phase}`;
+                        return (
+                          <div key={phase} className="mb-4 group/phase">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-[#a170e8] font-bold"># PHASE: {phase.toUpperCase()}</span>
+                              <OutputActions
+                                text={phaseText}
+                                filename={phaseFilename}
+                                theme="dark"
+                                zh={zh}
+                              />
+                            </div>
+                            <div className="pl-4 border-l border-[#a170e8]/20 text-[#e0e0e0]">
+                              {output.commands && output.commands.length > 0 && (
+                                <div className="text-cyan-400/50 mb-2 font-bold italic">
+                                  {output.commands.map((cmd: string, i: number) => (
+                                    <div key={i}>&gt; {cmd}</div>
+                                  ))}
+                                </div>
+                              )}
+                              {/* output field = actual device response text
+                                  fallback: if no output field, treat commands array as raw output lines */}
+                              {output.output
+                                ? output.output
+                                : output.status === 'success' && output.commands && output.commands.length > 0
+                                  ? <span className="text-yellow-400/70 italic">{zh ? '命令执行成功，但设备未返回数据（如 ARP 表为空）' : 'Command succeeded but device returned no data'}</span>
+                                  : (output.commands && output.commands.length > 0
+                                      ? output.commands.join('\n')
+                                      : '—')}
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        );
+                      })
                     ) : (
                       <div className="text-white/20 text-center py-24 select-none">{zh ? '无命令输出' : 'No command output'}</div>
                     )}
