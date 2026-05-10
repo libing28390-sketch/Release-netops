@@ -28,33 +28,49 @@ jobs:
 
       - name: 5. 彻底清理敏感文件与原始源码
         run: |
-          # 删除原始 Python 代码及 Cython 产生的中间层 C 代码
+          # ── License 核心：删除原始 Python 源码及 Cython 中间 C 文件 ──
           rm -f backend/license_auth/verifier.py backend/license_auth/verifier.c
-          rm -f backend/license_auth/crypto.py backend/license_auth/crypto.c
-          
-          # 删除核心私钥（绝对不能发给客户）
-          rm -f backend/license_auth/keys/private.pem
-          
-          # 删除只属于开发者使用的签发工具环境
-          rm -rf tools/license_issuer/
-          
-          # 删除部署脚本里没用的编译脚本
-          rm -f scripts/compile_license.py
-          
-          # 删除开发者的 Bug 记录、内部技术笔记、提示词技能库
-          rm -f bug_fix_memory.md
-          rm -rf docs/
-          rm -rf skills/
+          rm -f backend/license_auth/crypto.py  backend/license_auth/crypto.c
 
-          # 删除 AI 助手残留和本地开发者垃圾文件
-          rm -rf .codex/ .cursor/ .playwright-mcp/
+          # ── 私钥：绝对不能发给客户 ──
+          rm -f backend/license_auth/keys/private.pem
+
+          # ── 开发者专用工具 ──
+          rm -rf tools/
+
+          # ── 编译脚本及 Windows 客户端工具（客户不需要）──
+          rm -rf scripts/
+
+          # ── 开发者内部文档 / 笔记 ──
+          rm -f bug_fix_memory.md
+          rm -f PAM_Audit_Restoration_Report.md
+          rm -rf docs/
+          rm -rf brain/
+          rm -rf skills/
+          rm -rf .github/skills/
+
+          # ── 测试 / 调试脚本 ──
+          rm -rf scratch/
+          rm -rf backend/scratch/
+          rm -f backend/_check_audit.py
+          rm -f backend/check_executions.py
+          rm -f backend/check_results.py
+          rm -f backend/debug_device.py
+          rm -f backend/find_target.py
+          rm -f _purge_bogus_backups.py
+
+          # ── 本地数据库文件（客户应使用自己的 PostgreSQL）──
+          rm -f netops.db backend/netops.db backend/netsops.db
+
+          # ── 本地 license 数据（不能把开发测试 license 带过去）──
+          rm -f data/license*.json
+
+          # ── AI 助手 / IDE 残留文件 ──
+          rm -rf .codex/ .cursor/ .playwright-mcp/ .vscode/
           rm -f .clinerules .cursorrules .geminirules mcp-config.json
           rm -f -- "--version"
 
-          # 删除测试授权和本地授权备份
-          rm -f data/license*.json data/license.json
-          
-          # 删除自动化配置文件夹，客户不需要看到这些
+          # ── GitHub Actions 配置（发布仓库不需要 CI）──
           rm -rf .github/
           
       - name: 6. 将处理后的安全代码推送到对外发布仓库

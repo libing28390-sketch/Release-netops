@@ -111,19 +111,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[PAM] Stale session recovery failed: {e}")
 
-    # --- TEMPORARY DATA FIX (v2) ---
-    try:
-        from database import get_db_connection
-        conn_fix = get_db_connection()
-        # Fix platform if it was misdetected or manually set incorrectly
-        conn_fix.execute("UPDATE physical_assets SET platform = 'linux' WHERE hostname = 'ubuntu-server2' AND platform = 'huawei_vrp'")
-        conn_fix.execute("UPDATE devices SET platform = 'linux' WHERE hostname = 'ubuntu-server2' AND platform = 'huawei_vrp'")
-        conn_fix.commit()
-        conn_fix.close()
-        logger.info("[Startup Fix] Corrected platform for ubuntu-server2 to 'linux'")
-    except Exception as e:
-        logger.error(f"[Startup Fix] Data repair failed: {e}")
-
     # License validation at startup
     _lic = get_license_verifier()
     _lic.load()

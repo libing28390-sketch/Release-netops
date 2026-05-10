@@ -406,16 +406,18 @@ info "配置 systemd 服务..."
 sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=NetOps Automation Platform
-After=network.target
+After=network.target postgresql.service
+Wants=postgresql.service
 
 [Service]
 Type=simple
 User=$RUN_USER
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$VENV_DIR/bin/python backend/main.py
+ExecStart=$VENV_DIR/bin/uvicorn backend.main:app --host 127.0.0.1 --port $BACKEND_PORT --workers 2
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
+Environment=PORT=$BACKEND_PORT
 Environment=PYTHONPATH=$PROJECT_DIR/backend
 EnvironmentFile=-$PROJECT_DIR/.env
 AmbientCapabilities=CAP_NET_RAW
@@ -468,7 +470,7 @@ echo "========================================"
 echo -e "  ${GREEN}部署完成！${NC}"
 echo "========================================"
 echo ""
-echo "  访问地址:  http://<服务器IP>  (Nginx 反向代理 → :${BACKEND_PORT})"
+echo "  访问地址:  http://<服务器IP>  (Nginx :${NGINX_PORT} → 后端 :${BACKEND_PORT})"
 echo "  默认账号:  admin / admin"
 echo "  (首次登录后请立即修改为强密码)"
 echo ""
