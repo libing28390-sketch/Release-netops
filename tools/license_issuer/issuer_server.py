@@ -218,6 +218,14 @@ async def issue_license(req: IssueRequest, request: Request):
     if not PRIVATE_KEY_PATH.exists():
         raise HTTPException(500, "Private key not found. Run key generation first.")
 
+    # All license types (including trial) must be bound to a machine_id
+    if not req.machine_id or not req.machine_id.strip():
+        raise HTTPException(
+            400,
+            "machine_id is required for all license types including trial. "
+            "Ask the customer to visit http://<server>/api/license/machine-id to get their Machine ID."
+        )
+
     private_key_pem = load_private_key_from_file(str(PRIVATE_KEY_PATH))
 
     # Build payload

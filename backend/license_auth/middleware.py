@@ -55,22 +55,26 @@ _FEATURE_REQUIRED: tuple[tuple[str, str], ...] = (
     ("/api/automation",       "automation"),
     ("/api/scripts",          "automation"),
     ("/api/playbooks",        "automation"),
+    ("/api/inspections",      "inspections"),
     ("/api/scheduled-jobs",   "scheduled_jobs"),
     ("/api/configs",          "config_management"),
     ("/api/config-drift",     "config_management"),
     ("/api/monitoring",       "monitoring"),
     ("/api/device-health",    "monitoring"),
     ("/api/alerts",           "alerting"),
+    ("/api/alert-rules",      "alerting"),
+    ("/api/maintenance",      "alerting"),
     ("/api/topology",         "topology"),
     ("/api/ipam",             "ipam"),
     ("/api/capacity",         "capacity"),
+    ("/api/reports",          "reports"),
     ("/api/compliance",       "compliance"),
-    ("/api/inspections",      "inspections"),
     ("/api/change-orders",    "change_orders"),
     ("/api/change-order-templates", "change_orders"),
     ("/api/pam",              "access_center"),
     ("/api/access",           "access_center"),
     ("/api/password-rotation","password_rotation"),
+    ("/api/audit",            "rbac"),
 )
 
 
@@ -156,28 +160,6 @@ class LicenseMiddleware:
 
 # ── Route-level Dependencies ─────────────────────────────────────────
 
-def require_license(request: Request):
-    """
-    FastAPI Dependency: ensures a valid license for critical endpoints.
-    
-    Usage:
-        @router.post("/api/tasks/run", dependencies=[Depends(require_license)])
-        async def run_task(...):
-    """
-    verifier = get_license_verifier()
-    lic_status = verifier.validate()
-
-    if not lic_status.valid:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "message": "A valid license is required for this operation",
-                "license_error": lic_status.error,
-                "code": "LICENSE_REQUIRED",
-            },
-        )
-
-
 def require_feature(feature_name: str):
     """
     FastAPI Dependency factory: checks for a specific licensed feature.
@@ -188,7 +170,7 @@ def require_feature(feature_name: str):
     
     If the feature is not in the license, raises 403.
     """
-    def _dependency(request: Request):
+    def _dependency():
         verifier = get_license_verifier()
         lic_status = verifier.validate()
 
@@ -215,3 +197,25 @@ def require_feature(feature_name: str):
             )
 
     return _dependency
+
+
+def require_license():
+    """
+    FastAPI Dependency: ensures a valid license for critical endpoints.
+    
+    Usage:
+        @router.post("/api/tasks/run", dependencies=[Depends(require_license)])
+        async def run_task(...):
+    """
+    verifier = get_license_verifier()
+    lic_status = verifier.validate()
+
+    if not lic_status.valid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "A valid license is required for this operation",
+                "license_error": lic_status.error,
+                "code": "LICENSE_REQUIRED",
+            },
+        )

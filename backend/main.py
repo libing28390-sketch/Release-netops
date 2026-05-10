@@ -202,7 +202,6 @@ app.include_router(setup_router,         prefix="/api")
 app.include_router(license_router,       prefix="/api")
 app.include_router(system_router,        prefix="/api")
 app.include_router(notifications_router, prefix="/api")
-app.include_router(audit_router,         prefix="/api")
 app.include_router(tags_router,          prefix="/api")
 
 # ── 需要 License 但不限定具体 feature 的路由（设备基础操作）──
@@ -236,6 +235,7 @@ app.include_router(compliance_router,     prefix="/api", dependencies=[Depends(r
 app.include_router(inspections_router,    prefix="/api", dependencies=[Depends(require_feature("inspections"))])
 app.include_router(change_orders_router,  prefix="/api", dependencies=[Depends(require_feature("change_orders"))])
 app.include_router(pam_router,            prefix="/api", dependencies=[Depends(require_feature("access_center"))])
+app.include_router(audit_router,          prefix="/api", dependencies=[Depends(require_feature("rbac"))])
 
 # ── License Middleware (after CORS) ──────────────
 # bootstrap_license_protection() 在编译后的 .so 内部强制注册中间件并建立完整性基线。

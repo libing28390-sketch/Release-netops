@@ -1,33 +1,21 @@
 {
   "payload": {
-    "license_id": "88feb9d1-0d4b-45c2-98e6-8cba5b93619c",
-    "company": "test",
+    "license_id": "e1bd6f60-6bcd-4249-9606-16551cafb128",
+    "company": "111111111111111111111",
     "license_type": "standard",
-    "issued_at": "2026-05-09T13:34:05.774705+00:00",
-    "expire_at": "2027-05-09T23:59:59",
+    "issued_at": "2026-05-10T15:25:57.455386+00:00",
+    "expire_at": "2026-05-13T23:59:59",
     "device_limit": 50,
     "server_limit": 50,
     "features": [
       "automation",
       "config_management",
       "monitoring",
-      "alerting",
-      "rbac",
-      "change_orders",
-      "inspections",
-      "topology",
-      "ipam",
-      "capacity",
-      "compliance",
-      "reports",
-      "api_access",
-      "scheduled_jobs",
-      "password_rotation",
       "access_center"
     ],
     "machine_id": "7294-18BB-E08A-5D49",
     "max_version": "99.9.9",
     "metadata": null
   },
-  "signature": "hOo4SYDm377+4PYyxHYJ7C0ErnPA/6xHoiNhIB19g1Ao39MmauEe5P0mynrpiJ56mUj0yVU7D+HjMSO0aCKXCkX8dY0Bzp909LdJ4/CwqGas/N0+4GTRVAfqYdScFXParDh+A5+JvTCpWOmUGFsgycWzVSH70wMFPp5Pll14YcgB0pvp5Piw8QzRnsFgaJuwNGUWcvP7ML3rNVAz/xykUikPQv3Jlmicb9Q+gGKZbSoX9lD1CFhjvbWc0cApwY7ZQiaK1sR9Q9qXhxaGWoIRQ4dnk1PD/WCDUUhjSEW6m9yTKnqTkGzpjeMT2t8DhdIPnQsVPgPZocxJ/IaAGQ8KVg=="
+  "signature": "BZNvv2F11LkBaFm4zzPACqZ1Akrr2QfnIF3GKcyTDuFQVxcdI/bRQp15m8Z558tQT/2NEZl+a5+7jlbn9AIMR8Gza6FZ3+8cQ5ezWOl3nXIuQ7lCQlDVj0fYfgH2T3vl+NHHU48ufjUw10LfLOjoouptT98jadV6L7Fk0KC4fzcNShqZAdrGk0Jf7ztyX/5hygktj/AglC7wjZ9ofHtme1qPy/LRsTlY+s2wuNHK+ns7c1LZ/Ayp9qkcNpAA7u9n607JDB9Ef26AmgAbB0mLxEnsDtm7eKA6mTflcZ/HGNwLQuf9+wrj4lG0j026q6wV2S7IllFHQRe5H5KvMw7lpQ=="
 }

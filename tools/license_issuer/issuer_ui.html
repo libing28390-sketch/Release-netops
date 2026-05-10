@@ -215,8 +215,9 @@ pre.license-json{background:#0f172a;border:1px solid rgba(255,255,255,.06);borde
           <input id="f-max-version" value="99.9.9" placeholder="例：1.5.0" />
         </div>
         <div class="field">
-          <label>机器指纹 (可选)</label>
-          <input id="f-machine" placeholder="留空则不绑定机器" />
+          <label>机器指纹 <span style="color:#e53e3e">*必填</span></label>
+          <input id="f-machine" placeholder="客户访问 http://<服务器>/api/license/machine-id 获取" required />
+          <small style="color:#718096;font-size:11px">所有版本（含试用版）均须绑定机器，防止 License 被复制传播</small>
         </div>
         <div class="field">
           <label>内部备注 (不写入License)</label>
@@ -555,8 +556,10 @@ function getSelectedFeatures() {
 async function issueLicense() {
   const company = document.getElementById('f-company').value.trim();
   const expire = document.getElementById('f-expire').value;
+  const machineId = document.getElementById('f-machine').value.trim();
   if (!company) { showToast('请填写公司名称', 'err'); return; }
   if (!expire) { showToast('请选择到期日期', 'err'); return; }
+  if (!machineId) { showToast('机器指纹为必填项，请让客户访问 /api/license/machine-id 获取', 'err'); return; }
 
   const btn = document.getElementById('btn-issue');
   btn.disabled = true; btn.textContent = '⏳ 签名中...';
@@ -569,7 +572,7 @@ async function issueLicense() {
       device_limit: parseInt(document.getElementById('f-devices').value) || 50,
       server_limit: parseInt(document.getElementById('f-servers').value) || 50,
       features: getSelectedFeatures(),
-      machine_id: document.getElementById('f-machine').value.trim() || null,
+      machine_id: machineId,
       max_version: document.getElementById('f-max-version').value.trim() || "99.9.9",
       notes: document.getElementById('f-notes').value.trim() || null,
     };

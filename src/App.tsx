@@ -151,6 +151,7 @@ const App: React.FC = () => {
   // ── License Management State ──
   const [isLicenseValid, setIsLicenseValid] = useState(true);
   const [licenseError, setLicenseError] = useState<string | null>(null);
+  const [licenseFeatures, setLicenseFeatures] = useState<string[]>([]);
 
   const checkLicenseStatus = useCallback(async () => {
     try {
@@ -162,6 +163,7 @@ const App: React.FC = () => {
         const data = await resp.json();
         setIsLicenseValid(data.valid);
         setLicenseError(data.error || null);
+        setLicenseFeatures(data.features || []);
       }
     } catch { /* ignore */ }
   }, []);
@@ -178,29 +180,77 @@ const App: React.FC = () => {
   const routeContext = useMemo(() => getRouteContext(location.pathname), [location.pathname]);
   const { activeTab, configPage, automationPage, inventorySubPage, changeOrderPage } = routeContext;
 
+  // ── tab → required feature 映射（与后端 middleware._FEATURE_REQUIRED 保持一致）──
+  const TAB_FEATURE_MAP: Record<string, string> = {
+    // 自动化
+    'automation':       'automation',
+    // 配置管理（所有子页面 activeTab 都是 'config'）
+    'config':           'config_management',
+    // 监控（两个路径都映射）
+    'monitoring':       'monitoring',
+    'overview':         'monitoring',
+    // 告警
+    'alerts':           'alerting',
+    'alert-history':    'alerting',
+    'alert-rules':      'alerting',
+    'maintenance':      'alerting',
+    // 拓扑
+    'topology':         'topology',
+    // IPAM
+    'ipam':             'ipam',
+    // 容量规划
+    'capacity':         'capacity',
+    // 报表（独立 feature）
+    'reports':          'reports',
+    // 合规
+    'compliance':       'compliance',
+    // 巡检（automation 子功能）
+    'inspections':      'inspections',
+    // 变更工单
+    'change-orders':    'change_orders',
+    // 操作工作台 / PAM
+    'access':           'access_center',
+    'pam':              'access_center',
+    'pam-audit':        'access_center',
+    // 定时作业
+    'scheduled-jobs':   'scheduled_jobs',
+    // 密码轮换
+    'credentials':      'password_rotation',
+    // 审计日志（需要 rbac feature）
+    'audit':            'rbac',
+  };
+
   // ── Global License Enforcement ──
   useEffect(() => {
-    if (isAuthenticated && !isLicenseValid) {
-      // Allow basic read-only or low-risk tabs without a license
-      const basicAllowedTabs = [
-        'dashboard',
-        'inventory',
-        'monitoring',
-        'topology',
-        'license',
-        'health',
-        'setup'
-      ];
+    if (!isAuthenticated) return;
+
+    // 1. License 无效时：只允许基础页面
+    if (!isLicenseValid) {
+      const basicAllowedTabs = ['dashboard', 'inventory', 'monitoring', 'topology', 'license', 'health', 'setup'];
       if (!basicAllowedTabs.includes(activeTab)) {
         showToast(language === 'zh' ? '该功能属于高级特性，请激活有效授权以继续使用' : 'This is an advanced feature. Please activate a valid license to continue.', 'info');
         navigate('/license');
       }
+      return;
     }
+
+    // 2. License 有效时：检查当前 tab 是否在授权 feature 列表里
+    const requiredFeature = TAB_FEATURE_MAP[activeTab];
+    if (requiredFeature && licenseFeatures.length > 0 && !licenseFeatures.includes(requiredFeature)) {
+      showToast(
+        language === 'zh'
+          ? `功能「${requiredFeature}」未在您的授权范围内，请升级 License`
+          : `Feature '${requiredFeature}' is not included in your license. Please upgrade.`,
+        'info'
+      );
+      navigate('/license');
+    }
+
     // Redirect old history path to audit
     if (location.pathname === '/history') {
       navigate('/audit', { replace: true });
     }
-  }, [isAuthenticated, isLicenseValid, activeTab, navigate, location.pathname, showToast, language]);
+  }, [isAuthenticated, isLicenseValid, licenseFeatures, activeTab, navigate, location.pathname, showToast, language]);
 
   const deviceFetchMode = useMemo<'light' | 'full'>(() => {
     if (activeTab === 'inventory') return 'full';
@@ -3492,6 +3542,7 @@ const App: React.FC = () => {
     // Global license check state
     isLicenseValid,
     licenseError,
+    licenseFeatures,
     checkLicenseStatus,
     handleRunBackupAllOnline,
     handleBackupSingleDevice,

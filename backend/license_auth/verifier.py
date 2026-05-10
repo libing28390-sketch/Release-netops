@@ -285,8 +285,9 @@ class LicenseVerifier:
             self._last_validated = now
             return status
 
-        # 3. Machine ID Binding Check
-        if payload.license_type.value != "trial" and not payload.machine_id:
+        # 3. Machine ID Binding Check — ALL license types must be bound to a machine
+        # Trial licenses are no exception: an unbound trial can be copied and shared freely.
+        if not payload.machine_id:
             status = LicenseStatus(
                 valid=False,
                 license_id=payload.license_id,
@@ -298,33 +299,37 @@ class LicenseVerifier:
                 device_limit=payload.device_limit,
                 server_limit=payload.server_limit,
                 features=payload.features,
-                error="Non-trial licenses must be locked to a specific Machine ID to prevent reuse.",
+                error="License must be locked to a specific Machine ID. "
+                      "Please contact the vendor to reissue a license bound to this machine.",
             )
             self._cached_status = status
             self._last_validated = now
-            logger.error(f"[License] REUSE BLOCKED: Non-trial license {payload.license_id} lacks machine_id")
+            logger.error(f"[License] REUSE BLOCKED: License {payload.license_id} "
+                         f"(type={payload.license_type.value}) lacks machine_id")
             return status
 
-        if payload.machine_id:
-            current_machine_id = get_machine_id()
-            if payload.machine_id != current_machine_id:
-                status = LicenseStatus(
-                    valid=False,
-                    license_id=payload.license_id,
-                    company=payload.company,
-                    license_type=payload.license_type.value,
-                    issued_at=payload.issued_at,
-                    expire_at=payload.expire_at,
-                    days_remaining=days_remaining,
-                    device_limit=payload.device_limit,
-                    server_limit=payload.server_limit,
-                    features=payload.features,
-                    error=f"License is bound to machine '{payload.machine_id}', but current machine is '{current_machine_id}'.",
-                )
-                self._cached_status = status
-                self._last_validated = now
-                logger.error(f"[License] MACHINE ID MISMATCH for {payload.license_id}")
-                return status
+        current_machine_id = get_machine_id()
+        if payload.machine_id != current_machine_id:
+            status = LicenseStatus(
+                valid=False,
+                license_id=payload.license_id,
+                company=payload.company,
+                license_type=payload.license_type.value,
+                issued_at=payload.issued_at,
+                expire_at=payload.expire_at,
+                days_remaining=days_remaining,
+                device_limit=payload.device_limit,
+                server_limit=payload.server_limit,
+                features=payload.features,
+                error=f"License is bound to machine '{payload.machine_id}', "
+                      f"but current machine is '{current_machine_id}'. "
+                      f"If this is a new deployment, set MACHINE_ID_OVERRIDE in .env.",
+            )
+            self._cached_status = status
+            self._last_validated = now
+            logger.error(f"[License] MACHINE ID MISMATCH for {payload.license_id}: "
+                         f"expected={payload.machine_id}, got={current_machine_id}")
+            return status
         
         # 4. Version Check
         from packaging import version
