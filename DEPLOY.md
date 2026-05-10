@@ -50,6 +50,14 @@ The script auto-detects whether `systemd` is available and falls back to `servic
 #### Fresh server (nothing pre-installed)
 
 ```bash
+# Recommended: download first, then execute
+curl -fsSL -o /tmp/deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
+chmod +x /tmp/deploy.sh
+bash /tmp/deploy.sh
+```
+
+Or pipe directly (also supported):
+```bash
 curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
 ```
 
@@ -289,6 +297,14 @@ Nginx (:80)
 
 #### 全新服务器（无需预装任何依赖）
 
+```bash
+# 推荐：先下载再执行，避免管道模式下的 stdin 问题
+curl -fsSL -o /tmp/deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
+chmod +x /tmp/deploy.sh
+bash /tmp/deploy.sh
+```
+
+也支持管道方式：
 ```bash
 curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
 ```

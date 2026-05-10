@@ -17,8 +17,9 @@ def build():
     from setuptools import Extension
     
     extensions = [
-        Extension("backend.license_auth.verifier", ["backend/license_auth/verifier.py"]),
-        Extension("backend.license_auth.crypto", ["backend/license_auth/crypto.py"])
+        Extension("backend.license_auth.verifier",  ["backend/license_auth/verifier.py"]),
+        Extension("backend.license_auth.crypto",    ["backend/license_auth/crypto.py"]),
+        Extension("backend.license_auth.middleware", ["backend/license_auth/middleware.py"]),
     ]
     
     print("开始编译核心模块...")

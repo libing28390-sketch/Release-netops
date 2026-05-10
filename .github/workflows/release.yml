@@ -52,8 +52,11 @@ jobs:
       - name: 5. 彻底清理敏感文件与原始源码
         run: |
           # ── License 核心：删除原始 Python 源码及 Cython 中间 C 文件 ──
-          rm -f backend/license_auth/verifier.py backend/license_auth/verifier.c
-          rm -f backend/license_auth/crypto.py  backend/license_auth/crypto.c
+          rm -f backend/license_auth/verifier.py   backend/license_auth/verifier.c
+          rm -f backend/license_auth/crypto.py     backend/license_auth/crypto.c
+          rm -f backend/license_auth/middleware.py backend/license_auth/middleware.c
+          # generator.py 包含完整签发流程说明，不应对外暴露
+          rm -f backend/license_auth/generator.py
 
           # ── 私钥：绝对不能发给客户 ──
           rm -f backend/license_auth/keys/private.pem

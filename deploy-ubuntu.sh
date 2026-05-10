@@ -8,6 +8,23 @@
 
 set -euo pipefail
 
+# ── 全局错误捕获：任何命令失败时打印出错位置 ──
+_on_error() {
+    local exit_code=$?
+    local line_no=$1
+    echo ""
+    echo -e "\033[0;31m[FAIL]\033[0m  脚本在第 ${line_no} 行意外退出 (exit code: ${exit_code})"
+    echo -e "\033[0;31m[FAIL]\033[0m  请检查上方输出，或使用 'bash -x deploy-ubuntu.sh' 开启调试模式"
+    exit $exit_code
+}
+trap '_on_error $LINENO' ERR
+
+# ── 检测是否通过管道运行（curl | bash），重定向 stdin ──
+if [ ! -t 0 ]; then
+    # stdin 不是终端（管道模式），重定向到 /dev/tty 保证交互命令正常
+    exec < /dev/tty 2>/dev/null || true
+fi
+
 # ---------- 颜色输出 ----------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -158,8 +175,35 @@ svc_is_active() {
 # ============================================================
 # 1. 系统依赖
 # ============================================================
+
+# 检查系统时间是否偏差过大（时间错误会导致 apt 源证书验证失败）
+SYSTEM_EPOCH=$(date +%s)
+# 用 curl 拿一个可靠的时间戳（HTTP Date 头）
+REMOTE_DATE=$(curl -sI --max-time 5 https://www.baidu.com 2>/dev/null | grep -i '^date:' | head -1 | cut -d' ' -f2-)
+if [ -n "$REMOTE_DATE" ]; then
+    REMOTE_EPOCH=$(date -d "$REMOTE_DATE" +%s 2>/dev/null || echo 0)
+    TIME_DIFF=$(( SYSTEM_EPOCH - REMOTE_EPOCH ))
+    TIME_DIFF=${TIME_DIFF#-}  # 取绝对值
+    if [ "$TIME_DIFF" -gt 86400 ] 2>/dev/null; then
+        warn "系统时间偏差超过 24 小时（偏差 ${TIME_DIFF}s），apt 源证书验证可能失败"
+        info "尝试自动同步时间..."
+        sudo timedatectl set-ntp true 2>/dev/null || true
+        sudo systemctl restart systemd-timesyncd 2>/dev/null || \
+            sudo service systemd-timesyncd restart 2>/dev/null || true
+        sleep 3
+        # 如果 ntp 同步太慢，直接用 HTTP 时间强制设置
+        if [ -n "$REMOTE_DATE" ] && [ "$TIME_DIFF" -gt 86400 ]; then
+            sudo timedatectl set-time "$REMOTE_DATE" 2>/dev/null || \
+                sudo date -s "$REMOTE_DATE" 2>/dev/null || true
+            ok "系统时间已强制同步: $(date)"
+        fi
+    fi
+fi
+
 info "安装系统依赖..."
-sudo apt-get update -qq
+sudo apt-get update -qq --allow-releaseinfo-change 2>/dev/null || \
+    sudo apt-get update -qq -o Acquire::Check-Valid-Until=false 2>/dev/null || \
+    warn "apt update 遇到警告，尝试继续安装..."
 sudo apt-get install -y -qq \
     python3 python3-venv python3-dev \
     build-essential libffi-dev libssl-dev \
@@ -333,6 +377,7 @@ import sys
 sys.path.insert(0, 'backend')
 from license_auth.verifier import LicenseVerifier
 from license_auth.crypto import verify_signature
+from license_auth.middleware import LicenseMiddleware
 " 2>/dev/null; then
     ok "license_auth 模块验证通过"
 else

@@ -177,6 +177,15 @@ The script auto-detects the environment and uses `systemd` or `service` accordin
 **On a fresh server (nothing pre-installed):**
 
 ```bash
+# Recommended: download first, then execute
+curl -fsSL -o /tmp/deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
+chmod +x /tmp/deploy.sh
+bash /tmp/deploy.sh
+```
+
+Or pipe directly (also supported):
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
 ```
 
@@ -371,6 +380,15 @@ Nexora 使用签名 License 文件控制功能权限和设备数量上限。
 脚本自动检测运行环境，在标准系统中使用 `systemd`，在容器中使用 `service` + 后台进程。
 
 **全新服务器（什么都不用预装）：**
+
+```bash
+# 推荐：先下载再执行，避免管道模式下的 stdin 问题
+curl -fsSL -o /tmp/deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
+chmod +x /tmp/deploy.sh
+bash /tmp/deploy.sh
+```
+
+也支持管道方式：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
