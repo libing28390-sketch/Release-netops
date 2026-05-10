@@ -169,6 +169,9 @@ const App: React.FC = () => {
   useEffect(() => {
     if (isAuthenticated) {
       checkLicenseStatus();
+      // 每 60 秒轮询一次，确保 License 上传后状态自动同步
+      const timer = setInterval(checkLicenseStatus, 60000);
+      return () => clearInterval(timer);
     }
   }, [isAuthenticated, checkLicenseStatus]);
 
@@ -3489,6 +3492,7 @@ const App: React.FC = () => {
     // Global license check state
     isLicenseValid,
     licenseError,
+    checkLicenseStatus,
     handleRunBackupAllOnline,
     handleBackupSingleDevice,
     handleNavigateToConfigDiff,

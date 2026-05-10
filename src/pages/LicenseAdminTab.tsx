@@ -10,6 +10,7 @@ import { AnimatePresence, motion } from 'motion/react';
 interface Props {
   language: string;
   t: (key: string) => string;
+  onLicenseUpdate?: () => void;
 }
 
 interface LicenseStatus {
@@ -83,7 +84,7 @@ const TYPE_LABELS: Record<string, { zh: string; en: string }> = {
   enterprise:   { zh: '企业版', en: 'Enterprise' },
 };
 
-const LicenseAdminTab: React.FC<Props> = ({ language }) => {
+const LicenseAdminTab: React.FC<Props> = ({ language, onLicenseUpdate }) => {
   const zh = language === 'zh';
 
   const [status, setStatus] = useState<LicenseStatus | null>(null);
@@ -148,6 +149,8 @@ const LicenseAdminTab: React.FC<Props> = ({ language }) => {
       if (res.ok) {
         setFeedbackMsg({ type: 'success', text: zh ? 'License 上传成功并已激活' : 'License uploaded and activated' });
         await fetchAll();
+        // 通知 App.tsx 刷新全局 License 状态，解除功能门控
+        onLicenseUpdate?.();
       } else {
         const err = await res.json();
         setFeedbackMsg({ type: 'error', text: err.detail || (zh ? '上传失败' : 'Upload failed') });

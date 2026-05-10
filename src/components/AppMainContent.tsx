@@ -1154,7 +1154,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
 
       {activeTab === 'license' && (
         <Suspense fallback={lazyPanelFallback}>
-          <LicenseAdminTab language={language} t={t} />
+          <LicenseAdminTab language={language} t={t} onLicenseUpdate={props.checkLicenseStatus} />
         </Suspense>
       )}
     </main>
