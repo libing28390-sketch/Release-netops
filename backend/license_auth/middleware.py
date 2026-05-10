@@ -47,6 +47,40 @@ _EXEMPT_PREFIXES = (
 # Read-only methods allowed when license is expired (view data, no mutations)
 _READONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
 
+# ── URL prefix → required feature 映射表 ──────────────────────────────
+# 这张表内嵌在编译后的 .so 里，即使 main.py 被篡改删除 dependencies，
+# 中间件层面仍然会强制检查。
+# 规则：路径前缀匹配，返回需要的 feature 名称。
+_FEATURE_REQUIRED: tuple[tuple[str, str], ...] = (
+    ("/api/automation",       "automation"),
+    ("/api/scripts",          "automation"),
+    ("/api/playbooks",        "automation"),
+    ("/api/scheduled-jobs",   "scheduled_jobs"),
+    ("/api/configs",          "config_management"),
+    ("/api/config-drift",     "config_management"),
+    ("/api/monitoring",       "monitoring"),
+    ("/api/device-health",    "monitoring"),
+    ("/api/alerts",           "alerting"),
+    ("/api/topology",         "topology"),
+    ("/api/ipam",             "ipam"),
+    ("/api/capacity",         "capacity"),
+    ("/api/compliance",       "compliance"),
+    ("/api/inspections",      "inspections"),
+    ("/api/change-orders",    "change_orders"),
+    ("/api/change-order-templates", "change_orders"),
+    ("/api/pam",              "access_center"),
+    ("/api/access",           "access_center"),
+    ("/api/password-rotation","password_rotation"),
+)
+
+
+def _get_required_feature(path: str) -> str | None:
+    """返回该路径需要的 feature，没有限制则返回 None。"""
+    for prefix, feature in _FEATURE_REQUIRED:
+        if path.startswith(prefix):
+            return feature
+    return None
+
 
 class LicenseMiddleware:
     """
@@ -82,10 +116,23 @@ class LicenseMiddleware:
         lic_status = verifier.validate()
 
         if lic_status.valid:
-            # logger.debug(f"[LicenseMiddleware] VALID: {path}")
+            # 4. License valid — check feature gate
+            required_feature = _get_required_feature(path)
+            if required_feature and required_feature not in lic_status.features:
+                logger.warning(f"[License] FEATURE BLOCKED: {path} requires '{required_feature}'")
+                response = JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={
+                        "detail": f"Feature '{required_feature}' is not included in your license.",
+                        "code": "FEATURE_NOT_LICENSED",
+                        "feature": required_feature,
+                        "licensed_features": lic_status.features,
+                    }
+                )
+                return await response(scope, receive, send)
             return await self.app(scope, receive, send)
 
-        # 4. Invalid - logic for expiry vs hard block
+        # 5. Invalid license — logic for expiry vs hard block
         error_msg = lic_status.error or "License invalid"
         is_expired = "expired" in error_msg.lower()
 

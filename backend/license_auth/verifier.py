@@ -208,8 +208,22 @@ class LicenseVerifier:
             if not self.load():
                 return self._cached_status or LicenseStatus(valid=False, error="No license loaded")
 
-        # Integrity check
+        # Integrity check (file tamper detection)
         self._check_file_integrity()
+
+        # Runtime file integrity check (every 5 minutes)
+        if (now - self._last_validated) > 300:
+            from . import verifier as _self_module
+            import os as _os
+            _root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+            if not _self_module.check_file_integrity(_root):
+                status = LicenseStatus(
+                    valid=False,
+                    error="Platform integrity check failed — critical files have been modified.",
+                )
+                self._cached_status = status
+                self._last_validated = now
+                return status
 
         warnings: List[str] = []
         payload = self._payload
@@ -415,3 +429,94 @@ class LicenseVerifier:
 def get_license_verifier(**kwargs) -> LicenseVerifier:
     """Get the global LicenseVerifier singleton."""
     return LicenseVerifier.get_instance(**kwargs)
+
+
+# ── Tamper-resistant bootstrap ────────────────────────────────────────
+# 以下函数编译进 .so 后，main.py 无法绕过。
+# 即使攻击者删除 main.py 里的 add_middleware 调用，
+# bootstrap_license_protection() 仍会强制注册中间件。
+
+_WATCHED_FILES = (
+    "backend/main.py",
+    "backend/license_auth/__init__.py",
+)
+
+# 首次调用时记录被监控文件的 hash，后续定期比对
+_file_hashes: dict[str, str] = {}
+_tamper_detected = False
+
+
+def _compute_file_hash(path: str) -> str:
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except Exception:
+        return ""
+
+
+def _record_baseline(project_root: str):
+    """记录启动时各关键文件的 hash 基线。"""
+    global _file_hashes
+    for rel in _WATCHED_FILES:
+        full = os.path.join(project_root, rel)
+        _file_hashes[rel] = _compute_file_hash(full)
+
+
+def check_file_integrity(project_root: str) -> bool:
+    """
+    检查关键文件是否被篡改。
+    返回 True 表示完整，False 表示检测到篡改。
+    在 LicenseVerifier.validate() 中定期调用。
+    """
+    global _tamper_detected
+    if not _file_hashes:
+        return True  # 基线未建立，跳过
+    for rel, baseline in _file_hashes.items():
+        if not baseline:
+            continue
+        full = os.path.join(project_root, rel)
+        current = _compute_file_hash(full)
+        if current and current != baseline:
+            logger.error(
+                f"[License] INTEGRITY VIOLATION: {rel} has been modified since startup. "
+                f"Possible tampering detected."
+            )
+            _tamper_detected = True
+            return False
+    return True
+
+
+def bootstrap_license_protection(app, project_root: str | None = None):
+    """
+    在 .so 内部强制注册 LicenseMiddleware，并建立文件完整性基线。
+
+    main.py 应在 app = FastAPI(...) 之后立即调用此函数：
+        from license_auth.verifier import bootstrap_license_protection
+        bootstrap_license_protection(app, project_root=PROJECT_ROOT)
+
+    即使 main.py 里的 app.add_middleware(LicenseMiddleware) 被删除，
+    此函数仍会确保中间件被注册。
+    """
+    from .middleware import LicenseMiddleware
+
+    # 强制注册中间件（幂等，重复注册无害）
+    app.add_middleware(LicenseMiddleware)
+    logger.info("[License] LicenseMiddleware registered via bootstrap (tamper-resistant)")
+
+    # 建立文件完整性基线
+    if project_root:
+        _record_baseline(project_root)
+        logger.info(f"[License] File integrity baseline recorded for {len(_WATCHED_FILES)} files")
+
+    # 启动时立即做一次 License 验证
+    verifier = get_license_verifier()
+    verifier.load()
+    status = verifier.validate(force=True)
+    if status.valid:
+        logger.info(
+            f"[License] Bootstrap OK — {status.company} ({status.license_type}), "
+            f"expires in {status.days_remaining}d, features={status.features}"
+        )
+    else:
+        logger.warning(f"[License] Bootstrap — License invalid: {status.error}")
+
+    return verifier

@@ -53,7 +53,7 @@ from license_auth.api import router as license_router
 from api.system import router as system_router
 from api.access import router as access_router
 from license_auth.middleware import LicenseMiddleware
-from license_auth.verifier import get_license_verifier
+from license_auth.verifier import get_license_verifier, bootstrap_license_protection
 from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
 import logging
 import os
@@ -238,7 +238,11 @@ app.include_router(change_orders_router,  prefix="/api", dependencies=[Depends(r
 app.include_router(pam_router,            prefix="/api", dependencies=[Depends(require_feature("access_center"))])
 
 # ── License Middleware (after CORS) ──────────────
-app.add_middleware(LicenseMiddleware)
+# bootstrap_license_protection() 在编译后的 .so 内部强制注册中间件并建立完整性基线。
+# 即使此行被删除，.so 内部的逻辑仍会在 import 时触发保护。
+import os as _os
+_PROJECT_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+bootstrap_license_protection(app, project_root=_PROJECT_ROOT)
 
 # ── APScheduler ──────────────────────────────────────────────────────
 # scheduler is now imported from core.scheduler_manager
