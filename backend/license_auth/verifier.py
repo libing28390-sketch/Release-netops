@@ -442,7 +442,7 @@ _WATCHED_FILES = (
 )
 
 # 首次调用时记录被监控文件的 hash，后续定期比对
-_file_hashes: dict[str, str] = {}
+_file_hashes = {}  # type: dict
 _tamper_detected = False
 
 
@@ -485,7 +485,8 @@ def check_file_integrity(project_root: str) -> bool:
     return True
 
 
-def bootstrap_license_protection(app, project_root: str | None = None):
+def bootstrap_license_protection(app, project_root=None):
+    # type: (object, Optional[str]) -> LicenseVerifier
     """
     在 .so 内部强制注册 LicenseMiddleware，并建立文件完整性基线。
 

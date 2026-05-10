@@ -74,7 +74,8 @@ _FEATURE_REQUIRED: tuple[tuple[str, str], ...] = (
 )
 
 
-def _get_required_feature(path: str) -> str | None:
+def _get_required_feature(path: str):
+    # type: (str) -> Optional[str]
     """返回该路径需要的 feature，没有限制则返回 None。"""
     for prefix, feature in _FEATURE_REQUIRED:
         if path.startswith(prefix):
