@@ -34,10 +34,13 @@ _db_initialized = False
 # Priority: DATABASE_URL env > default SQLite
 _DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
 
-# Automatically fix docker compose 'db' host for local execution outside docker
-if not os.path.exists('/.dockerenv') and '@db:' in _DATABASE_URL:
+# Automatically fix docker compose 'db' host for non-Docker-Compose execution.
+# Covers: local dev, GitHub Codespaces, bare-metal Ubuntu, systemd deployments.
+# Does NOT replace when running inside docker-compose (where 'db' is a valid service name).
+_in_compose = os.path.exists('/.dockerenv') and os.environ.get('POSTGRES_USER') is not None
+if not _in_compose and '@db:' in _DATABASE_URL:
     _DATABASE_URL = _DATABASE_URL.replace('@db:', '@localhost:')
-    logger.info("Running outside Docker: Auto-replaced 'db' host with 'localhost' in DATABASE_URL")
+    logger.info("Non-compose environment: Auto-replaced 'db' host with 'localhost' in DATABASE_URL")
 
 normalized_db_url = _DATABASE_URL.lower()
 _USE_PG = normalized_db_url.startswith('postgresql://') or normalized_db_url.startswith('postgres://')

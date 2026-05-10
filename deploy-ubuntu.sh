@@ -239,8 +239,10 @@ else
     if [ -d "$PROJECT_DIR/.git" ]; then
         info "项目目录已存在，拉取最新代码..."
         cd "$PROJECT_DIR"
-        git pull --ff-only || warn "git pull 失败，使用当前版本继续"
-        ok "代码更新完成: $PROJECT_DIR"
+        # 远端可能做过 force push（历史重写），--ff-only 会失败
+        # 直接 reset 到远端最新状态，确保与发布版本完全一致
+        git fetch origin main 2>&1 || warn "git fetch 失败，使用当前版本继续"
+        git reset --hard origin/main 2>&1 && ok "代码已同步到最新版本: $PROJECT_DIR" || warn "git reset 失败，使用当前版本继续"
     else
         info "从 Git 克隆项目..."
         sudo mkdir -p "$INSTALL_BASE"
@@ -374,6 +376,13 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
     else
         warn "未找到 .env.example，跳过环境文件自动生成"
     fi
+fi
+
+# ── 无论 .env 是新建还是已存在，都强制修正 DATABASE_URL 里的 Docker 服务名 ──
+# 非 docker-compose 环境下 'db' 无法解析，必须替换为 localhost
+if [ -f "$PROJECT_DIR/.env" ] && grep -q '@db:' "$PROJECT_DIR/.env" 2>/dev/null; then
+    sed -i 's|@db:|@localhost:|g' "$PROJECT_DIR/.env"
+    warn ".env 中 DATABASE_URL 的主机名 'db' 已自动替换为 'localhost'（非 Docker Compose 环境）"
 fi
 
 # ============================================================
