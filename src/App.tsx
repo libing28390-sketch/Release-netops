@@ -316,16 +316,17 @@ const App: React.FC = () => {
   const [configSearchResults, setConfigSearchResults] = useState<any[]>([]);
   const [configSearchLoading, setConfigSearchLoading] = useState(false);
   const [isTakingSnapshot, setIsTakingSnapshot] = useState(false);
+  const [activeBackupRunId, setActiveBackupRunId] = useState<string | null>(null);
   // Schedule state
   const [scheduleEnabled, setScheduleEnabled] = useState(true);
   const [scheduleCron, setScheduleCron] = useState('0 2 * * *');
   const [scheduleLoading, setScheduleLoading] = useState(false);
-  const [configGroupOpen, setConfigGroupOpen] = useState(() => location.pathname.startsWith('/config'));
+  const [configGroupOpen, setConfigGroupOpen] = useState(() => location.pathname.startsWith('/config') || location.pathname === '/compliance');
   const [automationGroupOpen, setAutomationGroupOpen] = useState(() => location.pathname.startsWith('/automation'));
   const [inventoryGroupOpen, setInventoryGroupOpen] = useState(() => location.pathname.startsWith('/inventory'));
   const [alertGroupOpen, setAlertGroupOpen] = useState(() => ['alerts', 'alert-rules', 'maintenance'].includes(location.pathname.split('/')[1] || 'dashboard'));
   const [monitoringGroupOpen, setMonitoringGroupOpen] = useState(() => location.pathname === '/monitoring' || location.pathname === '/inventory/interfaces');
-  const [managementGroupOpen, setManagementGroupOpen] = useState(() => ['audit', 'configuration', 'users'].includes(location.pathname.split('/')[1] || 'dashboard'));
+  const [managementGroupOpen, setManagementGroupOpen] = useState(() => ['audit', 'users'].includes(location.pathname.split('/')[1] || 'dashboard'));
   const [realtimeSectionOpen, setRealtimeSectionOpen] = useState(true);
   const [alertsSectionOpen, setAlertsSectionOpen] = useState(true);
   const [assetsSectionOpen, setAssetsSectionOpen] = useState(true);
@@ -549,7 +550,7 @@ const App: React.FC = () => {
     if (path === '/capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
     if (path === '/reports') return language === 'zh' ? '报表中心' : 'Reports';
     if (path === '/audit') return t('auditLogs');
-    if (path === '/configuration') return language === 'zh' ? '平台设置' : 'Platform Settings';
+    if (path === '/config/templates') return language === 'zh' ? '配置管理' : 'Config Management';
     if (path === '/users') return t('userManagement');
     return path.replace('/', '');
   }, [language, t]);
@@ -596,11 +597,11 @@ const App: React.FC = () => {
       { path: '/config/search', label: t('configSearchTab'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/schedule', label: zh ? '备份计划' : 'Backup Schedule', group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/drift', label: zh ? '配置漂移' : 'Config Drift', group: zh ? '配置与合规' : 'Config & Compliance' },
+      { path: '/config/templates', label: zh ? '配置管理' : 'Config Management', group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/compliance', label: t('compliance'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/capacity', label: zh ? '容量规划' : 'Capacity Planning', group: zh ? '分析报告' : 'Analytics' },
       { path: '/reports', label: zh ? '报表中心' : 'Reports', group: zh ? '分析报告' : 'Analytics' },
       { path: '/audit', label: t('auditLogs'), group: zh ? '平台管理' : 'Management' },
-      { path: '/configuration', label: zh ? '平台设置' : 'Platform Settings', group: zh ? '平台管理' : 'Management' },
       { path: '/users', label: t('userManagement'), group: zh ? '平台管理' : 'Management' },
       { path: '/license', label: zh ? '授权管理' : 'License Management', group: zh ? '平台管理' : 'Management' },
       { path: '/change-orders/all', label: zh ? '全部工单' : 'All Orders', group: zh ? '工单管理' : 'Tickets' },
@@ -645,6 +646,7 @@ const App: React.FC = () => {
         search: t('configSearchTab'),
         schedule: language === 'zh' ? '备份计划' : 'Backup Schedule',
         drift: language === 'zh' ? '配置漂移' : 'Config Drift',
+        templates: language === 'zh' ? '配置管理' : 'Config Management',
       };
       return map[configPage] || configPage;
     }
@@ -662,7 +664,6 @@ const App: React.FC = () => {
     if (activeTab === 'alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
     if (activeTab === 'maintenance') return language === 'zh' ? '维护期' : 'Maintenance';
     if (activeTab === 'history' || activeTab === 'audit') return t('auditLogs');
-    if (activeTab === 'configuration') return language === 'zh' ? '平台设置' : 'Platform Settings';
     if (activeTab === 'reports') return language === 'zh' ? '报表中心' : 'Reports';
     if (activeTab === 'capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
     if (activeTab === 'ipam') return language === 'zh' ? 'IP/VLAN管理' : 'IP/VLAN Management';
@@ -729,7 +730,7 @@ const App: React.FC = () => {
     const configActive = activeTab === 'config' || activeTab === 'compliance' || location.pathname.startsWith('/config');
     const automationActive = activeTab === 'automation' || location.pathname.startsWith('/automation');
     const inventoryActive = activeTab === 'inventory' || activeTab === 'ipam' || activeTab === 'ip-locator';
-    const managementActive = ['history', 'configuration', 'users', 'license'].includes(activeTab);
+    const managementActive = ['history', 'users', 'license'].includes(activeTab);
     setMonitoringGroupOpen(monitoringActive);
     setAlertGroupOpen(alertActive);
     setConfigGroupOpen(configActive);
@@ -2926,6 +2927,21 @@ const App: React.FC = () => {
         : `${device.hostname} (${device.ip_address}) is a mock device, cannot backup real config`, 'error');
       return null;
     }
+    // Config backup commands (show running-config / display current-configuration)
+    // require privileged exec on most platforms. The 'normal' role almost always
+    // fails with "% Invalid input detected". Reject Linux / server assets here
+    // too so the user gets a clear message instead of a nonsensical snapshot.
+    const NETWORK_PLATFORM_KEYWORDS = ['cisco', 'arista', 'rgos', 'ruijie', 'juniper', 'junos', 'huawei', 'vrp', 'h3c', 'comware'];
+    const _plat = (device.platform || '').toLowerCase();
+    if (!NETWORK_PLATFORM_KEYWORDS.some((kw) => _plat.includes(kw))) {
+      showToast(
+        language === 'zh'
+          ? `${device.hostname} 不是网络设备，跳过配置备份`
+          : `${device.hostname} is not a network device, backup skipped`,
+        'error'
+      );
+      return null;
+    }
     setIsTakingSnapshot(true);
     try {
       // Step 1: fetch live config from device
@@ -2933,7 +2949,7 @@ const App: React.FC = () => {
       let fetchSuccess = false;
       try {
         const _p = (device.platform || '').toLowerCase();
-        const _cmd = (_p.includes('cisco') || _p.includes('arista') || _p.includes('rgos'))
+        const _cmd = (_p.includes('cisco') || _p.includes('arista') || _p.includes('rgos') || _p.includes('ruijie'))
           ? 'show running-config'
           : (_p.includes('juniper') || _p.includes('junos'))
             ? 'show configuration'
@@ -2946,6 +2962,11 @@ const App: React.FC = () => {
             device_id: device.id,
             command: _cmd,
             isConfig: false,
+            // CRITICAL: `show running-config` requires privileged exec mode.
+            // Force admin credentials so Netmiko can call .enable() on Cisco
+            // devices; otherwise the backup silently collects
+            // "% Invalid input detected at '^' marker." as its content.
+            auth_role: 'admin',
             author: currentUser.username || 'admin',
             actor_id: currentUser.id,
             actor_role: currentUser.role || currentUserRecord?.role || 'Administrator',
@@ -2954,8 +2975,18 @@ const App: React.FC = () => {
         if (execResp.ok) {
           const execData = await execResp.json();
           const output = execData.output || '';
-          // Reject mock driver output
-          if (output && !output.startsWith('[Mock ') && !output.startsWith('% ')) {
+          // Reject mock driver output and common error markers so we don't
+          // persist garbage as a valid backup.
+          const lower = output.toLowerCase();
+          const isErrorOutput =
+            !output.trim() ||
+            output.startsWith('[Mock ') ||
+            output.startsWith('% ') ||
+            lower.includes('% invalid input') ||
+            lower.includes('% permission denied') ||
+            lower.includes('% authorization failed') ||
+            lower.includes('command not found');
+          if (!isErrorOutput) {
             configContent = output;
             fetchSuccess = true;
           }
@@ -2966,8 +2997,8 @@ const App: React.FC = () => {
 
       if (!fetchSuccess || !configContent.trim()) {
         showToast(language === 'zh'
-          ? `${device.hostname} 配置获取失败，无法建立备份`
-          : `Failed to fetch config from ${device.hostname}, backup skipped`, 'error');
+          ? `${device.hostname} 配置获取失败（请检查特权账号或设备权限）`
+          : `Failed to fetch config from ${device.hostname} (check admin credentials)`, 'error');
         return null;
       }
 
@@ -3034,26 +3065,93 @@ const App: React.FC = () => {
 
   const handleRunBackupAllOnline = async () => {
     const MOCK_IPS = ['127.0.0.1', '0.0.0.0', 'localhost'];
+    // Only count network devices — Linux/servers don't have a running-config.
+    // Keep this whitelist in sync with the backend `run_scheduled_backup`.
+    const NETWORK_PLATFORM_KEYWORDS = ['cisco', 'arista', 'rgos', 'ruijie', 'juniper', 'junos', 'huawei', 'vrp', 'h3c', 'comware'];
+    const isNetworkDevice = (platform?: string) => {
+      const p = (platform || '').toLowerCase();
+      return NETWORK_PLATFORM_KEYWORDS.some((kw) => p.includes(kw));
+    };
     const online = devices.filter(
-      (device) => device.status === 'online' && !MOCK_IPS.includes(device.ip_address || '')
+      (device) =>
+        device.status === 'online' &&
+        !MOCK_IPS.includes(device.ip_address || '') &&
+        isNetworkDevice(device.platform)
     );
     if (online.length === 0) {
-      showToast(language === 'zh' ? '没有可备份的真实在线设备' : 'No real online devices to backup', 'error');
+      showToast(
+        language === 'zh'
+          ? '没有可备份的在线网络设备（Linux / 服务器不支持配置备份）'
+          : 'No online network devices to backup (servers not supported)',
+        'error'
+      );
       return;
     }
-    showToast(`${t('backupStarted')} (${online.length} ${t('devicesOnline')})`, 'info');
-    let success = 0;
-    let failed = 0;
-    for (const device of online) {
-      const snap = await takeConfigSnapshot(device, 'manual');
-      if (snap) success++;
-      else failed++;
+
+    setIsTakingSnapshot(true);
+    try {
+      // Delegate to the scheduler's backup routine via a dedicated endpoint.
+      // This ensures admin credentials are used (required for privileged exec
+      // commands like `show running-config`) and gives us consistent filtering
+      // between manual and scheduled runs.
+      const token = localStorage.getItem('netops_token');
+      const resp = await fetch('/api/configs/run-now', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        showToast(
+          (language === 'zh' ? '触发备份失败' : 'Failed to trigger backup') +
+            (err?.detail ? `: ${err.detail}` : ` (HTTP ${resp.status})`),
+          'error'
+        );
+        return;
+      }
+      const { run_id } = await resp.json();
+      setActiveBackupRunId(run_id || null);
+      showToast(
+        `${t('backupStarted')} (${online.length} ${t('devicesOnline')})`,
+        'info'
+      );
+
+      // Poll progress until finished, then do a final list refresh.
+      if (run_id) {
+        const pollInterval = window.setInterval(async () => {
+          try {
+            const pr = await fetch(`/api/configs/run-now/${run_id}/progress`, {
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
+            if (!pr.ok) { window.clearInterval(pollInterval); return; }
+            const progress = await pr.json();
+            // Refresh the backup list on every tick so rows appear as they complete
+            try { await loadConfigSnapshots(configCenterDevice?.id, { requireFilter: true }); } catch { /* ignore */ }
+            if (progress.finished) {
+              window.clearInterval(pollInterval);
+              setActiveBackupRunId(null);
+              const { success, failed } = progress;
+              showToast(
+                language === 'zh'
+                  ? `备份完成：${success} 成功${failed > 0 ? `，${failed} 失败` : ''}`
+                  : `Backup complete: ${success} succeeded${failed > 0 ? `, ${failed} failed` : ''}`,
+                failed > 0 ? 'error' : 'success'
+              );
+            }
+          } catch { window.clearInterval(pollInterval); }
+        }, 2000);
+      }
+    } catch (err) {
+      showToast(
+        (language === 'zh' ? '网络错误' : 'Network error') +
+          `: ${err instanceof Error ? err.message : String(err)}`,
+        'error'
+      );
+    } finally {
+      setIsTakingSnapshot(false);
     }
-    const summary = language === 'zh'
-      ? `备份完成: ${success} 成功${failed > 0 ? `, ${failed} 失败` : ''}`
-      : `Backup complete: ${success} succeeded${failed > 0 ? `, ${failed} failed` : ''}`;
-    showToast(summary, failed > 0 ? 'error' : 'success');
-    await loadConfigSnapshots(configCenterDevice?.id, { requireFilter: true });
   };
 
   const handleBackupSingleDevice = async (deviceId: string) => {
@@ -3378,6 +3476,7 @@ const App: React.FC = () => {
     openComplianceFindingDetail,
     updateComplianceFinding,
     isTakingSnapshot,
+    activeBackupRunId,
     scheduleEnabled,
     setScheduleEnabled,
     scheduleCron,
@@ -3390,6 +3489,7 @@ const App: React.FC = () => {
     // Global license check state
     isLicenseValid,
     licenseError,
+    handleRunBackupAllOnline,
     handleBackupSingleDevice,
     handleNavigateToConfigDiff,
     diffPreSelectedDeviceId,

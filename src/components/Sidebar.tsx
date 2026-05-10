@@ -609,6 +609,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               <div className={configGroupOpen ? 'mt-1' : 'hidden'}>
                 <div className={subNavRailClass}>
                   {([
+                    { path: 'config/templates', icon: Settings, label: language === 'zh' ? '配置管理' : 'Config Management' },
                     { path: 'config/backup', icon: Download, label: t('backupHistory') },
                     { path: 'config/diff', icon: FileText, label: t('diffCompare') },
                     { path: 'config/search', icon: Search, label: t('configSearchTab') },
@@ -616,11 +617,16 @@ const Sidebar: React.FC<SidebarProps> = ({
                     { path: 'config/drift', icon: GitCompareArrows, label: language === 'zh' ? '配置漂移' : 'Config Drift' },
                     isFeatureEnabled('compliance') && { path: 'compliance', icon: ShieldCheck, label: t('compliance') },
                   ].filter(Boolean) as any[]).map((item) => {
-                    const isActive = item.path === 'compliance' ? activeTab === 'compliance' : currentPath === `/${item.path}`;
+                    const isActive = item.path === 'compliance'
+                      ? activeTab === 'compliance'
+                      : currentPath === `/${item.path}`;
                     return (
                       <button
                         key={item.path}
-                        onClick={() => item.path === 'compliance' ? setActiveTab('compliance') : navTo(`/${item.path}`)}
+                        onClick={() => {
+                          if (item.path === 'compliance') setActiveTab('compliance');
+                          else navTo(`/${item.path}`);
+                        }}
                         className={`${subItemButtonClass} ${
                           isActive
                             ? `${activeSubItemClass} font-semibold`
@@ -719,17 +725,17 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => {
                   const next = !managementGroupOpen;
                   setManagementGroupOpen(next);
-                  if (next && !['audit', 'configuration', 'users', 'license'].includes(activeTab)) {
+                  if (next && !['audit', 'users', 'license'].includes(activeTab)) {
                     setActiveTab('audit');
                   }
                 }}
                 className={`${navButtonGroupClass} ${
-                  ['audit', 'configuration', 'users', 'license'].includes(activeTab)
+                  ['audit', 'users', 'license'].includes(activeTab)
                     ? activePrimaryNavClass
                     : inactivePrimaryNavClass
                 }`}
               >
-                <Settings size={17} className={['audit', 'configuration', 'users', 'license'].includes(activeTab) ? 'text-[#5fe6ff]' : 'text-white/72'} />
+                <Settings size={17} className={['audit', 'users', 'license'].includes(activeTab) ? 'text-[#5fe6ff]' : 'text-white/72'} />
                 <span className={navLabelClass}>{language === 'zh' ? '平台管理' : 'Management'}</span>
                 <ChevronRight size={groupChevronIconSize} className={`${plainChevronClass} ${managementGroupOpen ? 'rotate-90 text-white/55' : ''}`} />
               </button>
@@ -737,7 +743,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <div className={subNavRailClass}>
                   {([
                     isFeatureEnabled('audit_logs') && { id: 'audit', icon: History, label: t('auditLogs') },
-                    { id: 'configuration', icon: Settings, label: t('configuration') },
                     isFeatureEnabled('user_management') && { id: 'users', icon: User, label: t('userManagement') },
                     { id: 'license', icon: Shield, label: language === 'zh' ? '授权管理' : 'License' },
                     isFeatureEnabled('password_rotation') && { id: 'credentials', icon: Lock, label: language === 'zh' ? '凭据轮换' : 'Password Rotation' },

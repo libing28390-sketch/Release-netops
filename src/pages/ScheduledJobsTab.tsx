@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
   Database, Activity, Power, PowerOff,
-  Search, FileCode, Eye, Target, FileText,
+  Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight,
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import TagConditionPicker, { type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter, parseTagFilter } from '../components/TagConditionPicker';
@@ -81,6 +82,19 @@ interface EligibleApprover {
   id: string;
   username: string;
   role: string;
+}
+
+interface SystemScheduledJob {
+  id: string;
+  name_zh: string;
+  name_en: string;
+  description_zh: string;
+  description_en: string;
+  category?: string;
+  action_type?: string;
+  deep_link?: string | null;
+  trigger?: string;
+  next_run_at?: string | null;
 }
 
 interface ScheduledJobsTabProps {
@@ -178,9 +192,11 @@ const describeScope = (scope: string, filter: string, zh: boolean): string => {
 
 const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast }) => {
   const zh = language === 'zh';
+  const navigate = useNavigate();
 
   /* === STATE === */
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
+  const [systemJobs, setSystemJobs] = useState<SystemScheduledJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
@@ -241,6 +257,18 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
   }, [authHeaders, page, pageSize]);
 
+  const fetchSystemJobs = useCallback(async () => {
+    try {
+      const r = await fetch('/api/scheduled-jobs/system', { headers: authHeaders });
+      if (r.ok) {
+        const j = await r.json();
+        setSystemJobs(j?.data?.items || []);
+      }
+    } catch {
+      // Silently skip — system jobs view is optional enrichment, not blocking.
+    }
+  }, [authHeaders]);
+
   const fetchApprovers = useCallback(async () => {
     try {
       const r = await fetch('/api/users', { headers: authHeaders });
@@ -265,6 +293,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   }, [authHeaders]);
 
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
+  useEffect(() => { fetchSystemJobs(); }, [fetchSystemJobs]);
   useEffect(() => { 
     if (modalOpen && !isEditMode) fetchApprovers(); 
     if ((modalOpen || detailJob) && (form.action_type === 'script_run' || detailJob?.action_type === 'script_run')) fetchScripts();
@@ -640,17 +669,22 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   return (
     <div className="h-full flex flex-col overflow-hidden space-y-4">
       {/* Page Header */}
-      <div className="rounded-2xl border border-black/5 bg-white shadow-sm">
-        <div className="flex items-center justify-between px-5 py-3">
-          <div>
-            <h2 className="text-lg font-semibold text-[#164e63]">{zh ? '定时作业' : 'Scheduled Jobs'}</h2>
-            <p className="text-[11px] text-black/40">{zh ? '创建和管理周期性执行的自动化作业，需审批人验证码授权' : 'Create and manage periodic automation jobs with approver verification'}</p>
+      <div className="rounded-2xl border border-black/5 bg-white shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 bg-[linear-gradient(to_right,#f0fdff_0%,#ffffff_100%)] border-b border-cyan-100/60">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-cyan-500/10 flex items-center justify-center">
+              <CalendarClock className="w-5 h-5 text-cyan-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-[#164e63]">{zh ? '定时作业' : 'Scheduled Jobs'}</h2>
+              <p className="text-[11px] text-black/40">{zh ? '创建和管理周期性执行的自动化作业，需审批人验证码授权' : 'Create and manage periodic automation jobs with approver verification'}</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={fetchJobs}
+              onClick={() => { fetchJobs(); fetchSystemJobs(); }}
               disabled={loading}
-              className="inline-flex h-8 items-center gap-1 rounded-xl border border-black/8 bg-[#f8fafc] px-3 text-[11px] font-medium text-[#0e7490] transition-all hover:bg-white hover:border-cyan-400/30"
+              className="inline-flex h-8 items-center gap-1 rounded-xl border border-black/8 bg-white px-3 text-[11px] font-medium text-[#0e7490] transition-all hover:bg-cyan-50 hover:border-cyan-400/30"
             >
               <RotateCcw size={12} className={loading ? 'animate-spin' : ''} />
               {zh ? '刷新' : 'Refresh'}
@@ -665,6 +699,110 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           </div>
         </div>
       </div>
+
+      {/* ═══ System Jobs (platform-managed, read-only) ═══ */}
+      {systemJobs.length > 0 && (
+        <div className="rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50 to-white shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-slate-900/5 text-slate-600 flex items-center justify-center">
+              <Lock size={13} />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-bold text-[#0f172a] flex items-center gap-2">
+                {zh ? '系统任务' : 'System Jobs'}
+                <span className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded bg-slate-200/70 text-slate-600">
+                  {zh ? '平台内置' : 'Platform'}
+                </span>
+              </h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                {zh
+                  ? '由平台托管的周期性任务，不占用审批流程；如需调整请进入对应模块。'
+                  : 'Platform-managed recurring tasks. They do not require approval; adjust them in the linked modules.'}
+              </p>
+            </div>
+            <span className="text-[10px] font-bold text-slate-400 px-2 py-0.5 rounded-full bg-slate-100">
+              {systemJobs.length}
+            </span>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {systemJobs.map((sj) => {
+              const icon = sj.action_type === 'backup'
+                ? Database
+                : sj.action_type === 'inspection'
+                  ? Activity
+                  : sj.action_type === 'arp_sweep'
+                    ? Search
+                    : sj.action_type === 'password_rotation'
+                      ? Shield
+                      : CalendarClock;
+              const Icon = icon;
+              const nextAt = sj.next_run_at
+                ? new Date(sj.next_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', {
+                    hour12: false, month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit',
+                  })
+                : null;
+              return (
+                <div
+                  key={sj.id}
+                  className={`flex items-center gap-4 px-5 py-3 hover:bg-slate-50 transition-colors ${sj.deep_link ? 'cursor-pointer group/sys' : ''}`}
+                  onClick={() => { if (sj.deep_link) navigate(sj.deep_link); }}
+                >
+                  <div className="w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center shrink-0 shadow-sm">
+                    <Icon size={16} className="text-slate-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-bold text-[#0f172a] truncate">
+                        {zh ? sj.name_zh : sj.name_en}
+                      </p>
+                      <span className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
+                        {sj.id}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                      {zh ? sj.description_zh : sj.description_en}
+                    </p>
+                    <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-400 flex-wrap">
+                      {sj.trigger && (
+                        <span className="flex items-center gap-1">
+                          <CalendarClock size={10} />
+                          <code className="font-mono truncate max-w-[220px]">{sj.trigger}</code>
+                        </span>
+                      )}
+                      {nextAt && (
+                        <>
+                          <span className="text-slate-200">·</span>
+                          <span>{zh ? '下次' : 'Next'}: {nextAt}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {sj.deep_link && (
+                    <div className="shrink-0 flex items-center gap-1 text-[11px] font-semibold text-slate-400 group-hover/sys:text-cyan-600 transition-colors">
+                      {zh ? '查看详情' : 'Details'}
+                      <ArrowUpRight size={12} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* User-defined jobs header */}
+      {systemJobs.length > 0 && (
+        <div className="flex items-center gap-2 px-1">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-black/40">
+            {zh ? '用户定义作业' : 'User-defined Jobs'}
+          </h3>
+          <div className="flex-1 h-px bg-black/[0.05]" />
+          <span className="text-[10px] text-black/30">
+            {zh ? `共 ${total} 条` : `${total} total`}
+          </span>
+        </div>
+      )}
 
       {/* Job List */}
       {loading ? (

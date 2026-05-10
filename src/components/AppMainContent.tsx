@@ -238,6 +238,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     openComplianceFindingDetail,
     updateComplianceFinding,
     isTakingSnapshot,
+    activeBackupRunId,
     scheduleEnabled,
     setScheduleEnabled,
     scheduleCron,
@@ -887,6 +888,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             language={language}
             isTakingSnapshot={isTakingSnapshot}
             onBackupAllOnline={handleRunBackupAllOnline}
+            activeRunId={activeBackupRunId}
             onBackupDevice={handleBackupSingleDevice}
             onNavigateToDiff={handleNavigateToConfigDiff}
             showToast={showToast}
@@ -961,7 +963,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
           <ConfigSearchTab t={t} />
         </Suspense>
       )}
-      {activeTab === 'configuration' && (
+      {activeTab === 'config' && configPage === 'templates' && (
         <Suspense fallback={lazyPanelFallback}>
           <PlatformSettingsTab
             t={t}

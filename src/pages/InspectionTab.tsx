@@ -399,22 +399,26 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
 
       {/* ═══════ Main Content Area ═══════ */}
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        {/* Navigation Tabs */}
-        <div className="flex items-center gap-1.5 border-b border-black/5 px-5 py-3 shrink-0">
-          {[
-            { key: 'overview', label: isZh ? '巡检概览' : 'Overview', icon: <BarChart3 className="w-3.5 h-3.5" /> },
-            { key: 'records', label: isZh ? '巡检记录' : 'Records', icon: <Clock className="w-3.5 h-3.5" /> },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => { setSubTab(tab.key as SubTab); setSelectedRunDetail(null); }}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all ${subTab === tab.key ? 'bg-[#00172d] text-white shadow-lg' : 'text-black/40 hover:bg-black/5 hover:text-black/60'}`}
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        {/* Navigation Tabs — only shown when NOT driven by sidebar navigation.
+            When initialView is set, the sidebar already provides the navigation
+            so showing these tabs would duplicate the menu items. */}
+        {!initialView && (
+          <div className="flex items-center gap-1.5 border-b border-black/5 px-5 py-3 shrink-0">
+            {[
+              { key: 'overview', label: isZh ? '巡检概览' : 'Overview', icon: <BarChart3 className="w-3.5 h-3.5" /> },
+              { key: 'records', label: isZh ? '巡检记录' : 'Records', icon: <Clock className="w-3.5 h-3.5" /> },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => { setSubTab(tab.key as SubTab); setSelectedRunDetail(null); }}
+                className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all ${subTab === tab.key ? 'bg-[#00172d] text-white shadow-lg' : 'text-black/40 hover:bg-black/5 hover:text-black/60'}`}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Scrollable Body */}
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">

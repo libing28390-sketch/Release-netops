@@ -2,51 +2,44 @@ import React, { useState, useCallback } from 'react';
 import { Copy, Check, Download, FileDown } from 'lucide-react';
 
 /**
- * GitHub-style copy + download toolbar for command-output blocks.
+ * GitHub-style compact toolbar for command-output blocks.
  *
- * - Copy button: copies `text` to clipboard; shows a short "Copied!" confirmation.
- * - Download button: downloads `text` as a plaintext .txt file (UTF-8).
- * - Export CSV button (optional): when `csvRows` is provided, exports rows as a .csv
- *   file. Used by the quick-query parsed-table view.
+ * Visual reference (from project screenshots):
+ *   ┌──────────────────────────┐
+ *   │ sJz+-wO3W_4vIvQRmV20  ⧉ │   black/dark-navy pill
+ *   └──────────────────────────┘   cyan text + icon, "✓" after copy
  *
- * The toolbar is styled so it can sit on both dark (terminal) and light backgrounds.
+ * - Copy:     copies `text` to clipboard, shows ✓ briefly.
+ * - Download: saves `text` as a UTF-8 .txt.
+ * - CSV:      optional, exports `csvRows` as .csv (Excel-ready with BOM).
+ *
+ * Theme presets:
+ *   - `dark`  : GitHub-style dark navy pill with cyan accent (default).
+ *   - `light` : slate pill for use on white panels.
  */
 interface OutputActionsProps {
-  /** Full text to be copied / saved. */
   text: string;
-  /** Base filename (without extension). Defaults to "output". */
   filename?: string;
-  /** Optional rows for CSV export. Headers derived from first row. */
   csvRows?: Array<Record<string, unknown>>;
-  /** Visual theme. "dark" for black-terminal panels, "light" otherwise. */
   theme?: 'dark' | 'light';
-  /** Labels in zh/en. */
   zh?: boolean;
-  /** Extra Tailwind classes for the outer container. */
   className?: string;
-  /** Hide the text label next to each button (icon-only). */
   iconOnly?: boolean;
 }
 
 function escapeCsvCell(value: unknown): string {
   const s = value == null ? '' : String(value);
-  if (/[",\n\r]/.test(s)) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
 
 function rowsToCsv(rows: Array<Record<string, unknown>>): string {
   if (!rows.length) return '';
-  // Preserve insertion order across all rows
   const headerSet = new Set<string>();
   rows.forEach(r => Object.keys(r || {}).forEach(k => headerSet.add(k)));
   const headers = Array.from(headerSet);
   const lines = [headers.map(escapeCsvCell).join(',')];
-  rows.forEach(r => {
-    lines.push(headers.map(h => escapeCsvCell(r?.[h])).join(','));
-  });
-  // Prepend UTF-8 BOM so Excel detects encoding correctly when opening.
+  rows.forEach(r => lines.push(headers.map(h => escapeCsvCell(r?.[h])).join(',')));
   return '\uFEFF' + lines.join('\r\n');
 }
 
@@ -58,7 +51,6 @@ function triggerDownload(blob: Blob, filename: string) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  // Give the browser a moment before revoking so the download settles.
   setTimeout(() => URL.revokeObjectURL(url), 200);
 }
 
@@ -81,7 +73,6 @@ const OutputActions: React.FC<OutputActionsProps> = ({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Fallback for insecure contexts
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed';
@@ -107,31 +98,74 @@ const OutputActions: React.FC<OutputActionsProps> = ({
     triggerDownload(blob, `${filename}_${stamp}.csv`);
   }, [csvRows, filename]);
 
-  const baseBtn =
-    theme === 'dark'
-      ? 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border border-white/10 hover:border-white/20 transition-all'
-      : 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-200 transition-all';
+  // ── Pill styles ─────────────────────────────────────────────
+  // Dark  = project's signature GitHub-style pill (#00172d bg, cyan accent).
+  // Light = slate pill for use on white surfaces.
+  const isDark = theme === 'dark';
+  const pillBase = isDark
+    ? 'bg-[#00172d] hover:bg-[#0a2540] border border-white/5'
+    : 'bg-slate-100 hover:bg-slate-200 border border-slate-200';
+  const textDefault = isDark ? 'text-cyan-400' : 'text-slate-700';
+  const textSuccess = isDark ? 'text-emerald-400' : 'text-emerald-600';
+  const textDisabled = isDark ? 'text-white/20' : 'text-slate-300';
+  const dividerCol = isDark ? 'bg-white/10' : 'bg-slate-300';
 
-  const successBtn =
-    theme === 'dark'
-      ? 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-400/30 transition-all'
-      : 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200 transition-all';
-
+  // Segmented pill: [Copy | Download | CSV?]
   return (
-    <div className={`flex items-center gap-1.5 ${className}`}>
-      <button type="button" onClick={handleCopy} className={copied ? successBtn : baseBtn} title={label('复制到剪贴板', 'Copy to clipboard')}>
-        {copied ? <Check size={12} /> : <Copy size={12} />}
+    <div
+      className={`inline-flex items-stretch rounded-full overflow-hidden ${pillBase} shadow-sm ${className}`}
+      role="toolbar"
+    >
+      {/* Copy segment */}
+      <button
+        type="button"
+        onClick={handleCopy}
+        disabled={!text}
+        className={`group/copy inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono font-semibold transition-colors ${
+          !text ? `${textDisabled} cursor-not-allowed` : copied ? textSuccess : `${textDefault} hover:text-white`
+        }`}
+        title={label('复制到剪贴板', 'Copy to clipboard')}
+        aria-label={label('复制', 'Copy')}
+      >
+        {copied
+          ? <Check size={13} strokeWidth={2.5} />
+          : <Copy size={13} strokeWidth={2} />}
         {!iconOnly && <span>{copied ? label('已复制', 'Copied') : label('复制', 'Copy')}</span>}
       </button>
-      <button type="button" onClick={handleDownloadText} className={baseBtn} title={label('下载 TXT', 'Download TXT')} disabled={!text}>
-        <Download size={12} />
+
+      {/* Divider */}
+      <span className={`w-px ${dividerCol} my-1.5`} aria-hidden="true" />
+
+      {/* Download TXT segment */}
+      <button
+        type="button"
+        onClick={handleDownloadText}
+        disabled={!text}
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono font-semibold transition-colors ${
+          !text ? `${textDisabled} cursor-not-allowed` : `${textDefault} hover:text-white`
+        }`}
+        title={label('下载 TXT', 'Download TXT')}
+        aria-label={label('下载', 'Download')}
+      >
+        <Download size={13} strokeWidth={2} />
         {!iconOnly && <span>{label('下载', 'Download')}</span>}
       </button>
+
+      {/* Optional CSV segment */}
       {csvRows && csvRows.length > 0 && (
-        <button type="button" onClick={handleDownloadCsv} className={baseBtn} title={label('导出 CSV (Excel 可直接打开)', 'Export CSV (opens in Excel)')}>
-          <FileDown size={12} />
-          {!iconOnly && <span>{label('导出 CSV', 'Export CSV')}</span>}
-        </button>
+        <>
+          <span className={`w-px ${dividerCol} my-1.5`} aria-hidden="true" />
+          <button
+            type="button"
+            onClick={handleDownloadCsv}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono font-semibold transition-colors ${textDefault} hover:text-white`}
+            title={label('导出 CSV (Excel 可直接打开)', 'Export CSV (opens in Excel)')}
+            aria-label={label('导出 CSV', 'Export CSV')}
+          >
+            <FileDown size={13} strokeWidth={2} />
+            {!iconOnly && <span>CSV</span>}
+          </button>
+        </>
       )}
     </div>
   );

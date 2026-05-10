@@ -68,6 +68,7 @@ export const navConfig: NavGroup[] = [
       { id: 'config-schedule', label: '备份计划',   labelEn: 'Backup Schedule',  path: '/config/schedule' },
       { id: 'config-diff',    label: '配置对比',   labelEn: 'Config Diff',      path: '/config/diff' },
       { id: 'config-search',  label: '配置搜索',   labelEn: 'Config Search',    path: '/config/search' },
+      { id: 'configuration',  label: '配置模板',   labelEn: 'Templates',        path: '/config/templates' },
     ],
   },
   {
@@ -118,7 +119,6 @@ export const navConfig: NavGroup[] = [
     section: true,
     children: [
       { id: 'audit',          label: '审计日志',  labelEn: 'Audit Logs',  icon: 'Clock',    path: '/audit' },
-      { id: 'configuration',  label: '平台设置',  labelEn: 'Settings',    icon: 'Settings', path: '/configuration' },
       { id: 'users',          label: '用户管理',  labelEn: 'Users',       icon: 'User',     path: '/users' },
       { id: 'credentials',     label: '凭据轮换',  labelEn: 'Password Rotation', icon: 'Key',   path: '/credentials', requiredRole: 'Administrator' },
       { id: 'license',        label: '授权管理',  labelEn: 'License',     icon: 'Shield',   path: '/license', requiredRole: 'Administrator' },

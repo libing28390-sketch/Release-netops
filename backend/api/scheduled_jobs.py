@@ -62,6 +62,148 @@ def list_scheduled_jobs(
         conn.close()
 
 
+# ── System Jobs ──
+# Platform-managed periodic jobs (APScheduler). Unlike user-defined scheduled
+# jobs they cannot be created / edited / deleted from the UI because they are
+# part of the product's guaranteed behavior (backups, inspections, retention,
+# etc.). We expose them read-only so operators have a single place to see every
+# recurring task on the platform.
+_SYSTEM_JOB_CATALOG = {
+    'daily_backup': {
+        'name_zh': '配置自动备份',
+        'name_en': 'Scheduled Config Backup',
+        'description_zh': '每日扫描所有在线网络设备，自动抓取运行配置并归档到备份中心。',
+        'description_en': 'Daily collection of running-config across all online network devices, archived in the Backup Center.',
+        'category': 'collection',
+        'action_type': 'backup',
+        'deep_link': '/config/schedule',
+    },
+    'arp_cache_sweep': {
+        'name_zh': 'ARP 缓存采集',
+        'name_en': 'ARP Cache Sweep',
+        'description_zh': '定期从接入层设备采集 ARP 表，用于 IP 定位器的 MAC 追踪。',
+        'description_en': 'Periodic ARP table collection for the IP Locator’s MAC-tracking workflow.',
+        'category': 'collection',
+        'action_type': 'arp_sweep',
+        'deep_link': '/ip-locator',
+    },
+    'inspection_scheduler': {
+        'name_zh': '周期巡检',
+        'name_en': 'Scheduled Inspection',
+        'description_zh': '按计划执行健康巡检（Ping / SSH / 精细化指标），结果进入巡检概览。',
+        'description_en': 'Runs health inspections (ping / SSH / per-item checks) on schedule.',
+        'category': 'collection',
+        'action_type': 'inspection',
+        'deep_link': '/automation/inspection',
+    },
+    'host_resource_sampler': {
+        'name_zh': '宿主机资源采样',
+        'name_en': 'Host Resource Sampler',
+        'description_zh': '每分钟采集宿主机 CPU / 内存 / 磁盘指标，用于监控看板。',
+        'description_en': 'Samples host CPU / memory / disk every minute for monitoring dashboards.',
+        'category': 'collection',
+        'action_type': 'resource_snapshot',
+        'deep_link': '/monitoring',
+    },
+    'device_health_sampler': {
+        'name_zh': '设备健康采样',
+        'name_en': 'Device Health Sampler',
+        'description_zh': '每分钟对设备状态与健康打分进行抽样，驱动监控告警。',
+        'description_en': 'Samples device status and health score each minute to drive monitoring signals.',
+        'category': 'collection',
+        'action_type': 'device_health',
+        'deep_link': '/monitoring',
+    },
+    'password_rotation_sweep': {
+        'name_zh': '凭据轮换扫描',
+        'name_en': 'Password Rotation Sweep',
+        'description_zh': '每日凌晨检查到期凭据，并按策略执行自动轮换。',
+        'description_en': 'Daily scan for expiring credentials with policy-driven rotation.',
+        'category': 'security',
+        'action_type': 'password_rotation',
+        'deep_link': '/credentials',
+    },
+}
+
+
+def _describe_trigger(trigger) -> str:
+    """Best-effort human-readable description of an APScheduler trigger."""
+    try:
+        s = str(trigger)
+        if 'cron' in s.lower():
+            # CronTrigger's __str__ is already reasonably human (e.g.
+            # "cron[hour='2', minute='0']")
+            return s
+        if 'interval' in s.lower():
+            return s
+        return s
+    except Exception:
+        return 'unknown'
+
+
+@router.get("/scheduled-jobs/system")
+def list_system_scheduled_jobs(_user=require_role("Viewer")):
+    """Return platform-managed periodic jobs (read-only).
+
+    Sourced from APScheduler's in-memory job registry, enriched with the static
+    metadata in ``_SYSTEM_JOB_CATALOG``. Unknown IDs are reported with their raw
+    information so newly added jobs surface without a code change.
+    """
+    from core.scheduler_manager import scheduler
+
+    items: list[dict] = []
+    try:
+        jobs = scheduler.get_jobs()
+    except Exception as exc:
+        logger.warning(f"[SystemJobs] Could not list APScheduler jobs: {exc}")
+        jobs = []
+
+    for sjob in jobs:
+        jid = sjob.id
+        # Skip user-defined dynamic jobs (prefix 'dyn_'); those are already
+        # returned by /scheduled-jobs.
+        if jid.startswith('dyn_'):
+            continue
+        meta = _SYSTEM_JOB_CATALOG.get(jid, {
+            'name_zh': jid,
+            'name_en': jid,
+            'description_zh': '平台内置任务',
+            'description_en': 'Platform built-in task',
+            'category': 'platform',
+            'action_type': 'system',
+            'deep_link': None,
+        })
+        next_run = None
+        try:
+            if sjob.next_run_time:
+                next_run = sjob.next_run_time.isoformat()
+        except Exception:
+            pass
+        items.append({
+            'id': jid,
+            'name_zh': meta['name_zh'],
+            'name_en': meta['name_en'],
+            'description_zh': meta['description_zh'],
+            'description_en': meta['description_en'],
+            'category': meta.get('category'),
+            'action_type': meta.get('action_type'),
+            'deep_link': meta.get('deep_link'),
+            'trigger': _describe_trigger(sjob.trigger),
+            'next_run_at': next_run,
+        })
+    # Stable order: daily_backup / inspection first, then the rest alphabetically
+    _priority = ['daily_backup', 'inspection_scheduler', 'arp_cache_sweep',
+                 'device_health_sampler', 'host_resource_sampler',
+                 'password_rotation_sweep']
+    def _sort_key(item: dict):
+        try:
+            return (_priority.index(item['id']), item['id'])
+        except ValueError:
+            return (len(_priority), item['id'])
+    items.sort(key=_sort_key)
+    return {'success': True, 'data': {'items': items, 'total': len(items)}}
+
+
 # ── Create ──
 
 @router.post("/scheduled-jobs")

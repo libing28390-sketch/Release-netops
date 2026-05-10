@@ -158,21 +158,31 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     return Array.from(vendors).sort();
   }, [configTemplates]);
 
+  // Templates matching the free-text search (used for both vendor-chip counts
+  // and the final rendered list, so counts stay consistent with what the user sees).
+  const searchedTemplates = useMemo(() => {
+    if (!tplSearch.trim()) return configTemplates;
+    const q = tplSearch.trim().toLowerCase();
+    return configTemplates.filter(
+      (tpl) =>
+        tpl.name.toLowerCase().includes(q) ||
+        (tpl.vendor || 'Custom').toLowerCase().includes(q)
+    );
+  }, [configTemplates, tplSearch]);
+
   const filteredTemplates = useMemo(() => {
-    let list = configTemplates;
-    if (tplVendorFilter !== 'all') {
-      list = list.filter((tpl) => (tpl.vendor || 'Custom') === tplVendorFilter);
-    }
-    if (tplSearch.trim()) {
-      const q = tplSearch.trim().toLowerCase();
-      list = list.filter(
-        (tpl) =>
-          tpl.name.toLowerCase().includes(q) ||
-          (tpl.vendor || 'Custom').toLowerCase().includes(q)
-      );
-    }
-    return list;
-  }, [configTemplates, tplVendorFilter, tplSearch]);
+    if (tplVendorFilter === 'all') return searchedTemplates;
+    return searchedTemplates.filter((tpl) => (tpl.vendor || 'Custom') === tplVendorFilter);
+  }, [searchedTemplates, tplVendorFilter]);
+
+  const vendorCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    searchedTemplates.forEach((tpl) => {
+      const v = tpl.vendor || 'Custom';
+      map.set(v, (map.get(v) || 0) + 1);
+    });
+    return map;
+  }, [searchedTemplates]);
 
   const templateVarsMap = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -320,11 +330,14 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                     : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                 }`}
               >
-                {zh ? '全部' : 'All'} · {configTemplates.length}
+                {zh ? '全部' : 'All'} · {searchedTemplates.length}
               </button>
               {vendorList.map((vendor) => {
                 const brand = vendorBrand(vendor);
-                const count = configTemplates.filter((tpl) => (tpl.vendor || 'Custom') === vendor).length;
+                const count = vendorCounts.get(vendor) || 0;
+                // When the user types a search, hide vendors with zero matches
+                // to avoid the "Arista · 5" lie shown during search.
+                if (tplSearch.trim() && count === 0) return null;
                 const isActive = tplVendorFilter === vendor;
                 return (
                   <button

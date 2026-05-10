@@ -141,34 +141,60 @@ def list_devices_with_backups(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
 ):
-    """Return devices that have at least one config snapshot, with backup count and pagination."""
+    """Return devices eligible for config backup, with backup count and pagination.
+
+    Scope:
+      - Only network devices (platforms: cisco_*, arista, juniper_*, huawei_*,
+        h3c_*, ruijie_*). Linux / server assets are excluded because they
+        don't produce a textual running-config.
+      - Includes devices with 0 snapshots so operators can trigger a first
+        backup from the UI.
+    """
     conn = get_db_connection()
     try:
-        where_sql = ''
+        # Platform whitelist — keep in sync with run_scheduled_backup().
+        platform_filter = (
+            "(LOWER(COALESCE(d.platform,'')) LIKE '%cisco%' "
+            " OR LOWER(COALESCE(d.platform,'')) LIKE '%arista%' "
+            " OR LOWER(COALESCE(d.platform,'')) LIKE '%rgos%' "
+            " OR LOWER(COALESCE(d.platform,'')) LIKE '%ruijie%' "
+            " OR LOWER(COALESCE(d.platform,'')) LIKE '%juniper%' "
+            " OR LOWER(COALESCE(d.platform,'')) LIKE '%junos%' "
+            " OR LOWER(COALESCE(d.platform,'')) LIKE '%huawei%' "
+            " OR LOWER(COALESCE(d.platform,'')) LIKE '%vrp%' "
+            " OR LOWER(COALESCE(d.platform,'')) LIKE '%h3c%' "
+            " OR LOWER(COALESCE(d.platform,'')) LIKE '%comware%')"
+        )
+
+        where_sql = f"WHERE {platform_filter}"
         params: list = []
         if search and search.strip():
             fuzzy = f"%{search.strip().lower()}%"
-            where_sql = "AND (LOWER(d.hostname) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ?)"
+            where_sql += " AND (LOWER(d.hostname) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ?)"
             params = [fuzzy, fuzzy]
 
         count_sql = f'''
             SELECT COUNT(DISTINCT d.id)
             FROM devices d
-            INNER JOIN config_snapshots cs ON cs.device_id = d.id
-            WHERE 1=1 {where_sql}
+            {where_sql}
         '''
         total = conn.execute(count_sql, tuple(params)).fetchone()[0]
 
         offset = (page - 1) * page_size
+        # Devices sorted by whether they've been backed up (backed-up first),
+        # then by most recent backup time, then by hostname.
         rows = conn.execute(f'''
             SELECT d.id, d.hostname, d.ip_address, d.platform, d.status,
                    COUNT(cs.id) AS backup_count,
                    MAX(cs.timestamp) AS latest_backup
             FROM devices d
-            INNER JOIN config_snapshots cs ON cs.device_id = d.id
-            WHERE 1=1 {where_sql}
+            LEFT JOIN config_snapshots cs ON cs.device_id = d.id
+            {where_sql}
             GROUP BY d.id
-            ORDER BY MAX(cs.timestamp) DESC
+            ORDER BY
+                CASE WHEN COUNT(cs.id) > 0 THEN 0 ELSE 1 END,
+                COALESCE(MAX(cs.timestamp), '') DESC,
+                d.hostname
             LIMIT ? OFFSET ?
         ''', tuple([*params, page_size, offset])).fetchall()
 
@@ -495,9 +521,8 @@ def get_backup_stats():
         device_stats = []
         for dev in devices:
             dev_snaps = conn.execute(
-                """SELECT COUNT(*) as cnt, MAX(timestamp) as latest, trigger
-                   FROM config_snapshots WHERE device_id = ?
-                   GROUP BY device_id""",
+                """SELECT COUNT(*) as cnt, MAX(timestamp) as latest
+                   FROM config_snapshots WHERE device_id = ?""",
                 (dev['id'],)
             ).fetchone()
             last_trigger = conn.execute(
@@ -687,6 +712,44 @@ def update_schedule(body: ScheduleUpdate):
     return cfg
 
 
+# ── In-memory progress registry ──────────────────────────────────────────────
+# Keyed by run_id (uuid hex). Entries are cleaned up after 10 minutes.
+# Shape: { run_id: { total, done, success, failed, skipped, devices: [...], finished_at } }
+_backup_runs: dict[str, dict] = {}
+
+# How many devices to back up in parallel. SSH connections are I/O-bound so
+# 5 concurrent workers is a safe default that won't overwhelm most networks.
+# Increase via BACKUP_CONCURRENCY env var if your network can handle more.
+import os as _os
+BACKUP_CONCURRENCY = int(_os.environ.get('BACKUP_CONCURRENCY', '10'))
+
+
+@router.post('/configs/run-now')
+async def trigger_backup_now():
+    """Trigger the same backup routine used by the scheduler, on demand.
+
+    Returns a ``run_id`` that the frontend can poll via
+    ``GET /configs/run-now/{run_id}/progress`` to show a live progress bar.
+    """
+    import asyncio
+    run_id = uuid.uuid4().hex
+    asyncio.create_task(run_scheduled_backup(run_id=run_id))
+    return {
+        'status': 'started',
+        'run_id': run_id,
+        'message': 'Config backup triggered. Poll /configs/run-now/{run_id}/progress for status.',
+    }
+
+
+@router.get('/configs/run-now/{run_id}/progress')
+def get_backup_progress(run_id: str):
+    """Return live progress for a manual backup run."""
+    entry = _backup_runs.get(run_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail='Run not found or already expired')
+    return entry
+
+
 @router.get('/configs/schedule/preview')
 def preview_schedule(n: int = Query(default=10, ge=1, le=50)):
     """Return the next N scheduled execution times + device list."""
@@ -868,82 +931,175 @@ def reschedule_backup(cfg: dict):
 MOCK_IPS = {'127.0.0.1', '0.0.0.0', 'localhost'}
 
 
-async def run_scheduled_backup():
-    """Backup all online devices. Called by APScheduler.
-    Directly calls AutomationService to bypass HTTP authentication.
-    Runs retention cleanup afterward.
+async def run_scheduled_backup(run_id: str | None = None):
+    """Backup all online network devices. Called by APScheduler or on-demand.
+
+    Concurrency:
+      - Up to ``BACKUP_CONCURRENCY`` (default 5) devices are backed up in
+        parallel using asyncio.Semaphore + run_in_executor.
+      - Each device gets its own AutomationService instance so there is no
+        shared state between concurrent workers.
+
+    Progress tracking:
+      - When ``run_id`` is provided the function writes live progress into
+        ``_backup_runs[run_id]`` so the frontend can poll it.
     """
     import asyncio
     from services.automation_service import AutomationService
     from core.crypto import decrypt_credential
     from api.devices import _record_instant_execution
+    import time as _time
 
-    logger.info("[Scheduled Backup] Starting daily config backup for all online devices...")
+    logger.info("[Scheduled Backup] Starting daily config backup for all online network devices...")
     conn = get_db_connection()
     try:
         devices = conn.execute(
-            "SELECT id, hostname, ip_address, platform, username, password FROM devices WHERE status = 'online'"
+            "SELECT id, hostname, ip_address, platform, role, username, password, "
+            "normal_username, normal_password, admin_username, admin_password, enable_password "
+            "FROM devices WHERE status = 'online'"
         ).fetchall()
     finally:
         conn.close()
 
-    success = 0
-    failed = 0
-    skipped = 0
+    # Platforms we back up (anything producing a textual running-config).
+    NETWORK_PLATFORM_KEYWORDS = (
+        'cisco', 'arista', 'rgos', 'ruijie',
+        'juniper', 'junos',
+        'huawei', 'vrp',
+        'h3c', 'comware',
+    )
 
+    def _is_network_device(platform: str) -> bool:
+        p = (platform or '').lower()
+        return any(kw in p for kw in NETWORK_PLATFORM_KEYWORDS)
+
+    # Filter to eligible devices upfront so progress totals are accurate
+    eligible = []
+    skipped_count = 0
     for device in devices:
-        # Skip mock / loopback devices
         if (device['ip_address'] or '') in MOCK_IPS:
-            skipped += 1
-            logger.info(f"[Scheduled Backup] ⊘ {device['hostname']} (mock IP, skipped)")
+            skipped_count += 1
+            logger.info(f"[Scheduled Backup] [SKIP] {device['hostname']} (mock IP, skipped)")
             continue
+        if not _is_network_device(device['platform']):
+            skipped_count += 1
+            logger.info(f"[Scheduled Backup] [SKIP] {device['hostname']} (platform={device['platform']} is not a network device, skipped)")
+            continue
+        eligible.append(device)
+
+    total = len(eligible)
+
+    # Initialise progress entry
+    if run_id:
+        _backup_runs[run_id] = {
+            'run_id': run_id,
+            'total': total,
+            'skipped': skipped_count,
+            'done': 0,
+            'success': 0,
+            'failed': 0,
+            'finished': False,
+            'finished_at': None,
+            'devices': [],
+            'started_at': _time.time(),
+        }
+
+    success_count = 0
+    failed_count = 0
+    sem = asyncio.Semaphore(BACKUP_CONCURRENCY)
+
+    def _looks_like_error(raw: str) -> bool:
+        if not raw or not raw.strip():
+            return True
+        low = raw.lower()
+        markers = (
+            '[mock ',
+            '% invalid input',
+            '% permission denied',
+            '% authorization failed',
+            'bash: ',
+            'command not found',
+        )
+        return any(m in low for m in markers)
+
+    async def _backup_one(device) -> dict:
+        """Back up a single device; returns a result dict."""
+        nonlocal success_count, failed_count
 
         _platform = (device['platform'] or '').lower()
-        if 'cisco' in _platform or 'arista' in _platform or 'rgos' in _platform:
+        if 'cisco' in _platform or 'arista' in _platform or 'rgos' in _platform or 'ruijie' in _platform:
             _backup_cmd = 'show running-config'
         elif 'juniper' in _platform or 'junos' in _platform:
             _backup_cmd = 'show configuration'
         else:
             _backup_cmd = 'display current-configuration'
 
+        d = dict(device)
+        admin_user = (d.get('admin_username') or '').strip()
+        admin_pass = decrypt_credential(d.get('admin_password') or '') or ''
+        normal_user = (d.get('normal_username') or '').strip()
+        normal_pass = decrypt_credential(d.get('normal_password') or '') or ''
+        default_user = (d.get('username') or '').strip()
+        default_pass = decrypt_credential(d.get('password') or '') or ''
+        enable_pass = decrypt_credential(d.get('enable_password') or '') or ''
+
+        if admin_user and admin_pass:
+            d['username'] = admin_user
+            d['password'] = admin_pass
+            d['enable_password'] = enable_pass or admin_pass
+            cred_kind = 'admin'
+        elif default_user and default_pass:
+            d['username'] = default_user
+            d['password'] = default_pass
+            d['enable_password'] = enable_pass or default_pass
+            cred_kind = 'default'
+        elif normal_user and normal_pass:
+            d['username'] = normal_user
+            d['password'] = normal_pass
+            d['enable_password'] = enable_pass or normal_pass
+            cred_kind = 'normal (fallback)'
+        else:
+            failed_count += 1
+            logger.error(f"[Scheduled Backup] [X] {device['hostname']}: no usable credentials")
+            return {'hostname': device['hostname'], 'status': 'failed', 'reason': 'no_credentials'}
+
         output = ''
         backup_ok = False
-        
-        try:
-            # Bypass HTTP by calling AutomationService directly
-            d = dict(device)
-            d['password'] = decrypt_credential(d.get('password')) or ''
-            driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
-            
-            service = AutomationService(driver_type=driver_type)
-            commands = [_backup_cmd]
-            
-            # run_in_executor to avoid blocking the event loop
-            results = await asyncio.get_event_loop().run_in_executor(
-                None, 
-                lambda: service.execute_commands(d, commands, is_config=False)
-            )
-            
-            if results and results[0].get('success', False):
-                output = results[0].get('output', '')
-                _record_instant_execution(d['id'], "Scheduled Backup", commands, 'completed', platform=d.get('platform'), output=output)
-            else:
-                err = results[0].get('error', "Unknown error") if results else "Unknown error"
-                logger.warning(f"[Scheduled Backup] Execution failed for {device['hostname']}: {err}")
+
+        async with sem:
+            try:
+                driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
+                service = AutomationService(driver_type=driver_type)
+                commands = [_backup_cmd]
+
+                results = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: service.execute_commands(d, commands, is_config=False)
+                )
+
+                if results and results[0].get('success', False):
+                    output = results[0].get('output') or results[0].get('stdout') or ''
+                    _record_instant_execution(d['id'], "Scheduled Backup", commands, 'completed',
+                                              platform=d.get('platform'), output=output, device_info=d)
+                else:
+                    err = (results[0].get('error') or results[0].get('stderr') or 'Unknown error') if results else 'Unknown error'
+                    logger.warning(f"[Scheduled Backup] Execution failed for {device['hostname']} ({cred_kind}): {err}")
+                    output = ''
+
+            except Exception as e:
+                logger.warning(f"[Scheduled Backup] Logic error for {device['hostname']}: {e}")
                 output = ''
 
-        except Exception as e:
-            logger.warning(f"[Scheduled Backup] Logic error for {device['hostname']}: {e}")
-            output = ''
-
-        # Validate: reject mock output, error placeholders, or empty
-        if output and not output.startswith('[Mock ') and not output.startswith('% '):
+        if not _looks_like_error(output) and not output.startswith('% '):
             backup_ok = True
 
         if not backup_ok:
-            failed += 1
-            logger.error(f"[Scheduled Backup] [X] {device['hostname']}: no valid config obtained")
-            continue
+            failed_count += 1
+            logger.error(
+                f"[Scheduled Backup] [X] {device['hostname']} ({cred_kind}): "
+                f"no valid config obtained (output length={len(output)})"
+            )
+            return {'hostname': device['hostname'], 'status': 'failed', 'reason': 'invalid_output'}
 
         try:
             platform = (device['platform'] or '').lower()
@@ -974,13 +1130,38 @@ async def run_scheduled_backup():
                 conn2.commit()
             finally:
                 conn2.close()
-            success += 1
+            success_count += 1
             logger.info(f"[Scheduled Backup] [OK] {device['hostname']}")
+            return {'hostname': device['hostname'], 'status': 'success', 'size': size}
         except Exception as e:
-            failed += 1
+            failed_count += 1
             logger.error(f"[Scheduled Backup] [X] {device['hostname']}: {e}")
+            return {'hostname': device['hostname'], 'status': 'failed', 'reason': str(e)}
 
-    logger.info(f"[Scheduled Backup] Done - {success} succeeded, {failed} failed, {skipped} skipped")
+    # Run all eligible devices concurrently (bounded by semaphore)
+    async def _run_with_progress(device):
+        result = await _backup_one(device)
+        if run_id and run_id in _backup_runs:
+            entry = _backup_runs[run_id]
+            entry['done'] += 1
+            entry['success'] = success_count
+            entry['failed'] = failed_count
+            entry['devices'].append(result)
+        return result
+
+    await asyncio.gather(*[_run_with_progress(dev) for dev in eligible])
+
+    logger.info(f"[Scheduled Backup] Done - {success_count} succeeded, {failed_count} failed, {skipped_count} skipped")
+
+    # Mark run as finished
+    if run_id and run_id in _backup_runs:
+        _backup_runs[run_id]['finished'] = True
+        _backup_runs[run_id]['finished_at'] = _time.time()
+        # Auto-expire after 10 minutes to avoid memory leak
+        async def _expire():
+            await asyncio.sleep(600)
+            _backup_runs.pop(run_id, None)
+        asyncio.create_task(_expire())
 
     # Run retention cleanup after backup
     try:

@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy, ArrowLeftRight, Trash2 } from 'lucide-react';
+import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy, ArrowLeftRight, Trash2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import Pagination from '../components/Pagination';
 
 interface LatestBackup {
@@ -24,6 +24,8 @@ interface ConfigBackupTabProps {
   onBackupDevice: (deviceId: string) => Promise<void>;
   onNavigateToDiff: (deviceId: string) => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
+  /** run_id returned by POST /configs/run-now — used to poll live progress */
+  activeRunId?: string | null;
 }
 
 const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
@@ -34,6 +36,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   onBackupDevice,
   onNavigateToDiff,
   showToast,
+  activeRunId,
 }) => {
   const zh = language === 'zh';
 
@@ -43,6 +46,50 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState('');
+
+  // Live progress state
+  const [progress, setProgress] = useState<{
+    total: number; done: number; success: number; failed: number; finished: boolean;
+    devices: Array<{ hostname: string; status: string }>;
+  } | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  // Poll progress when a run is active
+  useEffect(() => {
+    if (!activeRunId) {
+      if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; }
+      return;
+    }
+    const token = localStorage.getItem('netops_token');
+    const poll = async () => {
+      try {
+        const r = await fetch(`/api/configs/run-now/${activeRunId}/progress`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!r.ok) return;
+        const p = await r.json();
+        setProgress(p);
+        if (p.finished && pollRef.current) {
+          window.clearInterval(pollRef.current);
+          pollRef.current = null;
+          // Final list refresh
+          void loadLatestBackups();
+        }
+      } catch { /* ignore */ }
+    };
+    void poll();
+    pollRef.current = window.setInterval(poll, 1500);
+    return () => { if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRunId]);
+
+  // Clear progress banner a few seconds after finishing
+  useEffect(() => {
+    if (progress?.finished) {
+      const t = window.setTimeout(() => setProgress(null), 8000);
+      return () => window.clearTimeout(t);
+    }
+  }, [progress?.finished]);
 
   // View config modal
   const [viewSnapshot, setViewSnapshot] = useState<LatestBackup | null>(null);
@@ -210,6 +257,84 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Live backup progress banner */}
+        <AnimatePresence>
+          {progress && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className={`mx-5 mb-4 rounded-2xl border px-5 py-4 ${
+                progress.finished
+                  ? progress.failed > 0
+                    ? 'bg-amber-50 border-amber-200'
+                    : 'bg-emerald-50 border-emerald-200'
+                  : 'bg-cyan-50 border-cyan-200'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {progress.finished ? (
+                      progress.failed > 0
+                        ? <AlertTriangle size={15} className="text-amber-600" />
+                        : <CheckCircle2 size={15} className="text-emerald-600" />
+                    ) : (
+                      <RefreshCw size={15} className="text-cyan-600 animate-spin" />
+                    )}
+                    <span className={`text-sm font-bold ${
+                      progress.finished
+                        ? progress.failed > 0 ? 'text-amber-800' : 'text-emerald-800'
+                        : 'text-cyan-800'
+                    }`}>
+                      {progress.finished
+                        ? (zh
+                            ? `备份完成：${progress.success} 成功${progress.failed > 0 ? `，${progress.failed} 失败` : ''}`
+                            : `Backup complete: ${progress.success} succeeded${progress.failed > 0 ? `, ${progress.failed} failed` : ''}`)
+                        : (zh
+                            ? `正在备份... ${progress.done} / ${progress.total}`
+                            : `Backing up... ${progress.done} / ${progress.total}`)}
+                    </span>
+                  </div>
+                  <span className="text-[11px] font-mono text-black/40">
+                    {progress.done}/{progress.total}
+                  </span>
+                </div>
+                {/* Progress bar */}
+                <div className="h-2 rounded-full bg-black/[0.06] overflow-hidden">
+                  <motion.div
+                    className={`h-full rounded-full ${
+                      progress.finished
+                        ? progress.failed > 0 ? 'bg-amber-500' : 'bg-emerald-500'
+                        : 'bg-cyan-500'
+                    }`}
+                    initial={{ width: 0 }}
+                    animate={{ width: progress.total > 0 ? `${Math.round((progress.done / progress.total) * 100)}%` : '0%' }}
+                    transition={{ duration: 0.4 }}
+                  />
+                </div>
+                {/* Per-device status chips */}
+                {progress.devices.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {progress.devices.map((d, i) => (
+                      <span
+                        key={i}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                          d.status === 'success'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-red-100 text-red-700'
+                        }`}
+                      >
+                        {d.status === 'success' ? '✓' : '✗'} {d.hostname}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Search */}
         <div className="flex items-center gap-3 px-5 py-4">

@@ -232,8 +232,9 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
           ],
         },
         {
-          id: 'config-group', icon: FolderOpen, labelZh: '备份中心', labelEn: 'Backup Center',
+          id: 'config-group', icon: FolderOpen, labelZh: '配置中心', labelEn: 'Config Center',
           children: [
+            { id: 'configuration', path: '/config/templates', icon: FileText, labelZh: '配置管理', labelEn: 'Templates' },
             { id: 'config-backup', path: '/config/backup', icon: Download, labelZh: '备份历史', labelEn: 'Backups' },
             { id: 'config-diff', path: '/config/diff', icon: FileText, labelZh: '差异对比', labelEn: 'Diff' },
             { id: 'config-search', path: '/config/search', icon: Search, labelZh: '配置搜索', labelEn: 'Search' },
@@ -373,7 +374,6 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
   /* ── 底部：管理菜单 ── */
   const managementItems: NavChild[] = useMemo(() => [
     { id: 'history', path: null, icon: History, labelZh: '审计日志', labelEn: 'Audit Logs' },
-    { id: 'configuration', path: null, icon: Settings, labelZh: '系统设置', labelEn: 'Settings' },
     { id: 'users', path: null, icon: User, labelZh: '用户管理', labelEn: 'Users' },
   ], []);
 
@@ -611,15 +611,15 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
                 onClick={() => {
                   const next = !props.managementGroupOpen;
                   setManagementGroupOpen(next);
-                  if (next && !['history', 'configuration', 'users'].includes(activeTab)) setActiveTab('history');
+                  if (next && !['history', 'users'].includes(activeTab)) setActiveTab('history');
                 }}
                 className={`sidebar-nav-item group/nav w-full flex items-center gap-2.5 px-3 py-[7px] rounded-md text-[13px] font-medium transition-colors duration-100 ${
-                  ['history', 'configuration', 'users'].includes(activeTab)
+                  ['history', 'users'].includes(activeTab)
                     ? 'text-white bg-white/[0.07] sidebar-active-indicator'
                     : 'text-[#8b9cb6] hover:text-[#c8d6e5] hover:bg-white/[0.035]'
                 }`}
               >
-                <Settings size={17} strokeWidth={1.8} className={`shrink-0 ${['history', 'configuration', 'users'].includes(activeTab) ? 'text-[#58a6ff]' : 'text-[#4a5568]'}`} />
+                <Settings size={17} strokeWidth={1.8} className={`shrink-0 ${['history', 'users'].includes(activeTab) ? 'text-[#58a6ff]' : 'text-[#4a5568]'}`} />
                 <span className="sidebar-nav-label flex-1 truncate text-left">{language === 'zh' ? '平台管理' : 'Management'}</span>
                 <ChevronRight
                   size={14}
