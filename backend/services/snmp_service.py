@@ -83,7 +83,7 @@ _install_snmp_error_filter()
 # ═══════════════════════════════════════════════════════════════
 # SNMP 并发控制 — 限制全局同时进行的 SNMP 操作数
 # ═══════════════════════════════════════════════════════════════
-_SNMP_CONCURRENCY = 15
+_SNMP_CONCURRENCY = 30
 _snmp_semaphore: asyncio.Semaphore | None = None
 
 

@@ -14,17 +14,40 @@ jobs:
       - name: 1. 拉取开发库代码
         uses: actions/checkout@v4
 
-      - name: 2. 配置 Python 环境
+      - name: 2. 配置 Python 多版本环境
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-          
-      - name: 3. 安装 Cython 编译依赖
-        run: pip install cython setuptools
+          python-version: |
+            3.10
+            3.11
+            3.12
 
-      - name: 4. 编译核心安全代码 (生成 Ubuntu 适用的 .so 动态库)
+      - name: 3. 安装 Cython 编译依赖（所有版本）
         run: |
-          python scripts/compile_license.py build_ext --inplace
+          python3.10 -m pip install cython setuptools
+          python3.11 -m pip install cython setuptools
+          python3.12 -m pip install cython setuptools
+
+      - name: 4. 编译核心安全代码（Python 3.10 / 3.11 / 3.12）
+        run: |
+          # 编译函数：每个版本独立编译，互不干扰
+          compile_for_version() {
+            local pybin="$1"
+            echo "--- 编译 $($pybin --version) ---"
+            # 清理上一次编译的 build/ 目录，避免版本混用
+            rm -rf build/
+            $pybin scripts/compile_license.py build_ext --inplace
+          }
+
+          compile_for_version python3.10
+          compile_for_version python3.11
+          compile_for_version python3.12
+
+          # 清理最终残留的 build/ 目录
+          rm -rf build/
+
+          echo "--- 编译产物 ---"
+          ls backend/license_auth/*.so 2>/dev/null || echo "警告: 未找到 .so 文件"
 
       - name: 5. 彻底清理敏感文件与原始源码
         run: |

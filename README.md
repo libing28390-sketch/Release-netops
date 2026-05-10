@@ -1,393 +1,547 @@
-# Nexora / NetOps Automation Platform
+# Nexora NetOps Platform
 
-English | 中文
+[English](#english) | [中文](#中文说明)
 
-Nexora is a full-stack network operations platform for device inventory, monitoring, automation, configuration backup, compliance auditing, and operational traceability.
+> Version 0.1.1 · Standard Edition
+
+Nexora is a full-stack network operations platform covering device inventory, real-time monitoring, automation, configuration backup, compliance auditing, and operational traceability.
 
 Nexora 是一个面向网络运维场景的全栈平台，覆盖设备资产管理、运行监控、自动化执行、配置备份、合规审计与操作追踪。
 
+---
+
+## System Requirements / 系统要求
+
+### Supported Operating Systems / 支持的操作系统
+
+| OS | Version | Architecture | Notes |
+|----|---------|--------------|-------|
+| Ubuntu | 20.04 LTS | x86_64 | ✅ Recommended / 推荐 |
+| Ubuntu | 22.04 LTS | x86_64 | ✅ Recommended / 推荐 |
+| Ubuntu | 24.04 LTS | x86_64 | ✅ Supported / 支持 |
+| Debian | 11 (Bullseye) | x86_64 | ✅ Supported / 支持 |
+| Debian | 12 (Bookworm) | x86_64 | ✅ Supported / 支持 |
+| RHEL / Rocky Linux / AlmaLinux | 8.x | x86_64 | ✅ Supported / 支持 |
+| RHEL / Rocky Linux / AlmaLinux | 9.x | x86_64 | ✅ Supported / 支持 |
+| CentOS Stream | 8, 9 | x86_64 | ✅ Supported / 支持 |
+| GitHub Codespaces | — | x86_64 | ✅ Supported / 支持 |
+| Docker (any host OS) | Engine 20.10+ | x86_64 | ✅ Supported / 支持 |
+| **CentOS** | **7.x** | x86_64 | ❌ Not supported / 不支持 |
+| ARM64 / aarch64 | any | arm64 | ❌ Not supported / 不支持 |
+| Windows (native) | any | — | ❌ Not supported / 不支持 |
+| macOS (native) | any | — | ❌ Not supported / 不支持 |
+
+> **Why CentOS 7 is not supported:** The compiled `.so` files require glibc ≥ 2.28. CentOS 7 ships glibc 2.17 and reached End-of-Life in June 2024. Migrate to Rocky Linux 8+ or AlmaLinux 8+.
+>
+> **为什么不支持 CentOS 7：** 编译的 `.so` 文件需要 glibc ≥ 2.28，CentOS 7 自带 glibc 2.17，且已于 2024 年 6 月停止维护。建议迁移到 Rocky Linux 8+ 或 AlmaLinux 8+。
+
+---
+
+### Software Requirements / 软件要求
+
+| Component | Minimum | Recommended | Notes |
+|-----------|---------|-------------|-------|
+| Python | 3.10 | 3.12 | 3.10 / 3.11 / 3.12 all supported |
+| Node.js | 18.x | 22.x LTS | Required for frontend build only |
+| PostgreSQL | 14 | 17 | SQLite fallback available for dev/test |
+| Nginx | 1.18 | 1.27 | Reverse proxy, included in deploy script |
+| glibc | 2.28 | 2.35+ | Determines OS compatibility |
+| Docker Engine | 20.10 | 26.x | Docker deployment only |
+| Docker Compose | v2.0 | v2.27+ | Docker deployment only |
+
+> **Python version note:** The release package includes pre-compiled `.so` files for Python 3.10, 3.11, and 3.12. The runtime automatically loads the matching version. Do not use Python 3.9 or below.
+>
+> **Python 版本说明：** 发布包包含 Python 3.10、3.11、3.12 三个版本的预编译 `.so` 文件，运行时自动加载匹配版本。不支持 Python 3.9 及以下。
+
+---
+
+### Hardware Requirements / 硬件要求
+
+The platform runs a background SNMP polling loop (concurrency: 20 devices simultaneously, batch size: 50) and collects interface telemetry every 5 seconds. Resource usage scales with managed device count.
+
+平台后台运行 SNMP 轮询（并发 20 台设备，批次 50 台）并每 5 秒采集一次接口遥测数据，资源消耗随管理设备数量线性增长。
+
+#### Minimum / 最低配置
+
+> Suitable for evaluation, lab environments, or ≤ 20 devices.
+> 适用于评估、实验室环境或管理设备数 ≤ 20 台。
+
+| Resource | Requirement |
+|----------|-------------|
+| CPU | 2 cores / 2 核 |
+| RAM | 2 GB |
+| Disk | 20 GB (SSD recommended) |
+| Network | 100 Mbps, reachable to managed devices |
+
+#### Recommended / 推荐配置
+
+> Suitable for production with 20–200 managed devices.
+> 适用于生产环境，管理设备数 20–200 台。
+
+| Resource | Requirement |
+|----------|-------------|
+| CPU | 4 cores / 4 核 |
+| RAM | 4 GB |
+| Disk | 50 GB SSD |
+| Network | 1 Gbps, reachable to managed devices |
+
+#### Large-scale / 大规模配置
+
+> Suitable for 200–500+ managed devices with full telemetry, compliance scanning, and frequent automation jobs.
+> 适用于 200–500+ 台设备，开启全量遥测、合规扫描和高频自动化作业。
+
+| Resource | Requirement |
+|----------|-------------|
+| CPU | 8 cores / 8 核 |
+| RAM | 8 GB |
+| Disk | 100 GB SSD |
+| Network | 1 Gbps, low-latency to managed devices |
+
+#### Disk space breakdown / 磁盘空间说明
+
+| Data type | Retention | Estimated size (100 devices) |
+|-----------|-----------|------------------------------|
+| Raw interface telemetry | 48 hours (default) | ~500 MB |
+| Aggregated telemetry (1-min) | 365 days (default) | ~2 GB |
+| Configuration snapshots | Manual cleanup | ~1 GB |
+| PostgreSQL base | — | ~500 MB |
+| Application + frontend | — | ~300 MB |
+| **Total estimate** | | **~4.5 GB** |
+
+> Retention periods are configurable via `TELEMETRY_RAW_RETENTION_HOURS` and `TELEMETRY_ROLLUP_RETENTION_DAYS` in `.env`.
+>
+> 保留时长可通过 `.env` 中的 `TELEMETRY_RAW_RETENTION_HOURS` 和 `TELEMETRY_ROLLUP_RETENTION_DAYS` 调整。
+
+#### Network requirements / 网络要求
+
+| Requirement | Detail |
+|-------------|--------|
+| Management plane access | SSH (TCP 22) to all managed devices |
+| SNMP polling | UDP 161 to all managed devices |
+| Outbound webhook (optional) | HTTPS 443, for alert notifications |
+| Browser to platform | TCP 80 (or 443 with SSL) |
+| Platform to PostgreSQL | TCP 5432 (localhost or internal network) |
+
+---
+
 ## English
 
-### Overview
+### Core Features
 
-Nexora is built for network engineers who need a unified console to manage multi-vendor infrastructure. It combines operational visibility with automation workflows so common daily tasks can be completed in one place instead of switching between multiple tools.
-
-### Core Capabilities
-
-- **Dashboard** — Operational overview with device status donut chart, job trends, compliance trends, and real-time KPIs
-- **Multi-vendor device inventory** with platform, model, software, site, and role metadata
-- **Interface monitoring** with traffic, bandwidth utilization, status changes, and flap detection
-- **Topology Map** — Automatic node linking maps, real-time discovery graphs, and operational visibility
-- **Change Orders** — Standardized operational review chains, approval mechanisms, and execution pre-checks
-- **Visual Rack Management** — 2D equipment chassis mapping across physical locations
-- **Tag & Asset Lifecycle** — Tailored metadata categorization and compliance tracking
-- **Credential Vault & Offline Guard** — Granular SSH/Telnet profile security and system authorization
-- **Automation center** for direct execution, playbooks, and execution history
-- **Configuration center** for backup, snapshot browsing, diff comparison, search, and rollback workflows
-- **Config drift detection** — Scan all devices for running-config changes, color-coded diff view, selective line-level rollback preview
-- **Capacity planning & forecasting** — CPU/memory/link utilization trends, 30-day linear forecast, days-to-threshold risk assessment
-- **IP/VLAN management (IPAM)** — Subnet CRUD with utilization bars, IP address assignment, conflict detection
-- **Compliance auditing** with findings, severity breakdown, and remediation-oriented views
-- **Alert center** with alert desk, rule management, and maintenance windows
-- **Reports center** with KPI cards, job/compliance trend charts, and multi-sheet XLSX export
-- **Audit logs and user management** for operational accountability and access control
-- **XLSX export** available across alerts, audit logs, compliance findings, and reports
+| Module | Description |
+|--------|-------------|
+| Dashboard | Device status, job trends, compliance KPIs, real-time overview |
+| Device Inventory | Multi-vendor assets with platform, model, version, site, role metadata |
+| Interface Monitoring | Traffic, bandwidth utilization, status changes, flap detection |
+| Topology Map | Auto-discovered physical links, real-time LLDP/CDP graph |
+| Automation Center | Direct execution, Playbooks, scenario orchestration, execution history |
+| Configuration Center | Backup, snapshot browsing, diff comparison, rollback workflows |
+| Config Drift Detection | Full-scan running-config changes, color-coded diff, line-level rollback preview |
+| Change Orders | Dual-approval workflow, scheduling, compliance enforcement |
+| IPAM | Subnet CRUD, IP assignment, utilization bars, conflict detection |
+| Capacity Planning | CPU/memory/link trends, 30-day linear forecast, days-to-threshold risk |
+| Compliance Auditing | Findings, severity breakdown, remediation-oriented views |
+| Alert Center | Alert desk, rule management, maintenance windows |
+| PAM / Credential Vault | Encrypted SSH/Telnet profiles, password rotation, offline guard |
+| Rack Management | 2D physical chassis mapping across data center locations |
+| Reports | KPI cards, trend charts, multi-sheet XLSX export |
+| Audit Logs | Full operational traceability and access control |
 
 ### Technology Stack
 
-- Frontend: React 19, TypeScript, Vite, TailwindCSS, Recharts
-- Backend: Python, FastAPI, SQLite
-- Network automation: Netmiko, Scrapli, SNMP-based telemetry collection
-- Runtime model: Vite frontend in development, Python backend serving APIs and production runtime
+- **Frontend**: React 19, TypeScript, Vite, TailwindCSS, Recharts
+- **Backend**: Python 3.10+, FastAPI, Uvicorn
+- **Database**: PostgreSQL 17 (production) / SQLite (fallback)
+- **Network Automation**: Netmiko, Scrapli, SNMP telemetry
+- **License**: RSA-signed license file with feature gating and device limits
+
+### License Activation
+
+Nexora uses a signed license file for feature and device limit control.
+
+1. Contact us to obtain a `license.json` file for your deployment
+2. Place it at `data/license.json` (Ubuntu/Docker) or upload via **Settings → License** in the UI
+3. The platform validates the license on startup and enforces feature access accordingly
+
+Trial licenses are available — reach out to get started.
+
+---
+
+### Deployment
+
+#### Option 1 — Ubuntu One-Click (Recommended)
+
+Supports Ubuntu 20.04 / 22.04 / 24.04, GitHub Codespaces, and Docker containers.
+The script auto-detects the environment and uses `systemd` or `service` accordingly.
+
+**On a fresh server (nothing pre-installed):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
+```
+
+**Inside an existing cloned directory:**
+
+```bash
+chmod +x deploy-ubuntu.sh
+./deploy-ubuntu.sh
+```
+
+The script handles everything automatically:
+- Installs system dependencies (Python, Node.js 22, Nginx, PostgreSQL)
+- Creates a Python virtual environment and installs all dependencies
+- Builds the frontend production bundle
+- Generates `.env` with random `SECRET_KEY` and `CREDENTIAL_ENCRYPTION_KEY`
+- Configures Nginx as a reverse proxy on port 80
+- Registers and starts the backend as a systemd service (or background process in containers)
+
+After deployment, access the platform at `http://<server-ip>`.
+
+Default credentials: `admin / admin` — **change immediately after first login.**
+
+---
+
+#### Option 2 — Docker Compose
+
+Requires Docker and Docker Compose. Includes PostgreSQL, backend, and Nginx in one stack.
+
+```bash
+# Clone the repository
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+cd netops-automation
+
+# Build frontend and start all containers
+npm install && npm run build
+docker compose up -d --build
+```
+
+Access at `http://localhost` (Nginx on port 80).
+
+**Key environment variables** (set in `.env` before starting):
+
+```env
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your-secure-password
+POSTGRES_DB=netops
+CREDENTIAL_ENCRYPTION_KEY=your-random-32-char-key
+MACHINE_ID_OVERRIDE=YOUR-MACHINE-ID   # required for non-trial licenses
+```
+
+Get your Machine ID from: `http://<server>/api/license/machine-id`
+
+**Common Docker commands:**
+
+```bash
+docker compose up -d --build     # Build and start
+docker compose down              # Stop all containers
+docker compose logs -f netops    # Backend logs
+docker compose logs -f nginx     # Nginx logs
+docker compose restart netops    # Restart backend
+```
+
+---
+
+#### Option 3 — Manual Setup
+
+**Prerequisites:** Node.js 18+, Python 3.10+, PostgreSQL 17
+
+```bash
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+cd netops-automation
+
+# Python environment
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+
+# Frontend
+npm install
+npm run build
+
+# Environment
+cp .env.example .env
+# Edit .env: set DATABASE_URL, SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY
+
+# Start
+.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8003
+```
+
+---
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | SQLite fallback |
+| `SECRET_KEY` | Session signing key — **must be changed** | placeholder |
+| `CREDENTIAL_ENCRYPTION_KEY` | Device credential encryption key — **must be changed** | placeholder |
+| `ENVIRONMENT` | `production` or `development` | `development` |
+| `CORS_ORIGINS` | Comma-separated allowed origins | `*` in dev |
+| `MACHINE_ID_OVERRIDE` | Override machine fingerprint (Docker/Cloud) | auto-detected |
+| `LICENSE_FILE_PATH` | Path to license.json | `data/license.json` |
+| `ALERT_NOTIFY_WEBHOOK_URL` | Webhook for alert notifications | empty |
+| `PLATFORM_URL` | "Go to platform" button URL in alerts | empty |
+| `TELEMETRY_RAW_RETENTION_HOURS` | Raw telemetry retention (hours) | `48` |
+| `TELEMETRY_ROLLUP_RETENTION_DAYS` | Aggregated telemetry retention (days) | `365` |
+
+---
 
 ### Project Structure
 
 ```text
 netops-automation/
-├── backend/                  # Python backend
+├── backend/
 │   ├── api/                  # REST API routes
-│   ├── core/                 # Config and logging
-│   ├── data/                 # Local backend runtime data
-│   ├── drivers/              # Device access drivers
+│   ├── core/                 # Config, logging, RBAC
+│   ├── drivers/              # Device drivers (Netmiko / Scrapli)
+│   ├── engine/               # Automation execution engine
+│   ├── license_auth/         # License validation (compiled .so)
 │   ├── models/               # Database models
 │   ├── schemas/              # Pydantic schemas
-│   ├── services/             # Business services
-│   ├── database.py           # Database bootstrap
+│   ├── services/             # Business services (SNMP, alerts, etc.)
+│   ├── database.py           # PG / SQLite dual-backend
 │   ├── main.py               # FastAPI entrypoint
-│   └── requirements.txt      # Python dependencies
+│   └── requirements.txt
 ├── src/                      # React frontend source
-│   ├── components/           # Reusable UI components
-│   ├── App.tsx               # Main application shell
-│   ├── i18n.tsx              # Language resources
-│   └── main.tsx              # Frontend entrypoint
-├── data/                     # Runtime data directory
-├── cleanup-ports.js          # Local port cleanup helper
-├── deploy-ubuntu.sh          # Ubuntu deployment helper
-├── DEPLOY.md                 # Deployment guide
-├── package.json              # Node scripts and dependencies
-└── vite.config.ts            # Frontend build configuration
+├── nginx/                    # Nginx config for Docker deployment
+├── data/                     # Runtime data (license.json, logs)
+├── backup/                   # Configuration backup storage
+├── deploy-ubuntu.sh          # Ubuntu / Codespaces one-click deploy
+├── docker-compose.yml        # Docker stack (PG + backend + Nginx)
+├── Dockerfile
+├── .env.example
+├── package.json
+└── vite.config.ts
 ```
 
-### Quick Start
-
-#### Prerequisites
-
-- Node.js 18+
-- Python 3.10+
-- Git
-
-#### Setup
-
-```bash
-git clone https://github.com/libing28390-sketch/netsops.git
-cd netsops
-
-# Windows
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-
-# Linux / macOS
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r backend/requirements.txt
-
-# Frontend dependencies
-npm install
-```
-
-#### Environment Files and Git Ignore
-
-- Copy `.env.example` to `.env` and fill in your local values before production-like deployment.
-- Keep `.env.example` in the repository as a template so teammates know required environment variables.
-- Keep `.gitignore` in the repository to avoid committing sensitive files (for example `.env`) and local artifacts (`node_modules`, build output, caches, logs).
-
-#### Development
-
-```bash
-npm run dev
-```
-
-Default development endpoints:
-
-- Frontend: http://localhost:4300
-- Backend API: http://localhost:8003
-
-#### Build
-
-```bash
-npm run build
-```
-
-### CI (GitHub Actions)
-
-- Frontend workflow: `.github/workflows/frontend-build-check.yml`
-	- Runs on changes to frontend-related files in `main` push and pull requests
-	- Executes `npm ci`, `npm run lint`, and `npm run build`
-- Backend workflow: `.github/workflows/backend-pytest-check.yml`
-	- Runs on changes to backend-related files in `main` push and pull requests
-	- Installs `backend/requirements.txt` and runs `pytest`
-	- Strict policy: no tests or test failures both fail CI
-
-### npm Scripts
-
-- `npm run dev`: Start backend and frontend together
-- `npm run cleanup`: Clean occupied local dev ports
-- `npm run dev:frontend`: Start Vite only
-- `npm run dev:backend`: Start Python backend only
-- `npm run build`: Build frontend assets
-- `npm run start`: Run production flow
-- `npm run lint`: TypeScript type check
-
-### Deployment
-
-See [DEPLOY.md](DEPLOY.md) for Windows and Ubuntu deployment instructions.
-
-### Notes
-
-- This repository ignores local virtual environments, local SQLite runtime files, backups, logs, and editor-specific settings.
-- The platform is intended for internal operations and lab or enterprise network automation scenarios.
+---
 
 ## 中文说明
 
-### 项目简介
-
-Nexora 是一个面向网络工程师和运维团队的统一运维平台，目标是把常见的网管工作流集中到一个控制台中完成，包括设备台账、运行监控、自动化执行、配置备份、合规检查和审计追踪。
+> 完整的系统要求（操作系统、软件、硬件、网络）请参阅上方 [System Requirements / 系统要求](#system-requirements--系统要求) 章节。
 
 ### 主要功能
 
-- **运维看板** — 设备状态甜甜圈图、作业趋势、合规趋势、实时 KPI 卡片
-- **多厂商设备资产管理**，支持平台、型号、版本、站点、角色等信息维护
-- **接口监控**，支持流量、带宽利用率、状态变化和 flap 检测
-- **拓扑大屏** — 跨厂商自动化物理链路发现、全景负载追踪
-- **电子工单变更中心** — 覆盖运维任务双因子审批、变更排期与操作合规保障
-- **2D 物理机架可视化** — 支持对数据中心机房空间排布的精准映射
-- **自定义资产标签与全寿期追踪** — 贯穿硬件入库到退役维护
-- **加密凭据保险箱与离线证书防线** — 保障基础设施登录、授权万无一失
-- **自动化中心**，支持直接执行、场景编排、Playbook 和执行历史
-- **配置中心**，支持备份、快照浏览、差异对比、搜索和回滚流程
-- **配置漂移检测** — 全量扫描设备配置变化，彩色 diff 视图，支持选择性行级回滚预览
-- **容量规划与预测** — CPU/内存/链路利用率趋势，30 天线性预测，距阈值天数风险评估
-- **IP/VLAN 资源管理（IPAM）** — 子网增删改查（含利用率进度条）、IP 地址分配、冲突检测
-- **合规审计**，支持发现项、严重级别统计和整改视图
-- **告警中心**，含告警工作台、规则管理和维护期管理
-- **运维报表中心**，KPI 卡片、作业/合规趋势图表，多 Sheet XLSX 导出
-- **审计日志与用户管理**，满足运维留痕和权限控制要求
-- **XLSX 导出**，覆盖告警、审计日志、合规发现项和报表
+| 模块 | 说明 |
+|------|------|
+| 运维看板 | 设备状态、作业趋势、合规 KPI、实时概览 |
+| 设备资产管理 | 多厂商设备台账，支持平台、型号、版本、站点、角色 |
+| 接口监控 | 流量、带宽利用率、状态变化、flap 检测 |
+| 拓扑大屏 | LLDP/CDP 自动发现物理链路，实时拓扑图 |
+| 自动化中心 | 直接执行、Playbook 场景编排、执行历史 |
+| 配置中心 | 备份、快照浏览、差异对比、回滚流程 |
+| 配置漂移检测 | 全量扫描配置变化，彩色 diff，行级回滚预览 |
+| 变更工单 | 双因子审批流程、变更排期、合规保障 |
+| IPAM | 子网增删改查、IP 分配、利用率进度条、冲突检测 |
+| 容量规划 | CPU/内存/链路趋势，30 天线性预测，距阈值天数风险 |
+| 合规审计 | 发现项、严重级别统计、整改视图 |
+| 告警中心 | 告警工作台、规则管理、维护期管理 |
+| 凭据保险箱 | 加密 SSH/Telnet 凭据、密码轮换、离线防护 |
+| 机架管理 | 2D 物理机架可视化，跨机房空间映射 |
+| 运维报表 | KPI 卡片、趋势图表、多 Sheet XLSX 导出 |
+| 审计日志 | 全量操作留痕与权限管控 |
 
 ### 技术栈
 
-- 前端：React 19、TypeScript、Vite、TailwindCSS、Recharts
-- 后端：Python、FastAPI、SQLite
-- 网络自动化：Netmiko、Scrapli、SNMP 数据采集
+- **前端**：React 19、TypeScript、Vite、TailwindCSS、Recharts
+- **后端**：Python 3.10+、FastAPI、Uvicorn
+- **数据库**：PostgreSQL 17（生产）/ SQLite（回退）
+- **网络自动化**：Netmiko、Scrapli、SNMP 遥测采集
+- **授权**：RSA 签名 License 文件，支持功能门控与设备数量限制
+
+### License 激活
+
+Nexora 使用签名 License 文件控制功能权限和设备数量上限。
+
+1. 联系我们获取适合你部署环境的 `license.json` 文件
+2. 将文件放置到 `data/license.json`（Ubuntu/Docker 部署），或通过界面 **设置 → License** 上传
+3. 平台启动时自动验证 License，并按授权范围控制功能访问
+
+可申请试用 License，欢迎联系我们。
+
+---
+
+### 部署方式
+
+#### 方式一 — Ubuntu 一键部署（推荐）
+
+支持 Ubuntu 20.04 / 22.04 / 24.04、GitHub Codespaces 及 Docker 容器环境。
+脚本自动检测运行环境，在标准系统中使用 `systemd`，在容器中使用 `service` + 后台进程。
+
+**全新服务器（什么都不用预装）：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
+```
+
+**已克隆项目目录内执行：**
+
+```bash
+chmod +x deploy-ubuntu.sh
+./deploy-ubuntu.sh
+```
+
+脚本自动完成以下所有步骤：
+- 安装系统依赖（Python、Node.js 22、Nginx、PostgreSQL）
+- 创建 Python 虚拟环境并安装全部依赖
+- 构建前端生产版本
+- 自动生成 `.env`，随机生成 `SECRET_KEY` 和 `CREDENTIAL_ENCRYPTION_KEY`
+- 配置 Nginx 反向代理（监听 80 端口）
+- 注册并启动后端服务（systemd 服务或容器后台进程）
+
+部署完成后访问 `http://<服务器IP>`。
+
+默认账号：`admin / admin`，**首次登录后请立即修改密码。**
+
+---
+
+#### 方式二 — Docker Compose 部署
+
+包含 PostgreSQL、后端、Nginx 三个容器，一条命令启动完整环境。
+
+```bash
+# 克隆项目
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+cd netops-automation
+
+# 构建前端并启动所有容器
+npm install && npm run build
+docker compose up -d --build
+```
+
+访问地址：`http://localhost`（Nginx 监听 80 端口）。
+
+**启动前在 `.env` 中配置关键变量：**
+
+```env
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=你的安全密码
+POSTGRES_DB=netops
+CREDENTIAL_ENCRYPTION_KEY=随机32位密钥
+MACHINE_ID_OVERRIDE=你的机器ID   # 非试用版 License 必填
+```
+
+机器 ID 获取方式：访问 `http://<服务器>/api/license/machine-id`
+
+**常用 Docker 命令：**
+
+```bash
+docker compose up -d --build     # 构建并启动
+docker compose down              # 停止所有容器
+docker compose logs -f netops    # 查看后端日志
+docker compose logs -f nginx     # 查看 Nginx 日志
+docker compose restart netops    # 重启后端
+```
+
+---
+
+#### 方式三 — 手动部署
+
+**前置条件**：Node.js 18+、Python 3.10+、PostgreSQL 17
+
+```bash
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+cd netops-automation
+
+# Python 环境
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+
+# 前端
+npm install
+npm run build
+
+# 环境配置
+cp .env.example .env
+# 编辑 .env：设置 DATABASE_URL、SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY
+
+# 启动
+.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8003
+```
+
+---
+
+### 环境变量说明
+
+将 `.env.example` 复制为 `.env` 后按需修改：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `DATABASE_URL` | PostgreSQL 连接字符串 | 回退到 SQLite |
+| `SECRET_KEY` | 会话签名密钥，**必须修改** | 占位符 |
+| `CREDENTIAL_ENCRYPTION_KEY` | 设备凭据加密密钥，**必须修改** | 占位符 |
+| `ENVIRONMENT` | `production` 或 `development` | `development` |
+| `CORS_ORIGINS` | 允许的跨域来源（逗号分隔） | 开发模式为 `*` |
+| `MACHINE_ID_OVERRIDE` | 覆盖机器指纹（Docker/云环境使用） | 自动检测 |
+| `LICENSE_FILE_PATH` | license.json 文件路径 | `data/license.json` |
+| `ALERT_NOTIFY_WEBHOOK_URL` | 告警通知 Webhook 地址 | 空 |
+| `PLATFORM_URL` | 告警通知中"前往平台"按钮跳转地址 | 空 |
+| `TELEMETRY_RAW_RETENTION_HOURS` | 原始遥测数据保留时长（小时） | `48` |
+| `TELEMETRY_ROLLUP_RETENTION_DAYS` | 聚合遥测数据保留时长（天） | `365` |
+
+---
 
 ### 目录结构
 
 ```text
 netops-automation/
-├── backend/                  # Python 后端
-│   ├── api/                  # API 路由
-│   ├── core/                 # 配置与日志
-│   ├── data/                 # 后端本地运行数据
-│   ├── drivers/              # 设备访问驱动
+├── backend/
+│   ├── api/                  # REST API 路由
+│   ├── core/                 # 配置、日志、RBAC
+│   ├── drivers/              # 设备驱动（Netmiko / Scrapli）
+│   ├── engine/               # 自动化执行引擎
+│   ├── license_auth/         # License 验证（编译后 .so）
 │   ├── models/               # 数据模型
 │   ├── schemas/              # Pydantic 模型
-│   ├── services/             # 业务服务
-│   ├── database.py           # 数据库初始化
+│   ├── services/             # 业务服务（SNMP、告警等）
+│   ├── database.py           # PG / SQLite 双后端
 │   ├── main.py               # FastAPI 启动入口
-│   └── requirements.txt      # Python 依赖
+│   └── requirements.txt
 ├── src/                      # React 前端源码
-│   ├── components/           # UI 组件
-│   ├── App.tsx               # 主应用容器
-│   ├── i18n.tsx              # 国际化配置
-│   └── main.tsx              # 前端入口
-├── data/                     # 运行时数据目录
-├── cleanup-ports.js          # 本地端口清理脚本
-├── deploy-ubuntu.sh          # Ubuntu 部署脚本
-├── DEPLOY.md                 # 部署说明文档
-├── package.json              # Node 依赖与脚本
-└── vite.config.ts            # 前端构建配置
+├── nginx/                    # Docker 部署 Nginx 配置
+├── data/                     # 运行时数据（license.json、日志）
+├── backup/                   # 配置备份存储
+├── deploy-ubuntu.sh          # Ubuntu / Codespaces 一键部署脚本
+├── docker-compose.yml        # Docker 编排（PG + 后端 + Nginx）
+├── Dockerfile
+├── .env.example
+├── package.json
+└── vite.config.ts
 ```
 
-### 快速开始
+---
 
-#### 环境要求
+### 常见问题
 
-- Node.js 18 及以上
-- Python 3.10 及以上
-- Git
+**Q: 部署脚本在 GitHub Codespaces 或容器里失败，提示 systemd 不可用？**
 
-#### 安装步骤
+脚本已自动检测容器环境，会切换到 `service` 命令启动 PostgreSQL，并以 `nohup` 后台进程方式运行后端。如果仍然失败，请确认使用的是最新版本的 `deploy-ubuntu.sh`。
+
+**Q: 如何查看后端运行日志？**
+
+- systemd 环境：`sudo journalctl -u netops -f`
+- 容器/Codespaces：`tail -f data/netops.log`
+- Docker：`docker compose logs -f netops`
+
+**Q: 非试用版 License 提示机器 ID 不匹配？**
+
+访问 `http://<服务器>/api/license/machine-id` 获取当前机器 ID，联系我们重新签发绑定该 ID 的 License。Docker 部署时在 `.env` 中设置 `MACHINE_ID_OVERRIDE` 为签发时使用的 ID。
+
+**Q: 如何升级到新版本？**
 
 ```bash
-git clone https://github.com/libing28390-sketch/netsops.git
-cd netsops
+# Ubuntu systemd 部署
+cd /opt/netops-automation
+git pull
+npm install && npm run build
+pip install -r backend/requirements.txt
+sudo systemctl restart netops
 
-# Windows
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-
-# Linux / macOS
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r backend/requirements.txt
-
-# 安装前端依赖
-npm install
+# Docker 部署
+git pull
+npm install && npm run build
+docker compose up -d --build
 ```
-
-#### 环境变量与 Git 忽略规则
-
-- 在接近生产的部署场景中，请先复制 `.env.example` 为 `.env`，并填写本地真实参数。
-- 建议保留仓库中的 `.env.example`，用于告知协作者项目所需的环境变量键名。
-- 建议保留仓库中的 `.gitignore`，用于避免提交敏感信息（如 `.env`）和本地产物（如 `node_modules`、构建产物、缓存、日志）。
-
-#### 开发启动
-
-```bash
-npm run dev
-```
-
-默认开发访问地址：
-
-- 前端：http://localhost:4300
-- 后端 API：http://localhost:8003
-
-#### 构建
-
-```bash
-npm run build
-```
-
-### CI（GitHub Actions）
-
-- 前端工作流：`.github/workflows/frontend-build-check.yml`
-	- 在 `main` 分支的 push / pull request 且涉及前端相关文件变更时触发
-	- 执行 `npm ci`、`npm run lint`、`npm run build`
-- 后端工作流：`.github/workflows/backend-pytest-check.yml`
-	- 在 `main` 分支的 push / pull request 且涉及后端相关文件变更时触发
-	- 安装 `backend/requirements.txt` 并执行 `pytest`
-	- 严格策略：无测试或测试失败都会导致 CI 失败
-
-### 常用脚本
-
-- `npm run dev`：同时启动前端和后端
-- `npm run cleanup`：清理本地开发端口
-- `npm run dev:frontend`：仅启动前端
-- `npm run dev:backend`：仅启动后端
-- `npm run build`：构建前端静态资源
-- `npm run start`：生产模式启动
-- `npm run lint`：TypeScript 类型检查
-
-### 部署说明
-
-Windows 和 Ubuntu 的部署步骤请查看 [DEPLOY.md](DEPLOY.md)。
-
-### Windows 代理配置（V2Ray: 127.0.0.1:10808）
-
-当出现“浏览器可访问外网，但 Git/npm/pip 等命令行工具无法访问外网”时，可执行以下步骤统一代理。
-
-#### 一键应用（普通 PowerShell）
-
-```powershell
-# 1) WinINET（系统/桌面应用常用）
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyServer /t REG_SZ /d "socks=127.0.0.1:10808;http=127.0.0.1:10808;https=127.0.0.1:10808" /f
-
-# 2) 用户环境变量（新开终端生效）
-setx HTTP_PROXY "socks5://127.0.0.1:10808"
-setx HTTPS_PROXY "socks5://127.0.0.1:10808"
-setx ALL_PROXY "socks5://127.0.0.1:10808"
-setx NO_PROXY "localhost,127.0.0.1,::1"
-
-# 3) Git 全局代理
-git config --global http.proxy socks5h://127.0.0.1:10808
-git config --global https.proxy socks5h://127.0.0.1:10808
-
-# 4) npm 代理
-npm config set proxy "http://127.0.0.1:10808"
-npm config set https-proxy "http://127.0.0.1:10808"
-```
-
-#### WinHTTP（管理员 PowerShell）
-
-WinHTTP 影响系统服务和部分只走 WinHTTP 的工具，必须在“管理员身份”PowerShell 执行：
-
-```powershell
-netsh winhttp set proxy 127.0.0.1:10808 "localhost;127.0.0.1"
-netsh winhttp show proxy
-```
-
-如果出现 `拒绝访问 (5)`，说明当前终端不是管理员权限。
-
-#### 配置验证
-
-```powershell
-reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable
-reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyServer
-git config --global --get http.proxy
-git config --global --get https.proxy
-npm config get proxy
-npm config get https-proxy
-netsh winhttp show proxy
-```
-
-#### pip 安装报错：Missing dependencies for SOCKS support
-
-pip 在本机已经配置了用户级镜像源时，应优先直接使用本地 pip 配置文件，不必额外依赖代理。
-
-如果当前终端设置了以下环境变量：
-
-```powershell
-$env:HTTP_PROXY = "socks5://127.0.0.1:10808"
-$env:HTTPS_PROXY = "socks5://127.0.0.1:10808"
-$env:ALL_PROXY = "socks5://127.0.0.1:10808"
-```
-
-即使本地 pip 配置文件已经指向国内镜像，以上环境变量仍然会影响 pip 的网络访问；某些 Windows 环境中的 pip 会因为未安装 SOCKS 传输依赖而报错：`Missing dependencies for SOCKS support`。
-
-优先做法是在当前 PowerShell 会话中临时清空代理变量，让 pip 直接使用本地配置文件中的国内镜像：
-
-```powershell
-$env:HTTP_PROXY = ""
-$env:HTTPS_PROXY = ""
-$env:ALL_PROXY = ""
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-```
-
-如果你明确需要通过本地代理转发，再临时切换为 HTTP 代理后安装：
-
-```powershell
-$env:HTTP_PROXY = "http://127.0.0.1:10808"
-$env:HTTPS_PROXY = "http://127.0.0.1:10808"
-$env:ALL_PROXY = "http://127.0.0.1:10808"
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-```
-
-#### 回滚（取消代理）
-
-```powershell
-# WinINET
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f
-
-# 环境变量
-setx HTTP_PROXY ""
-setx HTTPS_PROXY ""
-setx ALL_PROXY ""
-setx NO_PROXY ""
-
-# Git / npm
-git config --global --unset http.proxy
-git config --global --unset https.proxy
-npm config delete proxy
-npm config delete https-proxy
-
-# WinHTTP（管理员）
-netsh winhttp reset proxy
-```
-
-### 补充说明
-
-- 仓库已忽略本地虚拟环境、SQLite 运行文件、备份文件、日志和编辑器配置。
-- 本项目适用于实验环境、内网运维平台场景，以及企业网络自动化原型和内部平台建设。

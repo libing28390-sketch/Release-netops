@@ -1,448 +1,495 @@
-# NetOps Automation 部署指南
+# NetOps Automation — Deployment Guide / 部署指南
 
-## 项目概述
+[English](#english) | [中文](#中文)
 
-| 组件 | 技术栈 | 端口 |
-|------|--------|------|
-| 前端 | React 19 + TypeScript + Vite + TailwindCSS | 4300 (dev) |
-| 后端 | Python FastAPI + Uvicorn | 8003 |
-| 数据库 | PostgreSQL 17 (默认) / SQLite (fallback) | 5432 |
-| SNMP | pysnmp 7.x | - |
+> For full system requirements (OS, software, hardware, network), see [README.md — System Requirements](README.md#system-requirements--系统要求).
+>
+> 完整系统要求（操作系统、软件、硬件、网络）请参阅 [README.md — 系统要求](README.md#system-requirements--系统要求)。
 
-## 项目结构
-
-```
-netops-automation/
-├── backend/              # Python 后端
-│   ├── main.py           # FastAPI 入口 + 状态监控
-│   ├── database.py       # 数据库管理 (PG/SQLite 双后端)
-│   ├── api/              # API 路由
-│   ├── core/             # 配置与日志
-│   ├── drivers/          # 设备驱动 (Netmiko/Scrapli)
-│   ├── models/           # 数据模型
-│   ├── schemas/          # Pydantic schemas
-│   ├── services/         # SNMP 服务等
-│   └── requirements.txt  # Python 依赖
-├── src/                  # React 前端
-│   ├── App.tsx           # 主应用组件
-│   ├── main.tsx          # 入口
-│   ├── i18n.tsx          # 国际化
-│   └── components/       # UI 组件
-├── data/                 # 日志与本地数据目录
-├── backup/               # 配置备份目录
-├── package.json          # Node.js 依赖与脚本
-├── vite.config.ts        # Vite 配置
-└── docker-compose.yml    # Docker 编排 (含 PostgreSQL)
-```
+**Supported OS quick reference / 支持的操作系统速查：**
+- ✅ Ubuntu 20.04 / 22.04 / 24.04 (x86_64)
+- ✅ Debian 11 / 12 (x86_64)
+- ✅ RHEL / Rocky Linux / AlmaLinux 8.x, 9.x (x86_64)
+- ✅ CentOS Stream 8, 9 (x86_64)
+- ✅ Docker (any host OS, x86_64)
+- ❌ CentOS 7.x — glibc 2.17, not supported
+- ❌ ARM64 / Windows / macOS native — not supported
 
 ---
 
-## Windows 部署
+## English
 
-### 前置条件
+### Architecture Overview
 
-- **Node.js** ≥ 18（推荐通过 https://nodejs.org 安装 LTS 版本）
-- **Python** ≥ 3.10（推荐通过 https://www.python.org 安装，安装时勾选 "Add to PATH"）
-- **Git**（可选，用于克隆仓库）
-
-### 安装步骤
-
-```powershell
-# 1. 克隆项目
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
-
-# 2. 创建 Python 虚拟环境
-py -3 -m venv .venv
-
-# 3. 激活虚拟环境
-.\.venv\Scripts\Activate.ps1
-
-# 4. 安装 Python 依赖
-.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-
-# 5. 安装 Node.js 依赖
-npm install
+```
+User Browser
+    │
+    ▼
+Nginx (:80)
+    ├── /assets/*  →  dist/ static files (365-day cache)
+    ├── /api/*     →  reverse proxy → FastAPI (:8003)
+    ├── /api/ws/*  →  WebSocket proxy → FastAPI (:8003)
+    └── /*         →  SPA fallback → index.html
 ```
 
-### 启动开发环境
-
-```powershell
-# 一键启动（前端 + 后端）
-npm run dev
-
-# 或者分别启动
-npm run dev:backend:win     # 仅后端
-npm run dev:frontend        # 仅前端
-```
-
-### 生产构建与运行
-
-```powershell
-npm run start:win
-# 或
-npm run build              # 构建前端
-.venv\Scripts\python.exe backend\main.py   # 启动后端（同时 serve 前端）
-```
-
-### Windows 特有注意事项
-
-1. **防火墙**：首次运行时 Windows Defender 可能弹出网络访问提示，需要允许 Python 和 Node.js 的网络访问
-2. **ping3 权限**：`ping3` 库在 Windows 上通常可直接使用，无需额外权限
-3. **端口占用**：如遇端口被占用，运行 `npm run cleanup` 或手动查看：
-   ```powershell
-   netstat -ano | findstr :8003
-   taskkill /PID <pid> /F
-   ```
-4. **PowerShell 执行策略**：如果 `\.venv\Scripts\Activate.ps1` 报错，先执行：
-   ```powershell
-   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-   ```
+| Component | Stack | Port |
+|-----------|-------|------|
+| Frontend  | React 19 + Vite (built to dist/) | served by Nginx |
+| Backend   | Python FastAPI + Uvicorn | 8003 (internal) |
+| Database  | PostgreSQL 17 | 5432 |
+| Proxy     | Nginx | 80 (public) |
 
 ---
 
-## Ubuntu 部署
+### Option A — Ubuntu One-Click Deploy
 
-### 前置条件
+The recommended path for bare-metal servers, VMs, and container environments (GitHub Codespaces, Docker).
 
-```bash
-# 安装 Node.js (通过 nvm，推荐)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
-source ~/.bashrc
-nvm install 22
+The script auto-detects whether `systemd` is available and falls back to `service` + background process in containers.
 
-# 安装 Python 和系统依赖
-sudo apt update
-sudo apt install python3 python3-venv python3-dev build-essential
-```
-
-### 安装步骤
+#### Fresh server (nothing pre-installed)
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
-
-# 2. 创建 Python 虚拟环境
-python3 -m venv .venv
-
-# 3. 激活虚拟环境
-source .venv/bin/activate
-
-# 4. 安装 Python 依赖
-pip install -r backend/requirements.txt
-
-# 5. 安装 Node.js 依赖
-npm install
+curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
 ```
 
-### 启动开发环境
+#### Inside a cloned directory
 
 ```bash
-# 一键启动（前端 + 后端）
-npm run dev
-
-# 或者分别启动
-npm run dev:backend:linux   # 仅后端
-npm run dev:frontend        # 仅前端
-```
-
-### 生产构建与运行
-
-```bash
-npm run start:linux
-# 或
-npm run build
-.venv/bin/python backend/main.py
-```
-
-### Ubuntu 特有注意事项
-
-1. **ping3 需要 RAW 权限**：Linux 上发送 ICMP 包需要特权，有两种方式：
-   ```bash
-   # 方式 A：给 Python 添加 CAP_NET_RAW 能力（推荐）
-   sudo setcap cap_net_raw+ep $(readlink -f .venv/bin/python)
-
-   # 方式 B：以 root 运行（不推荐）
-   sudo .venv/bin/python backend/main.py
-   ```
-2. **防火墙**：Ubuntu 默认 UFW 可能阻止外部访问：
-   ```bash
-   sudo ufw allow 'Nginx Full'   # 生产：80/443
-   sudo ufw allow 4300/tcp       # 仅开发时需要
-   ```
-3. **端口占用**：查看和清理端口：
-   ```bash
-   lsof -i :8003
-   kill -9 <pid>
-   # 或直接
-   npm run cleanup
-   ```
-4. **Vite watcher 限制**：如果 `npm run dev` 在 Ubuntu 上报 `ENOSPC: System limit for number of file watchers reached`，本项目已在 `vite.config.ts` 中忽略 `.venv/`、`backend/`、`backup/`、`data/` 等目录。拉取最新代码后重试；如果宿主机 watcher 上限仍然偏低，可额外执行：
-   ```bash
-   echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
-   echo fs.inotify.max_user_instances=1024 | sudo tee -a /etc/sysctl.conf
-   sudo sysctl -p
-   ```
-5. **后台运行（生产）**：使用 systemd 服务：
-   ```bash
-   # 创建服务文件
-   sudo tee /etc/systemd/system/netops.service > /dev/null <<EOF
-   [Unit]
-   Description=NetOps Automation Platform
-   After=network.target
-
-   [Service]
-   Type=simple
-   User=$USER
-   WorkingDirectory=$(pwd)
-   ExecStart=$(pwd)/.venv/bin/python backend/main.py
-   Restart=always
-   RestartSec=5
-   Environment=NODE_ENV=production
-   Environment=PYTHONPATH=backend
-   AmbientCapabilities=CAP_NET_RAW
-
-   [Install]
-   WantedBy=multi-user.target
-   EOF
-
-   sudo systemctl daemon-reload
-   sudo systemctl enable netops
-   sudo systemctl start netops
-   ```
-
----
-
-## 通用说明
-
-### npm 脚本一览
-
-| 命令 | 说明 |
-|------|------|
-| `npm run dev` | 一键启动开发环境（自动检测平台） |
-| `npm run dev:backend:win` | 仅启动后端（Windows） |
-| `npm run dev:backend:linux` | 仅启动后端（Ubuntu/Linux） |
-| `npm run dev:frontend` | 仅启动前端开发服务器 |
-| `npm run build` | 构建前端生产版本到 `dist/` |
-| `npm run start` | 构建 + 启动生产模式（自动检测平台） |
-| `npm run clean` | 删除 `dist/` 构建目录 |
-
-### 默认账号
-
-| 用户名 | 密码 | 角色 |
-|--------|------|------|
-| admin | admin | Administrator |
-
-### 环境变量 (.env)
-
-从 `.env.example` 复制并按需修改：
-
-```powershell
-# Windows PowerShell
-Copy-Item .env.example .env
-```
-
-```bash
-# Linux / macOS
-cp .env.example .env
-```
-
-建议至少检查并按需修改以下变量：
-```env
-# 应用基础配置
-SECRET_KEY=change-this-in-production
-CREDENTIAL_ENCRYPTION_KEY=change-me-to-a-random-secret
-ENVIRONMENT=production
-
-# 跨域与平台跳转
-CORS_ORIGINS=http://localhost:4300
-PLATFORM_URL=
-
-# 高频原始接口遥测保留时长（小时）
-TELEMETRY_RAW_RETENTION_HOURS=48
-
-# 1分钟聚合遥测保留时长（天）
-TELEMETRY_ROLLUP_RETENTION_DAYS=365
-
-# 接口 DOWN 告警开关
-ALERT_INTERFACE_DOWN_ENABLED=true
-
-# 接口带宽利用率告警阈值（百分比）
-ALERT_INTERFACE_UTIL_THRESHOLD=85
-
-# 主机资源告警阈值（百分比）
-ALERT_CPU_THRESHOLD=90
-ALERT_MEMORY_THRESHOLD=90
-
-# 告警通知 Webhook（可填写企业微信机器人地址）
-ALERT_NOTIFY_WEBHOOK_URL=
-```
-
-### 访问地址
-
-- 开发模式：http://localhost:4300（Vite 代理 API 到 8003）
-- 生产模式（直连后端）：http://localhost:8003（`npm run start` / `python backend/main.py`）
-- Nginx 反向代理部署：http://localhost:8080（Ubuntu 一键部署默认端口，可通过 `NGINX_PORT` 修改）
-- Docker 模式：http://localhost:8080（Nginx 容器 → netops 容器）
-
----
-
-## 一键部署（推荐）
-
-### 方式 A：已克隆项目
-
-```bash
-cd netops-automation
 chmod +x deploy-ubuntu.sh
 ./deploy-ubuntu.sh
 ```
 
-### 方式 B：全新服务器（真正一键）
+#### What the script does
 
-无需手动 git clone，脚本自动完成克隆 + 部署：
+1. Installs system packages: Python 3, Node.js 22, Nginx, PostgreSQL, libcap2-bin
+2. Creates a Python virtual environment and installs `backend/requirements.txt`
+3. Installs Node.js dependencies and builds the frontend (`dist/`)
+4. Generates `.env` from `.env.example` with random `SECRET_KEY` and `CREDENTIAL_ENCRYPTION_KEY`
+5. Creates PostgreSQL user `netops` and database `netops` with a random password
+6. Sets `CAP_NET_RAW` on the venv Python binary (for ICMP ping)
+7. Writes and enables an Nginx reverse proxy config on port 80
+8. **systemd environments**: registers and starts a `netops.service` unit
+9. **Container environments**: starts the backend with `nohup` and writes PID to `data/netops.pid`
+
+#### After deployment
+
+| Item | Value |
+|------|-------|
+| Access URL | `http://<server-ip>` |
+| Default credentials | `admin / admin` |
+| Backend port | 8003 (internal, not exposed) |
+| Nginx port | 80 |
+| Backend logs (systemd) | `sudo journalctl -u netops -f` |
+| Backend logs (container) | `tail -f data/netops.log` |
+
+**Change the default password immediately after first login.**
+
+#### Service management
 
 ```bash
-# 一行命令，什么都不用装
-curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
+# systemd
+sudo systemctl status netops
+sudo systemctl restart netops
+sudo systemctl stop netops
+sudo journalctl -u netops -f
+
+# Container / Codespaces
+tail -f data/netops.log
+kill $(cat data/netops.pid)          # stop
+bash deploy-ubuntu.sh                # restart
+
+# Nginx (both environments)
+sudo nginx -t && sudo nginx -s reload
+sudo tail -f /var/log/nginx/error.log
 ```
-
-或者手动指定安装目录：
-
-```bash
-# 下载脚本后执行（默认安装到 /opt/netops-automation）
-curl -fsSL -o deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
-chmod +x deploy.sh
-INSTALL_DIR=/opt ./deploy.sh
-```
-
-脚本会自动完成：Git 安装 → 项目克隆 → Python/Node 安装 → 依赖 → 前端构建 → Nginx 反向代理 → systemd 服务注册。
-
-部署完成后通过 `http://<服务器IP>:8080` 访问（Nginx 8080 端口 → 后端 8003）。
-
-> 如需修改 Nginx 监听端口，在运行部署脚本前设置 `NGINX_PORT` 环境变量，如：`NGINX_PORT=80 ./deploy.sh`
 
 ---
 
-## Docker 部署
+### Option B — Docker Compose
 
-### 快速启动（已有代码）
+Runs PostgreSQL, backend, and Nginx as a single stack. No host-level dependencies needed beyond Docker.
 
-```bash
-cd netops-automation
-npm install && npm run build
-docker compose up -d --build
-```
-
-### 全新服务器一键 Docker 部署
+#### Prerequisites
 
 ```bash
-# 1. 安装 Docker（如未安装）
+# Install Docker (if not already installed)
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
-# 重新登录使 docker 组生效，或执行: newgrp docker
+newgrp docker   # or re-login
+```
 
-# 2. 安装 Git 并克隆项目
-sudo apt-get update -qq && sudo apt-get install -y -qq git nodejs npm
+#### Start
+
+```bash
 git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
 cd netops-automation
 
-# 3. 构建前端 + 启动容器
+# Build frontend first (required — Dockerfile copies dist/)
 npm install && npm run build
+
+# Start all containers
 docker compose up -d --build
-
-# 4. 查看状态
-docker compose ps
-docker compose logs -f
 ```
 
-### 架构说明
+Access at `http://localhost`.
 
+#### Environment variables
+
+Create a `.env` file before starting:
+
+```env
+# Database
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=change-this-password
+POSTGRES_DB=netops
+
+# Security — generate random values for production
+SECRET_KEY=replace-with-a-very-secret-key
+CREDENTIAL_ENCRYPTION_KEY=replace-with-a-32-char-random-key
+
+# License
+MACHINE_ID_OVERRIDE=YOUR-MACHINE-ID   # required for non-trial licenses
+LICENSE_FILE_PATH=/app/data/license.json
+
+# Optional
+CORS_ORIGINS=https://netops.example.com
+PLATFORM_URL=https://netops.example.com
+ALERT_NOTIFY_WEBHOOK_URL=
 ```
-用户 → Nginx (:8080) → FastAPI (:8003)
-              │
-              ├── /assets/  → 本地 dist/ 静态文件（缓存 365 天）
-              ├── /api/*    → 反向代理到 netops 容器
-              ├── /ws       → WebSocket 代理
-              └── /*        → SPA 回退 index.html
+
+Get your Machine ID: `http://<server>/api/license/machine-id`
+
+#### Common commands
+
+```bash
+docker compose up -d --build     # Build and start
+docker compose down              # Stop all containers
+docker compose ps                # Container status
+docker compose logs -f netops    # Backend logs
+docker compose logs -f nginx     # Nginx logs
+docker compose restart netops    # Restart backend only
 ```
 
-### 自定义域名
+#### Custom domain
 
-编辑 `nginx/nginx.conf`，将 `server_name _` 改为你的域名：
+Edit `nginx/nginx.conf`, change `server_name _` to your domain:
+
 ```nginx
 server_name netops.example.com;
 ```
 
-### 启用 HTTPS
+#### HTTPS / SSL
 
-1. 将证书放入 `nginx/ssl/` 目录
-2. 取消 `docker-compose.yml` 中 SSL volume 注释
-3. 在 `nginx/nginx.conf` 中添加 SSL 配置块
+1. Place certificates in `nginx/ssl/`
+2. Uncomment the SSL volume in `docker-compose.yml`
+3. Add SSL server block to `nginx/nginx.conf`
 
-### 环境变量
+---
 
-```bash
-# .env 文件
-CREDENTIAL_ENCRYPTION_KEY=your-random-secret-key
-CORS_ORIGINS=https://netops.example.com
-```
+### Option C — Manual Setup
 
-### 常用 Docker 命令
+For custom environments or development.
+
+**Prerequisites:** Node.js 18+, Python 3.10+, PostgreSQL 17
 
 ```bash
-docker compose up -d --build   # 构建并启动
-docker compose down            # 停止
-docker compose logs -f nginx   # 查看 Nginx 日志
-docker compose logs -f netops  # 查看后端日志
-docker compose restart nginx   # 重启 Nginx
+# 1. Clone
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+cd netops-automation
+
+# 2. Python environment
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+
+# 3. Frontend
+npm install
+npm run build
+
+# 4. PostgreSQL
+sudo -u postgres psql -c "CREATE USER netops WITH PASSWORD 'your-password';"
+sudo -u postgres psql -c "CREATE DATABASE netops OWNER netops;"
+
+# 5. Environment
+cp .env.example .env
+# Edit .env: set DATABASE_URL, SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY
+
+# 6. CAP_NET_RAW (Linux, for ICMP ping)
+sudo setcap cap_net_raw+ep $(readlink -f .venv/bin/python)
+
+# 7. Start
+.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8003 --workers 2
 ```
 
 ---
 
-## PostgreSQL 数据库
+### License Setup
 
-默认使用 PostgreSQL。如设置了 `DATABASE_URL=postgresql://...` 环境变量，系统自动启用 PG；未设置时 fallback 到 SQLite。
+1. Obtain `license.json` from the vendor
+2. Place at `data/license.json`, or upload via **Settings → License** in the UI
+3. The platform validates on startup — check logs for `[License] [OK]`
 
-### 1. 安装 PostgreSQL
+For Docker: mount the file or copy it into the `netops-data` volume:
 
 ```bash
-# Ubuntu
-sudo apt install postgresql postgresql-contrib
-sudo systemctl enable postgresql
-
-# 创建数据库和用户
-sudo -u postgres psql -c "CREATE USER netops WITH PASSWORD 'your-secure-password';"
-sudo -u postgres psql -c "CREATE DATABASE netops OWNER netops;"
+docker cp license.json netops-automation:/app/data/license.json
+docker compose restart netops
 ```
 
-### 2. 配置环境变量
+---
 
-在 `.env` 文件中添加：
+### Upgrading
+
+```bash
+# Ubuntu systemd
+cd /opt/netops-automation
+git pull
+npm install && npm run build
+pip install -r backend/requirements.txt
+sudo systemctl restart netops
+
+# Docker
+git pull
+npm install && npm run build
+docker compose up -d --build
+```
+
+---
+
+## 中文
+
+### 架构说明
+
+```
+用户浏览器
+    │
+    ▼
+Nginx (:80)
+    ├── /assets/*  →  dist/ 静态文件（365 天缓存）
+    ├── /api/*     →  反向代理 → FastAPI (:8003)
+    ├── /api/ws/*  →  WebSocket 代理 → FastAPI (:8003)
+    └── /*         →  SPA 回退 → index.html
+```
+
+| 组件 | 技术栈 | 端口 |
+|------|--------|------|
+| 前端 | React 19 + Vite（构建到 dist/） | 由 Nginx 提供 |
+| 后端 | Python FastAPI + Uvicorn | 8003（内部） |
+| 数据库 | PostgreSQL 17 | 5432 |
+| 代理 | Nginx | 80（对外） |
+
+---
+
+### 方式 A — Ubuntu 一键部署
+
+适用于裸机服务器、虚拟机及容器环境（GitHub Codespaces、Docker）。
+
+脚本自动检测是否有 `systemd`，容器环境自动切换为 `service` 命令 + 后台进程模式。
+
+#### 全新服务器（无需预装任何依赖）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
+```
+
+#### 已克隆项目目录内执行
+
+```bash
+chmod +x deploy-ubuntu.sh
+./deploy-ubuntu.sh
+```
+
+#### 脚本自动完成的步骤
+
+1. 安装系统包：Python 3、Node.js 22、Nginx、PostgreSQL、libcap2-bin
+2. 创建 Python 虚拟环境并安装 `backend/requirements.txt`
+3. 安装 Node.js 依赖并构建前端（`dist/`）
+4. 从 `.env.example` 生成 `.env`，随机生成 `SECRET_KEY` 和 `CREDENTIAL_ENCRYPTION_KEY`
+5. 创建 PostgreSQL 用户 `netops` 和数据库 `netops`，随机生成密码
+6. 为虚拟环境 Python 设置 `CAP_NET_RAW`（用于 ICMP ping）
+7. 写入并启用 Nginx 反向代理配置（监听 80 端口）
+8. **systemd 环境**：注册并启动 `netops.service` 系统服务
+9. **容器环境**：以 `nohup` 后台方式启动后端，PID 写入 `data/netops.pid`
+
+#### 部署完成后
+
+| 项目 | 值 |
+|------|-----|
+| 访问地址 | `http://<服务器IP>` |
+| 默认账号 | `admin / admin` |
+| 后端端口 | 8003（内部，不对外暴露） |
+| Nginx 端口 | 80 |
+| 后端日志（systemd） | `sudo journalctl -u netops -f` |
+| 后端日志（容器） | `tail -f data/netops.log` |
+
+**首次登录后请立即修改默认密码。**
+
+#### 服务管理命令
+
+```bash
+# systemd 环境
+sudo systemctl status netops
+sudo systemctl restart netops
+sudo systemctl stop netops
+sudo journalctl -u netops -f
+
+# 容器 / Codespaces 环境
+tail -f data/netops.log
+kill $(cat data/netops.pid)          # 停止
+bash deploy-ubuntu.sh                # 重启
+
+# Nginx（两种环境通用）
+sudo nginx -t && sudo nginx -s reload
+sudo tail -f /var/log/nginx/error.log
+```
+
+---
+
+### 方式 B — Docker Compose 部署
+
+PostgreSQL、后端、Nginx 三个容器一键启动，宿主机只需安装 Docker。
+
+#### 安装 Docker（如未安装）
+
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker   # 或重新登录
+```
+
+#### 启动
+
+```bash
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+cd netops-automation
+
+# 先构建前端（必须，Dockerfile 会复制 dist/）
+npm install && npm run build
+
+# 启动所有容器
+docker compose up -d --build
+```
+
+访问地址：`http://localhost`
+
+#### 环境变量配置
+
+启动前创建 `.env` 文件：
 
 ```env
-DATABASE_URL=postgresql://netops:your-secure-password@localhost:5432/netops
+# 数据库
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=修改为安全密码
+POSTGRES_DB=netops
+
+# 安全密钥（生产环境必须修改为随机值）
+SECRET_KEY=替换为随机密钥
+CREDENTIAL_ENCRYPTION_KEY=替换为32位随机密钥
+
+# License
+MACHINE_ID_OVERRIDE=你的机器ID   # 非试用版 License 必填
+LICENSE_FILE_PATH=/app/data/license.json
+
+# 可选
+CORS_ORIGINS=https://netops.example.com
+PLATFORM_URL=https://netops.example.com
+ALERT_NOTIFY_WEBHOOK_URL=
 ```
 
-或设置系统环境变量：
+机器 ID 获取：访问 `http://<服务器>/api/license/machine-id`
+
+#### 常用命令
 
 ```bash
-export DATABASE_URL="postgresql://netops:your-secure-password@localhost:5432/netops"
+docker compose up -d --build     # 构建并启动
+docker compose down              # 停止所有容器
+docker compose ps                # 查看容器状态
+docker compose logs -f netops    # 查看后端日志
+docker compose logs -f nginx     # 查看 Nginx 日志
+docker compose restart netops    # 仅重启后端
 ```
 
-> 设置 `DATABASE_URL` 后，系统自动使用 PostgreSQL；不设置则使用默认 SQLite。
+#### 自定义域名
 
-### 3. 初始化
+编辑 `nginx/nginx.conf`，将 `server_name _` 改为你的域名：
 
-首次启动时，系统自动在 PostgreSQL 中创建所有表结构，无需手动迁移。
+```nginx
+server_name netops.example.com;
+```
 
-### 4. Docker 部署
+#### 启用 HTTPS
 
-`docker-compose.yml` 已内置 PostgreSQL 服务，`docker compose up -d --build` 即可启动完整环境。
+1. 将证书文件放入 `nginx/ssl/` 目录
+2. 取消 `docker-compose.yml` 中 SSL volume 的注释
+3. 在 `nginx/nginx.conf` 中添加 SSL 配置块
 
-### 注意事项
+---
 
-- 首次启动自动建表，无需迁移脚本
-- 切换回 SQLite 只需删除 `DATABASE_URL` 环境变量
-- PostgreSQL 驱动 `psycopg2-binary` 已包含在 requirements.txt 中
+### 方式 C — 手动部署
 
+适用于自定义环境或开发调试。
+
+**前置条件**：Node.js 18+、Python 3.10+、PostgreSQL 17
+
+```bash
+# 1. 克隆项目
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+cd netops-automation
+
+# 2. Python 环境
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+
+# 3. 前端
+npm install
+npm run build
+
+# 4. PostgreSQL
+sudo -u postgres psql -c "CREATE USER netops WITH PASSWORD '你的密码';"
+sudo -u postgres psql -c "CREATE DATABASE netops OWNER netops;"
+
+# 5. 环境配置
+cp .env.example .env
+# 编辑 .env：设置 DATABASE_URL、SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY
+
+# 6. CAP_NET_RAW（Linux，用于 ICMP ping）
+sudo setcap cap_net_raw+ep $(readlink -f .venv/bin/python)
+
+# 7. 启动
+.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8003 --workers 2
+```
+
+---
+
+### License 配置
+
+1. 向我们获取 `license.json` 文件
+2. 放置到 `data/license.json`，或通过界面 **设置 → License** 上传
+3. 平台启动时自动验证，日志中出现 `[License] [OK]` 表示激活成功
+
+Docker 部署时，将文件复制到容器数据卷：
+
+```bash
+docker cp license.json netops-automation:/app/data/license.json
+docker compose restart netops
+```
+
+---
+
+### 版本升级
+
+```bash
+# Ubuntu systemd 部署
+cd /opt/netops-automation
+git pull
+npm install && npm run build
+pip install -r backend/requirements.txt
+sudo systemctl restart netops
+
+# Docker 部署
+git pull
+npm install && npm run build
+docker compose up -d --build
+```

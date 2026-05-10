@@ -60,6 +60,36 @@ fi
 HAS_SYSTEMD=0
 IS_CONTAINER=0
 
+# ── OS 兼容性检查 ──
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_ID="${ID:-unknown}"
+    OS_VERSION="${VERSION_ID:-0}"
+    OS_MAJOR=$(echo "$OS_VERSION" | cut -d. -f1)
+
+    case "$OS_ID" in
+        ubuntu|debian)
+            ok "操作系统: $PRETTY_NAME"
+            ;;
+        rhel|rocky|almalinux|centos)
+            if [ "$OS_MAJOR" -ge 8 ] 2>/dev/null; then
+                ok "操作系统: $PRETTY_NAME"
+                warn "注意: 此脚本针对 Ubuntu/Debian 优化，在 RHEL 系发行版上部分步骤（apt-get/Nginx 路径）可能需要手动调整。"
+                warn "建议使用 Docker 部署方式以获得最佳兼容性。"
+            else
+                fail "不支持的操作系统: $PRETTY_NAME
+  CentOS 7 / RHEL 7 的 glibc 版本 (2.17) 过低，无法加载平台核心模块。
+  请迁移到 Rocky Linux 8+ 或 AlmaLinux 8+，或使用 Docker 部署。"
+            fi
+            ;;
+        *)
+            warn "未识别的操作系统: ${PRETTY_NAME:-$OS_ID}，继续尝试部署..."
+            ;;
+    esac
+else
+    warn "无法读取 /etc/os-release，跳过 OS 兼容性检查"
+fi
+
 if [ -f /run/systemd/private ] || systemctl --version > /dev/null 2>&1; then
     HAS_SYSTEMD=1
 fi
@@ -238,6 +268,19 @@ PY_OK=$($PYTHON_BIN -c "import sys; print(1 if sys.version_info >= (3,10) else 0
 [ "$PY_OK" != "1" ] && fail "Python 版本 $PY_VER 过低，需要 >= $PYTHON_MIN"
 ok "Python $PY_VER"
 
+# 检查 license_auth .so 是否与当前 Python 版本兼容
+PY_MINOR=$($PYTHON_BIN -c "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')")
+SO_MATCH=$(ls "$PROJECT_DIR"/backend/license_auth/verifier.cpython-${PY_MINOR}-*.so 2>/dev/null | head -1 || true)
+if [ -z "$SO_MATCH" ]; then
+    # 列出实际存在的 .so 版本供参考
+    AVAILABLE_SO=$(ls "$PROJECT_DIR"/backend/license_auth/verifier.cpython-*.so 2>/dev/null | \
+        grep -oP 'cpython-\K[0-9]+' | sort -u | sed 's/\(.\)\(.\)/\1.\2/' | tr '\n' ' ' || echo "none")
+    fail "Python 版本不兼容：当前 Python ${PY_VER}，但 license_auth 没有对应的 .so 文件。
+  可用版本: ${AVAILABLE_SO}
+  请联系发行方获取支持 Python ${PY_VER} 的版本包。"
+fi
+ok "license_auth .so 版本兼容 (Python ${PY_VER} → $(basename $SO_MATCH))"
+
 # ============================================================
 # 3. Node.js 安装 / 检查
 # ============================================================
@@ -280,6 +323,22 @@ info "安装 Python 依赖..."
 "$VENV_DIR/bin/pip" install --upgrade pip -q
 "$VENV_DIR/bin/pip" install -r backend/requirements.txt -q
 ok "Python 依赖安装完成"
+
+# 验证 license_auth 模块可以正常加载
+info "验证 license_auth 模块..."
+if "$VENV_DIR/bin/python" -c "
+import sys
+sys.path.insert(0, 'backend')
+from license_auth.verifier import LicenseVerifier
+from license_auth.crypto import verify_signature
+" 2>/dev/null; then
+    ok "license_auth 模块验证通过"
+else
+    fail "license_auth 模块加载失败，请检查 Python 版本兼容性。
+  当前 Python: ${PY_VER}
+  可用 .so 文件: $(ls backend/license_auth/*.so 2>/dev/null | xargs -I{} basename {} | tr '\n' ' ' || echo '无')
+  请联系发行方获取支持 Python ${PY_VER} 的版本包。"
+fi
 
 # ============================================================
 # 5. Node.js 依赖 & 前端构建

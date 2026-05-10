@@ -425,8 +425,8 @@ async def status_monitor():
     lldp_counter = 0
     monitor_cycle = 0
     maintenance_counter = 0
-    monitor_concurrency = 10 if sys.platform != 'win32' else 2
-    monitor_batch_size = 30 if sys.platform != 'win32' else 5
+    monitor_concurrency = 20 if sys.platform != 'win32' else 2
+    monitor_batch_size = 50 if sys.platform != 'win32' else 5
     sem = asyncio.Semaphore(monitor_concurrency)
     # Store previous interface octets for bandwidth calculation { device_id: { ifname: {in_octets, out_octets, ts} } }
     prev_intf_octets: dict = {}

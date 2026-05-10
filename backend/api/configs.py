@@ -718,8 +718,9 @@ def update_schedule(body: ScheduleUpdate):
 _backup_runs: dict[str, dict] = {}
 
 # How many devices to back up in parallel. SSH connections are I/O-bound so
-# 5 concurrent workers is a safe default that won't overwhelm most networks.
+# 10 concurrent workers is a safe default that won't overwhelm most networks.
 # Increase via BACKUP_CONCURRENCY env var if your network can handle more.
+# Recommended range: 5–20. Higher values may trigger SSH rate-limiting on devices.
 import os as _os
 BACKUP_CONCURRENCY = int(_os.environ.get('BACKUP_CONCURRENCY', '10'))
 
@@ -935,7 +936,7 @@ async def run_scheduled_backup(run_id: str | None = None):
     """Backup all online network devices. Called by APScheduler or on-demand.
 
     Concurrency:
-      - Up to ``BACKUP_CONCURRENCY`` (default 5) devices are backed up in
+      - Up to ``BACKUP_CONCURRENCY`` (default 10) devices are backed up in
         parallel using asyncio.Semaphore + run_in_executor.
       - Each device gets its own AutomationService instance so there is no
         shared state between concurrent workers.
