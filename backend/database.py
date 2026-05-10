@@ -486,9 +486,11 @@ def _init_db_logic(conn):
         role TEXT,
         status TEXT,
         last_login TEXT,
-        avatar_url TEXT
+        avatar_url TEXT,
+        created_at TEXT
     )
     ''')
+    ensure_column('users', 'created_at', 'TEXT')
     ensure_column('users', 'group_name', "TEXT DEFAULT ''")
     ensure_column('users', 'change_groups_json', "TEXT DEFAULT '[]'")
     ensure_column('users', 'notification_channels', "TEXT DEFAULT '{}'")

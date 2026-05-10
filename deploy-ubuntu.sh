@@ -267,7 +267,24 @@ if [ "$ROLE_EXISTS" != "1" ]; then
     sudo -u postgres psql -c "CREATE DATABASE $PG_DB OWNER $PG_USER;" > /dev/null || fail "创建数据库失败"
     ok "PostgreSQL 数据库 ($PG_DB) 与用户 ($PG_USER) 创建完成"
 else
-    ok "PostgreSQL 用户 ($PG_USER) 已存在，跳过自动创建"
+    # 用户已存在：检查 .env 里是否已有有效密码，没有则重置
+    EXISTING_DB_URL=$(grep "^DATABASE_URL=" "$PROJECT_DIR/.env" 2>/dev/null || true)
+    if echo "$EXISTING_DB_URL" | grep -q "YOUR_PASSWORD\|replace-with\|@localhost:5432/$PG_DB$" || [ -z "$EXISTING_DB_URL" ]; then
+        # .env 里没有有效密码，重置 PG 用户密码
+        PG_PASS=$(openssl rand -hex 16)
+        sudo -u postgres psql -c "ALTER USER $PG_USER WITH PASSWORD '$PG_PASS';" > /dev/null || fail "重置数据库密码失败"
+        ok "PostgreSQL 用户 ($PG_USER) 已存在，密码已重置"
+    else
+        # .env 里已有有效密码，提取出来复用，不重置
+        PG_PASS=$(echo "$EXISTING_DB_URL" | grep -oP '://[^:]+:\K[^@]+' || true)
+        ok "PostgreSQL 用户 ($PG_USER) 已存在，复用现有密码"
+    fi
+    # 确保数据库存在
+    DB_EXISTS=$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$PG_DB'" 2>/dev/null || echo "0")
+    if [ "$DB_EXISTS" != "1" ]; then
+        sudo -u postgres psql -c "CREATE DATABASE $PG_DB OWNER $PG_USER;" > /dev/null || fail "创建数据库失败"
+        ok "PostgreSQL 数据库 ($PG_DB) 创建完成"
+    fi
 fi
 
 # ============================================================
@@ -391,11 +408,11 @@ fi
 # 5. Node.js 依赖 & 前端构建
 # ============================================================
 info "安装 Node.js 依赖..."
-npm install --silent 2>&1 | tail -1
+npm install --prefer-offline 2>&1 | tail -5 || npm install 2>&1 | tail -10 || fail "npm install 失败，请检查网络或 package.json"
 ok "Node.js 依赖安装完成"
 
 info "构建前端生产版本..."
-npm run build --silent
+npm run build 2>&1 | tail -5 || fail "前端构建失败，请检查 Node.js 版本或依赖"
 ok "前端构建完成 (dist/)"
 
 # ============================================================
@@ -405,6 +422,8 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
     if [ -f "$PROJECT_DIR/.env.example" ]; then
         info "正在生成 .env 配置文件..."
         cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+        # 强制转换 CRLF → LF，避免 Windows 换行符导致 sed 替换失败
+        sed -i 's/\r$//' "$PROJECT_DIR/.env"
 
         NEW_SECRET=$(openssl rand -hex 32)
         NEW_CRED_KEY=$(openssl rand -hex 32)
@@ -423,11 +442,22 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
     fi
 fi
 
-# ── 无论 .env 是新建还是已存在，都强制修正 DATABASE_URL 里的 Docker 服务名 ──
-# 非 docker-compose 环境下 'db' 无法解析，必须替换为 localhost
-if [ -f "$PROJECT_DIR/.env" ] && grep -q '@db:' "$PROJECT_DIR/.env" 2>/dev/null; then
-    sed -i 's|@db:|@localhost:|g' "$PROJECT_DIR/.env"
-    warn ".env 中 DATABASE_URL 的主机名 'db' 已自动替换为 'localhost'（非 Docker Compose 环境）"
+# ── 无论 .env 是新建还是已存在，先统一转换换行符，再修正配置 ──
+if [ -f "$PROJECT_DIR/.env" ]; then
+    # 转换 CRLF → LF（Windows 开发机上传的文件可能带 \r）
+    sed -i 's/\r$//' "$PROJECT_DIR/.env"
+
+    # 修正 Docker 服务名 db → localhost
+    if grep -q '@db:' "$PROJECT_DIR/.env" 2>/dev/null; then
+        sed -i 's|@db:|@localhost:|g' "$PROJECT_DIR/.env"
+        warn ".env 中 DATABASE_URL 的主机名 'db' 已自动替换为 'localhost'（非 Docker Compose 环境）"
+    fi
+
+    # 如果 DATABASE_URL 还是占位符且现在有密码，补写进去
+    if [ -n "$PG_PASS" ] && grep -q 'YOUR_PASSWORD' "$PROJECT_DIR/.env" 2>/dev/null; then
+        sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://$PG_USER:$PG_PASS@localhost:5432/$PG_DB|" "$PROJECT_DIR/.env"
+        ok "DATABASE_URL 已更新（使用当前 PostgreSQL 密码）"
+    fi
 fi
 
 # ============================================================

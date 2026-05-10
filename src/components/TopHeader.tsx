@@ -28,6 +28,7 @@ import {
   PlusCircle,
   ChevronLeft as BackIcon
 } from 'lucide-react';
+import { useSystem } from '../hooks/useSystem';
 import type { NotificationItem, SessionUser, ThemeMode } from '../types';
 
 interface TopHeaderProps {
@@ -105,6 +106,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
   const [appSearch, setAppSearch] = useState('');
   const appSwitcherRef = useRef<HTMLDivElement>(null);
   const appSearchRef = useRef<HTMLInputElement>(null);
+  const { systemInfo } = useSystem();
 
   const appEntries = useMemo(() => [
     { id: 'dashboard',  label: '首页',       labelEn: 'Dashboard',    icon: LayoutDashboard, path: '/dashboard',          accent: '#06b6d4' },
@@ -169,7 +171,7 @@ const TopHeader: React.FC<TopHeaderProps> = ({
             </div>
             <div>
               <h2 style={{ color: 'var(--heading-text)' }} className="text-base md:text-lg font-bold tracking-tight leading-none">
-                Nexora
+                {systemInfo?.system_name || 'Nexora'}
               </h2>
               <p style={{ color: 'var(--dim-text)' }} className="text-[11px] hidden sm:block mt-0.5 leading-none">
                 {language === 'zh' ? '智能网络中枢' : 'Smart Net Hub'}

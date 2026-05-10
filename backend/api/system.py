@@ -20,12 +20,31 @@ router = APIRouter(prefix="/system", tags=["System"])
 async def get_system_info() -> Dict[str, Any]:
     verifier = get_license_verifier()
     license_status = verifier.validate()
-    
+
+    # 读取用户在 setup 向导里保存的 system_name
+    system_name = settings.PROJECT_NAME
+    try:
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT value FROM global_vars WHERE key = 'platform_settings'"
+            ).fetchone()
+            if row:
+                import json as _json
+                ps = _json.loads(row[0] if isinstance(row, (list, tuple)) else row['value'])
+                if ps.get('system_name'):
+                    system_name = ps['system_name']
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
     return {
         "version": VERSION,
         "edition": EDITION,
         "build_date": BUILD_DATE,
         "project_name": settings.PROJECT_NAME,
+        "system_name": system_name,
         "license": license_status.model_dump()
     }
 

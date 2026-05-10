@@ -195,36 +195,47 @@ app.add_middleware(
 )
 
 # 注册路由
-app.include_router(health_router, prefix="/api")
-app.include_router(devices_router, prefix="/api")
-app.include_router(jobs_router, prefix="/api")
-app.include_router(templates_router, prefix="/api")
-app.include_router(automation_router, prefix="/api")
-app.include_router(users_router, prefix="/api")
-app.include_router(topology_router, prefix="/api")
-app.include_router(configs_router, prefix="/api")
-app.include_router(playbooks_router, prefix="/api")
+# ── 无需 License 的基础路由 ──
+app.include_router(health_router,        prefix="/api")
+app.include_router(users_router,         prefix="/api")
+app.include_router(setup_router,         prefix="/api")
+app.include_router(license_router,       prefix="/api")
+app.include_router(system_router,        prefix="/api")
 app.include_router(notifications_router, prefix="/api")
-app.include_router(monitoring_router, prefix="/api")
-app.include_router(device_health_router, prefix="/api")
-app.include_router(alerts_router, prefix="/api")
-app.include_router(audit_router, prefix="/api")
-app.include_router(compliance_router, prefix="/api")
-app.include_router(config_drift_router, prefix="/api")
-app.include_router(capacity_router, prefix="/api")
-app.include_router(ipam_router, prefix="/api")
-app.include_router(assets_router, prefix="/api")
-app.include_router(pam_router, prefix="/api")
-app.include_router(change_orders_router, prefix="/api")
-app.include_router(setup_router, prefix="/api")
-app.include_router(ip_locator_router, prefix="/api")
-app.include_router(inspections_router, prefix="/api")
-app.include_router(tags_router, prefix="/api")
-app.include_router(scheduled_jobs_router, prefix="/api")
-app.include_router(racks_router, prefix="/api")
-app.include_router(license_router, prefix="/api")
-app.include_router(system_router, prefix="/api")
-app.include_router(access_router, prefix="/api")
+app.include_router(audit_router,         prefix="/api")
+app.include_router(tags_router,          prefix="/api")
+
+# ── 需要 License 但不限定具体 feature 的路由（设备基础操作）──
+from fastapi import Depends
+from license_auth.middleware import require_license
+_lic = [Depends(require_license)]
+
+app.include_router(devices_router,       prefix="/api", dependencies=_lic)
+app.include_router(jobs_router,          prefix="/api", dependencies=_lic)
+app.include_router(templates_router,     prefix="/api", dependencies=_lic)
+app.include_router(assets_router,        prefix="/api", dependencies=_lic)
+app.include_router(racks_router,         prefix="/api", dependencies=_lic)
+app.include_router(ip_locator_router,    prefix="/api", dependencies=_lic)
+app.include_router(device_health_router, prefix="/api", dependencies=_lic)
+app.include_router(access_router,        prefix="/api", dependencies=_lic)
+
+# ── Feature-gated 路由：每个路由绑定对应的 License feature ──
+from license_auth.middleware import require_feature
+
+app.include_router(automation_router,     prefix="/api", dependencies=[Depends(require_feature("automation"))])
+app.include_router(playbooks_router,      prefix="/api", dependencies=[Depends(require_feature("automation"))])
+app.include_router(scheduled_jobs_router, prefix="/api", dependencies=[Depends(require_feature("scheduled_jobs"))])
+app.include_router(configs_router,        prefix="/api", dependencies=[Depends(require_feature("config_management"))])
+app.include_router(config_drift_router,   prefix="/api", dependencies=[Depends(require_feature("config_management"))])
+app.include_router(monitoring_router,     prefix="/api", dependencies=[Depends(require_feature("monitoring"))])
+app.include_router(alerts_router,         prefix="/api", dependencies=[Depends(require_feature("alerting"))])
+app.include_router(topology_router,       prefix="/api", dependencies=[Depends(require_feature("topology"))])
+app.include_router(ipam_router,           prefix="/api", dependencies=[Depends(require_feature("ipam"))])
+app.include_router(capacity_router,       prefix="/api", dependencies=[Depends(require_feature("capacity"))])
+app.include_router(compliance_router,     prefix="/api", dependencies=[Depends(require_feature("compliance"))])
+app.include_router(inspections_router,    prefix="/api", dependencies=[Depends(require_feature("inspections"))])
+app.include_router(change_orders_router,  prefix="/api", dependencies=[Depends(require_feature("change_orders"))])
+app.include_router(pam_router,            prefix="/api", dependencies=[Depends(require_feature("access_center"))])
 
 # ── License Middleware (after CORS) ──────────────
 app.add_middleware(LicenseMiddleware)

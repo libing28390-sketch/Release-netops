@@ -40,6 +40,7 @@ import type { AppSidebarProps, NavChild } from './types';
 import BadgeCount from './BadgeCount';
 import NavItem from './NavItem';
 import NavSection from './NavSection';
+import { useSystem } from '../../hooks/useSystem';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
@@ -66,6 +67,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
   const location = useLocation();
   const navigate = useNavigate();
   const searchRef = useRef<HTMLInputElement>(null);
+  const { systemInfo } = useSystem();
 
   /* ─────────── Mini mode ─────────── */
   const [mini, setMini] = useState(() => {
@@ -353,7 +355,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                 <Activity size={16} className="text-cyan-400" />
               </div>
               <div className="min-w-0">
-                <h1 className="text-base font-bold text-white tracking-tight leading-none">Nexora</h1>
+                <h1 className="text-base font-bold text-white tracking-tight leading-none">{systemInfo?.system_name || 'Nexora'}</h1>
                 <p className="text-xs text-slate-500 mt-0.5 leading-none">
                   {zh ? '智能网络中枢' : 'SMART NET HUB'}
                 </p>

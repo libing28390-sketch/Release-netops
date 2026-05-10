@@ -172,7 +172,16 @@ def _get_db_health() -> tuple[bool, str]:
     db_ok = False
     db_status = "missing"
     try:
-        if os.path.exists(DB_PATH):
+        from database import _USE_PG
+        if _USE_PG:
+            # PostgreSQL 模式：直接尝试连接
+            conn = get_db_connection()
+            conn.execute("SELECT 1").fetchone()
+            conn.close()
+            db_ok = True
+            db_status = "connected"
+        elif os.path.exists(DB_PATH):
+            # SQLite 模式：检查文件存在再连接
             conn = get_db_connection()
             conn.execute("SELECT 1").fetchone()
             conn.close()

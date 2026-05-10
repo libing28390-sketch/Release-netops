@@ -5,6 +5,7 @@ export interface SystemInfo {
   edition: 'Standard' | 'Professional' | 'Enterprise';
   build_date: string;
   project_name: string;
+  system_name: string;
   license: {
     valid: boolean;
     customer_id: string;
