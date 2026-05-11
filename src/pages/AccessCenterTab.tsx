@@ -133,29 +133,17 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         return;
       }
 
-      // 2. Resolve identity and trigger launch
-      try {
-        const res = await fetch('/api/system/launch-terminal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            app_type: terminalType,
-            path: terminalPath,
-            host: dev.ip_address,
-            user: identity === 'privileged' ? (dev.admin_username || 'root') : (dev.normal_username || 'user'),
-            requester_username: currentUsername || 'unknown',
-            access_level: identity === 'privileged' ? 'admin' : 'normal',
-          })
-        });
-        const result = await res.json();
-        if (result.success) {
-          showToast(isZh ? '正在拉起本地客户端...' : 'Launching native client...', 'success');
-        } else {
-          showToast(result.error || 'Launch failed', 'error');
-        }
-      } catch (err) {
-        showToast('Native launch request failed', 'error');
+      // Privileged local terminal MUST pass MFA before the backend will release credentials
+      if (identity === 'privileged') {
+        setMfaTarget({ device: dev, appType: 'xshell', identity });
+        setFixedPassword('');
+        setDynamicCode('');
+        setShowMFAModal(true);
+        return;
       }
+
+      // Normal identity: launch directly
+      launchLocalTerminal(dev, terminalPath, terminalType, 'normal');
       return;
     }
 
@@ -164,11 +152,50 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       return;
     }
 
-    // Privileged: require MFA
+    // Privileged web: require MFA
     setMfaTarget({ device: dev, appType: 'web', identity });
     setFixedPassword('');
     setDynamicCode('');
     setShowMFAModal(true);
+  };
+
+  const launchLocalTerminal = async (
+    dev: Device,
+    terminalPath: string,
+    terminalType: string,
+    level: 'normal' | 'admin',
+    mfaCode?: string,
+    fixedPw?: string,
+  ) => {
+    try {
+      const res = await fetch('/api/system/launch-terminal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_type: terminalType,
+          path: terminalPath,
+          host: dev.ip_address,
+          user: level === 'admin' ? (dev.admin_username || 'root') : (dev.normal_username || 'user'),
+          requester_username: currentUsername || 'unknown',
+          access_level: level,
+          mfa_code: mfaCode,
+          fixed_pin: fixedPw,
+        })
+      });
+      const result = await res.json();
+      if (result.success) {
+        showToast(isZh ? '正在拉起本地客户端...' : 'Launching native client...', 'success');
+      } else if (result.requires_mfa) {
+        setMfaTarget({ device: dev, appType: 'xshell', identity: 'privileged' });
+        setFixedPassword('');
+        setDynamicCode('');
+        setShowMFAModal(true);
+      } else {
+        showToast(result.error || 'Launch failed', 'error');
+      }
+    } catch (err) {
+      showToast('Native launch request failed', 'error');
+    }
   };
 
   const sendMFACode = async () => {
@@ -207,12 +234,25 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       showToast(isZh ? '请输入完整的验证码' : 'Enter complete code', 'info');
       return;
     }
-    
-    if (mfaTarget) {
-      // Privileged web login via PAM Session Gateway
-      requestSession(mfaTarget.device, 'admin', dynamicCode, fixedPassword);
+
+    if (!mfaTarget) return;
+
+    if (mfaTarget.appType === 'xshell') {
+      // Privileged local terminal: verify + launch
+      const terminalPath = localStorage.getItem('local_terminal_path') || '';
+      const terminalType = localStorage.getItem('terminal_app') || 'xshell';
+      if (!terminalPath) {
+        showToast(isZh ? '请先在个人信息中配置终端路径' : 'Please configure terminal path in Profile first', 'info');
+        return;
+      }
+      launchLocalTerminal(mfaTarget.device, terminalPath, terminalType, 'admin', dynamicCode, fixedPassword);
       setShowMFAModal(false);
+      return;
     }
+
+    // Privileged web login via PAM Session Gateway
+    requestSession(mfaTarget.device, 'admin', dynamicCode, fixedPassword);
+    setShowMFAModal(false);
   };
 
   const requestSession = async (dev: Device, accessLevel: 'normal' | 'admin', mfaCode?: string, fixedPw?: string) => {

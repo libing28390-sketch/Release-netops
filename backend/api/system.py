@@ -104,6 +104,22 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
     user = payload.get("user")
     requester_username = payload.get("requester_username", "unknown")
     access_level = payload.get("access_level", "normal")  # 'normal' | 'admin'
+    mfa_code = payload.get("mfa_code")
+    fixed_pin = payload.get("fixed_pin")
+
+    # ── 特权账号登录必须先通过 MFA 审批 ──────────────────────────
+    if access_level == "admin":
+        if not mfa_code or not fixed_pin:
+            return {
+                "success": False,
+                "requires_mfa": True,
+                "error": "特权访问需要 MFA 验证",
+            }
+        from api.pam import _verify_mfa
+        ok, err = _verify_mfa(requester_username, fixed_pin, mfa_code)
+        if not ok:
+            return {"success": False, "error": err or "MFA 验证失败"}
+    # ──────────────────────────────────────────────────────────────
 
     # 1. Fetch the password from DB
     conn = get_db_connection()
