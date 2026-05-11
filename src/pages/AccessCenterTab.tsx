@@ -122,6 +122,26 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     return filteredDevices.slice(start, start + pageSize);
   }, [filteredDevices, currentPage, pageSize]);
 
+  // Reset all MFA-related state to a clean slate (but keep approver selection).
+  const resetMFAState = () => {
+    setFixedPassword('');
+    setDynamicCode('');
+    setCountdown(0);
+    setIsSending(false);
+  };
+
+  const openMFAModal = (target: { device: Device; appType: 'xshell' | 'web'; identity: 'normal' | 'privileged' }) => {
+    resetMFAState();
+    setMfaTarget(target);
+    setShowMFAModal(true);
+  };
+
+  const closeMFAModal = () => {
+    setShowMFAModal(false);
+    setMfaTarget(null);
+    resetMFAState();
+  };
+
   const handleAccessRequest = async (dev: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged') => {
     if (appType === 'xshell') {
       // 1. Get saved path from Profile Settings (localStorage keys: local_terminal_path, terminal_app)
@@ -135,10 +155,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
       // Privileged local terminal MUST pass MFA before the backend will release credentials
       if (identity === 'privileged') {
-        setMfaTarget({ device: dev, appType: 'xshell', identity });
-        setFixedPassword('');
-        setDynamicCode('');
-        setShowMFAModal(true);
+        openMFAModal({ device: dev, appType: 'xshell', identity });
         return;
       }
 
@@ -153,10 +170,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     }
 
     // Privileged web: require MFA
-    setMfaTarget({ device: dev, appType: 'web', identity });
-    setFixedPassword('');
-    setDynamicCode('');
-    setShowMFAModal(true);
+    openMFAModal({ device: dev, appType: 'web', identity });
   };
 
   const launchLocalTerminal = async (
@@ -186,10 +200,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       if (result.success) {
         showToast(isZh ? '正在拉起本地客户端...' : 'Launching native client...', 'success');
       } else if (result.requires_mfa) {
-        setMfaTarget({ device: dev, appType: 'xshell', identity: 'privileged' });
-        setFixedPassword('');
-        setDynamicCode('');
-        setShowMFAModal(true);
+        openMFAModal({ device: dev, appType: 'xshell', identity: 'privileged' });
       } else {
         showToast(result.error || 'Launch failed', 'error');
       }
@@ -237,22 +248,26 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
     if (!mfaTarget) return;
 
-    if (mfaTarget.appType === 'xshell') {
-      // Privileged local terminal: verify + launch
+    // Snapshot codes + target before closing, so state reset doesn't clear them.
+    const target = mfaTarget;
+    const code = dynamicCode;
+    const pin = fixedPassword;
+
+    if (target.appType === 'xshell') {
       const terminalPath = localStorage.getItem('local_terminal_path') || '';
       const terminalType = localStorage.getItem('terminal_app') || 'xshell';
       if (!terminalPath) {
         showToast(isZh ? '请先在个人信息中配置终端路径' : 'Please configure terminal path in Profile first', 'info');
         return;
       }
-      launchLocalTerminal(mfaTarget.device, terminalPath, terminalType, 'admin', dynamicCode, fixedPassword);
-      setShowMFAModal(false);
+      closeMFAModal();
+      launchLocalTerminal(target.device, terminalPath, terminalType, 'admin', code, pin);
       return;
     }
 
     // Privileged web login via PAM Session Gateway
-    requestSession(mfaTarget.device, 'admin', dynamicCode, fixedPassword);
-    setShowMFAModal(false);
+    closeMFAModal();
+    requestSession(target.device, 'admin', code, pin);
   };
 
   const requestSession = async (dev: Device, accessLevel: 'normal' | 'admin', mfaCode?: string, fixedPw?: string) => {
@@ -440,7 +455,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
                     <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mt-0.5">Dual-Control Audit required</p>
                   </div>
                 </div>
-                <button onClick={() => setShowMFAModal(false)} className="p-2 hover:bg-white rounded-xl transition-colors text-slate-300 hover:text-slate-500">
+                <button onClick={closeMFAModal} className="p-2 hover:bg-white rounded-xl transition-colors text-slate-300 hover:text-slate-500">
                   <X className="w-5 h-5" />
                 </button>
               </div>

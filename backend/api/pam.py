@@ -180,12 +180,13 @@ def _verify_mfa(username: str, fixed_pin: str, mfa_code: str) -> tuple[bool, str
     finally:
         conn.close()
 
-    # Check dynamic MFA code from local in-memory store
-    stored = mfa_store.get(username)
+    # Check dynamic MFA code from local in-memory store.
+    # Atomically pop the code first so it cannot be consumed more than once,
+    # even under concurrent requests or rapid double-submits.
+    stored = mfa_store.pop(username, None)
     if not stored or str(stored['code']) != str(mfa_code) or time.time() > stored['expire']:
         return False, '验证码错误或已过期'
 
-    del mfa_store[username]
     return True, ''
 
 
