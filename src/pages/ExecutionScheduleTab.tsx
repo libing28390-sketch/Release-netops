@@ -8,6 +8,7 @@ import {
 import Pagination from '../components/Pagination';
 import OutputActions from '../components/OutputActions';
 import DateTimePicker from '../components/DateTimePicker';
+import PageHero from '../components/PageHero';
 import type { Device } from '../types';
 
 /* ═══════════════════════════════════════════════════════ */
@@ -497,29 +498,23 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
 
   /* ═══ RENDER ═══ */
   return (
-    <div className="space-y-4">
-      {/* Page Header */}
-      <div className="rounded-2xl border border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] shadow-sm">
-        <div className="flex items-center justify-between px-6 py-4">
-          <div>
-            <h2 className="text-xl font-bold text-[#164e63]">
-              {inspSubTab === 'history' 
-                ? (zh ? '执行历史' : 'Execution History') 
-                : (zh ? '执行计划' : 'Execution Schedules')}
-            </h2>
-            <p className="text-xs text-black/40 mt-1">
-              {inspSubTab === 'history'
-                ? (zh ? '查看和追溯自动化执行历史' : 'View and trace automation execution history')
-                : (zh ? '创建指定时间范围内执行的一次性巡检计划' : 'Create one-time inspection plans within a specified time window')}
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={CalendarClock}
+        title={inspSubTab === 'history'
+          ? (zh ? '执行历史' : 'Execution History')
+          : (zh ? '执行计划' : 'Execution Schedules')}
+        subtitle={inspSubTab === 'history'
+          ? (zh ? '查看和追溯自动化执行历史' : 'View and trace automation execution history')
+          : (zh ? '创建指定时间范围内执行的一次性巡检计划' : 'Create one-time inspection plans within a specified time window')}
+        actions={
+          <>
             {inspSubTab === 'schedules' && (
               <button
                 onClick={() => setShowAddInspSchedule(!showAddInspSchedule)}
                 className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-[0.97] ${
-                  showAddInspSchedule 
-                    ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' 
+                  showAddInspSchedule
+                    ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     : 'bg-gradient-to-r from-cyan-500 to-cyan-600 text-white hover:from-cyan-400 hover:to-cyan-500'
                 }`}
               >
@@ -537,9 +532,11 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                 {zh ? '刷新记录' : 'Refresh'}
               </button>
             )}
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
 
       {/* ── Schedules sub-tab ── */}
       {inspSubTab === 'schedules' && (
@@ -1582,6 +1579,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
           </div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

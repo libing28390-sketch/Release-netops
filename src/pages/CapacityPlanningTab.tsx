@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import * as XLSX from 'xlsx';
 import { useChartTheme } from '../hooks/useChartTheme';
+import PageHero from '../components/PageHero';
 
 /* ───────── Types ───────── */
 
@@ -239,37 +240,32 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
   };
 
   return (
-    <div className="flex flex-col h-full gap-4 overflow-hidden">
-      {/* ────── Header ────── */}
-      <div className="flex items-end justify-between flex-shrink-0">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight" style={{ color: 'var(--heading-text)' }}>
-            {zh ? '容量预测与风险分析' : 'Capacity Forecast & Risk Analysis'}
-          </h2>
-          <p className="text-[13px] mt-0.5" style={{ color: 'var(--dim-text)' }}>
-            {zh ? '基于历史趋势的资源耗尽预测，提前规划扩容' : 'Resource exhaustion prediction based on historical trends'}
-          </p>
-        </div>
-        <div className="flex gap-2 items-center">
-          <button onClick={handleExport} className="p-2 rounded-lg border transition-all" style={{ borderColor: 'var(--card-border)', color: 'var(--muted-text)' }}
-            onMouseEnter={e => { e.currentTarget.style.color = '#06b6d4'; e.currentTarget.style.borderColor = 'rgba(6,182,212,0.3)'; }}
-            onMouseLeave={e => { e.currentTarget.style.color = 'var(--muted-text)'; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
-            title={zh ? '导出' : 'Export'}>
-            <Download size={15} />
-          </button>
-          <button onClick={loadData} disabled={loading}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-50"
-            style={{ background: '#06b6d4' }}
-            onMouseEnter={e => { e.currentTarget.style.background = '#0891b2'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = '#06b6d4'; }}>
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            {zh ? '刷新' : 'Refresh'}
-          </button>
-        </div>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={TrendingUp}
+        title={zh ? '容量预测与风险分析' : 'Capacity Forecast & Risk Analysis'}
+        subtitle={zh ? '基于历史趋势的资源耗尽预测，提前规划扩容' : 'Resource exhaustion prediction based on historical trends'}
+        actions={
+          <>
+            <button onClick={handleExport} className="p-2 rounded-lg border transition-all" style={{ borderColor: 'var(--card-border)', color: 'var(--muted-text)' }}
+              onMouseEnter={e => { e.currentTarget.style.color = '#06b6d4'; e.currentTarget.style.borderColor = 'rgba(6,182,212,0.3)'; }}
+              onMouseLeave={e => { e.currentTarget.style.color = 'var(--muted-text)'; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
+              title={zh ? '导出' : 'Export'}>
+              <Download size={15} />
+            </button>
+            <button onClick={loadData} disabled={loading}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-50"
+              style={{ background: '#06b6d4' }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#0891b2'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = '#06b6d4'; }}>
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              {zh ? '刷新' : 'Refresh'}
+            </button>
+          </>
+        }
+      />
 
-      {/* ────── Main split layout ────── */}
-      <div className="flex flex-1 gap-4 overflow-hidden min-h-0">
+      <div className="flex flex-1 gap-4 overflow-hidden min-h-0 px-6 py-5">
 
         {/* ══════ LEFT: Risk Queue ══════ */}
         <div className="w-[340px] flex-shrink-0 flex flex-col rounded-2xl border overflow-hidden"

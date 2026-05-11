@@ -10,6 +10,7 @@ import {
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Brush } from 'recharts';
 import type { Device, HostResourceSnapshot, HostResourceHistoryPayload } from '../types';
 import DateTimePicker from './DateTimePicker';
+import PageHero from './PageHero';
 import { useChartTheme } from '../hooks/useChartTheme';
 
 type MonitorDevice = {
@@ -761,48 +762,40 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
   const nocTimeStr = nocClock.toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   return (
-    <div className="monitoring-center space-y-5">
+    <div className="monitoring-center flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Radio}
+        title={language === 'zh' ? '运维指挥中心' : 'NOC Command Center'}
+        subtitle={language === 'zh' ? '实时监控 · 全网态势 · 快速处置' : 'Real-time monitoring · Network posture · Quick response'}
+        actions={
+          <>
+            <button type="button" onClick={() => { fetchMonitoringOverview(); fetchHostResources(); showToast(language === 'zh' ? '已下发全网设备检查' : 'Device check initiated', 'info'); }} className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] font-semibold text-sky-700 transition-all hover:bg-sky-100 hover:shadow-sm">
+              <Zap size={13} />{language === 'zh' ? '一键检查' : 'Check All'}
+            </button>
+            <button type="button" onClick={() => navigate('/alerts')} className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-semibold text-red-700 transition-all hover:bg-red-100 hover:shadow-sm">
+              <Bell size={13} />{language === 'zh' ? '告警中心' : 'Alert Center'}
+            </button>
+            <button type="button" onClick={() => navigate('/automation/execute')} className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 transition-all hover:bg-emerald-100 hover:shadow-sm">
+              <Play size={13} />{language === 'zh' ? '自动化任务' : 'Automation'}
+            </button>
+            <button type="button" onClick={() => navigate('/topology')} className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700 transition-all hover:bg-indigo-100 hover:shadow-sm">
+              <MapIcon size={13} />{language === 'zh' ? '网络拓扑' : 'Topology'}
+            </button>
+            <div className="h-6 w-px bg-black/10" />
+            <button type="button" onClick={() => setAutoRefresh(!autoRefresh)} className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all ${autoRefresh ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)]'}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-black/20'}`} />
+              {autoRefresh ? '30s' : 'OFF'}
+            </button>
+            <button type="button" disabled={refreshing} onClick={doRefreshAll} className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all ${refreshing ? 'border-sky-300 bg-sky-50 text-sky-700 cursor-not-allowed' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)] hover:border-black/20'}`}>
+              <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+              {refreshing ? (language === 'zh' ? '刷新中' : 'Sync') : (language === 'zh' ? '立即刷新' : 'Refresh')}
+            </button>
+            <span className="tabular-nums text-[11px] font-mono text-[var(--muted-text)]">{nocTimeStr}</span>
+          </>
+        }
+      />
 
-      {/* HEADER */}
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-lg shadow-sky-500/20">
-              <Radio size={18} />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold tracking-tight text-[var(--app-text)]">{language === 'zh' ? '\u8fd0\u7ef4\u6307\u6325\u4e2d\u5fc3' : 'NOC Command Center'}</h2>
-              <p className="text-[11px] text-[var(--muted-text)]">
-                {language === 'zh' ? '\u5b9e\u65f6\u76d1\u63a7 \u00b7 \u5168\u7f51\u6001\u52bf \u00b7 \u5feb\u901f\u5904\u7f6e' : 'Real-time monitoring \u00b7 Network posture \u00b7 Quick response'}
-              </p>
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => { fetchMonitoringOverview(); fetchHostResources(); showToast(language === 'zh' ? '\u5df2\u4e0b\u53d1\u5168\u7f51\u8bbe\u5907\u68c0\u67e5' : 'Device check initiated', 'info'); }} className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] font-semibold text-sky-700 transition-all hover:bg-sky-100 hover:shadow-sm">
-            <Zap size={13} />{language === 'zh' ? '\u4e00\u952e\u68c0\u67e5' : 'Check All'}
-          </button>
-          <button type="button" onClick={() => navigate('/alerts')} className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-semibold text-red-700 transition-all hover:bg-red-100 hover:shadow-sm">
-            <Bell size={13} />{language === 'zh' ? '\u544a\u8b66\u4e2d\u5fc3' : 'Alert Center'}
-          </button>
-          <button type="button" onClick={() => navigate('/automation/execute')} className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 transition-all hover:bg-emerald-100 hover:shadow-sm">
-            <Play size={13} />{language === 'zh' ? '\u81ea\u52a8\u5316\u4efb\u52a1' : 'Automation'}
-          </button>
-          <button type="button" onClick={() => navigate('/topology')} className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700 transition-all hover:bg-indigo-100 hover:shadow-sm">
-            <MapIcon size={13} />{language === 'zh' ? '\u7f51\u7edc\u62d3\u6251' : 'Topology'}
-          </button>
-          <div className="h-6 w-px bg-black/10" />
-          <button type="button" onClick={() => setAutoRefresh(!autoRefresh)} className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all ${autoRefresh ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)]'}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-black/20'}`} />
-            {autoRefresh ? '30s' : 'OFF'}
-          </button>
-          <button type="button" disabled={refreshing} onClick={doRefreshAll} className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all ${refreshing ? 'border-sky-300 bg-sky-50 text-sky-700 cursor-not-allowed' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)] hover:border-black/20'}`}>
-            <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-            {refreshing ? (language === 'zh' ? '\u5237\u65b0\u4e2d' : 'Sync') : (language === 'zh' ? '\u7acb\u5373\u5237\u65b0' : 'Refresh')}
-          </button>
-          <span className="tabular-nums text-[11px] font-mono text-[var(--muted-text)]">{nocTimeStr}</span>
-        </div>
-      </div>
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
 
       {/* CRITICAL BANNER */}
       {(criticalCount > 0 || criticalAlertCount > 0) && (
@@ -1429,6 +1422,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
 
           </div>
         )}
+      </div>
       </div>
     </div>
   );

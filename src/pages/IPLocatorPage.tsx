@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download } from 'lucide-react';
-import { sectionHeaderRowClass } from '../components/shared';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 import * as XLSX from 'xlsx';
 
 interface IPLocatorPageProps {
@@ -323,19 +323,14 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
   const uplinkLocations = result?.locations?.filter(l => l.is_uplink) || [];
 
   return (
-    <div className="space-y-5 p-1 sm:p-0">
-      {/* ── Page Header ── */}
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-[#164e63]">
-            {zh ? 'IP 工具箱' : 'IP Toolbox'}
-          </h2>
-          <p className="text-sm text-black/40 dark:text-white/40 mt-0.5">
-            {zh ? 'IP 地址定位 · 连通性探测 · 全链路诊断' : 'IP Locate · Connectivity Probe · Full-path Diagnostics'}
-          </p>
-        </div>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={MapPin}
+        title={zh ? 'IP 工具箱' : 'IP Toolbox'}
+        subtitle={zh ? 'IP 地址定位 · 连通性探测 · 全链路诊断' : 'IP Locate · Connectivity Probe · Full-path Diagnostics'}
+      />
 
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
       {/* ── Tab Bar ── */}
       <div className="flex gap-1 bg-black/[0.03] dark:bg-white/[0.04] rounded-xl p-1 w-fit">
         <button
@@ -1157,6 +1152,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       )}
 
       </>)}
+      </div>
     </div>
   );
 };

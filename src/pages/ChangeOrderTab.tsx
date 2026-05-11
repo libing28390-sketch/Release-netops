@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import DateTimePicker from '../components/DateTimePicker';
 import { AnimatePresence, motion } from 'motion/react';
+import PageHero from '../components/PageHero';
 import { sectionHeaderRowClass } from '../components/shared';
 import Pagination from '../components/Pagination';
 import type { User as UserOption, SessionUser, ConfigTemplate } from '../types';
@@ -1800,9 +1801,25 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
      Render
      ═════════════════════════════════════════════════════════════════ */
 
+  const viewMeta: Record<typeof viewTab, { zh: string; en: string; desc_zh: string; desc_en: string }> = {
+    all: { zh: '全部工单', en: 'All Orders', desc_zh: '查看所有变更工单的生命周期', desc_en: 'Browse the full change order lifecycle' },
+    my_todo: { zh: '个人待办', en: 'My Todo', desc_zh: '需要你处理的变更工单', desc_en: 'Change orders awaiting your action' },
+    group_todo: { zh: '组内待办', en: 'Group Todo', desc_zh: '你所在职责组的待办事项', desc_en: 'Pending items for your duty groups' },
+    my_participated: { zh: '我参与的', en: 'My Participated', desc_zh: '曾参与审批或执行的工单', desc_en: 'Orders you have reviewed or executed' },
+    my_focus: { zh: '我的关注', en: 'My Focus', desc_zh: '你标记关注的重要工单', desc_en: 'Orders you have bookmarked' },
+    my_drafts: { zh: '草稿箱', en: 'Drafts', desc_zh: '尚未提交的工单草稿', desc_en: 'Pending change order drafts' },
+  };
+  const heroTitle = zh ? viewMeta[viewTab].zh : viewMeta[viewTab].en;
+  const heroSubtitle = zh ? viewMeta[viewTab].desc_zh : viewMeta[viewTab].desc_en;
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex flex-col gap-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+      <PageHero
+        icon={ClipboardList}
+        title={heroTitle}
+        subtitle={heroSubtitle}
+      />
+      <div className="flex flex-col gap-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar px-6 py-5">
       {/* ── Toast ── */}
       <AnimatePresence>
         {toast && (

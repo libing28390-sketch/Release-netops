@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Copy, Eye, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { Check, Copy, Eye, Plus, RefreshCw, Search, Trash2, Wrench, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import DateTimePicker from '../components/DateTimePicker';
+import PageHero from '../components/PageHero';
 import type {
   AlertMaintenanceCondition,
   AlertMaintenanceConditionField,
@@ -535,21 +536,14 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
 
   return (
     <>
-    <div className="flex-1 flex flex-col overflow-hidden space-y-4 min-h-0">
-      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
-              {language === 'zh' ? '告警中心 / 维护期' : 'Alert Center / Maintenance'}
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold text-[#164e63]">
-              {language === 'zh' ? '当前维护期' : 'Current Maintenance Windows'}
-            </h2>
-            <p className="mt-2 text-sm text-black/50">
-              {language === 'zh' ? '通过灵活的规则组合设定告警静默窗口，避免计划内变更引发告警风暴。' : 'Define suppression windows via flexible rule logic to prevent alert storms during planned maintenance.'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <PageHero
+        icon={Wrench}
+        eyebrow={language === 'zh' ? '告警中心 / 维护期' : 'Alert Center / Maintenance'}
+        title={language === 'zh' ? '当前维护期' : 'Current Maintenance Windows'}
+        subtitle={language === 'zh' ? '通过灵活的规则组合设定告警静默窗口，避免计划内变更引发告警风暴。' : 'Define suppression windows via flexible rule logic to prevent alert storms during planned maintenance.'}
+        actions={
+          <>
             <button onClick={() => void loadMaintenanceWindows()} className={alertSecondaryButtonClass}>
               <RefreshCw size={14} />
               {language === 'zh' ? '刷新' : 'Refresh'}
@@ -558,9 +552,12 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
               <Plus size={14} />
               {language === 'zh' ? '新建维护期' : 'New Window'}
             </button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
+      <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
+      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         <div className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center">
           <label className="relative min-w-[240px] flex-1">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
@@ -677,6 +674,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
           />
         </div>
 
+      </div>
       </div>
     </div>
 

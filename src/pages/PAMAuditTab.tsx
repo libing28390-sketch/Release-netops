@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import PageHero from '../components/PageHero';
 import { 
   ShieldCheck, 
   Terminal, 
@@ -186,23 +187,12 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const historyCnt = sessions.filter(s => !['active', 'connecting'].includes(s.status)).length;
 
   return (
-    <div className="flex flex-col h-full bg-slate-50/50">
-      {/* ── Header ── */}
-      <div className="px-8 py-6 bg-white border-b border-slate-200">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-cyan-600 rounded-xl">
-              <ShieldCheck className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900">
-                {isZh ? 'PAM 受控会话审计' : 'PAM Session Audit'}
-              </h1>
-              <p className="text-sm text-slate-500">
-                {isZh ? '实时监控、强制断开及录制回放' : 'Real-time monitoring, termination & playback'}
-              </p>
-            </div>
-          </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={ShieldCheck}
+        title={isZh ? 'PAM 受控会话审计' : 'PAM Session Audit'}
+        subtitle={isZh ? '实时监控、强制断开及录制回放' : 'Real-time monitoring, termination & playback'}
+        actions={
           <button
             onClick={fetchSessions}
             className="p-2 hover:bg-slate-100 rounded-full transition-colors"
@@ -210,61 +200,63 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
           >
             <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
           </button>
-        </div>
+        }
+        extras={
+          /* Tabs + Search */
+          <div className="flex items-center justify-between">
+            <div className="flex p-1 bg-slate-100 rounded-lg gap-1">
+              <button
+                onClick={() => setActiveTab('active')}
+                className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+                  activeTab === 'active'
+                    ? 'bg-white text-cyan-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Wifi className="w-3.5 h-3.5" />
+                {isZh ? '活跃会话' : 'Active Sessions'}
+                {activeCnt > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full">
+                    {activeCnt}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveTab('history')}
+                className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+                  activeTab === 'history'
+                    ? 'bg-white text-cyan-600 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />
+                {isZh ? '历史记录' : 'Session History'}
+                {activeTab === 'history' && historyCnt > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 bg-slate-200 text-slate-600 text-[10px] font-bold rounded-full">
+                    {historyCnt}
+                  </span>
+                )}
+              </button>
+            </div>
 
-        {/* Tabs + Search */}
-        <div className="flex items-center justify-between">
-          <div className="flex p-1 bg-slate-100 rounded-lg gap-1">
-            <button
-              onClick={() => setActiveTab('active')}
-              className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-                activeTab === 'active'
-                  ? 'bg-white text-cyan-600 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <Wifi className="w-3.5 h-3.5" />
-              {isZh ? '活跃会话' : 'Active Sessions'}
-              {activeCnt > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full">
-                  {activeCnt}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-                activeTab === 'history'
-                  ? 'bg-white text-cyan-600 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <History className="w-3.5 h-3.5" />
-              {isZh ? '历史记录' : 'Session History'}
-              {activeTab === 'history' && historyCnt > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 bg-slate-200 text-slate-600 text-[10px] font-bold rounded-full">
-                  {historyCnt}
-                </span>
-              )}
-            </button>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder={isZh ? '搜索设备、用户、IP...' : 'Search device, user, IP...'}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all outline-none"
+              />
+            </div>
           </div>
+        }
+      />
 
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder={isZh ? '搜索设备、用户、IP...' : 'Search device, user, IP...'}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all outline-none"
-            />
-          </div>
-        </div>
-      </div>
+      <div className="flex-1 overflow-auto px-6 py-5" style={{ background: 'rgba(248, 250, 252, 0.5)' }}>
 
       {/* ── Table ── */}
-      <div className="flex-1 overflow-auto p-8">
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           {filteredSessions.length === 0 && !loading ? (
             /* Empty state */
             <div className="flex flex-col items-center justify-center py-20 gap-4 text-slate-400">
@@ -569,6 +561,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

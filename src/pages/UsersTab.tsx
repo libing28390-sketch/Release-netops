@@ -1,8 +1,9 @@
 import React from 'react';
-import { Plus, Eye, EyeOff } from 'lucide-react';
+import { Plus, Eye, EyeOff, Users } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { User } from '../types';
-import { sectionHeaderRowClass, primaryActionBtnClass } from '../components/shared';
+import { primaryActionBtnClass } from '../components/shared';
+import PageHero from '../components/PageHero';
 
 type UserFormState = {
   username: string;
@@ -65,20 +66,23 @@ const UsersTab: React.FC<UsersTabProps> = ({
   };
 
   return (
-    <div className="space-y-8">
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-medium tracking-tight">{t('userManagement')}</h2>
-          <p className="text-sm text-black/40">{t('manageAccess')}</p>
-        </div>
-        <button
-          onClick={() => setShowAddUserModal(true)}
-          className={primaryActionBtnClass}
-        >
-          <Plus size={18} />
-          {t('addUser')}
-        </button>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Users}
+        title={t('userManagement')}
+        subtitle={t('manageAccess')}
+        actions={
+          <button
+            onClick={() => setShowAddUserModal(true)}
+            className={primaryActionBtnClass}
+          >
+            <Plus size={18} />
+            {t('addUser')}
+          </button>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-8">
 
       <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -347,6 +351,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
           </motion.div>
         </div>
       )}
+      </div>
     </div>
   );
 };

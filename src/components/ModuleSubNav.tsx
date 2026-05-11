@@ -5,7 +5,51 @@
  */
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  Activity,
+  Archive,
+  BarChart2,
+  BarChart3,
+  Bell,
+  CalendarClock,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardCheck,
+  ClipboardList,
+  Clock,
+  Code2,
+  Columns3,
+  FileCode2,
+  FileEdit,
+  FileSearch,
+  FileText,
+  GitCompare,
+  Globe,
+  History,
+  Inbox,
+  Key,
+  LayoutDashboard,
+  MapPin,
+  Network,
+  Package,
+  PlusCircle,
+  Router,
+  Search,
+  Server,
+  Shield,
+  ShieldCheck,
+  SlidersHorizontal,
+  Star,
+  Tag,
+  Terminal,
+  Timer,
+  TrendingUp,
+  User,
+  UserCheck,
+  Users,
+  Wrench,
+  Zap,
+} from 'lucide-react';
 import { navConfig } from './AppSidebar/navConfig';
 
 interface ModuleSubNavProps {
@@ -17,6 +61,19 @@ interface ModuleSubNavProps {
 const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, Viewer: 1 };
 
 const LS_KEY = 'nexora_module_nav';
+
+/** Map icon string keys (from navConfig) → lucide component */
+const iconMap: Record<string, React.ElementType> = {
+  Activity, Archive, BarChart2, BarChart3, Bell, CalendarClock,
+  ClipboardCheck, ClipboardList, Clock, Code2, Columns3,
+  FileCode2, FileEdit, FileSearch, FileText, GitCompare, Globe,
+  History, Inbox, Key, LayoutDashboard, MapPin, Network, Package,
+  PlusCircle, Router, Search, Server, Shield, ShieldCheck,
+  SlidersHorizontal, Star, Tag, Terminal, Timer, TrendingUp,
+  User, UserCheck, Users, Wrench, Zap,
+};
+
+const ACCENT = '#06b6d4';
 
 const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, currentUser }) => {
   const location = useLocation();
@@ -90,8 +147,8 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
     };
     window.addEventListener('refresh-todo-badge', handleRefresh);
 
-    return () => { 
-      isMounted = false; 
+    return () => {
+      isMounted = false;
       window.removeEventListener('refresh-todo-badge', handleRefresh);
     };
   }, [currentGroup?.id, currentUser?.id, currentUser?.username, currentUser?.change_groups, pathname]);
@@ -112,47 +169,67 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
   };
 
   const groupLabel = zh ? currentGroup.label : (currentGroup.labelEn || currentGroup.label);
+  const GroupIcon = currentGroup.icon ? iconMap[currentGroup.icon] : undefined;
 
   return (
     <aside
       className="flex-shrink-0 flex flex-col h-full border-r transition-all duration-200 select-none"
       style={{
-        width: collapsed ? 44 : 192,
+        width: collapsed ? 48 : 200,
         background: 'var(--header-bg)',
         borderColor: 'var(--header-border)',
       }}
     >
       {/* Group title */}
-      {!collapsed && (
-        <div
-          className="px-4 pt-4 pb-2 text-[11px] font-semibold tracking-wider uppercase"
-          style={{ color: 'var(--dim-text)' }}
-        >
-          {groupLabel}
+      {!collapsed ? (
+        <div className="px-3 pt-4 pb-2 flex items-center gap-2">
+          {GroupIcon && (
+            <span
+              className="flex items-center justify-center w-6 h-6 rounded-md flex-shrink-0"
+              style={{ background: `${ACCENT}14`, color: ACCENT }}
+            >
+              <GroupIcon size={13} strokeWidth={1.8} />
+            </span>
+          )}
+          <span
+            className="text-[11px] font-semibold tracking-[0.12em] uppercase truncate"
+            style={{ color: 'var(--muted-text)' }}
+          >
+            {groupLabel}
+          </span>
         </div>
+      ) : (
+        GroupIcon && (
+          <div className="pt-3 pb-2 flex justify-center">
+            <span
+              className="flex items-center justify-center w-7 h-7 rounded-md"
+              style={{ background: `${ACCENT}14`, color: ACCENT }}
+              title={groupLabel}
+            >
+              <GroupIcon size={14} strokeWidth={1.8} />
+            </span>
+          </div>
+        )
       )}
 
       {/* Nav items */}
-      <nav className={`flex-1 overflow-y-auto ${collapsed ? 'px-1 pt-3' : 'px-2'}`}>
+      <nav className={`flex-1 overflow-y-auto ${collapsed ? 'px-1.5 pt-2' : 'px-2'}`}>
         {visibleChildren.map(child => {
           const active = isActive(child);
           const label = zh ? child.label : (child.labelEn || child.label);
+          const Icon = child.icon ? iconMap[child.icon] : undefined;
 
           if (collapsed) {
-            // Collapsed: show first 2 chars as abbreviation
-            const abbr = label.slice(0, 2);
             return (
               <button
                 key={child.id}
                 onClick={() => navigate(child.path)}
                 title={label}
-                className="w-full flex items-center justify-center rounded-lg mb-1 transition-all"
+                className="w-full flex items-center justify-center rounded-lg mb-1 transition-all relative"
                 style={{
                   height: 36,
-                  color: active ? '#06b6d4' : 'var(--body-text)',
+                  color: active ? ACCENT : 'var(--body-text)',
                   background: active ? 'rgba(6,182,212,0.08)' : 'transparent',
-                  fontSize: 11,
-                  fontWeight: active ? 600 : 500,
                 }}
                 onMouseEnter={e => {
                   if (!active) e.currentTarget.style.background = 'var(--app-hover-bg)';
@@ -161,18 +238,20 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
                   if (!active) e.currentTarget.style.background = 'transparent';
                 }}
               >
-                <span className="relative">
-                  {abbr}
-                  {child.id === 'my-todo' && todoCounts.my > 0 && (
-                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                  )}
-                  {child.id === 'group-todo' && todoCounts.group > 0 && (
-                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                  )}
-                  {child.id === 'my-focus' && todoCounts.focus > 0 && (
-                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-                  )}
-                </span>
+                {Icon ? (
+                  <Icon size={16} strokeWidth={active ? 2 : 1.7} />
+                ) : (
+                  <span className="text-[11px] font-semibold">{label.slice(0, 2)}</span>
+                )}
+                {child.id === 'my-todo' && todoCounts.my > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                )}
+                {child.id === 'group-todo' && todoCounts.group > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                )}
+                {child.id === 'my-focus' && todoCounts.focus > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                )}
               </button>
             );
           }
@@ -181,9 +260,9 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
             <button
               key={child.id}
               onClick={() => navigate(child.path)}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] transition-all mb-0.5"
+              className="group relative w-full flex items-center gap-2.5 pl-3 pr-2.5 py-2 rounded-lg text-[13px] transition-all mb-0.5"
               style={{
-                color: active ? '#06b6d4' : 'var(--body-text)',
+                color: active ? ACCENT : 'var(--body-text)',
                 background: active ? 'rgba(6,182,212,0.08)' : 'transparent',
                 fontWeight: active ? 600 : 400,
               }}
@@ -194,25 +273,35 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
                 if (!active) e.currentTarget.style.background = 'transparent';
               }}
             >
-              {active && (
-                <span
-                  className="w-[3px] h-4 rounded-full flex-shrink-0"
-                  style={{ background: '#06b6d4' }}
+              {/* Left active bar */}
+              <span
+                aria-hidden
+                className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full transition-opacity"
+                style={{ background: ACCENT, opacity: active ? 1 : 0 }}
+              />
+              {Icon && (
+                <Icon
+                  size={15}
+                  strokeWidth={active ? 2 : 1.7}
+                  className="flex-shrink-0"
+                  style={{
+                    color: active ? ACCENT : 'var(--muted-text)',
+                  }}
                 />
               )}
-              <span className="truncate">{label}</span>
+              <span className="truncate flex-1 text-left">{label}</span>
               {child.id === 'my-todo' && todoCounts.my > 0 && (
-                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white leading-none min-w-[16px] text-center">
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white leading-none min-w-[16px] text-center">
                   {todoCounts.my}
                 </span>
               )}
               {child.id === 'group-todo' && todoCounts.group > 0 && (
-                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-500 text-white leading-none min-w-[16px] text-center">
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-500 text-white leading-none min-w-[16px] text-center">
                   {todoCounts.group}
                 </span>
               )}
               {child.id === 'my-focus' && todoCounts.focus > 0 && (
-                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-indigo-500 text-white leading-none min-w-[16px] text-center">
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-indigo-500 text-white leading-none min-w-[16px] text-center">
                   {todoCounts.focus}
                 </span>
               )}
@@ -237,20 +326,20 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
 
       {/* Version Info Footer */}
       {!collapsed && (
-        <div className="px-4 py-3 border-t border-black/5 bg-black/[0.02] flex flex-col gap-1 flex-shrink-0">
+        <div className="px-3 py-3 border-t flex flex-col gap-1 flex-shrink-0" style={{ borderColor: 'var(--header-border)', background: 'var(--app-hover-bg)' }}>
           <div className="flex items-center justify-between">
-            <span className="text-[9px] font-bold opacity-40 uppercase tracking-wider">
+            <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--dim-text)' }}>
               {zh ? '版本' : 'VER'}
             </span>
-            <span className="text-[10px] font-mono font-bold text-cyan-600/80">
+            <span className="text-[10px] font-mono font-bold" style={{ color: ACCENT }}>
               v0.1.0
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-[9px] font-bold opacity-40 uppercase tracking-wider">
+            <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--dim-text)' }}>
               {zh ? '授权' : 'ED'}
             </span>
-            <span className="text-[10px] font-bold text-slate-500">
+            <span className="text-[10px] font-bold" style={{ color: 'var(--muted-text)' }}>
               Standard
             </span>
           </div>

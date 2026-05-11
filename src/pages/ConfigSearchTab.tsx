@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { RotateCcw, Search, Server } from 'lucide-react';
+import PageHero from '../components/PageHero';
 
 interface ConfigSearchMatch {
   line: number;
@@ -50,13 +51,13 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t }) => {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex justify-between items-end mb-5 flex-shrink-0">
-        <div>
-          <h2 className="text-2xl font-medium tracking-tight">{t('configSearchTab')}</h2>
-          <p className="text-sm text-black/40">{t('globalConfigSearchDesc')}</p>
-        </div>
-      </div>
+      <PageHero
+        icon={Search}
+        title={t('configSearchTab')}
+        subtitle={t('globalConfigSearchDesc')}
+      />
 
+      <div className="flex-1 flex flex-col overflow-hidden px-6 py-5">
       <div className="flex-1 bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden flex flex-col">
         <div className="p-5 border-b border-black/5 bg-black/[0.01]">
           <div className="flex gap-2">
@@ -163,6 +164,7 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t }) => {
             </>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

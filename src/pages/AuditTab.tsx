@@ -1,9 +1,10 @@
 import React from 'react';
-import { Download } from 'lucide-react';
+import { Download, ClipboardList } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { AuditEvent } from '../types';
-import { sectionHeaderRowClass, severityBadgeClass, auditStatusBadgeClass } from '../components/shared';
+import { severityBadgeClass, auditStatusBadgeClass } from '../components/shared';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 
 interface AuditTabProps {
@@ -139,18 +140,20 @@ const AuditTab: React.FC<AuditTabProps> = ({
   };
 
   return (
-    <div className="space-y-6">
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-medium tracking-tight">{t('auditLogsTitle')}</h2>
-          <p className="text-sm text-black/40">{t('fullHistory')}</p>
-        </div>
-        <button onClick={handleExportAudit} className="inline-flex items-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-medium text-black/60 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all" title={language === 'zh' ? '导出审计日志' : 'Export Audit Logs'}>
-          <Download size={14} />
-          {language === 'zh' ? '导出' : 'Export'}
-        </button>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={ClipboardList}
+        title={t('auditLogsTitle')}
+        subtitle={t('fullHistory')}
+        actions={
+          <button onClick={handleExportAudit} className="inline-flex items-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-medium text-black/60 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all" title={language === 'zh' ? '导出审计日志' : 'Export Audit Logs'}>
+            <Download size={14} />
+            {language === 'zh' ? '导出' : 'Export'}
+          </button>
+        }
+      />
 
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-6">
       <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
         <div className="p-4 bg-black/[0.02] border-b border-black/5 flex gap-4 flex-wrap">
           <select
@@ -265,6 +268,7 @@ const AuditTab: React.FC<AuditTabProps> = ({
           onPageChange={setAuditPage}
           language={language}
         />
+      </div>
       </div>
     </div>
   );

@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Search, X, Download, RefreshCw, Eye, Repeat, ChevronDown, ChevronUp, Calendar, MapPin, Wrench } from 'lucide-react';
+import { Search, X, Download, RefreshCw, Eye, Repeat, ChevronDown, ChevronUp, Calendar, MapPin, Wrench, History } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { AlertListResponse, AlertRecord, AlertDetailResponse } from '../types';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 import { severityBadgeClass, alertWorkflowBadgeClass } from '../components/shared';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import DateTimePicker from '../components/DateTimePicker';
@@ -159,22 +160,14 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
 
   return (
     <>
-    <div className="flex-1 flex flex-col overflow-hidden space-y-4 min-h-0">
-      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        {/* Header */}
-        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
-              {zh ? '告警中心 / 历史告警' : 'Alert Center / Alert History'}
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold text-[#164e63]">
-              {zh ? '历史告警' : 'Alert History'}
-            </h2>
-            <p className="mt-2 text-sm text-black/50">
-              {zh ? '查询并溯源历史告警，复盘故障处理生命周期与时长记录。' : 'Trace historical alerts and review incident lifecycles and resolution metrics.'}
-            </p>
-          </div>
-          <div className="flex gap-2">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <PageHero
+        icon={History}
+        eyebrow={zh ? '告警中心 / 历史告警' : 'Alert Center / Alert History'}
+        title={zh ? '历史告警' : 'Alert History'}
+        subtitle={zh ? '查询并溯源历史告警，复盘故障处理生命周期与时长记录。' : 'Trace historical alerts and review incident lifecycles and resolution metrics.'}
+        actions={
+          <>
             <button onClick={handleExport} className={alertSecondaryButtonClass} title={zh ? '导出' : 'Export'}>
               <Download size={14} />
               {zh ? '导出' : 'Export'}
@@ -183,9 +176,12 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
               <RefreshCw size={14} />
               {zh ? '刷新' : 'Refresh'}
             </button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
+      <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
+      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         {/* Search bar */}
         <div className="flex flex-col gap-3 px-5 py-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -400,6 +396,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
           />
         </div>
 
+      </div>
       </div>
     </div>
 

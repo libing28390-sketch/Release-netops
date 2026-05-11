@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  RefreshCw, Download, ChevronUp, ChevronDown,
+  RefreshCw, Download, ChevronUp, ChevronDown, BarChart3,
 } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -9,6 +9,7 @@ import * as XLSX from 'xlsx';
 import { motion } from 'motion/react';
 import type { Device, Job, ComplianceOverview } from '../types';
 import { useChartTheme } from '../hooks/useChartTheme';
+import PageHero from '../components/PageHero';
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
@@ -245,23 +246,13 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
   const scoreColor = healthScore >= 90 ? '#10b981' : healthScore >= 70 ? '#f59e0b' : '#ef4444';
 
   return (
-    <div className="space-y-10 overflow-auto h-full pb-10">
-
-      {/* ══════════════════════════════════════════════════════════════
-          Section 1 — Executive Overview
-          ══════════════════════════════════════════════════════════════ */}
-      <section>
-        {/* Toolbar */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-[22px] font-bold tracking-tight text-[#00172D]">
-              {zh ? '运营报告' : 'Operations Report'}
-            </h1>
-            <p className="text-xs text-black/30 mt-0.5">
-              {zh ? '高管视角 · 实时网络运营健康概览' : 'Executive View · Real-time Network Health'}
-            </p>
-          </div>
-          <div className="flex gap-2 items-center">
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={BarChart3}
+        title={zh ? '运营报告' : 'Operations Report'}
+        subtitle={zh ? '高管视角 · 实时网络运营健康概览' : 'Executive View · Real-time Network Health'}
+        actions={
+          <>
             <span className="text-[10px] text-black/25 mr-1">
               {zh ? '更新于 ' : 'Updated '}
               {Math.round((Date.now() - lastRefresh.getTime()) / 1000) < 5
@@ -283,22 +274,33 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
             >
               <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
             </button>
-            <div className="flex gap-0.5 bg-black/[0.03] rounded-lg p-0.5 ml-1">
-              {(['7d', '30d'] as const).map(r => (
-                <button
-                  key={r}
-                  onClick={() => setReportRange(r)}
-                  className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-all ${
-                    reportRange === r
-                      ? 'bg-white shadow-sm text-[#00172D]'
-                      : 'text-black/35 hover:text-black/55'
-                  }`}
-                >
-                  {r === '7d' ? (zh ? '7天' : '7D') : (zh ? '30天' : '30D')}
+          </>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-10 pb-10">
+
+      {/* ══════════════════════════════════════════════════════════════
+          Section 1 — Executive Overview
+          ══════════════════════════════════════════════════════════════ */}
+      <section>
+        {/* Time range toggle */}
+        <div className="flex items-center justify-end mb-8">
+          <div className="flex gap-0.5 bg-black/[0.03] rounded-lg p-0.5 ml-1">
+            {(['7d', '30d'] as const).map(r => (
+              <button
+                key={r}
+                onClick={() => setReportRange(r)}
+                className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-all ${
+                  reportRange === r
+                    ? 'bg-white shadow-sm text-[#00172D]'
+                    : 'text-black/35 hover:text-black/55'
+                }`}
+              >
+                {r === '7d' ? (zh ? '7天' : '7D') : (zh ? '30天' : '30D')}
                 </button>
               ))}
             </div>
-          </div>
         </div>
 
         {/* Core KPI — no card borders, data floats on page */}
@@ -614,6 +616,7 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
           </div>
         </div>
       </section>
+      </div>
     </div>
   );
 };

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Server, Activity, ShieldCheck, AlertCircle, AlertTriangle, Bell, TrendingUp, PieChart as PieChartIcon, History, Clock, ChevronRight, X, Zap, MonitorSmartphone, Cpu, HardDrive, MemoryStick, Play, CalendarPlus } from 'lucide-react';
+import { Server, Activity, ShieldCheck, AlertCircle, AlertTriangle, Bell, TrendingUp, PieChart as PieChartIcon, History, Clock, ChevronRight, X, Zap, MonitorSmartphone, Cpu, HardDrive, MemoryStick, Play, CalendarPlus, LayoutDashboard } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, PieChart, Pie, Cell } from 'recharts';
 import type { Device, Job, ScheduledTask, HostResourceSnapshot, NotificationItem } from '../types';
 import { sectionHeaderRowClass, primaryActionBtnClass, secondaryActionBtnClass } from '../components/shared';
 import { useChartTheme } from '../hooks/useChartTheme';
+import PageHero from '../components/PageHero';
 
 interface DashboardTabProps {
   devices: Device[];
@@ -82,44 +83,36 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
   const dashAgoSec = Math.round((Date.now() - dashLastRefresh.getTime()) / 1000);
 
   return (
-    <div className="space-y-5 overflow-auto h-full">
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-[#00172D]">{t('networkOverview')}</h2>
-          <p className="text-sm text-black/40">{t('dashboardSubtitle')}</p>
-        </div>
-        <div className="flex gap-2 items-center">
-          <span className="text-[10px] text-black/30">{t('lastRefreshed')} {dashAgoSec}{t('secondsAgo')}</span>
-          {hostResources && <span className="px-3 py-1 text-[10px] font-bold rounded-full uppercase tracking-wider bg-[#00172D]/5 text-[#00172D]">{hostStatusText}</span>}
-          <span className={`px-3 py-1 text-[10px] font-bold rounded-full uppercase tracking-wider ${healthColor} ${healthLevel === 'critical' ? 'animate-pulse' : ''}`}>{healthLabel}</span>
-        </div>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={LayoutDashboard}
+        eyebrow={language === 'zh' ? 'Nexora 运营中心' : 'Nexora Command Center'}
+        title={t('networkOverview')}
+        subtitle={t('dashboardSubtitle')}
+        actions={
+          <>
+            <span className="text-[10px]" style={{ color: 'var(--dim-text)' }}>
+              {t('lastRefreshed')} {dashAgoSec}{t('secondsAgo')}
+            </span>
+            {hostResources && (
+              <span className="px-3 py-1 text-[10px] font-bold rounded-full uppercase tracking-wider bg-[#00172D]/5 text-[#00172D]">
+                {hostStatusText}
+              </span>
+            )}
+            <span className={`px-3 py-1 text-[10px] font-bold rounded-full uppercase tracking-wider ${healthColor} ${healthLevel === 'critical' ? 'animate-pulse' : ''}`}>
+              {healthLabel}
+            </span>
+            <button onClick={() => navigate('/monitoring')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs'}>
+              {language === 'zh' ? '查看平台资源' : 'View Host Resources'}
+            </button>
+            <button onClick={() => navigate('/automation/execute')} className={primaryActionBtnClass + ' !py-1.5 !text-xs'}>
+              {t('openAutomation')}
+            </button>
+          </>
+        }
+      />
 
-      {!dashBannerCollapsed && (
-        <div className="rounded-2xl border border-[#00bceb]/20 bg-gradient-to-r from-[#f4fcff] via-white to-[#eef9ff] px-5 py-3.5 shadow-sm relative">
-          <button onClick={() => setDashBannerCollapsed(true)} className="absolute top-2.5 right-3 p-1 rounded-lg hover:bg-black/5 text-black/30 hover:text-black/60 transition-all" aria-label="Close banner"><X size={14} /></button>
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a5cd]">{language === 'zh' ? 'Nexora 运营中心' : 'Nexora Command Center'}</p>
-              <h3 className="mt-0.5 text-lg font-bold text-[#0d2c40]">{t('todaySnapshot')}</h3>
-              <p className="mt-0.5 text-xs text-[#21546d]/80">{t('todaySnapshotDesc')}</p>
-              {hostResources && <p className="mt-1 text-[11px] text-[#21546d]/85">{language === 'zh' ? `平台宿主机: CPU ${Math.round(hostResources.cpu_percent || 0)}% / 内存 ${Math.round(hostResources.memory_percent || 0)}% / 磁盘 ${Math.round(hostResources.disk_percent || 0)}%` : `Platform host: CPU ${Math.round(hostResources.cpu_percent || 0)}% / Memory ${Math.round(hostResources.memory_percent || 0)}% / Disk ${Math.round(hostResources.disk_percent || 0)}%`}</p>}
-            </div>
-            <div className="flex flex-wrap gap-2 shrink-0">
-              <button onClick={() => navigate('/monitoring')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs'}>
-                {language === 'zh' ? '查看平台资源' : 'View Host Resources'}
-              </button>
-              <button onClick={() => navigate('/automation/execute')} className={primaryActionBtnClass + ' !py-1.5 !text-xs'}>
-                {t('openAutomation')}
-              </button>
-              <button onClick={() => navigate('/automation/history')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs'}>
-                {t('viewExecHistory')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4">
         {/* Total Assets */}
         <div onClick={() => setActiveTab('inventory')} className="bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-[#005073]/20 transition-all cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
@@ -435,6 +428,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             )}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

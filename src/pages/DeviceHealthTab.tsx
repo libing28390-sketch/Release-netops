@@ -1,9 +1,10 @@
 import React from 'react';
-import { Activity, AlertTriangle, Filter, ShieldCheck, Server } from 'lucide-react';
+import { Activity, AlertTriangle, Filter, ShieldCheck, Server, Stethoscope } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '../types';
-import { sectionHeaderRowClass, severityBadgeClass } from '../components/shared';
+import { severityBadgeClass } from '../components/shared';
 import { useChartTheme } from '../hooks/useChartTheme';
+import PageHero from '../components/PageHero';
 
 interface DeviceHealthTabProps {
   devices: Device[];
@@ -125,21 +126,24 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
   const displayedRiskyDevices = hasActiveFilters ? filteredRiskyDevices : riskyDevices;
 
   return (
-    <div className="space-y-4">
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-medium tracking-tight">{isZh ? '健康检测中心' : 'Health Detection Center'}</h2>
-          <p className="text-sm text-black/40">{isZh ? '把可达性、资源、硬件、接口异常和开放告警整合到统一健康模型，便于快速排障。' : 'Unify reachability, resource, hardware, interface anomalies, and open alerts into one health model for fast triage.'}</p>
-        </div>
-        <button
-          type="button"
-          onClick={onOpenMonitoring}
-          className="px-4 py-2 rounded-xl border border-black/10 text-sm font-medium hover:bg-black/5 transition-all"
-          title={isZh ? '打开监控中心' : 'Open Monitoring Center'}
-        >
-          {isZh ? '打开监控中心' : 'Open Monitoring'}
-        </button>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Stethoscope}
+        title={isZh ? '健康检测中心' : 'Health Detection Center'}
+        subtitle={isZh ? '把可达性、资源、硬件、接口异常和开放告警整合到统一健康模型，便于快速排障。' : 'Unify reachability, resource, hardware, interface anomalies, and open alerts into one health model for fast triage.'}
+        actions={
+          <button
+            type="button"
+            onClick={onOpenMonitoring}
+            className="px-4 py-2 rounded-xl border border-black/10 text-sm font-medium hover:bg-black/5 transition-all"
+            title={isZh ? '打开监控中心' : 'Open Monitoring Center'}
+          >
+            {isZh ? '打开监控中心' : 'Open Monitoring'}
+          </button>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
         {[
@@ -405,6 +409,7 @@ const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, Clock, Cpu, Loader2, Play, RefreshCw, Search, Server, Shield, X, XCircle, Wifi, WifiOff, Zap, BarChart3, Eye, Download } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, ClipboardCheck, Clock, Cpu, Loader2, Play, RefreshCw, Search, Server, Shield, X, XCircle, Wifi, WifiOff, Zap, BarChart3, Eye, Download } from 'lucide-react';
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '../types';
 import { useChartTheme } from '../hooks/useChartTheme';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 import {
   alertPanelClass,
   alertSecondaryButtonClass,
@@ -347,8 +348,27 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
   /* ─────────────────────────────────────── */
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden space-y-4 min-h-0">
-      {/* ═══════ Hero header strip ═══════ */}
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <PageHero
+        icon={ClipboardCheck}
+        title={isZh ? '巡检概览' : 'Inspection Overview'}
+        subtitle={isZh ? '按计划或手动触发网络健康巡检，一眼看清全网状态' : 'Schedule or trigger network health inspection runs and view the fleet at a glance'}
+        actions={
+          <button
+            onClick={() => triggerInspection('all')}
+            disabled={isRunning}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all
+              bg-gradient-to-r from-cyan-500 to-cyan-600 text-white hover:from-cyan-400 hover:to-cyan-500
+              disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97]"
+          >
+            {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+            {isRunning ? (isZh ? '巡检中' : 'Running') : (isZh ? '立即巡检全部' : 'Run All Inspection')}
+          </button>
+        }
+      />
+
+      <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 space-y-4 min-h-0">
+      {/* ═══════ Hero gauge strip ═══════ */}
       <div className="relative rounded-2xl overflow-hidden bg-gradient-to-r from-[#0c1e35] via-[#0e2942] to-[#0a3455] p-5 shadow-lg shrink-0">
         <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '18px 18px' }} />
         <div className="relative flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -665,6 +685,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
             />
           </div>
         )}
+      </div>
       </div>
     </div>
   );

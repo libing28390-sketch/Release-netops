@@ -2,8 +2,9 @@ import React from 'react';
 import { Download, RotateCcw, ShieldCheck } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { ComplianceFinding, ComplianceOverview } from '../types';
-import { sectionHeaderRowClass, sectionToolbarClass, primaryActionBtnClass, severityBadgeClass, complianceStatusBadgeClass } from '../components/shared';
+import { sectionToolbarClass, primaryActionBtnClass, severityBadgeClass, complianceStatusBadgeClass } from '../components/shared';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 
 interface ComplianceTabProps {
@@ -75,36 +76,39 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({
   };
 
   return (
-    <div className="space-y-8">
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-medium tracking-tight">{t('complianceStandards')}</h2>
-          <p className="text-sm text-black/40">{t('auditGolden')}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {(complianceOverview as any)?.recent_runs?.[0]?.started_at && (
-            <span className="text-xs text-black/40">
-              {language === 'zh' ? '最近审计' : 'Last audit'}: {new Date((complianceOverview as any).recent_runs[0].started_at).toLocaleString()}
-            </span>
-          )}
-          <button
-            onClick={handleExportCompliance}
-            className="inline-flex items-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-2.5 text-sm font-medium text-black/60 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all"
-            title={language === 'zh' ? '导出合规报告' : 'Export Compliance'}
-          >
-            <Download size={14} />
-            {language === 'zh' ? '导出' : 'Export'}
-          </button>
-          <button
-            onClick={runComplianceAudit}
-            disabled={complianceRunLoading}
-            className={`${primaryActionBtnClass} disabled:opacity-50 disabled:cursor-not-allowed`}
-          >
-            {complianceRunLoading ? <RotateCcw size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-            {language === 'zh' ? '执行审计' : 'Run Audit'}
-          </button>
-        </div>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={ShieldCheck}
+        title={t('complianceStandards')}
+        subtitle={t('auditGolden')}
+        actions={
+          <>
+            {(complianceOverview as any)?.recent_runs?.[0]?.started_at && (
+              <span className="text-xs text-black/40">
+                {language === 'zh' ? '最近审计' : 'Last audit'}: {new Date((complianceOverview as any).recent_runs[0].started_at).toLocaleString()}
+              </span>
+            )}
+            <button
+              onClick={handleExportCompliance}
+              className="inline-flex items-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-2.5 text-sm font-medium text-black/60 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all"
+              title={language === 'zh' ? '导出合规报告' : 'Export Compliance'}
+            >
+              <Download size={14} />
+              {language === 'zh' ? '导出' : 'Export'}
+            </button>
+            <button
+              onClick={runComplianceAudit}
+              disabled={complianceRunLoading}
+              className={`${primaryActionBtnClass} disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {complianceRunLoading ? <RotateCcw size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+              {language === 'zh' ? '执行审计' : 'Run Audit'}
+            </button>
+          </>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-8">
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="bg-white p-6 rounded-2xl border border-black/5 shadow-sm lg:col-span-1">
@@ -236,6 +240,7 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({
           onPageChange={setCompliancePage}
           language={language}
         />
+      </div>
       </div>
     </div>
   );

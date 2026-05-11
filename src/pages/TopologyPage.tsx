@@ -1,10 +1,11 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Download, Globe, RotateCcw, Search } from 'lucide-react';
+import { Download, Globe, RotateCcw, Search, Network } from 'lucide-react';
 import type { Device } from '../types';
-import { darkActionBtnClass, secondaryActionBtnClass, sectionHeaderRowClass } from '../components/shared';
+import { darkActionBtnClass, secondaryActionBtnClass } from '../components/shared';
 import TopologyGraph from '../components/TopologyGraph';
 import TopologyInspectorPanel from '../components/TopologyInspectorPanel';
+import PageHero from '../components/PageHero';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 
@@ -131,29 +132,30 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   getTopologyOperationalTone,
 }) => {
   return (
-    <div className="h-full flex flex-col space-y-6">
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-medium tracking-tight">{language === 'zh' ? '网络拓扑' : 'Network Topology'}</h2>
-          <p className="text-sm text-black/40">
-            {language === 'zh'
-              ? '基于 LLDP 邻居发现展示网络连接关系，按站点、角色和状态快速缩小故障域。'
-              : 'Visualize LLDP-based network adjacency and reduce the fault domain by site, role, and health state.'}
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <button onClick={onTriggerDiscovery} className={secondaryActionBtnClass} disabled={topologyDiscoveryRunning}>
-            <RotateCcw size={16} />
-            {topologyDiscoveryRunning
-              ? (language === 'zh' ? '发现中...' : 'Discovering...')
-              : (language === 'zh' ? '刷新发现' : 'Refresh Discovery')}
-          </button>
-          <button onClick={onExportMap} className={darkActionBtnClass}>
-            <Download size={16} />
-            {language === 'zh' ? '导出拓扑图' : 'Export Map'}
-          </button>
-        </div>
-      </div>
+    <div className="h-full flex flex-col overflow-hidden">
+      <PageHero
+        icon={Network}
+        title={language === 'zh' ? '网络拓扑' : 'Network Topology'}
+        subtitle={language === 'zh'
+          ? '基于 LLDP 邻居发现展示网络连接关系，按站点、角色和状态快速缩小故障域。'
+          : 'Visualize LLDP-based network adjacency and reduce the fault domain by site, role, and health state.'}
+        actions={
+          <>
+            <button onClick={onTriggerDiscovery} className={secondaryActionBtnClass} disabled={topologyDiscoveryRunning}>
+              <RotateCcw size={16} />
+              {topologyDiscoveryRunning
+                ? (language === 'zh' ? '发现中...' : 'Discovering...')
+                : (language === 'zh' ? '刷新发现' : 'Refresh Discovery')}
+            </button>
+            <button onClick={onExportMap} className={darkActionBtnClass}>
+              <Download size={16} />
+              {language === 'zh' ? '导出拓扑图' : 'Export Map'}
+            </button>
+          </>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-6">
 
       <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -331,6 +333,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           formatTopologyEvidenceLabel={formatTopologyEvidenceLabel}
           getTopologyOperationalTone={getTopologyOperationalTone}
         />
+      </div>
       </div>
     </div>
   );

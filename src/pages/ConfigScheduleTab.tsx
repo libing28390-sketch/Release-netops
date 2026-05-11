@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Database, RotateCcw, Calendar, Server, ChevronDown, Play, Info, Zap,
+  Database, RotateCcw, Calendar, CalendarClock, Server, ChevronDown, Play, Info, Zap,
   Activity, Timer, TrendingUp, BarChart3, AlertTriangle, RefreshCw,
   Shield, GitCompareArrows, Hash, Eye, Tag, HardDrive, Layers, CheckCircle2, XCircle,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import type { ConfigSnapshot, Device } from '../types';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 
 /* ═══════════════════════════════════════════════════════ */
 /*  Constants                                              */
@@ -290,8 +291,15 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
   const sevenDayTotal = backupStats?.daily_history?.reduce((a, d) => a + d.total, 0) ?? 0;
 
   return (
-    <div className="space-y-4">
-      {/* ── Status Bar & Integrated Header ── */}
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={CalendarClock}
+        title={zh ? '备份计划' : 'Backup Schedule'}
+        subtitle={zh ? '自动化运维控制台 · 管理全网设备配置的定时备份任务与数据保留策略' : 'Manage scheduled backup tasks and retention policies for all network assets'}
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
+      {/* ── Status Bar ── */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -301,19 +309,14 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
         <div className="absolute -left-20 -bottom-20 h-64 w-64 rounded-full bg-violet-500/10 blur-[80px]" />
 
         <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-1">
-            <div className="flex items-center gap-3">
-              <h2 className="text-2xl font-bold tracking-tight text-white">
-                {zh ? '备份计划' : 'Backup Schedule'}
-              </h2>
-              <div className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${scheduleEnabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-white/5 text-white/30 border border-white/10'}`}>
-                <div className={`w-1.5 h-1.5 rounded-full ${scheduleEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-white/20'}`} />
-                {scheduleEnabled ? (zh ? '运行中' : 'ACTIVE') : (zh ? '已停用' : 'IDLE')}
-              </div>
+          <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${scheduleEnabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-white/5 text-white/30 border border-white/10'}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${scheduleEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-white/20'}`} />
+              {scheduleEnabled ? (zh ? '运行中' : 'ACTIVE') : (zh ? '已停用' : 'IDLE')}
             </div>
-            <p className="text-sm text-slate-400 max-w-md">
-              {zh ? '自动化运维控制台 · 管理全网设备配置的定时备份任务与数据保留策略' : 'Automation Console · Manage scheduled backup tasks and retention policies for all network assets.'}
-            </p>
+            <span className="text-[12px] text-slate-300">
+              {zh ? '定时任务运行状态' : 'Scheduled task status'}
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-4">
@@ -682,6 +685,7 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

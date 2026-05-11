@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy, ArrowLeftRight, Trash2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 
 interface LatestBackup {
   id: string;
@@ -224,22 +225,14 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)]">
-        {/* Header */}
-        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
-              {zh ? '配置管理 / 备份中心' : 'Config / Backup Center'}
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold text-[#164e63]">
-              {zh ? '备份中心' : 'Backup Center'}
-            </h2>
-            <p className="mt-2 text-sm text-black/50">
-              {zh ? '展示所有设备的最近一次配置备份。' : 'Latest config backup for each device.'}
-            </p>
-          </div>
-          <div className="flex gap-2">
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Database}
+        eyebrow={zh ? '配置管理 / 备份中心' : 'Config / Backup Center'}
+        title={zh ? '备份中心' : 'Backup Center'}
+        subtitle={zh ? '展示所有设备的最近一次配置备份。' : 'Latest config backup for each device.'}
+        actions={
+          <>
             <button
               onClick={() => void handleBackupAllClick()}
               disabled={isTakingSnapshot}
@@ -255,9 +248,12 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
               {zh ? '刷新' : 'Refresh'}
             </button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
+      <div className="rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)]">
         {/* Live backup progress banner */}
         <AnimatePresence>
           {progress && (
@@ -590,6 +586,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

@@ -6,6 +6,7 @@ import {
   Hash, Building2, Crown, Loader2, ShieldCheck, ShieldAlert, Copy, Database,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import PageHero from '../components/PageHero';
 
 interface Props {
   language: string;
@@ -304,7 +305,35 @@ const LicenseAdminTab: React.FC<Props> = ({ language, onLicenseUpdate }) => {
   }
 
   return (
-    <div className="space-y-4 pb-6">
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Shield}
+        title={zh ? 'License 授权管理' : 'License Management'}
+        subtitle={zh ? '管理平台授权、设备配额与功能开关' : 'Manage platform licensing, device quotas, and feature flags'}
+        actions={
+          <>
+            <button onClick={fetchAll} className="p-2 rounded-lg text-black/25 hover:text-[#00bceb] hover:bg-[#00bceb]/5 transition-colors" title={zh ? '刷新' : 'Refresh'}>
+              <RefreshCw size={15} />
+            </button>
+            <button
+              onClick={() => {
+                if (status?.valid) {
+                  setShowConfirm(true);
+                } else {
+                  fileInputRef.current?.click();
+                }
+              }}
+              disabled={uploading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20 disabled:opacity-50"
+            >
+              {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+              {zh ? '上传 License' : 'Upload License'}
+            </button>
+          </>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept=".json" className="hidden" onChange={handleUpload} />
 
@@ -329,36 +358,6 @@ const LicenseAdminTab: React.FC<Props> = ({ language, onLicenseUpdate }) => {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-            <Shield size={20} className="text-[#00bceb]" />
-            {zh ? 'License 授权管理' : 'License Management'}
-          </h2>
-          <p className="text-xs text-black/40 mt-0.5">{zh ? '管理平台授权、设备配额与功能开关' : 'Manage platform licensing, device quotas, and feature flags'}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={fetchAll} className="p-2 rounded-lg text-black/25 hover:text-[#00bceb] hover:bg-[#00bceb]/5 transition-colors" title={zh ? '刷新' : 'Refresh'}>
-            <RefreshCw size={15} />
-          </button>
-          <button
-            onClick={() => {
-              if (status?.valid) {
-                setShowConfirm(true);
-              } else {
-                fileInputRef.current?.click();
-              }
-            }}
-            disabled={uploading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20 disabled:opacity-50"
-          >
-            {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-            {zh ? '上传 License' : 'Upload License'}
-          </button>
-        </div>
-      </div>
 
       {/* ── Status Banner ── */}
       {status && !status.valid && (() => {
@@ -661,6 +660,7 @@ const LicenseAdminTab: React.FC<Props> = ({ language, onLicenseUpdate }) => {
           </div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

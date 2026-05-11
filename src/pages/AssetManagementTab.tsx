@@ -18,6 +18,7 @@ import DateTimePicker from '../components/DateTimePicker';
 import Pagination from '../components/Pagination';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { AssetReadonlyDetailInner } from '../components/AssetReadonlyDetail';
+import PageHero from '../components/PageHero';
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
@@ -789,7 +790,14 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
      RENDER
      ═══════════════════════════════════════════════════════════════════ */
   return (
-    <div className="space-y-2.5">
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Package}
+        title={zh ? '资产管理' : 'Asset Management'}
+        subtitle={zh ? '设备台账 · 资产生命周期 · 租户归属' : 'Device inventory, lifecycle and tenant ownership'}
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-2.5">
       {/* Hidden file input for Excel import */}
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
 
@@ -1815,6 +1823,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

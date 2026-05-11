@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, ShieldAlert, ShieldCheck, GitCompare, RotateCcw, Download, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { RefreshCw, ShieldAlert, ShieldCheck, GitCompare, RotateCcw, Download, ChevronDown, ChevronRight, AlertTriangle, TrendingUp } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { sectionHeaderRowClass } from '../components/shared';
+import PageHero from '../components/PageHero';
 
 interface DriftItem {
   device_id: string;
@@ -156,27 +156,25 @@ const ConfigDriftTab: React.FC<ConfigDriftTabProps> = ({ language, t }) => {
   };
 
   return (
-    <div className="space-y-5 overflow-auto h-full">
-      {/* Header */}
-      <div className={sectionHeaderRowClass}>
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-[#00172D]">
-            {language === 'zh' ? '配置漂移检测' : 'Configuration Drift'}
-          </h2>
-          <p className="text-sm text-black/40">
-            {language === 'zh' ? '对比设备当前配置与基线快照，发现未授权变更' : 'Compare current configs against baselines to detect unauthorized changes'}
-          </p>
-        </div>
-        <div className="flex gap-2 items-center">
-          <button onClick={handleExport} className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all" title={language === 'zh' ? '导出报告' : 'Export'}>
-            <Download size={14} />
-          </button>
-          <button onClick={runScan} disabled={scanning} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] transition-all disabled:opacity-50">
-            <RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />
-            {language === 'zh' ? '扫描全部设备' : 'Scan All Devices'}
-          </button>
-        </div>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={TrendingUp}
+        title={language === 'zh' ? '配置漂移检测' : 'Configuration Drift'}
+        subtitle={language === 'zh' ? '对比设备当前配置与基线快照，发现未授权变更' : 'Compare current configs against baselines to detect unauthorized changes'}
+        actions={
+          <>
+            <button onClick={handleExport} className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all" title={language === 'zh' ? '导出报告' : 'Export'}>
+              <Download size={14} />
+            </button>
+            <button onClick={runScan} disabled={scanning} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] transition-all disabled:opacity-50">
+              <RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />
+              {language === 'zh' ? '扫描全部设备' : 'Scan All Devices'}
+            </button>
+          </>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -346,6 +344,7 @@ const ConfigDriftTab: React.FC<ConfigDriftTabProps> = ({ language, t }) => {
             </div>
           ) : null}
         </div>
+      </div>
       </div>
     </div>
   );

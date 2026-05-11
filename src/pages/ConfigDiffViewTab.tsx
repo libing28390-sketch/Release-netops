@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, RotateCcw, Search, X, Database, Clock, ArrowLeftRight, Zap } from 'lucide-react';
 import type { DiffLine } from '../types';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
+import { GitCompare } from 'lucide-react';
 
 /* ── shared interfaces (kept compatible with App.tsx) ── */
 
@@ -252,29 +254,26 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="flex justify-between items-end mb-5 flex-shrink-0">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
-            {zh ? '配置管理 / 配置对比' : 'Config / Diff Compare'}
-          </p>
-          <h2 className="mt-2 text-2xl font-semibold text-[#164e63]">{t('diffCompare')}</h2>
-          <p className="mt-1 text-sm text-black/40">
-            {showDiffViewer
-              ? (zh ? `${configDiffLeft.hostname} 的两个版本配置对比` : `Comparing two snapshots of ${configDiffLeft.hostname}`)
-              : (zh ? '选择设备和快照进行配置差异对比' : 'Select a device and snapshots to compare')}
-          </p>
-        </div>
-        {(selectedDevice || showDiffViewer) && (
-          <button
-            onClick={showDiffViewer ? () => { onReset(); } : handleBackToDevices}
-            className="text-xs text-black/40 hover:text-black transition px-3 py-1.5 border border-black/10 rounded-xl hover:bg-black/[0.03]"
-          >
-            {showDiffViewer ? (zh ? '重新选择' : 'Re-select') : (zh ? '返回设备列表' : 'Back to devices')}
-          </button>
-        )}
-      </div>
+      <PageHero
+        icon={GitCompare}
+        eyebrow={zh ? '配置管理 / 配置对比' : 'Config / Diff Compare'}
+        title={t('diffCompare')}
+        subtitle={showDiffViewer
+          ? (zh ? `${configDiffLeft.hostname} 的两个版本配置对比` : `Comparing two snapshots of ${configDiffLeft.hostname}`)
+          : (zh ? '选择设备和快照进行配置差异对比' : 'Select a device and snapshots to compare')}
+        actions={
+          (selectedDevice || showDiffViewer) ? (
+            <button
+              onClick={showDiffViewer ? () => { onReset(); } : handleBackToDevices}
+              className="text-xs text-black/40 hover:text-black transition px-3 py-1.5 border border-black/10 rounded-xl hover:bg-black/[0.03]"
+            >
+              {showDiffViewer ? (zh ? '重新选择' : 'Re-select') : (zh ? '返回设备列表' : 'Back to devices')}
+            </button>
+          ) : undefined
+        }
+      />
 
+      <div className="flex-1 overflow-hidden px-6 py-5 flex flex-col">
       <div className="flex-1 overflow-hidden rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)] flex flex-col">
         {/* ════════ Step 1 + 2: Selection area ════════ */}
         {!showDiffViewer && (
@@ -770,6 +769,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
             </div>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

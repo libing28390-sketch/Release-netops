@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
   Play, Search, Star, ChevronDown, SlidersHorizontal,
-  Plus, Eye, ArrowUpDown, Layers, Shield, X,
+  Plus, Eye, ArrowUpDown, Layers, Shield, X, FolderOpen,
 } from 'lucide-react';
+import PageHero from '../components/PageHero';
 
 /* ─── Types ─── */
 interface PlatformMeta { icon?: string; vendor?: string }
@@ -176,45 +177,47 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
   const hasActiveFilter = riskFilter !== 'all' || vendorFilter !== 'all' || categoryFilter !== 'all';
 
   return (
-    <div className="h-full overflow-auto scenario-library-scroll">
-      {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight truncate">{t('scenarioLibrary')}</h2>
-          <p className="text-xs text-black/40 dark:text-white/40 mt-0.5">{t('scenarioLibraryDesc')}</p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30 pointer-events-none" size={13} />
-            <input
-              value={scenarioSearch}
-              onChange={e => onScenarioSearchChange(e.target.value)}
-              placeholder={language === 'zh' ? '搜索场景关键词…' : 'Search scenarios…'}
-              className="pl-8 pr-3 py-1.5 text-xs border border-black/10 dark:border-white/10 rounded-lg
-                bg-transparent outline-none focus:border-[#00bceb]/40 dark:focus:border-[#00bceb]/40
-                text-black/80 dark:text-white/80 placeholder:text-black/30 dark:placeholder:text-white/25 w-56"
-            />
-          </div>
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`p-1.5 rounded-lg border transition-all ${
-              showFilters || hasActiveFilter
-                ? 'border-[#00bceb]/30 text-[#00bceb] bg-[#00bceb]/5'
-                : 'border-black/10 dark:border-white/10 text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'
-            }`}
-            title={language === 'zh' ? '筛选' : 'Filters'}
-          >
-            <SlidersHorizontal size={14} />
-          </button>
-          <button
-            onClick={onOpenManualScenarioDraft}
-            className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#00bceb] text-white rounded-lg text-xs
-              font-medium hover:bg-[#0096bd] transition-all shadow-sm shadow-[#00bceb]/20"
-          >
-            <Plus size={12} /> {language === 'zh' ? '自定义场景' : 'Custom'}
-          </button>
-        </div>
-      </div>
+    <div className="h-full flex flex-col overflow-hidden">
+      <PageHero
+        icon={FolderOpen}
+        title={t('scenarioLibrary')}
+        subtitle={t('scenarioLibraryDesc')}
+        actions={
+          <>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30 pointer-events-none" size={13} />
+              <input
+                value={scenarioSearch}
+                onChange={e => onScenarioSearchChange(e.target.value)}
+                placeholder={language === 'zh' ? '搜索场景关键词…' : 'Search scenarios…'}
+                className="pl-8 pr-3 py-1.5 text-xs border border-black/10 dark:border-white/10 rounded-lg
+                  bg-transparent outline-none focus:border-[#00bceb]/40 dark:focus:border-[#00bceb]/40
+                  text-black/80 dark:text-white/80 placeholder:text-black/30 dark:placeholder:text-white/25 w-56"
+              />
+            </div>
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`p-1.5 rounded-lg border transition-all ${
+                showFilters || hasActiveFilter
+                  ? 'border-[#00bceb]/30 text-[#00bceb] bg-[#00bceb]/5'
+                  : 'border-black/10 dark:border-white/10 text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'
+              }`}
+              title={language === 'zh' ? '筛选' : 'Filters'}
+            >
+              <SlidersHorizontal size={14} />
+            </button>
+            <button
+              onClick={onOpenManualScenarioDraft}
+              className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#00bceb] text-white rounded-lg text-xs
+                font-medium hover:bg-[#0096bd] transition-all shadow-sm shadow-[#00bceb]/20"
+            >
+              <Plus size={12} /> {language === 'zh' ? '自定义场景' : 'Custom'}
+            </button>
+          </>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 scenario-library-scroll">
 
       {/* ── Filter Bar ── */}
       {showFilters && (
@@ -445,6 +448,7 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
           )}
         </div>
       )}
+      </div>
     </div>
   );
 };

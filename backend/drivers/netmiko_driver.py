@@ -135,41 +135,66 @@ class NetmikoDriver(BaseDriver):
             'global_delay_factor':1.5 if is_slow else 0.5,
             'blocking_timeout':   30,
         }
+        logger.info(f"Login to {self.host} as username={self.username!r} pwd_len={len(self.password or '')}")
         device_params.update(build_netmiko_compatibility_kwargs())
-        # enable secret: use explicit field, then fall back to login password for Cisco
-        # (many Cisco devices share the same enable secret and SSH password)
+        # enable secret: only use an explicitly configured enable_password.
+        # Do NOT fall back to the login password — if the device has no enable
+        # password, passing a non-empty secret causes Netmiko to expect a
+        # "Password:" prompt that never comes, and enable() fails.
         secret = (
             self.device_info.get('enable_password') or
             self.device_info.get('secret') or
-            (self.password if self.device_type in ('cisco_ios', 'cisco_nxos', 'cisco_iosxr') else '')
+            ''
         )
         if secret:
             device_params['secret'] = secret
+        logger.info(f"Secret set for {self.host}: len={len(secret)}")
 
         try:
             logger.debug(f"Connecting to {self.host}:{self.port} type={self.device_type} fast_cli={device_params['fast_cli']}")
             self.conn = ConnectHandler(**device_params)
 
-            # For Cisco devices: always call enable() so Netmiko's internal state
-            # is correctly set to privilege exec mode (prompt = '#').
-            # - privilege 15 accounts: enable() is a no-op (already at '#')
-            # - privilege 1 accounts: enable() uses the secret to elevate
-            # Without this, send_config_set() → config_mode() fails even for priv-15 accounts
-            # because Netmiko thinks the session is still at '>'.
-            if self.device_type in ('cisco_ios', 'cisco_nxos', 'cisco_iosxr') and secret:
+            # For Cisco: check prompt after login and elevate only if needed.
+            if self.device_type in ('cisco_ios', 'cisco_nxos', 'cisco_iosxr'):
                 try:
-                    self.conn.enable()
+                    prompt = self.conn.find_prompt()
+                    logger.info(f"Prompt after login on {self.host}: {prompt!r}")
+                    if prompt.strip().endswith('>'):
+                        logger.info(f"User exec mode on {self.host}, sending enable")
+                        self.conn.write_channel('enable\n')
+                        import time as _time
+                        _time.sleep(1)
+                        out = self.conn.read_channel()
+                        logger.info(f"enable response on {self.host}: {out!r}")
+
+                        if 'assword' in out:
+                            # Device prompted for password
+                            pwd_to_send = secret or self.password or ''
+                            self.conn.write_channel(pwd_to_send + '\n')
+                            _time.sleep(1)
+                            out2 = self.conn.read_channel()
+                            logger.info(f"after password on {self.host}: {out2!r}")
+                        elif 'Error in authentication' in out or 'Access denied' in out:
+                            # Device has enable password but we didn't get prompted —
+                            # try sending admin password directly
+                            logger.info(f"Auth error on enable, retrying with admin password")
+                            self.conn.write_channel('enable\n')
+                            _time.sleep(0.5)
+                            out3 = self.conn.read_channel()
+                            if 'assword' in out3:
+                                pwd_to_send = secret or self.password or ''
+                                self.conn.write_channel(pwd_to_send + '\n')
+                                _time.sleep(1)
+                                self.conn.read_channel()
+
+                        # Update Netmiko's internal prompt state
+                        self.conn.set_base_prompt()
+                        prompt2 = self.conn.find_prompt()
+                        logger.info(f"Prompt after enable on {self.host}: {prompt2!r}")
+                    else:
+                        logger.info(f"Already privilege exec on {self.host}")
                 except Exception as en_err:
-                    # If enable() fails, the account may already be at '#' (priv 15).
-                    # Check the current prompt — if it ends with '#' we're fine.
-                    try:
-                        prompt = self.conn.find_prompt()
-                        if prompt.strip().endswith('#'):
-                            logger.debug(f"enable() raised but prompt is '#' on {self.host} — already privileged, continuing")
-                        else:
-                            raise en_err
-                    except Exception:
-                        raise en_err
+                    logger.warning(f"Privilege elevation failed on {self.host}: {en_err}")
 
             logger.info(f"Connected to {self.host} (type={self.device_type})")
         except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:

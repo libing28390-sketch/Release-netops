@@ -5,6 +5,7 @@ import {
   Shield, CheckCircle2, Search, Filter, Info, ListFilter, Copy, Check, Download, Database, FileCode
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 import {
   alertPanelClass,
   alertSecondaryButtonClass,
@@ -302,65 +303,13 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   }, [paginatedItems, zh]);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden space-y-4 min-h-0">
-      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        {/* Header */}
-        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar mb-4">
-            <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar mb-4">
-              <button
-                onClick={() => setCategoryFilter('All')}
-                className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
-                  categoryFilter === 'All' 
-                  ? 'bg-gradient-to-br from-[#164e63] to-[#0e3f52] text-white border-[#164e63] shadow-lg shadow-cyan-900/20 scale-[1.02]' 
-                  : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
-                }`}
-              >
-                {zh ? '全部指标' : 'All Metrics'}
-                <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'All' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                  {items.length}
-                </span>
-              </button>
-              {CATEGORIES.map(cat => {
-                const count = items.filter(i => i.category === cat.id).length;
-                const isActive = categoryFilter === cat.id;
-                return (
-                  <button
-                    key={cat.id}
-                    onClick={() => setCategoryFilter(cat.id)}
-                    className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
-                      isActive 
-                      ? 'bg-gradient-to-br from-cyan-600 to-cyan-700 text-white border-cyan-500 shadow-lg shadow-cyan-600/20 scale-[1.02]' 
-                      : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
-                    }`}
-                  >
-                    {zh ? cat.zh : cat.en}
-                    <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 flex items-center justify-center">
-                <ListFilter className="w-5 h-5 text-cyan-600" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-[#164e63]">
-                  {zh ? '巡检指标项管理' : 'Inspection Items Management'}
-                </h2>
-                <p className="text-[10px] text-black/35 font-bold uppercase tracking-widest mt-0.5">
-                  {zh ? '定义与维护自动化巡检的核心监控指标' : 'Define and manage core metrics for automated inspection'}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <PageHero
+        icon={ListFilter}
+        title={zh ? '巡检指标项管理' : 'Inspection Items Management'}
+        subtitle={zh ? '定义与维护自动化巡检的核心监控指标' : 'Define and manage core metrics for automated inspection'}
+        actions={
+          <>
             <div className="relative group">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-black/20 group-focus-within:text-cyan-500 transition-colors" />
               <input
@@ -386,6 +335,48 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
               <Plus className="w-4 h-4" />
               {zh ? '新增指标' : 'Add Item'}
             </button>
+          </>
+        }
+      />
+
+      <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 space-y-4 min-h-0">
+      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
+        {/* Category filter tabs */}
+        <div className="px-5 py-4 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+            <button
+              onClick={() => setCategoryFilter('All')}
+              className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
+                categoryFilter === 'All'
+                ? 'bg-gradient-to-br from-[#164e63] to-[#0e3f52] text-white border-[#164e63] shadow-lg shadow-cyan-900/20 scale-[1.02]'
+                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
+              }`}
+            >
+              {zh ? '全部指标' : 'All Metrics'}
+              <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'All' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                {items.length}
+              </span>
+            </button>
+            {CATEGORIES.map(cat => {
+              const count = items.filter(i => i.category === cat.id).length;
+              const isActive = categoryFilter === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => setCategoryFilter(cat.id)}
+                  className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
+                    isActive
+                    ? 'bg-gradient-to-br from-cyan-600 to-cyan-700 text-white border-cyan-500 shadow-lg shadow-cyan-600/20 scale-[1.02]'
+                    : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
+                  }`}
+                >
+                  {zh ? cat.zh : cat.en}
+                  <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -841,6 +832,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             alwaysVisible
           />
         </div>
+      </div>
       </div>
     </div>
   );

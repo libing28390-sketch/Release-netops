@@ -7,6 +7,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import TerminalWindow from '../components/access/TerminalWindow';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 
 interface Device {
   id: string;
@@ -255,54 +256,41 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#f8fafc] animate-in fade-in duration-500 overflow-hidden text-slate-700 font-sans">
-      {/* Header Section */}
-      <div className="bg-white border-b border-slate-200 p-6 shadow-sm shrink-0">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-[#00bceb] text-white rounded-xl flex items-center justify-center shadow-lg shadow-[#00bceb]/20">
-              <Database className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900">
-                {isZh ? '操作工作台' : 'Operation Workspace'}
-              </h1>
-              <p className="text-sm text-slate-500">
-                {isZh ? '资产统一入口 · 安全受控访问' : 'Unified asset gateway · Controlled secure access'}
-              </p>
-            </div>
+    <div className="flex flex-col h-full animate-in fade-in duration-500 overflow-hidden text-slate-700 font-sans" style={{ background: '#f8fafc' }}>
+      <PageHero
+        icon={Database}
+        title={isZh ? '操作工作台' : 'Operation Workspace'}
+        subtitle={isZh ? '资产统一入口 · 安全受控访问' : 'Unified asset gateway · Controlled secure access'}
+        actions={
+          <div className="relative group">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 group-focus-within:text-[#00bceb] transition-colors" />
+            <input
+              type="text"
+              placeholder="搜索资产名称或 IP 地址..."
+              className="w-80 pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-[#00bceb] focus:bg-white focus:ring-4 focus:ring-[#00bceb]/5 transition-all text-sm font-medium"
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+            />
           </div>
-
-          <div className="flex items-center gap-3">
-            <div className="relative group">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 group-focus-within:text-[#00bceb] transition-colors" />
-              <input
-                type="text"
-                placeholder="搜索资产名称或 IP 地址..."
-                className="w-80 pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-[#00bceb] focus:bg-white focus:ring-4 focus:ring-[#00bceb]/5 transition-all text-sm font-medium"
-                value={searchQuery}
-                onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-              />
-            </div>
+        }
+        extras={
+          <div className="flex items-center gap-2">
+            {['ALL', 'SSH', 'RDP'].map((proto) => (
+              <button
+                key={proto}
+                onClick={() => { setActiveProtocol(proto); setCurrentPage(1); }}
+                className={`px-5 py-2 rounded-xl text-[10px] font-black tracking-widest transition-all uppercase ${
+                  activeProtocol === proto
+                  ? 'bg-[#00bceb] text-white shadow-lg shadow-[#00bceb]/20'
+                  : 'bg-white text-slate-400 border border-slate-200 hover:border-[#00bceb] hover:text-[#00bceb]'
+                }`}
+              >
+                {proto}
+              </button>
+            ))}
           </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {['ALL', 'SSH', 'RDP'].map((proto) => (
-            <button
-              key={proto}
-              onClick={() => { setActiveProtocol(proto); setCurrentPage(1); }}
-              className={`px-5 py-2 rounded-xl text-[10px] font-black tracking-widest transition-all uppercase ${
-                activeProtocol === proto 
-                ? 'bg-[#00bceb] text-white shadow-lg shadow-[#00bceb]/20' 
-                : 'bg-white text-slate-400 border border-slate-200 hover:border-[#00bceb] hover:text-[#00bceb]'
-              }`}
-            >
-              {proto}
-            </button>
-          ))}
-        </div>
-      </div>
+        }
+      />
 
       {/* Table Section */}
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">

@@ -73,12 +73,32 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     pwd = getattr(body, 'password', '') or ''
     community = getattr(body, 'snmp_community', '') or 'public'
     port = getattr(body, 'snmp_port', None) or 161
+
+    # PAM (dual-account) fields
+    normal_user = getattr(body, 'normal_username', '') or ''
+    normal_pwd  = getattr(body, 'normal_password', '') or ''
+    admin_user  = getattr(body, 'admin_username', '')  or ''
+    admin_pwd   = getattr(body, 'admin_password', '')  or ''
+    enable_pwd  = getattr(body, 'enable_password', '') or ''
+    auth_model  = getattr(body, 'auth_model', '') or 'single'
+
+    # If PAM is in use but legacy username/password are empty, fill them from
+    # the admin side so existing code paths that still read username/password
+    # (e.g. quick connectivity check) keep working.
+    if auth_model == 'dual':
+        if not uname and admin_user:
+            uname = admin_user
+        if not pwd and admin_pwd:
+            pwd = admin_pwd
+
     conn.execute('''
         INSERT INTO devices (
             id, asset_id, hostname, ip_address, platform, status, compliance,
             username, password, sn, model, version, role, site, uptime,
-            connection_method, vendor, snmp_community, snmp_port
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            connection_method, vendor, snmp_community, snmp_port,
+            normal_username, normal_password, admin_username, admin_password,
+            enable_password, auth_model
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         device_id, asset_id,
         body.hostname, body.management_ip,
@@ -87,6 +107,10 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         body.serial_number, body.model, '', body.device_role,
         body.datacenter, '0d 0h', method, body.vendor,
         community, port,
+        normal_user, _safe_encrypt(normal_pwd),
+        admin_user,  _safe_encrypt(admin_pwd),
+        _safe_encrypt(enable_pwd),
+        auth_model,
     ))
     return device_id
 
@@ -196,6 +220,7 @@ class AssetCreate(BaseModel):
     normal_password: str = ''
     admin_username: str = ''
     admin_password: str = ''
+    enable_password: str = ''
     auth_model: str = 'single'
     snmp_community: str = 'public'
     snmp_port: int = 161
@@ -332,36 +357,42 @@ def list_assets(
         params = []
 
         if asset_type != 'all':
-            conditions.append('asset_type = ?')
+            conditions.append('pa.asset_type = ?')
             params.append(asset_type)
         if vendor:
-            conditions.append('vendor = ?')
+            conditions.append('pa.vendor = ?')
             params.append(vendor)
         if datacenter:
-            conditions.append('datacenter = ?')
+            conditions.append('pa.datacenter = ?')
             params.append(datacenter)
         if department:
-            conditions.append('department = ?')
+            conditions.append('pa.department = ?')
             params.append(department)
         if status != 'all':
-            conditions.append('status = ?')
+            conditions.append('pa.status = ?')
             params.append(status)
         if device_role:
-            conditions.append('device_role = ?')
+            conditions.append('pa.device_role = ?')
             params.append(device_role)
         if q:
             conditions.append(
-                "(asset_tag LIKE ? OR serial_number LIKE ? OR hostname LIKE ? OR vendor LIKE ? OR model LIKE ? OR management_ip LIKE ? OR business_ip LIKE ? OR rack LIKE ?)"
+                "(pa.asset_tag LIKE ? OR pa.serial_number LIKE ? OR pa.hostname LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ? OR pa.management_ip LIKE ? OR pa.business_ip LIKE ? OR pa.rack LIKE ?)"
             )
             like = f'%{q}%'
             params.extend([like] * 8)
 
         where = (' WHERE ' + ' AND '.join(conditions)) if conditions else ''
-        total = conn.execute(f'SELECT COUNT(*) FROM physical_assets{where}', params).fetchone()[0]
+        total = conn.execute(f'SELECT COUNT(*) FROM physical_assets pa{where}', params).fetchone()[0]
 
         offset = (page - 1) * page_size
         rows = conn.execute(
-            f'SELECT * FROM physical_assets{where} ORDER BY created_at DESC LIMIT ? OFFSET ?',
+            f'''SELECT pa.*,
+                COALESCE(NULLIF(pa.normal_username,''), d.normal_username, '') AS normal_username,
+                COALESCE(NULLIF(pa.admin_username,''),  d.admin_username,  '') AS admin_username,
+                COALESCE(NULLIF(pa.username,''),        d.username,        '') AS username
+            FROM physical_assets pa
+            LEFT JOIN devices d ON d.asset_id = pa.id
+            {where} ORDER BY pa.created_at DESC LIMIT ? OFFSET ?''',
             params + [page_size, offset]
         ).fetchall()
 
@@ -394,7 +425,16 @@ def get_asset(asset_id: str):
     """Single asset row (same fields as list items) for rack drawer / cross-module detail."""
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT * FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+        row = conn.execute(
+            '''SELECT pa.*,
+               COALESCE(NULLIF(pa.normal_username,''), d.normal_username, '') AS normal_username,
+               COALESCE(NULLIF(pa.admin_username,''),  d.admin_username,  '') AS admin_username,
+               COALESCE(NULLIF(pa.username,''),        d.username,        '') AS username
+            FROM physical_assets pa
+            LEFT JOIN devices d ON d.asset_id = pa.id
+            WHERE pa.id = ?''',
+            (asset_id,)
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Asset not found')
         item = dict(row)
@@ -429,9 +469,12 @@ def create_asset(body: AssetCreate):
                 datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
                 status, lifecycle_status, purchase_date, warranty_expiry, department, notes,
-                platform, connection_method, username, password, snmp_community, snmp_port,
+                platform, connection_method, username, password,
+                normal_username, normal_password, admin_username, admin_password,
+                enable_password, auth_model,
+                snmp_community, snmp_port,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
@@ -440,7 +483,14 @@ def create_asset(body: AssetCreate):
             body.vlan, body.uplink_switch, body.uplink_port,
             body.status, body.lifecycle_status,
             body.purchase_date, body.warranty_expiry, body.department, body.notes,
-            body.platform, body.connection_method, body.username, _safe_encrypt(body.password),
+            body.platform, body.connection_method,
+            body.username, _safe_encrypt(body.password),
+            getattr(body, 'normal_username', '') or '',
+            _safe_encrypt(getattr(body, 'normal_password', '') or ''),
+            getattr(body, 'admin_username', '') or '',
+            _safe_encrypt(getattr(body, 'admin_password', '') or ''),
+            _safe_encrypt(getattr(body, 'enable_password', '') or ''),
+            getattr(body, 'auth_model', '') or 'single',
             body.snmp_community, body.snmp_port,
             now, now
         ))

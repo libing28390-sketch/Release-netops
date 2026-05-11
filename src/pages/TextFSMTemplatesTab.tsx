@@ -4,6 +4,7 @@ import {
   CheckCircle2, AlertCircle, Loader2, PlayCircle, Download, Upload,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import PageHero from '../components/PageHero';
 
 interface Props {
   t: (key: string) => string;
@@ -228,7 +229,32 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden min-h-0 space-y-3 pb-4">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <PageHero
+        icon={FileCode}
+        title={isZh ? 'TextFSM 解析模板' : 'TextFSM Parse Templates'}
+        subtitle={isZh ? '管理设备 CLI 输出解析模板，支持自定义覆盖内置模板' : 'Manage CLI output parsing templates; custom templates override built-ins'}
+        actions={
+          <>
+            <button
+              onClick={fetchTemplates}
+              className="p-2 rounded-lg text-black/40 hover:text-[#00bceb] hover:bg-[#00bceb]/5 transition-colors"
+              title={isZh ? '刷新' : 'Refresh'}
+            >
+              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+            </button>
+            <button
+              onClick={openNewEditor}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20"
+            >
+              <Plus size={13} />
+              {isZh ? '新建模板' : 'New Template'}
+            </button>
+          </>
+        }
+      />
+
+      <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 space-y-3 min-h-0">
       {/* Toast */}
       <AnimatePresence>
         {toast && (
@@ -244,39 +270,8 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
         )}
       </AnimatePresence>
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 pt-4">
-        <div>
-          <h2 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-            <FileCode size={20} className="text-[#00bceb]" />
-            {isZh ? 'TextFSM 解析模板' : 'TextFSM Parse Templates'}
-          </h2>
-          <p className="text-xs text-black/40 mt-0.5">
-            {isZh
-              ? '管理设备 CLI 输出解析模板，支持自定义覆盖内置模板'
-              : 'Manage CLI output parsing templates; custom templates override built-ins'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={fetchTemplates}
-            className="p-2 rounded-lg text-black/40 hover:text-[#00bceb] hover:bg-[#00bceb]/5 transition-colors"
-            title={isZh ? '刷新' : 'Refresh'}
-          >
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-          </button>
-          <button
-            onClick={openNewEditor}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20"
-          >
-            <Plus size={13} />
-            {isZh ? '新建模板' : 'New Template'}
-          </button>
-        </div>
-      </div>
-
       {/* Filters */}
-      <div className="flex items-center gap-2 px-5">
+      <div className="flex items-center gap-2">
         <div className="relative flex-1 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
           <input
@@ -307,7 +302,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       </div>
 
       {/* Templates Table */}
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5">
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
         <div className="bg-white rounded-xl border border-black/5 shadow-sm overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-slate-50/80 text-black/40 text-[11px] font-semibold uppercase tracking-wider">
@@ -556,6 +551,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
           </div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

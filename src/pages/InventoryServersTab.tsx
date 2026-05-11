@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 
 /* ═══════════════════════════════════════════════════════
    Types
@@ -339,14 +340,12 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
   const datacenters = useMemo(() => [...new Set(servers.map(s => s.datacenter).filter(Boolean))], [servers]);
 
   return (
-    <div className="space-y-4">
-      {/* ════ Header ════ */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight">{zh ? '服务器管理' : 'Server Management'}</h2>
-          <p className="text-xs text-black/40 dark:text-white/40 mt-0.5">{zh ? '管理和查看数据中心服务器资产。' : 'Manage and view datacenter server assets.'}</p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Server}
+        title={zh ? '服务器管理' : 'Server Management'}
+        subtitle={zh ? '管理和查看数据中心服务器资产。' : 'Manage and view datacenter server assets.'}
+        actions={
           <button onClick={fetchServers}
             title={zh ? '刷新' : 'Refresh'}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-black/8 dark:border-white/10
@@ -354,8 +353,10 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
             <Download size={14} />
             {t('export')}
           </button>
-        </div>
-      </div>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
 
       {/* ════ Toolbar: Search + Filters ════ */}
       <div className="flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-black/5 dark:border-white/8 bg-[var(--card-bg)]">
@@ -428,13 +429,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
             <span className="text-[11px] font-medium text-black/45 dark:text-white/40 tabular-nums">
               {selectedIds.size} {zh ? '已选' : 'selected'}
             </span>
-            <button onClick={handleDeleteSelected}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium
-                border border-red-200 dark:border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-400
-                hover:bg-red-500/20 transition-all">
-              <Trash2 size={11} />
-              {zh ? '批量删除' : 'Batch Delete'}
-            </button>
+            {/* Batch delete removed — use Asset Management for CRUD */}
           </div>
         )}
       </div>
@@ -642,14 +637,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
                             ${verifyingIds.has(server.id) ? 'bg-black/5 text-black/20' : 'text-black/30 dark:text-white/25 hover:bg-amber-500/10 hover:text-amber-500'}`}>
                           <Key size={13} />
                         </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setDeleteTarget(server); }}
-                          title={zh ? '删除' : 'Delete'}
-                          className="inline-flex items-center justify-center w-7 h-7 rounded-md
-                            text-black/30 dark:text-white/25 hover:bg-red-500/10
-                            hover:text-red-500 dark:hover:text-red-400 transition-all">
-                          <Trash2 size={13} />
-                        </button>
+                        {/* Delete removed — use Asset Management for CRUD */}
                       </div>
                     </td>
                   </tr>
@@ -748,6 +736,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

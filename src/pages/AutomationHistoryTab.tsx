@@ -18,6 +18,7 @@ import {
   Check,
 } from 'lucide-react';
 import type { Device } from '../types';
+import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import OutputActions from '../components/OutputActions';
 
@@ -208,20 +209,22 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex justify-between items-end mb-5 flex-shrink-0">
-        <div>
-          <h2 className="text-2xl font-medium tracking-tight">{t('executionHistory')}</h2>
-          <p className="text-sm text-black/40">{t('executionHistoryDesc')}</p>
-        </div>
-        <button
-          onClick={() => void onRefreshHistory()}
-          title={isZh ? '刷新执行历史' : 'Refresh execution history'}
-          className="p-2 rounded-xl border border-black/10 hover:bg-black/5 transition-all"
-        >
-          <RotateCcw size={14} />
-        </button>
-      </div>
+      <PageHero
+        icon={History}
+        title={t('executionHistory')}
+        subtitle={t('executionHistoryDesc')}
+        actions={
+          <button
+            onClick={() => void onRefreshHistory()}
+            title={isZh ? '刷新执行历史' : 'Refresh execution history'}
+            className="p-2 rounded-xl border border-black/10 hover:bg-black/5 transition-all"
+          >
+            <RotateCcw size={14} />
+          </button>
+        }
+      />
 
+      <div className="flex-1 flex flex-col px-6 py-5 overflow-hidden">
       <div className="flex-1 bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden flex flex-col min-h-[500px]">
         {/* Toolbar */}
         <div className="px-6 py-4 border-b border-black/5 bg-black/[0.01] flex items-center justify-between flex-wrap gap-4 flex-shrink-0">
@@ -796,6 +799,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
           </div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

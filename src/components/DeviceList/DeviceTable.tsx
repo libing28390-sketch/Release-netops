@@ -87,8 +87,8 @@ interface DeviceTableProps {
   selectedIds: string[];
   onSelectChange: React.Dispatch<React.SetStateAction<string[]>>;
   onShowDetails: (device: Device) => void;
-  onEdit: (device: Device) => void;
-  onDelete: (id: string) => void;
+  onEdit?: (device: Device) => void;
+  onDelete?: (id: string) => void;
   onManage: (device: Device) => void;
   onTestConnection: (device: Device, mode?: 'quick' | 'deep') => void;
   deviceConnectionChecks: Record<string, DeviceConnectionCheckSummary>;
@@ -330,6 +330,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                             ${testing ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'bg-violet-500/10 text-violet-600 dark:text-violet-400 hover:bg-violet-500/20'}`}>
                           <Activity size={13} className={testing ? 'animate-pulse' : ''} />
                         </button>
+                        {onEdit && (
                         <button
                           onClick={() => onEdit(device)}
                           title={zh ? '编辑' : 'Edit'}
@@ -338,6 +339,8 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                             hover:text-black/60 dark:hover:text-white/60 transition-all">
                           <Pencil size={13} />
                         </button>
+                        )}
+                        {onDelete && (
                         <button
                           onClick={() => onDelete(device.id)}
                           title={zh ? '删除' : 'Delete'}
@@ -346,6 +349,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                             hover:text-red-500 dark:hover:text-red-400 transition-all">
                           <Trash2 size={13} />
                         </button>
+                        )}
                       </div>
                     </td>
                   )}

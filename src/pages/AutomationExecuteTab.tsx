@@ -40,6 +40,7 @@ import type { Device, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
 import TagFilterDropdown from '../components/TagFilterDropdown';
 import OutputActions from '../components/OutputActions';
+import PageHero from '../components/PageHero';
 
 /* ─────────── Types ─────────── */
 interface ScenarioVariable {
@@ -726,26 +727,22 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
      ═══════════════════════════════════════════════════════════════════ */
   return (
     <div className="h-full min-h-0 flex flex-col relative">
-      {/* ── Title bar ── */}
-      <div className="flex-shrink-0 flex items-center justify-between px-1 pb-3">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-gray-900">
-            {isZh ? '自动化执行控制台' : 'Automation Console'}
-          </h2>
-          <p className="text-sm text-gray-400 mt-0.5">
-            {isZh ? '选择设备进行快捷查询或执行自定义命令' : 'Select devices for quick query or custom commands'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+      <PageHero
+        icon={Zap}
+        title={isZh ? '自动化执行控制台' : 'Automation Console'}
+        subtitle={isZh ? '选择设备进行快捷查询或执行自定义命令' : 'Select devices for quick query or custom commands'}
+        actions={
           <button
-            onClick={() => {}} 
+            onClick={() => {}}
             className="px-3 py-2 text-xs font-bold rounded-xl text-gray-500 hover:bg-gray-50 transition-all flex items-center gap-1.5"
           >
             <History size={13} />
             {isZh ? '执行历史' : 'History'}
           </button>
-        </div>
-      </div>
+        }
+      />
+
+      <div className="flex-1 min-h-0 flex flex-col px-6 py-5 overflow-hidden">
 
       {/* ── Stepper (Hidden for Execute Tab) ── */}
       {/* 
@@ -2463,6 +2460,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 };

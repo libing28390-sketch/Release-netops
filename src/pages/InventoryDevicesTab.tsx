@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Upload, Download, Plus, Search, Activity,
-  AlertTriangle, CheckCircle2, XCircle, Server,
+  AlertTriangle, CheckCircle2, XCircle, Server, Router,
   Shield, Trash2, SlidersHorizontal, Tag,
 } from 'lucide-react';
 import type { Device, DeviceConnectionCheckSummary, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
 import DeviceTable, { DEFAULT_COLUMNS, type ColumnVisibility, type ColumnKey } from '../components/DeviceList/DeviceTable';
 import TagFilterDropdown from '../components/TagFilterDropdown';
+import PageHero from '../components/PageHero';
 
 /* ─── Quick Filter Tag ─── */
 const QuickTag: React.FC<{
@@ -225,38 +226,26 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   };
 
   return (
-    <div className="space-y-4">
-      {/* ════ Header ════ */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight">{t('deviceInventory')}</h2>
-          <p className="text-xs text-black/40 dark:text-white/40 mt-0.5">{t('manageMonitor')}</p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <ColumnToggle columns={columns} onChange={handleColumnToggle} language={language} />
-          <label className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-black/8 dark:border-white/10
-            rounded-lg text-xs font-medium text-black/55 dark:text-white/55 hover:bg-black/[.03] dark:hover:bg-white/[.05] transition-all cursor-pointer">
-            <Upload size={14} />
-            {t('import')}
-            <input type="file" className="hidden" onChange={handleImport} accept=".xlsx,.xls,.csv"
-              title={language === 'zh' ? '导入设备文件' : 'Import device file'} />
-          </label>
-          <button onClick={handleExport}
-            title={language === 'zh' ? '导出设备清单' : 'Export device inventory'}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-black/8 dark:border-white/10
-              rounded-lg text-xs font-medium text-black/55 dark:text-white/55 hover:bg-black/[.03] dark:hover:bg-white/[.05] transition-all">
-            <Download size={14} />
-            {t('export')}
-          </button>
-          <button onClick={() => setShowAddModal(true)}
-            title={language === 'zh' ? '新增设备' : 'Add device'}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#00bceb] text-white rounded-lg text-xs
-              font-medium hover:bg-[#0096bd] transition-all shadow-sm shadow-[#00bceb]/20">
-            <Plus size={14} />
-            {t('addDevice')}
-          </button>
-        </div>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Router}
+        title={t('deviceInventory')}
+        subtitle={t('manageMonitor')}
+        actions={
+          <>
+            <ColumnToggle columns={columns} onChange={handleColumnToggle} language={language} />
+            <button onClick={handleExport}
+              title={language === 'zh' ? '导出设备清单' : 'Export device inventory'}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-black/8 dark:border-white/10
+                rounded-lg text-xs font-medium text-black/55 dark:text-white/55 hover:bg-black/[.03] dark:hover:bg-white/[.05] transition-all">
+              <Download size={14} />
+              {t('export')}
+            </button>
+          </>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
 
       {/* ════ Toolbar: Search + Filters ════ */}
       <div className="flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-black/5 dark:border-white/8 bg-[var(--card-bg)]">
@@ -422,14 +411,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
                 </div>
               )}
             </div>
-            <button
-              onClick={handleDeleteSelected}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium
-                border border-red-200 dark:border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-400
-                hover:bg-red-500/20 transition-all">
-              <Trash2 size={11} />
-              {language === 'zh' ? '批量删除' : 'Batch Delete'}
-            </button>
+            {/* Batch delete removed — use Asset Management for CRUD */}
           </div>
         )}
       </div>
@@ -445,8 +427,8 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
           selectedIds={selectedDeviceIds}
           onSelectChange={setSelectedDeviceIds}
           onShowDetails={handleShowDetails}
-          onEdit={handleEditDevice}
-          onDelete={handleDeleteDevice}
+          onEdit={undefined}
+          onDelete={undefined}
           onManage={handleManage}
           onTestConnection={handleTestConnection}
           deviceConnectionChecks={deviceConnectionChecks}
@@ -461,6 +443,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
           onPageChange={setInventoryPage}
           language={language}
         />
+      </div>
       </div>
     </div>
   );

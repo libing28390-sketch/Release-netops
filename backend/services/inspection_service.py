@@ -215,12 +215,35 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str]) -> dict[str, s
     results: dict[str, str] = {}
     try:
         with ConnectHandler(**params) as conn:
-            # Cisco 系列尝试进入 enable 模式
+            # ── Cisco 系列：智能 enable 提权 ─────────────────────────────
+            # 三种场景自适应：
+            # 1. 账号已经是 privilege 15 → 提示符 '#' → 跳过 enable()
+            # 2. 账号是 privilege 1 → 提示符 '>' → 调用 enable()
+            #    a. 设备配置了 enable secret → 用 secret 提权
+            #    b. 设备配置了 'aaa authentication enable default none' → 无需密码
+            #    c. 两者都没配 → enable 失败，抛警告但不阻断（后续 show 命令可能仍可执行）
             if params['device_type'] in ('cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa'):
                 try:
-                    conn.enable()
-                except Exception:
-                    pass
+                    prompt = conn.find_prompt()
+                    if prompt.strip().endswith('>'):
+                        # 需要 enable 提权
+                        try:
+                            conn.enable()
+                        except Exception as en_err:
+                            logger.warning(
+                                f"[Inspection] Enable mode failed for {device.get('hostname') or device.get('ip_address')}: {en_err}. "
+                                f"Continuing with user exec mode — some show commands may be denied. "
+                                f"If you need full access, configure either 'enable secret' or "
+                                f"'aaa authentication enable default none' on the device."
+                            )
+                    # 已经是 '#'（privilege 15）则跳过，nothing to do
+                except Exception as prompt_err:
+                    # 读取提示符失败，尝试盲 enable（兼容某些设备 find_prompt 超时）
+                    logger.debug(f"[Inspection] find_prompt failed, trying blind enable(): {prompt_err}")
+                    try:
+                        conn.enable()
+                    except Exception:
+                        pass
 
             for cmd in commands:
                 try:

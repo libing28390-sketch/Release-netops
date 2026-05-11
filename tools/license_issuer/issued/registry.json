@@ -286,5 +286,36 @@
     "max_version": "99.9.9",
     "notes": null,
     "filename": "license_cisco_20260511_085134.json"
+  },
+  {
+    "license_id": "59c5eb89-57b9-4072-a98c-c5f5a63fe886",
+    "company": "cisco",
+    "license_type": "standard",
+    "issued_at": "2026-05-11T06:01:22.789397+00:00",
+    "expire_at": "2027-05-11T23:59:59",
+    "device_limit": 50,
+    "server_limit": 50,
+    "features": [
+      "automation",
+      "config_management",
+      "monitoring",
+      "alerting",
+      "rbac",
+      "change_orders",
+      "inspections",
+      "topology",
+      "ipam",
+      "capacity",
+      "compliance",
+      "reports",
+      "api_access",
+      "scheduled_jobs",
+      "password_rotation",
+      "access_center"
+    ],
+    "machine_id": "3C87-F629-86D1-30BF",
+    "max_version": "99.9.9",
+    "notes": null,
+    "filename": "license_cisco_20260511_140122.json"
   }
 ]

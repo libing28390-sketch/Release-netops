@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import Pagination from './Pagination';
+import PageHero from './PageHero';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   RefreshCw, Shield, AlertTriangle, CheckCircle2, Clock, Loader2, RotateCcw,
-  Search, X, ShieldCheck, ShieldAlert, ShieldX, KeyRound, Server, Filter,
+  Search, X, ShieldCheck, ShieldAlert, ShieldX, Key, KeyRound, Server, Filter,
   Eye, EyeOff, Copy, Check, ChevronDown, User,
 } from 'lucide-react';
 
@@ -324,7 +325,14 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
   ];
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Key}
+        title={zh ? '凭据轮换' : 'Credential Rotation'}
+        subtitle={zh ? '管理并轮换设备的特权凭据，确保密码周期合规' : 'Manage and rotate privileged credentials across all devices'}
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
       {/* ═══ Stat Cards ═══ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {statCards.map(c => {
@@ -587,6 +595,7 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
             language={language}
           />
         </div>
+      </div>
       </div>
     </div>
   );

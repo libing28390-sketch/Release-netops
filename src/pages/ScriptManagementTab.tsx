@@ -4,6 +4,7 @@ import {
   Plus, X, Trash2, Edit3, Shield, Search, User, FileCode, Terminal, Layout, Maximize2, XCircle, Wand2, ChevronDown, CheckCircle2, MessageSquare, AlertCircle, SearchCode
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 
 interface Script {
   id: string;
@@ -169,44 +170,37 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const labelClass = "text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5";
 
   return (
-    <div className="flex flex-col h-full bg-transparent">
-      {/* Header */}
-      <div className="px-10 py-6 flex items-center justify-between border-b border-slate-200/10 bg-white/50 dark:bg-transparent backdrop-blur-md">
-        <div className="flex items-center gap-6">
-          <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-lg shadow-[#00a9ce]/20" style={{ backgroundColor: BRAND_COLOR }}>
-            <Terminal size={24} />
-          </div>
-          <div>
-             <h2 className="text-lg font-bold text-slate-800 dark:text-white tracking-tight flex items-center gap-2">
-               {zh ? '操作管理' : 'Ops'}
-             </h2>
-             <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium mt-0.5 tracking-tight">{zh ? '自动化脚本生命周期管理' : 'Script lifecycle management'}</p>
-          </div>
-        </div>
+    <div className="flex flex-col h-full bg-transparent overflow-hidden">
+      <PageHero
+        icon={Terminal}
+        title={zh ? '操作管理' : 'Ops'}
+        subtitle={zh ? '自动化脚本生命周期管理' : 'Script lifecycle management'}
+        accent={BRAND_COLOR}
+        actions={
+          <>
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" size={14} />
+              <input
+                type="text"
+                placeholder={zh ? "搜索脚本..." : "Search..."}
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+                className="pl-11 pr-4 py-2 bg-slate-100/50 dark:bg-slate-800/40 border border-transparent dark:border-white/5 rounded-xl text-[12px] w-64 focus:w-80 transition-all outline-none text-slate-700 dark:text-white"
+              />
+            </div>
+            <button
+              onClick={() => { setModalMode('create'); setEditForm({ platform: 'Linux', script_type: 'shell', version: 'v1.0.0', status: 'draft' }); setIsModalOpen(true); }}
+              className="px-6 py-2.5 text-white rounded-xl text-[13px] font-bold shadow-lg shadow-[#00a9ce]/15 active:scale-[0.98] transition-all flex items-center gap-2"
+              style={{ backgroundColor: BRAND_COLOR }}
+            >
+              <Plus size={16} />
+              {zh ? '新增脚本' : 'Create'}
+            </button>
+          </>
+        }
+      />
 
-        <div className="flex items-center gap-4">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" size={14} />
-            <input
-              type="text"
-              placeholder={zh ? "搜索脚本..." : "Search..."}
-              value={searchQuery}
-              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-              className="pl-11 pr-4 py-2 bg-slate-100/50 dark:bg-slate-800/40 border border-transparent dark:border-white/5 rounded-xl text-[12px] w-64 focus:w-80 transition-all outline-none text-slate-700 dark:text-white"
-            />
-          </div>
-          <button
-            onClick={() => { setModalMode('create'); setEditForm({ platform: 'Linux', script_type: 'shell', version: 'v1.0.0', status: 'draft' }); setIsModalOpen(true); }}
-            className="px-6 py-2.5 text-white rounded-xl text-[13px] font-bold shadow-lg shadow-[#00a9ce]/15 active:scale-[0.98] transition-all flex items-center gap-2"
-            style={{ backgroundColor: BRAND_COLOR }}
-          >
-            <Plus size={16} />
-            {zh ? '新增脚本' : 'Create'}
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-10 space-y-6 no-scrollbar">
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 no-scrollbar">
         <div className="flex items-center justify-between">
            <div className="flex items-center gap-1.5 p-1 bg-slate-200/20 dark:bg-slate-800/30 rounded-xl border border-white/5 flex-wrap">
              {['All', 'Linux', 'Cisco', 'Huawei', 'H3C', 'Juniper', 'Arista'].map(p => (

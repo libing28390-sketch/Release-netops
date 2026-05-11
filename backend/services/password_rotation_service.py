@@ -299,8 +299,11 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
         asset_id = device.get('asset_id')
 
         # ─ Step 1: Write new passwords to DB with 'pending' status ──────────
-        # If anything downstream fails, these values remain and can be used for
-        # manual recovery (console access to the device).
+        # Save old encrypted values first so we can roll back if SSH fails.
+        old_enc_normal = device.get('normal_password') or ''
+        old_enc_admin  = device.get('admin_password')  or device.get('password') or ''
+        old_enc_enable = device.get('enable_password') or ''
+
         conn_pre = get_db_connection()
         try:
             if role != 'enable':
@@ -339,11 +342,11 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
             'password': login_pwd,
             'platform': platform,
             'port': device.get('management_port') or device.get('ssh_port') or 22,
-            'secret': (
-                decrypt_credential(device.get('enable_password') or '') or
-                current_admin_pwd or
-                login_pwd
-            ) if 'cisco' in platform else '',
+            # Only pass enable_password if explicitly configured by the user.
+            # Do NOT fall back to the login password — devices with no enable
+            # password will fail if a non-empty secret is passed (Netmiko
+            # expects a "Password:" prompt that never comes).
+            'enable_password': decrypt_credential(device.get('enable_password') or '') or '',
         }
 
         ssh_error = None
@@ -424,13 +427,25 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
                     'expires_at': expires_str,
                 }
             else:
-                # SSH failed: keep staged passwords in DB, mark failure clearly
+                # SSH failed: roll back DB to the old passwords so the DB stays
+                # consistent with what's actually on the device.
                 conn_post.execute(
-                    "UPDATE devices SET rotation_status=?, takeover_error=? WHERE id=?",
-                    ('failed',
+                    "UPDATE devices SET "
+                    "normal_password=?, admin_password=?, password=?, "
+                    "rotation_status=?, takeover_error=? "
+                    "WHERE id=?",
+                    (old_enc_normal, old_enc_admin, old_enc_admin,
+                     'failed',
                      f'SSH apply failed: {ssh_error[:400]}. '
-                     f'New passwords are staged in DB but device may still hold old credentials. '
-                     f'Recover via console if necessary.',
+                     f'DB has been rolled back to previous credentials. '
+                     f'Device password was NOT changed.',
+                     device_id)
+                ) if role != 'enable' else conn_post.execute(
+                    "UPDATE devices SET enable_password=?, rotation_status=?, takeover_error=? WHERE id=?",
+                    (old_enc_enable,
+                     'failed',
+                     f'SSH apply failed: {ssh_error[:400]}. '
+                     f'DB has been rolled back to previous enable password.',
                      device_id)
                 )
                 conn_post.commit()

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import TagConditionPicker, { type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter, parseTagFilter } from '../components/TagConditionPicker';
+import PageHero from '../components/PageHero';
 
 /* ═══════════════════════════════════════════════════════ */
 /*  Constants                                              */
@@ -667,20 +668,13 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   /*  RENDER                                              */
   /* ════════════════════════════════════════════════════ */
   return (
-    <div className="h-full flex flex-col overflow-hidden space-y-4">
-      {/* Page Header */}
-      <div className="rounded-2xl border border-black/5 bg-white shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 bg-[linear-gradient(to_right,#f0fdff_0%,#ffffff_100%)] border-b border-cyan-100/60">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-cyan-500/10 flex items-center justify-center">
-              <CalendarClock className="w-5 h-5 text-cyan-600" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-[#164e63]">{zh ? '定时作业' : 'Scheduled Jobs'}</h2>
-              <p className="text-[11px] text-black/40">{zh ? '创建和管理周期性执行的自动化作业，需审批人验证码授权' : 'Create and manage periodic automation jobs with approver verification'}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
+    <div className="h-full flex flex-col overflow-hidden">
+      <PageHero
+        icon={CalendarClock}
+        title={zh ? '定时作业' : 'Scheduled Jobs'}
+        subtitle={zh ? '创建和管理周期性执行的自动化作业，需审批人验证码授权' : 'Create and manage periodic automation jobs with approver verification'}
+        actions={
+          <>
             <button
               onClick={() => { fetchJobs(); fetchSystemJobs(); }}
               disabled={loading}
@@ -696,9 +690,11 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               <Plus className="w-3.5 h-3.5" />
               {zh ? '新建定时作业' : 'New Scheduled Job'}
             </button>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
 
       {/* ═══ System Jobs (platform-managed, read-only) ═══ */}
       {systemJobs.length > 0 && (
@@ -1695,6 +1691,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

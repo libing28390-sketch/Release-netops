@@ -19,16 +19,12 @@ import {
   ClipboardList,
   Clock,
   Cpu,
-  Database,
   FileCode2,
   HardDrive,
   MemoryStick,
-  Monitor,
   Plus,
   Play,
   Server,
-  SlidersHorizontal,
-  Users,
   Wifi,
   Zap,
 } from 'lucide-react';
@@ -69,7 +65,6 @@ const apps: AppEntry[] = [
   { id: 'automation', label: '自动化',     labelEn: 'Automation',   desc: '作业执行与编排',     descEn: 'Jobs & orchestration', icon: Zap,               path: '/automation/execute', accent: '#0891b2' },
   { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      desc: '变更审批与跟踪',     descEn: 'Change & approval',    icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff' },
   { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      desc: '趋势分析与报表',     descEn: 'Trends & reports',     icon: BarChart2,         path: '/capacity',           accent: '#13c2c2' },
-  { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     desc: '用户、日志与审计',   descEn: 'Users, logs & audit',  icon: SlidersHorizontal, path: '/audit',            accent: '#8c8c8c' },
 ];
 
 /* ─────────────── Helpers ─────────────── */
@@ -190,14 +185,41 @@ const HomePage: React.FC<HomePageProps> = ({
     >
       <div className="max-w-[960px] xl:max-w-[1200px] 2xl:max-w-[1440px] w-full mx-auto px-5 sm:px-8 py-6">
 
-        {/* ════════ 1. Title ════════ */}
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-          <h1 className="text-lg font-semibold tracking-tight" style={{ color: 'var(--heading-text)' }}>
-            Nexora {zh ? '控制台' : 'Console'}
-            <span className="ml-2 text-[13px] font-normal" style={{ color: 'var(--muted-text)' }}>
-              {zh ? '网络自动化运维平台' : 'Network Automation Platform'}
-            </span>
-          </h1>
+        {/* ════════ 1. Greeting / status summary ════════ */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="flex flex-wrap items-end justify-between gap-3"
+        >
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight" style={{ color: 'var(--heading-text)' }}>
+              {zh ? '你好，欢迎回来' : 'Welcome back'}
+            </h1>
+            <p className="text-[13px] mt-1" style={{ color: 'var(--muted-text)' }}>
+              {zh
+                ? `今日网络 · ${stats.total} 台设备 · ${stats.online} 台在线 · ${stats.critical} 条严重告警`
+                : `Today · ${stats.total} devices · ${stats.online} online · ${stats.critical} critical alerts`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--dim-text)' }}>
+            {stats.hostname && (
+              <span className="px-2.5 py-1 rounded-full" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+                {stats.hostname}
+              </span>
+            )}
+            {stats.dbStatus && (
+              <span
+                className="px-2.5 py-1 rounded-full font-medium"
+                style={{
+                  background: stats.dbOk ? 'rgba(82,196,26,0.12)' : 'rgba(245,34,45,0.12)',
+                  color: stats.dbOk ? '#52c41a' : '#f5222d',
+                }}
+              >
+                DB · {stats.dbStatus}
+              </span>
+            )}
+          </div>
         </motion.div>
 
         {/* ════════ 2. Module Grid — 4 cols card nav ════════ */}
@@ -205,7 +227,7 @@ const HomePage: React.FC<HomePageProps> = ({
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.04 }}
-          className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3"
+          className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3"
         >
           {apps.map((app, idx) => {
             const Icon = app.icon;
@@ -252,21 +274,40 @@ const HomePage: React.FC<HomePageProps> = ({
             return (
               <div
                 key={i}
-                className="rounded-lg px-4 py-3.5 flex items-start gap-3"
-                style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+                className="relative rounded-xl px-4 py-4 overflow-hidden"
+                style={{
+                  background: `linear-gradient(135deg, ${s.accent}0d 0%, var(--card-bg) 55%)`,
+                  border: `1px solid ${s.accent}22`,
+                  boxShadow: `0 1px 2px ${s.accent}0f`,
+                }}
               >
-                <div
-                  className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0 mt-0.5"
-                  style={{ background: `${s.accent}14` }}
-                >
-                  <Icon size={16} strokeWidth={1.6} style={{ color: s.accent }} />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-[11px] font-medium" style={{ color: 'var(--muted-text)' }}>{s.label}</div>
-                  <div className="text-xl font-semibold tabular-nums leading-tight mt-0.5" style={{ color: s.accent }}>
-                    {s.value}
+                {/* Accent left bar */}
+                <span
+                  aria-hidden
+                  className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r"
+                  style={{ background: s.accent }}
+                />
+                <div className="flex items-start justify-between gap-3 pl-2">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: 'var(--muted-text)' }}>
+                      {s.label}
+                    </div>
+                    <div
+                      className="text-[26px] font-bold tabular-nums leading-none mt-1.5"
+                      style={{ color: s.accent }}
+                    >
+                      {s.value}
+                    </div>
+                    <div className="text-[11px] mt-1.5" style={{ color: 'var(--dim-text)' }}>
+                      {s.sub}
+                    </div>
                   </div>
-                  <div className="text-[11px] mt-0.5" style={{ color: 'var(--dim-text)' }}>{s.sub}</div>
+                  <div
+                    className="flex items-center justify-center w-9 h-9 rounded-lg flex-shrink-0"
+                    style={{ background: `${s.accent}1a` }}
+                  >
+                    <Icon size={18} strokeWidth={1.7} style={{ color: s.accent }} />
+                  </div>
                 </div>
               </div>
             );

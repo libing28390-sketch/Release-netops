@@ -1,6 +1,7 @@
 import React from 'react';
 import { FileText, Search, Zap } from 'lucide-react';
 import type { Device } from '../types';
+import PageHero from '../components/PageHero';
 
 interface PlatformMeta {
   icon?: string;
@@ -95,13 +96,13 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
 }) => {
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex justify-between items-end mb-5 flex-shrink-0">
-        <div>
-          <h2 className="text-2xl font-medium tracking-tight">Playbooks</h2>
-          <p className="text-sm text-black/40">{t('playbookDesc')}</p>
-        </div>
-      </div>
+      <PageHero
+        icon={FileText}
+        title="Playbooks"
+        subtitle={t('playbookDesc')}
+      />
 
+      <div className="flex-1 flex flex-col px-6 py-5 overflow-hidden">
       <div className="mb-4 rounded-xl border border-black/10 bg-black/[0.02] px-4 py-3 text-xs text-black/60">
         {language === 'zh'
           ? '标准流程：选择场景 -> 填写变量 -> 选择目标设备 -> Preview Commands -> Validation / Apply Changes。'
@@ -316,6 +317,7 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

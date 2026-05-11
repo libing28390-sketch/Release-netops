@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ConfigTemplate, Device } from '../types';
+import PageHero from '../components/PageHero';
 
 type ConfigWorkspaceView = 'source' | 'rendered' | 'checks';
 type TemplateType = 'Jinja2' | 'YAML';
@@ -222,40 +223,32 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
       : 'text-rose-600';
 
   return (
-    <div className="h-full flex flex-col gap-4 overflow-hidden bg-gradient-to-br from-slate-50 to-cyan-50/30">
-      {/* ═════════ HERO HEADER ═════════ */}
-      <div className={`${sectionHeaderRowClass} flex-shrink-0`}>
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#06b6d4] via-[#0891b2] to-[#164e63] flex items-center justify-center shadow-lg shadow-cyan-500/30">
-            <FileCog size={26} className="text-white" strokeWidth={2} />
-          </div>
-          <div>
-            <h2 className="text-[28px] font-bold tracking-tight text-[#0f172a] leading-tight">
-              {t('configManagement')}
-            </h2>
-            <p className="text-sm text-slate-500 mt-0.5">
-              {zh
-                ? '多厂商网络设备配置模板 · 渲染预览 · 发布范围与下发'
-                : 'Multi-vendor network config templates · Render · Scope · Deploy'}
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2.5">
-          <label className="cursor-pointer px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:border-[#06b6d4] hover:text-[#0891b2] transition-all flex items-center gap-2 shadow-sm">
-            <Upload size={15} />
-            {t('importVars')}
-            <input type="file" className="hidden" accept=".xlsx, .xls, .csv" onChange={(e) => { onImportVars(e); e.target.value = ''; }} />
-          </label>
-          <button
-            onClick={onCreateTemplate}
-            className="bg-gradient-to-r from-[#06b6d4] to-[#0891b2] text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 hover:shadow-lg hover:shadow-cyan-500/30 transition-all"
-          >
-            <Plus size={16} />
-            {t('newTemplate')}
-          </button>
-        </div>
-      </div>
+    <div className="h-full flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 to-cyan-50/30">
+      <PageHero
+        icon={FileCog}
+        title={t('configManagement')}
+        subtitle={zh
+          ? '多厂商网络设备配置模板 · 渲染预览 · 发布范围与下发'
+          : 'Multi-vendor network config templates · Render · Scope · Deploy'}
+        actions={
+          <>
+            <label className="cursor-pointer px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:border-[#06b6d4] hover:text-[#0891b2] transition-all flex items-center gap-2 shadow-sm">
+              <Upload size={15} />
+              {t('importVars')}
+              <input type="file" className="hidden" accept=".xlsx, .xls, .csv" onChange={(e) => { onImportVars(e); e.target.value = ''; }} />
+            </label>
+            <button
+              onClick={onCreateTemplate}
+              className="bg-gradient-to-r from-[#06b6d4] to-[#0891b2] text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 hover:shadow-lg hover:shadow-cyan-500/30 transition-all"
+            >
+              <Plus size={16} />
+              {t('newTemplate')}
+            </button>
+          </>
+        }
+      />
 
+      <div className="flex-1 flex flex-col gap-4 overflow-hidden px-6 py-5">
       {/* ═════════ METRICS STRIP ═════════ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 flex-shrink-0">
         <MetricCard
@@ -852,6 +845,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             )}
           </div>
         </section>
+      </div>
       </div>
     </div>
   );

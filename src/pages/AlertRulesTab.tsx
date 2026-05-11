@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, ChevronRight, Copy, Edit3, Plus, Power, PowerOff, RefreshCw, Save, Trash2, X, Search, Check, Shield } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Edit3, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, X, Search, Check, Shield } from 'lucide-react';
 import type { AlertRuleHistoryItem, AlertRuleListResponse, AlertRulePreview, AlertRuleSettings } from '../types';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 import { severityBadgeClass } from '../components/shared';
 import {
   ALERT_SEVERITY_OPTIONS,
@@ -408,25 +409,14 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
   return (
     <>
-    <div className="flex-1 flex flex-col overflow-hidden space-y-4 min-h-0">
-      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
-          <div className="flex-1">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 flex items-center justify-center">
-                <Shield className="w-5 h-5 text-cyan-600" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-[#164e63]">
-                  {language === 'zh' ? '告警规则管理' : 'Alert Rules Management'}
-                </h2>
-                <p className="text-[10px] text-black/35 font-bold uppercase tracking-widest mt-0.5">
-                  {language === 'zh' ? '灵活配置监控指标阈值与告警策略' : 'Configure metric thresholds and alerting policies'}
-                </p>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <PageHero
+        icon={SlidersHorizontal}
+        eyebrow={language === 'zh' ? '告警中心 / 告警规则' : 'Alert Center / Rules'}
+        title={language === 'zh' ? '告警规则管理' : 'Alert Rules Management'}
+        subtitle={language === 'zh' ? '灵活配置监控指标阈值与告警策略' : 'Configure metric thresholds and alerting policies'}
+        actions={
+          <>
             <button onClick={() => void loadAlertRules()} className={alertSecondaryButtonClass}>
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
               {language === 'zh' ? '刷新' : 'Refresh'}
@@ -435,9 +425,12 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
               <Plus size={14} />
               {language === 'zh' ? '新增规则' : 'New Rule'}
             </button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
+      <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
+      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         <div className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center">
           <label className="relative min-w-[240px] flex-1">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
@@ -698,6 +691,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
           />
         </div>
 
+      </div>
       </div>
     </div>
 

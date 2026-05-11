@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Network, Plus, Trash2, AlertTriangle, RefreshCw, Download, Search, X, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle2, Pencil, ChevronUp, Server, LayoutGrid, LayoutList, FolderOpen, Grid3x3, ChevronDown, PanelLeftClose, Minimize2, Maximize2, TableProperties } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { sectionHeaderRowClass } from '../components/shared';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 
 interface Subnet {
   id: string;
@@ -598,25 +598,24 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
           <button onClick={() => setApiError('')} title="关闭" className="text-red-400 hover:text-red-600"><X className="w-3.5 h-3.5" /></button>
         </div>
       )}
-      <div className={`${sectionHeaderRowClass} flex-shrink-0 pb-3`}>
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-[#00172D]">
-            {language === 'zh' ? 'IP/VLAN 资源管理' : 'IP/VLAN Management'}
-          </h2>
-          <p className="text-sm text-black/40">
-            {language === 'zh' ? '子网与IP地址分配管理，冲突检测' : 'Subnet & IP address management with conflict detection'}
-          </p>
-        </div>
-        <div className="flex gap-2 items-center">
-          <button onClick={handleExport} className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all" title={language === 'zh' ? '导出' : 'Export'}>
-            <Download size={14} />
-          </button>
-          <button onClick={() => setShowAddSubnet(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] transition-all">
-            <Plus size={14} />
-            {language === 'zh' ? '添加子网' : 'Add Subnet'}
-          </button>
-        </div>
-      </div>
+      <PageHero
+        icon={Network}
+        title={language === 'zh' ? 'IP/VLAN 资源管理' : 'IP/VLAN Management'}
+        subtitle={language === 'zh' ? '子网与IP地址分配管理，冲突检测' : 'Subnet & IP address management with conflict detection'}
+        actions={
+          <>
+            <button onClick={handleExport} className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all" title={language === 'zh' ? '导出' : 'Export'}>
+              <Download size={14} />
+            </button>
+            <button onClick={() => setShowAddSubnet(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] transition-all">
+              <Plus size={14} />
+              {language === 'zh' ? '添加子网' : 'Add Subnet'}
+            </button>
+          </>
+        }
+      />
+
+      <div className="flex-1 flex flex-col overflow-hidden px-6 py-5">
       <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden transition-all duration-300 flex-shrink-0">
         <button
           type="button"
@@ -1455,6 +1454,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

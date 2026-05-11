@@ -23,6 +23,8 @@ import {
   Maximize2, Minimize2, ChevronsUpDown, PanelRightClose, PanelRightOpen,
 } from 'lucide-react';
 import { AssetReadonlyDetailInner, normalizeAssetApiRow } from '../components/AssetReadonlyDetail';
+import PageHero from '../components/PageHero';
+import { Columns3 } from 'lucide-react';
 
 /* ================================================================
    Types
@@ -1517,47 +1519,43 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
   const selectedRack = racks.find(r => r.id === selectedRackId);
 
   return (
-    <div className="flex flex-col gap-3 h-full">
-      {/* -- Header + Stats row -- */}
-      <div className="flex-shrink-0 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-        <div className="flex items-center gap-4">
-          <div>
-            <h2 className="text-lg font-bold" style={{ color: 'var(--heading-text)' }}>
-              {zh ? '机柜管理' : 'Rack Management'}
-            </h2>
-            <p className="text-[11px]" style={{ color: 'var(--muted-text)' }}>
-              {zh ? '拖拽设备调整U位 · 可视化机柜布局' : 'Drag devices to reposition · Visual rack layout'}
-            </p>
-          </div>
-          {stats && (
-            <div className="hidden lg:flex items-center gap-3 ml-2">
-              {[
-                { label: zh ? '机柜' : 'Racks', value: stats.total_racks, color: '#06b6d4', icon: <LayoutGrid size={14} /> },
-                { label: zh ? '设备' : 'Devices', value: stats.total_devices, color: '#6366f1', icon: <Server size={14} /> },
-                { label: zh ? 'U位' : 'U', value: `${stats.used_u}/${stats.total_u}`, color: '#10b981', icon: <Layers size={14} /> },
-                { label: zh ? '利用率' : 'Util', value: `${stats.utilization}%`, color: stats.utilization > 80 ? '#ef4444' : stats.utilization > 60 ? '#f59e0b' : '#10b981', icon: <Eye size={14} /> },
-              ].map((s, i) => (
-                <div key={i} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-                  <span style={{ color: s.color }}>{s.icon}</span>
-                  <span className="text-[11px] font-bold" style={{ color: s.color }}>{s.value}</span>
-                  <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{s.label}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={openNewDeviceType} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', color: 'var(--body-text)' }}>
-            <Package size={14} /> {zh ? '设备型号' : 'Device Types'}
-          </button>
-          <button onClick={openNewRack} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors">
-            <Plus size={14} /> {zh ? '新建机柜' : 'New Rack'}
-          </button>
-          <button onClick={refresh} className="p-1.5 rounded-lg transition-colors" style={{ color: 'var(--muted-text)' }} title={zh ? '刷新' : 'Refresh'}>
-            <RefreshCw size={16} />
-          </button>
-        </div>
-      </div>
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Columns3}
+        title={zh ? '机柜管理' : 'Rack Management'}
+        subtitle={zh ? '拖拽设备调整U位 · 可视化机柜布局' : 'Drag devices to reposition · Visual rack layout'}
+        actions={
+          <>
+            {stats && (
+              <div className="hidden lg:flex items-center gap-2 mr-2">
+                {[
+                  { label: zh ? '机柜' : 'Racks', value: stats.total_racks, color: '#06b6d4', icon: <LayoutGrid size={14} /> },
+                  { label: zh ? '设备' : 'Devices', value: stats.total_devices, color: '#6366f1', icon: <Server size={14} /> },
+                  { label: zh ? 'U位' : 'U', value: `${stats.used_u}/${stats.total_u}`, color: '#10b981', icon: <Layers size={14} /> },
+                  { label: zh ? '利用率' : 'Util', value: `${stats.utilization}%`, color: stats.utilization > 80 ? '#ef4444' : stats.utilization > 60 ? '#f59e0b' : '#10b981', icon: <Eye size={14} /> },
+                ].map((s, i) => (
+                  <div key={i} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+                    <span style={{ color: s.color }}>{s.icon}</span>
+                    <span className="text-[11px] font-bold" style={{ color: s.color }}>{s.value}</span>
+                    <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{s.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button onClick={openNewDeviceType} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', color: 'var(--body-text)' }}>
+              <Package size={14} /> {zh ? '设备型号' : 'Device Types'}
+            </button>
+            <button onClick={openNewRack} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors">
+              <Plus size={14} /> {zh ? '新建机柜' : 'New Rack'}
+            </button>
+            <button onClick={refresh} className="p-1.5 rounded-lg transition-colors" style={{ color: 'var(--muted-text)' }} title={zh ? '刷新' : 'Refresh'}>
+              <RefreshCw size={16} />
+            </button>
+          </>
+        }
+      />
+
+      <div className="flex-1 flex flex-col gap-3 overflow-hidden px-6 py-5">
 
       {/* -- Stats cards (small screens) -- */}
       {stats && (
@@ -2355,6 +2353,7 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

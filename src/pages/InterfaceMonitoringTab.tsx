@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { Search, Server, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X, Filter } from 'lucide-react';
+import { Search, Server, Activity, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X, Filter } from 'lucide-react';
 import type { Device } from '../types';
-import { sectionHeaderRowClass, sectionToolbarClass } from '../components/shared';
+import { sectionToolbarClass } from '../components/shared';
+import PageHero from '../components/PageHero';
 
 interface InterfaceMonitoringTabProps {
   devices: Device[];
@@ -178,14 +179,13 @@ function InterfaceMonitoringTab({
   ];
 
   return (
-            <div className="space-y-6">
-              <div className="flex flex-col gap-4">
-                <div className={sectionHeaderRowClass}>
-                  <div>
-                    <h2 className="text-2xl font-medium tracking-tight">{language === 'zh' ? '接口监控' : 'Interface Monitoring'}</h2>
-                    <p className="text-sm text-black/40">{language === 'zh' ? '所有设备的接口实时状态总览' : 'Real-time interface status overview for all devices'}</p>
-                  </div>
-                  <div className="flex gap-3 items-center flex-wrap">
+            <div className="flex flex-col h-full overflow-hidden">
+              <PageHero
+                icon={Activity}
+                title={language === 'zh' ? '接口监控' : 'Interface Monitoring'}
+                subtitle={language === 'zh' ? '所有设备的接口实时状态总览' : 'Real-time interface status overview for all devices'}
+                actions={
+                  <>
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-black/5 rounded-xl">
                       <span className="w-2 h-2 rounded-full bg-[#00bceb]" />
                       <span className="text-xs text-black/60">
@@ -212,8 +212,11 @@ function InterfaceMonitoringTab({
                         <span className="text-xs text-orange-600 font-medium">{language === 'zh' ? '丢包' : 'Drops'}: {totalDiscards.toLocaleString()}</span>
                       </div>
                     )}
-                  </div>
-                </div>
+                  </>
+                }
+              />
+
+              <div className="flex-1 overflow-auto px-6 py-5 space-y-6">
 
                 {/* Top-5 Bandwidth Ranking */}
                 {top5Bw.length > 0 && (
@@ -648,6 +651,7 @@ function InterfaceMonitoringTab({
                     </button>
                   </div>
               )}
+              </div>
             </div>
   );
 }

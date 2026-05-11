@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Activity, AlertTriangle, CheckCircle2, CheckSquare, Clock, Download, Eye, ExternalLink, MapPin, RefreshCw, Repeat, Search, Square, UserCheck, Wrench, X } from 'lucide-react';
+import { Activity, AlertTriangle, Bell, CheckCircle2, CheckSquare, Clock, Download, Eye, ExternalLink, MapPin, RefreshCw, Repeat, Search, Square, UserCheck, Wrench, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { AlertDetailResponse, AlertListResponse, AlertRecord } from '../types';
 import Pagination from '../components/Pagination';
+import PageHero from '../components/PageHero';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import {
@@ -323,21 +324,14 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
   return (
     <>
-    <div className="flex-1 flex flex-col overflow-hidden space-y-4 min-h-0">
-      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        <div className="flex flex-col gap-4 border-b border-black/5 px-5 py-5 lg:flex-row lg:items-end lg:justify-between bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
-              {language === 'zh' ? '告警中心 / 告警信息' : 'Alert Center / Alert Desk'}
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold text-[#164e63]">
-              {language === 'zh' ? '当前告警' : 'Current Alerts'}
-            </h2>
-            <p className="mt-2 text-sm text-black/50">
-              {language === 'zh' ? '实时监控全网设备与业务异常，快速进行故障确认、分派和处置。' : 'Real-time monitoring of network anomalies, facilitating quick triage and response.'}
-            </p>
-          </div>
-          <div className="flex gap-2">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <PageHero
+        icon={Bell}
+        eyebrow={language === 'zh' ? '告警中心 / 告警信息' : 'Alert Center / Alert Desk'}
+        title={language === 'zh' ? '当前告警' : 'Current Alerts'}
+        subtitle={language === 'zh' ? '实时监控全网设备与业务异常，快速进行故障确认、分派和处置。' : 'Real-time monitoring of network anomalies, facilitating quick triage and response.'}
+        actions={
+          <>
             <button onClick={handleExportAlerts} className={alertSecondaryButtonClass} title={language === 'zh' ? '导出告警' : 'Export Alerts'}>
               <Download size={14} />
               {language === 'zh' ? '导出' : 'Export'}
@@ -354,9 +348,12 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               <RefreshCw size={14} />
               {language === 'zh' ? '刷新列表' : 'Refresh'}
             </button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
+      <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
+      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         <div className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center">
           <label className="relative min-w-[240px] flex-1">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
@@ -587,6 +584,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
           />
         </div>
 
+      </div>
       </div>
     </div>
 

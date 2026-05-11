@@ -1,9 +1,9 @@
 {
   "payload": {
-    "license_id": "a8f14ffb-dca4-40fe-baaf-ad05aec2f22f",
+    "license_id": "59c5eb89-57b9-4072-a98c-c5f5a63fe886",
     "company": "cisco",
     "license_type": "standard",
-    "issued_at": "2026-05-11T00:51:34.848924+00:00",
+    "issued_at": "2026-05-11T06:01:22.789397+00:00",
     "expire_at": "2027-05-11T23:59:59",
     "device_limit": 50,
     "server_limit": 50,
@@ -13,12 +13,21 @@
       "monitoring",
       "alerting",
       "rbac",
+      "change_orders",
+      "inspections",
       "topology",
+      "ipam",
+      "capacity",
+      "compliance",
+      "reports",
+      "api_access",
+      "scheduled_jobs",
+      "password_rotation",
       "access_center"
     ],
     "machine_id": "3C87-F629-86D1-30BF",
     "max_version": "99.9.9",
     "metadata": null
   },
-  "signature": "UbXf36lZ6GHG73a8MrC7tAmcubqPHAkPQ6MhdqYTN6yAEDHsxqXmuH/mWAMDwnt+CexDRnqlqfniVCjQm68VlhpAF1FAer8fgnt7AneSzowi1mKMa4Qnt6yWl83eI1OU5nVehTtsTv7OZrdKk5tmGw8mtStuKTcnUI14D1BjOJNKPW57dxichECTmZXkpOfIweG586zHfnMvrhaZRj9+A+nMCxZdbtsYj3tkh8/ZU6PJJ97vIGx4QsiGZvWtuB6Oy528cnhluIETT7LJDS0oh+/o9zHHLvPhvZJ40SFtNMpEOpOFHTheSEHtdmfG31A9eaC85uoXfSVXj3YlpPliQQ=="
+  "signature": "KMAbBccNwYi84r/t1wH4TSm82otebat1YXAaGOoq7UjAOjE1qZ80Mj1OnemcXS0L/PxLJHgq2kwFeFxKMFAjKv4FYCiEthCKGsNWqItAykD4fQrgwh5vSpSMVphCG58nArrzyjpCkkUmnjINyQFyWZPKaiEdpZPp1sAoqhM9cUt9zHl/fshqjasPSAK74k61bhvb6/vY2QLnd55eKsohPZx3JFt99bOvMRDFFpxX9RG5H6SXuPVXUvQlVdIuImOip3xP6MQ6gz6wA/SxWsabt5/Qg1llSOhu3I+YuR75pbR87GbLQ44fyRrFSyV8BAfQB0DbBHh6s7m5GkohJFGkfQ=="
 }

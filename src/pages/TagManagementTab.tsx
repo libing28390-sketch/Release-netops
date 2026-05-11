@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import type { TagDefinition, TagCategory } from '../types';
 import { TAG_CATEGORY_LABELS } from '../types';
+import PageHero from '../components/PageHero';
 
 /* ─── Props ─── */
 interface TagManagementTabProps {
@@ -232,23 +233,14 @@ export default function TagManagementTab({ language }: TagManagementTabProps) {
 
   /* ────────────── render ────────────── */
   return (
-    <div className="space-y-5">
-      {/* ── Header card with stats ── */}
-      <div className="rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)]">
-        <div className="flex flex-col gap-4 border-b border-black/5 px-6 py-5 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">
-              {zh ? '资产与配置 / 标签管理' : 'Assets & Config / Tag Management'}
-            </p>
-            <h2 className="mt-2 flex items-center gap-2.5 text-2xl font-semibold text-[#164e63]">
-              <Tags size={22} className="text-[#06b6d4]" />
-              {zh ? '标签管理' : 'Tag Management'}
-            </h2>
-            <p className="mt-2 text-sm text-black/50">
-              {zh ? '管理设备分类标签，支持按类型、厂商、系统、角色、环境、功能等维度进行标签化分组。' : 'Manage device classification tags across type, vendor, OS, role, environment, and function dimensions.'}
-            </p>
-          </div>
-          <div className="flex gap-2">
+    <div className="flex flex-col h-full overflow-hidden">
+      <PageHero
+        icon={Tags}
+        eyebrow={zh ? '资产与配置 / 标签管理' : 'Assets & Config / Tag Management'}
+        title={zh ? '标签管理' : 'Tag Management'}
+        subtitle={zh ? '管理设备分类标签，支持按类型、厂商、系统、角色、环境、功能等维度进行标签化分组。' : 'Manage device classification tags across type, vendor, OS, role, environment, and function dimensions.'}
+        actions={
+          <>
             <button
               onClick={openCreateModal}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#06b6d4] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(6,182,212,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0891b2]"
@@ -263,12 +255,16 @@ export default function TagManagementTab({ language }: TagManagementTabProps) {
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
               {zh ? '刷新' : 'Refresh'}
             </button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
+      {/* ── Header card with stats ── */}
+      <div className="rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)]">
         {/* ── Stats strip ── */}
         {stats && (
-          <div className="grid grid-cols-2 gap-px border-b border-black/5 bg-black/[0.02] sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-px bg-black/[0.02] sm:grid-cols-4 rounded-t-[28px] overflow-hidden">
             {[
               { label: zh ? '标签定义' : 'Definitions', value: stats.total_definitions, color: 'text-[#06b6d4]' },
               { label: zh ? '标签分配' : 'Assignments', value: stats.total_assignments, color: 'text-violet-600' },
@@ -287,7 +283,7 @@ export default function TagManagementTab({ language }: TagManagementTabProps) {
         )}
 
         {/* ── Search + filter row ── */}
-        <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
+        <div className="flex flex-col gap-3 px-5 py-4 border-t border-black/5 sm:flex-row sm:items-center">
           <label className="relative min-w-[240px] flex-1">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
             <input
@@ -588,6 +584,7 @@ export default function TagManagementTab({ language }: TagManagementTabProps) {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
