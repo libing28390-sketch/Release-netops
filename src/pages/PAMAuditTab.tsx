@@ -561,7 +561,6 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
           </div>
         </div>
       )}
-      </div>
     </div>
   );
 };

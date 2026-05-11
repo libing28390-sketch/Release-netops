@@ -303,7 +303,6 @@ function InterfaceMonitoringTab({
                     ))}
                   </div>
                 </div>
-              </div>
 
               {/* Device list */}
               {sortedDevices.length === 0 ? (
