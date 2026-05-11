@@ -572,6 +572,7 @@ const App: React.FC = () => {
     if (path === '/automation/schedule-history') return language === 'zh' ? '执行历史' : 'Execution History';
     if (path === '/automation/scheduled-jobs') return language === 'zh' ? '定时作业' : 'Scheduled Jobs';
     if (path === '/automation/metrics') return language === 'zh' ? '巡检指标项' : 'Inspection Metrics';
+    if (path === '/automation/textfsm-templates') return language === 'zh' ? 'TextFSM 解析模板' : 'TextFSM Parse Templates';
     if (path === '/change-orders/all') return language === 'zh' ? '全部工单' : 'All Orders';
     if (path === '/change-orders/my-todo') return language === 'zh' ? '个人待办' : 'My Todo';
     if (path === '/change-orders/group-todo') return language === 'zh' ? '组内待办' : 'Group Todo';
@@ -644,6 +645,7 @@ const App: React.FC = () => {
       { path: '/automation/schedule-history', label: zh ? '执行历史' : 'Execution History', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scheduled-jobs', label: zh ? '定时作业' : 'Scheduled Jobs', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/metrics', label: zh ? '巡检指标项' : 'Inspection Metrics', group: zh ? '作业自动化' : 'Automation' },
+      { path: '/automation/textfsm-templates', label: zh ? 'TextFSM 解析模板' : 'TextFSM Templates', group: zh ? '作业自动化' : 'Automation' },
       { path: '/automation/scripts', label: zh ? '脚本管理' : 'Script Management', group: zh ? '作业自动化' : 'Automation' },
       { path: '/config/backup', label: t('backupHistory'), group: zh ? '配置与合规' : 'Config & Compliance' },
       { path: '/config/diff', label: t('diffCompare'), group: zh ? '配置与合规' : 'Config & Compliance' },

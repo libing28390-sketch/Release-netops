@@ -27,10 +27,32 @@ interface InspectionItem {
   script_id?: string | null;
   warning_threshold?: number | null;
   critical_threshold?: number | null;
+  // ── 扩展字段（TextFSM 解析）──
+  parse_type?: string;          // numeric | status | count | diff | info
+  textfsm_template?: string;    // 模板文件名
+  parse_field?: string;         // 提取的字段
+  parse_filter?: string;        // 过滤条件（JSON）
+  fallback_regex?: string;      // 正则兜底
+  enabled?: number;             // 是否启用
 }
 
 
-const VENDORS = ['Generic', 'Cisco', 'Huawei', 'H3C', 'Juniper', 'Arista', 'Linux', 'Windows', 'VMware', 'Dell', 'HP', 'F5', 'PaloAlto', 'Fortinet', 'Checkpoint'];
+const VENDORS = [
+  'Generic',
+  // ── 主流厂商（友好名称 + 具体 platform code）──
+  'Cisco', 'cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd',
+  'Huawei', 'huawei_vrp', 'huawei_vrpv8',
+  'H3C', 'h3c_comware',
+  'Juniper', 'juniper_junos',
+  'Arista', 'arista_eos',
+  'PaloAlto', 'paloalto_panos',
+  'Fortinet',
+  'Checkpoint', 'checkpoint_gaia',
+  'Hillstone', 'hillstone_stoneos',
+  'Ruijie', 'ruijie_os',
+  // ── 其他 ──
+  'Linux', 'Windows', 'VMware', 'Dell', 'HP', 'F5',
+];
 const CATEGORIES = [
   { id: 'Network', en: 'Network Device', zh: '网络设备' },
   { id: 'Server', en: 'Server / Host', zh: '服务器/主机' },
@@ -422,9 +444,10 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                       value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}
                       className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none bg-white shadow-sm"
                     >
+                      <option value="CLI">CLI (网络设备)</option>
+                      <option value="Shell">Shell (服务器)</option>
                       <option value="SNMP">SNMP</option>
                       <option value="SSH">SSH</option>
-                      <option value="Shell">Shell</option>
                       <option value="ICMP">ICMP</option>
                       <option value="TCP">TCP</option>
                       <option value="Agent">Agent</option>

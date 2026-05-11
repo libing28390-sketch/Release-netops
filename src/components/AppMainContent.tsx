@@ -34,6 +34,7 @@ const AutomationHistoryTab = lazy(() => import('../pages/AutomationHistoryTab'))
 const InspectionTab = lazy(() => import('../pages/InspectionTab'));
 const ExecutionScheduleTab = lazy(() => import('../pages/ExecutionScheduleTab'));
 const InspectionItemsTab = lazy(() => import('../pages/InspectionItemsTab'));
+const TextFSMTemplatesTab = lazy(() => import('../pages/TextFSMTemplatesTab'));
 const ScheduledJobsTab = lazy(() => import('../pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
@@ -851,6 +852,12 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
       {activeTab === 'automation' && automationPage === 'metrics' && (
         <Suspense fallback={lazyPanelFallback}>
           <InspectionItemsTab t={t} language={language} showToast={showToast} />
+        </Suspense>
+      )}
+
+      {activeTab === 'automation' && automationPage === 'textfsm-templates' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <TextFSMTemplatesTab t={t} language={language} />
         </Suspense>
       )}
 

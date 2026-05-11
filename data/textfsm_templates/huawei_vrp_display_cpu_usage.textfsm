@@ -1,0 +1,16 @@
+Value CPU_5_SEC (\d+)
+Value CPU_1_MIN (\d+)
+Value CPU_5_MIN (\d+)
+Value SYSTEM_CPU (\d+)
+Value CPU_USAGE_PCT (\d+)
+Value CPU_USAGE_MAX (\d+)
+
+Start
+  # VRPv5 格式: CPU utilization for five seconds: 97%: one minute: 95%: five minutes: 95%
+  ^CPU\s+utilization\s+for\s+five\s+seconds:\s+${CPU_5_SEC}%.*?one\s+minute:\s+${CPU_1_MIN}%.*?five\s+minutes:\s+${CPU_5_MIN}% -> Record
+  # VRPv5/v8 通用格式: CPU Using Percentage Is: 23%
+  ^\s*(?:System\s+)?CPU\s+Using\s+Percentage\s+Is:\s+${SYSTEM_CPU}% -> Record
+  # VRPv8 格式: CPU Usage: 23.3%  Max: 100%
+  ^\s*CPU\s+Usage:\s+${CPU_USAGE_PCT}%\s+Max:\s+${CPU_USAGE_MAX}% -> Record
+  # VRPv8 格式: CPU utilization for ten seconds: 23.3%  one minute: 22.0%  five minutes: 23.0%
+  ^CPU\s+utilization\s+for\s+ten\s+seconds:\s+${CPU_5_SEC}%.*?one\s+minute:\s+${CPU_1_MIN}%.*?five\s+minutes:\s+${CPU_5_MIN}% -> Record

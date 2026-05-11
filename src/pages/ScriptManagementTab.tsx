@@ -137,7 +137,29 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
     users.filter(u => u.username !== currentUser && u.username.toLowerCase().includes(auditorSearch.toLowerCase())), 
   [users, currentUser, auditorSearch]);
 
-  const filteredScripts = useMemo(() => scripts.filter(s => (s.name + (s.id||'')).toLowerCase().includes(searchQuery.toLowerCase()) && (platformFilter === 'All' || s.platform === platformFilter)), [scripts, searchQuery, platformFilter]);
+  // Platform filter groups: 按厂商族匹配，每个厂商可能对应多个 platform code
+  // Linux → linux/ubuntu/centos…   Cisco → cisco_ios/cisco_nxos/cisco_asa…   华为 → huawei_vrp/huawei_vrpv8…
+  const PLATFORM_GROUPS: Record<string, string[]> = {
+    'All': [],
+    'Linux': ['Linux', 'linux', 'ubuntu', 'centos', 'debian', 'redhat'],
+    'Cisco': ['cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd', 'Cisco'],
+    'Huawei': ['huawei_vrp', 'huawei_vrpv8', 'huawei', 'Huawei'],
+    'H3C': ['h3c_comware', 'hp_comware', 'H3C'],
+    'Juniper': ['juniper_junos', 'juniper', 'Juniper'],
+    'Arista': ['arista_eos', 'Arista'],
+  };
+  const matchesPlatformGroup = (scriptPlatform: string, group: string): boolean => {
+    if (group === 'All') return true;
+    const codes = PLATFORM_GROUPS[group] || [group];
+    if (codes.length === 0) return true;
+    const p = (scriptPlatform || '').toLowerCase();
+    return codes.some(c => c.toLowerCase() === p);
+  };
+
+  const filteredScripts = useMemo(() => scripts.filter(s =>
+    (s.name + (s.id||'')).toLowerCase().includes(searchQuery.toLowerCase())
+    && matchesPlatformGroup(s.platform || '', platformFilter)
+  ), [scripts, searchQuery, platformFilter]);
   const paginatedScripts = useMemo(() => filteredScripts.slice((currentPage - 1) * pageSize, currentPage * pageSize), [filteredScripts, currentPage, pageSize]);
 
   const isReviewMode = editForm.status === 'pending_audit' && editForm.approver_username === currentUser;
@@ -186,9 +208,9 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
       <div className="flex-1 overflow-y-auto p-10 space-y-6 no-scrollbar">
         <div className="flex items-center justify-between">
-           <div className="flex items-center gap-1.5 p-1 bg-slate-200/20 dark:bg-slate-800/30 rounded-xl border border-white/5">
-             {['All', 'Linux', 'Cisco', 'Huawei'].map(p => (
-               <button key={p} onClick={() => { setPlatformFilter(p); setCurrentPage(1); }} className={`px-5 py-1.5 rounded-lg text-[11px] font-bold transition-all ${platformFilter === p ? 'bg-[#00a9ce] text-white shadow-sm' : 'text-slate-400 hover:text-[#00a9ce]'}`}>{p}</button>
+           <div className="flex items-center gap-1.5 p-1 bg-slate-200/20 dark:bg-slate-800/30 rounded-xl border border-white/5 flex-wrap">
+             {['All', 'Linux', 'Cisco', 'Huawei', 'H3C', 'Juniper', 'Arista'].map(p => (
+               <button key={p} onClick={() => { setPlatformFilter(p); setCurrentPage(1); }} className={`px-4 py-1.5 rounded-lg text-[11px] font-bold transition-all ${platformFilter === p ? 'bg-[#00a9ce] text-white shadow-sm' : 'text-slate-400 hover:text-[#00a9ce]'}`}>{p}</button>
              ))}
            </div>
            <div className="flex items-center gap-3">

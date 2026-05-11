@@ -5,7 +5,8 @@ Device Inspection Service — 设备巡检引擎
 - 手动触发巡检（单台/批量/全网）
 - 定时巡检计划（cron 表达式）
 - 分层连通性验证（ICMP → SSH）
-- 健康指标采集与评分
+- 服务器：Shell 脚本执行 + 数值提取
+- 网络设备：CLI 采集 + TextFSM 结构化解析 + 阈值/计数/对比判定
 - 合规检查集成
 - 结构化巡检报告
 """
@@ -27,11 +28,28 @@ from services.device_health_service import (
     evaluate_device_health,
     _build_open_alert_stats,
 )
+from core.textfsm import parse_with_textfsm
 
 logger = logging.getLogger(__name__)
 
 _BEIJING_TZ = timezone(timedelta(hours=8))
-_MAX_CONCURRENT = 10
+_MAX_CONCURRENT = 20          # 同时巡检的设备数（提升至 20）
+_SSH_CONNECT_TIMEOUT = 15     # SSH 建立超时
+_SSH_COMMAND_TIMEOUT = 30     # 单条命令超时
+
+# 识别为"网络设备"的 platform（走 NetmikoDriver CLI 采集）
+_NETWORK_PLATFORMS = {
+    'cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd',
+    'huawei_vrp', 'huawei_vrpv8', 'huawei',
+    'h3c_comware', 'hp_comware',
+    'juniper_junos', 'juniper',
+    'arista_eos',
+    'paloalto_panos', 'fortinet', 'checkpoint_gaia',
+    'hillstone_stoneos', 'ruijie_os', 'zte_zxros',
+}
+
+# 识别为"服务器/Linux 主机"的 platform（走 Shell 脚本采集）
+_SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat', 'Linux'}
 
 
 def _beijing_now_iso() -> str:
@@ -122,7 +140,465 @@ def _extract_numeric_value(output: str) -> float | None:
             except: continue
     return None
 
+
+# ══════════════════════════════════════════════════════════════════
+# 网络设备 CLI 巡检（Netmiko + TextFSM）
+# ══════════════════════════════════════════════════════════════════
+
+def _netmiko_platform_type(platform: str) -> str:
+    """将平台名映射到 Netmiko device_type。"""
+    mapping = {
+        'cisco_ios': 'cisco_ios',
+        'cisco_nxos': 'cisco_nxos',
+        'cisco_xr': 'cisco_xr',
+        'cisco_asa': 'cisco_asa',
+        'cisco_ftd': 'cisco_ftd',
+        'huawei_vrp': 'huawei',
+        'huawei_vrpv8': 'huawei_vrpv8',
+        'huawei': 'huawei',
+        'h3c_comware': 'hp_comware',
+        'hp_comware': 'hp_comware',
+        'juniper_junos': 'juniper_junos',
+        'juniper': 'juniper_junos',
+        'arista_eos': 'arista_eos',
+        'paloalto_panos': 'paloalto_panos',
+        'fortinet': 'fortinet',
+        'checkpoint_gaia': 'checkpoint_gaia',
+        'hillstone_stoneos': 'hillstone_stoneos',
+        'ruijie_os': 'ruijie_os',
+        'zte_zxros': 'zte_zxros',
+    }
+    return mapping.get(platform, 'cisco_ios')
+
+
+def _netmiko_collect(device: dict[str, Any], commands: list[str]) -> dict[str, str]:
+    """
+    一次 SSH 连接执行多条命令，返回 {command: output} 字典。
+    命令失败单条用 '__ERROR__: xxx' 标记，整体连接失败抛异常。
+    """
+    from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
+    from drivers.ssh_compat import build_netmiko_compatibility_kwargs
+    from core.crypto import decrypt_credential
+
+    platform = (device.get('platform') or 'cisco_ios').lower()
+    is_slow = platform in {'huawei_vrp', 'huawei_vrpv8', 'h3c_comware', 'hp_comware'}
+
+    # 凭据解密
+    username = device.get('username') or ''
+    raw_password = device.get('password') or ''
+    try:
+        password = decrypt_credential(raw_password) or raw_password
+    except Exception:
+        password = raw_password
+
+    params = {
+        'device_type': _netmiko_platform_type(platform),
+        'host': device.get('ip_address'),
+        'username': username,
+        'password': password,
+        'port': int(device.get('port') or device.get('management_port') or 22),
+        'timeout': _SSH_CONNECT_TIMEOUT,
+        'session_timeout': 60,
+        'fast_cli': not is_slow,
+        'global_delay_factor': 1.5 if is_slow else 0.5,
+        'blocking_timeout': 30,
+    }
+    params.update(build_netmiko_compatibility_kwargs())
+
+    secret = device.get('enable_password') or device.get('secret') or ''
+    if secret:
+        try:
+            params['secret'] = decrypt_credential(secret) or secret
+        except Exception:
+            params['secret'] = secret
+
+    results: dict[str, str] = {}
+    try:
+        with ConnectHandler(**params) as conn:
+            # Cisco 系列尝试进入 enable 模式
+            if params['device_type'] in ('cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa'):
+                try:
+                    conn.enable()
+                except Exception:
+                    pass
+
+            for cmd in commands:
+                try:
+                    output = conn.send_command(
+                        cmd,
+                        cmd_verify=False,
+                        strip_prompt=True,
+                        strip_command=True,
+                        read_timeout=_SSH_COMMAND_TIMEOUT,
+                    )
+                    results[cmd] = output
+                except Exception as ce:
+                    results[cmd] = f"__ERROR__: {ce}"
+    except NetmikoAuthenticationException as e:
+        raise RuntimeError(f"SSH 认证失败: {e}") from e
+    except NetmikoTimeoutException as e:
+        raise RuntimeError(f"SSH 连接超时: {e}") from e
+    except Exception as e:
+        raise RuntimeError(f"SSH 连接失败: {e}") from e
+
+    return results
+
+
+def _apply_parse_filter(records: list[dict], parse_filter_json: str) -> list[dict]:
+    """
+    应用 parse_filter JSON 条件过滤记录。
+    支持 op: ==, !=, >, <, >=, <=, in, not_in, not_numeric
+    """
+    if not parse_filter_json or not records:
+        return records
+    try:
+        cond = json.loads(parse_filter_json)
+    except Exception:
+        return records
+
+    field = cond.get('field') or ''
+    op = cond.get('op') or '=='
+    value = cond.get('value')
+
+    def _match(row: dict) -> bool:
+        rv = row.get(field)
+        if op == '==':
+            return str(rv) == str(value)
+        if op == '!=':
+            return str(rv) != str(value)
+        if op == 'in':
+            return str(rv) in (value or [])
+        if op == 'not_in':
+            return str(rv) not in (value or [])
+        if op == 'not_numeric':
+            try:
+                float(str(rv))
+                return False
+            except Exception:
+                return True
+        if op in ('>', '<', '>=', '<='):
+            try:
+                rvn = float(rv)
+                vn = float(value)
+            except Exception:
+                return False
+            return {'>': rvn > vn, '<': rvn < vn, '>=': rvn >= vn, '<=': rvn <= vn}[op]
+        return True
+
+    return [r for r in records if _match(r)]
+
+
+def _extract_item_value(item: dict, raw_outputs: dict[str, str]) -> tuple[Any, str]:
+    """
+    根据指标定义从原始输出中提取值。
+    返回 (value, error_msg)：成功时 error_msg 为空串。
+
+    parse_type 含义：
+      numeric — 返回第一条记录的 parse_field 字段（转 float）
+      status  — 返回第一条记录的 parse_field 字段（字符串）
+      count   — 返回满足 parse_filter 的记录数（int）
+      diff    — 同 numeric，由上层与历史对比
+      info    — 返回第一条记录的 parse_field 字段（原值）
+    """
+    command = item.get('command') or ''
+    parse_type = (item.get('parse_type') or 'numeric').lower()
+    parse_field = item.get('parse_field') or ''
+    parse_filter = item.get('parse_filter') or ''
+    textfsm_template = item.get('textfsm_template') or ''
+    fallback_regex = item.get('fallback_regex') or ''
+    platform_vendor = (item.get('vendor') or '').lower()
+
+    # 1. 找到命令对应的原始输出
+    raw = raw_outputs.get(command)
+    if raw is None:
+        # 命令未被收集或无匹配 — 尝试模糊匹配
+        for k, v in raw_outputs.items():
+            if k.strip().lower() == command.strip().lower():
+                raw = v
+                break
+    if raw is None:
+        return None, f"未采集到命令输出: {command}"
+    if str(raw).startswith("__ERROR__"):
+        return None, str(raw)
+
+    # 2. TextFSM 解析
+    records: list[dict] = []
+    if textfsm_template:
+        # textfsm_template 可能是模板名（如 huawei_vrp_display_cpu_usage），拆出 platform + command
+        # 由于模板查找规则是 {platform}_{command}.textfsm，这里直接用 platform + command 查找
+        try:
+            records = parse_with_textfsm(platform_vendor or 'cisco_ios', command, raw) or []
+        except Exception as e:
+            logger.debug(f"TextFSM parse error for {textfsm_template}: {e}")
+
+    # 3. 失败时用 fallback_regex 兜底（仅 numeric/status 类型）
+    if not records and fallback_regex and parse_type in ('numeric', 'status'):
+        m = re.search(fallback_regex, raw, re.MULTILINE)
+        if m:
+            val = m.group(1) if m.groups() else m.group(0)
+            if parse_type == 'numeric':
+                try:
+                    return float(val), ''
+                except Exception:
+                    return None, f"fallback_regex 提取值无法转为数字: {val}"
+            return val, ''
+
+    if not records:
+        return None, "TextFSM 解析为空，且无 fallback_regex 命中"
+
+    # 4. 按 parse_filter 过滤
+    if parse_filter:
+        records = _apply_parse_filter(records, parse_filter)
+
+    # 5. 按 parse_type 提取值
+    if parse_type == 'count':
+        return len(records), ''
+
+    if parse_type in ('numeric', 'diff'):
+        if not records:
+            return None, "过滤后记录为空"
+        first = records[0]
+        raw_val = first.get(parse_field) if parse_field else None
+        if raw_val is None or raw_val == '':
+            return None, f"字段 {parse_field} 为空"
+        try:
+            return float(str(raw_val).strip().rstrip('%')), ''
+        except Exception:
+            return None, f"字段 {parse_field} 值无法转为数字: {raw_val}"
+
+    # status / info
+    if records and parse_field:
+        return records[0].get(parse_field), ''
+    return str(records[0]) if records else None, ''
+
+
+def _get_last_metric_value(device_id: str, check_key: str) -> float | None:
+    """
+    查询该设备该指标的上一次巡检值（用于 diff 对比）。
+    """
+    if not device_id:
+        return None
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            'SELECT metrics_json FROM inspection_results '
+            'WHERE device_id=? AND metrics_json IS NOT NULL AND metrics_json != ? '
+            'ORDER BY checked_at DESC LIMIT 5',
+            (device_id, '{}')
+        ).fetchall()
+        for row in rows:
+            try:
+                metrics = json.loads(row['metrics_json'] or '{}')
+            except Exception:
+                continue
+            val = metrics.get(check_key)
+            if val is None:
+                continue
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    return None
+
+
+def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: list[dict]) -> dict[str, Any]:
+    """
+    网络设备巡检：一次 SSH 连接采集所有命令，TextFSM 解析，阈值/计数/对比判定。
+    """
+    device_id = str(device.get('id') or '')
+    ip = device.get('ip_address') or ''
+    hostname = device.get('hostname') or ip
+    platform_name = device.get('platform') or 'cisco_ios'
+    now = _beijing_now_iso()
+
+    result = {
+        'id': str(uuid.uuid4()),
+        'device_id': device_id,
+        'hostname': hostname,
+        'ip_address': ip,
+        'platform': platform_name,
+        'role': device.get('role') or '',
+        'site': device.get('site') or '',
+        'ping_ok': 0, 'ssh_ok': 0, 'ssh_error': '',
+        'ping_latency_ms': None,
+        'health_score': 100,
+        'health_status': 'healthy',
+        'metrics_json': '{}',
+        'findings_json': '[]',
+        'checked_at': now,
+        'cpu_usage': None, 'memory_usage': None, 'temperature': None,
+        'fan_status': '', 'psu_status': '',
+        'interface_total': 0, 'interface_up': 0, 'interface_down': 0,
+        'interface_flapping': 0, 'interface_high_util': 0, 'interface_errors': 0,
+        'open_alerts': alert_stats.get('open_alert_count', 0),
+        'critical_alerts': alert_stats.get('critical_open_alerts', 0),
+        'compliance_status': 'unknown', 'compliance_findings': 0,
+    }
+
+    findings: list[dict] = []
+    metrics: dict[str, Any] = {}
+
+    # 1. ICMP 连通性
+    ping_result = _ping_device(ip, count=2, timeout=2)
+    result['ping_ok'] = 1 if ping_result.get('success') else 0
+    result['ping_latency_ms'] = ping_result.get('latency_ms')
+
+    if not result['ping_ok']:
+        findings.append({'severity': 'critical', 'message': '设备 ICMP 不可达'})
+        result['health_status'] = 'critical'
+        result['health_score'] = 0
+        result['findings_json'] = json.dumps(findings, ensure_ascii=False)
+        return result
+
+    # 2. SSH 端口探测
+    mgmt_port = int(device.get('management_port') or 22)
+    ssh_check = _check_ssh(ip, port=mgmt_port, timeout=3)
+    if not ssh_check.get('success'):
+        result['ssh_ok'] = 0
+        result['ssh_error'] = ssh_check.get('error', '')
+        findings.append({'severity': 'critical', 'message': f'SSH 端口 {mgmt_port} 不通: {ssh_check.get("error", "")}'})
+        result['health_status'] = 'critical'
+        result['health_score'] = 20
+        result['findings_json'] = json.dumps(findings, ensure_ascii=False)
+        return result
+
+    # 3. 收集所有需要的命令（去重）
+    commands_needed = sorted({item.get('command') or '' for item in inspection_items if item.get('command')})
+    if not commands_needed:
+        result['ssh_ok'] = 1
+        result['findings_json'] = '[]'
+        return result
+
+    # 4. 一次 SSH 连接采集所有命令
+    try:
+        raw_outputs = _netmiko_collect(device, commands_needed)
+        result['ssh_ok'] = 1
+    except Exception as e:
+        result['ssh_ok'] = 0
+        result['ssh_error'] = str(e)
+        findings.append({'severity': 'critical', 'message': f'SSH 采集失败: {e}'})
+        result['health_status'] = 'critical'
+        result['health_score'] = 30
+        result['findings_json'] = json.dumps(findings, ensure_ascii=False)
+        return result
+
+    # 5. 对每个指标进行解析和判定
+    health_deduct = 0
+    for item in inspection_items:
+        check_key = item.get('check_key') or ''
+        name_zh = item.get('name_zh') or item.get('name') or check_key
+        parse_type = (item.get('parse_type') or 'numeric').lower()
+        warn_threshold = item.get('warning_threshold')
+        crit_threshold = item.get('critical_threshold')
+
+        value, err = _extract_item_value(item, raw_outputs)
+
+        if err and value is None:
+            metrics[check_key] = {'value': None, 'error': err}
+            continue
+
+        metrics[check_key] = value
+
+        # 阈值判定
+        if parse_type in ('numeric', 'count') and isinstance(value, (int, float)):
+            if crit_threshold is not None and value >= float(crit_threshold):
+                findings.append({'severity': 'critical', 'message': f"{name_zh} 严重超标: {value} (阈值 {crit_threshold})"})
+                health_deduct += 25
+                if result['health_status'] != 'critical':
+                    result['health_status'] = 'critical'
+            elif warn_threshold is not None and value >= float(warn_threshold):
+                findings.append({'severity': 'warning', 'message': f"{name_zh} 达到告警线: {value} (阈值 {warn_threshold})"})
+                health_deduct += 14
+                if result['health_status'] == 'healthy':
+                    result['health_status'] = 'warning'
+
+        elif parse_type == 'diff' and isinstance(value, (int, float)):
+            last_val = _get_last_metric_value(device_id, check_key)
+            if last_val is not None and last_val > 0:
+                change_pct = abs(value - last_val) / last_val * 100.0
+                metrics[f"{check_key}_last"] = last_val
+                metrics[f"{check_key}_change_pct"] = round(change_pct, 2)
+                if crit_threshold is not None and change_pct >= float(crit_threshold):
+                    findings.append({
+                        'severity': 'critical',
+                        'message': f"{name_zh} 变化异常: 上次 {last_val} → 本次 {value}（变化 {change_pct:.1f}%，阈值 {crit_threshold}%）",
+                    })
+                    health_deduct += 20
+                    if result['health_status'] != 'critical':
+                        result['health_status'] = 'critical'
+                elif warn_threshold is not None and change_pct >= float(warn_threshold):
+                    findings.append({
+                        'severity': 'warning',
+                        'message': f"{name_zh} 变化提醒: 上次 {last_val} → 本次 {value}（变化 {change_pct:.1f}%）",
+                    })
+                    health_deduct += 10
+                    if result['health_status'] == 'healthy':
+                        result['health_status'] = 'warning'
+
+    # 6. 汇总健康评分
+    result['health_score'] = max(0, 100 - health_deduct)
+    result['metrics_json'] = json.dumps(metrics, ensure_ascii=False)
+    result['findings_json'] = json.dumps(findings, ensure_ascii=False)
+
+    # 映射常用字段以保证 Dashboard 兼容
+    for key_pair in (('cpu_util', 'cpu_usage'), ('mem_util', 'memory_usage'), ('memory', 'memory_usage')):
+        mkey, rkey = key_pair
+        for k, v in metrics.items():
+            if k.endswith(mkey) and isinstance(v, (int, float)):
+                result[rkey] = v
+                break
+
+    return result
+
 def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], check_items: list[str] | None = None) -> dict[str, Any]:
+    device_id = str(device.get('id') or '')
+    ip = device.get('ip_address') or ''
+    hostname = device.get('hostname') or ip
+    platform_name = (device.get('platform') or 'Linux').lower()
+
+    # ── 加载该平台适用的巡检指标（enabled=1，vendor 匹配或为 Generic/空）──
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM inspection_items "
+            "WHERE (vendor = ? OR LOWER(vendor) = 'generic' OR vendor = '') "
+            "AND COALESCE(enabled, 1) = 1",
+            (platform_name,)
+        ).fetchall()
+        matched_items = [dict(r) for r in rows]
+    except Exception as e:
+        logger.warning(f"Failed to load inspection items for {platform_name}: {e}")
+        matched_items = []
+    finally:
+        conn.close()
+
+    # ── 按平台类型路由 ──
+    # 网络设备：走 NetmikoDriver CLI 采集 + TextFSM 解析
+    # 服务器：走 Paramiko Shell 脚本采集（原有逻辑）
+    is_network_device = platform_name in _NETWORK_PLATFORMS
+    is_server = platform_name in {p.lower() for p in _SERVER_PLATFORMS}
+
+    if is_network_device:
+        # 只选 CLI 方式的指标
+        cli_items = [it for it in matched_items if (it.get('method') or '').upper() == 'CLI']
+        return _inspect_network_device(device, alert_stats, cli_items)
+
+    if is_server:
+        # 只选 Shell 方式的指标（原有逻辑）
+        shell_items = [it for it in matched_items if (it.get('method') or '') == 'Shell']
+        return _inspect_server_device(device, alert_stats, shell_items)
+
+    # 默认当服务器处理（兼容旧数据）
+    shell_items = [it for it in matched_items if (it.get('method') or '') == 'Shell']
+    return _inspect_server_device(device, alert_stats, shell_items)
+
+
+def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], shell_items: list[dict]) -> dict[str, Any]:
+    """服务器巡检（Shell 脚本方式），保留原有逻辑。"""
     device_id = str(device.get('id') or '')
     ip = device.get('ip_address') or ''
     hostname = device.get('hostname') or ip
@@ -156,40 +632,32 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
     metrics_results = {}
     findings = []
 
-    # 建立数据库连接获取指标
     conn = get_db_connection()
     try:
-        # 获取该平台相关的精细化 Shell 巡检指标
-        items = conn.execute(
-            "SELECT * FROM inspection_items WHERE (vendor = ? OR vendor = 'Generic' OR vendor = '') AND method = 'Shell'",
-            (platform_name,)
-        ).fetchall()
+        for item in shell_items:
+            script_id = item.get('script_id') or ''
+            if not script_id:
+                continue
 
-        for item in items:
-            script_id = item['script_id']
-            if not script_id: continue
-            
             script_row = conn.execute("SELECT content FROM scripts WHERE id = ?", (script_id,)).fetchone()
-            if not script_row: continue
-            
-            # 1. 真实 SSH 执行
+            if not script_row:
+                continue
+
             raw_output = _execute_shell_script(ip, script_row['content'], device)
-            
-            # 2. 精细化取值 (取最后算出的数值)
             val = _extract_numeric_value(raw_output)
-            
+
             if val is not None:
                 metrics_results[item['check_key']] = val
-                # 3. 阈值自动化判定
-                w = item['warning_threshold']
-                c = item['critical_threshold']
-                
+                w = item.get('warning_threshold')
+                c = item.get('critical_threshold')
+
                 if c is not None and val >= c:
                     findings.append({'severity': 'critical', 'message': f"{item['name_zh']} 严重超标: {val} (阈值 {c})"})
                     result['health_status'] = 'critical'
                 elif w is not None and val >= w:
                     findings.append({'severity': 'warning', 'message': f"{item['name_zh']} 达到告警线: {val} (阈值 {w})"})
-                    if result['health_status'] != 'critical': result['health_status'] = 'warning'
+                    if result['health_status'] != 'critical':
+                        result['health_status'] = 'warning'
             else:
                 metrics_results[item['check_key']] = "Fetch Failed"
 
@@ -200,12 +668,17 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
 
     result['metrics_json'] = json.dumps(metrics_results)
     result['findings_json'] = json.dumps(findings, ensure_ascii=False)
-    
+
     # 映射常用字段以保证 Dashboard 兼容
     result['cpu_usage'] = metrics_results.get('cpu_util')
     result['memory_usage'] = metrics_results.get('mem_avail')
 
     return result
+
+
+def _inspect_single_device_legacy(device: dict[str, Any], alert_stats: dict[str, int], check_items: list[str] | None = None) -> dict[str, Any]:
+    """[DEPRECATED] 旧的巡检入口，保留用于兼容。请使用 _inspect_single_device。"""
+    return _inspect_single_device(device, alert_stats, check_items)
 
 
 # ──────────────────────────────────────────────

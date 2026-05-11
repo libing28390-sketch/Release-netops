@@ -1,0 +1,12 @@
+Value PROTO (\S+)
+Value TOTAL (\d+)
+Value ACTIVE (\d+)
+Value ADDED (\d+)
+Value DELETED (\d+)
+
+Start
+  # 跳过表头
+  ^\s*Proto(col)?\s+Total\s+Active
+  ^\s*-+
+  # 数据行: Direct  5  5  10  5
+  ^\s*${PROTO}\s+${TOTAL}\s+${ACTIVE}\s+${ADDED}\s+${DELETED}\s*$$ -> Record

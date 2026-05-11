@@ -84,6 +84,7 @@ export const navConfig: NavGroup[] = [
       { id: 'exec-history', label: '执行历史',   labelEn: 'Execution History', path: '/automation/history' },
       { id: 'scheduled-jobs', label: '定时作业',  labelEn: 'Scheduled Jobs',    path: '/automation/scheduled-jobs' },
       { id: 'inspection-metrics', label: '巡检指标', labelEn: 'Inspection Metrics', path: '/automation/metrics' },
+      { id: 'textfsm-templates', label: '解析模板', labelEn: 'Parse Templates', path: '/automation/textfsm-templates' },
       { id: 'scripts', label: '操作管理', labelEn: 'Operations', path: '/automation/scripts' },
     ],
   },

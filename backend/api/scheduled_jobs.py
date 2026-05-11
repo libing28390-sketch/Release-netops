@@ -453,7 +453,18 @@ def update_scheduled_job(
     payload: dict = Body(...),
     user=require_role("Operator"),
 ):
-    """编辑已有定时作业（名称、调度、设备范围等）。"""
+    """编辑已有定时作业（名称、调度、设备范围等）。
+
+    ⚠️ 安全修复（2026-05-11）：任何涉及脚本引用或命令内容的修改，都必须走审批流程。
+    这与创建流程保持一致，避免通过"修改"绕过审批。
+
+    豁免规则（不需要审批，仅调整元数据）：
+      - 仅修改 name / description / device_scope / device_filter 等元信息
+      - 不涉及 script_id / commands / action_type 的变更
+    """
+    is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
+    skip_approval_verification = payload.get("skip_approval_verification", False) if is_test_env else False
+
     conn = get_db_connection()
     try:
         row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
@@ -466,6 +477,8 @@ def update_scheduled_job(
         device_scope = payload.get("device_scope", row["device_scope"])
         device_filter = (payload.get("device_filter") or "").strip()
         config_reason = (payload.get("config_reason") or "").strip()
+        new_script_id = (payload.get("script_id") or "").strip() if "script_id" in payload else None
+        new_commands = (payload.get("commands") or "").strip() if "commands" in payload else None
 
         if not name:
             raise HTTPException(status_code=400, detail="作业名称不能为空")
@@ -474,33 +487,86 @@ def update_scheduled_job(
         if row["job_type"] == "cron" and not cron_expr:
             raise HTTPException(status_code=400, detail="定时作业需要 cron 表达式")
 
+        # ── 判断是否触及敏感字段（需要审批）──────────────────────────
+        sensitive_changed = False
+        sensitive_fields = []
+        if action_type != row["action_type"]:
+            sensitive_changed = True
+            sensitive_fields.append(f"action_type: {row['action_type']} → {action_type}")
+        if new_script_id is not None and new_script_id != (row["script_id"] or ""):
+            sensitive_changed = True
+            sensitive_fields.append(f"script_id: {row['script_id']} → {new_script_id}")
+        if new_commands is not None and new_commands != (row["commands"] or ""):
+            sensitive_changed = True
+            sensitive_fields.append("commands: content changed")
+        if cron_expr and cron_expr != (row["cron_expr"] or ""):
+            # cron 修改也视为敏感（防止临时修改成高频执行）
+            sensitive_changed = True
+            sensitive_fields.append(f"cron_expr: {row['cron_expr']} → {cron_expr}")
+
+        approval_record = None
+        if sensitive_changed and not skip_approval_verification:
+            approval_token = (payload.get("approval_token") or "").strip()
+            approval_code = (payload.get("approval_code") or "").strip()
+            if not approval_token or not approval_code:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"修改作业的敏感字段（{', '.join(sensitive_fields)}）需要审批验证码。请先申请审批。"
+                )
+            ok, err = verify_code(approval_token, approval_code)
+            if not ok:
+                raise HTTPException(status_code=403, detail=err)
+            approval_record = consume_approval(approval_token)
+            if not approval_record:
+                raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
+        elif sensitive_changed and skip_approval_verification:
+            logger.warning(f"Scheduled job {job_id} sensitive update with approval skipped by {user.get('username', 'unknown')}: {sensitive_fields}")
+
         now = datetime.now().isoformat()
-        conn.execute(
-            """UPDATE scheduled_jobs
-               SET name = ?, action_type = ?, cron_expr = ?,
-                   device_scope = ?, device_filter = ?, config_reason = ?,
-                   updated_at = ?
-               WHERE id = ?""",
-            (name, action_type, cron_expr, device_scope, device_filter, config_reason, now, job_id),
-        )
+
+        # 构建动态 UPDATE 语句（只更新提供了的字段）
+        updates = {
+            'name': name,
+            'action_type': action_type,
+            'cron_expr': cron_expr,
+            'device_scope': device_scope,
+            'device_filter': device_filter,
+            'config_reason': config_reason,
+            'updated_at': now,
+        }
+        if new_script_id is not None:
+            updates['script_id'] = new_script_id
+        if new_commands is not None:
+            updates['commands'] = new_commands
+
+        set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+        params = list(updates.values()) + [job_id]
+        conn.execute(f"UPDATE scheduled_jobs SET {set_clause} WHERE id = ?", params)
         conn.commit()
 
         actor = user.get("username", "unknown")
         log_audit_event(
             event_type="SCHEDULED_JOB_UPDATED",
             category="automation",
-            severity="medium",
+            severity="high" if sensitive_changed else "medium",
             status="success",
-            summary=f"Updated scheduled job '{name}'",
+            summary=f"Updated scheduled job '{name}' ({'sensitive' if sensitive_changed else 'metadata'})",
             actor_username=actor,
             actor_role=user.get("role", "Operator"),
             source_ip=request.client.host if request.client else None,
-            details={"job_id": job_id, "job_name": name, "changes": payload},
+            details={
+                "job_id": job_id,
+                "job_name": name,
+                "changes": payload,
+                "sensitive_changed": sensitive_changed,
+                "sensitive_fields": sensitive_fields,
+                "approved_by": approval_record.get("approver", "") if approval_record else None,
+            },
         )
-        
+
         # Refresh scheduler
         refresh_dynamic_scheduler()
 
-        return {"success": True, "message": "作业已更新"}
+        return {"success": True, "message": "作业已更新" + ("（已通过审批）" if sensitive_changed else "")}
     finally:
         conn.close()

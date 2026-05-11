@@ -199,21 +199,76 @@ const LicenseAdminTab: React.FC<Props> = ({ language, onLicenseUpdate }) => {
 
   const translateError = (err?: string) => {
     if (!err) return '';
-    if (!zh) return err;
     const lower = err.toLowerCase();
-    if (lower.includes('public key not found')) return '未找到公钥文件。';
-    if (lower.includes('license file not found')) return '未找到授权文件。';
-    if (lower.includes('corrupted')) return '授权文件损坏（非法的 JSON 格式）。';
-    if (lower.includes('invalid license signature')) return '授权签名无效，文件可能已被篡改。';
-    if (lower.includes('license expired')) {
-      const match = err.match(/\d+/);
-      const days = match ? match[0] : '';
-      return `授权已过期${days ? ` ${days} 天` : ''}。`;
+
+    // ── 机器码不匹配（最常见问题）──────────────────────────────────
+    // 匹配 "bound to machine" 或 "machine_id" 相关错误
+    if (lower.includes('bound to machine') || lower.includes('machine_id') || lower.includes('machine id')) {
+      // 提取授权绑定的机器码和当前机器码
+      const boundMatch = err.match(/bound to machine\s*['"]([\w-]+)['"]/i);
+      const currentMatch = err.match(/current machine(?:\s+is)?\s*['"]([\w-]+)['"]/i);
+      const boundId = boundMatch?.[1] ?? '';
+      const currentId = currentMatch?.[1] ?? machineId ?? '';
+
+      if (lower.includes('lacks machine_id') || lower.includes('must be locked')) {
+        if (zh) {
+          return '授权文件未绑定服务器\n\n此授权文件没有绑定任何服务器，无法使用。请联系管理员，使用当前服务器的机器码重新签发授权。\n\n当前机器码可在下方"授权详情"中复制。';
+        }
+        return 'License not bound to any machine.\n\nThis license file has no machine binding and cannot be activated. Please contact your administrator to reissue a license bound to this machine ID.\n\nYou can copy the current Machine ID from the "License Details" section below.';
+      }
+
+      if (zh) {
+        return `授权文件与当前服务器不匹配${boundId ? `\n\n授权绑定机器码：${boundId}` : ''}${currentId ? `\n当前服务器机器码：${currentId}` : ''}\n\n常见原因：\n• 虚机克隆或网卡重建后机器码发生变化\n• 此授权文件属于其他服务器\n\n解决方法：\n① 复制上方当前机器码，联系管理员重新签发授权\n② 或在服务器 .env 文件中添加：\n   MACHINE_ID_OVERRIDE=${boundId || '<授权中的机器码>'}`;
+      }
+      return `License is bound to a different machine.${boundId ? `\n\nLicense machine ID: ${boundId}` : ''}${currentId ? `\nCurrent machine ID: ${currentId}` : ''}\n\nCommon causes:\n• VM cloned or network card replaced\n• This license belongs to another server\n\nHow to fix:\n① Copy the current Machine ID above and ask your admin to reissue the license\n② Or add to your .env file:\n   MACHINE_ID_OVERRIDE=${boundId || '<license machine id>'}`;
     }
-    if (lower.includes('machine id')) {
-      if (lower.includes('lacks machine_id')) return '非试用版授权必须绑定机器码。';
-      return '授权文件绑定的机器码与当前服务器不一致。';
+
+    // ── 授权文件未找到 ──────────────────────────────────────────────
+    if (lower.includes('license file not found') || lower.includes('no license loaded')) {
+      if (zh) return '尚未上传授权文件\n\n系统未检测到有效的授权文件，所有高级功能暂不可用。\n\n请点击右上角"上传 License"按钮，上传您的授权文件（.json 格式）。';
+      return 'No license file found.\n\nNo valid license has been uploaded yet. All advanced features are currently unavailable.\n\nClick "Upload License" in the top-right corner to activate your license.';
     }
+
+    // ── 授权文件损坏 ────────────────────────────────────────────────
+    if (lower.includes('corrupted') || lower.includes('invalid json')) {
+      if (zh) return '授权文件已损坏\n\n上传的文件不是有效的授权文件，或文件内容已损坏。\n\n请重新获取授权文件后再次上传。';
+      return 'License file is corrupted.\n\nThe uploaded file is not a valid license or its content is damaged.\n\nPlease obtain a fresh license file and upload it again.';
+    }
+
+    // ── 签名验证失败 ────────────────────────────────────────────────
+    if (lower.includes('invalid license signature') || lower.includes('tampered')) {
+      if (zh) return '授权签名验证失败\n\n授权文件的数字签名无效，文件可能已被篡改或损坏。\n\n请联系管理员重新获取原始授权文件。';
+      return 'Invalid license signature.\n\nThe digital signature of the license file is invalid — it may have been tampered with or corrupted.\n\nPlease contact your administrator to obtain a new license file.';
+    }
+
+    // ── 公钥缺失（系统配置问题）────────────────────────────────────
+    if (lower.includes('public key not found')) {
+      if (zh) return '系统配置异常\n\n授权验证所需的公钥文件缺失，这是系统部署问题，不是授权文件的问题。\n\n请联系技术支持检查服务器部署配置。';
+      return 'System configuration error.\n\nThe public key required for license verification is missing. This is a deployment issue, not a problem with your license file.\n\nPlease contact technical support to check the server deployment.';
+    }
+
+    // ── 平台完整性检查失败 ──────────────────────────────────────────
+    if (lower.includes('integrity check failed') || lower.includes('integrity violation')) {
+      if (zh) return '平台完整性校验失败\n\n系统检测到关键文件被修改，授权验证已暂停。\n\n请联系技术支持。';
+      return 'Platform integrity check failed.\n\nCritical system files have been modified. License validation has been suspended.\n\nPlease contact technical support.';
+    }
+
+    // ── 授权已过期 ──────────────────────────────────────────────────
+    if (lower.includes('expired')) {
+      const match = err.match(/(\d+)\s*day/i);
+      const days = match?.[1] ?? '';
+      if (zh) return `授权已过期${days ? `（${days} 天前）` : ''}\n\n您的授权已失效，所有高级功能已被禁用。\n\n请联系管理员续期授权，续期后重新上传授权文件即可恢复使用。`;
+      return `License expired${days ? ` (${days} day${Number(days) > 1 ? 's' : ''} ago)` : ''}.\n\nYour license has expired and all advanced features are disabled.\n\nPlease contact your administrator to renew the license, then upload the new file to restore access.`;
+    }
+
+    // ── 版本超出授权范围 ────────────────────────────────────────────
+    if (lower.includes('exceeds license authorized version') || lower.includes('max_version')) {
+      if (zh) return '平台版本超出授权范围\n\n当前平台版本高于授权文件允许的最高版本。\n\n请联系管理员升级授权，或回退到授权支持的平台版本。';
+      return 'Platform version exceeds license authorization.\n\nThe current platform version is higher than what your license allows.\n\nPlease contact your administrator to upgrade the license, or roll back to a supported version.';
+    }
+
+    // ── 兜底：原始错误 ──────────────────────────────────────────────
+    if (zh) return `授权验证失败\n\n${err}`;
     return err;
   };
 
@@ -306,15 +361,64 @@ const LicenseAdminTab: React.FC<Props> = ({ language, onLicenseUpdate }) => {
       </div>
 
       {/* ── Status Banner ── */}
-      {status && !status.valid && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200">
-          <ShieldAlert size={20} className="text-red-500 shrink-0" />
-          <div>
-            <p className="text-sm font-semibold text-red-800">{zh ? 'License 无效' : 'License Invalid'}</p>
-            <p className="text-xs text-red-600 mt-0.5">{translateError(status.error)}</p>
+      {status && !status.valid && (() => {
+        const errLower = (status.error || '').toLowerCase();
+        const isMachineIdMismatch = errLower.includes('bound to machine') || (errLower.includes('machine') && errLower.includes('current machine'));
+        const boundMatch = status.error?.match(/bound to machine\s*['"]([\w-]+)['"]/i);
+        const currentMatch = status.error?.match(/current machine(?:\s+is)?\s*['"]([\w-]+)['"]/i);
+        const boundId = boundMatch?.[1];
+        const currentId = currentMatch?.[1] || machineId;
+
+        return (
+          <div className="rounded-xl bg-red-50 border border-red-200 overflow-hidden">
+            <div className="flex items-start gap-3 px-4 py-3">
+              <ShieldAlert size={20} className="text-red-500 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-red-800">
+                  {zh ? 'License 无效' : 'License Invalid'}
+                </p>
+                <p className="text-xs text-red-600 mt-1 whitespace-pre-wrap leading-relaxed">
+                  {translateError(status.error)}
+                </p>
+              </div>
+            </div>
+
+            {/* 机器码不匹配时，展示对比卡片 */}
+            {isMachineIdMismatch && (boundId || currentId) && (
+              <div className="mx-4 mb-3 grid grid-cols-2 gap-2">
+                {boundId && (
+                  <div className="rounded-lg bg-red-100/60 border border-red-200 px-3 py-2">
+                    <p className="text-[10px] font-bold text-red-400 uppercase tracking-wider mb-1">
+                      {zh ? '授权绑定机器码' : 'License Machine ID'}
+                    </p>
+                    <p className="font-mono text-xs font-bold text-red-700 break-all">{boundId}</p>
+                  </div>
+                )}
+                {currentId && (
+                  <div className="rounded-lg bg-white border border-red-200 px-3 py-2">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      {zh ? '当前服务器机器码' : 'Current Machine ID'}
+                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-mono text-xs font-bold text-slate-700 break-all flex-1">{currentId}</p>
+                      <button
+                        onClick={() => copyToClipboard(currentId)}
+                        className={`shrink-0 p-1 rounded hover:bg-slate-100 transition-colors ${copiedText === currentId ? 'text-emerald-500' : 'text-slate-400 hover:text-cyan-600'}`}
+                        title={zh ? '复制机器码' : 'Copy Machine ID'}
+                      >
+                        {copiedText === currentId ? <CheckCircle2 size={12} /> : <Copy size={12} />}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      {zh ? '请将此机器码提供给管理员重新签发授权' : 'Provide this ID to your admin to reissue the license'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {status && status.valid && status.warnings.length > 0 && (
         <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">

@@ -46,6 +46,7 @@ from api.change_orders import router as change_orders_router
 from api.setup import router as setup_router
 from api.ip_locator import router as ip_locator_router
 from api.inspections import router as inspections_router
+from api.textfsm_templates import router as textfsm_templates_router
 from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
@@ -233,6 +234,7 @@ app.include_router(ipam_router,           prefix="/api", dependencies=[Depends(r
 app.include_router(capacity_router,       prefix="/api", dependencies=[Depends(require_feature("capacity"))])
 app.include_router(compliance_router,     prefix="/api", dependencies=[Depends(require_feature("compliance"))])
 app.include_router(inspections_router,    prefix="/api", dependencies=[Depends(require_feature("inspections"))])
+app.include_router(textfsm_templates_router, prefix="/api", dependencies=[Depends(require_feature("inspections"))])
 app.include_router(change_orders_router,  prefix="/api", dependencies=[Depends(require_feature("change_orders"))])
 app.include_router(pam_router,            prefix="/api", dependencies=[Depends(require_feature("access_center"))])
 app.include_router(audit_router,          prefix="/api", dependencies=[Depends(require_feature("rbac"))])

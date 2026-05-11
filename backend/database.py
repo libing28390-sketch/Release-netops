@@ -320,6 +320,145 @@ def _table_columns(cursor, table_name: str) -> set[str]:
         return {row[0] for row in cursor.fetchall()}
     return {row['name'] for row in cursor.execute(f'PRAGMA table_info({table_name})').fetchall()}
 
+
+def _build_network_inspection_items(now: str) -> list[tuple]:
+    """
+    构建网络设备巡检指标（CLI 方式 + TextFSM 解析）。
+
+    每条记录 21 列对应 inspection_items 扩展字段：
+      id, name, name_zh, category, check_key, description, method, command, script_id,
+      warning_threshold, critical_threshold, vendor, oid, created_at, updated_at,
+      parse_type, textfsm_template, parse_field, parse_filter, fallback_regex, enabled
+
+    parse_type 取值：
+      numeric — 数值比较（默认）
+      status  — 关键词匹配（ok/fail/down 等）
+      count   — 统计行数（支持 parse_filter JSON 过滤条件）
+      diff    — 与上次巡检结果对比（变化率超阈值告警）
+      info    — 仅记录不告警
+    """
+    items: list[tuple] = []
+
+    def _item(id_, name, name_zh, category, check_key, desc, cmd, vendor,
+              w, c, parse_type, textfsm_template, parse_field,
+              parse_filter='', fallback_regex=''):
+        items.append((
+            id_, name, name_zh, category, check_key, desc,
+            'CLI', cmd, '',                    # method=CLI, script_id=空（通过综合脚本采集）
+            w, c, vendor, '', now, now,
+            parse_type, textfsm_template, parse_field,
+            parse_filter, fallback_regex, 1,    # enabled=1
+        ))
+
+    # ── Cisco IOS / IOS-XE ────────────────────────────────────────
+    _item('net_cisco_ios_cpu', 'Cisco IOS CPU', 'Cisco IOS CPU 利用率', 'Network', 'cisco_ios_cpu',
+          'CPU 利用率（5 秒）', 'show processes cpu sorted', 'cisco_ios',
+          80, 90, 'numeric', 'cisco_ios_show_processes_cpu', 'CPU_USAGE_5_SEC',
+          fallback_regex=r'CPU utilization.*?(\d+)%/\d+%')
+    _item('net_cisco_ios_intf_down', 'Cisco IOS Interface Down', 'Cisco IOS 接口 Down 数', 'Network', 'cisco_ios_intf_down',
+          '统计 notconnect/down 的接口数量', 'show interfaces status', 'cisco_ios',
+          1, 3, 'count', 'cisco_ios_show_interfaces_status', 'STATUS',
+          parse_filter='{"field":"STATUS","op":"in","value":["notconnect","disabled","err-disabled","down"]}')
+    _item('net_cisco_ios_bgp_down', 'Cisco IOS BGP Peer Down', 'Cisco IOS BGP 邻居 Down 数', 'Network', 'cisco_ios_bgp_down',
+          '统计非 Established 的 BGP 邻居', 'show ip bgp summary', 'cisco_ios',
+          1, 2, 'count', 'cisco_ios_show_ip_bgp_summary', 'STATE_OR_PREFIXES_RECEIVED',
+          parse_filter='{"field":"STATE_OR_PREFIXES_RECEIVED","op":"not_numeric"}')
+    _item('net_cisco_ios_route_total', 'Cisco IOS Route Total', 'Cisco IOS 路由总数', 'Network', 'cisco_ios_route_total',
+          '路由总数（与上次对比，变化 >10% 告警）', 'show ip route summary', 'cisco_ios',
+          10, 30, 'diff', 'cisco_ios_show_ip_route_summary', 'TOTAL_ROUTE_COUNT')
+
+    # ── Cisco NX-OS ───────────────────────────────────────────────
+    _item('net_cisco_nxos_cpu', 'Cisco NX-OS CPU', 'Cisco NX-OS CPU 利用率', 'Network', 'cisco_nxos_cpu',
+          'CPU 利用率（5 秒）', 'show processes cpu', 'cisco_nxos',
+          80, 90, 'numeric', 'cisco_nxos_show_processes_cpu', 'CPU_5_SEC')
+    _item('net_cisco_nxos_bgp_down', 'Cisco NX-OS BGP Peer Down', 'Cisco NX-OS BGP 邻居 Down 数', 'Network', 'cisco_nxos_bgp_down',
+          '统计非 Established 的 BGP 邻居', 'show bgp ipv4 unicast summary', 'cisco_nxos',
+          1, 2, 'count', 'cisco_nxos_show_ip_bgp_summary', 'STATE_PFXRCD',
+          parse_filter='{"field":"STATE_PFXRCD","op":"not_numeric"}')
+
+    # ── 华为 VRPv5 (S系列/AR/老NE) ────────────────────────────────
+    _item('net_huawei_vrp_cpu', '华为 VRPv5 CPU', '华为 VRPv5 CPU 利用率', 'Network', 'huawei_vrp_cpu',
+          'CPU 利用率', 'display cpu-usage', 'huawei_vrp',
+          80, 90, 'numeric', 'huawei_vrp_display_cpu_usage', 'CPU_5_SEC',
+          fallback_regex=r'CPU utilization for five seconds:\s+(\d+)%')
+    _item('net_huawei_vrp_mem', '华为 VRPv5 Memory', '华为 VRPv5 内存利用率', 'Network', 'huawei_vrp_mem',
+          '内存利用率', 'display memory-usage', 'huawei_vrp',
+          80, 90, 'numeric', 'huawei_vrp_display_memory_usage', 'MEMORY_USING_PCT',
+          fallback_regex=r'Memory Using Percentage Is:\s+(\d+)%')
+    _item('net_huawei_vrp_intf_down', '华为 VRPv5 Interface Down', '华为 VRPv5 接口 Down 数', 'Network', 'huawei_vrp_intf_down',
+          '统计 down 的接口数量', 'display interface brief', 'huawei_vrp',
+          1, 3, 'count', 'huawei_vrp_display_interface_brief', 'PHY',
+          parse_filter='{"field":"PHY","op":"in","value":["down","*down"]}')
+    _item('net_huawei_vrp_bgp_down', '华为 VRPv5 BGP Peer Down', '华为 VRPv5 BGP 邻居 Down 数', 'Network', 'huawei_vrp_bgp_down',
+          '统计非 Established 的 BGP 邻居', 'display bgp peer', 'huawei_vrp',
+          1, 2, 'count', 'huawei_vrp_display_bgp_peer', 'STATE',
+          parse_filter='{"field":"STATE","op":"!=","value":"Established"}')
+    _item('net_huawei_vrp_route_total', '华为 VRPv5 Route Total', '华为 VRPv5 路由总数', 'Network', 'huawei_vrp_route_total',
+          '路由总数（与上次对比）', 'display ip routing-table statistics', 'huawei_vrp',
+          10, 30, 'diff', 'huawei_vrp_display_ip_routing_table_statistics', 'ACTIVE_COUNT',
+          parse_filter='{"field":"PROTO","op":"==","value":"Total"}')
+
+    # ── 华为 VRPv8 (CE系列/新NE) ──────────────────────────────────
+    _item('net_huawei_vrpv8_cpu', '华为 VRPv8 CPU', '华为 VRPv8 CPU 利用率', 'Network', 'huawei_vrpv8_cpu',
+          'CPU 利用率', 'display cpu-usage', 'huawei_vrpv8',
+          80, 90, 'numeric', 'huawei_vrp_display_cpu_usage', 'CPU_USAGE_PCT',
+          fallback_regex=r'CPU Usage:\s+(\d+)(?:\.\d+)?%')
+    _item('net_huawei_vrpv8_mem', '华为 VRPv8 Memory', '华为 VRPv8 内存利用率', 'Network', 'huawei_vrpv8_mem',
+          '内存利用率', 'display memory-usage', 'huawei_vrpv8',
+          80, 90, 'numeric', 'huawei_vrp_display_memory_usage', 'MEMORY_USING_PCT',
+          fallback_regex=r'Memory Using Percentage Is:\s+(\d+)%')
+    _item('net_huawei_vrpv8_route_total', '华为 VRPv8 Route Total', '华为 VRPv8 路由总数', 'Network', 'huawei_vrpv8_route_total',
+          '路由总数（与上次对比）', 'display ip routing-table statistics', 'huawei_vrpv8',
+          10, 30, 'diff', 'huawei_vrp_display_ip_routing_table_statistics', 'ACTIVE_COUNT',
+          parse_filter='{"field":"PROTO","op":"==","value":"Total"}')
+
+    # ── H3C Comware ───────────────────────────────────────────────
+    _item('net_h3c_cpu', 'H3C Comware CPU', 'H3C Comware CPU 利用率', 'Network', 'h3c_comware_cpu',
+          'CPU 利用率', 'display cpu-usage', 'h3c_comware',
+          80, 90, 'numeric', 'hp_comware_display_cpu_usage', 'CPU_5_SEC',
+          fallback_regex=r'(\d+)%\s+in\s+last\s+5\s+seconds')
+    _item('net_h3c_mem', 'H3C Comware Memory', 'H3C Comware 内存利用率', 'Network', 'h3c_comware_mem',
+          '内存利用率（计算 Used/Total）', 'display memory', 'h3c_comware',
+          80, 90, 'numeric', 'hp_comware_display_memory', 'USED_KB',
+          fallback_regex=r'Used\s*\(kB\):\s+(\d+)')
+    _item('net_h3c_intf_down', 'H3C Comware Interface Down', 'H3C Comware 接口 Down 数', 'Network', 'h3c_comware_intf_down',
+          '统计 DOWN 的接口数量', 'display interface brief', 'h3c_comware',
+          1, 3, 'count', 'hp_comware_display_interface_brief', 'LINK',
+          parse_filter='{"field":"LINK","op":"in","value":["DOWN","down"]}')
+    _item('net_h3c_bgp_down', 'H3C Comware BGP Peer Down', 'H3C Comware BGP 邻居 Down 数', 'Network', 'h3c_comware_bgp_down',
+          '统计非 Established 的 BGP 邻居', 'display bgp peer ipv4', 'h3c_comware',
+          1, 2, 'count', 'hp_comware_display_bgp_peer_ipv4', 'STATE',
+          parse_filter='{"field":"STATE","op":"!=","value":"Established"}')
+    _item('net_h3c_route_total', 'H3C Comware Route Total', 'H3C Comware 路由总数', 'Network', 'h3c_comware_route_total',
+          '路由总数（与上次对比）', 'display ip routing-table statistics', 'h3c_comware',
+          10, 30, 'diff', 'hp_comware_display_ip_routing_table_statistics', 'ACTIVE',
+          parse_filter='{"field":"PROTO","op":"==","value":"Total"}')
+
+    # ── Juniper JunOS ─────────────────────────────────────────────
+    _item('net_juniper_cpu', 'Juniper JunOS CPU', 'Juniper JunOS CPU 利用率', 'Network', 'juniper_junos_cpu',
+          'CPU 利用率（100 - Idle）', 'show chassis routing-engine', 'juniper_junos',
+          80, 90, 'numeric', 'juniper_junos_show_chassis_routing_engine', 'CPU_IDLE',
+          fallback_regex=r'Idle\s+(\d+)\s+percent')
+    _item('net_juniper_mem', 'Juniper JunOS Memory', 'Juniper JunOS 内存利用率', 'Network', 'juniper_junos_mem',
+          '内存利用率', 'show chassis routing-engine', 'juniper_junos',
+          80, 90, 'numeric', 'juniper_junos_show_chassis_routing_engine', 'MEMORY_UTIL_PCT',
+          fallback_regex=r'Memory utilization\s+(\d+)\s+percent')
+    _item('net_juniper_route_total', 'Juniper JunOS Route Total', 'Juniper JunOS 路由总数', 'Network', 'juniper_junos_route_total',
+          '路由总数（与上次对比）', 'show route summary', 'juniper_junos',
+          10, 30, 'diff', 'juniper_junos_show_route_summary', 'ACTIVE_ROUTE_COUNT')
+
+    # ── Arista EOS ────────────────────────────────────────────────
+    _item('net_arista_cpu', 'Arista EOS CPU', 'Arista EOS CPU 利用率', 'Network', 'arista_eos_cpu',
+          'CPU 利用率', 'show processes top once', 'arista_eos',
+          80, 90, 'numeric', 'arista_eos_show_processes_top_once', 'CPU_USER')
+
+    return items
+
+
+def _table_columns_deprecated(cursor, table_name: str) -> set[str]:
+    """DEPRECATED — kept for backward compat, use _table_columns instead."""
+    return _table_columns(cursor, table_name)
+
 def init_db():
     global _db_initialized
     if _db_initialized:
@@ -458,7 +597,11 @@ def _init_db_logic(conn):
         ('rejected_reason', "TEXT DEFAULT ''"),
         ('category', "TEXT DEFAULT 'custom'"),
         ('created_at', 'TEXT'),
-        ('updated_at', 'TEXT')
+        ('updated_at', 'TEXT'),
+        # ── 脚本版本管理扩展字段 ──
+        ('parent_script_id', "TEXT DEFAULT ''"),     # 指向上一版本
+        ('script_family', "TEXT DEFAULT ''"),         # 脚本族标识
+        ('is_latest', 'INTEGER DEFAULT 1')            # 是否为该族的最新版本
     ]:
         ensure_column('scripts', col, dtype)
     
@@ -1969,13 +2112,23 @@ def _init_db_logic(conn):
         ''')
         
     # Migration: Add missing columns if they don't exist
-    for col, dtype in [('script_id', "TEXT DEFAULT ''"), ('warning_threshold', 'REAL'), ('critical_threshold', 'REAL'), ('method', "TEXT DEFAULT 'SNMP'"), ('command', "TEXT DEFAULT ''")]:
+    for col, dtype in [('script_id', "TEXT DEFAULT ''"), ('warning_threshold', 'REAL'), ('critical_threshold', 'REAL'), ('method', "TEXT DEFAULT 'SNMP'"), ('command', "TEXT DEFAULT ''"),
+                       # ── TextFSM 解析扩展字段 ──
+                       ('parse_type', "TEXT DEFAULT 'numeric'"),       # numeric | status | count | diff | info
+                       ('textfsm_template', "TEXT DEFAULT ''"),          # 模板文件名（含 .textfsm）
+                       ('parse_field', "TEXT DEFAULT ''"),               # 从 TextFSM 结果中提取的字段名
+                       ('parse_filter', "TEXT DEFAULT ''"),              # count/diff 类型的过滤条件 (JSON)
+                       ('fallback_regex', "TEXT DEFAULT ''"),            # TextFSM 失败时的正则兜底
+                       ('enabled', 'INTEGER DEFAULT 1')]:                 # 是否启用该指标
         ensure_column('inspection_items', col, dtype)
         
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_items_cat ON inspection_items(category)')
 
     # Migration for inspection_results
     ensure_column('inspection_results', 'metrics_json', "TEXT DEFAULT '{}'")
+
+    # 提前定义 now，供后续所有 seed 操作使用
+    now = _beijing_now_iso()
 
     # Seed standard scripts
     std_scripts = [
@@ -1987,15 +2140,47 @@ def _init_db_logic(conn):
         ('std_linux_swap', 'Linux Swap 使用率', '#!/bin/bash\nfree | grep Swap | awk "{if ($2>0) print ($3/$2)*100; else print 0}"', '交换分区使用百分比 (0-100)', 'Linux', 'standard'),
         ('std_linux_load', 'Linux CPU 负载比例', '#!/bin/bash\n# 计算负载与核心数的比值\ncores=$(grep -c ^processor /proc/cpuinfo)\nload=$(uptime | awk -F "load average:" "{print $2}" | cut -d, -f1 | xargs)\necho | awk "{print ($load/$cores)*100}"', '系统 1min 负载相对于核心数的比例', 'Linux', 'standard'),
         ('std_linux_conns', 'Linux TCP 连接数', '#!/bin/bash\nss -ant | grep ESTAB | wc -l', '统计系统 Established 状态的 TCP 连接总数', 'Linux', 'standard'),
-        ('std_linux_proc', 'Linux 关键进程巡检', '#!/bin/bash\n# 检查指定的多个关键进程，返回丢失的数量\nprocs=${1:-"sshd crond docker"}\nmissing=0\nfor p in $procs; do\n  if ! pgrep -f "$p" > /dev/null; then\n    echo "[CRITICAL] Process not found: $p"\n    missing=$((missing + 1))\n  fi\ndone\necho "MISSING_COUNT: $missing"', '检查进程存活状态，返回未运行的进程数', 'Linux', 'standard')
+        ('std_linux_proc', 'Linux 关键进程巡检', '#!/bin/bash\n# 检查指定的多个关键进程，返回丢失的数量\nprocs=${1:-"sshd crond docker"}\nmissing=0\nfor p in $procs; do\n  if ! pgrep -f "$p" > /dev/null; then\n    echo "[CRITICAL] Process not found: $p"\n    missing=$((missing + 1))\n  fi\ndone\necho "MISSING_COUNT: $missing"', '检查进程存活状态，返回未运行的进程数', 'Linux', 'standard'),
+
+        # ── 网络设备综合巡检脚本（每个平台一个，一次连接采集所有指标）──
+        # Cisco IOS / IOS-XE
+        ('insp_cisco_ios_full', 'Cisco IOS 综合巡检', 'show version\nshow processes cpu sorted\nshow processes memory sorted\nshow environment temperature\nshow environment power all\nshow interfaces status\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Cisco IOS / IOS-XE 综合巡检脚本，覆盖 CPU/内存/温度/电源/接口/路由协议/路由数量', 'cisco_ios', 'inspection'),
+        # Cisco NX-OS
+        ('insp_cisco_nxos_full', 'Cisco NX-OS 综合巡检', 'show version\nshow processes cpu\nshow system resources\nshow environment\nshow interface brief\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Cisco NX-OS 综合巡检脚本，覆盖 CPU/内存/环境/接口/路由协议/路由数量', 'cisco_nxos', 'inspection'),
+        # 华为 VRPv5 (S系列/AR/老NE)
+        ('insp_huawei_vrp_full', '华为 VRPv5 综合巡检', 'display version\ndisplay cpu-usage\ndisplay memory-usage\ndisplay temperature all\ndisplay fan\ndisplay power\ndisplay interface brief\ndisplay bgp peer\ndisplay ospf peer brief\ndisplay ip routing-table statistics', '华为 VRPv5（S系列/AR/老NE）综合巡检脚本', 'huawei_vrp', 'inspection'),
+        # 华为 VRPv8 (CE系列/新NE)
+        ('insp_huawei_vrpv8_full', '华为 VRPv8 综合巡检', 'display version\ndisplay cpu-usage\ndisplay memory-usage\ndisplay environment\ndisplay interface brief\ndisplay bgp peer\ndisplay ospf peer brief\ndisplay ip routing-table statistics', '华为 VRPv8（CE系列/新NE）综合巡检脚本', 'huawei_vrpv8', 'inspection'),
+        # H3C Comware
+        ('insp_h3c_comware_full', 'H3C Comware 综合巡检', 'display version\ndisplay cpu-usage\ndisplay memory\ndisplay environment\ndisplay fan\ndisplay power\ndisplay interface brief\ndisplay bgp peer ipv4\ndisplay ospf peer\ndisplay ip routing-table statistics', 'H3C Comware V7/V9 综合巡检脚本', 'h3c_comware', 'inspection'),
+        # Juniper JunOS
+        ('insp_juniper_junos_full', 'Juniper JunOS 综合巡检', 'show version\nshow chassis routing-engine\nshow chassis environment\nshow interfaces terse\nshow bgp summary\nshow ospf neighbor\nshow route summary', 'Juniper JunOS 综合巡检脚本（MX/EX/QFX/SRX 通用）', 'juniper_junos', 'inspection'),
+        # Arista EOS
+        ('insp_arista_eos_full', 'Arista EOS 综合巡检', 'show version\nshow processes top once\nshow memory\nshow environment temperature\nshow environment power\nshow interfaces status\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Arista EOS 综合巡检脚本', 'arista_eos', 'inspection')
     ]
     cursor.executemany(
         'INSERT INTO scripts (id, name, content, description, platform, category) VALUES (?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, description = EXCLUDED.description',
         std_scripts
     )
 
+    # ── 网络设备巡检脚本的补充元数据（script_type=cli, status=released, author=system）──
+    # 这些字段通过单独的 UPDATE 设置，因为基础 INSERT 语句列数固定
+    insp_script_ids = [
+        'insp_cisco_ios_full', 'insp_cisco_nxos_full',
+        'insp_huawei_vrp_full', 'insp_huawei_vrpv8_full',
+        'insp_h3c_comware_full', 'insp_juniper_junos_full', 'insp_arista_eos_full',
+    ]
+    for sid in insp_script_ids:
+        cursor.execute(
+            "UPDATE scripts SET script_type=?, status=?, author=?, "
+            "submitter_name=?, approver_username=?, "
+            "created_at=COALESCE(NULLIF(created_at, ''), ?), "
+            "updated_at=? "
+            "WHERE id=?",
+            ('cli', 'released', 'system', 'system', 'system', now, now, sid)
+        )
+
     # Seed/Update default items
-    now = _beijing_now_iso()
     default_items = [
         # --- Network Device ---
         ('net_ping', 'Connectivity (Ping)', '网络连通性 (Ping)', 'Network', 'ping', '检查设备 ICMP 响应时间与丢包率', 'ICMP', 'ping -c 3 {ip}', '', 100, 200, 'Generic', '', now, now),
@@ -2015,6 +2200,10 @@ def _init_db_logic(conn):
         ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
         ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定进程是否存在', 'Shell', 'std_linux_proc', 'std_linux_proc', 1, 0, 'Linux', '', now, now),
     ]
+
+    # ── 网络设备巡检指标（CLI 方式，需要后续迁移补充扩展字段） ──
+    # 这里使用统一的 insert_network_items 函数处理，因为它们需要 parse_type / textfsm_template / parse_field 等扩展字段
+    network_items_v2 = _build_network_inspection_items(now)
     
     # ── Seed/Update default items ──
     if _USE_PG:
@@ -2033,6 +2222,39 @@ def _init_db_logic(conn):
         # SQLite: INSERT OR REPLACE
         for item in default_items:
             cursor.execute('INSERT OR REPLACE INTO inspection_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', item)
+
+    # ── 网络设备巡检指标 Seed（使用扩展字段：parse_type / textfsm_template / parse_field）──
+    # 这些指标有 15 列（多了 parse_type / textfsm_template / parse_field / parse_filter / fallback_regex / enabled 6 个字段）
+    # 分别对应：id, name, name_zh, category, check_key, description, method, command, script_id,
+    #          warning_threshold, critical_threshold, vendor, oid, created_at, updated_at,
+    #          parse_type, textfsm_template, parse_field, parse_filter, fallback_regex, enabled
+    network_sql_columns = (
+        'id, name, name_zh, category, check_key, description, method, command, script_id, '
+        'warning_threshold, critical_threshold, vendor, oid, created_at, updated_at, '
+        'parse_type, textfsm_template, parse_field, parse_filter, fallback_regex, enabled'
+    )
+    if _USE_PG:
+        pg_net_sql = (
+            f'INSERT INTO inspection_items ({network_sql_columns}) '
+            f'VALUES (' + ','.join(['%s'] * 21) + ') '
+            'ON CONFLICT (id) DO UPDATE SET '
+            'name=EXCLUDED.name, name_zh=EXCLUDED.name_zh, category=EXCLUDED.category, '
+            'check_key=EXCLUDED.check_key, description=EXCLUDED.description, '
+            'method=EXCLUDED.method, command=EXCLUDED.command, script_id=EXCLUDED.script_id, '
+            'warning_threshold=EXCLUDED.warning_threshold, critical_threshold=EXCLUDED.critical_threshold, '
+            'vendor=EXCLUDED.vendor, oid=EXCLUDED.oid, updated_at=EXCLUDED.updated_at, '
+            'parse_type=EXCLUDED.parse_type, textfsm_template=EXCLUDED.textfsm_template, '
+            'parse_field=EXCLUDED.parse_field, parse_filter=EXCLUDED.parse_filter, '
+            'fallback_regex=EXCLUDED.fallback_regex, enabled=EXCLUDED.enabled'
+        )
+        cursor.executemany(pg_net_sql, network_items_v2)
+    else:
+        sqlite_net_sql = (
+            f'INSERT OR REPLACE INTO inspection_items ({network_sql_columns}) '
+            f'VALUES (' + ','.join(['?'] * 21) + ')'
+        )
+        for item in network_items_v2:
+            cursor.execute(sqlite_net_sql, item)
 
     # ── Seed Default Admin User ──
     admin_exists = cursor.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone()
