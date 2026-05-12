@@ -54,12 +54,15 @@
     "@types/node": "^22.14.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@vitest/runner": "^4.1.6",
     "autoprefixer": "^10.4.21",
     "cross-env": "^10.1.0",
+    "fast-check": "^4.8.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
+    "vitest": "^4.1.6",
     "wait-on": "^9.0.4"
   }
 }

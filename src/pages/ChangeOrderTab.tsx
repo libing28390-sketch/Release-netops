@@ -53,6 +53,7 @@ interface ChangeOrder {
   result_detail: Record<string, unknown>;
   authorization_exempt?: boolean;
   rejected_reason: string;
+  control_sheet?: Record<string, any>;
   created_at: string;
   updated_at: string;
 }
@@ -201,6 +202,17 @@ const EMPTY_FORM = {
   assigned_final_approver_username: '',
   target_devices: [] as { hostname: string; ip_address: string; username?: string; platform?: string }[],
   commands: [] as string[],
+  control_sheet: {
+    scheduled_start: '',
+    scheduled_end: '',
+    target_ips: '',
+    change_content: '',
+    risk_analysis: '',
+    rollback_plan: '',
+    requester_approver: '',
+    security_approver: '',
+    implementation_plan: '',
+  },
 };
 
 const DEFAULT_PAGE_SIZE = 10;
@@ -503,6 +515,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const [scheduledFrom, setScheduledFrom] = useState('');
   const [scheduledTo, setScheduledTo] = useState('');
   const [viewTab, setViewTab] = useState<'all' | 'group_todo' | 'my_todo' | 'my_focus' | 'my_participated' | 'my_drafts'>(initialView && initialView !== 'create' ? initialView : 'all');
+  const [myTodoSubTab, setMyTodoSubTab] = useState<'review' | 'implement' | 'modify'>('review');
 
   // Sync viewTab when sidebar navigation changes
   useEffect(() => {
@@ -1217,6 +1230,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       // View tab specific filters
       if (viewTab === 'my_todo' && currentUser.username) {
         params.set('my_todo', currentUser.username);
+        params.set('my_todo_kind', myTodoSubTab);
       } else if (viewTab === 'group_todo' && Array.isArray(currentUser.change_groups) && currentUser.change_groups.length > 0) {
         params.set('group_todo', currentUser.change_groups.join(','));
       } else if (viewTab === 'my_focus' && currentUser.id) {
@@ -1237,7 +1251,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, search, statusFilter, priorityFilter, requesterFilter, assigneeFilter, bookmarkFilter, orderTypeFilter, createdFrom, createdTo, completedFrom, completedTo, scheduledFrom, scheduledTo, viewTab, currentUser.id, currentUser.username, currentUser.change_groups, zh, showToast, authHeaders]);
+  }, [page, pageSize, search, statusFilter, priorityFilter, requesterFilter, assigneeFilter, bookmarkFilter, orderTypeFilter, createdFrom, createdTo, completedFrom, completedTo, scheduledFrom, scheduledTo, viewTab, myTodoSubTab, currentUser.id, currentUser.username, currentUser.change_groups, zh, showToast, authHeaders]);
 
   const fetchBookmarks = useCallback(async () => {
     try {
@@ -1377,16 +1391,6 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           payload.commands = effectivePreview.execute;
         }
         payload.rollback_plan = (effectivePreview?.rollback || []).join('\n') || form.rollback_plan;
-      } else if (commandMode === 'template') {
-        // Template mode but no scenario selected; use device platform
-        const devicePlatform = form.target_devices.find(d => d.platform)?.platform || '';
-        if (devicePlatform) {
-          payload.command_template = {
-            scenario_id: '',
-            platform: devicePlatform,
-            variables: {},
-          };
-        }
       }
 
       const url = editingOrder ? `/api/change-orders/${editingOrder.id}` : '/api/change-orders';

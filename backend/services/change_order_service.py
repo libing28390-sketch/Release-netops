@@ -13,6 +13,10 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
+# Alias used by bookmark / template helpers
+_now = _utc_now_iso
+
+
 def _today_str() -> str:
     return datetime.now(timezone.utc).strftime('%Y%m%d')
 
@@ -48,7 +52,8 @@ def create_change_order(conn, *, title: str, description: str = '',
                         risk_level: str = 'low',
                         scheduled_start: str = '',
                         scheduled_end: str = '',
-                        authorization_exempt: bool = False) -> dict:
+                        authorization_exempt: bool = False,
+                        control_sheet: dict | None = None) -> dict:
     order_id = str(uuid.uuid4())
     order_number = generate_order_number(conn)
     now = _utc_now_iso()
@@ -63,8 +68,9 @@ def create_change_order(conn, *, title: str, description: str = '',
             target_devices_json, commands_json, rollback_plan, risk_level,
             scheduled_start, scheduled_end,
             authorization_exempt,
+            control_sheet_json,
             created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             order_id, order_number, title, description, order_type, priority, status,
@@ -77,6 +83,7 @@ def create_change_order(conn, *, title: str, description: str = '',
             rollback_plan, risk_level,
             scheduled_start, scheduled_end,
             1 if authorization_exempt else 0,
+            json.dumps(control_sheet or {}, ensure_ascii=False),
             now, now,
         ),
     )
@@ -105,6 +112,7 @@ def update_change_order(conn, order_id: str, updates: dict) -> dict | None:
         'actual_start', 'actual_end',
         'result_summary', 'result_detail_json',
         'approval_token', 'rejected_reason',
+        'control_sheet_json',
     }
 
     # Convert list fields to JSON strings
@@ -116,6 +124,8 @@ def update_change_order(conn, order_id: str, updates: dict) -> dict | None:
         updates['result_detail_json'] = json.dumps(updates.pop('result_detail'), ensure_ascii=False)
     if 'command_template' in updates:
         updates['command_template_json'] = json.dumps(updates.pop('command_template'), ensure_ascii=False)
+    if 'control_sheet' in updates:
+        updates['control_sheet_json'] = json.dumps(updates.pop('control_sheet'), ensure_ascii=False)
 
     set_parts = []
     values = []
@@ -143,7 +153,42 @@ def get_change_order(conn, order_id: str) -> dict | None:
     row = conn.execute("SELECT * FROM change_orders WHERE id = ?", (order_id,)).fetchone()
     if not row:
         return None
-    return _row_to_dict(row)
+    order = _row_to_dict(row)
+    
+    # Fetch attachments
+    attachments_rows = conn.execute(
+        "SELECT id, file_name, file_size, created_at FROM change_order_control_sheet_attachments WHERE order_id = ? ORDER BY created_at ASC",
+        (order_id,)
+    ).fetchall()
+    order['control_sheet_attachments'] = [dict(r) for r in attachments_rows]
+    
+    return order
+
+
+def _build_group_todo_conditions(groups: set[str], exclude_requester: str = '') -> tuple[list[str], list[str]]:
+    """
+    Build the 'group_todo' filter fragment (Property 6).
+    Contracts:
+    - initial_reviewer: status='initial_review' AND assigned_initial_reviewer_id is empty
+    - final_approver: status='final_review' AND assigned_final_approver_id is empty
+    """
+    conditions = []
+    params = []
+    gconds = []
+    if 'initial_reviewer' in groups:
+        gconds.append("(status = 'initial_review' AND (assigned_initial_reviewer_id IS NULL OR assigned_initial_reviewer_id = ''))")
+    if 'final_approver' in groups:
+        gconds.append("(status = 'final_review' AND (assigned_final_approver_id IS NULL OR assigned_final_approver_id = ''))")
+    
+    if gconds:
+        conditions.append(f"({' OR '.join(gconds)})")
+        if exclude_requester:
+            conditions.append("requester_username != ?")
+            params.append(exclude_requester)
+    else:
+        conditions.append("1=0")
+    
+    return conditions, params
 
 
 def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
@@ -162,7 +207,8 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
                        completed_to: str = '',
                        scheduled_from: str = '',
                        scheduled_to: str = '',
-                       exclude_requester: str = '') -> tuple[list[dict], int]:
+                       exclude_requester: str = '',
+                       my_todo_kind: str = '') -> tuple[list[dict], int]:
     conditions = []
     params = []
 
@@ -182,31 +228,34 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
         )
         params.extend([my_participated] * 6)
     elif my_todo:
-        conditions.append(
-            "("
-            "(requester_username = ? AND status IN ('draft', 'rejected', 'approved'))"
-            " OR (assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?)"
-            " OR (assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)"
-            ")"
-        )
-        params.extend([my_todo, my_todo, my_todo, my_todo, my_todo])
-    if group_todo:
-        groups = [g.strip() for g in group_todo.split(',') if g.strip()]
-        gconds = []
-        if 'initial_reviewer' in groups:
-            # Show initial_review orders that either have no specific assignee,
-            # or are assigned to the current user (my_todo handles the personal case,
-            # group_todo shows unassigned ones for anyone in the group to pick up)
-            gconds.append("(status = 'initial_review' AND (assigned_initial_reviewer_id IS NULL OR assigned_initial_reviewer_id = ''))")
-        if 'final_approver' in groups:
-            gconds.append("(status = 'final_review' AND (assigned_final_approver_id IS NULL OR assigned_final_approver_id = ''))")
-        if gconds:
-            conditions.append(f"({' OR '.join(gconds)})")
-            if exclude_requester:
-                conditions.append("requester_username != ?")
-                params.append(exclude_requester)
+        if my_todo_kind == 'review':
+            conditions.append(
+                "("
+                "(assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?)"
+                " OR (assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)"
+                ")"
+            )
+            params.extend([my_todo, my_todo, my_todo, my_todo])
+        elif my_todo_kind == 'implement':
+            conditions.append("(requester_username = ? AND status = 'approved')")
+            params.append(my_todo)
+        elif my_todo_kind == 'modify':
+            conditions.append("(requester_username = ? AND status IN ('draft', 'rejected'))")
+            params.append(my_todo)
         else:
-            conditions.append("1=0")
+            conditions.append(
+                "("
+                "(requester_username = ? AND status IN ('draft', 'rejected', 'approved'))"
+                " OR (assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?)"
+                " OR (assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)"
+                ")"
+            )
+            params.extend([my_todo, my_todo, my_todo, my_todo, my_todo])
+    if group_todo:
+        groups = {g.strip() for g in group_todo.split(',') if g.strip()}
+        g_conds, g_params = _build_group_todo_conditions(groups, exclude_requester)
+        conditions.extend(g_conds)
+        params.extend(g_params)
     if status:
         conditions.append("status = ?")
         params.append(status)
@@ -257,8 +306,43 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
         f"SELECT * FROM change_orders {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
         params + [page_size, offset],
     ).fetchall()
+    
+    results = []
+    ids = [r['id'] for r in rows]
+    attachments_map = {}
+    if ids:
+        placeholders = ','.join(['?'] * len(ids))
+        att_rows = conn.execute(
+            f"SELECT id, order_id, file_name, file_size FROM change_order_control_sheet_attachments WHERE order_id IN ({placeholders})",
+            tuple(ids)
+        ).fetchall()
+        for ar in att_rows:
+            oid = ar['order_id']
+            if oid not in attachments_map:
+                attachments_map[oid] = []
+            attachments_map[oid].append(dict(ar))
 
-    return [_row_to_dict(r) for r in rows], total
+    for r in rows:
+        d = _row_to_dict(r)
+        d['control_sheet_attachments'] = attachments_map.get(d['id'], [])
+        
+        # Add todo_kind label (Task 15.1)
+        if my_todo:
+            if d['requester_username'] == my_todo and d['status'] in ('draft', 'rejected', 'approved'):
+                d['todo_kind'] = 'requester_action'
+            elif d['assigned_initial_reviewer_username'] == my_todo and d['status'] == 'initial_review':
+                d['todo_kind'] = 'reviewer_action'
+            elif d['assigned_final_approver_username'] == my_todo and d['status'] == 'final_review':
+                d['todo_kind'] = 'approver_action'
+        elif group_todo:
+            if d['status'] == 'initial_review':
+                d['todo_kind'] = 'group_initial_review'
+            elif d['status'] == 'final_review':
+                d['todo_kind'] = 'group_final_review'
+        
+        results.append(d)
+
+    return results, total
 
 
 def get_summary(conn, user_id: str = '', username: str = '') -> dict:
@@ -276,20 +360,20 @@ def get_summary(conn, user_id: str = '', username: str = '') -> dict:
     my_todo_count = 0
     group_todo_count = 0
     if user_id and username:
-        # My Todo
+        # My Todo - Align with list_change_orders
         my_todo_count = conn.execute(
             """
             SELECT COUNT(*) FROM change_orders 
             WHERE (
-                (status = 'initial_review' AND assigned_initial_reviewer_id = ?) OR 
-                (status = 'final_review' AND assigned_final_approver_id = ?)
-            ) AND requester_username != ?
+                (requester_username = ? AND status IN ('draft', 'rejected', 'approved')) OR 
+                (assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?) OR 
+                (assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)
+            )
             """,
-            (user_id, user_id, username)
+            (username, username, username, username, username)
         ).fetchone()[0]
 
-        # Group Todo
-        # Get user's groups
+        # Group Todo - Already using shared helper if it was extracted, otherwise inline
         row = conn.execute('SELECT change_groups_json FROM users WHERE id = ?', (user_id,)).fetchone()
         groups = set()
         if row:
@@ -304,17 +388,12 @@ def get_summary(conn, user_id: str = '', username: str = '') -> dict:
                 groups = {str(item or '').strip() for item in raw_groups if str(item or '').strip()}
         
         if groups:
-            gconds = []
-            if 'initial_reviewer' in groups:
-                gconds.append("(status = 'initial_review' AND (assigned_initial_reviewer_id IS NULL OR assigned_initial_reviewer_id = ''))")
-            if 'final_approver' in groups:
-                gconds.append("(status = 'final_review' AND (assigned_final_approver_id IS NULL OR assigned_final_approver_id = ''))")
-            
-            if gconds:
-                group_todo_count = conn.execute(
-                    f"SELECT COUNT(*) FROM change_orders WHERE ({' OR '.join(gconds)}) AND requester_username != ?",
-                    (username,)
-                ).fetchone()[0]
+            g_conds, g_params = _build_group_todo_conditions(groups, username)
+            where = f"WHERE {' AND '.join(g_conds)}"
+            group_todo_count = conn.execute(
+                f"SELECT COUNT(*) FROM change_orders {where}",
+                tuple(g_params)
+            ).fetchone()[0]
 
     return {
         'total': total,
@@ -435,15 +514,19 @@ def get_template(conn, template_id: str) -> dict | None:
 
 def _row_to_dict(row) -> dict:
     d = dict(row)
-    for json_field in ('target_devices_json', 'commands_json', 'result_detail_json', 'command_template_json'):
+    for json_field in ('target_devices_json', 'commands_json', 'result_detail_json', 'command_template_json', 'control_sheet_json'):
         raw = d.get(json_field, '') or ''
         try:
             parsed = json.loads(raw)
-            if json_field == 'command_template_json' and not isinstance(parsed, dict):
+            # Ensure dict types for template and control sheet
+            if json_field in ('command_template_json', 'control_sheet_json') and not isinstance(parsed, dict):
                 parsed = {}
             d[json_field.replace('_json', '')] = parsed
         except (json.JSONDecodeError, TypeError):
-            d[json_field.replace('_json', '')] = [] if json_field in ('target_devices_json', 'commands_json') else {}
+            if json_field in ('target_devices_json', 'commands_json'):
+                d[json_field.replace('_json', '')] = []
+            else:
+                d[json_field.replace('_json', '')] = {}
     if 'authorization_exempt' in d:
         d['authorization_exempt'] = bool(d.get('authorization_exempt'))
     return d

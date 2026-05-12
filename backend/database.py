@@ -469,6 +469,11 @@ def init_db():
         # Use autocommit for initialization to prevent transaction poisoning
         if _USE_PG and hasattr(conn, 'autocommit'):
             conn.autocommit = True
+        
+        # Ensure data directories exist
+        os.makedirs(os.path.join(PROJECT_ROOT, 'data', 'pam_recordings'), exist_ok=True)
+        os.makedirs(os.path.join(PROJECT_ROOT, 'data', 'change_order_attachments'), exist_ok=True)
+
         _init_db_logic(conn)
         conn.commit()
         _db_initialized = True
@@ -1844,6 +1849,22 @@ def _init_db_logic(conn):
     ensure_column('change_orders', 'approval_token', "TEXT DEFAULT ''")
     ensure_column('change_orders', 'rejected_reason', "TEXT DEFAULT ''")
 
+    ensure_column('change_orders', 'control_sheet_json', "TEXT DEFAULT '{}'")
+    
+    # ── Change Order Control Sheet Attachments ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS change_order_control_sheet_attachments (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_size INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (order_id) REFERENCES change_orders(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_co_attachments_order ON change_order_control_sheet_attachments(order_id)')
+
     # ── Change Order Bookmarks ──
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS change_order_bookmarks (
@@ -2221,7 +2242,11 @@ def _init_db_logic(conn):
     else:
         # SQLite: INSERT OR REPLACE
         for item in default_items:
-            cursor.execute('INSERT OR REPLACE INTO inspection_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', item)
+            cursor.execute('''
+                INSERT OR REPLACE INTO inspection_items 
+                (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', item)
 
     # ── 网络设备巡检指标 Seed（使用扩展字段：parse_type / textfsm_template / parse_field）──
     # 这些指标有 15 列（多了 parse_type / textfsm_template / parse_field / parse_filter / fallback_regex / enabled 6 个字段）

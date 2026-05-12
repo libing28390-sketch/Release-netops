@@ -3,12 +3,16 @@ change_orders.py — Change Order / Ticket Management API
 CRUD endpoints for change order lifecycle management.
 """
 
+import os
+import shutil
+import uuid
 import json
 import logging
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, File, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from database import get_db_connection
+from database import get_db_connection, PROJECT_ROOT
 from core.rbac import require_role
 from services.audit_service import log_audit_event
 from services.change_order_service import (
@@ -48,10 +52,84 @@ ALLOWED_TRANSITIONS = {
     'rollback_in_progress': {'rolled_back', 'failed'},
     'failed': {'rollback_in_progress', 'cancelled'},
     'rejected': {'draft', 'cancelled'},
+    # Terminal states
+    'completed': set(),
+    'rolled_back': set(),
+    'cancelled': set(),
     # Legacy status compatibility path
     'pending': {'approved', 'rejected', 'cancelled'},
     'executing': {'completed', 'failed', 'rollback_in_progress', 'cancelled'},
 }
+
+# Sanity-check: every status in ALLOWED_STATUSES must have an explicit entry in
+# ALLOWED_TRANSITIONS so that terminal states are never silently swallowed by the
+# .get(current_status, set()) fallback.  This assertion fires at import time
+# (and therefore at test-collection time) to catch any future drift.
+assert ALLOWED_STATUSES <= ALLOWED_TRANSITIONS.keys(), (
+    "ALLOWED_TRANSITIONS is missing keys for: "
+    + str(ALLOWED_STATUSES - ALLOWED_TRANSITIONS.keys())
+)
+
+
+def _validate_assignment_rules(requester_username: str, payload: dict):
+    """
+    Validate assignment constraints (Property 3 & 4):
+    - Requester cannot be assigned as initial reviewer or final approver.
+    - Initial reviewer and Final approver cannot be the same person.
+    """
+    rev_id = str(payload.get('assigned_initial_reviewer_id') or '').strip()
+    rev_name = str(payload.get('assigned_initial_reviewer_username') or '').strip()
+    app_id = str(payload.get('assigned_final_approver_id') or '').strip()
+    app_name = str(payload.get('assigned_final_approver_username') or '').strip()
+
+    if rev_name and rev_name == requester_username:
+        raise HTTPException(status_code=400, detail='申请人不能作为指定的初审人')
+    if app_name and app_name == requester_username:
+        raise HTTPException(status_code=400, detail='申请人不能作为指定的终审人')
+    if rev_id and rev_id == app_id:
+        raise HTTPException(status_code=400, detail='初审人与终审人不能为同一人')
+
+
+def _validate_template_completeness(payload: dict):
+    """
+    Property 1: Template Enforcement (Task 14.1)
+    Non-draft orders must have a valid command template.
+    """
+    status = payload.get('status')
+    if status and status != 'draft':
+        tpl = payload.get('command_template') or {}
+        if not tpl or tpl.get('mode') != 'template' or not tpl.get('scenario_id'):
+            raise HTTPException(status_code=400, detail='提交初审前必须选择场景化命令模板并渲染出可执行命令')
+        
+        preview = tpl.get('preview', {})
+        if not preview or not preview.get('execute'):
+            raise HTTPException(status_code=400, detail='提交初审前必须渲染出可执行命令')
+
+
+def _validate_control_sheet_completeness(conn, order_id: str, payload: dict, new_status: str):
+    """
+    Property 2: Control Sheet Enforcement (Task 15.3)
+    """
+    if new_status == 'initial_review':
+        cs = payload.get('control_sheet') or {}
+        # Required fields based on design.md and bugfix.md 2.4
+        required_fields = [
+            'scheduled_start', 'scheduled_end', 'target_ips', 
+            'change_content', 'risk_analysis', 'rollback_plan',
+            'requester_approver', 'security_approver', 'implementation_plan'
+        ]
+        missing = [f for f in required_fields if not str(cs.get(f) or '').strip()]
+        if missing:
+            raise HTTPException(status_code=400, detail=f'提交初审前必须填写完整的变更控制表，缺失字段: {", ".join(missing)}')
+
+    if new_status == 'implementing':
+        # Additionally require >= 1 row in change_order_control_sheet_attachments
+        count = conn.execute(
+            "SELECT COUNT(*) FROM change_order_control_sheet_attachments WHERE order_id = ?",
+            (order_id,)
+        ).fetchone()[0]
+        if count == 0:
+            raise HTTPException(status_code=400, detail='进入实施阶段前必须上传至少一个附件（变更控制表扫描件/截图）')
 
 
 STATUS_ZH = {
@@ -98,12 +176,12 @@ def _resolve_assignment_user(conn, user_id: str, stage: str) -> dict:
     if stage == 'initial':
         if user.get('role') == 'Viewer':
             raise HTTPException(status_code=400, detail='Initial reviewer must be Operator or Administrator')
-        if groups and 'initial_reviewer' not in groups:
+        if 'initial_reviewer' not in groups:
             raise HTTPException(status_code=400, detail='Selected user is not in the initial review group')
     if stage == 'final':
         if user.get('role') != 'Administrator':
             raise HTTPException(status_code=400, detail='Final approver must be an Administrator')
-        if groups and 'final_approver' not in groups:
+        if 'final_approver' not in groups:
             raise HTTPException(status_code=400, detail='Selected user is not in the final approval group')
     return {'id': str(user.get('id') or ''), 'username': str(user.get('username') or '')}
 
@@ -277,7 +355,12 @@ def _normalize_command_template_payload(payload: dict) -> dict:
         return normalized
 
     template_payload = normalized.get('command_template') or {}
+    status = normalized.get('status', 'draft')
+    order_type = normalized.get('order_type', 'config_change')
+
     if not template_payload:
+        if status != 'draft' and order_type == 'config_change':
+            raise HTTPException(status_code=400, detail='非草稿状态的配置变更工单必须携带有效的场景化模板')
         normalized['command_template'] = {}
         return normalized
 
@@ -308,6 +391,7 @@ class ChangeOrderCreate(BaseModel):
     scheduled_start: str = ''
     scheduled_end: str = ''
     authorization_exempt: bool = False
+    control_sheet: dict = {}
 
 
 class ChangeOrderUpdate(BaseModel):
@@ -330,6 +414,7 @@ class ChangeOrderUpdate(BaseModel):
     scheduled_start: Optional[str] = None
     scheduled_end: Optional[str] = None
     authorization_exempt: Optional[bool] = None
+    control_sheet: Optional[dict] = None
     actual_start: Optional[str] = None
     actual_end: Optional[str] = None
     result_summary: Optional[str] = None
@@ -371,6 +456,7 @@ def api_list_change_orders(
     completed_to: str = Query('', description='Filter actual_end <= ISO datetime'),
     scheduled_from: str = Query('', description='Filter scheduled_start >= ISO datetime'),
     scheduled_to: str = Query('', description='Filter scheduled_end <= ISO datetime'),
+    my_todo_kind: str = Query('', description='Filter my_todo by kind (review/implement/modify)'),
     user=require_role("Viewer"),
 ):
     conn = get_db_connection()
@@ -387,6 +473,7 @@ def api_list_change_orders(
             created_from=created_from, created_to=created_to,
             completed_from=completed_from, completed_to=completed_to,
             scheduled_from=scheduled_from, scheduled_to=scheduled_to,
+            my_todo_kind=my_todo_kind,
         )
         return {'success': True, 'data': orders, 'total': total, 'page': page, 'page_size': page_size}
     finally:
@@ -530,14 +617,19 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
     try:
         payload = _normalize_assignment_payload(conn, body.model_dump())
         payload = _normalize_command_template_payload(payload)
-        if payload.get('assigned_initial_reviewer_id') == user.get('user_id'):
-            raise HTTPException(status_code=400, detail='申请人不能作为指定的初审人')
-        if payload.get('assigned_final_approver_id') == user.get('user_id'):
-            raise HTTPException(status_code=400, detail='申请人不能作为指定的终审人')
-        if payload.get('assigned_initial_reviewer_id') and payload.get('assigned_initial_reviewer_id') == payload.get('assigned_final_approver_id'):
-            raise HTTPException(status_code=400, detail='初审人与终审人不能为同一人')
+        
+        # Wire Property 3 & 4 (Task 12.1)
+        _validate_assignment_rules(user.get('username'), payload)
+        
+        # Property 1: Template Enforcement (Task 14.1)
+        _validate_template_completeness(payload)
+
         if payload.get('status') != 'draft' and not payload.get('assigned_initial_reviewer_id'):
             raise HTTPException(status_code=400, detail='提交初审时必须指定初审人')
+        
+        # Property 2: Control Sheet Enforcement (Task 15.3)
+        if payload.get('status') == 'initial_review':
+            _validate_control_sheet_completeness(conn, None, payload, 'initial_review')
 
         order = create_change_order(
             conn,
@@ -560,6 +652,7 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
             scheduled_start=payload['scheduled_start'],
             scheduled_end=payload['scheduled_end'],
             authorization_exempt=bool(payload.get('authorization_exempt')),
+            control_sheet=payload.get('control_sheet') or {},
         )
         log_audit_event(
             event_type='change_order.created',
@@ -595,9 +688,23 @@ def api_update_change_order(order_id: str, body: ChangeOrderUpdate, user=require
         updates = _normalize_command_template_payload(updates)
         if not updates:
             raise HTTPException(status_code=400, detail='No fields to update')
-        order = update_change_order(conn, order_id, updates)
-        if not order:
+            
+        existing = get_change_order(conn, order_id)
+        if not existing:
             raise HTTPException(status_code=404, detail='Change order not found')
+            
+        # Merge updates with existing for validation
+        full_payload = {**existing, **updates}
+        _validate_assignment_rules(existing.get('requester_username'), full_payload)
+        
+        # Property 1: Template Enforcement (Task 14.1)
+        _validate_template_completeness(full_payload)
+        
+        # Property 2: Control Sheet Enforcement (Task 15.3)
+        if full_payload.get('status') == 'initial_review' and existing.get('status') != 'initial_review':
+             _validate_control_sheet_completeness(conn, order_id, full_payload, 'initial_review')
+
+        order = update_change_order(conn, order_id, updates)
         log_audit_event(
             event_type='change_order.updated',
             category='change_order',
@@ -645,8 +752,9 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         actor_username = user.get('username', '')
         actor_groups = _load_actor_change_groups(conn, str(user.get('user_id') or ''))
         # Applicant cannot review/approve own ticket.
-        if new_status in {'final_review', 'approved', 'rejected', 'initial_review'} and requester_username and requester_username == actor_username:
-            raise HTTPException(status_code=403, detail='申请人不能审核或审批自己的变更工单')
+        if requester_username and requester_username == actor_username:
+            if new_status in {'final_review', 'approved', 'rejected'} or (new_status == 'initial_review' and current_status != 'draft'):
+                raise HTTPException(status_code=403, detail='申请人不能审核或审批自己的变更工单')
         # Final approval requires administrator role.
         if new_status == 'approved' and user.get('role') != 'Administrator':
             raise HTTPException(status_code=403, detail='只有管理员角色的用户才能执行最终审批')
@@ -679,8 +787,41 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
                 raise HTTPException(status_code=400, detail='提交终审时必须指定终审人')
 
         updates = {'status': new_status}
+        if new_status == 'draft' and current_status in {'initial_review', 'final_review', 'rejected'}:
+            # Task 13.1 / Property 5 / Bug C4:
+            # When transitioning back to draft (reject→draft or direct pushback→draft),
+            # clear all six approver witness fields and pop the two review timestamps
+            # from result_detail.  Keep rejected_reason and the timeline event intact.
+            updates.update({
+                'assigned_initial_reviewer_id': '',
+                'assigned_initial_reviewer_username': '',
+                'assigned_final_approver_id': '',
+                'assigned_final_approver_username': '',
+                'initial_reviewer_id': '',
+                'initial_reviewer_username': '',
+                'final_approver_id': '',
+                'final_approver_username': '',
+                'approver_id': '',
+                'approver_username': '',
+            })
+            # Only pop the two review-phase timestamps; preserve rejected_reason,
+            # rejected_at, rejected_by, rejected_stage so the rejection history is
+            # still visible in the timeline / detail view.
+            rd = dict(existing.get('result_detail') or {})
+            rd.pop('initial_review_at', None)
+            rd.pop('approved_at', None)
+            updates['result_detail'] = rd
         if new_status in {'rejected', 'initial_review'} and current_status in {'initial_review', 'final_review'}:
             updates['rejected_reason'] = body.get('rejected_reason', '')
+            
+            # Record who performed the review action (rejection/pushback)
+            if current_status == 'initial_review':
+                updates['initial_reviewer_id'] = user.get('user_id', '')
+                updates['initial_reviewer_username'] = user.get('username', '')
+            elif current_status == 'final_review':
+                updates['final_approver_id'] = user.get('user_id', '')
+                updates['final_approver_username'] = user.get('username', '')
+
             updates['result_detail'] = {
                 **(existing.get('result_detail') or {}),
                 'rejected_by': user.get('username', ''),
@@ -693,12 +834,9 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             
             final_approver_id = body.get('assigned_final_approver_id')
             if final_approver_id:
-                cur = conn.cursor()
-                cur.execute('SELECT username FROM users WHERE id = ?', (final_approver_id,))
-                row = cur.fetchone()
-                if row:
-                    updates['assigned_final_approver_id'] = final_approver_id
-                    updates['assigned_final_approver_username'] = row[0]
+                resolved = _resolve_assignment_user(conn, final_approver_id, stage='final')
+                updates['assigned_final_approver_id'] = resolved['id']
+                updates['assigned_final_approver_username'] = resolved['username']
             
             updates['result_detail'] = {
                 **(existing.get('result_detail') or {}),
@@ -729,8 +867,18 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         if new_status == 'rolled_back':
             updates['result_detail'] = {
                 **(existing.get('result_detail') or {}),
-                'rollback_completed_at': _utc_now_iso(),
             }
+
+        # Property 3 & 4 (Task 12.1)
+        full_payload = {**existing, **updates}
+        _validate_assignment_rules(existing.get('requester_username'), full_payload)
+        
+        # Property 1 & 2 Enforcement (Task 14.1, 15.3)
+        if new_status == 'initial_review':
+            _validate_template_completeness(full_payload)
+            _validate_control_sheet_completeness(conn, order_id, full_payload, 'initial_review')
+        if new_status == 'implementing':
+            _validate_control_sheet_completeness(conn, order_id, full_payload, 'implementing')
 
         order = update_change_order(conn, order_id, updates)
         severity = 'high' if new_status in ('rejected', 'failed') else 'medium'
@@ -862,5 +1010,78 @@ def api_delete_template(template_id: str, user=require_role("Operator")):
         if not delete_template(conn, template_id):
             raise HTTPException(status_code=404, detail='Template not found')
         return {'success': True, 'message': '模板已删除'}
+    finally:
+        conn.close()
+
+
+@router.post('/change-orders/{order_id}/attachments')
+async def api_upload_attachment(order_id: str, file: UploadFile = File(...), user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        existing = get_change_order(conn, order_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail='Change order not found')
+        
+        attachment_id = f"att-{uuid.uuid4().hex[:12]}"
+        file_ext = os.path.splitext(file.filename)[1]
+        stored_filename = f"{attachment_id}{file_ext}"
+        attachments_dir = os.path.join(PROJECT_ROOT, 'data', 'change_order_attachments')
+        file_path = os.path.join(attachments_dir, stored_filename)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        file_size = os.path.getsize(file_path)
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        
+        conn.execute('''
+            INSERT INTO change_order_control_sheet_attachments (id, order_id, file_path, file_name, file_size, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (attachment_id, order_id, file_path, file.filename, file_size, now))
+        conn.commit()
+        
+        return {'success': True, 'data': {'id': attachment_id, 'file_name': file.filename, 'file_size': file_size}}
+    finally:
+        conn.close()
+
+
+@router.get('/change-orders/{order_id}/attachments/{attachment_id}')
+def api_get_attachment(order_id: str, attachment_id: str, user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT file_path, file_name FROM change_order_control_sheet_attachments WHERE id = ? AND order_id = ?',
+            (attachment_id, order_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Attachment not found')
+        
+        return FileResponse(row['file_path'], filename=row['file_name'])
+    finally:
+        conn.close()
+
+
+@router.delete('/change-orders/{order_id}/attachments/{attachment_id}')
+def api_delete_attachment(order_id: str, attachment_id: str, user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT file_path FROM change_order_control_sheet_attachments WHERE id = ? AND order_id = ?',
+            (attachment_id, order_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Attachment not found')
+        
+        file_path = row['file_path']
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+            
+        conn.execute('DELETE FROM change_order_control_sheet_attachments WHERE id = ?', (attachment_id,))
+        conn.commit()
+        return {'success': True, 'message': '附件已删除'}
     finally:
         conn.close()
