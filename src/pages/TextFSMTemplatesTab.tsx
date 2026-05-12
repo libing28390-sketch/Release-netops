@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import { alertPanelClass } from '../components/shared';
+import { useAlertOverlayDismiss } from './alertManagementShared';
 
 interface Props {
   t: (key: string) => string;
@@ -117,14 +118,8 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
     setPage(1);
   }, [search, platformFilter, sourceFilter]);
 
-  useEffect(() => {
-    if (!editorOpen) return;
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setEditorOpen(false);
-    };
-    window.addEventListener('keydown', handleEsc);
-    return () => window.removeEventListener('keydown', handleEsc);
-  }, [editorOpen]);
+  useAlertOverlayDismiss(editorOpen, () => setEditorOpen(false));
+  useAlertOverlayDismiss(!!confirmDelete, () => setConfirmDelete(null));
 
   const openNewEditor = () => {
     setEditingTemplate(null);
