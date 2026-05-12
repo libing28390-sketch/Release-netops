@@ -160,6 +160,9 @@ def list_templates(platform_filter: str = '', search: str = '') -> list[dict[str
 
     result = list(templates.values())
 
+    # 排序：按文件名升序，确保分页稳定性
+    result.sort(key=lambda x: x.get('filename', '').lower())
+
     # 过滤
     if platform_filter:
         result = [t for t in result if t.get('platform', '').lower() == platform_filter.lower()]

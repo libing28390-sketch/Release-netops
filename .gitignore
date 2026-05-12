@@ -10,23 +10,31 @@ Thumbs.db
 __pycache__/
 *.pyc
 .venv/
+# Database and session data
 data/netops.db
 data/netops.db-shm
 data/netops.db-wal
 backend/data/*.db
-backup/
-data/logs/
-.vscode/
-tools/license_issuer/credentials.json
-zhihu*.md
+data/pam_recordings/
+data/pam_audit/
+*.cast
 
 # License files
 data/license*.json
 tools/license_issuer/issued/
+tools/license_issuer/credentials.json
 
-
-tools/license_issuer/issued/registry.json
+# Scratch and temporary files
 scratch/
-tools/license_issuer/issued/registry.json
-tools/license_issuer/issued/registry.json
-data/license.json
+backup/
+data/logs/
+.vscode/
+zhihu*.md
+
+# Local DBs
+*.db
+*.db-shm
+*.db-wal
+
+# Root license
+license.json

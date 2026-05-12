@@ -317,9 +317,23 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
 
                       {/* Device */}
                       <td className="px-6 py-4">
-                        <div className="flex flex-col">
-                          <span className="text-sm font-semibold text-slate-900">{s.asset_hostname || '—'}</span>
-                          <span className="text-xs text-slate-400 font-mono mt-0.5">{s.target_ip}</span>
+                        <div className="flex items-center gap-3">
+                          <div className="flex flex-col">
+                            <span className="text-sm font-semibold text-slate-900">{s.asset_hostname || '—'}</span>
+                            <span className="text-xs text-slate-400 font-mono mt-0.5">{s.target_ip}</span>
+                          </div>
+                          {(s as any).risk_level > 0 && (
+                            <div 
+                              className={`group relative p-1.5 rounded-lg border ${(s as any).risk_level === 2 ? 'bg-rose-50 border-rose-200 text-rose-500' : 'bg-amber-50 border-amber-200 text-amber-500'}`}
+                              title={(s as any).risk_summary}
+                            >
+                              <AlertCircle className="w-4 h-4" />
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-900 text-white text-[10px] rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                                <div className="font-bold mb-1">{(s as any).risk_level === 2 ? '极高风险' : '中等风险'}</div>
+                                {(s as any).risk_summary}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </td>
 

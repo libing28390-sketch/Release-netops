@@ -1,7 +1,22 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Terminal } from 'xterm';
+import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
-import { Play, Pause, RotateCcw, X, Clock, User, Monitor, Download, AlertCircle, Loader2 } from 'lucide-react';
+import { 
+  Play, 
+  Pause, 
+  RotateCcw, 
+  X, 
+  Clock, 
+  User, 
+  Monitor, 
+  Download, 
+  AlertCircle, 
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Terminal as TerminalIcon,
+  Gauge
+} from 'lucide-react';
 import 'xterm/css/xterm.css';
 
 interface SessionMeta {
@@ -25,6 +40,8 @@ interface CastEvent {
   data: string;
 }
 
+const SPEED_OPTIONS = [0.5, 1.0, 2.0, 4.0, 8.0];
+
 export default function CastPlayer({
   sessionId,
   totalDuration,
@@ -33,27 +50,65 @@ export default function CastPlayer({
   isZh = true,
 }: CastPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const xtermRef     = useRef<Terminal | null>(null);
+  const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef  = useRef<FitAddon | null>(null);
+  const playerRef    = useRef<HTMLDivElement>(null);
 
   const [isPlaying, setIsPlaying]   = useState(false);
   const [progress, setProgress]     = useState(0);
   const [duration, setDuration]     = useState(Math.max(totalDuration || 0, 1));
   const [loadState, setLoadState]   = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMsg, setErrorMsg]     = useState('');
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const eventsRef      = useRef<CastEvent[]>([]);
   const currentIdxRef  = useRef(0);
   const rafRef         = useRef<number | null>(null);
   const startTimeRef   = useRef(0);
   const pauseOffsetRef = useRef(0);
+  const speedRef       = useRef(1.0);
+
+  // Sync speedRef with state for tick function
+  useEffect(() => {
+    speedRef.current = playbackSpeed;
+    if (isPlaying) {
+      // Re-calculate startTimeRef to avoid jump when speed changes during play
+      const now = performance.now();
+      startTimeRef.current = now - (pauseOffsetRef.current * 1000) / speedRef.current;
+    }
+  }, [playbackSpeed, isPlaying]);
+
+  // ── Fullscreen Logic ────────────────────────────────────────────────
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+      // Refit terminal after layout change
+      setTimeout(() => {
+        try { fitAddonRef.current?.fit(); } catch (_) {}
+      }, 100);
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!playerRef.current) return;
+    if (!document.fullscreenElement) {
+      playerRef.current.requestFullscreen().catch(err => {
+        console.error(`Error attempting to enable full-screen mode: ${err.message}`);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  };
 
   // ── Step 1: init xterm after mount ──────────────────────────────────
   useEffect(() => {
     const node = containerRef.current;
     if (!node || xtermRef.current) return;
 
-    const term = new Terminal({
+    const term = new XTerm({
       cursorBlink: false,
       fontFamily: '"Cascadia Code", "JetBrains Mono", Menlo, monospace',
       fontSize: 13,
@@ -177,10 +232,13 @@ export default function CastPlayer({
       return;
     }
     setIsPlaying(true);
-    startTimeRef.current = performance.now() - pauseOffsetRef.current * 1000;
+    
+    // Adjust startTimeRef based on current pauseOffset and current speed
+    startTimeRef.current = performance.now() - (pauseOffsetRef.current * 1000) / speedRef.current;
 
     const tick = () => {
-      const elapsed = (performance.now() - startTimeRef.current) / 1000;
+      const now = performance.now();
+      const elapsed = ((now - startTimeRef.current) / 1000) * speedRef.current;
       const events = eventsRef.current;
 
       while (
@@ -193,6 +251,7 @@ export default function CastPlayer({
 
       const clamped = Math.min(elapsed, duration);
       setProgress(clamped);
+      pauseOffsetRef.current = clamped;
 
       if (elapsed < duration) {
         rafRef.current = requestAnimationFrame(tick);
@@ -241,14 +300,45 @@ export default function CastPlayer({
 
   const pct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
 
+  const [commands, setCommands] = useState<{time: number, text: string}[]>([]);
+  const [showCommands, setShowCommands] = useState(false);
+
+  useEffect(() => {
+    if (loadState === 'ready') {
+      fetch(`/api/pam/sessions/${sessionId}/commands`)
+        .then(r => r.json())
+        .then(data => setCommands(data.commands || []))
+        .catch(() => {});
+    }
+  }, [sessionId, loadState]);
+
+  const jumpTo = (time: number) => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    setIsPlaying(false);
+
+    xtermRef.current?.clear();
+    const events = eventsRef.current;
+    let idx = 0;
+    while (idx < events.length && events[idx].time <= time) {
+      xtermRef.current?.write(events[idx].data);
+      idx++;
+    }
+    currentIdxRef.current = idx;
+    pauseOffsetRef.current = time;
+    setProgress(time);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/85 backdrop-blur-sm p-4">
       <div
-        className="bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 w-full max-w-5xl flex flex-col overflow-hidden"
-        style={{ maxHeight: '90vh' }}
+        ref={playerRef}
+        className={`bg-slate-800 shadow-2xl border border-slate-700 w-full flex flex-col overflow-hidden transition-all duration-300 ${
+          isFullscreen ? 'max-w-none h-screen rounded-none' : 'max-w-6xl rounded-2xl'
+        }`}
+        style={isFullscreen ? {} : { maxHeight: '90vh' }}
       >
         {/* ── Header ── */}
-        <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between bg-slate-900/60 shrink-0">
+        <div className={`px-6 py-4 border-b border-slate-700 flex items-center justify-between bg-slate-900/60 shrink-0 ${isFullscreen ? 'py-3' : ''}`}>
           <div className="flex items-center gap-3 min-w-0">
             <div className="p-2 bg-cyan-500/20 rounded-lg shrink-0">
               <Clock className="w-5 h-5 text-cyan-400" />
@@ -273,15 +363,37 @@ export default function CastPlayer({
                     {sessionMeta.loginUser}
                   </span>
                 )}
-                {sessionMeta?.requester && (
-                  <span className="text-[11px] text-slate-500">
-                    {isZh ? '操作人' : 'By'}: {sessionMeta.requester}
-                  </span>
-                )}
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setShowCommands(!showCommands)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                showCommands ? 'bg-cyan-500 text-white' : 'bg-slate-700 text-slate-300 hover:text-white'
+              }`}
+            >
+              <TerminalIcon size={14} />
+              {isZh ? '命令索引' : 'Commands'}
+              {commands.length > 0 && <span className="bg-white/20 px-1.5 py-0.5 rounded-md ml-1">{commands.length}</span>}
+            </button>
+
+            <button
+              onClick={async () => {
+                const res = await fetch(`/api/pam/sessions/${sessionId}/export`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                  alert(isZh ? '导出任务已启动，完成后将自动下载' : 'Export started, download will begin when ready');
+                } else {
+                  alert(isZh ? `导出失败: ${data.error}` : `Export failed: ${data.error}`);
+                }
+              }}
+              className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-cyan-400 transition-colors"
+              title={isZh ? '导出为视频 (MP4)' : 'Export to Video (MP4)'}
+            >
+              <Monitor size={18} />
+            </button>
+
             <button
               onClick={() => window.open(`/api/pam/sessions/${sessionId}/recording`, '_blank')}
               className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-cyan-400 transition-colors"
@@ -298,34 +410,73 @@ export default function CastPlayer({
           </div>
         </div>
 
-        {/* ── Terminal Area ── */}
-        <div className="flex-1 bg-[#0f172a] relative overflow-hidden" style={{ minHeight: '320px' }}>
-          {/* xterm mount point — always in DOM so useEffect can open it */}
-          <div ref={containerRef} className="absolute inset-0 p-2" />
+        <div className="flex-1 flex overflow-hidden">
+          {/* ── Terminal Area ── */}
+          <div className="flex-1 bg-[#0f172a] relative overflow-hidden" style={{ minHeight: '320px' }}>
+            <div ref={containerRef} className="absolute inset-0 p-2" />
 
-          {/* Loading overlay */}
-          {loadState === 'loading' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0f172a]/95 z-10 gap-3">
-              <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
-              <p className="text-slate-400 text-sm">{isZh ? '加载录像中...' : 'Loading recording...'}</p>
-            </div>
-          )}
+            {loadState === 'loading' && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0f172a]/95 z-10 gap-3">
+                <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
+                <p className="text-slate-400 text-sm">{isZh ? '加载录像中...' : 'Loading recording...'}</p>
+              </div>
+            )}
+          </div>
 
-          {/* Error overlay */}
-          {loadState === 'error' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0f172a]/95 z-10 gap-3 px-8">
-              <AlertCircle className="w-10 h-10 text-rose-400" />
-              <p className="text-rose-400 text-sm font-medium text-center">
-                {isZh ? '录像加载失败' : 'Failed to load recording'}
-              </p>
-              <p className="text-slate-500 text-xs font-mono text-center break-all">{errorMsg}</p>
+          {/* ── Command Sidebar ── */}
+          {showCommands && (
+            <div className="w-72 bg-slate-900/50 border-l border-slate-700 flex flex-col shrink-0">
+              <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-widest">{isZh ? '会话指令流' : 'Command Stream'}</h4>
+                <div className="px-2 py-0.5 bg-slate-800 text-slate-500 text-[10px] rounded font-mono">INDEX v1</div>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                {commands.length === 0 ? (
+                  <div className="py-20 text-center text-slate-600 text-xs italic">
+                    {isZh ? '未检测到具体指令' : 'No commands detected'}
+                  </div>
+                ) : (
+                  commands.map((c: any, i) => {
+                    const isHigh = c.risk_level === 2;
+                    const isMed = c.risk_level === 1;
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => jumpTo(c.time)}
+                        className={`w-full text-left p-3 rounded-xl transition-all group border border-transparent hover:border-slate-700 ${
+                          isHigh ? 'bg-rose-500/10 hover:bg-rose-500/20' : 
+                          isMed ? 'bg-amber-500/10 hover:bg-amber-500/20' : 
+                          'hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                            isHigh ? 'text-rose-400 bg-rose-400/10' :
+                            isMed ? 'text-amber-400 bg-amber-400/10' :
+                            'text-cyan-500 bg-cyan-500/10'
+                          }`}>
+                            {fmtTime(c.time)}
+                          </span>
+                          <Play size={8} className={`${isHigh ? 'text-rose-400' : isMed ? 'text-amber-400' : 'text-slate-600'} opacity-0 group-hover:opacity-100`} />
+                        </div>
+                        <p className={`text-xs font-mono break-all line-clamp-2 ${
+                          isHigh ? 'text-rose-200' : 
+                          isMed ? 'text-amber-200' : 
+                          'text-slate-300 group-hover:text-white'
+                        }`}>
+                          {c.text}
+                        </p>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
             </div>
           )}
         </div>
 
         {/* ── Controls ── */}
-        <div className="px-6 py-4 bg-slate-900/70 border-t border-slate-700 shrink-0">
-          {/* Seekable progress bar */}
+        <div className={`px-6 py-4 bg-slate-900/70 border-t border-slate-700 shrink-0 ${isFullscreen ? 'pb-6' : ''}`}>
           <div
             className="relative w-full h-2 bg-slate-700 rounded-full overflow-visible cursor-pointer mb-4 group"
             onClick={handleSeek}
@@ -334,54 +485,33 @@ export default function CastPlayer({
               className="absolute top-0 left-0 h-full bg-cyan-500 rounded-full pointer-events-none"
               style={{ width: `${pct}%` }}
             />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-lg pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{ left: `calc(${pct}% - 7px)` }}
-            />
           </div>
 
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {isPlaying ? (
-                <button
-                  onClick={pause}
-                  className="w-10 h-10 flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-white rounded-full transition-colors"
-                >
-                  <Pause size={18} fill="currentColor" />
-                </button>
-              ) : (
-                <button
-                  onClick={play}
-                  disabled={loadState !== 'ready'}
-                  className="w-10 h-10 flex items-center justify-center bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-full transition-colors"
-                >
-                  <Play size={18} fill="currentColor" className="ml-0.5" />
-                </button>
-              )}
-
-              <button
-                onClick={doReset}
-                disabled={loadState !== 'ready'}
-                className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 disabled:opacity-30 rounded-lg transition-colors"
-                title={isZh ? '重置' : 'Reset'}
-              >
-                <RotateCcw size={18} />
-              </button>
-
-              <span className="text-sm font-mono text-slate-300 tabular-nums select-none">
-                {fmtTime(progress)} / {fmtTime(duration)}
-              </span>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                {isPlaying ? (
+                  <button onClick={pause} className="w-10 h-10 flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-white rounded-full">
+                    <Pause size={18} fill="currentColor" />
+                  </button>
+                ) : (
+                  <button onClick={play} disabled={loadState !== 'ready'} className="w-10 h-10 flex items-center justify-center bg-cyan-600 hover:bg-cyan-500 text-white rounded-full">
+                    <Play size={18} fill="currentColor" className="ml-0.5" />
+                  </button>
+                )}
+                <button onClick={doReset} className="p-2 text-slate-400 hover:text-white rounded-lg"><RotateCcw size={18} /></button>
+              </div>
+              <div className="flex items-center gap-1 bg-slate-800/50 p-1 rounded-lg border border-slate-700/50">
+                {SPEED_OPTIONS.map(s => (
+                  <button key={s} onClick={() => setPlaybackSpeed(s)} className={`px-2 py-0.5 text-[10px] font-bold rounded ${playbackSpeed === s ? 'bg-cyan-500 text-white' : 'text-slate-400'}`}>{s}x</button>
+                ))}
+              </div>
+              <span className="text-sm font-mono text-slate-300 select-none ml-2">{fmtTime(progress)} / {fmtTime(duration)}</span>
             </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">
-                Asciinema v2
-              </span>
-              <span className="text-[10px] text-slate-600">·</span>
-              <span className="text-[10px] text-slate-500 font-mono">
-                {sessionId.slice(0, 20)}…
-              </span>
-            </div>
+            <button onClick={toggleFullscreen} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 text-xs">
+              {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              {isFullscreen ? (isZh ? '退出全屏' : 'Exit') : (isZh ? '全屏查看' : 'Fullscreen')}
+            </button>
           </div>
         </div>
       </div>

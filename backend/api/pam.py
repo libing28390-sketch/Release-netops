@@ -18,6 +18,9 @@ import asyncio
 import json
 import logging
 import time
+import os
+import threading
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -92,6 +95,7 @@ class SessionCreateIn(BaseModel):
     # MFA fields (required for admin access)
     mfa_code: Optional[str] = None
     fixed_pin: Optional[str] = None
+    mfa_nonce: Optional[str] = None
     requester_username: str = 'Admin'
 
 
@@ -154,7 +158,7 @@ def _resolve_session_creds(device: dict, asset: dict, access_level: str) -> dict
     return {'username': username or '', 'password': password or ''}
 
 
-def _verify_mfa(username: str, fixed_pin: str, mfa_code: str) -> tuple[bool, str]:
+def _verify_mfa(username: str, fixed_pin: str, mfa_code: str, mfa_nonce: Optional[str] = None) -> tuple[bool, str]:
     """Verify MFA (fixed PIN + dynamic code). Returns (success, error_msg)."""
     import bcrypt
     import time
@@ -165,13 +169,13 @@ def _verify_mfa(username: str, fixed_pin: str, mfa_code: str) -> tuple[bool, str
     conn = get_db_connection()
     try:
         user_row = conn.execute(
-            "SELECT fixed_pin, mfa_fixed_password FROM users WHERE username = ?",
+            "SELECT fixed_pin FROM users WHERE username = ?",
             (username,)
         ).fetchone()
         if not user_row:
             return False, '用户不存在'
 
-        stored_hash = user_row['fixed_pin'] or user_row.get('mfa_fixed_password')
+        stored_hash = user_row['fixed_pin']
         if not stored_hash:
             return False, '您尚未在个人设置中配置 6 位固定密码'
 
@@ -181,11 +185,25 @@ def _verify_mfa(username: str, fixed_pin: str, mfa_code: str) -> tuple[bool, str
         conn.close()
 
     # Check dynamic MFA code from local in-memory store.
-    # Atomically pop the code first so it cannot be consumed more than once,
-    # even under concurrent requests or rapid double-submits.
+    # Atomically pop the code first so it cannot be consumed more than once.
     stored = mfa_store.pop(username, None)
-    if not stored or str(stored['code']) != str(mfa_code) or time.time() > stored['expire']:
-        return False, '验证码错误或已过期'
+    
+    if not stored:
+        return False, '验证码不存在或已过期'
+    
+    # Validation chain:
+    # 1. Nonce check (if provided, must match to prevent out-of-order usage)
+    if mfa_nonce and stored.get('nonce') != mfa_nonce:
+        # If nonce doesn't match, we already popped it, so the code is invalidated.
+        return False, '验证码索引不匹配，请使用最新的验证码'
+    
+    # 2. Expiration check
+    if time.time() > stored.get('expire', 0):
+        return False, '验证码已过期'
+    
+    # 3. Code match
+    if str(stored.get('code')) != str(mfa_code):
+        return False, '验证码错误'
 
     return True, ''
 
@@ -240,7 +258,7 @@ def create_session(payload: SessionCreateIn):
                 }
             
             # Perform actual verification
-            success, error = _verify_mfa(requester, payload.fixed_pin, payload.mfa_code)
+            success, error = _verify_mfa(requester, payload.fixed_pin, payload.mfa_code, payload.mfa_nonce)
             if not success:
                 raise HTTPException(status_code=403, detail=error)
 
@@ -353,7 +371,8 @@ def list_sessions(
             SELECT id, asset_id, device_id, requester_username, access_level,
                    login_username, connect_method, target_ip, status,
                    connected_at, closed_at, close_reason, duration_seconds,
-                   command_count, recording_path, created_at, updated_at
+                   command_count, recording_path, risk_level, risk_summary, 
+                   created_at, updated_at
             FROM pam_sessions {where}
             ORDER BY created_at DESC LIMIT ? OFFSET ?
             ''',
@@ -391,12 +410,7 @@ async def kill_session(session_id: str):
             _active_sessions.pop(session_id, None)
             return {'ok': True, 'message': 'Session already closed'}
 
-        now = _utc_now()
-        conn.execute(
-            "UPDATE pam_sessions SET status='closed', closed_at=?, close_reason='admin_kill', updated_at=? WHERE id=?",
-            (now, now, session_id),
-        )
-        conn.commit()
+        _update_session_status(session_id, 'closed', close_reason='admin_kill')
 
         # Close WebSocket if still active. Use the event loop we captured
         # when the WS was established so this works regardless of which
@@ -567,7 +581,26 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
         ssh_conn = await asyncssh.connect(
             ip, port=port, username=username, password=password,
             known_hosts=None, client_factory=None,
-            login_timeout=15
+            login_timeout=15,
+            # Support legacy devices that only use CBC ciphers
+            encryption_algs=[
+                'chacha20-poly1305@openssh.com',
+                'aes256-gcm@openssh.com', 'aes128-gcm@openssh.com',
+                'aes256-ctr', 'aes192-ctr', 'aes128-ctr',
+                'aes256-cbc', 'aes192-cbc', 'aes128-cbc', '3des-cbc'
+            ],
+            # Also support legacy KEX and MACs often found on older switches
+            kex_algs=[
+                'curve25519-sha256', 'curve25519-sha256@libssh.org',
+                'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521',
+                'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group14-sha1',
+                'diffie-hellman-group1-sha1'
+            ],
+            mac_algs=[
+                'hmac-sha2-256-etm@openssh.com', 'hmac-sha2-512-etm@openssh.com',
+                'hmac-sha1-etm@openssh.com', 'hmac-sha2-256', 'hmac-sha2-512',
+                'hmac-sha1', 'hmac-md5'
+            ]
         )
         logger.info(f"[PAM] SSH connection established to {ip}:{port}")
         
@@ -789,40 +822,261 @@ async def _session_heartbeat(session_id: str):
         pass
 
 
-def _update_session_status(session_id: str, status: str, close_reason: str = '', recording_path: str = ''):
-    """Update session lifecycle status in DB."""
+def _scan_session_for_risk(session_id: str, recording_path: str):
+    """
+    Scans a terminal recording for high-risk commands.
+    Updates risk_level: 0=Safe, 1=Medium, 2=High.
+    """
+    if not recording_path or not os.path.exists(recording_path):
+        return
+
+    # Risk patterns - expanded for network devices and servers
+    HIGH_RISK = ['rm -rf', 'shutdown', 'reboot', 'reload', 'erase ', 'drop table', 'truncate ', 'delete from', 'format ', 'mkfs']
+    MED_RISK = ['rm ', 'config t', 'wr erase', 'write erase', 'delete ', 'passwd', 'userdel', 'iptables -F', 'no ip routing', 'clear config']
+
+    found_high = []
+    found_med = []
+
+    try:
+        # Reconstruct commands using the same logic as get_session_commands
+        commands = []
+        buffer = ""
+        with open(recording_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if not line.strip(): continue
+                try:
+                    event = json.loads(line)
+                    if not isinstance(event, list) or event[1] != 'o':
+                        continue
+                    data = event[2]
+                    for char in data:
+                        if char in ('\r', '\n'):
+                            clean_cmd = _strip_ansi(buffer).strip().lower()
+                            if len(clean_cmd) > 1:
+                                commands.append(clean_cmd)
+                            buffer = ""
+                        else:
+                            if ord(char) >= 32: buffer += char
+                            elif ord(char) == 8 or ord(char) == 127: buffer = buffer[:-1]
+                except:
+                    continue
+
+        for full_cmd in commands:
+            for risk in HIGH_RISK:
+                if risk in full_cmd:
+                    found_high.append(risk)
+            for risk in MED_RISK:
+                if risk in full_cmd:
+                    found_med.append(risk)
+
+        risk_level = 0
+        summary = ""
+        found_high = sorted(list(set(found_high)))
+        found_med = sorted(list(set(found_med)))
+        
+        if found_high:
+            risk_level = 2
+            summary = f"检测到极高风险指令: {', '.join(found_high)}"
+        elif found_med:
+            risk_level = 1
+            summary = f"检测到中等风险指令: {', '.join(found_med)}"
+
+        # ALWAYS update the database, even if risk_level is 0, to mark it as "scanned"
+        logger.info(f"[PAM RISK] Scanning session {session_id} complete. Risk Level: {risk_level}")
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                "UPDATE pam_sessions SET risk_level = ?, risk_summary = ? WHERE id = ?",
+                (risk_level, summary, session_id)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"[PAM RISK] Scan failed for {session_id}: {e}")
+
+
+def _strip_ansi(text: str) -> str:
+    """Removes ANSI escape sequences from strings."""
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
+
+
+@router.get('/pam/sessions/{session_id}/commands')
+def get_session_commands(session_id: str):
+    """Extracts typed commands and timestamps from a recording for playback navigation."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT recording_path, risk_level, risk_summary FROM pam_sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row or not row['recording_path'] or not os.path.exists(row['recording_path']):
+            return {"commands": [], "risk_level": 0, "risk_summary": ""}
+        
+        path = row['recording_path']
+        
+        # Trigger an on-demand scan if it hasn't been done yet
+        if row['risk_level'] == 0:
+            threading.Thread(target=_scan_session_for_risk, args=(session_id, path), daemon=True).start()
+
+        # Risk patterns
+        HIGH_RISK = ['rm -rf', 'shutdown', 'reboot', 'reload', 'erase ', 'drop table', 'truncate ', 'delete from', 'format ', 'mkfs']
+        MED_RISK = ['rm ', 'config t', 'wr erase', 'write erase', 'delete ', 'passwd', 'userdel', 'iptables -F', 'no ip routing', 'clear config']
+
+        commands = []
+        buffer = ""
+        last_time = 0
+        
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if not line.strip(): continue
+                try:
+                    event = json.loads(line)
+                    if not isinstance(event, list) or event[1] != 'o':
+                        continue
+                    
+                    time_val = event[0]
+                    data = event[2]
+                    
+                    for char in data:
+                        if char in ('\r', '\n'):
+                            clean_cmd = _strip_ansi(buffer).strip()
+                            if len(clean_cmd) > 2:
+                                final_text = clean_cmd
+                                for p in ['#', '>', '$']:
+                                    if p in final_text:
+                                        parts = final_text.split(p)
+                                        if len(parts) > 1 and parts[-1].strip():
+                                            final_text = parts[-1].strip()
+                                
+                                if len(final_text) > 1 and not final_text.startswith('['):
+                                    # Tag risk level
+                                    cmd_risk = 0
+                                    lower_text = final_text.lower()
+                                    for r in HIGH_RISK:
+                                        if r in lower_text: cmd_risk = 2; break
+                                    if cmd_risk == 0:
+                                        for r in MED_RISK:
+                                            if r in lower_text: cmd_risk = 1; break
+
+                                    commands.append({
+                                        "time": last_time,
+                                        "text": final_text,
+                                        "risk_level": cmd_risk
+                                    })
+                            buffer = ""
+                            last_time = time_val
+                        else:
+                            if ord(char) >= 32:
+                                buffer += char
+                            elif ord(char) == 8 or ord(char) == 127: # Backspace
+                                buffer = buffer[:-1]
+                except:
+                    continue
+        
+        filtered = []
+        for c in commands:
+            if not filtered or filtered[-1]['text'] != c['text']:
+                if len(c['text']) < 120:
+                    filtered.append(c)
+                
+        return {
+            "commands": filtered,
+            "risk_level": row['risk_level'],
+            "risk_summary": row['risk_summary']
+        }
+    finally:
+        conn.close()
+
+
+def _cleanup_old_sessions():
+    """Purges old recordings based on retention policy."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT value FROM system_settings WHERE key = 'pam_retention_days'").fetchone()
+        days = int(row[0]) if row else 30
+        
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+        
+        # Find sessions to purge
+        old_sessions = conn.execute(
+            "SELECT id, recording_path FROM pam_sessions WHERE created_at < ? AND recording_path IS NOT NULL AND recording_path != ''",
+            (cutoff,)
+        ).fetchall()
+        
+        if not old_sessions:
+            return
+
+        logger.info(f"[PAM PURGE] Found {len(old_sessions)} sessions older than {days} days")
+        
+        for s in old_sessions:
+            sid = s['id']
+            path = s['recording_path']
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                    logger.info(f"[PAM PURGE] Deleted recording: {path}")
+                except Exception as e:
+                    logger.error(f"[PAM PURGE] Failed to delete {path}: {e}")
+            
+            # Update DB to mark as purged
+            conn.execute(
+                "UPDATE pam_sessions SET recording_path = '' WHERE id = ?",
+                (sid,)
+            )
+        conn.commit()
+    except Exception as e:
+        logger.error(f"[PAM PURGE] Cleanup task failed: {e}")
+    finally:
+        conn.close()
+
+
+def _update_session_status(session_id: str, status: str, close_reason: str = None, recording_path: str = None):
+    """Internal helper to update status and close info."""
     conn = get_db_connection()
     try:
         now = _utc_now()
-        if status == 'active':
-            update_sql = "UPDATE pam_sessions SET status=?, connected_at=?, updated_at=?"
-            params = [status, now, now]
-            if recording_path:
-                update_sql += ", recording_path=?"
-                params.append(recording_path)
-            update_sql += " WHERE id=?"
-            params.append(session_id)
-            conn.execute(update_sql, tuple(params))
-        elif status in ('closed', 'error', 'timeout'):
-            # Calculate duration
-            row = conn.execute('SELECT connected_at FROM pam_sessions WHERE id=?', (session_id,)).fetchone()
+        if status in ('closed', 'error', 'timeout'):
+            # Fetch both timestamps to avoid KeyError and calculate duration correctly
+            row = conn.execute('SELECT created_at, connected_at FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
             duration = 0
-            if row and row['connected_at']:
-                try:
-                    start = datetime.fromisoformat(row['connected_at'].replace('Z', '+00:00'))
-                    duration = int((datetime.now(timezone.utc) - start).total_seconds())
-                except Exception:
-                    pass
+            
+            # If recording_path is NOT provided here, try to get it from the DB (existing record)
+            if not recording_path and row:
+                # Need to re-query for recording_path if not in original row
+                row_full = conn.execute('SELECT recording_path FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
+                recording_path = row_full['recording_path'] if row_full else ''
+
+            if row:
+                start_ts = row['connected_at'] or row['created_at']
+                if start_ts:
+                    try:
+                        start = datetime.fromisoformat(start_ts.replace('Z', '+00:00'))
+                        duration = int((datetime.now(timezone.utc) - start).total_seconds())
+                    except Exception:
+                        pass
+            
             conn.execute(
-                "UPDATE pam_sessions SET status=?, closed_at=?, close_reason=?, duration_seconds=?, updated_at=? WHERE id=?",
-                (status, now, close_reason, duration, now, session_id),
+                "UPDATE pam_sessions SET status=?, closed_at=?, close_reason=?, duration_seconds=?, recording_path=?, updated_at=? WHERE id=?",
+                (status, now, close_reason, duration, recording_path or '', now, session_id),
             )
+            conn.commit()
+            
+            if recording_path:
+                threading.Thread(target=_scan_session_for_risk, args=(session_id, recording_path), daemon=True).start()
+            
+            threading.Thread(target=_cleanup_old_sessions, daemon=True).start()
         else:
-            conn.execute(
-                "UPDATE pam_sessions SET status=?, updated_at=? WHERE id=?",
-                (status, now, session_id),
-            )
-        conn.commit()
+            # For 'active' status, we MUST preserve/save the recording_path
+            if recording_path:
+                conn.execute(
+                    "UPDATE pam_sessions SET status=?, recording_path=?, connected_at=?, updated_at=? WHERE id=?",
+                    (status, recording_path, now, now, session_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE pam_sessions SET status=?, updated_at=? WHERE id=?",
+                    (status, now, session_id),
+                )
+            conn.commit()
     finally:
         conn.close()
 
@@ -951,55 +1205,96 @@ async def request_mfa(data: dict):
     if not approver_id:
         return {"success": False, "error": "请先选择审批人"}
 
+    # 1. Rate limiting: 1 minute interval
+    now = time.time()
+    last_record = mfa_store.get(username)
+    if last_record and (now - last_record.get('last_sent_at', 0)) < 60:
+        remaining = int(60 - (now - last_record.get('last_sent_at', 0)))
+        return {"success": False, "error": f"发送频率过快，请在 {remaining} 秒后重试"}
+
+    # 2. Generate code and 2-digit index (nonce)
     code = f"{random.randint(100000, 999999)}"
-    mfa_store[username] = {"code": code, "expire": time.time() + 300}
+    index = f"{random.randint(1, 99):02d}"
     
-    logger.info(f"[MFA] Generated code for user={username}, approver_id={approver_id}")
+    mfa_store[username] = {
+        "code": code, 
+        "nonce": index,
+        "expire": now + 300, 
+        "last_sent_at": now
+    }
+    
+    logger.info(f"[MFA] Generated code [{index}] for user={username}, approver_id={approver_id}")
     
     conn = get_db_connection()
     feishu_url = ""
     approver_name = "Admin"
     try:
+        # Check selected approver's settings
         row = conn.execute("SELECT username, notification_channels FROM users WHERE id = ?", (approver_id,)).fetchone()
         if row:
             approver_name = row['username']
             try:
                 channels = json.loads(row['notification_channels'] or '{}')
                 feishu_cfg = channels.get('feishu', {})
-                if feishu_cfg.get('enabled') and feishu_cfg.get('webhook_url'):
+                if feishu_cfg.get('webhook_url'):
                     feishu_url = feishu_cfg['webhook_url']
             except:
                 pass
         
+        # Fallback to global config if approver has no webhook
         if not feishu_url:
-            global_row = conn.execute("SELECT webhook_url FROM global_notification_channels WHERE platform = 'feishu' AND enabled = 1").fetchone()
-            if global_row:
-                feishu_url = global_row['webhook_url']
+            global_row = conn.execute("SELECT webhook_url FROM global_notification_channels WHERE platform = 'feishu'").fetchone()
+            if global_row and global_row[0]:
+                feishu_url = global_row[0]
+                logger.info(f"[MFA] Using global feishu webhook")
     finally:
         conn.close()
 
     if not feishu_url:
-        logger.warning(f"[MFA] No feishu webhook configured for {approver_name}, returning code directly.")
-        return {"success": True, "message": f"审批人 {approver_name} 未配置飞书，授权码为: {code}（仅测试模式可见）"}
+        logger.error(f"[MFA] No Feishu webhook found for {approver_name} or globally.")
+        return {"success": False, "error": f"未检测到飞书配置。请确保审批人 {approver_name} 或全局设置中已配置 Webhook 地址。"}
 
+    # 3. Attempt to send via Feishu
     ok, msg = notification_service.send_feishu_mfa_access_code(
-        feishu_url, username, code, expires_min=5, approver_name=approver_name
+        feishu_url, username, code, expires_min=5, approver_name=approver_name, index=index
     )
     
     if ok:
-        return {"success": True, "message": f"验证码已发送至审批人 {approver_name} 的飞书"}
+        return {"success": True, "index": index, "message": f"验证码 [索引 #{index}] 已成功发送至审批人 {approver_name} 的飞书"}
     else:
-        return {"success": False, "error": f"推送至 {approver_name} 失败: {msg}"}
+        logger.error(f"[MFA] Feishu send failed: {msg}")
+        return {"success": False, "error": f"飞书推送失败: {msg}"}
+
+
+@router.post('/pam/sessions/{session_id}/export')
+async def export_session_video(session_id: str):
+    """
+    Initiates conversion of .cast to .mp4.
+    Note: Requires 'agg' (asciinema gif generator) or similar on the server.
+    """
+    import shutil
+    agg_path = shutil.which('agg')
+    if not agg_path:
+        return {
+            "success": False, 
+            "error": "服务器未安装渲染引擎 (agg)。请在服务器上安装 asciinema-agg 以支持视频导出。"
+        }
+    
+    # Logic to call agg would go here
+    # agg --font-family "JetBrains Mono" input.cast output.gif
+    # ffmpeg -i output.gif output.mp4
+    return {"success": False, "error": "导出功能暂处于维护状态，请下载 .cast 文件使用本地播放器查看。"}
 
 
 @router.post('/pam/mfa/verify')
 async def verify_mfa(data: dict):
     """Stand-alone MFA verification (Fixed PIN + dynamic code)."""
     mfa_code = data.get("mfa_code")
+    mfa_nonce = data.get("mfa_nonce")
     fixed_pw = data.get("fixed_password")
     current_username = data.get("current_username")
     
-    success, error = _verify_mfa(current_username, fixed_pw, mfa_code)
+    success, error = _verify_mfa(current_username, fixed_pw, mfa_code, mfa_nonce)
     if success:
         return {"success": True}
     return {"success": False, "error": error}

@@ -4,6 +4,7 @@ export const sectionToolbarClass = 'flex gap-4 items-center bg-white p-4 rounded
 export const primaryActionBtnClass = 'px-4 py-2 bg-[#00bceb] text-white rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-[#0096bd] transition-all shadow-lg shadow-[#00bceb]/20';
 export const secondaryActionBtnClass = 'px-4 py-2 border border-black/10 rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-black/5 transition-all';
 export const darkActionBtnClass = 'px-4 py-2 bg-black text-white rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-black/80 transition-all';
+export const alertPanelClass = 'rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)]';
 
 export const severityBadgeClass = (severity?: string) => {
   switch (String(severity || '').toLowerCase()) {

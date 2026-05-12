@@ -31,17 +31,27 @@ def api_list_templates(
     platform: str = Query('', description='按平台过滤'),
     search: str = Query('', description='关键字搜索'),
     source: str = Query('', description='按来源过滤：builtin|custom'),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=200),
     _user=require_role('Viewer'),
 ):
     """列出所有模板（内置 + 自定义），自定义模板同名时覆盖内置。"""
     items = list_templates(platform_filter=platform, search=search)
     if source:
         items = [t for t in items if t.get('source') == source]
+    
+    total = len(items)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated_items = items[start:end]
+    
     return {
         'success': True,
         'data': {
-            'total': len(items),
-            'items': items,
+            'total': total,
+            'items': paginated_items,
+            'page': page,
+            'page_size': page_size
         },
         'message': '',
     }

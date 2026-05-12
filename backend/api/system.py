@@ -116,7 +116,8 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "error": "特权访问需要 MFA 验证",
             }
         from api.pam import _verify_mfa
-        ok, err = _verify_mfa(requester_username, fixed_pin, mfa_code)
+        mfa_nonce = payload.get("mfa_nonce")
+        ok, err = _verify_mfa(requester_username, fixed_pin, mfa_code, mfa_nonce)
         if not ok:
             return {"success": False, "error": err or "MFA 验证失败"}
     # ──────────────────────────────────────────────────────────────
@@ -152,6 +153,7 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
         session_id = f"session-{uuid.uuid4().hex[:12]}"
         now_str = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
+        session_token = f"local-{uuid.uuid4().hex[:16]}"
         try:
             conn.execute('''
                 INSERT INTO pam_sessions (
@@ -169,7 +171,7 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
                 # when the user actually disconnects from their local client.
                 'closed', now_str, now_str, 'local_client_launched',
                 0, '',  # no recording for local sessions
-                '', now_str, 1,
+                session_token, now_str, 1,
                 now_str, now_str,
             ))
             conn.commit()

@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import PageHero from '../components/PageHero';
+import Pagination from '../components/Pagination';
+import { alertPanelClass } from '../components/shared';
 
 interface Props {
   t: (key: string) => string;
@@ -79,6 +81,10 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
     setTimeout(() => setToast(null), 3500);
   };
 
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [total, setTotal] = useState(0);
+
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -91,16 +97,34 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       if (platformFilter) params.set('platform', platformFilter);
       if (search) params.set('search', search);
       if (sourceFilter) params.set('source', sourceFilter);
+      params.set('page', String(page));
+      params.set('page_size', String(pageSize));
+      
       const res = await fetch(`/api/textfsm/templates?${params.toString()}`, { headers: authHeaders });
       if (res.ok) {
         const json = await res.json();
         setTemplates(json?.data?.items || []);
+        setTotal(json?.data?.total || 0);
       }
     } catch (e) { /* noop */ }
     setLoading(false);
-  }, [platformFilter, search, sourceFilter, authHeaders]);
+  }, [platformFilter, search, sourceFilter, page, pageSize, authHeaders]);
 
   useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
+
+  // Reset page on filter change
+  useEffect(() => {
+    setPage(1);
+  }, [search, platformFilter, sourceFilter]);
+
+  useEffect(() => {
+    if (!editorOpen) return;
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setEditorOpen(false);
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [editorOpen]);
 
   const openNewEditor = () => {
     setEditingTemplate(null);
@@ -301,11 +325,11 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
         </select>
       </div>
 
-      {/* Templates Table */}
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-        <div className="bg-white rounded-xl border border-black/5 shadow-sm overflow-hidden">
+      <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
+        {/* Templates Table */}
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
           <table className="w-full text-xs">
-            <thead className="bg-slate-50/80 text-black/40 text-[11px] font-semibold uppercase tracking-wider">
+            <thead className="bg-slate-50/80 text-black/40 text-[11px] font-semibold uppercase tracking-wider sticky top-0 z-10 border-b border-black/5">
               <tr>
                 <th className="text-left px-4 py-2.5">{isZh ? '文件名' : 'Filename'}</th>
                 <th className="text-left px-4 py-2.5">{isZh ? '平台' : 'Platform'}</th>
@@ -332,7 +356,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                     {tpl.source === 'custom' ? (
                       <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">{isZh ? '自定义' : 'Custom'}</span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold">{isZh ? '内置' : 'Built-in'}</span>
+                      <span className="px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 text-[10px] font-bold">{isZh ? '内置' : 'Built-in'}</span>
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-right">
@@ -361,8 +385,16 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
           </table>
         </div>
 
-        <div className="mt-2 text-[11px] text-black/30 text-right">
-          {isZh ? `共 ${templates.length} 个模板` : `${templates.length} template(s)`}
+        <div className="flex-shrink-0">
+          <Pagination
+            currentPage={page}
+            totalItems={total}
+            itemsPerPage={pageSize}
+            onPageChange={setPage}
+            onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }}
+            language={language}
+            alwaysVisible
+          />
         </div>
       </div>
 
