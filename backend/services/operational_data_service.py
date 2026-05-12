@@ -158,14 +158,20 @@ def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'norm
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     device_type = PLATFORM_DEVICE_TYPE_MAP.get(platform, 'cisco_ios')
     
+    from core.crypto import decrypt_credential
+    from services.vault_service import resolve_device_credentials
+
+    # 统一通过 resolve_device_credentials 解密，避免直接读取加密字段
+    creds = resolve_device_credentials(device_info)
+
     # PAM logic: select username/password based on role
     if auth_role == 'admin':
-        username = device_info.get('admin_username') or device_info.get('username')
-        password = device_info.get('admin_password') or device_info.get('password')
+        username = creds.get('admin_username') or creds.get('username') or ''
+        password = creds.get('admin_password') or creds.get('password') or ''
     else:
         # Default to normal user, but fallback to main credentials if missing
-        username = device_info.get('normal_username') or device_info.get('username')
-        password = device_info.get('normal_password') or device_info.get('password')
+        username = creds.get('normal_username') or creds.get('username') or ''
+        password = creds.get('normal_password') or creds.get('password') or ''
 
     params = {
         'device_type': device_type,
@@ -180,7 +186,7 @@ def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'norm
         'blocking_timeout': 30,
     }
     params.update(build_netmiko_compatibility_kwargs())
-    secret = device_info.get('enable_password') or device_info.get('secret') or ''
+    secret = creds.get('enable_password') or device_info.get('secret') or ''
     if secret:
         params['secret'] = secret
     return params

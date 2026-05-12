@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertCircle,
@@ -16,6 +16,11 @@ import {
   XCircle,
   Copy,
   Check,
+  Table2,
+  FileText,
+  Loader2,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import type { Device } from '../types';
 import PageHero from '../components/PageHero';
@@ -149,11 +154,161 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const isLive = !!(activeExecutionId && executionStatus === 'running');
 
+  // ── TextFSM parse state (per command block key) ──
+  // key format: `${phase}::${command}` for per-command granularity
+  const [parseViewMode, setParseViewMode] = useState<Record<string, 'raw' | 'parsed'>>({});
+  const [parseResults, setParseResults] = useState<Record<string, { loading: boolean; data: any; error: string }>>({});
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Reset parse state when device changes
+  useEffect(() => {
+    setParseViewMode({});
+    setParseResults({});
+    setCopiedKey(null);
+  }, [selectedDeviceDetail]);
+
   useEffect(() => {
     if (isLive) {
       setIsDetailModalOpen(true);
     }
   }, [isLive]);
+
+  const authHeaders = (() => {
+    const token = localStorage.getItem('netops_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  })();
+
+  // Parse a single command's output via TextFSM
+  const handleParseCommand = useCallback(async (
+    blockKey: string,
+    platform: string,
+    command: string,
+    rawOutput: string,
+    executionId: string,
+    deviceId: string,
+  ) => {
+    setParseResults(prev => ({ ...prev, [blockKey]: { loading: true, data: null, error: '' } }));
+    setParseViewMode(prev => ({ ...prev, [blockKey]: 'parsed' }));
+
+    try {
+      const res = await fetch(`/api/playbooks/${executionId}/devices/${deviceId}/parse`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform, command, output: rawOutput }),
+      });
+      const json = await res.json();
+      if (json.success && json.data?.count > 0) {
+        setParseResults(prev => ({ ...prev, [blockKey]: { loading: false, data: json.data, error: '' } }));
+      } else if (json.has_template === false) {
+        setParseResults(prev => ({ ...prev, [blockKey]: { loading: false, data: null, error: isZh ? `未找到 ${platform} / ${command} 的解析模板` : `No template for ${platform} / ${command}` } }));
+        setParseViewMode(prev => ({ ...prev, [blockKey]: 'raw' }));
+      } else {
+        setParseResults(prev => ({ ...prev, [blockKey]: { loading: false, data: null, error: json.message || (isZh ? '解析无结果' : 'No parse results') } }));
+      }
+    } catch {
+      setParseResults(prev => ({ ...prev, [blockKey]: { loading: false, data: null, error: isZh ? '解析请求失败' : 'Parse request failed' } }));
+      setParseViewMode(prev => ({ ...prev, [blockKey]: 'raw' }));
+    }
+  }, [authHeaders, isZh]);
+
+  const copyText = useCallback((text: string, key: string) => {
+    navigator.clipboard.writeText(text).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    });
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  }, []);
+
+  const downloadText = useCallback((text: string, filename: string) => {
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  /**
+   * Split a combined output string into per-command blocks.
+   *
+   * New format (produced by _exec_commands): each command's output is preceded by
+   * a "# <command>" marker line, separated by blank lines.
+   *
+   * Old format (no markers): the whole output is one blob. In this case we create
+   * one block per command in the commands array, all sharing the same raw output
+   * so each command can still be individually parsed via TextFSM.
+   */
+  const splitOutputByCommand = useCallback((output: string, commands: string[]): Array<{ command: string; output: string }> => {
+    if (!output && commands.length === 0) return [];
+
+    // Try to detect new format: lines starting with "# <cmd>" as section markers
+    // Matches: "# show version" or "# interfaces: show ip interface brief"
+    const markerRe = /^#[ \t]+(?:[^:\n]+:[ \t]+)?(.+)$/m;
+    const hasMarkers = markerRe.test(output);
+
+    if (hasMarkers) {
+      // Split on marker lines
+      const blocks: Array<{ command: string; output: string }> = [];
+      const lines = output.split('\n');
+      let currentCmd = '';
+      let currentLines: string[] = [];
+
+      for (const line of lines) {
+        const m = line.match(/^#[ \t]+(?:[^:\n]+:[ \t]+)?(.+)$/);
+        if (m) {
+          if (currentCmd || currentLines.some(l => l.trim())) {
+            blocks.push({ command: currentCmd, output: currentLines.join('\n').trim() });
+          }
+          currentCmd = m[1].trim();
+          currentLines = [];
+        } else {
+          currentLines.push(line);
+        }
+      }
+      if (currentCmd || currentLines.some(l => l.trim())) {
+        blocks.push({ command: currentCmd, output: currentLines.join('\n').trim() });
+      }
+      const valid = blocks.filter(b => b.command || b.output);
+      if (valid.length > 0) return valid;
+    }
+
+    // Old format or no markers: one block per command, all share the full output
+    // This lets each command be independently parsed even though we can't split the text
+    if (commands.length > 0) {
+      return commands.map(cmd => ({ command: cmd, output: output.trim() }));
+    }
+
+    // Absolute fallback: single unnamed block
+    return output.trim() ? [{ command: '', output: output.trim() }] : [];
+  }, []);
+
+  /** Export parsed records to Excel (.xlsx) using a simple CSV-in-xlsx approach */
+  const downloadExcel = useCallback((records: Record<string, string>[], fields: string[], filename: string) => {
+    // Build CSV content (Excel opens CSV with UTF-8 BOM correctly)
+    const bom = '\uFEFF';
+    const header = fields.join(',');
+    const rows = records.map(r =>
+      fields.map(f => {
+        const v = r[f] ?? '';
+        // Quote fields that contain comma, newline or double-quote
+        return /[,"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+      }).join(',')
+    );
+    const csv = bom + [header, ...rows].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
 
   // Helper mapping for execution status badge
   const getStatusMap = (status?: string) => {
@@ -708,76 +863,226 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                 {Object.entries((() => {
                                   try {
                                     return JSON.parse(selectedDeviceDetail.phases_json || '{}') as Record<string, { success?: boolean; commands?: string[]; output?: unknown }>;
-                                  } catch {
-                                    return {};
-                                  }
-                                })()).map(([phase, data]) => (
-                                  <div key={phase} className="rounded-xl border border-black/5 overflow-hidden">
-                                    <div className="flex items-center justify-between px-4 py-2.5 bg-black/[0.02] border-b border-black/5">
-                                      <p className="text-[10px] font-bold uppercase tracking-wider text-black/40">{phase.replace(/_/g, ' ')}</p>
-                                      {data?.success !== undefined && (
-                                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${data.success ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                                          {data.success ? '✓ Pass' : '✗ Fail'}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="px-4 py-3 space-y-3">
-                                      {/* Show command names as labels */}
-                                      {data?.commands && Array.isArray(data.commands) && data.commands.length > 0 && (
-                                        <div className="flex flex-wrap gap-1.5 mb-2">
-                                          {data.commands.map((cmd, idx) => (
-                                            <span key={idx} className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100">
-                                              {cmd}
+                                  } catch { return {}; }
+                                })()).map(([phase, data]) => {
+                                  const rawOutput = data?.output
+                                    ? (typeof data.output === 'string' ? data.output : JSON.stringify(data.output, null, 2))
+                                    : '';
+                                  const commands = data?.commands || [];
+                                  const dev = devices.find(d => d.hostname === selectedDeviceDetail.hostname || d.ip_address === selectedDeviceDetail.ip_address);
+                                  const platform = dev?.platform || 'cisco_ios';
+                                  const execId = selectedExecutionDetail?.id || activeExecutionId || '';
+                                  const devId = dev?.id || selectedDeviceDetail.ip_address || '';
+                                  const hostname = selectedDeviceDetail.hostname || 'device';
+
+                                  // Split combined output into per-command blocks
+                                  const cmdBlocks = splitOutputByCommand(rawOutput, commands);
+
+                                  return (
+                                    <div key={phase} className="rounded-xl border border-black/5 overflow-hidden">
+                                      {/* Phase header */}
+                                      <div className="flex items-center justify-between px-4 py-2.5 bg-black/[0.02] border-b border-black/5">
+                                        <div className="flex items-center gap-2">
+                                          <p className="text-[10px] font-bold uppercase tracking-wider text-black/40"># PHASE: {phase.replace(/_/g, ' ')}</p>
+                                          {data?.success !== undefined && (
+                                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${data.success ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                                              {data.success ? '✓ Pass' : '✗ Fail'}
                                             </span>
-                                          ))}
+                                          )}
                                         </div>
-                                      )}
-                                      {/* Show output content */}
-                                      {data?.output && (
-                                        (() => {
-                                          const [copied, setCopied] = React.useState(false);
-                                          const outputStr = typeof data.output === 'string' ? data.output : JSON.stringify(data.output, null, 2);
+                                        {/* Phase-level download of full raw output */}
+                                        {rawOutput && (
+                                          <div className="flex items-center gap-1.5">
+                                            <button
+                                              onClick={() => copyText(rawOutput, `${phase}-all`)}
+                                              className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] font-medium transition-all shadow-sm ${copiedKey === `${phase}-all` ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-black/10 text-black/40 hover:text-black/70 hover:border-black/20'}`}
+                                              title={isZh ? '复制全部输出' : 'Copy all output'}
+                                            >
+                                              {copiedKey === `${phase}-all` ? <Check size={10} /> : <Copy size={10} />}
+                                              <span>{isZh ? '复制全部' : 'Copy all'}</span>
+                                            </button>
+                                            <button
+                                              onClick={() => downloadText(rawOutput, `${hostname}_${phase}_raw.txt`)}
+                                              className="flex items-center gap-1 px-2 py-1 rounded-md border bg-white border-black/10 text-[10px] font-medium text-black/40 hover:text-black/70 hover:border-black/20 transition-all shadow-sm"
+                                              title={isZh ? '下载全部输出' : 'Download all output'}
+                                            >
+                                              <Download size={10} />
+                                              <span>{isZh ? '下载' : 'Download'}</span>
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      {/* Per-command blocks */}
+                                      <div className="divide-y divide-black/[0.04]">
+                                        {cmdBlocks.length > 0 ? cmdBlocks.map((block, bi) => {
+                                          const blockKey = `${phase}::${block.command || bi}`;
+                                          const viewMode = parseViewMode[blockKey] || 'raw';
+                                          const parseState = parseResults[blockKey];
+                                          const isCopied = copiedKey === `${blockKey}-copy`;
+                                          const hasOutput = !!block.output;
+                                          const displayCmd = block.command || commands[bi] || '';
+
                                           return (
-                                            <div className="group/code relative">
-                                              <div className="absolute right-2 top-2 z-10 transition-opacity">
-                                                <button
-                                                  onClick={() => {
-                                                    const textArea = document.createElement("textarea");
-                                                    textArea.value = outputStr;
-                                                    document.body.appendChild(textArea);
-                                                    textArea.select();
-                                                    try {
-                                                      document.execCommand('copy');
-                                                      setCopied(true);
-                                                      setTimeout(() => setCopied(false), 2000);
-                                                    } catch (err) {
-                                                      console.error('Copy failed', err);
-                                                    }
-                                                    document.body.removeChild(textArea);
-                                                  }}
-                                                  className={`p-1.5 rounded-md border transition-all shadow-sm ${
-                                                    copied 
-                                                      ? 'bg-emerald-50 border-emerald-200 text-emerald-600' 
-                                                      : 'bg-white/80 backdrop-blur-sm border-black/10 text-black/40 hover:text-indigo-600 hover:border-indigo-200'
-                                                  }`}
-                                                  title={isZh ? '复制内容' : 'Copy output'}
-                                                >
-                                                  {copied ? <Check size={12} /> : <Copy size={12} />}
-                                                </button>
-                                              </div>
-                                              <pre className="text-[11px] font-mono text-black/70 bg-black/[0.03] rounded-xl p-4 max-h-[500px] overflow-auto whitespace-pre-wrap border border-black/5">
-                                                {outputStr}
-                                              </pre>
+                                            <div key={blockKey} className="bg-white">
+                                              {/* Command bar — GitHub-style, always shown when we have a command */}
+                                              {displayCmd && (
+                                                <div className="flex items-center justify-between px-4 py-2 bg-[#f6f8fa] border-b border-black/[0.06]">
+                                                  <div className="flex items-center gap-2 min-w-0">
+                                                    <span className="text-[10px] text-black/30 font-mono select-none">$</span>
+                                                    <code className="text-[11px] font-mono text-[#0550ae] font-semibold truncate">{displayCmd}</code>
+                                                  </div>
+                                                  {hasOutput && (
+                                                    <div className="flex items-center gap-1 shrink-0 ml-3">
+                                                      {/* Raw / Parsed toggle */}
+                                                      <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-black/[0.05] border border-black/[0.06]">
+                                                        <button
+                                                          onClick={() => setParseViewMode(prev => ({ ...prev, [blockKey]: 'raw' }))}
+                                                          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-all ${viewMode === 'raw' ? 'bg-white shadow-sm text-[#24292f]' : 'text-black/30 hover:text-black/60'}`}
+                                                        >
+                                                          <FileText size={9} />
+                                                          Raw
+                                                        </button>
+                                                        <button
+                                                          onClick={() => {
+                                                            if (!parseState || (!parseState.data && !parseState.loading)) {
+                                                              void handleParseCommand(blockKey, platform, displayCmd, block.output, execId, devId);
+                                                            } else {
+                                                              setParseViewMode(prev => ({ ...prev, [blockKey]: 'parsed' }));
+                                                            }
+                                                          }}
+                                                          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-all ${viewMode === 'parsed' ? 'bg-white shadow-sm text-cyan-700' : 'text-black/30 hover:text-black/60'}`}
+                                                        >
+                                                          {parseState?.loading ? <Loader2 size={9} className="animate-spin" /> : <Table2 size={9} />}
+                                                          Parsed
+                                                        </button>
+                                                      </div>
+                                                      {/* Copy */}
+                                                      <button
+                                                        onClick={() => {
+                                                          const txt = viewMode === 'parsed' && parseState?.data
+                                                            ? JSON.stringify(parseState.data.records, null, 2)
+                                                            : block.output;
+                                                          copyText(txt, `${blockKey}-copy`);
+                                                        }}
+                                                        className={`p-1 rounded border transition-all ${isCopied ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-black/10 text-black/35 hover:text-[#0550ae] hover:border-[#0550ae]/30'}`}
+                                                        title={isZh ? '复制' : 'Copy'}
+                                                      >
+                                                        {isCopied ? <Check size={11} /> : <Copy size={11} />}
+                                                      </button>
+                                                      {/* Download raw .txt */}
+                                                      <button
+                                                        onClick={() => {
+                                                          const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                                          downloadText(block.output, `${hostname}_${safeCmd}_raw.txt`);
+                                                        }}
+                                                        className="flex items-center gap-1 p-1 rounded border bg-white border-black/10 text-black/35 hover:text-cyan-600 hover:border-cyan-300 transition-all"
+                                                        title={isZh ? '下载原始文本' : 'Download raw .txt'}
+                                                      >
+                                                        <Download size={11} />
+                                                        <span className="text-[9px] font-mono">txt</span>
+                                                      </button>
+                                                      {/* Download parsed .csv (Excel) — only when parsed data available */}
+                                                      {parseState?.data && (
+                                                        <button
+                                                          onClick={() => {
+                                                            const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                                            downloadExcel(parseState.data.records, parseState.data.fields, `${hostname}_${safeCmd}_parsed`);
+                                                          }}
+                                                          className="flex items-center gap-1 p-1 rounded border bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-all"
+                                                          title={isZh ? '下载解析结果 (CSV/Excel)' : 'Download parsed as CSV (Excel)'}
+                                                        >
+                                                          <Download size={11} />
+                                                          <span className="text-[9px] font-mono">csv</span>
+                                                        </button>
+                                                      )}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              )}
+
+                                              {/* Output content */}
+                                              {hasOutput && (
+                                                <div className="px-0">
+                                                  {viewMode === 'parsed' ? (
+                                                    parseState?.loading ? (
+                                                      <div className="flex items-center justify-center py-6 text-black/30 gap-2">
+                                                        <Loader2 size={14} className="animate-spin" />
+                                                        <span className="text-xs">{isZh ? '正在解析...' : 'Parsing...'}</span>
+                                                      </div>
+                                                    ) : parseState?.error ? (
+                                                      <div className="mx-4 my-3 rounded-lg bg-amber-50 border border-amber-100 p-3 flex items-start gap-2">
+                                                        <AlertCircle size={12} className="text-amber-500 shrink-0 mt-0.5" />
+                                                        <div>
+                                                          <p className="text-[11px] text-amber-700 font-medium">{parseState.error}</p>
+                                                          <p className="text-[10px] text-amber-500 mt-0.5">{isZh ? '已切换回原始视图' : 'Showing raw output'}</p>
+                                                        </div>
+                                                      </div>
+                                                    ) : parseState?.data ? (
+                                                      <div className="p-3 space-y-2">
+                                                        <div className="flex items-center justify-between px-1">
+                                                          <div className="flex items-center gap-2 text-[10px] text-emerald-600 font-semibold">
+                                                            <CheckCircle2 size={11} />
+                                                            {isZh ? `${parseState.data.count} 条记录` : `${parseState.data.count} record(s)`}
+                                                            <span className="text-black/25 font-normal">{parseState.data.fields.join(' · ')}</span>
+                                                          </div>
+                                                          {/* Excel download button inside table header */}
+                                                          <button
+                                                            onClick={() => {
+                                                              const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                                              downloadExcel(parseState.data.records, parseState.data.fields, `${hostname}_${safeCmd}_parsed`);
+                                                            }}
+                                                            className="flex items-center gap-1 px-2 py-0.5 rounded border bg-emerald-50 border-emerald-200 text-emerald-700 text-[10px] font-semibold hover:bg-emerald-100 transition-all"
+                                                            title={isZh ? '导出 CSV (可用 Excel 打开)' : 'Export CSV (opens in Excel)'}
+                                                          >
+                                                            <Download size={10} />
+                                                            {isZh ? '导出 CSV' : 'Export CSV'}
+                                                          </button>
+                                                        </div>
+                                                        <div className="overflow-auto rounded-lg border border-black/[0.06]">
+                                                          <table className="w-full text-[11px] font-mono">
+                                                            <thead className="bg-[#f6f8fa] border-b border-black/[0.06]">
+                                                              <tr>
+                                                                {parseState.data.fields.map((f: string) => (
+                                                                  <th key={f} className="px-3 py-1.5 text-left text-[10px] font-bold text-black/40 uppercase tracking-wider whitespace-nowrap">{f}</th>
+                                                                ))}
+                                                              </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-black/[0.04]">
+                                                              {parseState.data.records.map((rec: Record<string, string>, ri: number) => (
+                                                                <tr key={ri} className="hover:bg-[#f6f8fa]/60 transition-colors">
+                                                                  {parseState.data.fields.map((f: string) => (
+                                                                    <td key={f} className="px-3 py-1.5 text-black/65 whitespace-nowrap max-w-[180px] truncate" title={rec[f]}>{rec[f] || '—'}</td>
+                                                                  ))}
+                                                                </tr>
+                                                              ))}
+                                                            </tbody>
+                                                          </table>
+                                                        </div>
+                                                      </div>
+                                                    ) : null
+                                                  ) : (
+                                                    /* Raw view — dark terminal style */
+                                                    <pre className="text-[11px] font-mono text-[#e6edf3] bg-[#161b22] px-5 py-4 max-h-[480px] overflow-auto whitespace-pre-wrap leading-5 border-0">
+                                                      {block.output}
+                                                    </pre>
+                                                  )}
+                                                </div>
+                                              )}
                                             </div>
                                           );
-                                        })()
-                                      )}
-                                      {(!data?.output) && (!data?.commands || data.commands.length === 0) && (
-                                        <p className="text-[10px] text-black/20 italic">{isZh ? '无输出' : 'No output'}</p>
-                                      )}
+                                        }) : (
+                                          /* No output at all */
+                                          !rawOutput && (
+                                            <div className="px-4 py-3">
+                                              <p className="text-[10px] text-black/20 italic">{isZh ? '无输出' : 'No output'}</p>
+                                            </div>
+                                          )
+                                        )}
+                                      </div>
                                     </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           ) : (

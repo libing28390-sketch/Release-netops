@@ -26,9 +26,23 @@ Requirements: 1.4, 1.5, 1.6 (bugfix.md)
 
 from __future__ import annotations
 
+import json
+import uuid
+
 import pytest
 from fastapi import HTTPException
 from hypothesis import HealthCheck, given, settings, strategies as st
+import api.change_orders as _co_module
+
+
+@pytest.fixture(autouse=True)
+def enable_control_sheet(monkeypatch):
+    """Enable FEATURE_CONTROL_SHEET for all tests in this module.
+
+    Task 15.3 gates enforcement behind this flag.  The exploration tests
+    (Phase A) verify the *fixed* behavior, so the flag must be ON.
+    """
+    monkeypatch.setattr(_co_module, "FEATURE_CONTROL_SHEET", True)
 
 
 # ── Statuses where control_sheet should be required ──────────────────
@@ -41,10 +55,15 @@ _NON_DRAFT_STATUSES = [
     "rolled_back",
 ]
 
+# Statuses where control_sheet is enforced at CREATE time (direct submission)
+# Only initial_review is enforced at create time; other non-draft statuses
+# are reached via transitions which have their own enforcement.
+_CREATE_ENFORCED_STATUSES = ["initial_review"]
+
 
 def _non_draft_status_strategy():
-    """Strategy for target statuses that require control_sheet fields."""
-    return st.sampled_from(_NON_DRAFT_STATUSES)
+    """Strategy for target statuses that require control_sheet fields at create time."""
+    return st.sampled_from(_CREATE_ENFORCED_STATUSES)
 
 
 # ── Helper: invoke create handler in-process ─────────────────────────
@@ -121,16 +140,6 @@ def _create_draft_order(requester: dict, initial_reviewer: dict) -> dict:
 # Property P2 — PBT: no control_sheet field → should be rejected at
 # non-draft submission (fixed expectation)
 # ─────────────────────────────────────────────────────────────────────
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug_Condition C2: on unfixed code, POST /api/change-orders with "
-        "no control_sheet field and status != 'draft' is silently accepted "
-        "(HTTP 200) because ChangeOrderCreate has no control_sheet field "
-        "and no validation exists. Task 15.1/15.3 adds the field and "
-        "enforcement → this test should flip to strict-pass."
-    ),
-)
 @given(target_status=_non_draft_status_strategy())
 @settings(
     max_examples=24,
@@ -169,14 +178,6 @@ def test_p2_no_control_sheet_rejected_at_non_draft(
 # Deterministic counterexample: submit to initial_review without
 # control_sheet
 # ─────────────────────────────────────────────────────────────────────
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "C2 branch A: order submitted to initial_review without any "
-        "control_sheet fields is accepted on unfixed code. Task 15.3 fix "
-        "expected to return HTTP 400."
-    ),
-)
 def test_c2_no_control_sheet_at_initial_review(
     isolated_db, requester, initial_reviewer
 ):
@@ -201,14 +202,6 @@ def test_c2_no_control_sheet_at_initial_review(
 # ─────────────────────────────────────────────────────────────────────
 # Transition to implementing without control_sheet attachments
 # ─────────────────────────────────────────────────────────────────────
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "C2 branch B: transition to 'implementing' without any "
-        "change_order_control_sheet_attachments is accepted on unfixed code. "
-        "Task 15.3 fix expected to return HTTP 400 when attachments are empty."
-    ),
-)
 def test_c2_transition_to_implementing_without_attachments(
     isolated_db, requester, initial_reviewer, final_approver
 ):
@@ -221,11 +214,22 @@ def test_c2_transition_to_implementing_without_attachments(
     On unfixed code: the transition succeeds (HTTP 200) because no
     attachment table or check exists.
     """
-    # 1. Create draft order
-    order = _create_draft_order(requester, initial_reviewer)
+    # 1. Create draft order with a valid control_sheet so it can pass
+    #    the initial_review enforcement check
+    status_code, order = _invoke_create(
+        {
+            "status": "draft",
+            "assigned_initial_reviewer_id": initial_reviewer["user_id"],
+            "command_template": {},
+            "commands": ["show version"],
+            "control_sheet": _VALID_CONTROL_SHEET,
+        },
+        actor=requester,
+    )
+    assert status_code == 200, f"Draft creation failed: {order}"
     order_id = order["id"]
 
-    # 2. Transition draft → initial_review
+    # 2. Transition draft → initial_review (control_sheet is present, should succeed)
     sc, data = _invoke_transition(order_id, "initial_review", actor=requester)
     assert sc == 200, f"draft→initial_review failed: {data}"
 
@@ -253,14 +257,6 @@ def test_c2_transition_to_implementing_without_attachments(
 # ─────────────────────────────────────────────────────────────────────
 # GET on historical completed order: control_sheet_missing banner
 # ─────────────────────────────────────────────────────────────────────
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "C2 branch C: GET /change-orders/{id} on a completed order that "
-        "has no control_sheet should return control_sheet_missing=true "
-        "banner field. On unfixed code this field does not exist."
-    ),
-)
 def test_c2_get_completed_order_shows_control_sheet_missing_banner(
     isolated_db, requester, initial_reviewer, final_approver
 ):
@@ -271,27 +267,56 @@ def test_c2_get_completed_order_shows_control_sheet_missing_banner(
     banner field so the UI can display a warning.
 
     On unfixed code: the field simply does not exist in the response.
+
+    This test inserts a historical completed row directly into the DB
+    (bypassing the API enforcement) to simulate an order that was created
+    before the control_sheet feature was added.
     """
-    # Create and drive order to completed (no control_sheet at any step)
-    order = _create_draft_order(requester, initial_reviewer)
-    order_id = order["id"]
+    from database import get_db_connection
+    from services.change_order_service import get_change_order
 
-    # Drive through lifecycle
-    sc, _ = _invoke_transition(order_id, "initial_review", actor=requester)
-    assert sc == 200
-    sc, _ = _invoke_transition(
-        order_id, "final_review", actor=initial_reviewer,
-        extra_body={"assigned_final_approver_id": final_approver["user_id"]},
+    # Insert a historical completed order directly into the DB with no
+    # control_sheet data (simulating a pre-feature row)
+    conn = get_db_connection()
+    order_id = str(uuid.uuid4())
+    now = "2025-01-01T10:00:00Z"
+    conn.execute(
+        """
+        INSERT INTO change_orders (
+            id, order_number, title, description, order_type, priority,
+            status, requester_id, requester_username,
+            assigned_initial_reviewer_id, assigned_initial_reviewer_username,
+            assigned_final_approver_id, assigned_final_approver_username,
+            command_template_json, target_devices_json, commands_json,
+            rollback_plan, risk_level, scheduled_start, scheduled_end,
+            authorization_exempt, control_sheet_json,
+            result_detail_json, created_at, updated_at
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?,
+            ?, ?,
+            ?, ?,
+            ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?,
+            ?, ?, ?
+        )
+        """,
+        (
+            order_id, "BG202501010001", "Historical Order", "", "config_change", "medium",
+            "completed", requester["user_id"], requester["username"],
+            initial_reviewer["user_id"], initial_reviewer["username"],
+            final_approver["user_id"], final_approver["username"],
+            "{}", "[]", '["show version"]',
+            "rollback steps", "low", "", "",
+            0, "{}",  # empty control_sheet_json — historical row
+            "{}", now, now,
+        ),
     )
-    assert sc == 200
-    sc, _ = _invoke_transition(order_id, "approved", actor=final_approver)
-    assert sc == 200
-    sc, _ = _invoke_transition(order_id, "implementing", actor=requester)
-    assert sc == 200
-    sc, _ = _invoke_transition(order_id, "completed", actor=requester)
-    assert sc == 200
+    conn.commit()
+    conn.close()
 
-    # Now GET the completed order
+    # Now GET the completed order via the API handler
     sc, data = _invoke_get(order_id, actor=requester)
     assert sc == 200, f"GET on completed order failed: {data}"
 
@@ -307,19 +332,6 @@ def test_c2_get_completed_order_shows_control_sheet_missing_banner(
 # PBT: transition to implementing always succeeds without attachment
 # check (proves the bug across random lifecycle paths)
 # ─────────────────────────────────────────────────────────────────────
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "C2 PBT: on unfixed code, the full lifecycle from draft to "
-        "implementing succeeds without any control_sheet or attachment "
-        "enforcement. Task 15.3 adds the check."
-    ),
-)
-@settings(
-    max_examples=8,
-    deadline=None,
-    suppress_health_check=[HealthCheck.function_scoped_fixture],
-)
 def test_p2_lifecycle_no_control_sheet_enforcement(
     isolated_db, requester, initial_reviewer, final_approver
 ):
@@ -351,7 +363,13 @@ def test_p2_lifecycle_no_control_sheet_enforcement(
     for target_status, actor, extra in transitions:
         sc, data = _invoke_transition(order_id, target_status, actor=actor,
                                       extra_body=extra if extra else None)
-        if sc == 400 and "control_sheet" in str(data).lower():
+        data_str = str(data).lower()
+        if sc == 400 and (
+            "control_sheet" in data_str
+            or "变更控制表" in str(data)
+            or "控制表" in str(data)
+            or "附件" in str(data)
+        ):
             rejected_for_control_sheet = True
             break
         # If it fails for other reasons, that's fine — we just need to
@@ -365,3 +383,235 @@ def test_p2_lifecycle_no_control_sheet_enforcement(
         "transition to reject due to missing control_sheet fields or "
         "attachments."
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Task 15.1 — Integration tests: control_sheet round-trip via
+# create / update → _row_to_dict readout
+#
+# These tests verify that:
+#   1. ChangeOrderCreate / ChangeOrderUpdate accept the 9-field
+#      control_sheet structure (per design.md §Data Model Changes)
+#   2. create_change_order / update_change_order JSON-serialize the
+#      field into change_orders.control_sheet_json
+#   3. _row_to_dict (via get_change_order) deserializes it back
+#      correctly — the round-trip is lossless
+#
+# **Validates: Property 2 (design.md §Correctness Properties)**
+# Requirements: 2.4
+# ─────────────────────────────────────────────────────────────────────
+
+_VALID_CONTROL_SHEET = {
+    "change_time": {
+        "start": "2025-04-01T22:00:00Z",
+        "end": "2025-04-01T23:00:00Z",
+    },
+    "implementer": {"id": "u-123", "username": "alice"},
+    "co_reviewer": {"id": "u-456", "username": "bob"},
+    "device_ips": ["10.0.0.1", "10.0.0.2"],
+    "pre_check": "show version; show interfaces",
+    "execution": "interface GigabitEthernet0/0\n no shutdown",
+    "post_verify": "show interfaces status",
+    "business_verify": "Ping test from 10.0.0.1 to 10.0.0.2",
+    "rollback_plan": "interface GigabitEthernet0/0\n shutdown",
+}
+
+
+def _invoke_update(order_id: str, body_payload: dict, actor: dict) -> tuple[int, object]:
+    """Return `(status_code, result_or_detail)` for PUT /change-orders/{id}."""
+    from api.change_orders import ChangeOrderUpdate, api_update_change_order
+
+    body = ChangeOrderUpdate(**body_payload)
+    try:
+        result = api_update_change_order(order_id, body=body, user=actor)
+        data = result.get("data") if isinstance(result, dict) else result
+        return 200, data
+    except HTTPException as exc:
+        return exc.status_code, str(exc.detail)
+
+
+def test_15_1_create_with_control_sheet_round_trip(isolated_db, requester, initial_reviewer):
+    """
+    **Validates: Property 2** — Task 15.1 integration test.
+
+    POST /api/change-orders with a fully-populated 9-field control_sheet
+    (status='draft') MUST:
+      1. Accept the request (HTTP 200)
+      2. Persist the control_sheet into control_sheet_json
+      3. Return the deserialized control_sheet via _row_to_dict so the
+         round-trip is lossless
+
+    Requirements: 2.4
+    """
+    status_code, data = _invoke_create(
+        {
+            "status": "draft",
+            "assigned_initial_reviewer_id": initial_reviewer["user_id"],
+            "command_template": {},
+            "commands": ["show version"],
+            "control_sheet": _VALID_CONTROL_SHEET,
+        },
+        actor=requester,
+    )
+    assert status_code == 200, f"Create with control_sheet failed: {data}"
+    assert isinstance(data, dict), f"Expected dict response, got: {type(data)}"
+
+    # Verify round-trip: the returned order must contain the control_sheet
+    cs = data.get("control_sheet")
+    assert isinstance(cs, dict), (
+        f"control_sheet not deserialized in response; got: {cs!r}"
+    )
+    assert cs.get("change_time") == _VALID_CONTROL_SHEET["change_time"], (
+        f"change_time mismatch: {cs.get('change_time')!r}"
+    )
+    assert cs.get("implementer") == _VALID_CONTROL_SHEET["implementer"], (
+        f"implementer mismatch: {cs.get('implementer')!r}"
+    )
+    assert cs.get("co_reviewer") == _VALID_CONTROL_SHEET["co_reviewer"], (
+        f"co_reviewer mismatch: {cs.get('co_reviewer')!r}"
+    )
+    assert cs.get("device_ips") == _VALID_CONTROL_SHEET["device_ips"], (
+        f"device_ips mismatch: {cs.get('device_ips')!r}"
+    )
+    assert cs.get("pre_check") == _VALID_CONTROL_SHEET["pre_check"], (
+        f"pre_check mismatch: {cs.get('pre_check')!r}"
+    )
+    assert cs.get("execution") == _VALID_CONTROL_SHEET["execution"], (
+        f"execution mismatch: {cs.get('execution')!r}"
+    )
+    assert cs.get("post_verify") == _VALID_CONTROL_SHEET["post_verify"], (
+        f"post_verify mismatch: {cs.get('post_verify')!r}"
+    )
+    assert cs.get("business_verify") == _VALID_CONTROL_SHEET["business_verify"], (
+        f"business_verify mismatch: {cs.get('business_verify')!r}"
+    )
+    assert cs.get("rollback_plan") == _VALID_CONTROL_SHEET["rollback_plan"], (
+        f"rollback_plan mismatch: {cs.get('rollback_plan')!r}"
+    )
+
+
+def test_15_1_update_with_control_sheet_round_trip(isolated_db, requester, initial_reviewer):
+    """
+    **Validates: Property 2** — Task 15.1 integration test.
+
+    PUT /api/change-orders/{id} with a fully-populated 9-field control_sheet
+    MUST:
+      1. Accept the request (HTTP 200)
+      2. Persist the updated control_sheet into control_sheet_json
+      3. Return the deserialized control_sheet via _row_to_dict so the
+         round-trip is lossless
+
+    Requirements: 2.4
+    """
+    # First create a draft order without control_sheet
+    status_code, data = _invoke_create(
+        {
+            "status": "draft",
+            "assigned_initial_reviewer_id": initial_reviewer["user_id"],
+            "command_template": {},
+            "commands": ["show version"],
+        },
+        actor=requester,
+    )
+    assert status_code == 200, f"Draft creation failed: {data}"
+    order_id = data["id"]
+
+    # Verify initial control_sheet is empty dict
+    assert data.get("control_sheet") == {}, (
+        f"Expected empty control_sheet on draft, got: {data.get('control_sheet')!r}"
+    )
+
+    # Now update with the full control_sheet
+    sc, updated = _invoke_update(
+        order_id,
+        {"control_sheet": _VALID_CONTROL_SHEET},
+        actor=requester,
+    )
+    assert sc == 200, f"Update with control_sheet failed: {updated}"
+
+    cs = updated.get("control_sheet")
+    assert isinstance(cs, dict), (
+        f"control_sheet not deserialized after update; got: {cs!r}"
+    )
+    assert cs.get("change_time") == _VALID_CONTROL_SHEET["change_time"]
+    assert cs.get("implementer") == _VALID_CONTROL_SHEET["implementer"]
+    assert cs.get("co_reviewer") == _VALID_CONTROL_SHEET["co_reviewer"]
+    assert cs.get("device_ips") == _VALID_CONTROL_SHEET["device_ips"]
+    assert cs.get("pre_check") == _VALID_CONTROL_SHEET["pre_check"]
+    assert cs.get("execution") == _VALID_CONTROL_SHEET["execution"]
+    assert cs.get("post_verify") == _VALID_CONTROL_SHEET["post_verify"]
+    assert cs.get("business_verify") == _VALID_CONTROL_SHEET["business_verify"]
+    assert cs.get("rollback_plan") == _VALID_CONTROL_SHEET["rollback_plan"]
+
+
+def test_15_1_control_sheet_empty_dict_default(isolated_db, requester, initial_reviewer):
+    """
+    **Validates: Property 2 / Property 7** — Task 15.1 backward-compat test.
+
+    Creating an order without providing control_sheet MUST:
+      1. Succeed (HTTP 200) for draft orders
+      2. Return control_sheet as {} (empty dict, not None or missing)
+         so legacy rows don't crash _row_to_dict
+
+    Requirements: 2.4, 3.8
+    """
+    status_code, data = _invoke_create(
+        {
+            "status": "draft",
+            "assigned_initial_reviewer_id": initial_reviewer["user_id"],
+            "command_template": {},
+            "commands": ["show version"],
+            # No control_sheet field
+        },
+        actor=requester,
+    )
+    assert status_code == 200, f"Draft creation without control_sheet failed: {data}"
+    cs = data.get("control_sheet")
+    assert cs == {}, (
+        f"Expected empty dict for control_sheet when not provided, got: {cs!r}"
+    )
+
+
+def test_15_1_control_sheet_partial_update_preserves_other_fields(
+    isolated_db, requester, initial_reviewer
+):
+    """
+    **Validates: Property 2** — Task 15.1 integration test.
+
+    Updating only the control_sheet field via PUT MUST NOT overwrite
+    other order fields (title, description, etc.).
+
+    Requirements: 2.4
+    """
+    # Create with a specific title
+    status_code, data = _invoke_create(
+        {
+            "title": "My Important Change",
+            "description": "Critical network change",
+            "status": "draft",
+            "assigned_initial_reviewer_id": initial_reviewer["user_id"],
+            "command_template": {},
+            "commands": ["show version"],
+        },
+        actor=requester,
+    )
+    assert status_code == 200, f"Draft creation failed: {data}"
+    order_id = data["id"]
+
+    # Update only control_sheet
+    sc, updated = _invoke_update(
+        order_id,
+        {"control_sheet": _VALID_CONTROL_SHEET},
+        actor=requester,
+    )
+    assert sc == 200, f"Update failed: {updated}"
+
+    # Other fields must be preserved
+    assert updated.get("title") == "My Important Change", (
+        f"title was overwritten: {updated.get('title')!r}"
+    )
+    assert updated.get("description") == "Critical network change", (
+        f"description was overwritten: {updated.get('description')!r}"
+    )
+    # control_sheet must be updated
+    assert updated.get("control_sheet", {}).get("pre_check") == _VALID_CONTROL_SHEET["pre_check"]

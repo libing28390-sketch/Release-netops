@@ -60,6 +60,9 @@ interface RackLayout {
 interface RackStats {
   total_racks: number; total_devices: number;
   total_u: number; used_u: number; utilization: number;
+  total_power_capacity_watts?: number;
+  total_power_used_watts?: number;
+  power_utilization_pct?: number | null;
 }
 
 interface Props {
@@ -871,9 +874,9 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showDeviceTypeModal, setShowDeviceTypeModal] = useState(false);
 
-  const [rackForm, setRackForm] = useState({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '' });
+  const [rackForm, setRackForm] = useState({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '', power_capacity_watts: 0 });
   const [deviceForm, setDeviceForm] = useState({ name: '', device_type_id: '', start_u: 1, position: 'front' as string, status: 'active', serial_number: '', asset_id: '' });
-  const [dtForm, setDtForm] = useState({ model: '', vendor: '', u_height: 1, device_role: 'switch', description: '' });
+  const [dtForm, setDtForm] = useState({ model: '', vendor: '', u_height: 1, device_role: 'switch', description: '', power_watts: 0 });
   const [formError, setFormError] = useState('');
 
   // Asset selection for device installation (fields align with physical_assets / asset API)
@@ -1077,12 +1080,12 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const openNewRack = () => {
     setEditingRack(null);
-    setRackForm({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '' });
+    setRackForm({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '', power_capacity_watts: 0 });
     setFormError(''); setShowRackModal(true);
   };
   const openEditRack = (rack: Rack) => {
     setEditingRack(rack);
-    setRackForm({ name: rack.name, datacenter: rack.datacenter, room: rack.room, row: rack.row, total_u: rack.total_u, description: rack.description });
+    setRackForm({ name: rack.name, datacenter: rack.datacenter, room: rack.room, row: rack.row, total_u: rack.total_u, description: rack.description, power_capacity_watts: (rack as any).power_capacity_watts ?? 0 });
     setFormError(''); setShowRackModal(true);
   };
   const saveRack = async () => {
@@ -1248,7 +1251,7 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
   /* -- Device Type -- */
 
   const openNewDeviceType = () => {
-    setDtForm({ model: '', vendor: '', u_height: 1, device_role: 'switch', description: '' });
+    setDtForm({ model: '', vendor: '', u_height: 1, device_role: 'switch', description: '', power_watts: 0 });
     setFormError(''); setShowDeviceTypeModal(true);
   };
   const saveDeviceType = async () => {
@@ -1533,6 +1536,12 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                   { label: zh ? '设备' : 'Devices', value: stats.total_devices, color: '#6366f1', icon: <Server size={14} /> },
                   { label: zh ? 'U位' : 'U', value: `${stats.used_u}/${stats.total_u}`, color: '#10b981', icon: <Layers size={14} /> },
                   { label: zh ? '利用率' : 'Util', value: `${stats.utilization}%`, color: stats.utilization > 80 ? '#ef4444' : stats.utilization > 60 ? '#f59e0b' : '#10b981', icon: <Eye size={14} /> },
+                  ...(stats.total_power_capacity_watts ? [{
+                    label: zh ? '功率' : 'Power',
+                    value: `${stats.total_power_used_watts ?? 0}/${stats.total_power_capacity_watts}W`,
+                    color: (stats.power_utilization_pct ?? 0) > 80 ? '#ef4444' : (stats.power_utilization_pct ?? 0) > 60 ? '#f59e0b' : '#10b981',
+                    icon: <Zap size={14} />,
+                  }] : []),
                 ].map((s, i) => (
                   <div key={i} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
                     <span style={{ color: s.color }}>{s.icon}</span>
@@ -1565,6 +1574,12 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
             { label: zh ? '已安装设备' : 'Devices', value: stats.total_devices, color: '#6366f1', icon: <Server size={16} /> },
             { label: zh ? '总U位' : 'Total U', value: `${stats.used_u} / ${stats.total_u}`, color: '#10b981', icon: <Layers size={16} /> },
             { label: zh ? '利用率' : 'Utilization', value: `${stats.utilization}%`, color: stats.utilization > 80 ? '#ef4444' : stats.utilization > 60 ? '#f59e0b' : '#10b981', icon: <Eye size={16} /> },
+            ...(stats.total_power_capacity_watts ? [{
+              label: zh ? '机柜功率' : 'Power',
+              value: `${stats.total_power_used_watts ?? 0} / ${stats.total_power_capacity_watts} W`,
+              color: (stats.power_utilization_pct ?? 0) > 80 ? '#ef4444' : (stats.power_utilization_pct ?? 0) > 60 ? '#f59e0b' : '#10b981',
+              icon: <Zap size={16} />,
+            }] : []),
           ].map((s, i) => (
             <div key={i} className="rounded-lg px-3 py-2" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
               <div className="flex items-center justify-between">
@@ -1701,6 +1716,18 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                   <span className="text-[11px] font-medium" style={{ color: 'var(--muted-text)' }}>
                     {layout.total_used}U / {layout.total_u}U ({layout.available_u}U {zh ? '可用' : 'free'})
                   </span>
+                  {(layout as any).power_capacity_watts > 0 && (
+                    <span className={`text-[11px] font-medium flex items-center gap-1 ${
+                      ((layout as any).power_utilization_pct ?? 0) > 80 ? 'text-red-500' :
+                      ((layout as any).power_utilization_pct ?? 0) > 60 ? 'text-amber-500' : 'text-emerald-500'
+                    }`}>
+                      <Zap size={11} />
+                      {(layout as any).power_used_watts ?? 0} / {(layout as any).power_capacity_watts} W
+                      {(layout as any).power_utilization_pct != null && (
+                        <span className="text-[10px]">({(layout as any).power_utilization_pct}%)</span>
+                      )}
+                    </span>
+                  )}
                   <button onClick={handleDownloadRack} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} title={zh ? '下载' : 'Download'}>
                     <Download size={12} /> PNG
                   </button>
@@ -2024,6 +2051,11 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                     <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '总U位' : 'Total U'}</label>
                     <input type="number" min={1} max={60} value={rackForm.total_u} onChange={e => setRackForm({ ...rackForm, total_u: parseInt(e.target.value) || 42 })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
                   </div>
+                  <div>
+                    <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '最大功率 (W)' : 'Max Power (W)'}</label>
+                    <input type="number" min={0} value={rackForm.power_capacity_watts} onChange={e => setRackForm({ ...rackForm, power_capacity_watts: parseInt(e.target.value) || 0 })} placeholder="e.g. 6000" className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
+                    <p className="text-[10px] mt-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '机柜 PDU 最大承载功率，0 表示不限制' : 'PDU capacity, 0 = unlimited'}</p>
+                  </div>
                 </div>
                 <div>
                   <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '备注' : 'Description'}</label>
@@ -2336,6 +2368,10 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                   <div className="flex items-center gap-2">
                     <label className="text-[10px] flex-shrink-0" style={{ color: 'var(--muted-text)' }}>U{zh ? '高度' : ' Height'}:</label>
                     <input type="number" min={1} max={20} value={dtForm.u_height} onChange={e => setDtForm({ ...dtForm, u_height: parseInt(e.target.value) || 1 })} className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] flex-shrink-0" style={{ color: 'var(--muted-text)' }}>{zh ? '功率(W)' : 'Power(W)'}:</label>
+                    <input type="number" min={0} value={dtForm.power_watts} onChange={e => setDtForm({ ...dtForm, power_watts: parseInt(e.target.value) || 0 })} placeholder="0" className="w-20 rounded-lg px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
                   </div>
                   <select value={dtForm.device_role} onChange={e => setDtForm({ ...dtForm, device_role: e.target.value })} className="rounded-lg px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}>
                     {Object.entries(ROLE_COLORS).map(([key, rc]) => (

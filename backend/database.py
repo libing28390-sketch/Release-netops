@@ -13,10 +13,16 @@ def _beijing_now_iso() -> str:
 
 # Load .env BEFORE reading DATABASE_URL from os.environ
 # (pydantic-settings loads .env into Settings but NOT into os.environ at import time)
+# Load order: .env first, then .env.local overrides (same as config.py)
 try:
     from dotenv import load_dotenv
-    _env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _env_path = os.path.join(_project_root, '.env')
+    _env_local_path = os.path.join(_project_root, '.env.local')
     load_dotenv(_env_path, override=True)
+    # .env.local overrides .env (local dev only; not present in production)
+    if os.path.exists(_env_local_path):
+        load_dotenv(_env_local_path, override=True)
 except ImportError:
     pass
 
@@ -644,6 +650,9 @@ def _init_db_logic(conn):
     ensure_column('users', 'notification_channels', "TEXT DEFAULT '{}'")
     ensure_column('users', 'preferred_language', "TEXT DEFAULT 'zh'")
     ensure_column('users', 'fixed_pin', "TEXT DEFAULT ''")
+    ensure_column('users', 'display_name', "TEXT DEFAULT ''")
+    ensure_column('users', 'phone', "TEXT DEFAULT ''")
+    ensure_column('users', 'email', "TEXT DEFAULT ''")
 
     # Store user-defined scenario templates for playbooks
     cursor.execute('''
@@ -1671,6 +1680,16 @@ def _init_db_logic(conn):
     ensure_column('devices', 'password_last_rotated', "TEXT DEFAULT ''")
     ensure_column('devices', 'password_expires_at', "TEXT DEFAULT ''")
     ensure_column('devices', 'rotation_status', "TEXT DEFAULT ''")  # rotating / completed / failed
+
+    # Migration: device category and power consumption
+    ensure_column('devices', 'device_category', "TEXT DEFAULT ''")   # switch / router / firewall / load_balancer / other
+    ensure_column('devices', 'power_watts', "INTEGER DEFAULT 0")     # rated power consumption in watts
+
+    # Migration: rack power capacity
+    ensure_column('racks', 'power_capacity_watts', "INTEGER DEFAULT 0")   # max PDU capacity in watts
+
+    # Migration: device type power consumption
+    ensure_column('device_types', 'power_watts', "INTEGER DEFAULT 0")     # rated power per device type
 
     # Backfill for dual-auth assets created before normal_username column existed.
     # Keep behavior predictable: normal access should use normal_username first.

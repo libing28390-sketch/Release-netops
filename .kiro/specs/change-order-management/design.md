@@ -34,6 +34,7 @@
 - **`ALLOWED_TRANSITIONS`**：从当前状态到下一状态的白名单映射。
 - **`my_todo` / `group_todo` / `my_drafts`**：`list_change_orders` 的视图过滤参数。
 - **变更控制表（Control Sheet）**：结构化字段 + 附件的集合，描述一次变更的实施计划与验证方案。
+- **"创建中"（frontend-only transient state）**：用户在前端填写新建工单表单、尚未点击"提交"或 API 调用尚未返回时，UI 可显示"创建中…"加载态。**此状态不对应任何后端 `status` 值**，不落库，不出现在 `ALLOWED_STATUSES` 或 `ALLOWED_TRANSITIONS` 中。一旦 `POST /api/change-orders` 成功返回，工单即以 `draft` 状态持久化。前端代码中对应的是 `saving` 布尔状态变量（`ChangeOrderTab.tsx`），而非任何 `status` 字符串。
 
 ## Bug Details
 
@@ -282,7 +283,20 @@ _For any_ 输入不满足 `isBugCondition`，F'(input) 的返回 payload、数�
        'executing': {'completed', 'failed', 'rollback_in_progress', 'cancelled'},
    }
    ```
-2. "创建中"去后端化：文档与 UI 文案把"创建中"明确为"前端草稿表单未提交"的瞬时态，不落库；落库即 `draft`。
+2. **"创建中"去后端化（前端瞬时态声明）**：
+   - "创建中"**不是**后端状态，不在 `ALLOWED_STATUSES` 中，不落库。
+   - 它是前端在 `POST /api/change-orders` 请求飞行期间显示的 UI 加载态，对应 `ChangeOrderTab.tsx` 中的 `saving` 布尔变量（`setSaving(true)` → API 返回 → `setSaving(false)`）。
+   - 工单一旦落库，其初始状态即为 `draft`（草稿）。
+   - 六态正式词汇表（对齐 `bugfix.md §2.10`）：
+     | 后端 `status` 值 | 中文显示 | 英文显示 |
+     |---|---|---|
+     | `draft` | 草稿 | Draft |
+     | `initial_review` | 初审中 | Initial Review |
+     | `final_review` | 终审中 | Final Review |
+     | `approved` | 审批完成 | Approved |
+     | `implementing` | 实施中 | Implementing |
+     | `completed` | 完成 | Completed |
+   - 前端 `STATUS_META`（`ChangeOrderTab.tsx`）与 `App.tsx` 页面标题均已使用上述六态词汇，**不包含** `creating` 或"创建中"键。任何新增状态标签必须先在 `ALLOWED_STATUSES` 中注册，再同步到 `STATUS_META`。
 3. `api_transition_change_order` 的驳回分支（`new_status == 'draft'` 且 `current_status IN {'initial_review','final_review'}`，走 `rejected → draft` 的重开路径在 `new_status == 'rejected'` 后手动重开时也命中）新增字段清理：
    ```python
    if new_status == 'draft' and current_status in {'initial_review', 'final_review', 'rejected'}:
@@ -322,7 +336,11 @@ _For any_ 输入不满足 `isBugCondition`，F'(input) 的返回 payload、数�
 
 ```mermaid
 stateDiagram-v2
-    [*] --> draft: 前端"创建中" POST /change-orders
+    %% NOTE: "创建中" is a frontend-only transient UI state (saving=true) shown while
+    %% POST /change-orders is in-flight. It is NOT a backend status and does NOT appear
+    %% in ALLOWED_STATUSES. Once the API call returns successfully, the order is persisted
+    %% as `draft`. The arrow below represents that full lifecycle boundary.
+    [*] --> draft: 前端"创建中"瞬时态 → POST /change-orders 成功 → draft
     draft --> initial_review: 提交初审（必须含 command_template + control_sheet）
     draft --> cancelled: 取消
     initial_review --> final_review: 初审通过（并可切换终审人，走 _validate_assignment_rules）

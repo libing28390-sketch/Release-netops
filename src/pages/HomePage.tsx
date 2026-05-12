@@ -25,6 +25,7 @@ import {
   Plus,
   Play,
   Server,
+  SlidersHorizontal,
   Wifi,
   Zap,
 } from 'lucide-react';
@@ -65,6 +66,7 @@ const apps: AppEntry[] = [
   { id: 'automation', label: '自动化',     labelEn: 'Automation',   desc: '作业执行与编排',     descEn: 'Jobs & orchestration', icon: Zap,               path: '/automation/execute', accent: '#0891b2' },
   { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      desc: '变更审批与跟踪',     descEn: 'Change & approval',    icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff' },
   { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      desc: '趋势分析与报表',     descEn: 'Trends & reports',     icon: BarChart2,         path: '/capacity',           accent: '#13c2c2' },
+  { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     desc: '用户、审计与系统',   descEn: 'Users, audit & system', icon: SlidersHorizontal, path: '/audit',              accent: '#8c8c8c' },
 ];
 
 /* ─────────────── Helpers ─────────────── */

@@ -9,7 +9,10 @@ interface UseUserManagementProps {
   showToast: (msg: string, type: string) => void;
 }
 
-const createEmptyUserForm = () => ({ username: '', password: '', role: 'Operator', group_name: '', change_groups: [] as string[] });
+const createEmptyUserForm = () => ({
+  username: '', password: '', role: 'Operator', group_name: '', change_groups: [] as string[],
+  display_name: '', phone: '', email: '',
+});
 
 export const useUserManagement = ({ currentUser, setCurrentUser, language, showToast }: UseUserManagementProps) => {
   const [users, setUsers] = useState<User[]>([]);
@@ -67,6 +70,9 @@ export const useUserManagement = ({ currentUser, setCurrentUser, language, showT
           role: editUserForm.role,
           group_name: editUserForm.group_name,
           change_groups: editUserForm.change_groups,
+          display_name: editUserForm.display_name,
+          phone: editUserForm.phone,
+          email: editUserForm.email,
           actor_username: currentUser.username || 'admin',
           actor_role: currentUser.role || 'Administrator',
         }),

@@ -262,6 +262,9 @@ export interface User {
   notification_channels?: NotificationChannels;
   preferred_language?: 'zh' | 'en';
   fixed_pin?: string;
+  display_name?: string;
+  phone?: string;
+  email?: string;
 }
 
 export type ThemeMode = 'light' | 'dark';
@@ -274,6 +277,9 @@ export interface SessionUser {
   group_name?: string;
   change_groups?: string[];
   preferred_language?: 'zh' | 'en';
+  display_name?: string;
+  phone?: string;
+  email?: string;
 }
 
 export interface NotificationItem {

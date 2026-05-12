@@ -25,6 +25,17 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 from hypothesis import HealthCheck, given, settings, strategies as st
+import api.change_orders as _co_module
+
+
+@pytest.fixture(autouse=True)
+def enable_template_required(monkeypatch):
+    """Enable FEATURE_TEMPLATE_REQUIRED for all tests in this module.
+
+    Task 14.1 gates enforcement behind this flag.  The exploration tests
+    (Phase A) verify the *fixed* behavior, so the flag must be ON.
+    """
+    monkeypatch.setattr(_co_module, "FEATURE_TEMPLATE_REQUIRED", True)
 
 
 # ── Strategy: the four scoped bad `command_template` variants ─────────

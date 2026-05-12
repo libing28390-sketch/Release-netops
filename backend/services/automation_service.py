@@ -13,12 +13,28 @@ class AutomationService:
         self.orchestrator = get_orchestrator()
 
     def execute_commands(self, device_info: Dict[str, Any], commands: List[str], is_config: bool = False) -> List[Any]:
-        # 为了兼容旧接口，这里循环调用或根据场景封装
-        mode = "config" if is_config else "command"
-        content = commands if is_config else "\n".join(commands)
-        
-        result = self.orchestrator.execute_single(device_info, mode, content)
-        return [result] # 返回列表以匹配旧接口预期
+        if is_config:
+            # Config mode: send all lines as a config set (single transaction)
+            result = self.orchestrator.execute_single(device_info, "config", commands)
+            return [result]
+        else:
+            # Command mode: execute each command individually so every output is captured.
+            # Joining multiple show commands into one string causes Netmiko to treat them
+            # as a single command, resulting in empty or partial output.
+            results = []
+            for cmd in commands:
+                if not cmd.strip():
+                    continue
+                result = self.orchestrator.execute_single(device_info, "command", cmd)
+                results.append(result)
+                # Stop on first connection-level failure (auth/timeout) to avoid
+                # repeating the same error for every subsequent command.
+                if not result.get('success', False):
+                    err = result.get('stderr') or result.get('error') or ''
+                    is_conn_err = any(k in err.lower() for k in ('connection', 'timeout', 'authentication', 'ssh'))
+                    if is_conn_err:
+                        break
+            return results if results else [{"success": False, "stderr": "No commands provided", "stdout": ""}]
 
     def test_connectivity(self, ip_address: str, username: str, password: str, platform: str) -> bool:
         device = {

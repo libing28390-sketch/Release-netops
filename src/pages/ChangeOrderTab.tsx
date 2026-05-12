@@ -7,7 +7,8 @@ import {
   ArrowUpRight, ArrowDown, ArrowUp, Minus,
   User, Hash, Filter, Trash2,
   Copy, Bookmark, BookmarkCheck, Save, ChevronDown, SlidersHorizontal, Star,
-  Users, UserCheck, Heart,
+  Users, UserCheck, Heart, ClipboardCheck,
+  Download, Paperclip, Upload, Info,
 } from 'lucide-react';
 import DateTimePicker from '../components/DateTimePicker';
 import { AnimatePresence, motion } from 'motion/react';
@@ -15,6 +16,13 @@ import PageHero from '../components/PageHero';
 import { sectionHeaderRowClass } from '../components/shared';
 import Pagination from '../components/Pagination';
 import type { User as UserOption, SessionUser, ConfigTemplate } from '../types';
+
+/* ═══════════════════════════════════════════════════════════════════
+   Feature Flags
+   ═══════════════════════════════════════════════════════════════════ */
+
+const FEATURE_CONTROL_SHEET = import.meta.env.VITE_FEATURE_CONTROL_SHEET === '0' ? false : true;
+const FEATURE_TODO_SUBTABS = true; // Stage-3: split "个人待办" into 待我审核/待我实施/待我修改
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
@@ -54,8 +62,20 @@ interface ChangeOrder {
   authorization_exempt?: boolean;
   rejected_reason: string;
   control_sheet?: Record<string, any>;
+  control_sheet_attachments?: ControlSheetAttachment[];
+  control_sheet_missing?: boolean;
   created_at: string;
   updated_at: string;
+}
+
+interface ControlSheetAttachment {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  uploaded_by_username: string;
+  uploaded_at: string;
+  download_url?: string;
 }
 
 interface TimelineEvent {
@@ -187,6 +207,21 @@ const RISK_META: Record<string, { label: { zh: string; en: string }; color: stri
   high:   { label: { zh: '高风险', en: 'High Risk' },     color: 'text-rose-600' },
 };
 
+const EMPTY_CONTROL_SHEET = {
+  change_time_start: '',
+  change_time_end: '',
+  implementer_id: '',
+  implementer_username: '',
+  co_reviewer_id: '',
+  co_reviewer_username: '',
+  device_ips: '',
+  pre_check: '',
+  execution: '',
+  post_verify: '',
+  business_verify: '',
+  rollback_plan: '',
+};
+
 const EMPTY_FORM = {
   title: '',
   description: '',
@@ -202,17 +237,7 @@ const EMPTY_FORM = {
   assigned_final_approver_username: '',
   target_devices: [] as { hostname: string; ip_address: string; username?: string; platform?: string }[],
   commands: [] as string[],
-  control_sheet: {
-    scheduled_start: '',
-    scheduled_end: '',
-    target_ips: '',
-    change_content: '',
-    risk_analysis: '',
-    rollback_plan: '',
-    requester_approver: '',
-    security_approver: '',
-    implementation_plan: '',
-  },
+  control_sheet: { ...EMPTY_CONTROL_SHEET },
 };
 
 const DEFAULT_PAGE_SIZE = 10;
@@ -262,7 +287,7 @@ const hasChangeGroup = (user: UserOption, groupKey: string) =>
   Array.isArray(user.change_groups) && user.change_groups.includes(groupKey);
 
 const buildUserOptionLabel = (user: UserOption) =>
-  [user.username, user.group_name].filter(Boolean).join(' · ');
+  [user.display_name || user.username, user.group_name].filter(Boolean).join(' · ');
 
 const isCommandTemplateSnapshot = (value: unknown): value is CommandTemplateSnapshot => {
   if (!value || typeof value !== 'object') return false;
@@ -284,6 +309,7 @@ const TIMELINE_EVENT_META: Record<string, { zh: string; en: string }> = {
   'change_order.rolled_back': { zh: '回溯完成', en: 'Rollback Completed' },
   'change_order.cancelled': { zh: '工单取消', en: 'Order Cancelled' },
   'change_order.deleted': { zh: '工单删除', en: 'Order Deleted' },
+  'change_order.control_sheet_uploaded': { zh: '上传变更控制表附件', en: 'Control Sheet Attachment Uploaded' },
 };
 
 const timelineEventLabel = (eventType: string, lang: string) =>
@@ -312,6 +338,12 @@ const translateSummary = (summaryText: string, lang: string) => {
 };
 
 type WorkflowVisualState = 'done' | 'current' | 'pending' | 'error';
+
+const fmtFileSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 const PRIMARY_WORKFLOW = [
   {
@@ -602,6 +634,9 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
   const isPrivilegedDefault = currentUser.role === 'Administrator';
 
+  // ── Control Sheet ──
+  const [showControlSheet, setShowControlSheet] = useState(false);
+
   // ── Toast ──
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
@@ -686,6 +721,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     setDeviceOptions([]);
     setShowDevicePicker(false);
     setSelectedInventoryDevice(null);
+    setShowControlSheet(false);
     resetTemplateComposer();
   }, [isPrivilegedDefault, resetTemplateComposer]);
 
@@ -876,9 +912,12 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const filteredInitialReviewers = useMemo(() => {
     return initialReviewerOptions.filter(u => {
       const matchGroup = !selectedGroupForInitial || u.group_name === selectedGroupForInitial;
-      const matchSearch = !initialApproverSearch || 
-        u.username.toLowerCase().includes(initialApproverSearch.toLowerCase()) || 
-        (u.role && u.role.toLowerCase().includes(initialApproverSearch.toLowerCase()));
+      const q = initialApproverSearch.toLowerCase();
+      const matchSearch = !q ||
+        u.username.toLowerCase().includes(q) ||
+        (u.display_name && u.display_name.toLowerCase().includes(q)) ||
+        (u.phone && u.phone.includes(initialApproverSearch)) ||
+        (u.role && u.role.toLowerCase().includes(q));
       return matchGroup && matchSearch;
     });
   }, [initialReviewerOptions, selectedGroupForInitial, initialApproverSearch]);
@@ -886,9 +925,12 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const groupedInitialReviewers = useMemo(() => {
     const map: Record<string, UserOption[]> = {};
     initialReviewerOptions.forEach(u => {
-      const matchSearch = !initialApproverSearch || 
-        u.username.toLowerCase().includes(initialApproverSearch.toLowerCase()) || 
-        (u.role && u.role.toLowerCase().includes(initialApproverSearch.toLowerCase()));
+      const q = initialApproverSearch.toLowerCase();
+      const matchSearch = !q ||
+        u.username.toLowerCase().includes(q) ||
+        (u.display_name && u.display_name.toLowerCase().includes(q)) ||
+        (u.phone && u.phone.includes(initialApproverSearch)) ||
+        (u.role && u.role.toLowerCase().includes(q));
       if (matchSearch) {
         const g = u.group_name || (zh ? '无组别' : 'No Group');
         if (!map[g]) map[g] = [];
@@ -914,9 +956,12 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const groupedFinalApprovers = useMemo(() => {
     const map: Record<string, UserOption[]> = {};
     finalApproverOptions.forEach(u => {
-      const matchSearch = !finalApproverSearch || 
-        u.username.toLowerCase().includes(finalApproverSearch.toLowerCase()) || 
-        (u.role && u.role.toLowerCase().includes(finalApproverSearch.toLowerCase()));
+      const q = finalApproverSearch.toLowerCase();
+      const matchSearch = !q ||
+        u.username.toLowerCase().includes(q) ||
+        (u.display_name && u.display_name.toLowerCase().includes(q)) ||
+        (u.phone && u.phone.includes(finalApproverSearch)) ||
+        (u.role && u.role.toLowerCase().includes(q));
       if (matchSearch) {
         const g = u.group_name || (zh ? '无组别' : 'No Group');
         if (!map[g]) map[g] = [];
@@ -929,9 +974,12 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const filteredFinalApprovers = useMemo(() => {
     return finalApproverOptions.filter(u => {
       const matchGroup = !selectedGroupForFinal || u.group_name === selectedGroupForFinal;
-      const matchSearch = !finalApproverSearch || 
-        u.username.toLowerCase().includes(finalApproverSearch.toLowerCase()) || 
-        (u.role && u.role.toLowerCase().includes(finalApproverSearch.toLowerCase()));
+      const q = finalApproverSearch.toLowerCase();
+      const matchSearch = !q ||
+        u.username.toLowerCase().includes(q) ||
+        (u.display_name && u.display_name.toLowerCase().includes(q)) ||
+        (u.phone && u.phone.includes(finalApproverSearch)) ||
+        (u.role && u.role.toLowerCase().includes(q));
       return matchGroup && matchSearch;
     });
   }, [finalApproverOptions, selectedGroupForFinal, finalApproverSearch]);
@@ -1333,26 +1381,22 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         return;
       }
       if (commandMode === 'template') {
-        const devicePlatform = form.target_devices.find(d => d.platform)?.platform;
-        const platformToUse = effectiveScenarioPlatform || devicePlatform || '';
-        
-        if (!selectedScenarioId && !platformToUse) {
-          showToast(zh ? '请选择变更模板场景或添加有平台信息的目标设备' : 'Select a scenario or add a device with platform info', 'error');
+        // Guard: scenario must be selected before submission — no silent fallback to devicePlatform
+        if (!selectedScenarioId) {
+          showToast(zh ? '请先选择场景并填写必填变量' : 'Please select a scenario and fill in all required variables', 'error');
           return;
         }
-        if (selectedScenarioId && !effectiveScenarioPlatform && !platformToUse) {
+        if (!effectiveScenarioPlatform) {
           showToast(zh ? '无法确定目标平台' : 'Cannot determine target platform', 'error');
           return;
         }
-        if (selectedScenarioId) {
-          if (templateMissingRequired.length > 0) {
-            showToast(zh ? `请先填写必填变量：${templateMissingRequired.join('、')}` : `Fill required variables: ${templateMissingRequired.join(', ')}`, 'error');
-            return;
-          }
-          if (!effectivePreview || effectivePreview.execute.length === 0) {
-            showToast(zh ? '模板尚未生成可执行命令，请检查变量或模板配置' : 'No executable commands were generated, check variables or template config', 'error');
-            return;
-          }
+        if (templateMissingRequired.length > 0) {
+          showToast(zh ? `请先填写必填变量：${templateMissingRequired.join('、')}` : `Fill required variables: ${templateMissingRequired.join(', ')}`, 'error');
+          return;
+        }
+        if (!effectivePreview || effectivePreview.execute.length === 0) {
+          showToast(zh ? '模板尚未生成可执行命令，请检查变量或模板配置' : 'No executable commands were generated, check variables or template config', 'error');
+          return;
         }
       }
 
@@ -1376,6 +1420,33 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         commands: form.commands,
         rollback_plan: form.rollback_plan,
       };
+
+      // Build structured control_sheet payload if feature is enabled
+      if (FEATURE_CONTROL_SHEET) {
+        const cs = form.control_sheet;
+        payload.control_sheet = {
+          change_time: {
+            start: cs.change_time_start || '',
+            end: cs.change_time_end || '',
+          },
+          implementer: {
+            id: cs.implementer_id || '',
+            username: cs.implementer_username || '',
+          },
+          co_reviewer: {
+            id: cs.co_reviewer_id || '',
+            username: cs.co_reviewer_username || '',
+          },
+          device_ips: cs.device_ips
+            ? cs.device_ips.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
+            : [],
+          pre_check: cs.pre_check || '',
+          execution: cs.execution || '',
+          post_verify: cs.post_verify || '',
+          business_verify: cs.business_verify || '',
+          rollback_plan: cs.rollback_plan || '',
+        };
+      }
 
       if (commandMode === 'template' && selectedScenarioId && effectiveScenarioPlatform) {
         if (!selectedScenarioPlatform && selectedScenarioPlatforms.length === 1) {
@@ -1462,7 +1533,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         fetchOrders();
         fetchSummary();
       } else {
-        showToast(data.detail || 'Error', 'error');
+        showToast(data.detail || data.message || 'Error', 'error');
       }
     } catch { showToast(zh ? '操作失败' : 'Failed', 'error'); }
   };
@@ -1507,6 +1578,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const handleCopyOrder = (order: ChangeOrder) => {
     setEditingOrder(null);
     setSelectedOrder(null); // Clear detail view when copying
+    const existingCs = order.control_sheet || {};
     setForm({
       title: `${order.title} (${zh ? '副本' : 'Copy'})`,
       description: order.description,
@@ -1523,6 +1595,20 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       assigned_final_approver_id: '',
       assigned_final_approver_username: '',
       authorization_exempt: order.authorization_exempt ?? false,
+      control_sheet: {
+        change_time_start: existingCs.change_time?.start || '',
+        change_time_end: existingCs.change_time?.end || '',
+        implementer_id: existingCs.implementer?.id || '',
+        implementer_username: existingCs.implementer?.username || '',
+        co_reviewer_id: existingCs.co_reviewer?.id || '',
+        co_reviewer_username: existingCs.co_reviewer?.username || '',
+        device_ips: Array.isArray(existingCs.device_ips) ? existingCs.device_ips.join('\n') : (existingCs.device_ips || ''),
+        pre_check: existingCs.pre_check || '',
+        execution: existingCs.execution || '',
+        post_verify: existingCs.post_verify || '',
+        business_verify: existingCs.business_verify || '',
+        rollback_plan: existingCs.rollback_plan || '',
+      },
     });
     setCommandInput('');
     setShowCreateModal(true);
@@ -1552,6 +1638,87 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   // ── Advanced search active count ──
   const advancedFilterCount = [requesterFilter, assigneeFilter, bookmarkFilter, orderTypeFilter, createdFrom, createdTo, completedFrom, completedTo, scheduledFrom, scheduledTo].filter(Boolean).length;
 
+  // ── Export order as CSV ──
+  const handleExportOrder = (order: ChangeOrder) => {
+    const cs = order.control_sheet || {};
+    const attachments = order.control_sheet_attachments || [];
+    const rows: (string[] | string)[] = [];
+
+    // Header
+    rows.push([zh ? '字段' : 'Field', zh ? '值' : 'Value']);
+
+    // Basic fields
+    rows.push([zh ? '工单号' : 'Order Number', order.order_number]);
+    rows.push([zh ? '标题' : 'Title', order.title]);
+    rows.push([zh ? '描述' : 'Description', order.description || '']);
+    rows.push([zh ? '类型' : 'Type', typeLabel(order.order_type, language)]);
+    rows.push([zh ? '优先级' : 'Priority', priorityLabel(order.priority, language)]);
+    rows.push([zh ? '风险等级' : 'Risk Level', riskLabel(order.risk_level, language)]);
+    rows.push([zh ? '状态' : 'Status', statusLabel(order.status, language)]);
+    rows.push([zh ? '申请人' : 'Requester', order.requester_username || '']);
+    rows.push([zh ? '初审人' : 'Initial Reviewer', order.initial_reviewer_username || '']);
+    rows.push([zh ? '终审人' : 'Final Approver', order.final_approver_username || order.approver_username || '']);
+    rows.push([zh ? '创建时间' : 'Created At', fmtDate(order.created_at)]);
+    rows.push([zh ? '计划开始' : 'Scheduled Start', order.scheduled_start ? fmtDate(order.scheduled_start) : '']);
+    rows.push([zh ? '计划结束' : 'Scheduled End', order.scheduled_end ? fmtDate(order.scheduled_end) : '']);
+    rows.push([zh ? '实际开始' : 'Actual Start', order.actual_start ? fmtDate(order.actual_start) : '']);
+    rows.push([zh ? '实际结束' : 'Actual End', order.actual_end ? fmtDate(order.actual_end) : '']);
+    rows.push([zh ? '执行结果' : 'Result Summary', order.result_summary || '']);
+    rows.push([zh ? '驳回原因' : 'Rejection Reason', order.rejected_reason || '']);
+
+    // Control sheet fields (per bugfix.md 2.6)
+    if (FEATURE_CONTROL_SHEET) {
+      rows.push(['', '']);
+      rows.push([zh ? '=== 变更控制表 ===' : '=== Control Sheet ===', '']);
+      const changeTimeStart = cs.change_time?.start || '';
+      const changeTimeEnd = cs.change_time?.end || '';
+      rows.push([zh ? '变更时间窗口（开始）' : 'Change Time Start', changeTimeStart ? fmtDate(changeTimeStart) : '']);
+      rows.push([zh ? '变更时间窗口（结束）' : 'Change Time End', changeTimeEnd ? fmtDate(changeTimeEnd) : '']);
+      rows.push([zh ? '实施人' : 'Implementer', cs.implementer?.username || '']);
+      rows.push([zh ? '联合审核人' : 'Co-Reviewer', cs.co_reviewer?.username || '']);
+      const deviceIps = Array.isArray(cs.device_ips) ? cs.device_ips.join(', ') : (cs.device_ips || '');
+      rows.push([zh ? '目标设备IP' : 'Target Device IPs', deviceIps]);
+      rows.push([zh ? '实施前检查' : 'Pre-Check', cs.pre_check || '']);
+      rows.push([zh ? '执行步骤' : 'Execution Steps', cs.execution || '']);
+      rows.push([zh ? '实施后验证' : 'Post-Verify', cs.post_verify || '']);
+      rows.push([zh ? '业务验证' : 'Business Verify', cs.business_verify || '']);
+      rows.push([zh ? '回滚方案' : 'Rollback Plan', cs.rollback_plan || '']);
+
+      // Attachments
+      if (attachments.length > 0) {
+        rows.push(['', '']);
+        rows.push([zh ? '=== 控制表附件 ===' : '=== Control Sheet Attachments ===', '']);
+        rows.push([
+          zh ? '文件名' : 'Filename',
+          zh ? '大小' : 'Size',
+          zh ? '上传人' : 'Uploaded By',
+          zh ? '上传时间' : 'Uploaded At',
+        ].join('\t'));
+        attachments.forEach(att => {
+          rows.push([
+            att.filename,
+            fmtFileSize(att.size_bytes),
+            att.uploaded_by_username,
+            fmtDate(att.uploaded_at),
+          ].join('\t'));
+        });
+      }
+    }
+
+    const csvContent = '\ufeff' + rows.map(r =>
+      Array.isArray(r) ? r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',') : r
+    ).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${order.order_number}_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast(zh ? '导出成功' : 'Exported successfully');
+  };
+
   // ── Detail ──
   const openDetail = async (order: ChangeOrder) => {
     setDetailLoading(true);
@@ -1573,6 +1740,22 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     const templateSnapshot = isCommandTemplateSnapshot(order.command_template) ? order.command_template : null;
     setSelectedOrder(null);
     setEditingOrder(order);
+    // Populate control sheet from existing order data
+    const existingCs = order.control_sheet || {};
+    const populatedControlSheet = {
+      change_time_start: existingCs.change_time?.start || '',
+      change_time_end: existingCs.change_time?.end || '',
+      implementer_id: existingCs.implementer?.id || '',
+      implementer_username: existingCs.implementer?.username || '',
+      co_reviewer_id: existingCs.co_reviewer?.id || '',
+      co_reviewer_username: existingCs.co_reviewer?.username || '',
+      device_ips: Array.isArray(existingCs.device_ips) ? existingCs.device_ips.join('\n') : (existingCs.device_ips || ''),
+      pre_check: existingCs.pre_check || '',
+      execution: existingCs.execution || '',
+      post_verify: existingCs.post_verify || '',
+      business_verify: existingCs.business_verify || '',
+      rollback_plan: existingCs.rollback_plan || '',
+    };
     setForm({
       title: order.title,
       description: order.description,
@@ -1589,6 +1772,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       authorization_exempt: order.authorization_exempt ?? false,
       target_devices: order.target_devices || [],
       commands: order.commands || [],
+      control_sheet: populatedControlSheet,
     });
     if (templateSnapshot) {
       setCommandMode('template');
@@ -2158,6 +2342,28 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       {!editorVisible && (
         <div className="min-w-0">
           <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
+            {/* ── My-Todo Sub-tabs (待我审核 / 待我实施 / 待我修改) ── */}
+            {FEATURE_TODO_SUBTABS && viewTab === 'my_todo' && (
+              <div className="flex items-center gap-1 px-4 pt-3 pb-0 border-b border-black/5">
+                {([
+                  { key: 'review',     zh: '待我审核', en: 'Pending Review' },
+                  { key: 'implement',  zh: '待我实施', en: 'Pending Implementation' },
+                  { key: 'modify',     zh: '待我修改', en: 'Pending Modification' },
+                ] as const).map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => { setMyTodoSubTab(tab.key); setPage(1); }}
+                    className={`px-4 py-2 text-sm font-medium rounded-t-xl border-b-2 transition-all -mb-px ${
+                      myTodoSubTab === tab.key
+                        ? 'border-[#00bceb] text-[#00bceb] bg-[#00bceb]/[0.04]'
+                        : 'border-transparent text-black/45 hover:text-black/70 hover:border-black/20'
+                    }`}
+                  >
+                    {zh ? tab.zh : tab.en}
+                  </button>
+                ))}
+              </div>
+            )}
             {loading && orders.length === 0 ? (
               <div className="flex items-center justify-center py-24 text-black/30">
                 <RefreshCw size={18} className="animate-spin mr-2" /> {zh ? '加载中...' : 'Loading...'}
@@ -2305,7 +2511,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
             {zh ? '返回工单列表' : 'Back to List'}
           </button>
           <div className="flex items-center gap-2">
-            {/* ── Utility buttons: Copy / Bookmark / Save as Template ── */}
+            {/* ── Utility buttons: Copy / Bookmark / Save as Template / Export ── */}
             <button
               onClick={() => handleCopyOrder(selectedOrder)}
               title={zh ? '复制工单' : 'Copy as new order'}
@@ -2336,6 +2542,14 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                 {zh ? '存为模板' : 'Template'}
               </button>
             )}
+            <button
+              onClick={() => handleExportOrder(selectedOrder)}
+              title={zh ? '导出工单（CSV）' : 'Export order (CSV)'}
+              className="px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 bg-white text-black/50 border border-black/10 hover:bg-sky-50 hover:text-sky-600 hover:border-sky-200 transition-all"
+            >
+              <Download size={13} />
+              {zh ? '导出' : 'Export'}
+            </button>
             <div className="w-px h-5 bg-black/8 mx-0.5" />
             {/* ── Workflow buttons ── */}
             {['draft', 'rejected'].includes(selectedOrder.status) && selectedOrder.requester_username === currentUser.username && (
@@ -2673,28 +2887,60 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                               </div>
                             )}
                             <div className="mt-3 grid grid-cols-1 gap-3">
-                              {preview.pre_check.length > 0 && (
+                              {/* Pre-check Commands */}
+                              {preview.pre_check.length > 0 ? (
                                 <div>
-                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '实施前检查' : 'Pre-check'}</p>
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '预检命令' : 'Pre-check Commands'}</p>
                                   <div className="rounded-xl bg-slate-900 p-3 font-mono text-xs text-cyan-300 whitespace-pre-wrap break-all leading-relaxed">
-                                    {preview.pre_check.map((cmd, index) => <div key={`${cmd}-${index}`}>{index + 1}. {cmd}</div>)}
+                                    {preview.pre_check.map((cmd, index) => <div key={`pre-${cmd}-${index}`}>{index + 1}. {cmd}</div>)}
                                   </div>
                                 </div>
-                              )}
-                              {preview.post_check.length > 0 && (
+                              ) : (
                                 <div>
-                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '实施后检查' : 'Post-check'}</p>
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '预检命令' : 'Pre-check Commands'}</p>
+                                  <p className="text-xs text-black/30 italic">{zh ? '无' : 'None'}</p>
+                                </div>
+                              )}
+                              {/* Execute Commands */}
+                              {preview.execute.length > 0 ? (
+                                <div>
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '执行命令' : 'Execute Commands'}</p>
+                                  <div className="rounded-xl bg-slate-900 p-3 font-mono text-xs text-emerald-300 whitespace-pre-wrap break-all leading-relaxed">
+                                    {preview.execute.map((cmd, index) => <div key={`exec-${cmd}-${index}`}>{index + 1}. {cmd}</div>)}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div>
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '执行命令' : 'Execute Commands'}</p>
+                                  <p className="text-xs text-black/30 italic">{zh ? '无' : 'None'}</p>
+                                </div>
+                              )}
+                              {/* Post-check Commands */}
+                              {preview.post_check.length > 0 ? (
+                                <div>
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '后检命令' : 'Post-check Commands'}</p>
                                   <div className="rounded-xl bg-slate-900 p-3 font-mono text-xs text-amber-300 whitespace-pre-wrap break-all leading-relaxed">
-                                    {preview.post_check.map((cmd, index) => <div key={`${cmd}-${index}`}>{index + 1}. {cmd}</div>)}
+                                    {preview.post_check.map((cmd, index) => <div key={`post-${cmd}-${index}`}>{index + 1}. {cmd}</div>)}
                                   </div>
                                 </div>
-                              )}
-                              {preview.rollback.length > 0 && (
+                              ) : (
                                 <div>
-                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '模板回退命令' : 'Template Rollback'}</p>
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '后检命令' : 'Post-check Commands'}</p>
+                                  <p className="text-xs text-black/30 italic">{zh ? '无' : 'None'}</p>
+                                </div>
+                              )}
+                              {/* Rollback Commands */}
+                              {preview.rollback.length > 0 ? (
+                                <div>
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '回滚命令' : 'Rollback Commands'}</p>
                                   <div className="rounded-xl bg-slate-900 p-3 font-mono text-xs text-rose-300 whitespace-pre-wrap break-all leading-relaxed">
-                                    {preview.rollback.map((cmd, index) => <div key={`${cmd}-${index}`}>{index + 1}. {cmd}</div>)}
+                                    {preview.rollback.map((cmd, index) => <div key={`rollback-${cmd}-${index}`}>{index + 1}. {cmd}</div>)}
                                   </div>
+                                </div>
+                              ) : (
+                                <div>
+                                  <p className="text-xs font-semibold text-black/40 mb-1.5">{zh ? '回滚命令' : 'Rollback Commands'}</p>
+                                  <p className="text-xs text-black/30 italic">{zh ? '无' : 'None'}</p>
                                 </div>
                               )}
                             </div>
@@ -2744,6 +2990,195 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                     </div>
                     </div>
 
+                  {/* ── Control Sheet Missing Banner (historical orders) ── */}
+                  {FEATURE_CONTROL_SHEET && selectedOrder.control_sheet_missing && (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+                      <Info size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-amber-700">
+                          {zh ? '变更控制表数据缺失' : 'Control Sheet Data Missing'}
+                        </p>
+                        <p className="text-xs text-amber-600 mt-0.5">
+                          {zh
+                            ? '此工单为历史工单，创建时尚未启用变更控制表功能，相关结构化字段与附件不可用。'
+                            : 'This is a historical order created before the control sheet feature was enabled. Structured fields and attachments are unavailable.'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Control Sheet Section ── */}
+                  {FEATURE_CONTROL_SHEET && !selectedOrder.control_sheet_missing && selectedOrder.control_sheet && Object.keys(selectedOrder.control_sheet).length > 0 && (() => {
+                    const cs = selectedOrder.control_sheet!;
+                    const deviceIps: string[] = Array.isArray(cs.device_ips) ? cs.device_ips : (cs.device_ips ? String(cs.device_ips).split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean) : []);
+                    return (
+                      <div className="rounded-2xl border border-teal-100 bg-gradient-to-br from-teal-50/60 to-white p-5">
+                        <div className="flex items-center gap-2 mb-4">
+                          <div className="p-1.5 rounded-lg bg-teal-100 ring-1 ring-teal-200">
+                            <ClipboardCheck size={14} className="text-teal-600" />
+                          </div>
+                          <p className="text-sm font-bold text-teal-800">{zh ? '变更控制表' : 'Change Control Sheet'}</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {/* Change Time Window */}
+                          {(cs.change_time?.start || cs.change_time?.end) && (
+                            <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-teal-100 md:col-span-2">
+                              <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1">
+                                {zh ? '变更时间窗口' : 'Change Time Window'}
+                              </p>
+                              <p className="text-sm font-medium text-black/70 tabular-nums">
+                                {cs.change_time?.start ? fmtDate(cs.change_time.start) : '—'}
+                                <span className="mx-2 text-black/30">→</span>
+                                {cs.change_time?.end ? fmtDate(cs.change_time.end) : '—'}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Implementer */}
+                          {cs.implementer?.username && (
+                            <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-teal-100">
+                              <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1">
+                                {zh ? '实施人' : 'Implementer'}
+                              </p>
+                              <p className="text-sm font-medium text-black/70 flex items-center gap-1.5">
+                                <User size={12} className="text-teal-400" />
+                                {cs.implementer.username}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Co-Reviewer */}
+                          {cs.co_reviewer?.username && (
+                            <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-teal-100">
+                              <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1">
+                                {zh ? '联合审核人' : 'Co-Reviewer'}
+                              </p>
+                              <p className="text-sm font-medium text-black/70 flex items-center gap-1.5">
+                                <UserCheck size={12} className="text-teal-400" />
+                                {cs.co_reviewer.username}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Device IPs */}
+                          {deviceIps.length > 0 && (
+                            <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-teal-100 md:col-span-2">
+                              <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1.5">
+                                {zh ? '目标设备IP' : 'Target Device IPs'}
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {deviceIps.map((ip: string, i: number) => (
+                                  <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-lg bg-teal-50 text-teal-700 text-xs font-mono ring-1 ring-teal-200">
+                                    {ip}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Multi-line text fields */}
+                        <div className="mt-3 space-y-3">
+                          {cs.pre_check && (
+                            <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-teal-100">
+                              <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1">
+                                {zh ? '实施前检查' : 'Pre-Check'}
+                              </p>
+                              <p className="text-sm text-black/65 leading-relaxed whitespace-pre-wrap">{cs.pre_check}</p>
+                            </div>
+                          )}
+                          {cs.execution && (
+                            <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-teal-100">
+                              <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1">
+                                {zh ? '执行步骤' : 'Execution Steps'}
+                              </p>
+                              <p className="text-sm text-black/65 leading-relaxed whitespace-pre-wrap">{cs.execution}</p>
+                            </div>
+                          )}
+                          {cs.post_verify && (
+                            <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-teal-100">
+                              <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1">
+                                {zh ? '实施后验证' : 'Post-Verify'}
+                              </p>
+                              <p className="text-sm text-black/65 leading-relaxed whitespace-pre-wrap">{cs.post_verify}</p>
+                            </div>
+                          )}
+                          {cs.business_verify && (
+                            <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-teal-100">
+                              <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1">
+                                {zh ? '业务验证' : 'Business Verify'}
+                              </p>
+                              <p className="text-sm text-black/65 leading-relaxed whitespace-pre-wrap">{cs.business_verify}</p>
+                            </div>
+                          )}
+                          {cs.rollback_plan && (
+                            <div className="bg-white rounded-xl px-3 py-2.5 ring-1 ring-teal-100">
+                              <p className="text-[10px] font-semibold text-black/35 uppercase tracking-wider mb-1">
+                                {zh ? '回滚方案' : 'Rollback Plan'}
+                              </p>
+                              <p className="text-sm text-black/65 leading-relaxed whitespace-pre-wrap">{cs.rollback_plan}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── Control Sheet Attachments ── */}
+                  {FEATURE_CONTROL_SHEET && (() => {
+                    const attachments = selectedOrder.control_sheet_attachments || [];
+                    if (attachments.length === 0) return null;
+                    return (
+                      <div className="rounded-2xl border border-teal-100 bg-white p-5">
+                        <div className="flex items-center gap-2 mb-4">
+                          <div className="p-1.5 rounded-lg bg-teal-100 ring-1 ring-teal-200">
+                            <Paperclip size={14} className="text-teal-600" />
+                          </div>
+                          <p className="text-sm font-bold text-teal-800">
+                            {zh ? '变更控制表附件' : 'Control Sheet Attachments'}
+                          </p>
+                          <span className="ml-auto text-[10px] font-medium text-black/40 px-2 py-0.5 bg-black/[0.03] rounded-full">
+                            {zh ? `共 ${attachments.length} 个文件` : `${attachments.length} file${attachments.length !== 1 ? 's' : ''}`}
+                          </span>
+                        </div>
+                        <div className="space-y-2">
+                          {attachments.map((att) => (
+                            <div key={att.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-teal-50/60 ring-1 ring-teal-100 hover:bg-teal-50 transition-colors">
+                              <FileText size={14} className="text-teal-500 flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-black/75 truncate">{att.filename}</p>
+                                <p className="text-[11px] text-black/40 mt-0.5">
+                                  {fmtFileSize(att.size_bytes)}
+                                  {att.uploaded_by_username && (
+                                    <span className="ml-2">
+                                      <User size={9} className="inline -mt-0.5 mr-0.5" />
+                                      {att.uploaded_by_username}
+                                    </span>
+                                  )}
+                                  {att.uploaded_at && (
+                                    <span className="ml-2 tabular-nums">{fmtDate(att.uploaded_at)}</span>
+                                  )}
+                                </p>
+                              </div>
+                              {att.download_url && (
+                                <a
+                                  href={att.download_url}
+                                  download={att.filename}
+                                  title={zh ? '下载附件' : 'Download attachment'}
+                                  className="flex-shrink-0 p-1.5 rounded-lg text-teal-500 hover:text-teal-700 hover:bg-teal-100 transition-all"
+                                  onClick={e => e.stopPropagation()}
+                                >
+                                  <Download size={14} />
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* ── Timeline (Professional Vertical Layout) ── */}
                   <div className="rounded-2xl border border-black/8 bg-white p-6">
                     <div className="flex items-center justify-between mb-6">
@@ -2769,29 +3204,51 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                       <div className="relative pl-8 space-y-8 before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-0.5 before:bg-gradient-to-b before:from-[#00bceb]/60 before:via-[#00bceb]/20 before:to-transparent">
                         {[...timeline].reverse().map((evt, idx) => {
                           const isNewest = idx === 0;
+                          const isControlSheetUpload = evt.event_type === 'change_order.control_sheet_uploaded';
                           return (
                             <div key={evt.id} className="relative">
                               {/* Dot on the line */}
                               <div className={`absolute -left-[35px] top-1.5 w-6 h-6 rounded-full border-4 border-white shadow-sm flex items-center justify-center z-10 ${
-                                isNewest ? 'bg-[#00bceb] scale-110' : 'bg-slate-200'
+                                isControlSheetUpload
+                                  ? 'bg-teal-500 scale-105'
+                                  : isNewest ? 'bg-[#00bceb] scale-110' : 'bg-slate-200'
                               }`}>
-                                <div className={`w-1.5 h-1.5 rounded-full ${isNewest ? 'bg-white' : 'bg-black/20'}`} />
+                                {isControlSheetUpload
+                                  ? <Paperclip size={10} className="text-white" />
+                                  : <div className={`w-1.5 h-1.5 rounded-full ${isNewest ? 'bg-white' : 'bg-black/20'}`} />
+                                }
                               </div>
 
                               <div className={`group transition-all duration-300 ${isNewest ? 'translate-x-1' : ''}`}>
                                 <div className="flex flex-wrap items-center gap-3 mb-1.5">
-                                  <span className={`text-sm font-bold ${isNewest ? 'text-black/90' : 'text-black/60'}`}>
+                                  <span className={`text-sm font-bold ${
+                                    isControlSheetUpload ? 'text-teal-700' : isNewest ? 'text-black/90' : 'text-black/60'
+                                  }`}>
                                     {timelineEventLabel(evt.event_type, language)}
                                   </span>
                                   <span className="text-[11px] font-mono text-black/40 bg-black/[0.03] px-2 py-0.5 rounded-md tabular-nums">
                                     {fmtDate(evt.created_at)}
                                   </span>
-                                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-sky-50 text-[#0e7490] text-[10px] font-bold ring-1 ring-sky-200/50">
+                                  <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold ring-1 ${
+                                    isControlSheetUpload
+                                      ? 'bg-teal-50 text-teal-700 ring-teal-200/50'
+                                      : 'bg-sky-50 text-[#0e7490] ring-sky-200/50'
+                                  }`}>
                                     <User size={10} />
                                     {evt.actor_username || (zh ? '系统自动化' : 'System')}
                                   </div>
+                                  {isControlSheetUpload && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-700 ring-1 ring-teal-200">
+                                      <Paperclip size={9} />
+                                      {zh ? '附件' : 'Attachment'}
+                                    </span>
+                                  )}
                                 </div>
-                                <div className="p-3.5 rounded-2xl border border-black/5 bg-black/[0.01] group-hover:bg-black/[0.03] group-hover:border-[#00bceb]/20 transition-all">
+                                <div className={`p-3.5 rounded-2xl border transition-all ${
+                                  isControlSheetUpload
+                                    ? 'border-teal-100 bg-teal-50/40 group-hover:bg-teal-50 group-hover:border-teal-200'
+                                    : 'border-black/5 bg-black/[0.01] group-hover:bg-black/[0.03] group-hover:border-[#00bceb]/20'
+                                }`}>
                                   <p className="text-xs text-black/60 leading-relaxed">
                                     {translateSummary(evt.summary || timelineEventLabel(evt.event_type, language), language)}
                                   </p>
@@ -3390,7 +3847,206 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                     </div>
                   )}
                 </div>
-              </div>
+
+              {/* ── 变更控制表 (Control Sheet) ── */}
+              {FEATURE_CONTROL_SHEET && (
+                <div className="rounded-2xl border border-black/8 bg-black/[0.015] overflow-hidden">
+                  {/* Collapsible header */}
+                  <button
+                    type="button"
+                    onClick={() => setShowControlSheet(v => !v)}
+                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-black/[0.02] transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <ClipboardCheck size={15} className="text-[#00bceb]" />
+                      <span className="text-xs font-semibold text-black/70">{zh ? '变更控制表' : 'Change Control Sheet'}</span>
+                      <span className="text-[10px] text-black/35 font-medium px-1.5 py-0.5 bg-black/[0.04] rounded-md">
+                        {zh ? '可选' : 'Optional'}
+                      </span>
+                    </div>
+                    <ChevronDown size={14} className={`text-black/40 transition-transform ${showControlSheet ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {/* Collapsible body */}
+                  {showControlSheet && (
+                    <div className="px-4 pb-4 pt-1 space-y-4 border-t border-black/5">
+                      {/* 1. change_time — time window picker */}
+                      <div>
+                        <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                          {zh ? '变更时间窗口' : 'Change Time Window'}
+                        </label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] text-black/40 mb-1">{zh ? '开始时间' : 'Start'}</label>
+                            <input
+                              type="datetime-local"
+                              value={form.control_sheet.change_time_start}
+                              onChange={e => setForm(f => ({ ...f, control_sheet: { ...f.control_sheet, change_time_start: e.target.value } }))}
+                              className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-black/40 mb-1">{zh ? '结束时间' : 'End'}</label>
+                            <input
+                              type="datetime-local"
+                              value={form.control_sheet.change_time_end}
+                              onChange={e => setForm(f => ({ ...f, control_sheet: { ...f.control_sheet, change_time_end: e.target.value } }))}
+                              className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 2 & 3. implementer + co_reviewer — user pickers */}
+                      <div className="grid grid-cols-2 gap-4">
+                        {/* implementer */}
+                        <div>
+                          <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                            {zh ? '实施人' : 'Implementer'}
+                          </label>
+                          <select
+                            title={zh ? '选择实施人' : 'Select implementer'}
+                            value={form.control_sheet.implementer_id}
+                            onChange={e => {
+                              const u = users.find(u => String(u.id) === e.target.value);
+                              setForm(f => ({
+                                ...f,
+                                control_sheet: {
+                                  ...f.control_sheet,
+                                  implementer_id: e.target.value,
+                                  implementer_username: u?.username || '',
+                                },
+                              }));
+                            }}
+                            className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
+                          >
+                            <option value="">{zh ? '请选择实施人' : 'Select implementer'}</option>
+                            {users.filter(u => u.role !== 'Viewer').map(u => (
+                              <option key={u.id} value={String(u.id)}>
+                                {u.username}{u.group_name ? ` · ${u.group_name}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {/* co_reviewer */}
+                        <div>
+                          <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                            {zh ? '协同审核人' : 'Co-Reviewer'}
+                          </label>
+                          <select
+                            title={zh ? '选择协同审核人' : 'Select co-reviewer'}
+                            value={form.control_sheet.co_reviewer_id}
+                            onChange={e => {
+                              const u = users.find(u => String(u.id) === e.target.value);
+                              setForm(f => ({
+                                ...f,
+                                control_sheet: {
+                                  ...f.control_sheet,
+                                  co_reviewer_id: e.target.value,
+                                  co_reviewer_username: u?.username || '',
+                                },
+                              }));
+                            }}
+                            className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
+                          >
+                            <option value="">{zh ? '请选择协同审核人' : 'Select co-reviewer'}</option>
+                            {users.filter(u => u.role !== 'Viewer').map(u => (
+                              <option key={u.id} value={String(u.id)}>
+                                {u.username}{u.group_name ? ` · ${u.group_name}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* 4. device_ips — IP list */}
+                      <div>
+                        <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                          {zh ? '涉及设备 IP（每行或逗号分隔）' : 'Device IPs (one per line or comma-separated)'}
+                        </label>
+                        <textarea
+                          value={form.control_sheet.device_ips}
+                          onChange={e => setForm(f => ({ ...f, control_sheet: { ...f.control_sheet, device_ips: e.target.value } }))}
+                          placeholder={zh ? '10.0.0.1\n10.0.0.2\n或 10.0.0.1, 10.0.0.2' : '10.0.0.1\n10.0.0.2\nor 10.0.0.1, 10.0.0.2'}
+                          rows={3}
+                          className="w-full px-4 py-2.5 text-sm font-mono border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
+                        />
+                      </div>
+
+                      {/* 5–8. Four multi-line text blocks */}
+                      <div className="grid grid-cols-2 gap-4">
+                        {/* pre_check */}
+                        <div>
+                          <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                            {zh ? '变更前检查' : 'Pre-Check'}
+                          </label>
+                          <textarea
+                            value={form.control_sheet.pre_check}
+                            onChange={e => setForm(f => ({ ...f, control_sheet: { ...f.control_sheet, pre_check: e.target.value } }))}
+                            placeholder={zh ? '描述变更前需要执行的检查步骤...' : 'Describe pre-change verification steps...'}
+                            rows={4}
+                            className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
+                          />
+                        </div>
+                        {/* execution */}
+                        <div>
+                          <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                            {zh ? '实施步骤' : 'Execution Steps'}
+                          </label>
+                          <textarea
+                            value={form.control_sheet.execution}
+                            onChange={e => setForm(f => ({ ...f, control_sheet: { ...f.control_sheet, execution: e.target.value } }))}
+                            placeholder={zh ? '描述具体的实施操作步骤...' : 'Describe the execution steps in detail...'}
+                            rows={4}
+                            className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
+                          />
+                        </div>
+                        {/* post_verify */}
+                        <div>
+                          <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                            {zh ? '变更后验证' : 'Post-Verify'}
+                          </label>
+                          <textarea
+                            value={form.control_sheet.post_verify}
+                            onChange={e => setForm(f => ({ ...f, control_sheet: { ...f.control_sheet, post_verify: e.target.value } }))}
+                            placeholder={zh ? '描述变更后的验证方法和预期结果...' : 'Describe post-change verification and expected results...'}
+                            rows={4}
+                            className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
+                          />
+                        </div>
+                        {/* business_verify */}
+                        <div>
+                          <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                            {zh ? '业务验证' : 'Business Verify'}
+                          </label>
+                          <textarea
+                            value={form.control_sheet.business_verify}
+                            onChange={e => setForm(f => ({ ...f, control_sheet: { ...f.control_sheet, business_verify: e.target.value } }))}
+                            placeholder={zh ? '描述业务层面的验证方法和预期结果...' : 'Describe business-level verification and expected results...'}
+                            rows={4}
+                            className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 9. rollback_plan — multi-line text block */}
+                      <div>
+                        <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                          {zh ? '回退方案（控制表）' : 'Rollback Plan (Control Sheet)'}
+                        </label>
+                        <textarea
+                          value={form.control_sheet.rollback_plan}
+                          onChange={e => setForm(f => ({ ...f, control_sheet: { ...f.control_sheet, rollback_plan: e.target.value } }))}
+                          placeholder={zh ? '描述变更失败时的回退步骤和恢复方案...' : 'Describe rollback steps and recovery plan if the change fails...'}
+                          rows={4}
+                          className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              </div>{/* end modal body */}
 
               {/* Modal footer */}
               <div className="px-6 py-4 border-t border-black/5 bg-black/[0.01] flex flex-wrap items-center justify-end gap-3">
@@ -3407,8 +4063,9 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={saving || !form.title.trim()}
+                  disabled={saving || !form.title.trim() || (commandMode === 'template' && !selectedScenarioId)}
                   className="px-5 py-2.5 bg-[#00bceb] text-white rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-[#0096bd] transition-all shadow-lg shadow-[#00bceb]/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={commandMode === 'template' && !selectedScenarioId ? (zh ? '请先选择场景并填写必填变量' : 'Please select a scenario and fill in all required variables') : undefined}
                 >
                   {saving ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
                   {editingOrder ? (zh ? '提交' : 'Submit') : (zh ? '创建工单' : 'Create Order')}
@@ -3549,8 +4206,13 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                                   className="w-4 h-4 text-cyan-500 focus:ring-cyan-400 border-black/20"
                                 />
                                 <div className="flex flex-col">
-                                  <span className="text-sm font-medium text-black/80">{item.username}</span>
-                                  <span className="text-xs text-black/40">{item.role}</span>
+                                  <span className="text-sm font-medium text-black/80">
+                                    {item.display_name ? `${item.display_name}` : item.username}
+                                    {item.display_name && <span className="ml-1 text-xs text-black/35">({item.username})</span>}
+                                  </span>
+                                  <span className="text-xs text-black/40">
+                                    {[item.role, item.phone, item.email].filter(Boolean).join(' · ')}
+                                  </span>
                                 </div>
                               </label>
                             ))}
@@ -3658,8 +4320,13 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                                   className="w-4 h-4 text-cyan-500 focus:ring-cyan-400 border-black/20"
                                 />
                                 <div className="flex flex-col">
-                                  <span className="text-sm font-medium text-black/80">{item.username}</span>
-                                  <span className="text-xs text-black/40">{item.role}</span>
+                                  <span className="text-sm font-medium text-black/80">
+                                    {item.display_name ? `${item.display_name}` : item.username}
+                                    {item.display_name && <span className="ml-1 text-xs text-black/35">({item.username})</span>}
+                                  </span>
+                                  <span className="text-xs text-black/40">
+                                    {[item.role, item.phone, item.email].filter(Boolean).join(' · ')}
+                                  </span>
                                 </div>
                               </label>
                             ))}

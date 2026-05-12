@@ -47,13 +47,13 @@ def get_rack(conn, rack_id: str) -> dict:
 
 def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
                 row: str = '', total_u: int = 42, description: str = '',
-                status: str = 'active') -> dict:
+                status: str = 'active', power_capacity_watts: int = 0) -> dict:
     rack_id = str(uuid.uuid4())
     now = _utc_now()
     conn.execute(
-        """INSERT INTO racks (id, name, datacenter, room, row, total_u, description, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (rack_id, name, datacenter, room, row, total_u, description, status, now, now)
+        """INSERT INTO racks (id, name, datacenter, room, row, total_u, description, status, power_capacity_watts, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (rack_id, name, datacenter, room, row, total_u, description, status, power_capacity_watts, now, now)
     )
     conn.commit()
     logger.info(f"[RackService] Created rack '{name}' in {datacenter or '(no DC)'}")
@@ -64,7 +64,7 @@ def update_rack(conn, rack_id: str, **fields) -> dict:
     existing = get_rack(conn, rack_id)
     updates = []
     params = []
-    for key in ('name', 'datacenter', 'room', 'row', 'total_u', 'description', 'status'):
+    for key in ('name', 'datacenter', 'room', 'row', 'total_u', 'description', 'status', 'power_capacity_watts'):
         if key in fields and fields[key] is not None:
             updates.append(f"{key} = ?")
             params.append(fields[key])
@@ -111,16 +111,16 @@ def get_device_type(conn, dt_id: str) -> dict:
 
 def create_device_type(conn, *, model: str, vendor: str = '', u_height: int = 1,
                        device_role: str = 'switch', is_full_depth: bool = True,
-                       description: str = '') -> dict:
+                       description: str = '', power_watts: int = 0) -> dict:
     dt_id = str(uuid.uuid4())
     now = _utc_now()
     conn.execute(
-        """INSERT INTO device_types (id, model, vendor, u_height, device_role, is_full_depth, description, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (dt_id, model, vendor, u_height, device_role, 1 if is_full_depth else 0, description, now, now)
+        """INSERT INTO device_types (id, model, vendor, u_height, device_role, is_full_depth, description, power_watts, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (dt_id, model, vendor, u_height, device_role, 1 if is_full_depth else 0, description, power_watts, now, now)
     )
     conn.commit()
-    logger.info(f"[RackService] Created device type '{vendor} {model}' ({u_height}U)")
+    logger.info(f"[RackService] Created device type '{vendor} {model}' ({u_height}U, {power_watts}W)")
     return get_device_type(conn, dt_id)
 
 
@@ -128,7 +128,7 @@ def update_device_type(conn, dt_id: str, **fields) -> dict:
     existing = get_device_type(conn, dt_id)
     updates = []
     params = []
-    for key in ('model', 'vendor', 'u_height', 'device_role', 'is_full_depth', 'description'):
+    for key in ('model', 'vendor', 'u_height', 'device_role', 'is_full_depth', 'description', 'power_watts'):
         if key in fields and fields[key] is not None:
             val = fields[key]
             if key == 'is_full_depth':
@@ -301,6 +301,12 @@ def get_rack_layout(conn, rack_id: str) -> dict:
             rear_occupied |= u_range
 
     total_u = rack['total_u']
+    # Compute power usage: sum power_watts from device_types of installed devices
+    power_used = 0
+    for d in devices:
+        power_used += int(d.get('power_watts') or 0)
+    power_capacity = int(rack.get('power_capacity_watts') or 0)
+
     return {
         **rack,
         'devices': devices,
@@ -308,6 +314,9 @@ def get_rack_layout(conn, rack_id: str) -> dict:
         'rear_used': len(rear_occupied),
         'total_used': len(front_occupied | rear_occupied),
         'available_u': total_u - len(front_occupied | rear_occupied),
+        'power_used_watts': power_used,
+        'power_capacity_watts': power_capacity,
+        'power_utilization_pct': round(power_used / power_capacity * 100, 1) if power_capacity > 0 else None,
     }
 
 
@@ -316,14 +325,17 @@ def get_rack_stats(conn) -> dict:
     racks = list_racks(conn)
     total_racks = len(racks)
     total_u = sum(r['total_u'] for r in racks)
+    total_power_capacity = sum(int(r.get('power_capacity_watts') or 0) for r in racks)
     total_devices = 0
     total_used_u = 0
+    total_power_used = 0
     for r in racks:
         devices = list_rack_devices(conn, r['id'])
         total_devices += len(devices)
         occupied = set()
         for d in devices:
             occupied |= set(range(d['start_u'], d['start_u'] + d['u_height']))
+            total_power_used += int(d.get('power_watts') or 0)
         total_used_u += len(occupied)
 
     return {
@@ -332,4 +344,7 @@ def get_rack_stats(conn) -> dict:
         'total_u': total_u,
         'used_u': total_used_u,
         'utilization': round(total_used_u / total_u * 100, 1) if total_u > 0 else 0,
+        'total_power_capacity_watts': total_power_capacity,
+        'total_power_used_watts': total_power_used,
+        'power_utilization_pct': round(total_power_used / total_power_capacity * 100, 1) if total_power_capacity > 0 else None,
     }

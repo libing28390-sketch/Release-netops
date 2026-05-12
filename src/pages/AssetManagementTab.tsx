@@ -101,6 +101,8 @@ const EMPTY_FORM = {
   auth_model: 'dual',
   snmp_community: 'public', snmp_port: '161',
   management_port: '22',
+  device_category: '',   // switch / router / firewall / load_balancer / other
+  power_watts: '',       // rated power consumption in watts
 };
 
 const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
@@ -1532,6 +1534,20 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                 <Field label={zh ? '管理IP' : 'Mgmt IP'}        value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="10.0.0.1" />
                 <Field label={zh ? '管理端口 (SSH)' : 'Mgmt Port'} value={form.management_port || '22'} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder="22" />
                 <Field label={zh ? '角色' : 'Role'}             value={form.device_role}   onChange={v => setForm(f => ({ ...f, device_role: v }))}   placeholder="Core, Access..." />
+                <div>
+                  <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '设备分类' : 'Category'}</label>
+                  <select value={form.device_category} onChange={e => setForm(f => ({ ...f, device_category: e.target.value }))} title="Device Category"
+                    className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25">
+                    <option value="">{zh ? '请选择' : 'Select...'}</option>
+                    <option value="switch">{zh ? '交换机' : 'Switch'}</option>
+                    <option value="router">{zh ? '路由器' : 'Router'}</option>
+                    <option value="firewall">{zh ? '防火墙' : 'Firewall'}</option>
+                    <option value="load_balancer">{zh ? '负载均衡' : 'Load Balancer'}</option>
+                    <option value="wireless_ap">{zh ? '无线 AP' : 'Wireless AP'}</option>
+                    <option value="other">{zh ? '其他' : 'Other'}</option>
+                  </select>
+                </div>
+                <Field label={zh ? '额定功率 (W)' : 'Power (W)'} value={form.power_watts} onChange={v => setForm(f => ({ ...f, power_watts: v }))} placeholder="e.g. 350" />
               </div>
 
               {/* ─── 连接配置 & PAM ─── */}

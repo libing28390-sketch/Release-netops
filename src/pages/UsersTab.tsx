@@ -11,6 +11,9 @@ type UserFormState = {
   role: string;
   group_name: string;
   change_groups: string[];
+  display_name: string;
+  phone: string;
+  email: string;
 };
 
 const CHANGE_GROUP_OPTIONS = [
@@ -90,6 +93,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
           <thead>
             <tr className="bg-black/[0.01] border-b border-black/5">
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('username')}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '真实姓名' : 'Display Name'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('role')}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '所属分组' : 'Group'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '职责组' : 'Responsibilities'}</th>
@@ -107,6 +111,16 @@ const UsersTab: React.FC<UsersTabProps> = ({
                       {user.username.substring(0, 2).toUpperCase()}
                     </div>
                     <span className="text-sm font-medium">{user.username}</span>
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm font-medium text-black/80">{user.display_name || <span className="text-black/25 text-xs">{isZh ? '未填写' : 'Not set'}</span>}</span>
+                    {(user.phone || user.email) && (
+                      <span className="text-[11px] text-black/40 font-mono">
+                        {[user.phone, user.email].filter(Boolean).join(' · ')}
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td className="px-6 py-4 text-xs">{user.role}</td>
@@ -140,6 +154,9 @@ const UsersTab: React.FC<UsersTabProps> = ({
                         role: user.role,
                         group_name: user.group_name || '',
                         change_groups: [...(user.change_groups || [])],
+                        display_name: user.display_name || '',
+                        phone: user.phone || '',
+                        email: user.email || '',
                       });
                       setShowEditUserModal(true);
                     }}
@@ -213,6 +230,41 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
                     placeholder={isZh ? '例如：核心网络组 / 变更平台主管组' : 'e.g. Core Network Team'}
                   />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '真实姓名' : 'Display Name'}</label>
+                    <input
+                      type="text"
+                      title={isZh ? '真实姓名' : 'Display Name'}
+                      value={newUserForm.display_name}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, display_name: e.target.value })}
+                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      placeholder={isZh ? '如：李兵' : 'e.g. Li Bing'}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '手机号' : 'Phone'}</label>
+                    <input
+                      type="tel"
+                      title={isZh ? '手机号' : 'Phone'}
+                      value={newUserForm.phone}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, phone: e.target.value })}
+                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      placeholder="138xxxx8888"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '邮箱' : 'Email'}</label>
+                    <input
+                      type="email"
+                      title={isZh ? '邮箱' : 'Email'}
+                      value={newUserForm.email}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })}
+                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      placeholder="li@example.com"
+                    />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '工单职责组' : 'Change Duties'}</label>
@@ -312,6 +364,41 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
                     placeholder={isZh ? '例如：核心网络组 / 变更平台主管组' : 'e.g. Core Network Team'}
                   />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '真实姓名' : 'Display Name'}</label>
+                    <input
+                      type="text"
+                      title={isZh ? '真实姓名' : 'Display Name'}
+                      value={editUserForm.display_name}
+                      onChange={(e) => setEditUserForm({ ...editUserForm, display_name: e.target.value })}
+                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      placeholder={isZh ? '如：李兵' : 'e.g. Li Bing'}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '手机号' : 'Phone'}</label>
+                    <input
+                      type="tel"
+                      title={isZh ? '手机号' : 'Phone'}
+                      value={editUserForm.phone}
+                      onChange={(e) => setEditUserForm({ ...editUserForm, phone: e.target.value })}
+                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      placeholder="138xxxx8888"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '邮箱' : 'Email'}</label>
+                    <input
+                      type="email"
+                      title={isZh ? '邮箱' : 'Email'}
+                      value={editUserForm.email}
+                      onChange={(e) => setEditUserForm({ ...editUserForm, email: e.target.value })}
+                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      placeholder="li@example.com"
+                    />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '工单职责组' : 'Change Duties'}</label>

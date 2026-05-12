@@ -147,6 +147,9 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
   const [macChanges, setMacChanges] = useState<MacChangesData | null>(null);
   const [macChangesLoading, setMacChangesLoading] = useState(false);
   const [macChangesError, setMacChangesError] = useState('');
+  const [macFilter, setMacFilter] = useState('');
+  const [macPage, setMacPage] = useState(1);
+  const [macPageSize, setMacPageSize] = useState(20);
 
   const token = localStorage.getItem('netops_token') || '';
 
@@ -210,12 +213,13 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
     setMacChangesLoading(true);
     setMacChangesError('');
     try {
-      const resp = await fetch('/api/ip-locator/mac-changes?limit=200', {
+      const resp = await fetch('/api/ip-locator/mac-changes?limit=1000', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data: MacChangesData = await resp.json();
       setMacChanges(data);
+      setMacPage(1);
     } catch (e: any) {
       setMacChangesError(e.message || 'Failed to load MAC changes');
     } finally {
@@ -1061,23 +1065,32 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       {/* ── Controls ── */}
       <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-5">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2 text-sm text-black/50 dark:text-white/50">
-            <RefreshCw size={14} />
-            <span>{zh ? 'IP-MAC 绑定变更记录 — 检测 MAC 地址漂移与异常' : 'IP-MAC binding change log — detect MAC drift & anomalies'}</span>
+          {/* Search */}
+          <div className="relative flex-1 min-w-[200px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
+            <input
+              value={macFilter}
+              onChange={e => { setMacFilter(e.target.value); setMacPage(1); }}
+              placeholder={zh ? '搜索 IP / MAC / 厂商 / 设备...' : 'Search IP / MAC / Vendor / Device...'}
+              className="w-full pl-9 pr-8 py-2.5 text-sm bg-black/[0.02] border border-black/8 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all"
+            />
+            {macFilter && (
+              <button onClick={() => { setMacFilter(''); setMacPage(1); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
+                <X size={13} />
+              </button>
+            )}
           </div>
-          <div className="ml-auto">
-            <button
-              onClick={fetchMacChanges}
-              disabled={macChangesLoading}
-              className="px-4 py-2.5 rounded-xl border border-black/10 text-sm text-black/50 hover:bg-black/[0.03] disabled:opacity-40 transition-all flex items-center gap-1.5"
-            >
-              <RotateCcw size={13} className={macChangesLoading ? 'animate-spin' : ''} />
-              {zh ? '刷新' : 'Refresh'}
-            </button>
-          </div>
+          <button
+            onClick={fetchMacChanges}
+            disabled={macChangesLoading}
+            className="px-4 py-2.5 rounded-xl border border-black/10 text-sm text-black/50 hover:bg-black/[0.03] disabled:opacity-40 transition-all flex items-center gap-1.5"
+          >
+            <RotateCcw size={13} className={macChangesLoading ? 'animate-spin' : ''} />
+            {zh ? '刷新' : 'Refresh'}
+          </button>
         </div>
         {macChanges && (
-          <div className="flex items-center gap-4 mt-3 text-[11px] text-black/30 dark:text-white/30">
+          <div className="flex items-center gap-4 mt-3 text-[11px] text-black/30 dark:text-white/30 flex-wrap">
             <span>{macChanges.total} {zh ? '条变更记录' : 'change records'}</span>
             <span>·</span>
             <span>{zh ? '更新时间' : 'Updated'}: {macChanges.timestamp?.replace('T', ' ').slice(0, 19)}</span>
@@ -1115,41 +1128,77 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       )}
 
       {/* ── Change List ── */}
-      {!macChangesLoading && macChanges && macChanges.total > 0 && (
-        <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
-          {/* Table header */}
-          <div className="grid grid-cols-[8rem_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
-            <span>IP</span>
-            <span>{zh ? '旧 MAC → 新 MAC' : 'Old MAC → New MAC'}</span>
-            <span>{zh ? '厂商变化' : 'Vendor Change'}</span>
-            <span>{zh ? '来源设备' : 'Device'}</span>
-            <span>{zh ? '检测时间' : 'Detected'}</span>
-          </div>
+      {!macChangesLoading && macChanges && macChanges.total > 0 && (() => {
+        const q = macFilter.trim().toLowerCase();
+        const filtered = q
+          ? macChanges.entries.filter(e =>
+              e.ip.toLowerCase().includes(q) ||
+              e.old_mac.toLowerCase().includes(q) ||
+              e.new_mac.toLowerCase().includes(q) ||
+              (e.old_vendor || '').toLowerCase().includes(q) ||
+              (e.new_vendor || '').toLowerCase().includes(q) ||
+              (e.old_device || '').toLowerCase().includes(q) ||
+              (e.new_device || '').toLowerCase().includes(q)
+            )
+          : macChanges.entries;
+        const pageStart = (macPage - 1) * macPageSize;
+        const pageEntries = filtered.slice(pageStart, pageStart + macPageSize);
 
-          <div>
-            {macChanges.entries.map((entry, idx) => (
-              <div
-                key={entry.id}
-                className={`grid grid-cols-[8rem_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
-              >
-                <span className="font-mono font-semibold text-[#164e63]">{entry.ip}</span>
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="font-mono text-red-400 truncate" title={entry.old_mac}>{entry.old_mac}</span>
-                  <ArrowRight size={12} className="text-black/20 dark:text-white/20 flex-shrink-0" />
-                  <span className="font-mono text-emerald-600 dark:text-emerald-400 truncate" title={entry.new_mac}>{entry.new_mac}</span>
+        return (
+          <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
+            {/* Table header */}
+            <div className="grid grid-cols-[8rem_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
+              <span>IP</span>
+              <span>{zh ? '旧 MAC → 新 MAC' : 'Old MAC → New MAC'}</span>
+              <span>{zh ? '厂商变化' : 'Vendor Change'}</span>
+              <span>{zh ? '来源设备' : 'Device'}</span>
+              <span>{zh ? '检测时间' : 'Detected'}</span>
+            </div>
+
+            <div>
+              {filtered.length === 0 ? (
+                <div className="px-5 py-6 text-center text-xs text-black/30">
+                  {zh ? `未找到匹配 "${macFilter}" 的记录` : `No entries matching "${macFilter}"`}
                 </div>
-                <div className="flex items-center gap-1.5 min-w-0 text-black/45 dark:text-white/45">
-                  <span className="truncate">{entry.old_vendor || '?'}</span>
-                  <ArrowRight size={10} className="text-black/15 dark:text-white/15 flex-shrink-0" />
-                  <span className="truncate">{entry.new_vendor || '?'}</span>
-                </div>
-                <span className="text-[#0891b2] truncate font-medium" title={entry.new_device}>{entry.new_device || '-'}</span>
-                <span className="text-black/30 dark:text-white/30" title={entry.detected_at}>{formatRelativeTime(entry.detected_at, zh)}</span>
-              </div>
-            ))}
+              ) : (
+                pageEntries.map((entry, idx) => (
+                  <div
+                    key={entry.id}
+                    className={`grid grid-cols-[8rem_1fr_1fr_8rem_8rem] gap-2 px-5 py-2.5 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] hover:bg-amber-50/30 dark:hover:bg-amber-500/5 transition-colors ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
+                  >
+                    <span
+                      className="font-mono font-semibold text-[#164e63] cursor-pointer hover:text-[#0891b2]"
+                      onClick={() => { setIp(entry.ip); setActiveTab('locate'); }}
+                      title={zh ? '点击定位此 IP' : 'Click to locate this IP'}
+                    >{entry.ip}</span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-mono text-red-400 truncate" title={entry.old_mac}>{entry.old_mac}</span>
+                      <ArrowRight size={12} className="text-black/20 dark:text-white/20 flex-shrink-0" />
+                      <span className="font-mono text-emerald-600 dark:text-emerald-400 truncate" title={entry.new_mac}>{entry.new_mac}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 min-w-0 text-black/45 dark:text-white/45">
+                      <span className="truncate">{entry.old_vendor || '?'}</span>
+                      <ArrowRight size={10} className="text-black/15 dark:text-white/15 flex-shrink-0" />
+                      <span className="truncate">{entry.new_vendor || '?'}</span>
+                    </div>
+                    <span className="text-[#0891b2] truncate font-medium" title={entry.new_device}>{entry.new_device || '-'}</span>
+                    <span className="text-black/30 dark:text-white/30" title={entry.detected_at}>{formatRelativeTime(entry.detected_at, zh)}</span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <Pagination
+              currentPage={macPage}
+              totalItems={filtered.length}
+              itemsPerPage={macPageSize}
+              onPageChange={setMacPage}
+              onItemsPerPageChange={(v) => { setMacPage(1); setMacPageSize(v); }}
+              language={language}
+            />
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       </>)}
       </div>

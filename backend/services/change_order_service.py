@@ -161,7 +161,19 @@ def get_change_order(conn, order_id: str) -> dict | None:
         (order_id,)
     ).fetchall()
     order['control_sheet_attachments'] = [dict(r) for r in attachments_rows]
-    
+
+    # Add control_sheet_missing banner for historical/completed orders that
+    # have no control_sheet data (e.g. rows created before the feature was
+    # added).  The UI uses this flag to display a warning.
+    cs = order.get('control_sheet') or {}
+    has_cs_data = bool(cs)
+    has_attachments = bool(order['control_sheet_attachments'])
+    terminal_statuses = {'completed', 'rolled_back', 'cancelled', 'failed'}
+    if order.get('status') in terminal_statuses and not has_cs_data and not has_attachments:
+        order['control_sheet_missing'] = True
+    else:
+        order['control_sheet_missing'] = False
+
     return order
 
 
@@ -209,6 +221,46 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
                        scheduled_to: str = '',
                        exclude_requester: str = '',
                        my_todo_kind: str = '') -> tuple[list[dict], int]:
+    """List change orders with optional filters.
+
+    View Filter Semantics (Property 6 contract — design.md §View Filter Semantics):
+
+    ``my_drafts=U``
+        Returns only rows where ``requester_username == U AND status == 'draft'``.
+        This is a **strict** filter: no other statuses are included.
+
+        **Rejected rows (status == 'rejected') do NOT appear here.**
+        They belong in ``my_todo`` under the ``follow_up`` bucket
+        (``requester_username == U AND status == 'rejected'``).
+        Callers that want to show a user their rejected orders must use
+        ``my_todo`` (optionally filtered by ``my_todo_kind='modify'``).
+
+    ``my_todo=U``
+        Returns rows partitioned into three buckets, each annotated with a
+        ``todo_kind`` label:
+
+        * ``review``   — ``assigned_initial_reviewer_username == U AND status == 'initial_review' AND requester_username != U``
+                         OR ``assigned_final_approver_username == U AND status == 'final_review' AND requester_username != U``
+        * ``implement`` — ``requester_username == U AND status == 'approved'``
+        * ``modify``   — ``requester_username == U AND status IN ('draft', 'rejected')``
+
+        The ``review`` bucket excludes rows where the requester is the same as
+        the reviewer (dual-role orders are rejected at creation time by
+        ``_validate_assignment_rules``; this exclusion is a belt-and-suspenders
+        guard for any historical data).
+
+    ``group_todo=G``
+        Returns unassigned work items for permission group(s) ``G``:
+
+        * ``initial_reviewer ∈ G`` → ``status == 'initial_review' AND (assigned_initial_reviewer_id IS NULL OR == '')``
+        * ``final_approver ∈ G``   → ``status == 'final_review'   AND (assigned_final_approver_id   IS NULL OR == '')``
+
+        Rows where ``requester_username == exclude_requester`` are excluded so
+        that a user does not see their own orders in the group queue.
+
+        The SQL fragment is produced by ``_build_group_todo_conditions`` and is
+        shared with ``get_summary`` to keep both in lock-step.
+    """
     conditions = []
     params = []
 
@@ -326,14 +378,24 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
         d = _row_to_dict(r)
         d['control_sheet_attachments'] = attachments_map.get(d['id'], [])
         
-        # Add todo_kind label (Task 15.1)
+        # Add todo_kind label (Task 16.2 — Property 6 bucket labels)
+        # Mapping per design.md §Fix Implementation 1.5 → 2:
+        #   review   — assigned initial/final reviewer + matching status + requester != U
+        #   implement — requester == U AND status == 'approved'
+        #   modify   — requester == U AND status IN ('draft', 'rejected')
+        # The review bucket excludes rows where requester_username == U (dual-role guard).
         if my_todo:
-            if d['requester_username'] == my_todo and d['status'] in ('draft', 'rejected', 'approved'):
-                d['todo_kind'] = 'requester_action'
-            elif d['assigned_initial_reviewer_username'] == my_todo and d['status'] == 'initial_review':
-                d['todo_kind'] = 'reviewer_action'
-            elif d['assigned_final_approver_username'] == my_todo and d['status'] == 'final_review':
-                d['todo_kind'] = 'approver_action'
+            req = d.get('requester_username', '')
+            rev_initial = d.get('assigned_initial_reviewer_username', '')
+            rev_final = d.get('assigned_final_approver_username', '')
+            st = d.get('status', '')
+            if (rev_initial == my_todo and st == 'initial_review' and req != my_todo) or \
+               (rev_final == my_todo and st == 'final_review' and req != my_todo):
+                d['todo_kind'] = 'review'
+            elif req == my_todo and st == 'approved':
+                d['todo_kind'] = 'implement'
+            elif req == my_todo and st in ('draft', 'rejected'):
+                d['todo_kind'] = 'modify'
         elif group_todo:
             if d['status'] == 'initial_review':
                 d['todo_kind'] = 'group_initial_review'

@@ -348,6 +348,7 @@ class RackCreate(BaseModel):
     total_u: int = 42
     description: str = ''
     status: str = 'active'
+    power_capacity_watts: int = 0
 
     @field_validator('name')
     @classmethod
@@ -380,6 +381,7 @@ class RackUpdate(BaseModel):
     total_u: Optional[int] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    power_capacity_watts: Optional[int] = None
 
 
 class DeviceTypeCreate(BaseModel):
@@ -389,6 +391,7 @@ class DeviceTypeCreate(BaseModel):
     device_role: str = 'switch'
     is_full_depth: bool = True
     description: str = ''
+    power_watts: int = 0
 
     @field_validator('model')
     @classmethod
@@ -420,6 +423,7 @@ class DeviceTypeUpdate(BaseModel):
     device_role: Optional[str] = None
     is_full_depth: Optional[bool] = None
     description: Optional[str] = None
+    power_watts: Optional[int] = None
 
 
 class RackDeviceCreate(BaseModel):

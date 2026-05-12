@@ -484,9 +484,10 @@ def create_device(device: dict = Body(...)):
                 id, hostname, ip_address, platform, status, compliance, username, password, 
                 sn, model, version, role, site, uptime, connection_method, snmp_community, 
                 snmp_port, lifecycle_status, enable_password, priv_username, credential_source, 
-                vault_path, normal_username, normal_password, admin_username, admin_password, auth_model
+                vault_path, normal_username, normal_password, admin_username, admin_password, auth_model,
+                device_category, power_watts
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             device_id,
             device.get('hostname'),
@@ -515,6 +516,8 @@ def create_device(device: dict = Body(...)):
             device.get('admin_username', ''),
             local_admin_pwd,
             device.get('auth_model', 'single'),
+            device.get('device_category', ''),
+            int(device.get('power_watts') or 0),
         ))
         # Plan-A: auto-create linked physical_assets record
         _create_linked_asset_for_device(conn, device_id, device)
@@ -637,7 +640,8 @@ def update_device(device_id: str, device: dict = Body(...)):
             SET hostname = ?, ip_address = ?, platform = ?, sn = ?, model = ?, version = ?, role = ?, site = ?, connection_method = ?, 
                 username = ?, password = ?, current_config = ?, config_history = ?, snmp_community = ?, snmp_port = ?, 
                 lifecycle_status = ?, enable_password = ?, priv_username = ?, credential_source = ?, vault_path = ?,
-                normal_username = ?, normal_password = ?, admin_username = ?, admin_password = ?, auth_model = ?
+                normal_username = ?, normal_password = ?, admin_username = ?, admin_password = ?, auth_model = ?,
+                device_category = ?, power_watts = ?
             WHERE id = ?
         ''', (
             device.get('hostname', ''),
@@ -665,6 +669,8 @@ def update_device(device_id: str, device: dict = Body(...)):
             device.get('admin_username', ''),
             stored_admin,
             device.get('auth_model', 'single'),
+            device.get('device_category', ''),
+            int(device.get('power_watts') or 0),
             device_id
         ))
         conn.commit()

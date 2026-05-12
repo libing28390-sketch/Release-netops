@@ -92,17 +92,31 @@ async def run_scheduled_automation_job(job_id: str):
         )
         conn.commit()
 
-        # 4. 执行
+        # 4. 执行（并行，最多 10 并发）
         total_failed = 0
         total_success = 0
         failure_details = []
+        results_lock = asyncio.Lock()
 
         service = AutomationService(driver_type='netmiko') # 默认 netmiko
 
-        for dev_id in device_ids:
-            device = conn.execute("SELECT * FROM devices WHERE id = ?", (dev_id,)).fetchone()
-            if not device: continue
-            
+        # 预加载所有设备信息，避免在并发任务中重复查询
+        device_rows = conn.execute(
+            f"SELECT * FROM devices WHERE id IN ({','.join('?' * len(device_ids))})",
+            device_ids
+        ).fetchall()
+        device_map = {row['id']: dict(row) for row in device_rows}
+
+        async def _execute_single_device(dev_id: str):
+            nonlocal total_failed, total_success
+
+            device = device_map.get(dev_id)
+            if not device:
+                async with results_lock:
+                    total_failed += 1
+                    failure_details.append(f"设备 {dev_id} 不存在")
+                return
+
             d = dict(device)
             # Use normal (least-privilege) credentials for scheduled command execution.
             # Admin credentials are only needed for config changes; read-only health
@@ -124,17 +138,21 @@ async def run_scheduled_automation_job(job_id: str):
                 d['username'] = fallback_user
                 d['password'] = fallback_pass
                 logger.info(f"[Scheduler] No normal credentials, falling back to '{fallback_user}' for device {d.get('hostname', d.get('ip_address'))}")
-            
-            # 记录设备开始执行
+
+            # 记录设备开始执行（使用独立连接，避免并发冲突）
             dev_started_at = datetime.now().isoformat()
             dev_result_id = str(uuid.uuid4())
-            conn.execute(
-                '''INSERT INTO execution_device_results 
-                   (id, execution_id, device_id, hostname, ip_address, status, started_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                (dev_result_id, execution_id, dev_id, d['hostname'], d['ip_address'], 'running', dev_started_at)
-            )
-            conn.commit()
+            dev_conn = get_db_connection()
+            try:
+                dev_conn.execute(
+                    '''INSERT INTO execution_device_results 
+                       (id, execution_id, device_id, hostname, ip_address, status, started_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                    (dev_result_id, execution_id, dev_id, d['hostname'], d['ip_address'], 'running', dev_started_at)
+                )
+                dev_conn.commit()
+            finally:
+                dev_conn.close()
 
             try:
                 loop = asyncio.get_event_loop()
@@ -145,18 +163,15 @@ async def run_scheduled_automation_job(job_id: str):
 
                 if is_shell_script and is_server:
                     # Linux/server: use LinuxDriver via SCRIPT mode.
-                    # Paramiko exec_command handles the full script natively —
-                    # no base64 wrapping, no sentinel markers needed.
                     d['asset_type'] = 'server'
-                    exec_results = await loop.run_in_executor(
+                    exec_results_raw = await loop.run_in_executor(
                         None,
                         lambda: service.orchestrator.execute_single(d, 'script', commands_str)
                     )
-                    # Normalise to list[dict] with 'output' key
                     exec_results = [{
-                        'success': exec_results.get('success', False),
-                        'output': exec_results.get('stdout', '') or exec_results.get('output', ''),
-                        'error': exec_results.get('stderr', '') or exec_results.get('error', ''),
+                        'success': exec_results_raw.get('success', False),
+                        'output': exec_results_raw.get('stdout', '') or exec_results_raw.get('output', ''),
+                        'error': exec_results_raw.get('stderr', '') or exec_results_raw.get('error', ''),
                     }]
 
                 elif is_shell_script and not is_server:
@@ -182,72 +197,65 @@ async def run_scheduled_automation_job(job_id: str):
 
                 else:
                     # Plain CLI commands (both Linux and network devices)
+                    cmds_snapshot = list(commands)  # capture for lambda closure
                     exec_results = await loop.run_in_executor(
                         None,
-                        lambda: service.execute_commands(d, commands, is_config=bool(job['is_config']))
+                        lambda: service.execute_commands(d, cmds_snapshot, is_config=bool(job['is_config']))
                     )
 
                 # ── Normalise output ─────────────────────────────────────────
-                # Different drivers return different keys: 'output', 'stdout', etc.
                 def _get_output(r: dict) -> str:
                     return r.get('output') or r.get('stdout') or ''
 
                 success = all(r.get('success', False) for r in exec_results)
-                
+
                 processed_commands = []
                 business_anomaly = False
                 anomaly_msg = ""
                 _sentinel_begin = "---NETOPS_BEGIN---"
                 _sentinel_end   = "---NETOPS_END---"
-                
+
                 for r in exec_results:
                     out = str(_get_output(r))
                     if is_shell_script and not is_server:
-                        # Network device path: extract between sentinel markers
                         if _sentinel_begin in out and _sentinel_end in out:
                             out = out.split(_sentinel_begin)[-1].split(_sentinel_end)[0].strip()
                         elif _sentinel_begin in out:
                             out = out.split(_sentinel_begin)[-1].strip() + "\n[Warning: Execution might be incomplete]"
-                    # For Linux server path, output is already clean (no markers needed)
-                    
+
                     processed_commands.append(out)
-                    
-                    # 业务逻辑异常检测：精准提取异常内容
+
                     lines = out.split('\n')
                     found_crit = False
                     for line in lines:
                         if "CRITICAL" in line or "ERROR" in line:
                             business_anomaly = True
                             found_crit = True
-                            # 提取具体的异常行，去除多余空格
                             clean_line = " ".join(line.split())
                             anomaly_msg = f"检测到严重异常: {clean_line}"
-                            break # 优先记录第一个严重异常
-                    
+                            break
+
                     if not found_crit:
                         for line in lines:
                             if "WARNING" in line:
-                                # WARNING 仅记录描述，不作为 business_anomaly 判定依据
                                 clean_line = " ".join(line.split())
                                 anomaly_msg = f"检测到警告: {clean_line}"
                                 break
 
-                # 统计逻辑：业务异常优先
-                # 如果脚本执行成功但业务逻辑异常，统一记为失败
                 if success and not business_anomaly:
-                    total_success += 1
                     phase_status = "success"
+                    async with results_lock:
+                        total_success += 1
                 else:
-                    total_failed += 1
                     phase_status = "failed"
-                    if success and business_anomaly:
-                        failure_details.append(f"设备 {d['hostname'] or d['ip_address']} 业务异常: {anomaly_msg}")
-                    elif not success:
-                        failure_details.append(f"设备 {d['hostname'] or d['ip_address']} 执行失败")
-                
-                # 格式化输出为 phases_json 兼容格式
+                    async with results_lock:
+                        total_failed += 1
+                        if success and business_anomaly:
+                            failure_details.append(f"设备 {d['hostname'] or d['ip_address']} 业务异常: {anomaly_msg}")
+                        elif not success:
+                            failure_details.append(f"设备 {d['hostname'] or d['ip_address']} 执行失败")
+
                 combined_output = '\n'.join(processed_commands).strip()
-                # For display: show script name or actual CLI commands, not the base64 wrapper
                 display_commands = [script_name] if is_shell_script else (commands or [])
                 phase_data = {
                     "execute": {
@@ -256,32 +264,49 @@ async def run_scheduled_automation_job(job_id: str):
                         "output": combined_output
                     }
                 }
-                
-                # 更新设备结果
+
                 dev_completed_at = datetime.now().isoformat()
-                conn.execute(
-                    '''UPDATE execution_device_results 
-                       SET status = ?, error_message = ?, phases_json = ?, completed_at = ?
-                       WHERE id = ?''',
-                    (phase_status, 
-                     anomaly_msg if business_anomaly else ("" if success else "Command failure"), 
-                     json.dumps(phase_data), dev_completed_at, dev_result_id)
-                )
-                conn.commit()
+                upd_conn = get_db_connection()
+                try:
+                    upd_conn.execute(
+                        '''UPDATE execution_device_results 
+                           SET status = ?, error_message = ?, phases_json = ?, completed_at = ?
+                           WHERE id = ?''',
+                        (phase_status,
+                         anomaly_msg if business_anomaly else ("" if success else "Command failure"),
+                         json.dumps(phase_data), dev_completed_at, dev_result_id)
+                    )
+                    upd_conn.commit()
+                finally:
+                    upd_conn.close()
 
             except Exception as e:
-                total_failed += 1
-                failure_details.append(f"设备 {d['hostname'] or d['ip_address']} 异常: {str(e)}")
-                
-                # 更新设备异常结果
+                async with results_lock:
+                    total_failed += 1
+                    failure_details.append(f"设备 {d['hostname'] or d['ip_address']} 异常: {str(e)}")
+
                 dev_completed_at = datetime.now().isoformat()
-                conn.execute(
-                    '''UPDATE execution_device_results 
-                       SET status = ?, error_message = ?, completed_at = ?
-                       WHERE id = ?''',
-                    ("failed", str(e), dev_completed_at, dev_result_id)
-                )
-                conn.commit()
+                err_conn = get_db_connection()
+                try:
+                    err_conn.execute(
+                        '''UPDATE execution_device_results 
+                           SET status = ?, error_message = ?, completed_at = ?
+                           WHERE id = ?''',
+                        ("failed", str(e), dev_completed_at, dev_result_id)
+                    )
+                    err_conn.commit()
+                finally:
+                    err_conn.close()
+
+        # 并发执行，最多 10 个设备同时运行
+        _CONCURRENCY = 10
+        semaphore = asyncio.Semaphore(_CONCURRENCY)
+
+        async def _throttled(dev_id: str):
+            async with semaphore:
+                await _execute_single_device(dev_id)
+
+        await asyncio.gather(*[_throttled(did) for did in device_ids])
 
         # 5. 更新总执行记录状态
         final_playbook_status = "success" if total_failed == 0 else ("failed" if total_success == 0 else "partial")

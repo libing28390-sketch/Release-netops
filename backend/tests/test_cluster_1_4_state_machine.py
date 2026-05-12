@@ -28,8 +28,13 @@ from __future__ import annotations
 
 import json
 import pytest
+from datetime import datetime, timezone
 from fastapi import HTTPException
 from hypothesis import HealthCheck, given, settings, strategies as st, assume
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
 # ── DB Setup: ensure change_orders table exists even if init_db fails ──
@@ -344,11 +349,14 @@ def test_p5_reject_from_initial_review_clears_reviewer_fields(
     assert status_code == 200, f"Setup failed: {data}"
     order_id = data["id"]
 
-    # Transition to initial_review
-    status_code, _ = _invoke_transition(
-        order_id, "initial_review", actor=requester
-    )
-    assert status_code == 200, "Setup: could not transition to initial_review"
+    # Use _force_status to bypass template enforcement (task 14.1) and
+    # directly set the order to initial_review with reviewer fields populated.
+    # This isolates the test to Property 5 (reject→draft cleanup) only.
+    _force_status(order_id, "initial_review", extra_fields={
+        "initial_reviewer_id": initial_reviewer["user_id"],
+        "initial_reviewer_username": initial_reviewer["username"],
+        "result_detail_json": json.dumps({"initial_review_at": _utc_now_iso()}),
+    })
 
     # Initial reviewer rejects → rejected
     status_code, _ = _invoke_transition(
@@ -443,17 +451,17 @@ def test_p5_reject_from_final_review_clears_all_approver_fields(
     assert status_code == 200, f"Setup failed: {data}"
     order_id = data["id"]
 
-    # Transition: draft → initial_review
-    status_code, _ = _invoke_transition(
-        order_id, "initial_review", actor=requester
-    )
-    assert status_code == 200, "Setup: could not transition to initial_review"
-
-    # Transition: initial_review → final_review (by initial_reviewer)
-    status_code, _ = _invoke_transition(
-        order_id, "final_review", actor=initial_reviewer
-    )
-    assert status_code == 200, "Setup: could not transition to final_review"
+    # Use _force_status to bypass template enforcement (task 14.1) and
+    # directly set the order to final_review with all reviewer/approver
+    # fields populated. This isolates the test to Property 5 only.
+    initial_review_at = _utc_now_iso()
+    _force_status(order_id, "final_review", extra_fields={
+        "initial_reviewer_id": initial_reviewer["user_id"],
+        "initial_reviewer_username": initial_reviewer["username"],
+        "assigned_final_approver_id": final_approver["user_id"],
+        "assigned_final_approver_username": final_approver["username"],
+        "result_detail_json": json.dumps({"initial_review_at": initial_review_at}),
+    })
 
     # Verify reviewer fields are now populated
     row_at_final = _get_order_row(order_id)
@@ -580,19 +588,18 @@ def test_p5_pbt_reject_to_draft_clears_all_fields(
     assert status_code == 200, f"Setup failed: {data}"
     order_id = data["id"]
 
-    # Transition: draft → initial_review
-    status_code, _ = _invoke_transition(
-        order_id, "initial_review", actor=requester
-    )
-    assert status_code == 200, "Setup: could not transition to initial_review"
-
+    # Use _force_status to bypass template enforcement (task 14.1) and
+    # directly set the order to the target review stage with reviewer fields
+    # populated. This isolates the PBT to Property 5 (reject→draft cleanup).
+    initial_review_at = _utc_now_iso()
     if reject_stage == "final_review":
-        # Transition: initial_review → final_review (by initial_reviewer)
-        status_code, _ = _invoke_transition(
-            order_id, "final_review", actor=initial_reviewer
-        )
-        assert status_code == 200, "Setup: could not transition to final_review"
-
+        _force_status(order_id, "final_review", extra_fields={
+            "initial_reviewer_id": initial_reviewer["user_id"],
+            "initial_reviewer_username": initial_reviewer["username"],
+            "assigned_final_approver_id": final_approver["user_id"],
+            "assigned_final_approver_username": final_approver["username"],
+            "result_detail_json": json.dumps({"initial_review_at": initial_review_at}),
+        })
         # Final approver rejects
         status_code, _ = _invoke_transition(
             order_id, "rejected", actor=final_approver,
@@ -600,6 +607,11 @@ def test_p5_pbt_reject_to_draft_clears_all_fields(
         )
         assert status_code == 200, "Setup: could not reject from final_review"
     else:
+        _force_status(order_id, "initial_review", extra_fields={
+            "initial_reviewer_id": initial_reviewer["user_id"],
+            "initial_reviewer_username": initial_reviewer["username"],
+            "result_detail_json": json.dumps({"initial_review_at": initial_review_at}),
+        })
         # Initial reviewer rejects
         status_code, _ = _invoke_transition(
             order_id, "rejected", actor=initial_reviewer,

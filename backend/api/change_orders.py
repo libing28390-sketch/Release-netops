@@ -9,7 +9,7 @@ import uuid
 import json
 import logging
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, Body, File, UploadFile
+from fastapi import APIRouter, HTTPException, Query, Body, File, Form, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from database import get_db_connection, PROJECT_ROOT
@@ -32,6 +32,16 @@ from services.change_order_service import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# ── Feature Flags (Stage 2 / Stage 3 enforcement gates) ─────────────
+# Set FEATURE_TEMPLATE_REQUIRED=1 in the environment to enable template
+# enforcement (cluster 1.1 fix, task 14.1).  Defaults to OFF so that
+# Stage-1 fixes (clusters 1.3 / 1.4) can be shipped independently.
+FEATURE_TEMPLATE_REQUIRED: bool = os.environ.get('FEATURE_TEMPLATE_REQUIRED', '0').strip() == '1'
+
+# Set FEATURE_CONTROL_SHEET=1 to enable control-sheet completeness
+# enforcement (cluster 1.2 fix, task 15.3).  Defaults to OFF.
+FEATURE_CONTROL_SHEET: bool = os.environ.get('FEATURE_CONTROL_SHEET', '0').strip() == '1'
 
 
 ALLOWED_STATUSES = {
@@ -90,35 +100,88 @@ def _validate_assignment_rules(requester_username: str, payload: dict):
         raise HTTPException(status_code=400, detail='初审人与终审人不能为同一人')
 
 
+_TEMPLATE_REQUIRED_STATUSES = frozenset({
+    'initial_review', 'final_review', 'approved', 'implementing', 'completed',
+})
+
+
 def _validate_template_completeness(payload: dict):
     """
     Property 1: Template Enforcement (Task 14.1)
-    Non-draft orders must have a valid command template.
+
+    When ``payload['status']`` is one of the five non-draft workflow statuses
+    that require a rendered command template
+    (``{'initial_review','final_review','approved','implementing','completed'}``),
+    the ``command_template`` field MUST satisfy all of:
+      - present and non-empty
+      - ``mode == 'template'``
+      - non-empty ``scenario_id``
+      - non-empty ``preview.execute`` list
+
+    Any violation raises ``HTTPException(400, '提交初审前必须选择场景化命令模板并渲染出可执行命令')``.
+
+    This function is a no-op for ``status == 'draft'`` and for terminal /
+    error statuses (``rejected``, ``failed``, ``cancelled``, etc.) that are
+    not in ``_TEMPLATE_REQUIRED_STATUSES``.
+
+    Gated by ``FEATURE_TEMPLATE_REQUIRED`` at the call sites in
+    ``api_create_change_order``, ``api_update_change_order``, and
+    ``api_transition_change_order``.
     """
     status = payload.get('status')
-    if status and status != 'draft':
-        tpl = payload.get('command_template') or {}
-        if not tpl or tpl.get('mode') != 'template' or not tpl.get('scenario_id'):
-            raise HTTPException(status_code=400, detail='提交初审前必须选择场景化命令模板并渲染出可执行命令')
-        
-        preview = tpl.get('preview', {})
-        if not preview or not preview.get('execute'):
-            raise HTTPException(status_code=400, detail='提交初审前必须渲染出可执行命令')
+    if status not in _TEMPLATE_REQUIRED_STATUSES:
+        return
+
+    tpl = payload.get('command_template') or {}
+    if not tpl or tpl.get('mode') != 'template' or not str(tpl.get('scenario_id') or '').strip():
+        raise HTTPException(
+            status_code=400,
+            detail='提交初审前必须选择场景化命令模板并渲染出可执行命令',
+        )
+
+    preview = tpl.get('preview') or {}
+    if not preview.get('execute'):
+        raise HTTPException(
+            status_code=400,
+            detail='提交初审前必须渲染出可执行命令',
+        )
 
 
 def _validate_control_sheet_completeness(conn, order_id: str, payload: dict, new_status: str):
     """
     Property 2: Control Sheet Enforcement (Task 15.3)
+
+    The 9 required structured fields (per design.md §Data Model Changes →
+    control_sheet_json):
+      change_time   — dict with 'start' and 'end' ISO timestamps
+      implementer   — dict with 'id' and 'username'
+      co_reviewer   — dict with 'id' and 'username'
+      device_ips    — non-empty list of IP strings
+      pre_check     — non-empty string
+      execution     — non-empty string
+      post_verify   — non-empty string
+      business_verify — non-empty string
+      rollback_plan — non-empty string
     """
     if new_status == 'initial_review':
         cs = payload.get('control_sheet') or {}
-        # Required fields based on design.md and bugfix.md 2.4
+        # Required fields per design.md §Data Model Changes → control_sheet_json
         required_fields = [
-            'scheduled_start', 'scheduled_end', 'target_ips', 
-            'change_content', 'risk_analysis', 'rollback_plan',
-            'requester_approver', 'security_approver', 'implementation_plan'
+            'change_time', 'implementer', 'co_reviewer', 'device_ips',
+            'pre_check', 'execution', 'post_verify', 'business_verify',
+            'rollback_plan',
         ]
-        missing = [f for f in required_fields if not str(cs.get(f) or '').strip()]
+        missing = []
+        for f in required_fields:
+            val = cs.get(f)
+            if val is None:
+                missing.append(f)
+            elif isinstance(val, (list,)) and not val:
+                missing.append(f)
+            elif isinstance(val, dict) and not val:
+                missing.append(f)
+            elif isinstance(val, str) and not val.strip():
+                missing.append(f)
         if missing:
             raise HTTPException(status_code=400, detail=f'提交初审前必须填写完整的变更控制表，缺失字段: {", ".join(missing)}')
 
@@ -359,7 +422,11 @@ def _normalize_command_template_payload(payload: dict) -> dict:
     order_type = normalized.get('order_type', 'config_change')
 
     if not template_payload:
-        if status != 'draft' and order_type == 'config_change':
+        # When FEATURE_TEMPLATE_REQUIRED is ON, reject empty templates for
+        # non-draft config-change orders at normalization time (before the
+        # dedicated _validate_template_completeness call).  When the flag is
+        # OFF we silently accept the empty dict for backward compatibility.
+        if FEATURE_TEMPLATE_REQUIRED and status in _TEMPLATE_REQUIRED_STATUSES and order_type == 'config_change':
             raise HTTPException(status_code=400, detail='非草稿状态的配置变更工单必须携带有效的场景化模板')
         normalized['command_template'] = {}
         return normalized
@@ -622,13 +689,14 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
         _validate_assignment_rules(user.get('username'), payload)
         
         # Property 1: Template Enforcement (Task 14.1)
-        _validate_template_completeness(payload)
+        if FEATURE_TEMPLATE_REQUIRED:
+            _validate_template_completeness(payload)
 
         if payload.get('status') != 'draft' and not payload.get('assigned_initial_reviewer_id'):
             raise HTTPException(status_code=400, detail='提交初审时必须指定初审人')
         
         # Property 2: Control Sheet Enforcement (Task 15.3)
-        if payload.get('status') == 'initial_review':
+        if FEATURE_CONTROL_SHEET and payload.get('status') == 'initial_review':
             _validate_control_sheet_completeness(conn, None, payload, 'initial_review')
 
         order = create_change_order(
@@ -698,10 +766,11 @@ def api_update_change_order(order_id: str, body: ChangeOrderUpdate, user=require
         _validate_assignment_rules(existing.get('requester_username'), full_payload)
         
         # Property 1: Template Enforcement (Task 14.1)
-        _validate_template_completeness(full_payload)
+        if FEATURE_TEMPLATE_REQUIRED:
+            _validate_template_completeness(full_payload)
         
         # Property 2: Control Sheet Enforcement (Task 15.3)
-        if full_payload.get('status') == 'initial_review' and existing.get('status') != 'initial_review':
+        if FEATURE_CONTROL_SHEET and full_payload.get('status') == 'initial_review' and existing.get('status') != 'initial_review':
              _validate_control_sheet_completeness(conn, order_id, full_payload, 'initial_review')
 
         order = update_change_order(conn, order_id, updates)
@@ -875,10 +944,13 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         
         # Property 1 & 2 Enforcement (Task 14.1, 15.3)
         if new_status == 'initial_review':
-            _validate_template_completeness(full_payload)
-            _validate_control_sheet_completeness(conn, order_id, full_payload, 'initial_review')
+            if FEATURE_TEMPLATE_REQUIRED:
+                _validate_template_completeness(full_payload)
+            if FEATURE_CONTROL_SHEET:
+                _validate_control_sheet_completeness(conn, order_id, full_payload, 'initial_review')
         if new_status == 'implementing':
-            _validate_control_sheet_completeness(conn, order_id, full_payload, 'implementing')
+            if FEATURE_CONTROL_SHEET:
+                _validate_control_sheet_completeness(conn, order_id, full_payload, 'implementing')
 
         order = update_change_order(conn, order_id, updates)
         severity = 'high' if new_status in ('rejected', 'failed') else 'medium'
@@ -1010,6 +1082,175 @@ def api_delete_template(template_id: str, user=require_role("Operator")):
         if not delete_template(conn, template_id):
             raise HTTPException(status_code=404, detail='Template not found')
         return {'success': True, 'message': '模板已删除'}
+    finally:
+        conn.close()
+
+
+# ── Control Sheet Upload ─────────────────────────────────────────────
+
+# MIME whitelist for control-sheet attachments (Property 2 / Req 2.5)
+_CONTROL_SHEET_ALLOWED_MIMES: frozenset[str] = frozenset({
+    'application/pdf',
+    'application/msword',                                                    # .doc
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
+    'application/vnd.ms-excel',                                              # .xls
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',    # .xlsx
+})
+
+# Extension → canonical MIME (used when the client sends an empty / wrong content-type)
+_EXT_TO_MIME: dict[str, str] = {
+    '.pdf':  'application/pdf',
+    '.doc':  'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls':  'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+}
+
+# Statuses that allow control-sheet uploads (design.md §API Surface Changes)
+_CONTROL_SHEET_UPLOAD_STATUSES: frozenset[str] = frozenset({
+    'approved', 'implementing', 'completed', 'rolled_back',
+})
+
+_CONTROL_SHEET_MAX_BYTES: int = 20 * 1024 * 1024  # 20 MiB
+
+
+@router.post('/change-orders/{order_id}/control-sheet')
+async def api_upload_control_sheet(
+    order_id: str,
+    file: UploadFile = File(...),
+    note: Optional[str] = Form(None),
+    user=require_role("Operator"),
+):
+    """
+    POST /api/change-orders/{order_id}/control-sheet
+
+    Upload a control-sheet attachment (pdf / doc / docx / xlsx, ≤ 20 MiB).
+
+    Authorization:
+      - The authenticated user must be the order's requester, or have the
+        Administrator role.  (Implementer is the requester in this workflow.)
+      - The order must be in one of: approved / implementing / completed / rolled_back.
+
+    Validates: Property 2 (design.md §Correctness Properties)
+    Requirements: 2.5
+    """
+    conn = get_db_connection()
+    try:
+        # 1. Verify order exists
+        existing = get_change_order(conn, order_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail='Change order not found')
+
+        # 2. Authorization: requester or Administrator
+        actor_username = user.get('username', '')
+        actor_role = user.get('role', '')
+        requester_username = existing.get('requester_username', '')
+        if actor_username != requester_username and actor_role != 'Administrator':
+            raise HTTPException(
+                status_code=403,
+                detail='只有工单申请人（实施人）或管理员才能上传变更控制表附件',
+            )
+
+        # 3. Status check
+        order_status = existing.get('status', '')
+        if order_status not in _CONTROL_SHEET_UPLOAD_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'当前工单状态 "{order_status}" 不允许上传变更控制表附件；'
+                    f'允许的状态：{", ".join(sorted(_CONTROL_SHEET_UPLOAD_STATUSES))}'
+                ),
+            )
+
+        # 4. MIME type validation
+        #    Prefer the client-supplied content_type; fall back to extension mapping.
+        client_mime = (file.content_type or '').strip().lower().split(';')[0].strip()
+        filename = file.filename or ''
+        ext = os.path.splitext(filename)[1].lower()
+        resolved_mime = client_mime if client_mime in _CONTROL_SHEET_ALLOWED_MIMES else _EXT_TO_MIME.get(ext, client_mime)
+
+        if resolved_mime not in _CONTROL_SHEET_ALLOWED_MIMES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'不支持的文件类型 "{client_mime or ext or "unknown"}"；'
+                    '仅允许上传 PDF、Word（.doc/.docx）、Excel（.xls/.xlsx）文件'
+                ),
+            )
+
+        # 5. Read file content and enforce size limit
+        content = await file.read()
+        if len(content) > _CONTROL_SHEET_MAX_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f'文件大小超过限制（最大 20 MiB，当前 {len(content) / 1024 / 1024:.1f} MiB）',
+            )
+        if len(content) == 0:
+            raise HTTPException(status_code=400, detail='上传的文件不能为空')
+
+        # 6. Persist file to storage directory
+        attachment_id = f"cs-{uuid.uuid4().hex[:12]}"
+        safe_ext = ext if ext in _EXT_TO_MIME else '.bin'
+        stored_filename = f"{attachment_id}{safe_ext}"
+        attachments_dir = os.path.join(PROJECT_ROOT, 'data', 'change_order_attachments')
+        os.makedirs(attachments_dir, exist_ok=True)
+        file_path = os.path.join(attachments_dir, stored_filename)
+
+        with open(file_path, 'wb') as fh:
+            fh.write(content)
+
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+
+        # 7. Insert row into change_order_control_sheet_attachments
+        conn.execute(
+            '''
+            INSERT INTO change_order_control_sheet_attachments
+                (id, order_id, file_path, file_name, file_size, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (attachment_id, order_id, file_path, filename or stored_filename, len(content), now),
+        )
+
+        # 8. Emit audit event
+        log_audit_event(
+            event_type='change_order.control_sheet_uploaded',
+            category='change_order',
+            severity='low',
+            status='open',
+            summary=(
+                f"变更工单 {existing['order_number']} 上传了变更控制表附件: "
+                f"{filename or stored_filename}"
+            ),
+            actor_id=user.get('user_id'),
+            actor_username=actor_username,
+            actor_role=actor_role,
+            target_type='change_order',
+            target_id=order_id,
+            target_name=existing['order_number'],
+            details={
+                'attachment_id': attachment_id,
+                'filename': filename or stored_filename,
+                'mime_type': resolved_mime,
+                'size_bytes': len(content),
+                'note': note or '',
+            },
+            conn=conn,
+        )
+
+        conn.commit()
+
+        return {
+            'success': True,
+            'data': {
+                'id': attachment_id,
+                'filename': filename or stored_filename,
+                'mime_type': resolved_mime,
+                'size_bytes': len(content),
+                'uploaded_at': now,
+                'note': note or '',
+            },
+        }
     finally:
         conn.close()
 

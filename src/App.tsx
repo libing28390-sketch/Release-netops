@@ -1351,6 +1351,9 @@ const App: React.FC = () => {
       password: '',
       confirmPassword: '',
       fixedPin: currentUserRecord?.fixed_pin || '',
+      displayName: currentUserRecord?.display_name || '',
+      phone: currentUserRecord?.phone || '',
+      email: currentUserRecord?.email || '',
     });
     setProfileAvatarPreview(currentAvatar);
     setShowProfilePwd(false);
@@ -1412,6 +1415,9 @@ const App: React.FC = () => {
         avatar_url: profileAvatarPreview,
         notification_channels: notificationChannels,
         fixedPin: profileForm.fixedPin,
+        display_name: profileForm.displayName.trim(),
+        phone: profileForm.phone.trim(),
+        email: profileForm.email.trim(),
       };
       if (profileForm.password) payload.password = profileForm.password;
 

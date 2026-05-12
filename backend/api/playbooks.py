@@ -3039,6 +3039,80 @@ async def get_execution_device_detail(execution_id: str, device_id: str):
     finally:
         conn.close()
 
+@router.post("/playbooks/{execution_id}/devices/{device_id}/parse")
+async def parse_device_output(execution_id: str, device_id: str, payload: dict = Body(...)):
+    """
+    使用 TextFSM 解析指定设备的执行输出。
+    请求体：{ "platform": "cisco_ios", "command": "show version", "output": "..." }
+    若不传 output，则从数据库中读取该设备的 execute phase 输出。
+    """
+    from core.textfsm import parse_with_textfsm, _find_template
+
+    platform = (payload.get('platform') or '').strip()
+    command = (payload.get('command') or '').strip()
+    raw_output = payload.get('output')
+
+    # 若未传 output，从数据库读取
+    if raw_output is None:
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT phases_json, hostname FROM execution_device_results WHERE execution_id = ? AND (device_id = ? OR ip_address = ?)",
+                (execution_id, device_id, device_id)
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Device result not found")
+            try:
+                phases = json.loads(row['phases_json'] or '{}')
+                # 取 execute phase 的 output
+                raw_output = phases.get('execute', {}).get('output', '')
+                if not command:
+                    # 尝试从 commands 列表推断命令
+                    cmds = phases.get('execute', {}).get('commands', [])
+                    if cmds:
+                        command = cmds[0]
+            except Exception:
+                raw_output = ''
+        finally:
+            conn.close()
+
+    if not raw_output:
+        return {'success': False, 'message': '没有可解析的输出内容', 'data': None}
+
+    if not platform or not command:
+        return {'success': False, 'message': '需要提供 platform 和 command 参数', 'data': None}
+
+    # 检查是否有对应模板
+    template_path = _find_template(platform, command)
+    if not template_path:
+        return {
+            'success': False,
+            'message': f'未找到 {platform} / {command} 的解析模板',
+            'data': None,
+            'has_template': False,
+        }
+
+    records = parse_with_textfsm(platform, command, raw_output)
+    if not records:
+        return {
+            'success': True,
+            'message': '模板匹配为空，请检查输出格式是否与模板一致',
+            'data': {'records': [], 'count': 0, 'fields': []},
+            'has_template': True,
+        }
+
+    return {
+        'success': True,
+        'message': f'解析成功，共 {len(records)} 条记录',
+        'data': {
+            'records': records,
+            'count': len(records),
+            'fields': list(records[0].keys()) if records else [],
+        },
+        'has_template': True,
+    }
+
+
 @router.post("/playbooks/preview")
 async def preview_playbook(payload: dict = Body(...)):
     """Preview rendered commands without executing."""
@@ -3646,18 +3720,27 @@ async def _exec_commands(service, device: dict, commands: list, is_config: bool)
             results = service.execute_commands(device, commands, is_config=is_config)
             output_lines = []
             all_ok = True
+            cmd_iter = iter(commands)
             for r in results:
+                # Try to pair each result with its command for labeling
+                cmd_label = next(cmd_iter, None)
                 if r.get('success', False):
                     # Different drivers use different output keys:
                     # NetmikoDriver (engine) → 'stdout'
                     # Legacy drivers         → 'output'
                     out = r.get('output') or r.get('stdout') or ''
-                    output_lines.append(out)
+                    if cmd_label and not is_config:
+                        output_lines.append(f"# {cmd_label}\n{out}")
+                    else:
+                        output_lines.append(out)
                 else:
                     err = r.get('error') or r.get('stderr') or ''
-                    output_lines.append(f"ERROR: {err}")
+                    if cmd_label and not is_config:
+                        output_lines.append(f"# {cmd_label}\nERROR: {err}")
+                    else:
+                        output_lines.append(f"ERROR: {err}")
                     all_ok = False
-            return {"success": all_ok, "output": "\n".join(output_lines), "commands": commands}
+            return {"success": all_ok, "output": "\n\n".join(output_lines), "commands": commands}
         except Exception as e:
             return {"success": False, "output": str(e), "commands": commands, "error": str(e)}
 

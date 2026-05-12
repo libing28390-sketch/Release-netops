@@ -168,6 +168,9 @@ def _hydrate_user_row(row) -> dict:
     result['change_groups'] = _normalize_change_groups(raw_groups)
     result.pop('change_groups_json', None)
     result['group_name'] = str(result.get('group_name') or '')
+    result['display_name'] = str(result.get('display_name') or '')
+    result['phone'] = str(result.get('phone') or '')
+    result['email'] = str(result.get('email') or '')
     return result
 
 def _check_lockout(username: str) -> int | None:
@@ -275,7 +278,7 @@ def read_users():
     conn = get_db_connection()
     try:
         users = conn.execute(
-            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users'
+            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email FROM users'
         ).fetchall()
         return [_hydrate_user_row(u) for u in users]
     finally:
@@ -288,14 +291,17 @@ async def create_user(request: Request, user: dict = Body(...)):
     raw_password = user.get('password', '')
     group_name = str(user.get('group_name') or '').strip()
     change_groups = _normalize_change_groups(user.get('change_groups'))
+    display_name = str(user.get('display_name') or '').strip()
+    phone = str(user.get('phone') or '').strip()
+    email = str(user.get('email') or '').strip()
     strength_err = _validate_password_strength(raw_password)
     if strength_err:
         raise HTTPException(status_code=400, detail=strength_err)
     hashed = await _hash_password(raw_password)
     try:
         conn.execute(
-            'INSERT INTO users (id, username, password, role, status, last_login, avatar_url, group_name, change_groups_json) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO users (id, username, password, role, status, last_login, avatar_url, group_name, change_groups_json, display_name, phone, email) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (
                 user_id,
                 user.get('username'),
@@ -306,6 +312,9 @@ async def create_user(request: Request, user: dict = Body(...)):
                 user.get('avatar_url'),
                 group_name,
                 json.dumps(change_groups, ensure_ascii=False),
+                display_name,
+                phone,
+                email,
             ),
         )
         conn.commit()
@@ -324,7 +333,7 @@ async def create_user(request: Request, user: dict = Body(...)):
             details={'role': user.get('role'), 'group_name': group_name, 'change_groups': change_groups},
         )
         row = conn.execute(
-            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
+            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email FROM users WHERE id = ?',
             (user_id,),
         ).fetchone()
         return _hydrate_user_row(row)
@@ -758,6 +767,9 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         change_groups_str = json.dumps(change_groups, ensure_ascii=False)
         password = user.get('password')
         fixed_pin = user.get('fixedPin')
+        display_name = str(user.get('display_name', existing['display_name'] if 'display_name' in existing.keys() else '') or '').strip()
+        phone = str(user.get('phone', existing['phone'] if 'phone' in existing.keys() else '') or '').strip()
+        email = str(user.get('email', existing['email'] if 'email' in existing.keys() else '') or '').strip()
         
         hashed_pin = existing.get('fixed_pin', '')
         if fixed_pin:
@@ -769,17 +781,17 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
                 raise HTTPException(status_code=400, detail=strength_err)
             hashed = await _hash_password(password)
             conn.execute(
-                'UPDATE users SET username = ?, role = ?, password = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ? WHERE id = ?',
-                (username, role, hashed, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, user_id)
+                'UPDATE users SET username = ?, role = ?, password = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ?, display_name = ?, phone = ?, email = ? WHERE id = ?',
+                (username, role, hashed, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, display_name, phone, email, user_id)
             )
         else:
             conn.execute(
-                'UPDATE users SET username = ?, role = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ? WHERE id = ?',
-                (username, role, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, user_id)
+                'UPDATE users SET username = ?, role = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ?, display_name = ?, phone = ?, email = ? WHERE id = ?',
+                (username, role, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, display_name, phone, email, user_id)
             )
         conn.commit()
         result = conn.execute(
-            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
+            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email FROM users WHERE id = ?',
             (user_id,)
         ).fetchone()
         log_audit_event(
@@ -815,7 +827,7 @@ def check_session(request: Request):
     conn = get_db_connection()
     try:
         user = conn.execute(
-            'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
+            'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email FROM users WHERE id = ?',
             (sess['user_id'],)
         ).fetchone()
         if not user:

@@ -15,6 +15,9 @@ export interface ProfileFormState {
   password: string;
   confirmPassword: string;
   fixedPin: string;
+  displayName: string;
+  phone: string;
+  email: string;
 }
 
 interface NotificationChannelsState {
@@ -184,6 +187,42 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
               placeholder="请输入用户名"
               className={`w-full rounded-xl px-3 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
             />
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>真实姓名</label>
+              <input
+                type="text"
+                value={profileForm.displayName}
+                onChange={(event) => onProfileFormChange((prev) => ({ ...prev, displayName: event.target.value }))}
+                title="Display name"
+                placeholder="如：李兵"
+                className={`w-full rounded-xl px-3 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
+              />
+            </div>
+            <div>
+              <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>手机号</label>
+              <input
+                type="tel"
+                value={profileForm.phone}
+                onChange={(event) => onProfileFormChange((prev) => ({ ...prev, phone: event.target.value }))}
+                title="Phone number"
+                placeholder="如：138xxxx8888"
+                className={`w-full rounded-xl px-3 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
+              />
+            </div>
+            <div>
+              <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>邮箱</label>
+              <input
+                type="email"
+                value={profileForm.email}
+                onChange={(event) => onProfileFormChange((prev) => ({ ...prev, email: event.target.value }))}
+                title="Email address"
+                placeholder="如：li@example.com"
+                className={`w-full rounded-xl px-3 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
+              />
+            </div>
           </div>
 
           <div>

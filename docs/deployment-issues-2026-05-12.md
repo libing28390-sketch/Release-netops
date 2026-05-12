@@ -1,195 +1,278 @@
-# 部署与开发问题排查报告
-**日期：** 2026-05-12
-**环境：** 开发机 Windows / 测试环境 192.168.56.1:4300
-**版本：** Nexora NetOps v0.1.1
-**状态：** 🟡 部分修复，明天继续（MFA 一次性消费问题遗留）
+# 问题记录 — 2026-05-12
+
+> 记录当日开发过程中发现并修复的问题，供后续排查参考。
 
 ---
 
-## 问题汇总
+## 1. 首页应用卡片缺少"平台管理"
 
-今天围绕 `/access` 特权账号授权链路做了一轮排错修复。包括版本回退、前端编译报错（JSX 结构错误）、特权账号终端登录裸奔、MFA 验证码状态泄漏等。最后一个问题——MFA 动态码仍然可以被二次消费——已定位根因，尚未修复，留作明天。
+**现象**：下拉菜单（TopHeader）有 9 个应用，首页卡片只展示 8 个，缺少"平台管理"。
 
----
+**根因**：`src/pages/HomePage.tsx` 的 `apps` 数组只定义了 8 个条目，漏掉了 `platform`（平台管理 → `/audit`）。
 
-## 一、版本回退到 `202605111734`
-
-### 背景
-今日上午在 `ff5a4e2` / `af1a41c` 两个新提交（定时作业 IP 校验、巡检错误上报改进）上发现不稳定，决定回退到昨晚的稳定版 `1ef869c (202605111734)` 再继续做 PAM 相关修复。
-
-### 处理
-- `git reset --hard 1ef869c`
-- HEAD 回到 `1ef869c 202605111734`
+**修复**：
+- 在 `HomePage.tsx` 的 `apps` 数组末尾补充 `{ id: 'platform', label: '平台管理', ... path: '/audit', ... }`
+- 同步导入 `SlidersHorizontal` 图标
 
 ---
 
-## 二、`InterfaceMonitoringTab.tsx` 构建报错 `Unterminated regular expression`
+## 2. 用户个人资料缺少真实姓名、手机号、邮箱字段
 
-### 现象
-执行 `npm run build`：
-```
-D:/tools/netops/src/pages/InterfaceMonitoringTab.tsx:655:18: ERROR: Unterminated regular expression
-```
-esbuild 把多余的 JSX 标签解释成了正则字面量开头，报了个迷惑人的错。
+**现象**：工单选人弹窗只显示登录名（如 `libing`），无法展示真实姓名和联系方式；搜索只支持用户名精确匹配。
 
-### 根因
-`202605111734` 这个提交把原来的"标题行 wrapper（`flex flex-col gap-4` + `sectionHeaderRowClass`）"重构成 `PageHero` 组件，并把主体包进了新的 `flex-1 overflow-auto` 滚动容器。但原本应该关闭 `flex flex-col gap-4` 的那个 `</div>`（L306）没有一起删除，反而变成了提前关闭新引入的滚动容器，结构完全错位，最终 JSX 标签数不匹配（开 48、关 49）。
+**根因**：`users` 表没有 `display_name`、`phone`、`email` 字段；前端 `ProfileModal` 和用户管理表单也没有对应输入项。
 
-### 修复
-- 删除 `src/pages/InterfaceMonitoringTab.tsx` L306 处多余的一个 `</div>`
-- 验证：div 开/关标签数 48/48 匹配，`npm run build` 通过
+**修复**：
+- `backend/database.py`：`ensure_column` 新增 `display_name`、`phone`、`email` 三列
+- `backend/api/users.py`：所有 SELECT/INSERT/UPDATE 语句加入三个新字段；`_hydrate_user_row` 返回新字段；`/session` 接口查询也加入新字段
+- `src/types.ts`：`User` 和 `SessionUser` 接口加入 `display_name?`、`phone?`、`email?`
+- `src/components/ProfileModal.tsx`：`ProfileFormState` 加三个字段；个人设置弹窗在"用户名"下方加一行三列输入框（真实姓名 / 手机号 / 邮箱）
+- `src/App.tsx`：`openProfileModal` 初始化新字段；`handleSaveProfile` 提交时带上新字段
+- `src/pages/UsersTab.tsx`：`UserFormState` 加三个字段；用户列表加"真实姓名"列（含手机/邮箱小字）；新建/编辑表单加三个输入框
+- `src/hooks/useUserManagement.ts`：`createEmptyUserForm` 和 `handleEditUser` 加入新字段
+- `src/pages/ChangeOrderTab.tsx`：选人弹窗（初审人/终审人）展示真实姓名+联系方式小字；搜索同时匹配 `display_name`、`phone`（输入"李"能匹配"李兵"，输入"lib"能匹配"libing"）
 
 ---
 
-## 三、`PAMAuditTab.tsx` 构建报错 `Adjacent JSX elements must be wrapped`
+## 3. 前端开发服务器端口 4300 被 Windows 系统保留
 
-### 现象
-构建继续在另一个文件报错：
-```
-[vite:react-babel] Adjacent JSX elements must be wrapped in an enclosing tag.
-File: src/pages/PAMAuditTab.tsx:565:4
+**现象**：`npm run dev` 启动时报 `Error: listen EACCES: permission denied 0.0.0.0:4300`。
+
+**根因**：Windows Hyper-V 将端口范围 4241–4340 保留，4300 在其中，Node.js 无法绑定。
+
+**验证命令**：
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp
 ```
 
-### 根因
-和 `InterfaceMonitoringTab.tsx` 的问题模式完全一致：`PageHero` 重构时多保留了一个 `</div>`。一开始我用 PowerShell 正则 `<div[\s>]` 去数标签，但没识别到 L476 那个自闭合的 `<div ... />`（遮罩背景），导致深度追踪误判，中途修复/又改回、反复一次。
-
-### 修复
-- 删除 `src/pages/PAMAuditTab.tsx` L564 处多余的一个 `</div>`
-- 验证：构建通过（`built in 10.48s`）
-
-### 经验教训
-- 用正则数 JSX 标签嵌套深度时必须单独统计 `<div ... />` 自闭合形式，不能只数 `<div>` / `</div>`
-- Babel 和 esbuild 在 JSX 失衡时报的错文本不同，但根因往往是同一个——缺/多一个闭合标签。以后看到 "Unterminated regular expression" 在 `.tsx` 里第一反应就是查 JSX 结构
+**修复**：`vite.config.ts` 中 `server.port` 从 `4300` 改为 `4350`（在保留范围之外）。
 
 ---
 
-## 四、`/access` 特权账号登录未经授权（严重安全漏洞）
+## 4. ARP 采集失败（No ARP entries collected）
 
-### 现象
-访问 `http://192.168.56.1:4300/access`，点任何设备的"终端登录 root"或"Web 登录 root"按钮，不需要任何审批/MFA 就能直接拿到 shell。
+**现象**：ARP 扫描日志显示 `No ARP entries collected`，IP 工具箱 ARP 表为空。
 
-### 根因分析
+**根因（双重）**：
 
-**4.1 终端（本地 xshell）特权登录完全裸奔**
-- 前端 `AccessCenterTab.tsx::handleAccessRequest` 的 `appType === 'xshell'` 分支**根本没判断 `identity === 'privileged'`**，管它是 user 还是 root 都直接 `fetch('/api/system/launch-terminal')`
-- 后端 `backend/api/system.py::launch_terminal` 只把 `access_level` 写进 pam_sessions 做审计，**从未校验 MFA 或审批工单**，直接 `decrypt_credential` + `subprocess.Popen` 拉本地客户端
-- 并且密码会以 `ssh://user:password@host` 形式出现在命令行上，`tasklist`/进程日志里都能看到
+**根因 A**：`backend/services/operational_data_service.py` 的 `_build_connection_params` 函数在 2026-05-05 的提交（`e9f160a`）中引入了 `auth_role` 支持，但直接读取 `device_info.get('normal_password')` 或 `device_info.get('password')` 等字段，这些字段在数据库中是 `enc:v1:...` 加密字符串，没有解密就传给 netmiko，导致 SSH 认证失败。
 
-**4.2 Web 登录虽然有 MFA 但缺审批**
-- `backend/api/pam.py::create_session` 对 admin 级只校验"6 位固定 PIN + 6 位动态码"
-- 完全没有去查 `pam_access_requests` 表是否有 `status='approved'` 且未过期的工单
-- 结果：虽然 UI 上叫"授权"，但后端其实只做了身份核验（MFA），**没有真正的审批动作记录**
+**根因 B**：`_load_eligible_devices` 中的凭据检查只看 `creds['username']`（普通账号），对于 `auth_model='dual'` 的设备，普通账号可能为空，导致设备被过滤掉。
 
-**4.3 MFA 动态码的 fallback 后门**
-- `backend/api/pam.py::request_mfa` L984-L986：如果审批人没配置飞书 webhook，会把 6 位码直接通过 `message: "授权码为: {code}（仅测试模式可见）"` 回到前端响应
-- 这意味着用户可以在没有审批人参与的情况下自己给自己发码
-- 本次没改，留明天讨论（改成仅 dev 模式允许，或干脆删掉）
-
-### 修复（今日完成部分）
-
-**后端：`backend/api/system.py::launch_terminal`**
-- 新增 `mfa_code` / `fixed_pin` 两个字段
-- `access_level == 'admin'` 时先调用 `_verify_mfa()`（复用 PAM 模块已有的校验函数）
-- 未带 MFA → 返回 `requires_mfa: true` 让前端弹窗
-- 校验失败 → 直接 `{success: false, error: ...}` 拒绝
-
-**前端：`src/pages/AccessCenterTab.tsx`**
-- `handleAccessRequest` 对 `appType === 'xshell' && identity === 'privileged'` 弹出 MFA 模态框（和 web 登录走同一个弹窗组件）
-- 抽出独立的 `launchLocalTerminal()` 辅助函数，携带 `mfa_code` / `fixed_pin` 调用后端
-- `handleMFAVerify` 根据 `mfaTarget.appType` 分流：`'xshell'` → `launchLocalTerminal`，`'web'` → `requestSession`
-
-### 经验教训
-- 任何"拉起本地客户端"的端点都必须视为和 "Web 受控会话" 同等敏感，不能因为传输层在用户本机就跳过验证
-- 审批（approval）和身份认证（MFA）是两个正交的事，"过了 MFA" ≠ "有人批准了这次访问"。按 PAM 产品的语义，特权访问应当是：**审批人工单 approved + 本人 MFA 核身 双因子**
+**修复**：
+- `operational_data_service.py`：`_build_connection_params` 改为调用 `resolve_device_credentials(device_info)` 统一解密，不再直接读取加密字段
+- `ip_locator_service.py`：`_load_eligible_devices` 检测 `auth_model`，dual 模式优先取 `admin_username` + `admin_password`；解析好的凭据存入 `_ssh_username`/`_ssh_password`/`_ssh_enable` 临时字段
 
 ---
 
-## 五、【遗留】MFA 验证码仍可被二次消费
+## 5. ARP 采集速度从 ~2s 退化到 ~30s
 
-### 现象
-修完上面之后发现：
-1. 用同一个 6 位动态码，先点"终端登录 root"通过，然后再点"Web 登录 root"，居然也能通过——**一码两用**
-2. 点完第一次登录后 modal 自动关闭，再打开第二次 modal 时，倒计时、输入框内容都还在（**state 泄漏**）
+**现象**：ARP 采集耗时从之前的约 2 秒变为约 30 秒（日志：`Collected 309 entries from 3 devices in 30.9s`）。
 
-### 今日已改的部分
+**根因**：`ubuntu-server2`（`linux` 平台）被纳入 ARP 采集，但 Linux 没有 `show ip arp` 命令，netmiko 连上去后等待超时（约 30 秒）。
 
-**链路 A：后端可能的并发复用**
-- 原 `_verify_mfa` 是"先 `get` 检查、成功才 `del`" 的非原子操作。并发或快速双击时，两个请求可能都读到同一个有效 code，两个都放行。
-- 修成 `stored = mfa_store.pop(username, None)` —— 原子性地先拿走 code，任何失败路径都不会让它回流。
+**修复**：`ip_locator_service.py` 的 `_load_eligible_devices` 加入平台过滤，`linux`、`windows` 等服务器平台直接跳过，只采集网络设备的 ARP 表。
 
-**链路 B：前端 state 泄漏**
-- `showMFAModal=false` 时没清 `fixedPassword` / `dynamicCode` / `countdown` / `isSending`
-- 抽出 `resetMFAState()` / `openMFAModal(target)` / `closeMFAModal()` 三个辅助函数，所有开/关弹窗路径都走这里
-- `handleMFAVerify` 里先把 `code`/`pin` 快照出来，再 `closeMFAModal()`，最后用快照去 fetch —— 保证 UI 一定被清空
-
-### 遗留问题（明天继续）
-
-**即使上面两条都改了，还是能复用码。**用户实测：
-- 第一次点"终端登录" → 通过 ✅
-- 第二次点"Web 登录"，**重新输入同一个 code**（前端已清空，是用户自己手动输入的）→ 也通过 ❌
-
-也就是说 `mfa_store.pop()` 没真正生效。可能的原因（待明天验证）：
-1. `_verify_mfa` 里用的 `username` 参数在两次调用时不一致，导致 pop 的 key 和 store 的 key 对不上
-   - 第一次终端登录：`requester_username = currentUsername` 来自 `/api/session` 的 `user.username`
-   - 第二次 Web 登录：同样的来源，**应该**一样，但也可能因为 casing / 大小写 / 空格被不同模块处理过
-2. 进程内存中 `mfa_store` 是模块级 dict，但如果 uvicorn 开了多 worker，两个 worker 各自有一份 `mfa_store`，第一次命中的 worker pop 掉了，第二次可能打到另一个 worker
-3. `request_mfa` L984-L986 那个 fallback 把 code 直接回给前端，用户第二次点的时候前端并没有重新请求新 code，它只是把老 code 字符串再 POST 一次；如果后端 store 里没删掉或者用了不同 key，就会再次命中
-
-### 明天的方案：**给验证码加唯一 nonce（编号）**
-
-用户建议的方向是对的。设计如下：
-
-**存储结构调整：**
 ```python
-mfa_store[username] = {
-    "nonce": uuid.uuid4().hex,   # 每次生成新码时附带一个唯一编号
-    "code": "123456",
-    "expire": time.time() + 300,
-    "consumed": False,
-}
+_ARP_UNSUPPORTED_PLATFORMS = frozenset({
+    'linux', 'linux_ssh', 'linux_telnet',
+    'windows', 'windows_ssh',
+    'paloalto_panos',
+})
 ```
-
-**`/api/pam/mfa/request` 返回时带 nonce：**
-```json
-{"success": true, "nonce": "a1b2c3...", "message": "..."}
-```
-
-**前端缓存 nonce，verify 时一并提交：**
-```json
-POST /api/pam/sessions
-{ "asset_id": ..., "access_level": "admin",
-  "mfa_code": "123456", "fixed_pin": "......",
-  "mfa_nonce": "a1b2c3..." }
-```
-
-**`_verify_mfa(username, fixed_pin, mfa_code, nonce)`：**
-- 原子 `pop`
-- 校验 `stored['nonce'] == nonce` + `code` 匹配 + 未过期
-- 任何一项不符 → 拒绝
-- 成功消费后再生成新 nonce 前，这个 username 不可能命中任何东西
-
-**附加改动（待确认）：**
-- `/api/pam/mfa/request` 是否要支持"同一个 username 发多次请求时主动让旧 nonce 失效"（防止用户重复点"发送验证码"后，旧的仍然有效）——明天一起讨论
-- 把 fallback 后门改成仅 `settings.DEBUG == True` 时才返回明文 code，或者删掉
-- 考虑把 `mfa_store` 从模块级 dict 挪到 Redis / SQLite，消除多 worker 不一致问题
 
 ---
 
-## 今日代码改动清单
+## 6. MAC 地址表采集未过滤路由器
+
+**现象**：IP 定位时，MAC 地址表查询会尝试连接路由器，但路由器没有二层 MAC 地址表，浪费时间且可能超时。
+
+**根因**：`locate_ip` 函数中 MAC 表查询的设备过滤逻辑只排除 `role='router'` 的设备，其他角色（firewall、gateway 等）仍会被查询。
+
+**修复**：改为黑名单过滤，明确排除 `router`、`firewall`、`gateway`、`server`、`linux`、`windows` 角色的设备。
+
+```python
+_MAC_EXCLUDED_ROLES = frozenset({'router', 'firewall', 'gateway', 'server', 'linux', 'windows'})
+switch_devices = [d for d in all_eligible if (d.get('role') or '').lower().strip() not in _MAC_EXCLUDED_ROLES]
+```
+
+---
+
+## 7. 网络设备录入缺少设备分类和功率字段
+
+**需求**：资产管理的网络设备录入需要"设备分类"（交换机/路由器/防火墙等）和"额定功率(W)"字段，用于机柜功率统计。
+
+**修复**：
+- `backend/database.py`：`devices` 表加 `device_category`（TEXT）和 `power_watts`（INTEGER）；`racks` 表加 `power_capacity_watts`；`device_types` 表加 `power_watts`（均通过 `ensure_column` 幂等迁移）
+- `backend/api/devices.py`：CREATE/UPDATE SQL 加入 `device_category`、`power_watts` 两个新字段
+- `backend/schemas/schemas.py`：`RackCreate`/`RackUpdate` 加 `power_capacity_watts`；`DeviceTypeCreate`/`DeviceTypeUpdate` 加 `power_watts`
+- `backend/services/rack_service.py`：
+  - `create_rack`/`update_rack` 传递 `power_capacity_watts`
+  - `create_device_type`/`update_device_type` 传递 `power_watts`
+  - `get_rack_layout` 返回 `power_used_watts`、`power_capacity_watts`、`power_utilization_pct`
+  - `get_rack_stats` 汇总全局 `total_power_capacity_watts`、`total_power_used_watts`、`power_utilization_pct`
+- `src/pages/AssetManagementTab.tsx`：`EMPTY_FORM` 加 `device_category`、`power_watts`；表单加"设备分类"下拉（交换机/路由器/防火墙/负载均衡/无线AP/其他）和"额定功率(W)"输入框
+- `src/pages/RackManagementTab.tsx`：
+  - `RackStats` 接口加功率字段
+  - 机柜创建/编辑表单加"最大功率(W)"输入框（含说明：0 表示不限制）
+  - 设备型号表单加"功率(W)"输入框
+  - 顶部统计卡片展示全局功率利用率（有容量配置时才显示）
+  - 机柜详情面板展示单机柜功率（>80% 红，>60% 黄，<60% 绿）
+
+**机柜功率参考**：
+
+| 机柜类型 | 常见功率上限 |
+|---|---|
+| 普通网络机柜（接入/汇聚交换机） | 2–4 kW |
+| 标准服务器机柜（混合负载） | 4–8 kW |
+| 高密度计算机柜（GPU/AI服务器） | 15–30 kW |
+| 超高密度（液冷） | 50–100 kW+ |
+
+**展示规范**（参考 NetBox/华为 iMaster）：进度条颜色 < 60% 绿，60–80% 黄，> 80% 红；显示格式 `已用 W / 容量 W (利用率%)`；当前实现为额定功率（铭牌值），实测功耗需后续对接 PDU SNMP 扩展。
+
+---
+
+## 8. .env 环境变量分离（开发 vs 生产）
+
+**问题**：`.env` 中 `ENVIRONMENT=production`，本地开发时应为 `development`，两者混用导致本地看不到完整错误信息。
+
+**修复**：
+- 创建 `.env.local`（已在 `.gitignore` 中忽略），只写 `ENVIRONMENT=development`，其余配置继承 `.env`
+- `backend/core/config.py`：`env_file` 改为 `(_ENV_FILE, _ENV_LOCAL_FILE)` 元组，`.env.local` 后加载优先级更高；新增 `IS_PRODUCTION`、`IS_DEVELOPMENT` 便捷变量
+- `backend/database.py`：`load_dotenv` 同步加载 `.env.local`（若存在），与 `config.py` 加载顺序保持一致，避免两者读到不同的 `DATABASE_URL`
+
+**说明**：
+- 本地有 PG → 用 PG（`.env` 里的连接串生效）
+- 部署服务器无 `.env.local` → 直接用 `.env`，`ENVIRONMENT=production`
+- 不需要写入 README，部署脚本从 `.env.example` 生成 `.env`，天然是生产配置
+
+**验证**：
+```bash
+python -c "import sys; sys.path.insert(0,'backend'); from core.config import settings; print(settings.ENVIRONMENT)"
+# 本地输出: development
+# 生产输出: production
+```
+
+**本地验证生产构建效果**：
+```bash
+npm run build && npx vite preview --port 4399
+```
+
+---
+
+## 9. MAC 变更记录缺少分页和搜索
+
+**现象**：IP 工具箱"MAC 变更"Tab 没有分页，数据量大时全部渲染，且无法搜索过滤。
+
+**修复**：`src/pages/IPLocatorPage.tsx`
+- 新增 `macFilter`、`macPage`、`macPageSize` state
+- API 请求 `limit` 从 200 改为 1000（前端分页）
+- 控制栏加搜索框（支持 IP/MAC/厂商/设备名模糊匹配）
+- 表格渲染改为与 ARP 表一致的分页样式（使用 `Pagination` 组件）
+- IP 列支持点击跳转到 IP 定位 Tab
+
+---
+
+## 10. 工单管理（change-order-management）Bugfix — Phase A–E
+
+**背景**：工单管理模块存在 5 个缺陷簇（1.1–1.5），采用探索优先（先写测试暴露 bug，再修复）的方法论。
+
+### 10.1 集群 1.3 — 审批人去重 / 权限组绕过
+
+**现象**：
+- POST 创建工单时，`change_groups_json=[]` 的用户可被指定为初审人（空组短路绕过）
+- PUT 更新工单时，可将初审人改为申请人自己（PUT 路径缺少去重校验）
+- transition 到 `final_review` 时，可将终审人设为申请人或初审人（transition 路径缺少权限组校验）
+
+**根因**：`_resolve_assignment_user` 中 `if groups and 'initial_reviewer' not in groups` 的 `if groups` 短路；PUT 和 transition 路径未复用 `_validate_assignment_rules`。
+
+**修复**：
+- `backend/api/change_orders.py`：修正 `_resolve_assignment_user` 短路 bug；新增 `_validate_assignment_rules` 集中校验；三条写路径（POST/PUT/transition）统一调用
+- 测试：`backend/tests/test_cluster_1_3_approver_dedup.py`（7 个测试全部通过）
+
+### 10.2 集群 1.4 — 状态机终态 + 驳回回流字段清理
+
+**现象**：
+- `completed`/`rolled_back`/`cancelled` 等终态可被再次 transition（隐式空集，行为正确但不可见）
+- 工单 `initial_review → rejected → draft` 后，`initial_reviewer_username` 等 6 个字段仍保留上一轮审批人信息
+
+**修复**：
+- `ALLOWED_TRANSITIONS` 显式声明终态为 `set()`，加模块级断言防止未来漂移
+- `api_transition_change_order`：`new_status == 'draft'` 时清空 6 个审批人字段，并从 `result_detail` 中 pop `initial_review_at`、`approved_at`，保留 `rejected_reason`
+- 测试：`backend/tests/test_cluster_1_4_state_machine.py`（4 个测试全部通过）
+
+### 10.3 集群 1.1 — 场景化命令模板强制化
+
+**现象**：提交非草稿工单时，`command_template={}` 或 `mode='manual'` 的工单被接受，初审人看不到可执行命令。
+
+**修复**：
+- 新增 `_validate_template_completeness`，要求 `mode='template'`、`scenario_id` 非空、`preview.execute` 非空
+- 通过 `FEATURE_TEMPLATE_REQUIRED` 环境变量开关（默认 OFF，Stage 2 上线时开启）
+- 前端 `ChangeOrderTab.tsx`：移除 `commandMode === 'template' && !scenarioId` 的静默回落分支；submit 按钮在无场景时禁用；四阶段命令预览（pre_check/execute/post_check/rollback）
+
+### 10.4 集群 1.2 — 变更控制表字段与附件
+
+**现象**：工单无变更控制表结构化字段，进入实施阶段无附件校验。
+
+**修复**：
+- `backend/database.py`：新增 `control_sheet_json` 列（`change_orders` 表）和 `change_order_control_sheet_attachments` 表
+- `backend/api/change_orders.py`：新增 `POST /api/change-orders/{order_id}/control-sheet` 上传接口（MIME 白名单、20 MiB 限制、审计事件）；transition 到 `initial_review` 时校验 9 个结构化字段；transition 到 `implementing` 时校验至少 1 个附件
+- 通过 `FEATURE_CONTROL_SHEET` 环境变量开关（默认 OFF）
+- 前端：创建/编辑向导加"变更控制表"可折叠步骤；详情页展示控制表字段、附件列表、时间线特殊图标；CSV 导出包含控制表字段；历史工单显示 `control_sheet_missing` 提示横幅
+
+### 10.5 集群 1.5 — 视图过滤语义对齐
+
+**现象**：`my_todo` 无 `todo_kind` 标签；`group_todo` 与 `get_summary` 的 SQL 不同源；`my_drafts` 语义文档缺失。
+
+**修复**：
+- `change_order_service.py`：`my_todo` 返回行加 `todo_kind ∈ {review, implement, modify}`；`_build_group_todo_conditions` 共享函数同时供 `list_change_orders` 和 `get_summary` 使用；`my_drafts` 严格过滤 `status='draft'` 并加文档注释
+- 前端 `ChangeOrderTab.tsx`：个人待办拆分为"待我审核 / 待我实施 / 待我修改"三个子 Tab（`FEATURE_TODO_SUBTABS=true`）
+
+### 10.6 Phase E — Fix-checking PBTs（属性测试）
+
+新增 7 个 fix-checking PBT 文件，覆盖 P1–P7 所有正确性属性：
+
+| 文件 | 覆盖属性 |
+|---|---|
+| `test_pbt_p1_template_enforcement.py` | P1 命令模板强制化 |
+| `test_pbt_p2_control_sheet_enforcement.py` | P2 控制表字段与附件 |
+| `test_pbt_p3_approver_rules.py` | P3 审批人规则（POST/PUT/transition 三路径） |
+| `test_pbt_p4_state_machine.py` | P4 状态机终态 |
+| `test_pbt_p5_reject_cleanup.py` | P5 驳回回流字段清理 |
+| `test_pbt_p6_view_contract.py` | P6 视图过滤契约 |
+| `test_pbt_p7_preservation.py` | P7 保留性（BG 编号、RBAC、列表过滤、模板/书签/validate-ticket） |
+
+### 10.7 Phase F — 集成测试
+
+新增 `backend/tests/test_integration_18.py`，覆盖：
+- 18.1 端到端主路径（initial_review → final_review → approved → implementing → completed）
+- 18.2 驳回回流路径（rejected → draft → 重新提交 → completed）
+- 18.3 跨视图一致性（4 个账号并发查询 my_todo/group_todo/my_drafts/my_participated）
+
+### 10.8 Phase F — Feature Flags & 迁移脚本
+
+- `backend/api/change_orders.py`：`FEATURE_TEMPLATE_REQUIRED`、`FEATURE_CONTROL_SHEET` 环境变量开关
+- `src/pages/ChangeOrderTab.tsx`：`FEATURE_CONTROL_SHEET`、`FEATURE_TODO_SUBTABS` 前端开关
+- `.env.example`：补充三个 feature flag 说明
+- `backend/scripts/migrate_change_order_dual_role.py`：扫描并清理存量双角色脏数据（申请人 == 审批人），dry-run 默认，`--apply` 才执行
+
+---
+
+## 11. 临时调试文件清理
+
+删除以下遗留的临时调试脚本和游离数据库文件：
 
 | 文件 | 说明 |
 |---|---|
-| `src/pages/InterfaceMonitoringTab.tsx` | 删除多余的一个 `</div>`（L306），修复构建错误 |
-| `src/pages/PAMAuditTab.tsx` | 删除多余的一个 `</div>`（L564），修复构建错误 |
-| `backend/api/system.py::launch_terminal` | 新增 admin 级 MFA 强制校验 |
-| `backend/api/pam.py::_verify_mfa` | `get` + `del` 改为原子 `pop` |
-| `src/pages/AccessCenterTab.tsx` | 终端登录接入 MFA 流程；新增 `openMFAModal` / `closeMFAModal` / `resetMFAState` 统一弹窗开关和 state 清理 |
+| `write_test.py` | `print(42)` 测试文件 |
+| `gen_test.py` | `x=1; print(x)` 测试文件 |
+| `backend/check_executions.py` | 查询 instant_executions 的调试脚本 |
+| `backend/check_results.py` | 查询 execution_device_results 的调试脚本 |
+| `backend/debug_device.py` | 查询特定 IP 设备的调试脚本 |
+| `backend/find_target.py` | 按 UUID 查找记录的调试脚本 |
+| `backend/_check_audit.py` | 查询审计事件的调试脚本 |
+| `netops.db` | 根目录游离 SQLite 文件（非 `data/` 目录） |
+| `backend/netops.db` | backend 目录游离 SQLite 文件 |
+| `backend/netsops.db` | 拼写错误的游离 SQLite 文件 |
 
----
-
-## 明日待办
-
-1. ⏳ **MFA 验证码 nonce 化**（本次核心遗留）
-2. ⏳ 删除 `request_mfa` 中"飞书未配置就明文回显 code"的测试后门
-3. ⏳ 讨论 `mfa_store` 是否挪到 Redis/SQLite（多 worker 场景）
-4. ⏳ 为 `/access` 特权登录加上真正的 `pam_access_requests` 审批工单校验（目前只有 MFA 核身，没查工单）
+保留：`_purge_bogus_backups.py`（有实际用途的运维脚本，清理损坏的配置快照）。

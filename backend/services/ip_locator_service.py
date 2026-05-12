@@ -62,6 +62,14 @@ _MAC_NORMALIZE_RE = re.compile(r'[.\-:\s]')
 
 # ── 设备端精确过滤命令 ──────────────────────────────
 # 每个平台针对 ARP / MAC 的过滤命令模板，{ip} / {mac} 会被替换
+
+# 不具备 ARP 表的平台（服务器/Linux），跳过 ARP 采集，避免超时拖慢整体采集
+_ARP_UNSUPPORTED_PLATFORMS = frozenset({
+    'linux', 'linux_ssh', 'linux_telnet',
+    'windows', 'windows_ssh',
+    'paloalto_panos',
+})
+
 _TARGETED_ARP_COMMANDS: dict[str, str] = {
     'cisco_ios':    'show ip arp {ip}',
     'cisco_nxos':   'show ip arp {ip}',
@@ -284,18 +292,31 @@ def _load_eligible_devices(role_filter: list[str] | None = None) -> list[dict]:
     devices = []
     for r in rows:
         d = dict(r)
+        # 跳过不支持 ARP 采集的平台（Linux 服务器等），避免超时
+        platform = str(d.get('platform') or '').lower()
+        if platform in _ARP_UNSUPPORTED_PLATFORMS:
+            continue
         creds = resolve_device_credentials(d)
-        username = creds['username'] or (d.get('username') or '').strip()
-        password = creds['password']
+        auth_model = (d.get('auth_model') or 'single').lower()
+
+        # dual 模式：优先用 admin 账号登录（与 operational_data_service 保持一致）
+        if auth_model == 'dual':
+            username = creds.get('admin_username') or creds.get('username') or (d.get('admin_username') or d.get('username') or '').strip()
+            password = creds.get('admin_password') or creds.get('password') or ''
+        else:
+            username = creds['username'] or (d.get('username') or '').strip()
+            password = creds['password']
+
         if not username or not password:
             continue
         if role_filter:
             dev_role = (d.get('role') or '').lower().strip()
             if dev_role not in role_filter:
                 continue
-        d['username'] = username
-        d['password'] = password
-        d['enable_password'] = creds['enable_password']
+        # 把解析好的登录凭据写回 dict，供 _build_ssh_params 直接使用
+        d['_ssh_username'] = username
+        d['_ssh_password'] = password
+        d['_ssh_enable'] = creds.get('enable_password') or ''
         devices.append(d)
     return devices
 
@@ -304,11 +325,15 @@ def _build_ssh_params(device_info: dict) -> dict[str, Any]:
     """构建 netmiko ConnectHandler 参数（轻量版，仅 IP Locator 使用）。"""
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     device_type = PLATFORM_DEVICE_TYPE_MAP.get(platform, 'cisco_ios')
+    # 优先使用 _load_eligible_devices 预解析好的登录凭据（已处理 dual 模式）
+    username = device_info.get('_ssh_username') or device_info.get('username') or ''
+    password = device_info.get('_ssh_password') or device_info.get('password') or ''
+    enable  = device_info.get('_ssh_enable')  or device_info.get('enable_password') or ''
     params = {
         'device_type': device_type,
         'host': device_info.get('ip_address'),
-        'username': device_info.get('username'),
-        'password': device_info.get('password'),
+        'username': username,
+        'password': password,
         'port': int(device_info.get('port') or 22),
         'timeout': 10,
         'session_timeout': 20,
@@ -317,9 +342,8 @@ def _build_ssh_params(device_info: dict) -> dict[str, Any]:
         'blocking_timeout': 15,
     }
     params.update(build_netmiko_compatibility_kwargs())
-    secret = device_info.get('enable_password') or device_info.get('secret') or ''
-    if secret:
-        params['secret'] = secret
+    if enable:
+        params['secret'] = enable
     return params
 
 
@@ -610,15 +634,16 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     result['mac_display'] = _format_mac(target_mac)
     result['arp_source'] = arp_source_info
 
-    # ── Step 2: 并发 MAC 地址表查询 ──
-    excluded_roles_for_mac = ROLE_EXCLUDED_CATEGORIES.get('router', set())
-    if 'mac_table' in excluded_roles_for_mac:
-        switch_devices = [
-            d for d in all_eligible
-            if (d.get('role') or '').lower().strip() != 'router'
-        ]
-    else:
-        switch_devices = all_eligible
+    # ── Step 2: 并发 MAC 地址表查询（仅交换机，路由器无二层 MAC 表）──
+    # 白名单：只查已知具备 MAC 地址表的设备角色
+    _SWITCH_ROLES = frozenset({'switch', 'access', 'distribution', 'core', 'aggregation', 'l2', 'l3switch'})
+    # 如果 role 字段为空或不在白名单，也允许查询（兼容未填 role 的设备）
+    # 明确排除路由器和防火墙
+    _MAC_EXCLUDED_ROLES = frozenset({'router', 'firewall', 'gateway', 'server', 'linux', 'windows'})
+    switch_devices = [
+        d for d in all_eligible
+        if (d.get('role') or '').lower().strip() not in _MAC_EXCLUDED_ROLES
+    ]
 
     mac_matches: list[dict] = []
 
@@ -742,6 +767,8 @@ def run_arp_sweep():
     if not gateway_devices:
         logger.info("[ARP Sweep] No eligible devices, skipping")
         return
+
+    logger.info(f"[ARP Sweep] {len(gateway_devices)} eligible device(s) found, starting collection")
 
     all_entries: list[dict] = []
     workers = _calc_ssh_workers(len(gateway_devices))

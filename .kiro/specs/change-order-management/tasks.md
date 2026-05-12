@@ -137,7 +137,7 @@
 
 ## Phase C — Data model & shared refactors (backend-only, blocks 14 / 15 and informs 12 / 13 / 16)
 
-- [ ] 10. Data model migrations for control sheet
+- [x] 10. Data model migrations for control sheet
 
   - [x] 10.1 Add `change_orders.control_sheet_json` column (idempotent)
     - Edit `backend/database.py`: call `ensure_column('change_orders', 'control_sheet_json', "TEXT NOT NULL DEFAULT '{}'")` during startup migration
@@ -174,7 +174,7 @@
     - _Validates: Property 3_
     - _Requirements: 2.7, 2.8, 2.9_
 
-  - [ ] 11.3 Make `ALLOWED_TRANSITIONS` terminals explicit
+  - [x] 11.3 Make `ALLOWED_TRANSITIONS` terminals explicit
     - Edit `backend/api/change_orders.py::ALLOWED_TRANSITIONS`: add explicit `'rolled_back': set()`, `'completed': set()`, `'cancelled': set()`; keep `'rejected': {'draft','cancelled'}` for the reopen path; retain legacy `'pending'` / `'executing'` entries verbatim
     - Add a module-level assertion (test-time) that every value in `ALLOWED_STATUSES` is a key of `ALLOWED_TRANSITIONS`
     - _Design_Ref: `design.md §Fix Implementation 1.4 → ALLOWED_TRANSITIONS`_
@@ -194,7 +194,7 @@
 
 ### Stage 1 — backend-only fixes (safe to ship without frontend changes)
 
-- [ ] 12. Fix for cluster 1.3 — approver dedup & permission-group enforcement across POST / PUT / transition
+- [x] 12. Fix for cluster 1.3 — approver dedup & permission-group enforcement across POST / PUT / transition
 
   - [x] 12.1 Wire `_validate_assignment_rules` into all three write paths
     - `api_create_change_order`: replace the 3 scattered `if` checks with one call to `_validate_assignment_rules(conn, requester_id=user['user_id'], payload=payload)`
@@ -212,7 +212,7 @@
     - _Validates: Property 3, Property 6 (dual-role lock-down)_
     - _Requirements: 2.9, 2.15_
 
-  - [ ] 12.3 Verify bug condition exploration test for cluster 1.3 now passes
+  - [x] 12.3 Verify bug condition exploration test for cluster 1.3 now passes
     - **Property 1: Expected Behavior** — Approver dedup / permission-group
     - **IMPORTANT**: Re-run the SAME test from task 3 — do NOT write a new test
     - The exploration test already encodes the fixed expectation (HTTP 400 on all bypass vectors)
@@ -220,7 +220,7 @@
     - _Validates: Property 3_
     - _Requirements: 2.7, 2.8, 2.9_
 
-  - [ ] 12.4 Verify preservation tests 7 (§3.3–§3.6) still pass
+  - [x] 12.4 Verify preservation tests 7 (§3.3–§3.6) still pass
     - **Property 2: Preservation** — Authorization branches unchanged
     - **IMPORTANT**: Re-run the SAME tests from task 7 — do NOT write new tests
     - **EXPECTED OUTCOME**: Tests PASS (no regression on legitimate reviewer / approver / requester / Administrator flows)
@@ -228,7 +228,7 @@
 
 - [x] 13. Fix for cluster 1.4 — state-machine terminals + reject→draft field reset
 
-  - [ ] 13.1 Clean up approver residue on reject→draft
+  - [x] 13.1 Clean up approver residue on reject→draft
     - `api_transition_change_order`: when `new_status == 'draft' AND current_status IN {'initial_review','final_review','rejected'}`, add to the `updates` dict: `initial_reviewer_id=''`, `initial_reviewer_username=''`, `final_approver_id=''`, `final_approver_username=''`, `approver_id=''`, `approver_username=''`; pop `initial_review_at` and `approved_at` from `result_detail`; keep `rejected_reason` and the timeline event
     - Ensure the cleanup happens in the same transaction as the status update
     - _Design_Ref: `design.md §Fix Implementation 1.4 → 3_
@@ -237,20 +237,20 @@
     - _Validates: Property 5_
     - _Requirements: 2.11_
 
-  - [ ] 13.2 Document "创建中" as frontend-only transient state
+  - [x] 13.2 Document "创建中" as frontend-only transient state
     - Update `design.md` cross-refs and `src/pages/ChangeOrderTab.tsx` / `src/App.tsx` status label strings to stop using "创建中" as a backend status; standardize on the six-phase lexicon from 2.10
     - No code behavior change; pure lexicon alignment
     - _Design_Ref: `design.md §Fix Implementation 1.4 → 2_
     - _Requirements: 2.10_
 
-  - [ ] 13.3 Verify bug condition exploration test for cluster 1.4 now passes
+  - [x] 13.3 Verify bug condition exploration test for cluster 1.4 now passes
     - **Property 1: Expected Behavior** — Terminal transitions rejected + reject-reset clean
     - **IMPORTANT**: Re-run the SAME test from task 4 — do NOT write a new test
     - **EXPECTED OUTCOME**: Test PASSES
     - _Validates: Properties 4 and 5_
     - _Requirements: 2.10, 2.11, 2.12_
 
-  - [ ] 13.4 Verify preservation tests 6 (§3.1–§3.2) still pass
+  - [x] 13.4 Verify preservation tests 6 (§3.1–§3.2) still pass
     - **Property 2: Preservation** — Main lifecycle unaffected
     - **IMPORTANT**: Re-run the SAME tests from task 6 — do NOT write new tests
     - **EXPECTED OUTCOME**: Tests PASS
@@ -258,9 +258,9 @@
 
 ### Stage 2 — new fields / frontend steps (requires data-model tasks 10.x landed)
 
-- [ ] 14. Fix for cluster 1.1 — scenario-based command template enforced
+- [x] 14. Fix for cluster 1.1 — scenario-based command template enforced
 
-  - [ ] 14.1 Backend template enforcement in create / update / transition
+  - [x] 14.1 Backend template enforcement in create / update / transition
     - `api_create_change_order` / `api_update_change_order`: when `payload.status IN {'initial_review','final_review','approved','implementing','completed'}`, require `command_template` to exist with `mode == 'template'`, non-empty `scenario_id`, and non-empty `preview.execute`; else `HTTPException(400, '提交初审前必须选择场景化命令模板并渲染出可执行命令')`
     - `_build_command_template_snapshot`: assert `scenario_id != ''` in all paths (today it is conditional)
     - `api_transition_change_order`: when moving `draft → initial_review`, re-check the same assertion against the persisted snapshot
@@ -271,33 +271,33 @@
     - _Validates: Property 1_
     - _Requirements: 2.1, 2.2, 2.3_
 
-  - [ ] 14.2 Frontend — remove silent fallback branch and expose variable errors
+  - [x] 14.2 Frontend — remove silent fallback branch and expose variable errors
     - Edit `src/pages/ChangeOrderTab.tsx`: delete the `commandMode === 'template' && !scenarioId` fallback that synthesizes an empty template from `devicePlatform`; replace with a disabled submit button + toast "请先选择场景并填写必填变量"
     - Surface backend 400 error messages verbatim (or via i18n keys) in the create/edit form
     - _Design_Ref: `design.md §Fix Implementation 1.1 → 3_
     - _Requirements: 2.1, 2.3_
 
-  - [ ] 14.3 Frontend — four-stage review view (pre_check / execute / post_check / rollback)
+  - [x] 14.3 Frontend — four-stage review view (pre_check / execute / post_check / rollback)
     - Edit `src/pages/ChangeOrderTab.tsx` detail + review panels: render `command_template.preview.{pre_check,execute,post_check,rollback}` as four labeled sections, alongside `scenario_name`, `platform`, and the `variables` table
     - _Design_Ref: `design.md §Fix Implementation 1.1 → 4_
     - _Requirements: 2.2_
 
-  - [ ] 14.4 Verify bug condition exploration test for cluster 1.1 now passes
+  - [x] 14.4 Verify bug condition exploration test for cluster 1.1 now passes
     - **Property 1: Expected Behavior** — Manual / empty-template submissions rejected
     - **IMPORTANT**: Re-run the SAME test from task 1 — do NOT write a new test
     - **EXPECTED OUTCOME**: Test PASSES
     - _Validates: Property 1_
     - _Requirements: 2.1, 2.2, 2.3_
 
-  - [ ] 14.5 Verify preservation tests 9 (§3.9 template CRUD) still pass
+  - [x] 14.5 Verify preservation tests 9 (§3.9 template CRUD) still pass
     - **Property 2: Preservation** — `/api/change-order-templates` CRUD untouched
     - **IMPORTANT**: Re-run the SAME tests from task 9 — do NOT write new tests
     - **EXPECTED OUTCOME**: Tests PASS
     - _Requirements: 3.9_
 
-- [ ] 15. Fix for cluster 1.2 — change control sheet fields + upload
+- [x] 15. Fix for cluster 1.2 — change control sheet fields + upload
 
-  - [ ] 15.1 Backend — `control_sheet` field accepted by create / update
+  - [x] 15.1 Backend — `control_sheet` field accepted by create / update
     - Extend `ChangeOrderCreate` / `ChangeOrderUpdate` pydantic models with a `control_sheet` structured field (per `design.md §Data Model Changes → control_sheet_json`)
     - `change_order_service.create_change_order` / `update_change_order`: JSON-serialize the field into `change_orders.control_sheet_json`
     - `_row_to_dict`: already covered by task 10.3 — verify readout in integration test
@@ -307,7 +307,7 @@
     - _Validates: Property 2_
     - _Requirements: 2.4_
 
-  - [ ] 15.2 Backend — new endpoint `POST /api/change-orders/{order_id}/control-sheet`
+  - [x] 15.2 Backend — new endpoint `POST /api/change-orders/{order_id}/control-sheet`
     - Add multipart/form-data handler in `backend/api/change_orders.py`; accept `file` (pdf/doc/docx/xlsx, ≤ 20 MiB) + optional `note`
     - Persist into `change_order_control_sheet_attachments`; emit `log_audit_event(event_type='change_order.control_sheet_uploaded', ...)`
     - Authorization: requester / implementer / Administrator; order `status IN {'approved','implementing','completed','rolled_back'}` (mirror `design.md §API Surface Changes`)
@@ -316,32 +316,32 @@
     - _Validates: Property 2_
     - _Requirements: 2.5_
 
-  - [ ] 15.3 Backend — transition enforcement of control-sheet completeness
+  - [x] 15.3 Backend — transition enforcement of control-sheet completeness
     - `api_transition_change_order`: when `new_status == 'initial_review'`, require the 9 structured fields to be non-empty (per 2.4); when `new_status == 'implementing'`, additionally require ≥ 1 row in `change_order_control_sheet_attachments` for the order
     - Gate behind `FEATURE_CONTROL_SHEET` flag (task 19.1)
     - _Design_Ref: `design.md §API Surface Changes → 扩展 transition`_
     - _Requirements: 2.4, 2.5_
 
-  - [ ] 15.4 Frontend — control-sheet step in create / edit wizard
+  - [x] 15.4 Frontend — control-sheet step in create / edit wizard
     - Edit `src/pages/ChangeOrderTab.tsx`: add a "变更控制表" step with the 9 structured inputs (time window picker, user picker ×2, IP list, four multi-line blocks, rollback plan); wire to the new backend field
     - Gate visibility behind the `FEATURE_CONTROL_SHEET` flag
     - _Design_Ref: `design.md §Fix Implementation 1.2 → UI`_
     - _Requirements: 2.4_
 
-  - [ ] 15.5 Frontend — detail / timeline / export rendering of control sheet + attachments
+  - [x] 15.5 Frontend — detail / timeline / export rendering of control sheet + attachments
     - Render structured fields in the detail page, attachment list with download link, and timeline entries for `change_order.control_sheet_uploaded`
     - Export view (CSV / print) includes control-sheet fields per `bugfix.md 2.6`
     - _Design_Ref: `design.md §Fix Implementation 1.2 → UI`_
     - _Requirements: 2.6_
 
-  - [ ] 15.6 Verify bug condition exploration test for cluster 1.2 now passes
+  - [x] 15.6 Verify bug condition exploration test for cluster 1.2 now passes
     - **Property 1: Expected Behavior** — Control-sheet enforcement at non-draft submission and at `→ implementing`
     - **IMPORTANT**: Re-run the SAME test from task 2 — do NOT write a new test
     - **EXPECTED OUTCOME**: Test PASSES
     - _Validates: Property 2_
     - _Requirements: 2.4, 2.5, 2.6_
 
-  - [ ] 15.7 Verify preservation tests 6 / 9 still pass
+  - [x] 15.7 Verify preservation tests 6 / 9 still pass
     - **Property 2: Preservation** — Main lifecycle + bookmarks / templates / validate-ticket unchanged
     - **IMPORTANT**: Re-run the SAME tests from tasks 6 and 9 — do NOT write new tests
     - **EXPECTED OUTCOME**: Tests PASS
@@ -349,39 +349,39 @@
 
 ### Stage 3 — view-filter UX polish
 
-- [ ] 16. Fix for cluster 1.5 — view filter semantics aligned with contract
+- [x] 16. Fix for cluster 1.5 — view filter semantics aligned with contract
 
-  - [ ] 16.1 `my_drafts` strict filter + doc
+  - [x] 16.1 `my_drafts` strict filter + doc
     - `change_order_service.list_change_orders`: keep `requester_username = ? AND status = 'draft'`; add docstring that rejected rows live in `my_todo`
     - _Design_Ref: `design.md §Fix Implementation 1.5 → 1_
     - _Validates: Property 6_
     - _Requirements: 2.16_
 
-  - [ ] 16.2 `my_todo` returns `todo_kind` bucket labels
+  - [x] 16.2 `my_todo` returns `todo_kind` bucket labels
     - `list_change_orders`: after the existing UNION that builds the `my_todo` rows, annotate each row with `todo_kind ∈ {'review', 'implement', 'follow_up', 'draft'}` per the mapping in `design.md §Fix Implementation 1.5 → 2`
     - Exclude the `review` bucket entry when `requester_username == U` (reinforced by task 12.2)
     - _Validates: Property 6_
     - _Requirements: 2.13_
 
-  - [ ] 16.3 `group_todo` via shared helper; align `get_summary`
+  - [x] 16.3 `group_todo` via shared helper; align `get_summary`
     - Wire `list_change_orders` and `get_summary` both through `_build_group_todo_conditions` (task 11.4); add PBT that both return identical WHERE fragments for the same input
     - _Validates: Property 6_
     - _Requirements: 2.14_
 
-  - [ ] 16.4 Frontend — tab labels "待我审核 / 待我实施 / 待我修改"
+  - [x] 16.4 Frontend — tab labels "待我审核 / 待我实施 / 待我修改"
     - `src/pages/ChangeOrderTab.tsx`: split the "个人待办" tab into three sub-sections keyed on `todo_kind`; apply i18n both zh/en
     - Gate behind Stage-3 feature flag (task 19.2) for rollback safety
     - _Design_Ref: `design.md §Fix Implementation 1.5 → 2_
     - _Requirements: 2.13_
 
-  - [ ] 16.5 Verify bug condition exploration test for cluster 1.5 now passes
+  - [x] 16.5 Verify bug condition exploration test for cluster 1.5 now passes
     - **Property 1: Expected Behavior** — View filters honor the contract + no dual-role rows
     - **IMPORTANT**: Re-run the SAME test from task 5 — do NOT write a new test
     - **EXPECTED OUTCOME**: Test PASSES
     - _Validates: Property 6_
     - _Requirements: 2.13, 2.14, 2.15, 2.16_
 
-  - [ ] 16.6 Verify preservation tests 8 still pass
+  - [x] 16.6 Verify preservation tests 8 still pass
     - **Property 2: Preservation** — List / i18n contracts intact
     - **IMPORTANT**: Re-run the SAME tests from task 8 — do NOT write new tests
     - **EXPECTED OUTCOME**: Tests PASS
@@ -391,43 +391,43 @@
 
 ## Phase E — Fix-checking PBTs (one PBT per correctness property)
 
-- [ ] 17. Fix-checking property tests (run on FIXED code)
+- [x] 17. Fix-checking property tests (run on FIXED code)
 
-  - [ ] 17.1 Property P1 — command-template enforcement PBT
+  - [x] 17.1 Property P1 — command-template enforcement PBT
     - Generate `(command_template ∈ {empty, manual, template-no-scenario, template-no-vars, template-valid}) × (status ∈ {'draft','initial_review','final_review','approved'})`
     - Assert acceptance matrix from `design.md §Testing Strategy → Property-Based Tests → P1`
     - _Validates: Property 1_
     - _Requirements: 2.1, 2.2, 2.3_
 
-  - [ ] 17.2 Property P2 — control-sheet enforcement PBT
+  - [x] 17.2 Property P2 — control-sheet enforcement PBT
     - Generate `(control_sheet ∈ {missing, partial, complete}) × (attachments_count ∈ {0, 1, k}) × (status ∈ transition targets)`
     - Assert fields required at `initial_review`, attachments required at `implementing`
     - _Validates: Property 2_
     - _Requirements: 2.4, 2.5, 2.6_
 
-  - [ ] 17.3 Property P3 — approver rule PBT across POST / PUT / transition
+  - [x] 17.3 Property P3 — approver rule PBT across POST / PUT / transition
     - Generate `(requester, reviewer, approver)` ∈ `{same, pairwise-different, empty-group, viewer-role, non-admin-approver}`
     - Assert POST / PUT / transition responses are equivalent (same 400 message taxonomy) for the same tuple
     - _Validates: Property 3_
     - _Requirements: 2.7, 2.8, 2.9, 2.15_
 
-  - [ ] 17.4 Property P4 — state-machine PBT
+  - [x] 17.4 Property P4 — state-machine PBT
     - Enumerate `(from, to) ∈ ALLOWED_STATUSES²`; assert `to ∈ ALLOWED_TRANSITIONS[from] ⇔ HTTP 200`; assert terminals `{'completed','rolled_back','cancelled'}` always 400 on any non-self transition
     - _Validates: Property 4_
     - _Requirements: 2.10, 2.12_
 
-  - [ ] 17.5 Property P5 — reject→draft cleanup PBT
+  - [x] 17.5 Property P5 — reject→draft cleanup PBT
     - Generate orders with arbitrary `(initial_reviewer, final_approver, approver)` combinations at any of `{'initial_review','final_review','rejected'}`; drive a `→ draft` transition; assert the six fields are empty and `result_detail.{initial_review_at,approved_at}` popped, while `rejected_reason` retained
     - _Validates: Property 5_
     - _Requirements: 2.11_
 
-  - [ ] 17.6 Property P6 — view contract PBT
+  - [x] 17.6 Property P6 — view contract PBT
     - Seed `N ∈ [50, 200]` random orders; for all `U`, assert `my_drafts=U`, `my_todo=U`, `group_todo=G` return rows matching the WHERE contracts in `design.md §View Filter Semantics`
     - Assert `¬∃ order` where `requester_username == assigned_initial_reviewer_username OR assigned_final_approver_username`
     - _Validates: Property 6_
     - _Requirements: 2.13, 2.14, 2.15, 2.16_
 
-  - [ ] 17.7 Property P7 — preservation PBT (fixed vs. unfixed parity)
+  - [x] 17.7 Property P7 — preservation PBT (fixed vs. unfixed parity)
     - For inputs where `NOT isBugCondition(input)`, snapshot the fixed handler's response (status code, body modulo new-and-defaulted fields, DB diff, audit events) and compare against the baseline captured in tasks 6–9
     - Strategy: generate inputs via the same generators as tasks 6–9 but filtered by `NOT C`
     - _Validates: Property 7_
@@ -437,48 +437,48 @@
 
 ## Phase F — Integration & cross-cutting
 
-- [ ] 18. Integration tests
+- [x] 18. Integration tests
 
-  - [ ] 18.1 End-to-end main path
+  - [x] 18.1 End-to-end main path
     - Operator creates an order in template mode → fills control sheet → submits to `initial_review` → initial reviewer promotes to `final_review` (optionally switching final approver) → Administrator approves → requester drives `approved → implementing` after uploading a control-sheet attachment → marks `completed`
     - Assert timeline events, audit log entries, and detail-page rendering (zh + en) match `design.md §State Machine` + `§API Surface Changes`
     - _Validates: Properties 1, 2, 3, 4, 6, 7_
     - _Requirements: 2.1–2.9, 3.1–3.8_
 
-  - [ ] 18.2 Reject-and-resume path
+  - [x] 18.2 Reject-and-resume path
     - Order goes to `initial_review` → `rejected` → reopen to `draft` → re-submit with new reviewer/approver → `final_review` → `approved` → `completed`
     - Assert between the reopen and resubmit, the six reviewer/approver fields are empty, `result_detail.{initial_review_at,approved_at}` popped, and `rejected_reason` retained (encoded on the first reject)
     - _Validates: Properties 3, 4, 5_
     - _Requirements: 2.11, 2.12_
 
-  - [ ] 18.3 Cross-view consistency
+  - [x] 18.3 Cross-view consistency
     - Seed four accounts: U1 (requester), U2 (initial reviewer), U3 (final approver), U4 (same group as U2 but not assigned); drive an order through several phases; at each phase snapshot `my_todo` / `group_todo` / `my_drafts` / `my_participated` for all four accounts
     - Assert no order appears in two views that would indicate a dual-role leak; assert `todo_kind` labels are stable
     - _Validates: Property 6_
     - _Requirements: 2.13, 2.14, 2.15, 2.16_
 
-- [ ] 19. Feature flags & staged rollout
+- [x] 19. Feature flags & staged rollout
 
-  - [ ] 19.1 Introduce backend + frontend feature flags
+  - [x] 19.1 Introduce backend + frontend feature flags
     - Backend: `FEATURE_TEMPLATE_REQUIRED` and `FEATURE_CONTROL_SHEET` env-driven booleans consumed in `backend/api/change_orders.py` (gate enforcement in tasks 14.1 / 15.3)
     - Frontend: mirror flags in `src/pages/ChangeOrderTab.tsx` (task 14.2 disabled-submit, task 15.4 control-sheet step, task 16.4 tab split)
     - Both flags default `ON` in production config and `OFF` in the staging rollback toggle
     - _Design_Ref: `design.md §Migration / Rollout → 前端灰度`_
     - _Requirements: 2.1–2.6, 2.13_
 
-  - [ ] 19.2 Staged deployment sequence
+  - [x] 19.2 Staged deployment sequence
     - Sequence: Stage 1 (clusters 1.3 + 1.4, backend-only, no flag needed) → Stage 2 (clusters 1.1 + 1.2 with flags ON) → Stage 3 (cluster 1.5 UI labels)
     - Each stage requires tasks in the corresponding Phase D / Phase F sub-sections to be green
     - Document the release order in the project release notes
     - _Design_Ref: `design.md §Migration / Rollout → 分步上线`_
 
-  - [ ] 19.3 Post-release probes
+  - [x] 19.3 Post-release probes
     - Add a 24-hour probe job that queries `my_todo` / `group_todo` / `my_drafts` for a sampled set of users and asserts Property 6 invariants hold on production data
     - Route probe failures to the existing alerting channel
     - _Design_Ref: `design.md §Migration / Rollout → 发布后验证`_
     - _Requirements: 2.13, 2.14, 2.16_
 
-- [ ] 20. One-off migration script for dirty historical data
+- [x] 20. One-off migration script for dirty historical data
   - Write `backend/scripts/migrate_change_order_dual_role.py`:
     - Scan `change_orders` for rows where `requester_username == assigned_initial_reviewer_username` OR `requester_username == assigned_final_approver_username`
     - Print a report (order_number, requester, reviewer/approver, status)
@@ -493,7 +493,7 @@
 
 ## Phase G — Checkpoint
 
-- [ ] 21. Checkpoint — Ensure all tests pass
+- [x] 21. Checkpoint — Ensure all tests pass
   - Run full pytest suite (including Phase A exploration tests — now passing, Phase B preservation tests, Phase E fix-checking PBTs, Phase F integration tests)
   - Run full frontend test suite (Vitest) including fast-check properties for task 1 and component tests for tasks 14.3 / 15.4 / 15.5 / 16.4
   - Walk through the Regression Prevention Checklist in `design.md §Regression Prevention Checklist` (§3.1–§3.11) and tick each item

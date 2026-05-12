@@ -7,6 +7,7 @@ BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 DEFAULT_DATABASE_URL = f"sqlite:///{os.path.join(PROJECT_ROOT, 'data', 'netops.db').replace(os.sep, '/')}"
 _ENV_FILE = os.path.join(PROJECT_ROOT, '.env')
+_ENV_LOCAL_FILE = os.path.join(PROJECT_ROOT, '.env.local')
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "NetOps Automation Platform"
@@ -40,7 +41,14 @@ class Settings(BaseSettings):
     PASSWORD_ROTATION_NOTIFY_DAYS: int = 14    # warn N days before expiry
 
     class Config:
-        env_file = _ENV_FILE
+        # .env.local 优先级高于 .env（后面的文件覆盖前面的）
+        # pydantic-settings 按列表顺序加载，后加载的值覆盖先加载的
+        env_file = (_ENV_FILE, _ENV_LOCAL_FILE)
+        env_file_encoding = 'utf-8'
         extra = "ignore"
 
 settings = Settings()
+
+# 便于其他模块快速判断当前环境
+IS_PRODUCTION = settings.ENVIRONMENT.lower() == "production"
+IS_DEVELOPMENT = not IS_PRODUCTION

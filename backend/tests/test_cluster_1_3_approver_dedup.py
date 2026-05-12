@@ -99,6 +99,46 @@ def _get_order_row(order_id: str) -> dict | None:
         conn.close()
 
 
+def _valid_command_template_snapshot() -> dict:
+    """Return a minimal valid command_template snapshot that satisfies
+    _validate_template_completeness (mode='template', scenario_id non-empty,
+    preview.execute non-empty).  This is used as a pre-built snapshot that
+    bypasses the real scenario lookup so tests can reach initial_review
+    without a live scenario registry."""
+    return {
+        "mode": "template",
+        "source_kind": "scenario",
+        "scenario_id": "test-scenario-001",
+        "scenario_name": "Test Scenario",
+        "scenario_name_zh": "测试场景",
+        "platform": "cisco_ios",
+        "variables": {},
+        "preview": {
+            "pre_check": ["show version"],
+            "execute": ["show running-config"],
+            "post_check": ["show interfaces status"],
+            "rollback": [],
+        },
+        "generated_at": "2025-01-01T00:00:00Z",
+    }
+
+
+def _valid_control_sheet() -> dict:
+    """Return a minimal valid control_sheet that satisfies
+    _validate_control_sheet_completeness for initial_review."""
+    return {
+        "scheduled_start": "2025-01-01T22:00:00Z",
+        "scheduled_end": "2025-01-01T23:00:00Z",
+        "target_ips": "10.0.0.1",
+        "change_content": "Test change content",
+        "risk_analysis": "Low risk",
+        "rollback_plan": "Revert config",
+        "requester_approver": "alice_requester",
+        "security_approver": "carol_final",
+        "implementation_plan": "Step 1: apply config",
+    }
+
+
 def _create_legal_draft(requester: dict, initial_reviewer: dict) -> str:
     """Create a legal draft order and return its id."""
     status_code, data = _invoke_create(
@@ -115,17 +155,45 @@ def _create_legal_draft(requester: dict, initial_reviewer: dict) -> str:
 def _create_legal_order_in_initial_review(
     requester: dict, initial_reviewer: dict, final_approver: dict
 ) -> str:
-    """Create a legal order and transition it to initial_review, return id."""
-    # Create as draft first
-    order_id = _create_legal_draft(requester, initial_reviewer)
-    # Transition to initial_review
-    status_code, data = _invoke_transition(
-        order_id, "initial_review", actor=requester
-    )
-    assert status_code == 200, (
-        f"Setup failed: could not transition to initial_review: {data}"
-    )
-    return order_id
+    """Create a legal order and transition it to initial_review, return id.
+
+    Uses the service layer directly to insert the order with a pre-built
+    command_template snapshot and control_sheet, bypassing the API's
+    scenario-lookup validation.  This lets the setup reach initial_review
+    even when the template-enforcement fix (task 14.1) is active.
+    """
+    from database import get_db_connection
+    from services.change_order_service import create_change_order
+
+    conn = get_db_connection()
+    try:
+        order = create_change_order(
+            conn,
+            title="Cluster 1.3 setup order",
+            description="",
+            order_type="config_change",
+            priority="medium",
+            status="initial_review",  # Insert directly in initial_review
+            requester_id=requester["user_id"],
+            requester_username=requester["username"],
+            assigned_initial_reviewer_id=initial_reviewer["user_id"],
+            assigned_initial_reviewer_username=initial_reviewer["username"],
+            assigned_final_approver_id="",
+            assigned_final_approver_username="",
+            command_template=_valid_command_template_snapshot(),
+            target_devices=[],
+            commands=["show running-config"],
+            rollback_plan="",
+            risk_level="low",
+            scheduled_start="",
+            scheduled_end="",
+            authorization_exempt=False,
+            control_sheet=_valid_control_sheet(),
+        )
+        conn.commit()
+        return order["id"]
+    finally:
+        conn.close()
 
 
 # ─────────────────────────────────────────────────────────────────────
