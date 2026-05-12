@@ -1761,6 +1761,8 @@ def _init_db_logic(conn):
         duration_seconds INTEGER DEFAULT 0,
         command_count INTEGER DEFAULT 0,
         recording_path TEXT DEFAULT '',
+        risk_level TEXT DEFAULT 'low',
+        risk_summary TEXT DEFAULT '',
         session_token TEXT UNIQUE,
         token_expires_at TEXT NOT NULL,
         token_consumed INTEGER DEFAULT 0,
@@ -1778,6 +1780,13 @@ def _init_db_logic(conn):
     pam_req_cols = _table_columns(cursor, 'pam_access_requests')
     if pam_req_cols and 'session_id' not in pam_req_cols:
         cursor.execute("ALTER TABLE pam_access_requests ADD COLUMN session_id TEXT DEFAULT ''")
+
+    # Migration: add risk_level / risk_summary to pam_sessions if missing
+    pam_ses_cols = _table_columns(cursor, 'pam_sessions')
+    if pam_ses_cols and 'risk_level' not in pam_ses_cols:
+        cursor.execute("ALTER TABLE pam_sessions ADD COLUMN risk_level TEXT DEFAULT 'low'")
+    if pam_ses_cols and 'risk_summary' not in pam_ses_cols:
+        cursor.execute("ALTER TABLE pam_sessions ADD COLUMN risk_summary TEXT DEFAULT ''")
 
     # Auto-link existing devices to matching assets, or create missing assets (Plan-A unification)
     unlinked = cursor.execute(
