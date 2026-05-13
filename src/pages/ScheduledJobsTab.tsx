@@ -34,7 +34,8 @@ const CRON_FIELD_HINTS_EN = ['0-59, */5, 0,30', '0-23, */2, 0-6', '1-31, */2', '
 
 const ACTION_TYPES = [
   { value: 'backup', labelZh: '核心配置备份', labelEn: 'Config Backup', icon: Database, category: 'collection' },
-  { value: 'script_run', labelZh: '自动化脚本', labelEn: 'Automated Script', icon: Zap, category: 'script_run_placeholder' },
+  { value: 'inspection', labelZh: '智能巡检', labelEn: 'Smart Inspection', icon: Activity, category: 'collection' },
+  { value: 'script_run', labelZh: '自动化脚本', labelEn: 'Automated Script', icon: Zap, category: 'change' },
 ];
 
 const MAJOR_CATEGORIES = [
@@ -1220,10 +1221,17 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                         </button>
                         <button
                           type="button"
+                          onClick={() => setForm(f => ({ ...f, action_type: 'inspection' }))}
+                          className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${form.action_type === 'inspection' ? 'bg-white shadow-sm text-cyan-600' : 'text-black/40 hover:text-black/60'}`}
+                        >
+                          {zh ? '智能巡检' : 'Inspection'}
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setForm(f => ({ ...f, action_type: 'script_run' }))}
                           className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${form.action_type === 'script_run' ? 'bg-white shadow-sm text-cyan-600' : 'text-black/40 hover:text-black/60'}`}
                         >
-                          {zh ? '巡检/采集脚本' : 'Inspection Script'}
+                          {zh ? '脚本运行' : 'Script'}
                         </button>
                       </motion.div>
                     )}
@@ -1406,7 +1414,25 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                       </div>
                     </div>
 
-                    {/* Approval (create only) */}
+                      {form.action_type !== 'backup' && (
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block">
+                            {form.action_type === 'inspection' ? (zh ? '巡检指标项' : 'Inspection Items') : (zh ? '执行命令 (可选)' : 'Commands (Optional)')}
+                          </label>
+                          <textarea
+                            value={form.commands}
+                            onChange={e => setForm(f => ({ ...f, commands: e.target.value }))}
+                            rows={3}
+                            className="w-full px-3 py-2 rounded-xl border border-black/[0.08] text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all resize-none"
+                            placeholder={form.action_type === 'inspection' 
+                              ? (zh ? '输入指标名称，每行一个\nnet_cisco_cpu\nnet_cisco_mem' : 'Enter metric names, one per line\nnet_cisco_cpu\nnet_cisco_mem')
+                              : (zh ? '输入设备命令，每行一个' : 'Enter commands, one per line')
+                            }
+                          />
+                        </div>
+                      )}
+
+                      {/* Approval (create only) */}
                     {!isEditMode && (
                       <div className="rounded-xl border border-black/8 overflow-hidden">
                         <div className={`px-4 py-2.5 flex items-center gap-2.5 ${

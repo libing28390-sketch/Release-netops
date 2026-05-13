@@ -2023,6 +2023,14 @@ def _init_db_logic(conn):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_device_id ON inspection_results(device_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_results_health_status ON inspection_results(health_status)')
 
+    # Migration: add raw_outputs_json and analysis_json for advanced reporting
+    for col, default in [('raw_outputs_json', "'{}'"), ('analysis_json', "'[]'")]:
+        ensure_column('inspection_results', col, f"TEXT DEFAULT {default}")
+    
+    # Add analysis_summary_json to inspection_runs
+    ensure_column('inspection_runs', 'analysis_summary_json', "TEXT DEFAULT '{}'")
+
+
     # ── Scheduled Jobs (定时作业 + 执行计划) ──
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS scheduled_jobs (

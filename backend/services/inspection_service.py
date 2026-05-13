@@ -29,6 +29,8 @@ from services.device_health_service import (
     _build_open_alert_stats,
 )
 from core.textfsm import parse_with_textfsm
+from core.analysis import analyze_device_inspection, summarize_run_analysis
+
 
 logger = logging.getLogger(__name__)
 
@@ -183,13 +185,26 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str]) -> dict[str, s
     platform = (device.get('platform') or 'cisco_ios').lower()
     is_slow = platform in {'huawei_vrp', 'huawei_vrpv8', 'h3c_comware', 'hp_comware'}
 
-    # 凭据解密
-    username = device.get('username') or ''
-    raw_password = device.get('password') or ''
-    try:
-        password = decrypt_credential(raw_password) or raw_password
-    except Exception:
-        password = raw_password
+    # 凭据解密 — 与 scheduler_service 保持一致的多级回退策略
+    # 优先 normal → 回退 username → 最终 admin
+    normal_user = (device.get('normal_username') or '').strip()
+    normal_pass = (device.get('normal_password') or '').strip()
+    if normal_user and normal_pass:
+        username = normal_user
+        try:
+            password = decrypt_credential(normal_pass) or normal_pass
+        except Exception:
+            password = normal_pass
+    else:
+        username = (device.get('username') or '').strip()
+        raw_password = (device.get('password') or '').strip()
+        if not username or not raw_password:
+            username = (device.get('admin_username') or '').strip() or username
+            raw_password = (device.get('admin_password') or '').strip() or raw_password
+        try:
+            password = decrypt_credential(raw_password) or raw_password
+        except Exception:
+            password = raw_password
 
     params = {
         'device_type': _netmiko_platform_type(platform),
@@ -427,6 +442,25 @@ def _get_last_metric_value(device_id: str, check_key: str) -> float | None:
         conn.close()
     return None
 
+def _get_last_metrics_dict(device_id: str) -> dict | None:
+    """获取该设备上一次巡检的所有指标字典。"""
+    if not device_id: return None
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT metrics_json FROM inspection_results '
+            'WHERE device_id=? AND metrics_json IS NOT NULL AND metrics_json != ? '
+            'ORDER BY checked_at DESC LIMIT 1',
+            (device_id, '{}')
+        ).fetchone()
+        if row:
+            return json.loads(row['metrics_json'] or '{}')
+    except Exception:
+        pass
+    finally:
+        conn.close()
+    return None
+
 
 def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: list[dict]) -> dict[str, Any]:
     """
@@ -566,6 +600,20 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
     result['health_score'] = max(0, 100 - health_deduct)
     result['metrics_json'] = json.dumps(metrics, ensure_ascii=False)
     result['findings_json'] = json.dumps(findings, ensure_ascii=False)
+    result['raw_outputs_json'] = json.dumps(raw_outputs, ensure_ascii=False)
+
+    # 7. 智能分析
+    try:
+        # 尝试获取上一次的指标用于对比
+        last_metrics_raw = _get_last_metrics_dict(device_id)
+        analysis = analyze_device_inspection(device, metrics, inspection_items, last_metrics_raw)
+        result['analysis_json'] = json.dumps(analysis, ensure_ascii=False)
+    except Exception as ae:
+        logger.warning(f"Analysis failed for {hostname}: {ae}")
+        result['analysis_json'] = '[]'
+
+    # 映射常用字段以保证 Dashboard 兼容
+    result['raw_outputs_json'] = json.dumps(raw_outputs, ensure_ascii=False)
 
     # 映射常用字段以保证 Dashboard 兼容
     for key_pair in (('cpu_util', 'cpu_usage'), ('mem_util', 'memory_usage'), ('memory', 'memory_usage')):
@@ -781,8 +829,9 @@ def run_inspection(
                  interface_total, interface_up, interface_down, interface_flapping,
                  interface_high_util, interface_errors,
                  open_alerts, critical_alerts,
-                 compliance_status, compliance_findings, findings_json, metrics_json, checked_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                 compliance_status, compliance_findings, findings_json, metrics_json, 
+                 raw_outputs_json, analysis_json, checked_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             [(
                 r.get('id'), r.get('run_id'), r.get('device_id'), r.get('hostname'), r.get('ip_address'),
                 r.get('platform'), r.get('role', ''), r.get('site', ''),
@@ -794,7 +843,8 @@ def run_inspection(
                 r.get('interface_flapping', 0), r.get('interface_high_util', 0), r.get('interface_errors', 0),
                 r.get('open_alerts', 0), r.get('critical_alerts', 0),
                 r.get('compliance_status', 'unknown'), r.get('compliance_findings', 0),
-                r.get('findings_json', '[]'), r.get('metrics_json', '{}'), r.get('checked_at'),
+                r.get('findings_json', '[]'), r.get('metrics_json', '{}'),
+                r.get('raw_outputs_json', '{}'), r.get('analysis_json', '[]'), r.get('checked_at'),
             ) for r in results],
         )
         # 5) 汇总统计
@@ -807,15 +857,20 @@ def run_inspection(
         scores = [r['health_score'] for r in results if r['health_score'] is not None]
         avg_score = round(sum(scores) / len(scores), 1) if scores else 0
 
+        # 汇总全网分析结论
+        run_analysis_sum = summarize_run_analysis(results)
+        analysis_sum_json = json.dumps(run_analysis_sum, ensure_ascii=False)
+
         completed_at = _beijing_now_iso()
         conn.execute(
             '''UPDATE inspection_runs SET
                 status='completed', completed_at=?, success_count=?, failed_count=?,
                 unreachable_count=?, healthy_count=?, warning_count=?, critical_count=?,
-                avg_health_score=?
+                avg_health_score=?, analysis_summary_json=?
                WHERE id=?''',
             (completed_at, success_count, failed_count, unreachable_count,
-             healthy_count, warning_count, critical_count, avg_score, run_id),
+             healthy_count, warning_count, critical_count, avg_score, 
+             analysis_sum_json, run_id),
         )
 
         # 更新 schedule 的 last_run_at
@@ -859,7 +914,9 @@ def run_inspection(
 def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, Any]]:
     select = (
         'id, hostname, ip_address, platform, status, compliance, role, site, '
-        'cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data'
+        'cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data, '
+        'username, password, normal_username, normal_password, '
+        'admin_username, admin_password, management_port, enable_password'
     )
     if scope_type == 'all':
         rows = conn.execute(f'SELECT {select} FROM devices ORDER BY hostname').fetchall()

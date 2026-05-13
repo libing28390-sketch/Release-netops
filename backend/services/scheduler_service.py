@@ -3,11 +3,14 @@ import json
 import asyncio
 import logging
 import time
+import re
 from datetime import datetime
 from database import get_db_connection
 from services.automation_service import AutomationService
 from services.notification_service import dispatch_to_all_users
 from core.crypto import decrypt_credential
+# Import inspection service to handle specialized inspection jobs
+from services.inspection_service import run_inspection
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,38 @@ async def run_scheduled_automation_job(job_id: str):
 
         if not device_ids:
             logger.warning(f"Job {job_id} has no target devices.")
+            return
+
+        # ── SPECIAL HANDLING FOR INSPECTION JOBS ──
+        # If the job is marked as an inspection, we divert it to the specialized
+        # inspection engine. This ensures we get smart analysis, health scoring,
+        # and Excel report support, which the generic command runner lacks.
+        if job['action_type'] == 'inspection':
+            logger.info(f"Diverting scheduled job {job_id} ({job['name']}) to inspection engine.")
+            
+            # Parse check items from commands field (comma-separated or newline-separated)
+            custom_check_items = None
+            if job['commands']:
+                custom_check_items = [c.strip() for c in re.split(r'[,\n]', job['commands']) if c.strip()]
+            
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: run_inspection(
+                    scope_type='ids',
+                    scope_filter=','.join(device_ids),
+                    trigger_type='scheduled',
+                    schedule_id=job_id,
+                    created_by='scheduler',
+                    check_items=custom_check_items
+                )
+            )
+            
+            conn.execute(
+                "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                (datetime.now().isoformat(), 'success', job_id)
+            )
+            conn.commit()
             return
 
         # 2. 获取命令或脚本内容

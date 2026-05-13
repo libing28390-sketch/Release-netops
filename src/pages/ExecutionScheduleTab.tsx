@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, Clock, Plus, X, Trash2, Activity, RotateCcw,
   Play, Shield, CheckCircle2, CalendarRange, AlertTriangle,
-  Eye, Download, Search
+  Eye, Download, Search, FileText, ChevronRight
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import OutputActions from '../components/OutputActions';
@@ -112,6 +112,8 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   const [selectedLog, setSelectedLog] = useState<UnifiedExecutionLog | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [logDetailLoading, setLogDetailLoading] = useState(false);
+  const [selectedInspDeviceId, setSelectedInspDeviceId] = useState<string | null>(null);
+  const [collapsedCmds, setCollapsedCmds] = useState<Record<string, boolean>>({});
   
   const [inspectionDetail, setInspectionDetail] = useState<any>(null);
   const [pbDetail, setPbDetail] = useState<any>(null);
@@ -293,6 +295,9 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
         if (resp.ok) {
           const j = await resp.json();
           setInspectionDetail(j.data);
+          if (j.data?.results?.length > 0) {
+            setSelectedInspDeviceId(j.data.results[0].device_id);
+          }
         }
       } else {
         const pbResp = await fetch(`/api/playbooks/${log.id}`, { headers: authHeaders });
@@ -320,6 +325,22 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
     } finally {
       setLogDetailLoading(false);
     }
+  };
+
+  const toggleCmdCollapse = (cmd: string) => {
+    setCollapsedCmds(prev => ({ ...prev, [cmd]: !prev[cmd] }));
+  };
+
+  const expandAllCmds = (cmds: string[]) => {
+    const next: Record<string, boolean> = {};
+    cmds.forEach(c => next[c] = false);
+    setCollapsedCmds(next);
+  };
+
+  const collapseAllCmds = (cmds: string[]) => {
+    const next: Record<string, boolean> = {};
+    cmds.forEach(c => next[c] = true);
+    setCollapsedCmds(next);
   };
 
   const handleSelectPbDevice = async (device_id: string) => {
@@ -1111,6 +1132,26 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                 </button>
                                 <button
                                   onClick={async () => {
+                                    if (log.source === 'inspection') {
+                                      // Smart Excel Report Export
+                                      try {
+                                        const resp = await fetch(`/api/inspections/${log.id}/export`, { headers: authHeaders });
+                                        if (resp.ok) {
+                                          const blob = await resp.blob();
+                                          const url = URL.createObjectURL(blob);
+                                          const a = document.createElement('a');
+                                          a.href = url;
+                                          a.download = `Smart_Inspection_Report_${log.id}.xlsx`;
+                                          a.click();
+                                          URL.revokeObjectURL(url);
+                                          return;
+                                        }
+                                      } catch (err) {
+                                        console.error('Failed to export Excel:', err);
+                                      }
+                                    }
+
+                                    // Fallback to JSON download (original behavior)
                                     let dlData = null;
                                     let fn = `execution_${log.id}.json`;
                                     try {
@@ -1144,8 +1185,8 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                   }}
                                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-all active:scale-95"
                                 >
-                                  <Download size={12} />
-                                  {zh ? '下载' : 'Download'}
+                                  {log.source === 'inspection' ? <FileText size={12} /> : <Download size={12} />}
+                                  {log.source === 'inspection' ? (zh ? '导出报表' : 'Export Report') : (zh ? '下载' : 'Download')}
                                 </button>
                               </div>
                             </td>
@@ -1209,6 +1250,29 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {selectedLog.source === 'inspection' && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const resp = await fetch(`/api/inspections/${selectedLog.id}/export`, { headers: authHeaders });
+                      if (resp.ok) {
+                        const blob = await resp.blob();
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `Smart_Inspection_Report_${selectedLog.id}.xlsx`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }
+                    } catch (err) { console.error(err); }
+                  }}
+                  title={zh ? '导出 Smart Excel 报表' : 'Export Smart Excel Report'}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-cyan-700 border border-cyan-100 bg-cyan-50/50 hover:bg-cyan-50 transition-all active:scale-95"
+                >
+                  <FileText size={14} />
+                  {zh ? '智能报表' : 'Smart Report'}
+                </button>
+              )}
               <button
                 onClick={() => setIsDetailModalOpen(false)}
                 className="p-2 rounded-xl text-black/20 hover:bg-black/5 hover:text-black/40 transition-all"
@@ -1225,68 +1289,212 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                 <RotateCcw size={32} className="animate-spin opacity-20" />
                 <span className="text-xs font-bold">{zh ? '加载详情中...' : 'Loading details...'}</span>
               </div>
-            ) : selectedLog.source === 'inspection' ? (
-              /* Inspection Details View */
-              <div className="flex flex-col h-full overflow-y-auto p-6 space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 flex-shrink-0">
-                  <div className="p-4 bg-slate-50 border border-black/5 rounded-2xl">
-                    <span className="text-[10px] font-bold text-black/30 uppercase block mb-1">{zh ? '总设备数' : 'Total Devices'}</span>
-                    <span className="text-xl font-black text-[#164e63]">{inspectionDetail?.total_devices || selectedLog.total_devices}</span>
+            ) : (selectedLog && selectedLog.source === 'inspection') ? (
+              /* Inspection Details View - Upgraded to Split-Pane Layout */
+              <div className="flex flex-col md:flex-row h-full">
+                {/* Device List (Left) */}
+                <div className="w-full md:w-4/12 border-r border-black/5 flex flex-col h-full bg-slate-50/50">
+                  <div className="p-4 border-b border-black/5 bg-white flex items-center justify-between">
+                    <span className="text-xs font-bold text-black/50">{zh ? '设备巡检结果' : 'Inspection Results'}</span>
+                    <span className="text-[10px] font-bold text-black/20 uppercase tracking-widest tabular-nums">
+                      {inspectionDetail?.results?.length || 0} {zh ? '台设备' : 'Devices'}
+                    </span>
                   </div>
-                  <div className="p-4 bg-emerald-50/50 border border-emerald-500/10 rounded-2xl">
-                    <span className="text-[10px] font-bold text-emerald-600 block mb-1">{zh ? '健康设备' : 'Healthy'}</span>
-                    <span className="text-xl font-black text-emerald-600">{inspectionDetail?.healthy_count || selectedLog.success_count}</span>
-                  </div>
-                  <div className="p-4 bg-amber-50/50 border border-amber-500/10 rounded-2xl">
-                    <span className="text-[10px] font-bold text-amber-600 block mb-1">{zh ? '告警/异常' : 'Warning'}</span>
-                    <span className="text-xl font-black text-amber-600">{(inspectionDetail?.warning_count || 0) + (inspectionDetail?.critical_count || 0)}</span>
-                  </div>
-                  <div className="p-4 bg-cyan-50 border border-cyan-500/10 rounded-2xl">
-                    <span className="text-[10px] font-bold text-cyan-600 block mb-1">{zh ? '平均得分' : 'Avg Score'}</span>
-                    <span className="text-xl font-black text-cyan-600">{inspectionDetail?.avg_health_score?.toFixed(1) || '—'}</span>
+                  <div className="flex-1 overflow-auto p-2 space-y-1 custom-scrollbar">
+                    {(inspectionDetail?.results || []).map((res: any) => {
+                      const isSelected = selectedInspDeviceId === res.device_id;
+                      return (
+                        <div
+                          key={res.id}
+                          onClick={() => setSelectedInspDeviceId(res.device_id)}
+                          className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
+                            isSelected 
+                              ? 'bg-[#164e63] text-white border-transparent shadow-md' 
+                              : 'bg-white border-black/5 hover:border-black/10 hover:shadow-sm'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <p className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-[#164e63]'}`}>{res.hostname}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <p className={`text-[9px] font-mono ${isSelected ? 'text-white/60' : 'text-black/30'}`}>{res.ip_address}</p>
+                              <span className={`text-[9px] font-bold ${isSelected ? 'text-cyan-300' : 'text-cyan-600'}`}>Score: {res.health_score ?? '—'}</span>
+                            </div>
+                          </div>
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                            res.health_status === 'healthy' 
+                              ? (isSelected ? 'bg-emerald-400/20 text-emerald-300' : 'bg-emerald-50 text-emerald-600')
+                              : res.health_status === 'warning'
+                                ? (isSelected ? 'bg-amber-400/20 text-amber-300' : 'bg-amber-50 text-amber-600')
+                                : (isSelected ? 'bg-red-400/20 text-red-300' : 'bg-red-50 text-red-600')
+                          }`}>
+                            {res.health_status === 'healthy' ? (zh ? '健康' : 'OK') : res.health_status === 'warning' ? (zh ? '警告' : 'WARN') : (zh ? '故障' : 'CRIT')}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
-                <div className="flex-1 rounded-2xl border border-black/5 overflow-hidden flex flex-col bg-white">
-                  <div className="px-4 py-3 bg-black/[0.02] border-b border-black/5">
-                    <h4 className="text-xs font-bold text-[#164e63]">{zh ? '各设备巡检指标' : 'Device Metric Summaries'}</h4>
-                  </div>
-                  <div className="flex-1 overflow-auto">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead className="sticky top-0 bg-slate-50 border-b border-black/5">
-                        <tr>
-                          <th className="px-4 py-3 font-bold text-black/40">{zh ? '主机名' : 'Hostname'}</th>
-                          <th className="px-4 py-3 font-bold text-black/40">{zh ? 'IP地址' : 'IP Address'}</th>
-                          <th className="px-4 py-3 font-bold text-black/40">{zh ? 'Ping通' : 'Ping'}</th>
-                          <th className="px-4 py-3 font-bold text-black/40">{zh ? 'SSH通' : 'SSH'}</th>
-                          <th className="px-4 py-3 font-bold text-black/40">{zh ? '得分' : 'Score'}</th>
-                          <th className="px-4 py-3 font-bold text-black/40">{zh ? '状态' : 'Status'}</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-black/[0.02]">
-                        {(inspectionDetail?.results || []).map((res: any) => (
-                          <tr key={res.id} className="hover:bg-indigo-50/10">
-                            <td className="px-4 py-3 font-bold text-black/80">{res.hostname}</td>
-                            <td className="px-4 py-3 text-black/50 font-mono">{res.ip_address}</td>
-                            <td className="px-4 py-3">
-                              <span className={`font-bold ${res.ping_ok ? 'text-emerald-600' : 'text-red-500'}`}>{res.ping_ok ? 'OK' : 'FAIL'}</span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`font-bold ${res.ssh_ok ? 'text-emerald-600' : 'text-red-500'}`}>{res.ssh_ok ? 'OK' : 'FAIL'}</span>
-                            </td>
-                            <td className="px-4 py-3 font-black">{res.health_score ?? '—'}</td>
-                            <td className="px-4 py-3">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                res.health_status === 'healthy' ? 'bg-emerald-50 text-emerald-600' : res.health_status === 'warning' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'
-                              }`}>
-                                {res.health_status === 'healthy' ? (zh ? '健康' : 'Healthy') : res.health_status === 'warning' ? (zh ? '警告' : 'Warning') : (zh ? '故障' : 'Critical')}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                {/* Detail Content (Right) */}
+                <div className="flex-1 flex flex-col bg-[#1E1E1E] overflow-hidden">
+                  {selectedInspDeviceId ? (() => {
+                    const res = inspectionDetail.results.find((r: any) => r.device_id === selectedInspDeviceId);
+                    if (!res) return null;
+                    
+                    let rawOutputs: Record<string, string> = {};
+                    try { rawOutputs = typeof res.raw_outputs_json === 'string' ? JSON.parse(res.raw_outputs_json) : (res.raw_outputs_json || {}); } catch(e) {}
+                    
+                    let analysis: any[] = [];
+                    try { analysis = typeof res.analysis_json === 'string' ? JSON.parse(res.analysis_json) : (res.analysis_json || []); } catch(e) {}
+
+                    let findings: any[] = [];
+                    try { findings = typeof res.findings_json === 'string' ? JSON.parse(res.findings_json) : (res.findings_json || []); } catch(e) {}
+
+                    return (
+                      <>
+                        <div className="p-4 border-b border-white/10 bg-black/20 flex items-center justify-between">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-white/80 font-bold block">{res.hostname} ({res.ip_address})</span>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/5 ${
+                                res.ping_ok ? 'text-emerald-400' : 'text-red-400'
+                              }`}>Ping: {res.ping_ok ? 'OK' : 'FAIL'}</span>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/5 ${
+                                res.ssh_ok ? 'text-emerald-400' : 'text-red-400'
+                              }`}>SSH: {res.ssh_ok ? 'OK' : 'FAIL'}</span>
+                              {res.ssh_error && <span className="text-[10px] text-red-400/70 truncate max-w-[200px]" title={res.ssh_error}>{res.ssh_error}</span>}
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <div className="text-[10px] text-white/30 font-mono uppercase tracking-widest">{zh ? '健康得分' : 'Health Score'}</div>
+                            <div className={`text-xl font-black ${
+                              (res.health_score || 0) >= 90 ? 'text-emerald-400' : (res.health_score || 0) >= 60 ? 'text-amber-400' : 'text-red-400'
+                            }`}>{res.health_score ?? '—'}</div>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 overflow-auto custom-scrollbar-dark p-6 space-y-8 select-text">
+                          {/* 1. Findings Section */}
+                          {findings.length > 0 && (
+                            <div className="space-y-3">
+                              <h4 className="text-[11px] font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
+                                <AlertTriangle size={12} className="text-amber-500" />
+                                {zh ? '异常发现' : 'Diagnostic Findings'}
+                              </h4>
+                              <div className="space-y-2">
+                                {findings.map((f, i) => (
+                                  <div key={i} className={`p-3 rounded-lg border flex items-start gap-3 ${
+                                    f.severity === 'critical' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                                  }`}>
+                                    <div className="mt-1 w-1.5 h-1.5 rounded-full bg-current" />
+                                    <span className="text-xs font-medium leading-relaxed">{f.message}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 2. Analysis Blocks */}
+                          {analysis.length > 0 && (
+                            <div className="space-y-3">
+                              <h4 className="text-[11px] font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
+                                <Activity size={12} className="text-cyan-500" />
+                                {zh ? '智能分析' : 'Smart Analysis'}
+                              </h4>
+                              <div className="grid grid-cols-1 gap-3">
+                                {analysis.map((a, i) => (
+                                  <div key={i} className="p-3 rounded-lg bg-white/5 border border-white/10 hover:bg-white/[0.08] transition-colors">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <span className="text-[11px] font-bold text-white/80">{a.metric}</span>
+                                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                        a.status === 'healthy' ? 'text-emerald-400 bg-emerald-400/10' : a.status === 'warning' ? 'text-amber-400 bg-amber-400/10' : 'text-red-400 bg-red-400/10'
+                                      }`}>{a.status?.toUpperCase()}</span>
+                                    </div>
+                                    <div className="text-xs text-white/50 leading-relaxed">{a.conclusion}</div>
+                                    {a.value !== undefined && (
+                                      <div className="mt-2 text-[10px] font-mono text-white/30 italic">Value: {String(a.value)}</div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 3. Raw Output Blocks */}
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <h4 className="text-[11px] font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
+                                <FileText size={12} className="text-indigo-400" />
+                                {zh ? '命令执行记录' : 'Command Execution Blocks'}
+                              </h4>
+                              {Object.keys(rawOutputs).length > 1 && (
+                                <div className="flex items-center gap-3">
+                                  <button 
+                                    onClick={() => expandAllCmds(Object.keys(rawOutputs))}
+                                    className="text-[10px] font-bold text-cyan-400/50 hover:text-cyan-400 transition-colors"
+                                  >
+                                    {zh ? '全部展开' : 'Expand All'}
+                                  </button>
+                                  <div className="w-px h-2 bg-white/10" />
+                                  <button 
+                                    onClick={() => collapseAllCmds(Object.keys(rawOutputs))}
+                                    className="text-[10px] font-bold text-white/20 hover:text-white/40 transition-colors"
+                                  >
+                                    {zh ? '全部折叠' : 'Collapse All'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            <div className="space-y-3">
+                              {Object.keys(rawOutputs).length > 0 ? (
+                                Object.entries(rawOutputs).map(([cmd, output], i) => {
+                                  const outputStr = String(output);
+                                  const isError = outputStr.startsWith('__ERROR__') || outputStr.includes('% Invalid input') || outputStr.includes('error');
+                                  const isCollapsed = collapsedCmds[cmd] ?? (!isError && Object.keys(rawOutputs).length > 3);
+                                  
+                                  return (
+                                    <div key={i} className={`rounded-lg overflow-hidden border transition-all ${
+                                      isError ? 'border-red-500/30 bg-red-500/5' : 'border-white/5 bg-black/20'
+                                    }`}>
+                                      <div 
+                                        onClick={() => toggleCmdCollapse(cmd)}
+                                        className="px-4 py-2 bg-white/5 flex items-center justify-between cursor-pointer hover:bg-white/[0.08]"
+                                      >
+                                        <div className="flex items-center gap-3">
+                                          <ChevronRight size={14} className={`text-white/20 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
+                                          <span className={`text-[11px] font-mono font-bold ${isError ? 'text-red-400' : 'text-cyan-400/80'}`}>&gt; {cmd}</span>
+                                          {!isCollapsed && <OutputActions text={outputStr} filename={`${res.hostname}_${cmd.replace(/\s+/g, '_')}`} theme="dark" zh={zh} />}
+                                        </div>
+                                        {isCollapsed && (
+                                          <span className="text-[10px] text-white/20 font-mono italic truncate max-w-[300px]">
+                                            {outputStr.substring(0, 60).replace(/\n/g, ' ')}...
+                                          </span>
+                                        )}
+                                      </div>
+                                      {!isCollapsed && (
+                                        <div className={`p-4 font-mono text-[11px] whitespace-pre-wrap leading-relaxed ${isError ? 'text-red-300/80' : 'text-white/60'}`}>
+                                          {outputStr}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })
+                              ) : (
+                                <div className="text-white/20 text-center py-10 italic text-[11px]">
+                                  {res.ssh_ok ? (zh ? '无命令回显' : 'No output returned') : (zh ? '连接未建立' : 'Connection failed')}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })() : (
+                    <div className="flex-1 flex flex-col items-center justify-center text-white/20 gap-3">
+                      <Search size={48} strokeWidth={1} className="opacity-10" />
+                      <span className="text-sm">{zh ? '请选择左侧设备查看详情' : 'Select a device to see details'}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (

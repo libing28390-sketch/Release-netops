@@ -319,6 +319,26 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
     }
   };
 
+  const handleDownloadReport = async (runId: string) => {
+    try {
+      const resp = await fetch(`/api/inspections/${runId}/export`, { headers: authHeaders });
+      if (!resp.ok) {
+        alert(isZh ? '报表生成失败' : 'Report generation failed');
+        return;
+      }
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Inspection_Report_${runId}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
+  };
+
   /* ─── derived data ─── */
 
   const historySeries = useMemo(() => history?.series || [], [history]);
@@ -595,10 +615,17 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
               <div className="rounded-2xl border border-black/[0.06] bg-white p-5 shadow-sm">
                 <div className="flex items-center gap-4 mb-5">
                   <ScoreGauge score={selectedRunDetail.avg_health_score} size={64} />
-                  <div>
+                  <div className="flex-1">
                     <h3 className="text-base font-bold text-[#0b2340]">{isZh ? '巡检详情' : 'Inspection Detail'}</h3>
                     <p className="text-[11px] text-black/35 mt-0.5">{new Date(selectedRunDetail.started_at).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}</p>
                   </div>
+                  <button
+                    onClick={() => handleDownloadReport(selectedRunDetail.id)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md active:scale-95 transition-all"
+                  >
+                    <Download className="w-4 h-4" />
+                    {isZh ? '下载分析报告 (Excel)' : 'Download Smart Report (Excel)'}
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

@@ -1,8 +1,12 @@
 """API routes for device inspection (巡检管理)."""
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
+import os
+import tempfile
 
 from core.rbac import require_role
+from core.report_generator import generate_inspection_excel
 from schemas.schemas import InspectionRunRequest, InspectionScheduleCreate, InspectionScheduleUpdate, InspectionItemCreate
 from services.inspection_service import (
     compare_runs,
@@ -174,3 +178,34 @@ def inspection_run_detail(
     if not detail:
         raise HTTPException(status_code=404, detail='巡检记录不存在')
     return {'success': True, 'data': detail, 'message': ''}
+
+@router.get('/inspections/{run_id}/export')
+def export_inspection_report(
+    run_id: str,
+    _user=require_role('Viewer'),
+):
+    detail = get_inspection_run_detail(run_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail='巡检记录不存在')
+    
+    # 准备数据
+    results = detail.pop('results', [])
+    
+    # 创建临时文件
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix='.xlsx', prefix=f'inspection_{run_id}_')
+    os.close(tmp_fd)
+    
+    try:
+        generate_inspection_excel(detail, results, tmp_path)
+        return FileResponse(
+            tmp_path,
+            filename=f"Nexora_Inspection_{run_id}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            background=None # FileResponse handles cleanup if we want, but simple here
+        )
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise HTTPException(status_code=500, detail=f"报表生成失败: {str(e)}")
+
+from datetime import datetime # Ensure datetime is available
