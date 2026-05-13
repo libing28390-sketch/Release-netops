@@ -1352,7 +1352,93 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                       </select>
                     </div>
 
-                    {/* IP input with validation — rendered outside grid below for full width */}
+                    {/* IP input — inline, right below Device Scope */}
+                    {form.device_scope === 'ip' && (
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                          {zh ? 'IP 地址' : 'IP Addresses'}
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={ipInput}
+                            onChange={e => { setIpInput(e.target.value); setIpError(''); }}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); validateAndAddIps(ipInput); } }}
+                            disabled={ipValidating}
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all font-mono pr-10"
+                            placeholder={zh ? '输入 IP 后回车验证,支持逗号/空格/分号分隔' : 'Enter IPs, press Enter to validate'}
+                          />
+                          {ipValidating && (
+                            <RotateCcw size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-cyan-500 animate-spin" />
+                          )}
+                        </div>
+
+                        {ipError && (
+                          <p className={`text-[10px] mt-1 ${ipError.includes('已添加') || ipError.includes('added') ? 'text-amber-500' : 'text-red-500'}`}>{ipError}</p>
+                        )}
+
+                        {ipDevices.length > 0 && (
+                          <div className="mt-2 space-y-1 max-h-40 overflow-y-auto pr-1">
+                            {ipDevices.map(dev => (
+                              <div
+                                key={dev.ip}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border group hover:border-cyan-200/60 transition-all ${
+                                  dev.hostname ? 'border-black/[0.06] bg-[#f8fafc]' : 'border-amber-200/60 bg-amber-50/30'
+                                }`}
+                              >
+                                <span className="text-xs font-mono font-bold text-[#164e63] shrink-0">{dev.ip}</span>
+                                {dev.hostname ? (
+                                  <>
+                                    <span className="text-black/15 text-[10px]">·</span>
+                                    <span className="text-[11px] text-black/40 truncate">{dev.hostname}</span>
+                                  </>
+                                ) : (
+                                  <span className="text-[10px] text-amber-500 italic">{zh ? '手动IP' : 'manual'}</span>
+                                )}
+                                {dev.tags.length > 0 && (
+                                  <div className="flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
+                                    {dev.tags.slice(0, 3).map(tag => (
+                                      <span
+                                        key={tag.id}
+                                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-white border border-black/[0.06] shrink-0"
+                                      >
+                                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: tag.color }} />
+                                        <span className="truncate">{zh ? (tag.label_zh || tag.label) : tag.label}</span>
+                                      </span>
+                                    ))}
+                                    {dev.tags.length > 3 && (
+                                      <span className="text-[9px] text-black/30 shrink-0">+{dev.tags.length - 3}</span>
+                                    )}
+                                  </div>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => removeIpDevice(dev.ip)}
+                                  className="p-1 rounded-lg text-black/25 hover:text-red-500 hover:bg-red-50 transition-all shrink-0 ml-auto"
+                                  title={zh ? '移除' : 'Remove'}
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <p className="text-[10px] text-black/25 mt-1.5">
+                          {ipDevices.length > 0
+                            ? (zh ? `已添加 ${ipDevices.length} 个设备` : `${ipDevices.length} device(s) added`)
+                            : (zh ? '输入 IP 后回车,系统自动验证并显示设备标签' : 'Enter IP and press Enter to validate')}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Tag picker — inline, right below Device Scope */}
+                    {form.device_scope === 'tag' && (
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '标签条件' : 'Tag Conditions'}</label>
+                        <TagConditionPicker value={tagFilter} onChange={setTagFilter} language={language} />
+                      </div>
+                    )}
 
                     {/* Site / Role filter */}
                     {(form.device_scope === 'site' || form.device_scope === 'role') && (
@@ -1366,8 +1452,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                         />
                       </div>
                     )}
-
-                    {/* Tag picker — rendered outside grid below for full width */}
                   </div>
 
                   {/* Right column */}
@@ -1572,93 +1656,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   </div>
                 </div>
 
-                {/* IP input — full width below grid */}
-                {form.device_scope === 'ip' && (
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
-                      {zh ? 'IP 地址' : 'IP Addresses'}
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={ipInput}
-                        onChange={e => { setIpInput(e.target.value); setIpError(''); }}
-                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); validateAndAddIps(ipInput); } }}
-                        disabled={ipValidating}
-                        className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all font-mono pr-10"
-                        placeholder={zh ? '输入 IP 地址后按回车验证，支持逗号/空格/分号分隔多个 IP' : 'Enter IPs separated by comma/space/semicolon, press Enter to validate'}
-                      />
-                      {ipValidating && (
-                        <RotateCcw size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-cyan-500 animate-spin" />
-                      )}
-                    </div>
-
-                    {ipError && (
-                      <p className={`text-[10px] mt-1 ${ipError.includes('已添加') || ipError.includes('added') ? 'text-amber-500' : 'text-red-500'}`}>{ipError}</p>
-                    )}
-
-                    {ipDevices.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {ipDevices.map(dev => (
-                          <div
-                            key={dev.ip}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border group hover:border-cyan-200/60 transition-all ${
-                              dev.hostname ? 'border-black/[0.06] bg-[#f8fafc]' : 'border-amber-200/60 bg-amber-50/30'
-                            }`}
-                          >
-                            <span className="text-xs font-mono font-bold text-[#164e63] shrink-0">{dev.ip}</span>
-                            {dev.hostname ? (
-                              <>
-                                <span className="text-black/15 text-[10px]">·</span>
-                                <span className="text-[11px] text-black/40 truncate">{dev.hostname}</span>
-                              </>
-                            ) : (
-                              <span className="text-[10px] text-amber-500 italic">{zh ? '手动IP' : 'manual'}</span>
-                            )}
-                            {dev.tags.length > 0 && (
-                              <div className="flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
-                                {dev.tags.slice(0, 4).map(tag => (
-                                  <span
-                                    key={tag.id}
-                                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-white border border-black/[0.06] shrink-0"
-                                  >
-                                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: tag.color }} />
-                                    <span className="truncate">{zh ? (tag.label_zh || tag.label) : tag.label}</span>
-                                  </span>
-                                ))}
-                                {dev.tags.length > 4 && (
-                                  <span className="text-[9px] text-black/30 shrink-0">+{dev.tags.length - 4}</span>
-                                )}
-                              </div>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => removeIpDevice(dev.ip)}
-                              className="p-1 rounded-lg text-black/25 hover:text-red-500 hover:bg-red-50 transition-all shrink-0 ml-auto"
-                              title={zh ? '移除' : 'Remove'}
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <p className="text-[10px] text-black/25 mt-1.5">
-                      {ipDevices.length > 0
-                        ? (zh ? `已添加 ${ipDevices.length} 个设备` : `${ipDevices.length} device(s) added`)
-                        : (zh ? '输入设备 IP 后按回车，系统将自动验证并显示设备标签' : 'Enter a device IP and press Enter to validate and show device tags')}
-                    </p>
-                  </div>
-                )}
-
-                {/* Tag picker — full width below grid */}
-                {form.device_scope === 'tag' && (
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '标签条件' : 'Tag Conditions'}</label>
-                    <TagConditionPicker value={tagFilter} onChange={setTagFilter} language={language} />
-                  </div>
-                )}
+                {/* End grid */}
               </div>
 
               {/* Footer */}
