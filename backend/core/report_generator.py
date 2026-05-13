@@ -55,26 +55,77 @@ def generate_inspection_excel(
     summary_ws.write('A6', '分析结论', label_fmt)
     summary_ws.merge_range('B6:D6', analysis_sum.get('conclusion', '未发现明显异常。'), border_fmt)
     
-    # Top 异常列表标题
+    # Top 异常列表标题（含连通性硬故障 + 智能分析 critical 项）
     summary_ws.write('A8', '严重异常 Top 列表', workbook.add_format({'bold': True, 'font_color': '#c62828'}))
-    headers = ['设备名称', 'IP 地址', '异常指标', '当前值', '诊断分析与建议']
+    headers = ['设备名称', 'IP 地址', '异常类型', '当前值 / 描述', '诊断分析与建议']
     for col, h in enumerate(headers):
         summary_ws.write(8, col, h, header_fmt)
-        
+
     row = 9
+    # 1. 先写连通性硬故障（findings_json 中 severity=critical）
+    for res in results:
+        findings = json.loads(res.get('findings_json') or '[]')
+        for f in findings:
+            if f.get('severity') == 'critical':
+                summary_ws.write(row, 0, res.get('hostname', ''), border_fmt)
+                summary_ws.write(row, 1, res.get('ip_address', ''), border_fmt)
+                summary_ws.write(row, 2, '连通性故障', critical_fmt)
+                summary_ws.write(row, 3, f.get('message', ''), critical_fmt)
+                summary_ws.write(row, 4, '请检查设备电源、网络路径及防火墙策略', border_fmt)
+                row += 1
+                if row > 30:
+                    break
+        if row > 30:
+            break
+    # 2. 再写智能分析 critical 项
     for res in results:
         analysis = json.loads(res.get('analysis_json') or '[]')
         for item in analysis:
-            if item['status'] == 'critical':
+            if item.get('status') == 'critical':
                 summary_ws.write(row, 0, res.get('hostname'), border_fmt)
                 summary_ws.write(row, 1, res.get('ip_address'), border_fmt)
-                summary_ws.write(row, 2, item['metric'], critical_fmt)
-                summary_ws.write(row, 3, item['value'], critical_fmt)
-                summary_ws.write(row, 4, item['conclusion'], border_fmt)
+                summary_ws.write(row, 2, item.get('metric', ''), critical_fmt)
+                summary_ws.write(row, 3, item.get('value', ''), critical_fmt)
+                summary_ws.write(row, 4, item.get('conclusion', ''), border_fmt)
                 row += 1
-                if row > 20: break # 只显示前 10 多个
+                if row > 50:
+                    break
+        if row > 50:
+            break
     
-    # ══════════════════ SHEET 2: 异常分析详情 (Anomalies) ══════════════════
+    # ══════════════════ SHEET 2: 连通性 & 硬故障异常明细 (Findings) ══════════════════
+    # 数据来源：findings_json（Ping/SSH 失败、采集异常等硬故障）
+    findings_ws = workbook.add_worksheet('异常明细')
+    findings_headers = ['设备名称', '管理 IP', '平台', '站点', '严重程度', '异常描述', 'Ping', 'SSH']
+    findings_ws.set_column('A:B', 18)
+    findings_ws.set_column('C:D', 14)
+    findings_ws.set_column('E:E', 10)
+    findings_ws.set_column('F:F', 50)
+    findings_ws.set_column('G:H', 8)
+
+    for col, h in enumerate(findings_headers):
+        findings_ws.write(0, col, h, header_fmt)
+
+    row = 1
+    for res in results:
+        findings = json.loads(res.get('findings_json') or '[]')
+        if not findings:
+            continue
+        for finding in findings:
+            severity = finding.get('severity', 'warning')
+            sev_fmt = critical_fmt if severity == 'critical' else warning_fmt
+            findings_ws.write(row, 0, res.get('hostname', ''), border_fmt)
+            findings_ws.write(row, 1, res.get('ip_address', ''), border_fmt)
+            findings_ws.write(row, 2, res.get('platform', ''), border_fmt)
+            findings_ws.write(row, 3, res.get('site', ''), border_fmt)
+            findings_ws.write(row, 4, severity.upper(), sev_fmt)
+            findings_ws.write(row, 5, finding.get('message', ''), border_fmt)
+            findings_ws.write(row, 6, '✓' if res.get('ping_ok') else '✗', healthy_fmt if res.get('ping_ok') else critical_fmt)
+            findings_ws.write(row, 7, '✓' if res.get('ssh_ok') else '✗', healthy_fmt if res.get('ssh_ok') else critical_fmt)
+            row += 1
+
+    # ══════════════════ SHEET 3: 异常指标分析明细 (Analysis) ══════════════════
+    # 数据来源：analysis_json（智能分析阈值超标项）
     detail_ws = workbook.add_worksheet('异常指标分析明细')
     detail_headers = ['设备名称', '管理 IP', '巡检指标', '当前值', '状态', '诊断结论', '建议操作']
     detail_ws.set_column('A:B', 15)

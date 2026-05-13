@@ -1869,32 +1869,48 @@ if __name__ == "__main__":
     import uvicorn
     import sys
     import os
-    
+
     # Re-enforce Proactor on Windows before uvicorn starts
     if sys.platform == 'win32':
         import asyncio
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-        
+
     port = int(os.environ.get("PORT", "9010"))
     workers = int(os.environ.get("WORKERS", "1"))
     is_dev = os.environ.get("NODE_ENV") == "development"
-    
-    if sys.platform == 'win32':
-        import asyncio
-        # Reinforce policy just before uvicorn launch
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    
+
     # On modern uvicorn versions, loop must be one of: auto/asyncio/uvloop/none.
     # Windows Proactor is already enforced via event loop policy above.
     loop_type = "asyncio" if sys.platform == "win32" else "auto"
-    
-    # Windows + reload subprocess may fall back to select() loop and hit FD limit.
-    # Force-disable reload on Windows for stability.
-    effective_reload = is_dev and sys.platform != "win32"
+
+    # Windows 热重载方案：
+    #   uvicorn 原生 reload 在 Windows 下会让子进程回退到 select() 事件循环，
+    #   触发 64 个 FD 上限崩溃，因此禁用。
+    #   替代方案：使用 uvicorn 的 reload_dirs + watchfiles 后端（需安装 watchfiles）。
+    #   watchfiles 在 Windows 下使用 ReadDirectoryChangesW API，不依赖 select()，
+    #   且不会 fork 子进程，避免了 FD 限制问题。
+    if is_dev and sys.platform == 'win32':
+        try:
+            import watchfiles  # noqa: F401 — 仅检测是否已安装
+            effective_reload = True
+            reload_kwargs = {
+                'reload': True,
+                'reload_dirs': [str(os.path.dirname(os.path.abspath(__file__)))],
+                'reload_excludes': ['*.pyc', '__pycache__', '*.db', '*.log'],
+            }
+        except ImportError:
+            # watchfiles 未安装，回退到禁用 reload（安全模式）
+            # 安装方法：pip install watchfiles
+            effective_reload = False
+            reload_kwargs = {}
+    elif is_dev:
+        effective_reload = True
+        reload_kwargs = {'reload': True}
+    else:
+        effective_reload = False
+        reload_kwargs = {}
 
     if workers > 1:
         uvicorn.run("main:app", host="0.0.0.0", port=port, workers=workers, loop=loop_type)
     else:
-        # For development, we must ensure the loop is clean
-        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=effective_reload, loop=loop_type)
-# Trigger Reload
+        uvicorn.run("main:app", host="0.0.0.0", port=port, loop=loop_type, **reload_kwargs)

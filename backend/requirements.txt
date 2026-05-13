@@ -44,6 +44,7 @@ wsproto>=1.2.0
 # ── System Utilities ────────────────────────────────────────
 psutil>=5.9.0
 ping3>=4.0.4
+watchfiles>=0.21.0              # Windows-compatible hot-reload for uvicorn (uses ReadDirectoryChangesW)
 
 # ── Task Queue (optional, for future use) ───────────────────
 celery>=5.3.0
