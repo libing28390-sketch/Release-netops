@@ -556,6 +556,10 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
 
         if err and value is None:
             metrics[check_key] = {'value': None, 'error': err}
+            findings.append({'severity': 'warning', 'message': f"{name_zh} 数据采集/解析失败: {err}"})
+            health_deduct += 10
+            if result['health_status'] == 'healthy':
+                result['health_status'] = 'warning'
             continue
 
         metrics[check_key] = value

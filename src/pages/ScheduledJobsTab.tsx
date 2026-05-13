@@ -297,9 +297,19 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
   useEffect(() => { fetchSystemJobs(); }, [fetchSystemJobs]);
   useEffect(() => { 
-    if (modalOpen && !isEditMode) fetchApprovers(); 
+    if (modalOpen) fetchApprovers(); 
     if ((modalOpen || detailJob) && (form.action_type === 'script_run' || detailJob?.action_type === 'script_run')) fetchScripts();
   }, [modalOpen, detailJob, isEditMode, fetchApprovers, fetchScripts, form.action_type]);
+
+  // Auto-load script content when detail modal opens for a script_run job
+  useEffect(() => {
+    if (detailJob && detailJob.action_type === 'script_run' && detailJob.script_id) {
+      void fetchAndShowScriptDetail(detailJob.script_id);
+    } else if (!detailJob) {
+      setViewingScript(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailJob?.id, detailJob?.script_id]);
 
   useEffect(() => {
     if (approvalCountdown <= 0) return;
@@ -485,8 +495,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           const r = await fetch(`/api/devices?search=${encodeURIComponent(ip)}&mode=light&page_size=50`, { headers: authHeaders });
           if (r.ok) {
             const j = await r.json();
-            const items = j.data?.items || j.data || [];
-            const device = items.find((d: { ip_address: string }) => d.ip_address === ip);
+            const items = Array.isArray(j) ? j : (j.items || j.data?.items || j.data || []);
+            const device = items.find((d: { ip_address: string; hostname?: string }) => 
+              d.ip_address === ip || d.hostname === ip
+            ) || items[0];
             if (device) {
               found = true;
               setIpDevices(prev => {
@@ -507,10 +519,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               const ar = await fetch(`/api/assets?q=${encodeURIComponent(ip)}&page_size=50`, { headers: authHeaders });
               if (ar.ok) {
                 const aj = await ar.json();
-                const assets = aj.data?.items || aj.data || [];
-                const asset = assets.find((a: { management_ip?: string; business_ip?: string }) =>
-                  a.management_ip === ip || a.business_ip === ip
-                );
+                const assets = Array.isArray(aj) ? aj : (aj.items || aj.data?.items || aj.data || []);
+                const asset = assets.find((a: { management_ip?: string; business_ip?: string; hostname?: string }) =>
+                  a.management_ip === ip || a.business_ip === ip || a.hostname === ip
+                ) || assets[0];
                 if (asset) {
                   found = true;
                   setIpDevices(prev => {
@@ -602,7 +614,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           device_scope: form.device_scope,
           device_filter: resolveFilter(),
           script_id: form.script_id,
+          commands: form.commands,
           config_reason: form.config_reason,
+          approval_token: approvalToken,
+          approval_code: approvalCode,
         }),
       });
       const j = await r.json();
@@ -1084,9 +1099,17 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                     </div>
                     <div className="p-4 overflow-x-auto">
                       <pre className="font-mono text-[11px] leading-relaxed text-cyan-50/90 whitespace-pre-wrap">
-                        {detailJob.action_type === 'backup' 
+                        {detailJob.action_type === 'backup'
                           ? (zh ? '# 该作业为内置配置备份任务\n# 将自动采集设备 running-config 并进行版本比对' : '# This is a built-in config backup job.\n# It will collect running-config and track drifts.')
-                          : (detailJob.commands || (zh ? '-- 未设置具体执行内容 --' : '-- No commands defined --'))}
+                          : detailJob.action_type === 'inspection'
+                            ? (zh ? '# 该作业为内置综合巡检\n# 将采集 interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf' : '# Built-in comprehensive inspection job.\n# Collects interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf')
+                            : detailJob.script_id && viewingScript?.id === detailJob.script_id && viewingScript?.content
+                              ? viewingScript.content
+                              : detailJob.commands
+                                ? detailJob.commands
+                                : detailJob.script_id
+                                  ? (zh ? `# 此作业绑定脚本: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}\n# 点击上方"查看脚本详情"查看完整内容` : `# Bound script: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}\n# Click "View Script" above to see full content`)
+                                  : (zh ? '-- 未设置具体执行内容 --' : '-- No commands defined --')}
                       </pre>
                     </div>
                   </div>
@@ -1432,8 +1455,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                         </div>
                       )}
 
-                      {/* Approval (create only) */}
-                    {!isEditMode && (
+                      {/* Approval (create & edit) */}
                       <div className="rounded-xl border border-black/8 overflow-hidden">
                         <div className={`px-4 py-2.5 flex items-center gap-2.5 ${
                           approvalStatus === 'verified'
@@ -1547,7 +1569,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                           </div>
                         )}
                       </div>
-                    )}
                   </div>
                 </div>
 

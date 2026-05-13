@@ -21,7 +21,10 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
+  FileSpreadsheet,
+  FileJson,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import type { Device } from '../types';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
@@ -288,27 +291,146 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
     return output.trim() ? [{ command: '', output: output.trim() }] : [];
   }, []);
 
-  /** Export parsed records to Excel (.xlsx) using a simple CSV-in-xlsx approach */
-  const downloadExcel = useCallback((records: Record<string, string>[], fields: string[], filename: string) => {
-    // Build CSV content (Excel opens CSV with UTF-8 BOM correctly)
-    const bom = '\uFEFF';
-    const header = fields.join(',');
-    const rows = records.map(r =>
-      fields.map(f => {
-        const v = r[f] ?? '';
-        // Quote fields that contain comma, newline or double-quote
-        return /[,"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-      }).join(',')
-    );
-    const csv = bom + [header, ...rows].join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  /** Export parsed records to a real .xlsx file */
+  const downloadExcel = useCallback((records: Record<string, any>[], fields: string[], filename: string) => {
+    if (!records || records.length === 0) return;
+    const data = records.map(r => {
+      const row: Record<string, any> = {};
+      for (const f of fields) row[f] = r[f] ?? '';
+      return row;
+    });
+    const ws = XLSX.utils.json_to_sheet(data, { header: fields });
+    // Auto column width
+    ws['!cols'] = fields.map(f => {
+      const maxLen = Math.max(f.length, ...data.map(r => String(r[f] ?? '').length));
+      return { wch: Math.min(Math.max(maxLen + 2, 10), 60) };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Parsed');
+    XLSX.writeFile(wb, filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`);
+  }, []);
+
+  /** Export parsed records as pretty-printed JSON */
+  const downloadJSON = useCallback((records: Record<string, any>[], filename: string) => {
+    if (!records || records.length === 0) return;
+    const text = JSON.stringify(records, null, 2);
+    const blob = new Blob([text], { type: 'application/json;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+    a.download = filename.endsWith('.json') ? filename : `${filename}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }, []);
+
+  /**
+   * Download an Excel summary of the whole execution:
+   *   - Sheet 1: 概览 (execution + devices summary)
+   *   - Sheet 2..N: per-device per-command raw output
+   * Requires a loaded execution detail and devices list.
+   */
+  const handleDownloadExecutionExcel = useCallback(async () => {
+    const execution = selectedExecutionDetail;
+    if (!execution) return;
+
+    const execId = execution.id;
+    const wb = XLSX.utils.book_new();
+
+    // ── Sheet 1: 概览 ──
+    const overviewRows: Record<string, any>[] = [
+      { 字段: isZh ? '作业名称' : 'Job Name', 值: execution.scenario_name || execution.task_name || '-' },
+      { 字段: 'Execution ID', 值: execId },
+      { 字段: isZh ? '执行人' : 'Operator', 值: execution.author || 'admin' },
+      { 字段: isZh ? '触发时间' : 'Triggered At', 值: new Date(execution.created_at).toLocaleString() },
+      { 字段: isZh ? '状态' : 'Status', 值: execution.status || '-' },
+      { 字段: isZh ? '总设备数' : 'Total Devices', 值: execution.total_devices ?? 0 },
+      { 字段: isZh ? '成功' : 'Success', 值: execution.success_count ?? 0 },
+      { 字段: isZh ? '失败' : 'Failed', 值: execution.failed_count ?? 0 },
+      { 字段: isZh ? '部分' : 'Partial', 值: execution.partial_count ?? 0 },
+    ];
+    const wsOverview = XLSX.utils.json_to_sheet(overviewRows);
+    wsOverview['!cols'] = [{ wch: 22 }, { wch: 60 }];
+    XLSX.utils.book_append_sheet(wb, wsOverview, isZh ? '概览' : 'Overview');
+
+    // ── Sheet 2: 设备汇总 ──
+    const deviceSummary = selectedExecDevices.map(d => ({
+      [isZh ? '主机名' : 'Hostname']: d.hostname,
+      [isZh ? 'IP 地址' : 'IP Address']: d.ip_address || '',
+      [isZh ? '状态' : 'Status']: d.status || '',
+      [isZh ? '耗时(ms)' : 'Duration(ms)']: d.duration_ms ?? 0,
+      [isZh ? '错误信息' : 'Error']: d.error_message || '',
+    }));
+    if (deviceSummary.length > 0) {
+      const wsDev = XLSX.utils.json_to_sheet(deviceSummary);
+      const cols = Object.keys(deviceSummary[0]);
+      wsDev['!cols'] = cols.map(k => {
+        const maxLen = Math.max(k.length, ...deviceSummary.map(r => String((r as any)[k] ?? '').length));
+        return { wch: Math.min(Math.max(maxLen + 2, 10), 60) };
+      });
+      XLSX.utils.book_append_sheet(wb, wsDev, isZh ? '设备汇总' : 'Devices');
+    }
+
+    // ── Sheet 3..N: per-device per-command output ──
+    // Fetch full detail for each device (if we have the list)
+    const token = localStorage.getItem('netops_token');
+    const hdr: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+    for (const dev of selectedExecDevices) {
+      try {
+        const res = await fetch(`/api/playbooks/${execId}/devices/${dev.device_id}`, { headers: hdr });
+        if (!res.ok) continue;
+        const detail = await res.json();
+        let phases: Record<string, any> = {};
+        try { phases = JSON.parse(detail.phases_json || '{}'); } catch { phases = {}; }
+
+        const rows: Record<string, any>[] = [];
+        for (const [phaseName, pdata] of Object.entries(phases)) {
+          const pd: any = pdata || {};
+          const cmds: string[] = pd.commands || [];
+          const outputStr: string = typeof pd.output === 'string' ? pd.output : JSON.stringify(pd.output || '');
+          // Try to split per-command via our helper
+          const blocks = splitOutputByCommand(outputStr, cmds);
+          for (const blk of blocks) {
+            rows.push({
+              [isZh ? '阶段' : 'Phase']: phaseName,
+              [isZh ? '命令' : 'Command']: blk.command || '-',
+              [isZh ? '输出' : 'Output']: blk.output || '',
+            });
+          }
+          if (blocks.length === 0 && outputStr) {
+            rows.push({
+              [isZh ? '阶段' : 'Phase']: phaseName,
+              [isZh ? '命令' : 'Command']: cmds.join(' | ') || '-',
+              [isZh ? '输出' : 'Output']: outputStr,
+            });
+          }
+        }
+        if (rows.length === 0) continue;
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws['!cols'] = [
+          { wch: 12 },
+          { wch: 40 },
+          { wch: 80 },
+        ];
+        // Sheet name max 31 chars, no special chars
+        const rawName = (dev.hostname || dev.ip_address || dev.device_id || 'device').replace(/[\\/?*[\]:]/g, '_');
+        const sheetName = rawName.slice(0, 31);
+        // Avoid duplicate sheet names
+        let unique = sheetName;
+        let i = 2;
+        while (wb.SheetNames.includes(unique)) {
+          unique = `${sheetName.slice(0, 28)}_${i++}`;
+        }
+        XLSX.utils.book_append_sheet(wb, ws, unique);
+      } catch {
+        // Skip devices that fail to load
+      }
+    }
+
+    const filename = `execution_${(execution.scenario_name || 'summary').replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '_').slice(0, 50)}_${execId.slice(0, 8)}.xlsx`;
+    XLSX.writeFile(wb, filename);
+  }, [selectedExecutionDetail, selectedExecDevices, splitOutputByCommand, isZh]);
 
   // Helper mapping for execution status badge
   const getStatusMap = (status?: string) => {
@@ -335,6 +457,19 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
     a.download = `execution_summary_${selectedExecutionDetail.id}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // Toggle state for the header download menu
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [downloadingExcel, setDownloadingExcel] = useState(false);
+  const handleDownloadSummaryExcel = async () => {
+    setDownloadingExcel(true);
+    try {
+      await handleDownloadExecutionExcel();
+    } finally {
+      setDownloadingExcel(false);
+      setDownloadMenuOpen(false);
+    }
   };
 
   const handleDownloadLogStream = () => {
@@ -596,13 +731,50 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                 </div>
                 <div className="flex items-center gap-2">
                   {!isLive && selectedExecutionDetail && (
-                    <button
-                      onClick={handleDownloadSummary}
-                      title={isZh ? '下载汇总报告' : 'Download Summary'}
-                      className="p-2 rounded-xl text-[#0891b2] border border-cyan-100 bg-cyan-50/30 hover:bg-cyan-50 hover:text-[#0e7490] transition-all"
-                    >
-                      <Download size={16} />
-                    </button>
+                    <div className="relative">
+                      <button
+                        onClick={() => setDownloadMenuOpen(v => !v)}
+                        title={isZh ? '下载汇总报告' : 'Download Summary'}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-[#0891b2] border border-cyan-100 bg-cyan-50/30 hover:bg-cyan-50 hover:text-[#0e7490] transition-all text-[11px] font-semibold"
+                      >
+                        {downloadingExcel ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                        {isZh ? '下载汇总' : 'Download'}
+                        <ChevronDown size={12} />
+                      </button>
+                      <AnimatePresence>
+                        {downloadMenuOpen && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -4 }}
+                            className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl border border-black/[0.08] shadow-xl overflow-hidden z-20"
+                          >
+                            <button
+                              onClick={() => { setDownloadMenuOpen(false); handleDownloadSummary(); }}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-black/70 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+                            >
+                              <FileJson size={13} className="text-indigo-500" />
+                              <div className="text-left flex-1">
+                                <div className="font-semibold">{isZh ? 'JSON 汇总' : 'JSON Summary'}</div>
+                                <div className="text-[9px] text-black/40">{isZh ? '执行元数据' : 'Metadata only'}</div>
+                              </div>
+                            </button>
+                            <div className="border-t border-black/[0.04]" />
+                            <button
+                              onClick={() => void handleDownloadSummaryExcel()}
+                              disabled={downloadingExcel}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-black/70 hover:bg-emerald-50 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                            >
+                              {downloadingExcel ? <Loader2 size={13} className="animate-spin text-emerald-500" /> : <FileSpreadsheet size={13} className="text-emerald-500" />}
+                              <div className="text-left flex-1">
+                                <div className="font-semibold">{isZh ? 'Excel 汇总' : 'Excel Report'}</div>
+                                <div className="text-[9px] text-black/40">{isZh ? '含各设备完整输出' : 'With per-device output'}</div>
+                              </div>
+                            </button>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
                   )}
                   {isLive && wsMessages.length > 0 && (
                     <button
@@ -982,7 +1154,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                                         <Download size={11} />
                                                         <span className="text-[9px] font-mono">txt</span>
                                                       </button>
-                                                      {/* Download parsed .csv (Excel) — only when parsed data available */}
+                                                      {/* Download parsed .xlsx — only when parsed data available */}
                                                       {parseState?.data && (
                                                         <button
                                                           onClick={() => {
@@ -990,10 +1162,24 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                                             downloadExcel(parseState.data.records, parseState.data.fields, `${hostname}_${safeCmd}_parsed`);
                                                           }}
                                                           className="flex items-center gap-1 p-1 rounded border bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-all"
-                                                          title={isZh ? '下载解析结果 (CSV/Excel)' : 'Download parsed as CSV (Excel)'}
+                                                          title={isZh ? '下载解析结果 (Excel)' : 'Download parsed as Excel'}
                                                         >
-                                                          <Download size={11} />
-                                                          <span className="text-[9px] font-mono">csv</span>
+                                                          <FileSpreadsheet size={11} />
+                                                          <span className="text-[9px] font-mono">xlsx</span>
+                                                        </button>
+                                                      )}
+                                                      {/* Download parsed .json — only when parsed data available */}
+                                                      {parseState?.data && (
+                                                        <button
+                                                          onClick={() => {
+                                                            const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                                            downloadJSON(parseState.data.records, `${hostname}_${safeCmd}_parsed`);
+                                                          }}
+                                                          className="flex items-center gap-1 p-1 rounded border bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-all"
+                                                          title={isZh ? '下载解析结果 (JSON)' : 'Download parsed as JSON'}
+                                                        >
+                                                          <FileJson size={11} />
+                                                          <span className="text-[9px] font-mono">json</span>
                                                         </button>
                                                       )}
                                                     </div>
@@ -1027,17 +1213,30 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                                             <span className="text-black/25 font-normal">{parseState.data.fields.join(' · ')}</span>
                                                           </div>
                                                           {/* Excel download button inside table header */}
-                                                          <button
-                                                            onClick={() => {
-                                                              const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
-                                                              downloadExcel(parseState.data.records, parseState.data.fields, `${hostname}_${safeCmd}_parsed`);
-                                                            }}
-                                                            className="flex items-center gap-1 px-2 py-0.5 rounded border bg-emerald-50 border-emerald-200 text-emerald-700 text-[10px] font-semibold hover:bg-emerald-100 transition-all"
-                                                            title={isZh ? '导出 CSV (可用 Excel 打开)' : 'Export CSV (opens in Excel)'}
-                                                          >
-                                                            <Download size={10} />
-                                                            {isZh ? '导出 CSV' : 'Export CSV'}
-                                                          </button>
+                                                          <div className="flex items-center gap-1.5">
+                                                            <button
+                                                              onClick={() => {
+                                                                const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                                                downloadExcel(parseState.data.records, parseState.data.fields, `${hostname}_${safeCmd}_parsed`);
+                                                              }}
+                                                              className="flex items-center gap-1 px-2 py-0.5 rounded border bg-emerald-50 border-emerald-200 text-emerald-700 text-[10px] font-semibold hover:bg-emerald-100 transition-all"
+                                                              title={isZh ? '导出 Excel (.xlsx)' : 'Export as Excel (.xlsx)'}
+                                                            >
+                                                              <FileSpreadsheet size={10} />
+                                                              {isZh ? '导出 Excel' : 'Export Excel'}
+                                                            </button>
+                                                            <button
+                                                              onClick={() => {
+                                                                const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                                                downloadJSON(parseState.data.records, `${hostname}_${safeCmd}_parsed`);
+                                                              }}
+                                                              className="flex items-center gap-1 px-2 py-0.5 rounded border bg-indigo-50 border-indigo-200 text-indigo-700 text-[10px] font-semibold hover:bg-indigo-100 transition-all"
+                                                              title={isZh ? '导出 JSON (.json)' : 'Export as JSON (.json)'}
+                                                            >
+                                                              <FileJson size={10} />
+                                                              {isZh ? '导出 JSON' : 'Export JSON'}
+                                                            </button>
+                                                          </div>
                                                         </div>
                                                         <div className="overflow-auto rounded-lg border border-black/[0.06]">
                                                           <table className="w-full text-[11px] font-mono">

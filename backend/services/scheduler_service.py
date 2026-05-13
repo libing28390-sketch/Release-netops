@@ -65,25 +65,31 @@ async def run_scheduled_automation_job(job_id: str):
             if job['commands']:
                 custom_check_items = [c.strip() for c in re.split(r'[,\n]', job['commands']) if c.strip()]
             
+            # NOTE: schedule_id must be None here.
+            # scheduled_jobs.id ≠ inspection_schedules.id — passing the job_id
+            # would violate the FK constraint on inspection_runs.schedule_id.
+            # We embed the job_id in created_by for traceability instead.
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
+            inspection_result = await loop.run_in_executor(
                 None,
                 lambda: run_inspection(
-                    scope_type='ids',
+                    scope_type='devices',
                     scope_filter=','.join(device_ids),
                     trigger_type='scheduled',
-                    schedule_id=job_id,
-                    created_by='scheduler',
+                    schedule_id=None,
+                    created_by=f'scheduler:{job_id}',
                     check_items=custom_check_items
                 )
             )
             
+            run_status = 'success' if inspection_result.get('success') else 'failed'
             conn.execute(
                 "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
-                (datetime.now().isoformat(), 'success', job_id)
+                (datetime.now().isoformat(), run_status, job_id)
             )
             conn.commit()
             return
+
 
         # 2. 获取命令或脚本内容
         commands_str = job['commands'] or ""

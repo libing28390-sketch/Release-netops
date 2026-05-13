@@ -6,6 +6,10 @@ from database import get_db_connection
 
 
 DEVICE_HEALTH_RETENTION_DAYS = 30
+
+# 服务器/Linux 主机平台标识（与 inspection_service 保持一致）
+# 这些平台不具备 fan/psu/interface 等网络设备专有指标
+_SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
 DEVICE_HEALTH_SELECT = (
     'id, hostname, ip_address, platform, status, compliance, role, site, '
     'cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data'
@@ -93,6 +97,8 @@ def _build_open_alert_stats(conn, device_ids: list[str]) -> dict[str, dict[str, 
 
 def evaluate_device_health(device: dict[str, Any], alert_stats: dict[str, int] | None = None) -> dict[str, Any]:
     alert_stats = alert_stats or {}
+    platform = str(device.get('platform') or '').lower()
+    is_server = platform in _SERVER_PLATFORMS
     status = str(device.get('status') or 'unknown').lower()
     compliance = str(device.get('compliance') or 'unknown').lower()
     cpu_usage = _as_float(device.get('cpu_usage'), 0.0)
@@ -100,7 +106,7 @@ def evaluate_device_health(device: dict[str, Any], alert_stats: dict[str, int] |
     temp = _as_float(device.get('temp'), 0.0)
     fan_status = str(device.get('fan_status') or '').lower()
     psu_status = str(device.get('psu_status') or '').lower()
-    interfaces = _parse_json_list(device.get('interface_data'))
+    interfaces = _parse_json_list(device.get('interface_data')) if not is_server else []
 
     reasons: list[tuple[str, str, int]] = []
     score = 100
@@ -120,13 +126,15 @@ def evaluate_device_health(device: dict[str, Any], alert_stats: dict[str, int] |
     elif status == 'pending':
         penalize('Device is pending validation or onboarding', 'warning', 25)
 
-    if fan_status == 'fail':
-        penalize('Fan status indicates a hardware failure', 'critical', 35)
+    # Fan/PSU checks only apply to network devices (servers don't report these)
+    if not is_server:
+        if fan_status == 'fail':
+            penalize('Fan status indicates a hardware failure', 'critical', 35)
 
-    if psu_status == 'fail':
-        penalize('Power supply status indicates a failure', 'critical', 35)
-    elif psu_status == 'single':
-        penalize('Power supply lost redundancy', 'warning', 12)
+        if psu_status == 'fail':
+            penalize('Power supply status indicates a failure', 'critical', 35)
+        elif psu_status == 'single':
+            penalize('Power supply lost redundancy', 'warning', 12)
 
     if cpu_usage >= 90:
         penalize(f'CPU usage is {cpu_usage:.0f}%', 'critical', 25)
@@ -138,10 +146,12 @@ def evaluate_device_health(device: dict[str, Any], alert_stats: dict[str, int] |
     elif memory_usage >= 80:
         penalize(f'Memory usage is elevated at {memory_usage:.0f}%', 'warning', 14)
 
-    if temp >= 75:
-        penalize(f'Temperature is high at {temp:.0f}C', 'critical', 20)
-    elif temp >= 60:
-        penalize(f'Temperature is elevated at {temp:.0f}C', 'warning', 10)
+    # Temperature checks: skip for servers (usually not reported via SNMP/DB)
+    if not is_server:
+        if temp >= 75:
+            penalize(f'Temperature is high at {temp:.0f}C', 'critical', 20)
+        elif temp >= 60:
+            penalize(f'Temperature is elevated at {temp:.0f}C', 'warning', 10)
 
     down_interfaces = 0
     flapping_interfaces = 0
