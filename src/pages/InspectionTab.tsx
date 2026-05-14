@@ -64,6 +64,8 @@ interface InspectionResult {
   compliance_status: string;
   findings_json: string;
   metrics_json: string;
+  analysis_json: string;
+  raw_outputs_json: string;
   checked_at: string;
 }
 
@@ -319,23 +321,26 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
     }
   };
 
-  const handleDownloadReport = async (runId: string) => {
+  const handleDownloadReport = async (runId: string, format: 'xlsx' | 'html' = 'xlsx') => {
     try {
-      const resp = await fetch(`/api/inspections/${runId}/export`, { headers: authHeaders });
+      const resp = await fetch(`/api/inspections/${runId}/export?format=${format}`, { headers: authHeaders });
       if (!resp.ok) {
-        alert(isZh ? '报表生成失败' : 'Report generation failed');
+        alert(isZh ? `报表生成失败 (${resp.status})` : `Report generation failed (${resp.status})`);
         return;
       }
       const blob = await resp.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Inspection_Report_${runId}.xlsx`;
+      const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      a.download = `Nexora_Inspection_${runId}_${today}.${format}`;
       document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Download failed:', err);
+      alert(isZh ? '报表下载失败' : 'Report download failed');
     }
   };
 
@@ -619,13 +624,24 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                     <h3 className="text-base font-bold text-[#0b2340]">{isZh ? '巡检详情' : 'Inspection Detail'}</h3>
                     <p className="text-[11px] text-black/35 mt-0.5">{new Date(selectedRunDetail.started_at).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}</p>
                   </div>
-                  <button
-                    onClick={() => handleDownloadReport(selectedRunDetail.id)}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md active:scale-95 transition-all"
-                  >
-                    <Download className="w-4 h-4" />
-                    {isZh ? '下载分析报告 (Excel)' : 'Download Smart Report (Excel)'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleDownloadReport(selectedRunDetail.id, 'xlsx')}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md active:scale-95 transition-all"
+                      title={isZh ? '下载 Excel 报表（含 7 个 Sheet）' : 'Download Excel report (7 sheets)'}
+                    >
+                      <Download className="w-4 h-4" />
+                      Excel
+                    </button>
+                    <button
+                      onClick={() => handleDownloadReport(selectedRunDetail.id, 'html')}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-500 shadow-md active:scale-95 transition-all"
+                      title={isZh ? '下载 HTML 报表（含 ECharts 图表）' : 'Download HTML report (ECharts inline)'}
+                    >
+                      <Download className="w-4 h-4" />
+                      HTML
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

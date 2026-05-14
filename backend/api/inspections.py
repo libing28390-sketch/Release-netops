@@ -23,6 +23,14 @@ from services.inspection_service import (
     update_inspection_item,
     delete_inspection_item,
 )
+from database import get_db_connection
+import json
+import uuid
+from datetime import datetime, timezone, timedelta
+
+_BEIJING_TZ = timezone(timedelta(hours=8))
+def _beijing_now_iso() -> str:
+    return datetime.now(_BEIJING_TZ).isoformat(timespec='seconds')
 
 router = APIRouter()
 
@@ -168,6 +176,166 @@ def remove_item(
     return {'success': ok, 'message': '指标已删除' if ok else '删除失败'}
 
 
+# ─── 历史趋势 API（R5.1–R5.4, R5.8）───
+
+@router.get('/inspections/device/{device_id}/trend')
+def get_device_metric_trend(
+    device_id: str,
+    metric: str = Query(..., description='指标 check_key'),
+    days: int = Query(30, ge=1, le=90),
+    run_limit: int = Query(100, ge=1, le=500),
+    _user=require_role('Viewer'),
+):
+    """R5: 返回指定设备指定指标的历史趋势数据。"""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            '''SELECT checked_at, metrics_json FROM inspection_results
+               WHERE device_id = ?
+                 AND checked_at >= datetime('now', ?)
+               ORDER BY checked_at ASC
+               LIMIT ?''',
+            (device_id, f'-{days} days', run_limit)
+        ).fetchall()
+
+        series = []
+        for row in rows:
+            try:
+                metrics = json.loads(row['metrics_json'] or '{}')
+            except (json.JSONDecodeError, TypeError):
+                continue
+            val = metrics.get(metric)
+            # R5.8: 过滤无效点（{value: null, error: ...} 结构）
+            if val is None:
+                continue
+            if isinstance(val, dict):
+                continue  # error structure
+            try:
+                numeric_val = float(val)
+            except (TypeError, ValueError):
+                continue
+            series.append({'ts': row['checked_at'], 'value': numeric_val})
+
+        # R5.4: 判断是否首次巡检
+        first_inspection = len(rows) == 0
+
+        # 获取指标单位（从 inspection_items 表）
+        unit = ''
+        try:
+            item_row = conn.execute(
+                "SELECT name_zh FROM inspection_items WHERE check_key = ? LIMIT 1",
+                (metric,)
+            ).fetchone()
+            if item_row:
+                # 简单推断单位
+                name = item_row['name_zh'] or ''
+                if '率' in name or '利用率' in name:
+                    unit = '%'
+                elif '温度' in name:
+                    unit = '°C'
+                elif '数' in name or '计数' in name:
+                    unit = '个'
+        except Exception:
+            pass
+
+        return {
+            'device_id': device_id,
+            'metric': metric,
+            'unit': unit,
+            'first_inspection': first_inspection,
+            'series': series,
+        }
+    finally:
+        conn.close()
+
+
+# ─── 关联规则 CRUD（R4.5）─── 必须在 {run_id} 之前注册
+
+@router.get('/inspections/correlation-rules')
+def list_correlation_rules(_user=require_role('Viewer')):
+    conn = get_db_connection()
+    try:
+        rows = conn.execute('SELECT * FROM inspection_correlation_rules ORDER BY created_at DESC').fetchall()
+        return {'success': True, 'data': [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
+
+@router.post('/inspections/correlation-rules')
+def create_correlation_rule(body: dict = Body(...), _user=require_role('Operator')):
+    conn = get_db_connection()
+    try:
+        rule_id = str(uuid.uuid4())
+        now = _beijing_now_iso()
+        conn.execute(
+            '''INSERT INTO inspection_correlation_rules
+                (id, name, name_zh, description, severity, suggestion, conditions_json, enabled, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            (
+                rule_id,
+                body.get('name', ''),
+                body.get('name_zh', ''),
+                body.get('description', ''),
+                body.get('severity', 'warning'),
+                body.get('suggestion', ''),
+                json.dumps(body.get('conditions', []), ensure_ascii=False),
+                1 if body.get('enabled', True) else 0,
+                now, now,
+            )
+        )
+        conn.commit()
+        return {'success': True, 'data': {'id': rule_id}, 'message': '关联规则已创建'}
+    finally:
+        conn.close()
+
+
+@router.put('/inspections/correlation-rules/{rule_id}')
+def update_correlation_rule(rule_id: str, body: dict = Body(...), _user=require_role('Operator')):
+    conn = get_db_connection()
+    try:
+        existing = conn.execute('SELECT * FROM inspection_correlation_rules WHERE id=?', (rule_id,)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail='规则不存在')
+        allowed = {'name', 'name_zh', 'description', 'severity', 'suggestion', 'conditions', 'enabled'}
+        sets = []
+        params = []
+        for k, v in body.items():
+            if k in allowed:
+                if k == 'conditions':
+                    sets.append('conditions_json=?')
+                    params.append(json.dumps(v, ensure_ascii=False))
+                elif k == 'enabled':
+                    sets.append('enabled=?')
+                    params.append(1 if v else 0)
+                else:
+                    sets.append(f'{k}=?')
+                    params.append(v)
+        if not sets:
+            return {'success': True, 'data': dict(existing), 'message': '无变更'}
+        sets.append('updated_at=?')
+        params.append(_beijing_now_iso())
+        params.append(rule_id)
+        conn.execute(f'UPDATE inspection_correlation_rules SET {", ".join(sets)} WHERE id=?', tuple(params))
+        conn.commit()
+        updated = conn.execute('SELECT * FROM inspection_correlation_rules WHERE id=?', (rule_id,)).fetchone()
+        return {'success': True, 'data': dict(updated), 'message': '规则已更新'}
+    finally:
+        conn.close()
+
+
+@router.delete('/inspections/correlation-rules/{rule_id}')
+def delete_correlation_rule(rule_id: str, _user=require_role('Operator')):
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('DELETE FROM inspection_correlation_rules WHERE id=?', (rule_id,))
+        conn.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail='规则不存在')
+        return {'success': True, 'message': '规则已删除'}
+    finally:
+        conn.close()
+
+
 # ⚠️ {run_id} 路径参数路由放最后，避免遮蔽上方字面路由
 @router.get('/inspections/{run_id}')
 def inspection_run_detail(
@@ -182,26 +350,49 @@ def inspection_run_detail(
 @router.get('/inspections/{run_id}/export')
 def export_inspection_report(
     run_id: str,
+    format: str = Query('xlsx', pattern='^(xlsx|html)$', description='导出格式: xlsx 或 html'),
+    customer_name: str = Query('', description='客户名称（HTML 报表）'),
+    engineer_name: str = Query('', description='工程师名称（HTML 报表）'),
     _user=require_role('Viewer'),
 ):
+    """
+    R7.1: 支持 format 参数 (xlsx 默认 / html)
+    R7.7: 文件名格式 Nexora_Inspection_{run_id}_{YYYYMMDD}.{ext}
+    """
+    from core.report_generator import generate_inspection_html
+
     detail = get_inspection_run_detail(run_id)
     if not detail:
         raise HTTPException(status_code=404, detail='巡检记录不存在')
-    
-    # 准备数据
+
     results = detail.pop('results', [])
-    
-    # 创建临时文件
+    today = datetime.now().strftime('%Y%m%d')
+
+    if format == 'html':
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.html', prefix=f'inspection_{run_id}_')
+        os.close(tmp_fd)
+        try:
+            generate_inspection_html(detail, results, tmp_path, customer_name, engineer_name)
+            return FileResponse(
+                tmp_path,
+                filename=f"Nexora_Inspection_{run_id}_{today}.html",
+                media_type='text/html; charset=utf-8',
+            )
+        except Exception as e:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise HTTPException(status_code=500, detail=f"HTML 报表生成失败: {str(e)}")
+
+    # 默认 xlsx
     tmp_fd, tmp_path = tempfile.mkstemp(suffix='.xlsx', prefix=f'inspection_{run_id}_')
     os.close(tmp_fd)
-    
+
     try:
         generate_inspection_excel(detail, results, tmp_path)
         return FileResponse(
             tmp_path,
-            filename=f"Nexora_Inspection_{run_id}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            filename=f"Nexora_Inspection_{run_id}_{today}.xlsx",
             media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            background=None # FileResponse handles cleanup if we want, but simple here
         )
     except Exception as e:
         if os.path.exists(tmp_path):

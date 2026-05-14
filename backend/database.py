@@ -3,6 +3,7 @@ import re
 import queue
 import logging
 import uuid
+import json
 from datetime import datetime, timezone, timedelta
 
 _BEIJING_TZ = timezone(timedelta(hours=8))
@@ -457,6 +458,38 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
     _item('net_arista_cpu', 'Arista EOS CPU', 'Arista EOS CPU 利用率', 'Network', 'arista_eos_cpu',
           'CPU 利用率', 'show processes top once', 'arista_eos',
           80, 90, 'numeric', 'arista_eos_show_processes_top_once', 'CPU_USER')
+
+    # ── 合规检查指标（R8.1, R8.2）— category='compliance' ────────
+    # NTP 服务器配置
+    _item('compliance_cisco_ios_ntp', 'NTP Status', 'NTP 时钟同步状态', 'compliance', 'cisco_ios_ntp_status',
+          '检查 NTP 是否同步', 'show ntp status', 'cisco_ios',
+          None, None, 'status', '', 'CLOCK_STATE',
+          fallback_regex=r'Clock is (synchronized|unsynchronized)')
+    # Syslog 配置
+    _item('compliance_cisco_ios_syslog', 'Syslog Config', 'Syslog 服务器配置', 'compliance', 'cisco_ios_syslog_count',
+          '统计 logging host 配置数量，0 则告警', 'show logging', 'cisco_ios',
+          1, None, 'count', 'cisco_ios_show_logging', 'LOGGING_HOST',
+          fallback_regex=r'Logging to (\d+\.\d+\.\d+\.\d+)')
+    # AAA 认证
+    _item('compliance_cisco_ios_aaa', 'AAA Config', 'AAA 认证配置', 'compliance', 'cisco_ios_aaa_status',
+          '检查 aaa new-model 是否启用', 'show running-config | include aaa', 'cisco_ios',
+          None, None, 'status', '', 'AAA_STATUS',
+          fallback_regex=r'(aaa new-model)')
+    # Telnet 禁用
+    _item('compliance_cisco_ios_telnet', 'Telnet Disabled', 'Telnet 服务禁用状态', 'compliance', 'cisco_ios_telnet_status',
+          '检查 VTY 是否禁用 telnet', 'show line vty 0 4', 'cisco_ios',
+          None, None, 'status', '', 'TRANSPORT_INPUT',
+          fallback_regex=r'transport input\s+(\S+)')
+    # SSH 版本
+    _item('compliance_cisco_ios_ssh_ver', 'SSH Version', 'SSH 版本检查', 'compliance', 'cisco_ios_ssh_version',
+          '检查 SSH 版本是否为 2.0', 'show ip ssh', 'cisco_ios',
+          None, None, 'status', 'cisco_ios_show_ip_ssh', 'SSH_VERSION',
+          fallback_regex=r'SSH\s+.*?version\s+([\d.]+)')
+    # SNMP 社区字符串
+    _item('compliance_cisco_ios_snmp', 'SNMP Community', 'SNMP 社区字符串安全性', 'compliance', 'cisco_ios_snmp_community',
+          '检查是否使用 public/private 等不安全社区字符串', 'show snmp community', 'cisco_ios',
+          None, None, 'status', '', 'COMMUNITY_STRING',
+          fallback_regex=r'Community name:\s*(\S+)')
 
     return items
 
@@ -2026,7 +2059,12 @@ def _init_db_logic(conn):
     # Migration: add raw_outputs_json and analysis_json for advanced reporting
     for col, default in [('raw_outputs_json', "'{}'"), ('analysis_json', "'[]'")]:
         ensure_column('inspection_results', col, f"TEXT DEFAULT {default}")
-    
+
+    # Migration (R9.1): add correlated_risks_json for multi-metric correlation analysis
+    ensure_column('inspection_results', 'correlated_risks_json', "TEXT DEFAULT '[]'")
+    # Migration: add exception_type for standardized exception classification
+    ensure_column('inspection_results', 'exception_type', "TEXT DEFAULT ''")
+
     # Add analysis_summary_json to inspection_runs
     ensure_column('inspection_runs', 'analysis_summary_json', "TEXT DEFAULT '{}'")
 
@@ -2176,10 +2214,107 @@ def _init_db_logic(conn):
                        ('parse_field', "TEXT DEFAULT ''"),               # 从 TextFSM 结果中提取的字段名
                        ('parse_filter', "TEXT DEFAULT ''"),              # count/diff 类型的过滤条件 (JSON)
                        ('fallback_regex', "TEXT DEFAULT ''"),            # TextFSM 失败时的正则兜底
-                       ('enabled', 'INTEGER DEFAULT 1')]:                 # 是否启用该指标
+                       ('enabled', 'INTEGER DEFAULT 1'),                  # 是否启用该指标
+                       # Migration (R9.2): 合规检查体系
+                       ('expected_value', "TEXT DEFAULT ''")]:           # 合规检查的期望值
         ensure_column('inspection_items', col, dtype)
         
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_inspection_items_cat ON inspection_items(category)')
+
+    # ── Inspection Correlation Rules (关联分析规则) — Task 4.3, R4.4/R4.5 ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS inspection_correlation_rules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        name_zh TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        severity TEXT NOT NULL DEFAULT 'warning',
+        suggestion TEXT DEFAULT '',
+        conditions_json TEXT NOT NULL DEFAULT '[]',
+        enabled INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_correlation_rules_enabled ON inspection_correlation_rules(enabled)')
+
+    # Seed 5 built-in correlation rules (idempotent — INSERT OR IGNORE on PK)
+    correlation_rules_seed = [
+        (
+            'rule_l2_loop',
+            'l2_loop_risk', '二层环路风险',
+            'CPU 高负载 + 接口错误激增 + 接口抖动，疑似二层环路或广播风暴。',
+            'critical',
+            '立即检查 STP 状态，执行 show spanning-tree 排查环路；检查最近的拓扑变更和广播流量。',
+            json.dumps([
+                {'metric': 'cpu_util', 'op': '>', 'value': 80},
+                {'metric': 'intf_errors', 'op': '>', 'value': 100},
+                {'metric': 'intf_flapping', 'op': '>', 'value': 3},
+            ], ensure_ascii=False),
+        ),
+        (
+            'rule_mem_leak',
+            'memory_leak_risk', '内存泄漏风险',
+            '内存利用率超阈值且较上次巡检明显增长，可能存在内存泄漏。',
+            'warning',
+            '检查内存占用进程，关注关键服务的内存增长趋势，必要时计划重启。',
+            json.dumps([
+                {'metric': 'mem_util', 'op': '>', 'value': 85},
+                {'metric': 'mem_util_change_pct', 'op': '>', 'value': 10},
+            ], ensure_ascii=False),
+        ),
+        (
+            'rule_uplink_degrade',
+            'uplink_degradation', '上行链路劣化风险',
+            '上行接口利用率高且错误率上升，链路质量可能劣化。',
+            'warning',
+            '检查上行链路光衰、CRC 错误，考虑扩容或切换备份链路。',
+            json.dumps([
+                {'metric': 'uplink_util', 'op': '>', 'value': 70},
+                {'metric': 'uplink_error_rate', 'op': '>', 'value': 0.1},
+            ], ensure_ascii=False),
+        ),
+        (
+            'rule_routing_unstable',
+            'routing_protocol_unstable', '路由协议不稳定',
+            'BGP 与 OSPF 邻居同时出现 Down 状态，路由协议不稳定。',
+            'critical',
+            '检查路由协议配置和上联链路质量，确认是否存在批量邻居中断。',
+            json.dumps([
+                {'metric': 'bgp_neighbor_down', 'op': '>', 'value': 0},
+                {'metric': 'ospf_neighbor_down', 'op': '>', 'value': 0},
+            ], ensure_ascii=False),
+        ),
+        (
+            'rule_overheat',
+            'device_overheat_risk', '设备过热风险',
+            '设备温度偏高且 CPU 持续高负载，存在过热风险。',
+            'warning',
+            '检查机房空调、设备散热风扇运行状态，必要时进行物理巡检。',
+            json.dumps([
+                {'metric': 'temperature', 'op': '>', 'value': 60},
+                {'metric': 'cpu_util', 'op': '>', 'value': 70},
+            ], ensure_ascii=False),
+        ),
+    ]
+    for rule_id, name, name_zh, description, severity, suggestion, conditions_json in correlation_rules_seed:
+        if _USE_PG:
+            cursor.execute(
+                '''INSERT INTO inspection_correlation_rules
+                    (id, name, name_zh, description, severity, suggestion, conditions_json, enabled, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
+                   ON CONFLICT (id) DO NOTHING''',
+                (rule_id, name, name_zh, description, severity, suggestion, conditions_json,
+                 _beijing_now_iso(), _beijing_now_iso())
+            )
+        else:
+            cursor.execute(
+                '''INSERT OR IGNORE INTO inspection_correlation_rules
+                    (id, name, name_zh, description, severity, suggestion, conditions_json, enabled, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)''',
+                (rule_id, name, name_zh, description, severity, suggestion, conditions_json,
+                 _beijing_now_iso(), _beijing_now_iso())
+            )
 
     # Migration for inspection_results
     ensure_column('inspection_results', 'metrics_json', "TEXT DEFAULT '{}'")
@@ -2318,6 +2453,26 @@ def _init_db_logic(conn):
             cursor.execute(sqlite_net_sql, item)
 
     # ── Seed Default Admin User ──
+    # Set expected_value for compliance items (R8.3)
+    compliance_expected_values = {
+        'compliance_cisco_ios_ntp': 'synchronized',
+        'compliance_cisco_ios_aaa': 'aaa new-model',
+        'compliance_cisco_ios_telnet': 'ssh',  # transport input should be ssh, not telnet
+        'compliance_cisco_ios_ssh_ver': '2.0',
+        'compliance_cisco_ios_snmp': '',  # empty means "not public/private" — checked in code
+    }
+    for item_id, expected in compliance_expected_values.items():
+        if _USE_PG:
+            cursor.execute(
+                'UPDATE inspection_items SET expected_value = %s WHERE id = %s AND (expected_value IS NULL OR expected_value = %s)',
+                (expected, item_id, '')
+            )
+        else:
+            cursor.execute(
+                'UPDATE inspection_items SET expected_value = ? WHERE id = ? AND (expected_value IS NULL OR expected_value = ?)',
+                (expected, item_id, '')
+            )
+
     admin_exists = cursor.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone()
     if not admin_exists:
         import bcrypt

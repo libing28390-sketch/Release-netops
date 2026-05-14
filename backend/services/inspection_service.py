@@ -29,7 +29,8 @@ from services.device_health_service import (
     _build_open_alert_stats,
 )
 from core.textfsm import parse_with_textfsm
-from core.analysis import analyze_device_inspection, summarize_run_analysis
+from core.analysis import analyze_device_inspection, summarize_run_analysis, correlate_risk_patterns
+from core.exception_classifier import make_finding
 
 
 logger = logging.getLogger(__name__)
@@ -177,6 +178,8 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str]) -> dict[str, s
     """
     一次 SSH 连接执行多条命令，返回 {command: output} 字典。
     命令失败单条用 '__ERROR__: xxx' 标记，整体连接失败抛异常。
+
+    特殊键：'__ENABLE_FAILED__' — 当 enable 提权失败时记录原始错误（R2.8）。
     """
     from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
     from drivers.ssh_compat import build_netmiko_compatibility_kwargs
@@ -245,6 +248,8 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str]) -> dict[str, s
                         try:
                             conn.enable()
                         except Exception as en_err:
+                            # R2.8: Enable 提权失败 — 记录到特殊键，由调用方转换为 finding
+                            results['__ENABLE_FAILED__'] = str(en_err)
                             logger.warning(
                                 f"[Inspection] Enable mode failed for {device.get('hostname') or device.get('ip_address')}: {en_err}. "
                                 f"Continuing with user exec mode — some show commands may be denied. "
@@ -257,8 +262,8 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str]) -> dict[str, s
                     logger.debug(f"[Inspection] find_prompt failed, trying blind enable(): {prompt_err}")
                     try:
                         conn.enable()
-                    except Exception:
-                        pass
+                    except Exception as en_err:
+                        results['__ENABLE_FAILED__'] = str(en_err)
 
             for cmd in commands:
                 try:
@@ -331,6 +336,10 @@ def _extract_item_value(item: dict, raw_outputs: dict[str, str]) -> tuple[Any, s
     根据指标定义从原始输出中提取值。
     返回 (value, error_msg)：成功时 error_msg 为空串。
 
+    错误消息使用标准化文案，对应 R2.9–R2.16：
+      - 命令级异常（R2.9–R2.12）：% Invalid input、% Authorization failed、--More--、__ERROR__
+      - 解析级异常（R2.13–R2.16）：模板不存在、解析为空、字段缺失、数值转换失败
+
     parse_type 含义：
       numeric — 返回第一条记录的 parse_field 字段（转 float）
       status  — 返回第一条记录的 parse_field 字段（字符串）
@@ -356,17 +365,38 @@ def _extract_item_value(item: dict, raw_outputs: dict[str, str]) -> tuple[Any, s
                 break
     if raw is None:
         return None, f"未采集到命令输出: {command}"
-    if str(raw).startswith("__ERROR__"):
-        return None, str(raw)
 
-    # 2. TextFSM 解析
+    raw_str = str(raw)
+
+    # ── 命令级异常检测（R2.9–R2.12）─────────────────────────────
+    # R2.11: __ERROR__ 前缀（命令执行失败）
+    if raw_str.startswith("__ERROR__"):
+        # 提取 __ERROR__ 后的原始错误信息
+        err_detail = raw_str[len("__ERROR__:"):].strip() if raw_str.startswith("__ERROR__:") else raw_str[len("__ERROR__"):].strip()
+        return None, f"命令执行失败: {err_detail}"
+
+    # R2.9: % Invalid input detected
+    if "% Invalid input detected" in raw_str:
+        return None, "命令不存在或设备不支持该命令"
+
+    # R2.10: % Authorization failed
+    if "% Authorization failed" in raw_str:
+        return None, "命令执行权限不足，请检查账号授权级别"
+
+    # R2.12: --More-- 残留（说明分页符未清除）
+    if "--More--" in raw_str:
+        return None, "命令输出分页符未清除，请检查终端分页配置"
+
+    # ── 2. TextFSM 解析（R2.13/R2.14）──────────────────────────
     records: list[dict] = []
-    if textfsm_template:
-        # textfsm_template 可能是模板名（如 huawei_vrp_display_cpu_usage），拆出 platform + command
-        # 由于模板查找规则是 {platform}_{command}.textfsm，这里直接用 platform + command 查找
+    template_found = True
+    parse_state_error: str = ''
+    if textfsm_template or platform_vendor:
         try:
             records = parse_with_textfsm(platform_vendor or 'cisco_ios', command, raw) or []
         except Exception as e:
+            # TextFSM State Error 或其他解析异常
+            parse_state_error = str(e)
             logger.debug(f"TextFSM parse error for {textfsm_template}: {e}")
 
     # 3. 失败时用 fallback_regex 兜底（仅 numeric/status 类型）
@@ -378,11 +408,26 @@ def _extract_item_value(item: dict, raw_outputs: dict[str, str]) -> tuple[Any, s
                 try:
                     return float(val), ''
                 except Exception:
-                    return None, f"fallback_regex 提取值无法转为数字: {val}"
+                    # R2.16: 数值转换失败
+                    return None, f"字段值 '{val}' 无法转换为数字"
             return val, ''
 
     if not records:
-        return None, "TextFSM 解析为空，且无 fallback_regex 命中"
+        # 区分模板不存在 vs 解析结果为空
+        if parse_state_error:
+            # R2.13 派生：解析过程出错
+            return None, f"TextFSM 解析异常: {parse_state_error}"
+        # 检测是否模板缺失（fallback 也失败）
+        try:
+            from core.textfsm import _find_template
+            tpl = _find_template(platform_vendor or 'cisco_ios', command)
+            if tpl is None:
+                # R2.13: 模板不存在
+                return None, f"未找到 {platform_vendor or 'cisco_ios'}/{command} 的解析模板"
+        except Exception:
+            pass
+        # R2.14: 模板存在但解析结果为空
+        return None, "TextFSM 解析结果为空，输出格式可能与模板不匹配"
 
     # 4. 按 parse_filter 过滤
     if parse_filter:
@@ -394,18 +439,24 @@ def _extract_item_value(item: dict, raw_outputs: dict[str, str]) -> tuple[Any, s
 
     if parse_type in ('numeric', 'diff'):
         if not records:
-            return None, "过滤后记录为空"
+            return None, "TextFSM 解析结果为空，输出格式可能与模板不匹配"
         first = records[0]
+        # R2.15: 字段缺失
+        if parse_field and parse_field not in first:
+            return None, f"解析字段 {parse_field} 在结果中不存在"
         raw_val = first.get(parse_field) if parse_field else None
         if raw_val is None or raw_val == '':
-            return None, f"字段 {parse_field} 为空"
+            return None, f"解析字段 {parse_field} 在结果中不存在"
         try:
             return float(str(raw_val).strip().rstrip('%')), ''
         except Exception:
-            return None, f"字段 {parse_field} 值无法转为数字: {raw_val}"
+            # R2.16: 数值转换失败
+            return None, f"字段值 '{raw_val}' 无法转换为数字"
 
     # status / info
     if records and parse_field:
+        if parse_field not in records[0]:
+            return None, f"解析字段 {parse_field} 在结果中不存在"
         return records[0].get(parse_field), ''
     return str(records[0]) if records else None, ''
 
@@ -505,7 +556,11 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
     result['ping_latency_ms'] = ping_result.get('latency_ms')
 
     if not result['ping_ok']:
-        findings.append({'severity': 'critical', 'message': '设备 ICMP 不可达'})
+        # R2.3: ICMP 不可达
+        findings.append(make_finding(
+            'connectivity_error',
+            '设备 ICMP 不可达，请检查设备电源及网络路径',
+        ))
         result['health_status'] = 'critical'
         result['health_score'] = 0
         result['findings_json'] = json.dumps(findings, ensure_ascii=False)
@@ -517,7 +572,12 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
     if not ssh_check.get('success'):
         result['ssh_ok'] = 0
         result['ssh_error'] = ssh_check.get('error', '')
-        findings.append({'severity': 'critical', 'message': f'SSH 端口 {mgmt_port} 不通: {ssh_check.get("error", "")}'})
+        # R2.4: SSH 端口不通
+        findings.append(make_finding(
+            'connectivity_error',
+            f'SSH 端口 {mgmt_port} 不通，请检查防火墙策略或 SSH 服务状态',
+            raw_error=ssh_check.get('error', ''),
+        ))
         result['health_status'] = 'critical'
         result['health_score'] = 20
         result['findings_json'] = json.dumps(findings, ensure_ascii=False)
@@ -536,12 +596,52 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         result['ssh_ok'] = 1
     except Exception as e:
         result['ssh_ok'] = 0
-        result['ssh_error'] = str(e)
-        findings.append({'severity': 'critical', 'message': f'SSH 采集失败: {e}'})
+        err_str = str(e)
+        result['ssh_error'] = err_str
+        # R2.5/R2.6/R2.7: SSH 认证失败 / 连接超时 / 会话中断
+        # 根据原始错误内容路由到对应的标准化消息
+        err_lower = err_str.lower()
+        if 'authentication' in err_lower or '认证失败' in err_str:
+            findings.append(make_finding(
+                'auth_error',
+                'SSH 认证失败，请核查账号密码或密钥配置',
+                raw_error=err_str,
+            ))
+        elif 'timeout' in err_lower or 'timed out' in err_lower or '连接超时' in err_str:
+            findings.append(make_finding(
+                'connectivity_error',
+                'SSH 连接超时，设备响应缓慢或网络延迟过高',
+                raw_error=err_str,
+            ))
+        elif 'reset' in err_lower or 'disconnected' in err_lower or '中断' in err_str:
+            findings.append(make_finding(
+                'connectivity_error',
+                'SSH 会话意外中断，设备可能已重启或连接被重置',
+                raw_error=err_str,
+                severity='warning',
+            ))
+        else:
+            findings.append(make_finding(
+                'connectivity_error',
+                f'SSH 采集失败: {err_str}',
+                raw_error=err_str,
+            ))
         result['health_status'] = 'critical'
         result['health_score'] = 30
         result['findings_json'] = json.dumps(findings, ensure_ascii=False)
         return result
+
+    # R2.8: Enable 提权失败 — 记录 warning finding，但继续执行
+    enable_err = raw_outputs.pop('__ENABLE_FAILED__', None)
+    if enable_err:
+        findings.append(make_finding(
+            'auth_error',
+            'Enable 提权失败，部分 show 命令可能被拒绝，请检查 enable secret 或 AAA 配置',
+            raw_error=str(enable_err),
+            severity='warning',
+        ))
+        if result['health_status'] == 'healthy':
+            result['health_status'] = 'warning'
 
     # 5. 对每个指标进行解析和判定
     health_deduct = 0
@@ -555,8 +655,13 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         value, err = _extract_item_value(item, raw_outputs)
 
         if err and value is None:
+            # 命令级 / 解析级异常：写入 metrics_json 的 error 子字段（R2.9–R2.16）
             metrics[check_key] = {'value': None, 'error': err}
-            findings.append({'severity': 'warning', 'message': f"{name_zh} 数据采集/解析失败: {err}"})
+            findings.append(make_finding(
+                'parse_error' if 'TextFSM' in err or '解析' in err or '模板' in err or '字段' in err else 'command_error',
+                f"{name_zh} 数据采集/解析失败: {err}",
+                raw_error=err,
+            ))
             health_deduct += 10
             if result['health_status'] == 'healthy':
                 result['health_status'] = 'warning'
@@ -567,12 +672,20 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         # 阈值判定
         if parse_type in ('numeric', 'count') and isinstance(value, (int, float)):
             if crit_threshold is not None and value >= float(crit_threshold):
-                findings.append({'severity': 'critical', 'message': f"{name_zh} 严重超标: {value} (阈值 {crit_threshold})"})
+                findings.append(make_finding(
+                    'data_error',
+                    f"{name_zh} 严重超标: {value} (阈值 {crit_threshold})",
+                    severity='critical',
+                ))
                 health_deduct += 25
                 if result['health_status'] != 'critical':
                     result['health_status'] = 'critical'
             elif warn_threshold is not None and value >= float(warn_threshold):
-                findings.append({'severity': 'warning', 'message': f"{name_zh} 达到告警线: {value} (阈值 {warn_threshold})"})
+                findings.append(make_finding(
+                    'data_error',
+                    f"{name_zh} 达到告警线: {value} (阈值 {warn_threshold})",
+                    severity='warning',
+                ))
                 health_deduct += 14
                 if result['health_status'] == 'healthy':
                     result['health_status'] = 'warning'
@@ -584,27 +697,95 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                 metrics[f"{check_key}_last"] = last_val
                 metrics[f"{check_key}_change_pct"] = round(change_pct, 2)
                 if crit_threshold is not None and change_pct >= float(crit_threshold):
-                    findings.append({
-                        'severity': 'critical',
-                        'message': f"{name_zh} 变化异常: 上次 {last_val} → 本次 {value}（变化 {change_pct:.1f}%，阈值 {crit_threshold}%）",
-                    })
+                    findings.append(make_finding(
+                        'data_error',
+                        f"{name_zh} 变化异常: 上次 {last_val} → 本次 {value}（变化 {change_pct:.1f}%，阈值 {crit_threshold}%）",
+                        severity='critical',
+                    ))
                     health_deduct += 20
                     if result['health_status'] != 'critical':
                         result['health_status'] = 'critical'
                 elif warn_threshold is not None and change_pct >= float(warn_threshold):
-                    findings.append({
-                        'severity': 'warning',
-                        'message': f"{name_zh} 变化提醒: 上次 {last_val} → 本次 {value}（变化 {change_pct:.1f}%）",
-                    })
+                    findings.append(make_finding(
+                        'data_error',
+                        f"{name_zh} 变化提醒: 上次 {last_val} → 本次 {value}（变化 {change_pct:.1f}%）",
+                        severity='warning',
+                    ))
                     health_deduct += 10
                     if result['health_status'] == 'healthy':
                         result['health_status'] = 'warning'
 
+        # R8.3: 合规判定 — parse_type='status' 且 expected_value 非空时对比
+        elif parse_type == 'status' and item.get('expected_value') and value is not None:
+            expected = item.get('expected_value', '')
+            category = (item.get('category') or '').lower()
+            if category == 'compliance':
+                # 合规检查：对比实际值与期望值
+                actual_str = str(value).strip().lower()
+                expected_str = expected.strip().lower()
+                if expected_str and expected_str not in actual_str:
+                    findings.append(make_finding(
+                        'data_error',
+                        f"{name_zh} 合规检查不通过: 期望 '{expected}'，实际 '{value}'",
+                        severity='warning',
+                    ))
+                    health_deduct += 5
+                    if result['health_status'] == 'healthy':
+                        result['health_status'] = 'warning'
+
+    # 5b. 计算合规状态（R8.5）
+    compliance_items = [it for it in inspection_items if (it.get('category') or '').lower() == 'compliance']
+    if compliance_items:
+        compliance_pass = 0
+        compliance_total = len(compliance_items)
+        for ci in compliance_items:
+            ck = ci.get('check_key', '')
+            val = metrics.get(ck)
+            if val is None or isinstance(val, dict):
+                continue  # 采集失败不计入
+            expected = ci.get('expected_value', '')
+            if not expected:
+                compliance_pass += 1  # 无期望值的视为通过
+            elif expected.lower() in str(val).lower():
+                compliance_pass += 1
+        if compliance_total > 0:
+            if compliance_pass == compliance_total:
+                result['compliance_status'] = 'compliant'
+            elif compliance_pass == 0:
+                result['compliance_status'] = 'non_compliant'
+            else:
+                result['compliance_status'] = 'partial'
+
     # 6. 汇总健康评分
     result['health_score'] = max(0, 100 - health_deduct)
     result['metrics_json'] = json.dumps(metrics, ensure_ascii=False)
+
+    # R10.3: raw_outputs_json 大小限制 — 超过 10MB 时截断最长的命令输出
+    _RAW_OUTPUTS_MAX_BYTES = 10 * 1024 * 1024  # 10MB
+    raw_outputs_json = json.dumps(raw_outputs, ensure_ascii=False)
+    if len(raw_outputs_json.encode('utf-8')) > _RAW_OUTPUTS_MAX_BYTES:
+        # 按命令输出长度降序，逐个截断直到总大小 < 10MB
+        truncated_count = 0
+        while len(json.dumps(raw_outputs, ensure_ascii=False).encode('utf-8')) > _RAW_OUTPUTS_MAX_BYTES:
+            # 找到最长的命令输出
+            longest_cmd = max(raw_outputs.keys(), key=lambda k: len(str(raw_outputs.get(k, ''))))
+            current_len = len(str(raw_outputs[longest_cmd]))
+            # 截断到当前长度的一半，并保留 [TRUNCATED] 标记
+            new_len = max(1024, current_len // 2)
+            raw_outputs[longest_cmd] = str(raw_outputs[longest_cmd])[:new_len] + "\n... [TRUNCATED: 输出过大] ..."
+            truncated_count += 1
+            if truncated_count > 50:
+                break  # safety guard
+        # 追加 info finding
+        findings.append(make_finding(
+            'data_error',
+            '原始输出超过 10MB，已截断',
+            severity='info',
+        ))
+        raw_outputs_json = json.dumps(raw_outputs, ensure_ascii=False)
+
     result['findings_json'] = json.dumps(findings, ensure_ascii=False)
-    result['raw_outputs_json'] = json.dumps(raw_outputs, ensure_ascii=False)
+    result['raw_outputs_json'] = raw_outputs_json
 
     # 7. 智能分析
     try:
@@ -616,8 +797,27 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         logger.warning(f"Analysis failed for {hostname}: {ae}")
         result['analysis_json'] = '[]'
 
-    # 映射常用字段以保证 Dashboard 兼容
-    result['raw_outputs_json'] = json.dumps(raw_outputs, ensure_ascii=False)
+    # 7b. 关联分析 — R4.2/R4.3: 多指标关联风险检测
+    correlated_risks = []
+    try:
+        conn_rules = get_db_connection()
+        try:
+            rule_rows = conn_rules.execute(
+                'SELECT * FROM inspection_correlation_rules WHERE enabled = 1'
+            ).fetchall()
+            rules_list = [dict(r) for r in rule_rows]
+        finally:
+            conn_rules.close()
+
+        if rules_list:
+            last_metrics_raw = last_metrics_raw if 'last_metrics_raw' in dir() else _get_last_metrics_dict(device_id)
+            correlated_risks = correlate_risk_patterns(metrics, rules_list, last_metrics_raw)
+    except Exception as ce:
+        # R4.7: 关联分析失败不影响其他结果
+        logger.warning(f"Correlation analysis failed for {hostname}: {ce}")
+        correlated_risks = []
+
+    result['correlated_risks_json'] = json.dumps(correlated_risks, ensure_ascii=False)
 
     # 映射常用字段以保证 Dashboard 兼容
     for key_pair in (('cpu_util', 'cpu_usage'), ('mem_util', 'memory_usage'), ('memory', 'memory_usage')):
@@ -727,17 +927,30 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                 c = item.get('critical_threshold')
 
                 if c is not None and val >= c:
-                    findings.append({'severity': 'critical', 'message': f"{item['name_zh']} 严重超标: {val} (阈值 {c})"})
+                    findings.append(make_finding(
+                        'data_error',
+                        f"{item['name_zh']} 严重超标: {val} (阈值 {c})",
+                        severity='critical',
+                    ))
                     result['health_status'] = 'critical'
                 elif w is not None and val >= w:
-                    findings.append({'severity': 'warning', 'message': f"{item['name_zh']} 达到告警线: {val} (阈值 {w})"})
+                    findings.append(make_finding(
+                        'data_error',
+                        f"{item['name_zh']} 达到告警线: {val} (阈值 {w})",
+                        severity='warning',
+                    ))
                     if result['health_status'] != 'critical':
                         result['health_status'] = 'warning'
             else:
-                metrics_results[item['check_key']] = "Fetch Failed"
+                metrics_results[item['check_key']] = {'value': None, 'error': '采集失败或无法提取数值'}
 
     except Exception as e:
-        findings.append({'severity': 'critical', 'message': f"精细化巡检引擎异常: {str(e)}"})
+        findings.append(make_finding(
+            'system_error',
+            f"精细化巡检引擎异常: {str(e)}",
+            raw_error=str(e),
+            severity='critical',
+        ))
     finally:
         conn.close()
 
@@ -802,13 +1015,38 @@ def run_inspection(
                 ): d
                 for d in devices
             }
+            # R10.1: 设备级超时保护 — 每个 future 最多等待 _SSH_COMMAND_TIMEOUT + 10 秒
+            device_timeout = _SSH_COMMAND_TIMEOUT + 10
             for future in as_completed(futures):
+                device = futures[future]
                 try:
-                    result = future.result()
+                    result = future.result(timeout=device_timeout)
                     result['run_id'] = run_id
                     results.append(result)
+                except TimeoutError as te:
+                    # R10.1: 设备采集超时
+                    logger.error(f"Inspection timeout for {device.get('hostname')}: {te}")
+                    future.cancel()
+                    results.append({
+                        'id': str(uuid.uuid4()),
+                        'run_id': run_id,
+                        'device_id': str(device.get('id') or ''),
+                        'hostname': device.get('hostname') or '',
+                        'ip_address': device.get('ip_address') or '',
+                        'platform': device.get('platform') or '',
+                        'health_status': 'critical',
+                        'health_score': 0,
+                        'findings_json': json.dumps([make_finding(
+                            'system_error',
+                            '设备采集超时，已跳过',
+                            raw_error=str(te),
+                            severity='warning',
+                        )], ensure_ascii=False),
+                        'checked_at': _beijing_now_iso(),
+                        'ping_ok': 0, 'ssh_ok': 0, 'metrics_json': '{}',
+                        'analysis_json': '[]', 'raw_outputs_json': '{}',
+                    })
                 except Exception as exc:
-                    device = futures[future]
                     logger.error(f"Inspection failed for {device.get('hostname')}: {exc}")
                     results.append({
                         'id': str(uuid.uuid4()),
@@ -818,14 +1056,18 @@ def run_inspection(
                         'ip_address': device.get('ip_address') or '',
                         'platform': device.get('platform') or '',
                         'health_status': 'critical',
-                        'findings_json': json.dumps([{'severity': 'critical', 'message': f'巡检异常: {exc}'}], ensure_ascii=False),
+                        'findings_json': json.dumps([make_finding(
+                            'system_error',
+                            f'巡检异常: {exc}',
+                            raw_error=str(exc),
+                            severity='critical',
+                        )], ensure_ascii=False),
                         'checked_at': _beijing_now_iso(),
                         'ping_ok': 0, 'ssh_ok': 0, 'metrics_json': '{}'
                     })
 
-        # 4) 存储结果 (增加 metrics_json 存储)
-        conn.executemany(
-            '''INSERT INTO inspection_results
+        # 4) 存储结果 — R10.2: 逐条写入，单台失败不影响其他设备
+        insert_sql = '''INSERT INTO inspection_results
                 (id, run_id, device_id, hostname, ip_address, platform, role, site,
                  ping_ok, ping_latency_ms, ssh_ok, ssh_error,
                  health_score, health_status,
@@ -833,24 +1075,33 @@ def run_inspection(
                  interface_total, interface_up, interface_down, interface_flapping,
                  interface_high_util, interface_errors,
                  open_alerts, critical_alerts,
-                 compliance_status, compliance_findings, findings_json, metrics_json, 
+                 compliance_status, compliance_findings, findings_json, metrics_json,
                  raw_outputs_json, analysis_json, checked_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            [(
-                r.get('id'), r.get('run_id'), r.get('device_id'), r.get('hostname'), r.get('ip_address'),
-                r.get('platform'), r.get('role', ''), r.get('site', ''),
-                r.get('ping_ok', 0), r.get('ping_latency_ms'), r.get('ssh_ok', 0), r.get('ssh_error', ''),
-                r.get('health_score', 100), r.get('health_status', 'unknown'),
-                r.get('cpu_usage'), r.get('memory_usage'), r.get('temperature'),
-                r.get('fan_status', ''), r.get('psu_status', ''),
-                r.get('interface_total', 0), r.get('interface_up', 0), r.get('interface_down', 0),
-                r.get('interface_flapping', 0), r.get('interface_high_util', 0), r.get('interface_errors', 0),
-                r.get('open_alerts', 0), r.get('critical_alerts', 0),
-                r.get('compliance_status', 'unknown'), r.get('compliance_findings', 0),
-                r.get('findings_json', '[]'), r.get('metrics_json', '{}'),
-                r.get('raw_outputs_json', '{}'), r.get('analysis_json', '[]'), r.get('checked_at'),
-            ) for r in results],
-        )
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'''
+        write_failed_count = 0
+        for r in results:
+            try:
+                conn.execute(insert_sql, (
+                    r.get('id'), r.get('run_id'), r.get('device_id'), r.get('hostname'), r.get('ip_address'),
+                    r.get('platform'), r.get('role', ''), r.get('site', ''),
+                    r.get('ping_ok', 0), r.get('ping_latency_ms'), r.get('ssh_ok', 0), r.get('ssh_error', ''),
+                    r.get('health_score', 100), r.get('health_status', 'unknown'),
+                    r.get('cpu_usage'), r.get('memory_usage'), r.get('temperature'),
+                    r.get('fan_status', ''), r.get('psu_status', ''),
+                    r.get('interface_total', 0), r.get('interface_up', 0), r.get('interface_down', 0),
+                    r.get('interface_flapping', 0), r.get('interface_high_util', 0), r.get('interface_errors', 0),
+                    r.get('open_alerts', 0), r.get('critical_alerts', 0),
+                    r.get('compliance_status', 'unknown'), r.get('compliance_findings', 0),
+                    r.get('findings_json', '[]'), r.get('metrics_json', '{}'),
+                    r.get('raw_outputs_json', '{}'), r.get('analysis_json', '[]'), r.get('checked_at'),
+                ))
+            except Exception as write_err:
+                # R10.2: 跳过该设备，记录日志，不回滚整次任务
+                write_failed_count += 1
+                logger.error(
+                    f"[Inspection] DB write failed for device {r.get('hostname')} "
+                    f"({r.get('device_id')}): {write_err}"
+                )
         # 5) 汇总统计
         success_count = sum(1 for r in results if r['ping_ok'] or r['ssh_ok'])
         failed_count = sum(1 for r in results if not r['ping_ok'] and not r['ssh_ok'] and r['health_status'] == 'critical')
@@ -861,9 +1112,13 @@ def run_inspection(
         scores = [r['health_score'] for r in results if r['health_score'] is not None]
         avg_score = round(sum(scores) / len(scores), 1) if scores else 0
 
-        # 汇总全网分析结论
-        run_analysis_sum = summarize_run_analysis(results)
-        analysis_sum_json = json.dumps(run_analysis_sum, ensure_ascii=False)
+        # 汇总全网分析结论 — R10.5: 失败时设为 '{}'
+        try:
+            run_analysis_sum = summarize_run_analysis(results)
+            analysis_sum_json = json.dumps(run_analysis_sum, ensure_ascii=False)
+        except Exception as sum_err:
+            logger.error(f"[Inspection] Failed to summarize analysis for run {run_id}: {sum_err}")
+            analysis_sum_json = '{}'
 
         completed_at = _beijing_now_iso()
         conn.execute(

@@ -7,6 +7,7 @@ import {
   FileSpreadsheet, FileJson, Loader2, Table2, Copy, Check
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer } from 'recharts';
 import Pagination from '../components/Pagination';
 import OutputActions from '../components/OutputActions';
 import DateTimePicker from '../components/DateTimePicker';
@@ -119,6 +120,12 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   // TextFSM parse state for inspection command blocks
   const [inspParseResults, setInspParseResults] = useState<Record<string, { loading: boolean; data: any; error: string }>>({});
   const [inspCopiedKey, setInspCopiedKey] = useState<string | null>(null);
+  // Inspection device detail tab (R3.1: 原始输出 / 指标快照 / 指标分析 / 合规检查)
+  type InspDetailTab = 'raw' | 'snapshot' | 'analysis' | 'compliance';
+  const [inspDetailTab, setInspDetailTab] = useState<InspDetailTab>('analysis');
+  // Trend chart state for analysis tab (R5.5–R5.7)
+  const [trendData, setTrendData] = useState<{ deviceId: string; metric: string; series: any[]; firstInspection?: boolean } | null>(null);
+  const [trendLoading, setTrendLoading] = useState(false);
   
   const [inspectionDetail, setInspectionDetail] = useState<any>(null);
   const [pbDetail, setPbDetail] = useState<any>(null);
@@ -418,6 +425,29 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
     setInspCopiedKey(key);
     setTimeout(() => setInspCopiedKey(null), 2000);
   }, []);
+
+  /** R5.6: Fetch metric trend for a device */
+  const fetchTrend = useCallback(async (deviceId: string, metric: string) => {
+    setTrendLoading(true);
+    try {
+      const resp = await fetch(`/api/inspections/device/${deviceId}/trend?metric=${encodeURIComponent(metric)}&days=30`, { headers: authHeaders });
+      if (resp.ok) {
+        const j = await resp.json();
+        setTrendData({
+          deviceId,
+          metric,
+          series: j.series || [],
+          firstInspection: j.first_inspection,
+        });
+      } else {
+        setTrendData({ deviceId, metric, series: [] });
+      }
+    } catch {
+      setTrendData({ deviceId, metric, series: [] });
+    } finally {
+      setTrendLoading(false);
+    }
+  }, [authHeaders]);
 
   const handleSelectPbDevice = async (device_id: string) => {
     setSelectedPbDevice(device_id);
@@ -1206,39 +1236,72 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                   <Eye size={12} />
                                   {zh ? '查看' : 'View'}
                                 </button>
-                                <button
-                                  onClick={async () => {
-                                    if (log.source === 'inspection') {
-                                      // Smart Excel Report Export
+                                {log.source === 'inspection' ? (
+                                  <>
+                                    {/* R7.1: Excel export */}
+                                    <button
+                                      onClick={async () => {
+                                        try {
+                                          const resp = await fetch(`/api/inspections/${log.id}/export?format=xlsx`, { headers: authHeaders });
+                                          if (resp.ok) {
+                                            const blob = await resp.blob();
+                                            const url = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                                            a.download = `Nexora_Inspection_${log.id}_${today}.xlsx`;
+                                            a.click();
+                                            URL.revokeObjectURL(url);
+                                          } else {
+                                            showToast(zh ? `Excel 导出失败 (${resp.status})` : `Excel export failed (${resp.status})`, 'error');
+                                          }
+                                        } catch (err) {
+                                          console.error('Export Excel failed:', err);
+                                          showToast(zh ? 'Excel 导出失败' : 'Excel export failed', 'error');
+                                        }
+                                      }}
+                                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-emerald-600 border border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50 transition-all active:scale-95"
+                                      title={zh ? '导出 Excel 报表' : 'Export Excel report'}
+                                    >
+                                      <FileSpreadsheet size={12} />
+                                      Excel
+                                    </button>
+                                    {/* R7.1/R7.7: HTML export */}
+                                    <button
+                                      onClick={async () => {
+                                        try {
+                                          const resp = await fetch(`/api/inspections/${log.id}/export?format=html`, { headers: authHeaders });
+                                          if (resp.ok) {
+                                            const blob = await resp.blob();
+                                            const url = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                                            a.download = `Nexora_Inspection_${log.id}_${today}.html`;
+                                            a.click();
+                                            URL.revokeObjectURL(url);
+                                          } else {
+                                            showToast(zh ? `HTML 导出失败 (${resp.status})` : `HTML export failed (${resp.status})`, 'error');
+                                          }
+                                        } catch (err) {
+                                          console.error('Export HTML failed:', err);
+                                          showToast(zh ? 'HTML 导出失败' : 'HTML export failed', 'error');
+                                        }
+                                      }}
+                                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-indigo-600 border border-indigo-200 bg-indigo-50/40 hover:bg-indigo-50 transition-all active:scale-95"
+                                      title={zh ? '导出 HTML 报表（含 ECharts 图表）' : 'Export HTML report (with ECharts)'}
+                                    >
+                                      <FileText size={12} />
+                                      HTML
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    onClick={async () => {
+                                      // Playbook JSON download (original behavior)
+                                      let dlData = null;
+                                      let fn = `execution_${log.id}.json`;
                                       try {
-                                        const resp = await fetch(`/api/inspections/${log.id}/export`, { headers: authHeaders });
-                                        if (resp.ok) {
-                                          const blob = await resp.blob();
-                                          const url = URL.createObjectURL(blob);
-                                          const a = document.createElement('a');
-                                          a.href = url;
-                                          a.download = `Smart_Inspection_Report_${log.id}.xlsx`;
-                                          a.click();
-                                          URL.revokeObjectURL(url);
-                                          return;
-                                        }
-                                      } catch (err) {
-                                        console.error('Failed to export Excel:', err);
-                                      }
-                                    }
-
-                                    // Fallback to JSON download (original behavior)
-                                    let dlData = null;
-                                    let fn = `execution_${log.id}.json`;
-                                    try {
-                                      if (log.source === 'inspection') {
-                                        const r = await fetch(`/api/inspections/${log.id}`, { headers: authHeaders });
-                                        if (r.ok) {
-                                          const j = await r.json();
-                                          dlData = j.data;
-                                          fn = `inspection_report_${log.id}.json`;
-                                        }
-                                      } else {
                                         const r1 = await fetch(`/api/playbooks/${log.id}`, { headers: authHeaders });
                                         const r2 = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=100`, { headers: authHeaders });
                                         if (r1.ok && r2.ok) {
@@ -1247,23 +1310,23 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                           dlData = { summary: j1, devices: Array.isArray(j2) ? j2 : (j2.items || []) };
                                           fn = `playbook_execution_${log.id}.json`;
                                         }
-                                      }
-                                      if (dlData) {
-                                        const blob = new Blob([JSON.stringify(dlData, null, 2)], { type: 'application/json' });
-                                        const url = URL.createObjectURL(blob);
-                                        const a = document.createElement('a');
-                                        a.href = url;
-                                        a.download = fn;
-                                        a.click();
-                                        URL.revokeObjectURL(url);
-                                      }
-                                    } catch (err) { console.error(err); }
-                                  }}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-all active:scale-95"
-                                >
-                                  {log.source === 'inspection' ? <FileText size={12} /> : <Download size={12} />}
-                                  {log.source === 'inspection' ? (zh ? '导出报表' : 'Export Report') : (zh ? '下载' : 'Download')}
-                                </button>
+                                        if (dlData) {
+                                          const blob = new Blob([JSON.stringify(dlData, null, 2)], { type: 'application/json' });
+                                          const url = URL.createObjectURL(blob);
+                                          const a = document.createElement('a');
+                                          a.href = url;
+                                          a.download = fn;
+                                          a.click();
+                                          URL.revokeObjectURL(url);
+                                        }
+                                      } catch (err) { console.error(err); }
+                                    }}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-all active:scale-95"
+                                  >
+                                    <Download size={12} />
+                                    {zh ? '下载' : 'Download'}
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -1327,27 +1390,62 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
             </div>
             <div className="flex items-center gap-2">
               {selectedLog.source === 'inspection' && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const resp = await fetch(`/api/inspections/${selectedLog.id}/export`, { headers: authHeaders });
-                      if (resp.ok) {
-                        const blob = await resp.blob();
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `Smart_Inspection_Report_${selectedLog.id}.xlsx`;
-                        a.click();
-                        URL.revokeObjectURL(url);
+                <>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const resp = await fetch(`/api/inspections/${selectedLog.id}/export?format=xlsx`, { headers: authHeaders });
+                        if (resp.ok) {
+                          const blob = await resp.blob();
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                          a.download = `Nexora_Inspection_${selectedLog.id}_${today}.xlsx`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        } else {
+                          showToast(zh ? `Excel 导出失败 (${resp.status})` : `Excel export failed (${resp.status})`, 'error');
+                        }
+                      } catch (err) {
+                        console.error(err);
+                        showToast(zh ? 'Excel 导出失败' : 'Excel export failed', 'error');
                       }
-                    } catch (err) { console.error(err); }
-                  }}
-                  title={zh ? '导出 Smart Excel 报表' : 'Export Smart Excel Report'}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-cyan-700 border border-cyan-100 bg-cyan-50/50 hover:bg-cyan-50 transition-all active:scale-95"
-                >
-                  <FileText size={14} />
-                  {zh ? '智能报表' : 'Smart Report'}
-                </button>
+                    }}
+                    title={zh ? '导出 Excel 报表（含 7 个 Sheet）' : 'Export Excel report (7 sheets)'}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-700 border border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50 transition-all active:scale-95"
+                  >
+                    <FileSpreadsheet size={14} />
+                    Excel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const resp = await fetch(`/api/inspections/${selectedLog.id}/export?format=html`, { headers: authHeaders });
+                        if (resp.ok) {
+                          const blob = await resp.blob();
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                          a.download = `Nexora_Inspection_${selectedLog.id}_${today}.html`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        } else {
+                          showToast(zh ? `HTML 导出失败 (${resp.status})` : `HTML export failed (${resp.status})`, 'error');
+                        }
+                      } catch (err) {
+                        console.error(err);
+                        showToast(zh ? 'HTML 导出失败' : 'HTML export failed', 'error');
+                      }
+                    }}
+                    title={zh ? '导出 HTML 报表（含 ECharts 图表，可直接发邮件）' : 'Export HTML report (ECharts inline)'}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-700 border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-50 transition-all active:scale-95"
+                  >
+                    <FileText size={14} />
+                    HTML
+                  </button>
+                </>
               )}
               <button
                 onClick={() => setIsDetailModalOpen(false)}
@@ -1430,6 +1528,16 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                     let findings: any[] = [];
                     try { findings = typeof res.findings_json === 'string' ? JSON.parse(res.findings_json) : (res.findings_json || []); } catch(e) {}
 
+                    // R3: parse metrics_json and correlated_risks_json
+                    let metricsObj: Record<string, any> = {};
+                    try { metricsObj = typeof res.metrics_json === 'string' ? JSON.parse(res.metrics_json) : (res.metrics_json || {}); } catch(e) {}
+
+                    let correlatedRisks: any[] = [];
+                    try { correlatedRisks = typeof res.correlated_risks_json === 'string' ? JSON.parse(res.correlated_risks_json) : (res.correlated_risks_json || []); } catch(e) {}
+
+                    // R3.8: 合规项（来自 analysis 中 category=compliance）
+                    const complianceItems = analysis.filter((a: any) => (a.category === 'compliance') || (a.key && String(a.key).includes('compliance')));
+
                     return (
                       <>
                         <div className="p-4 border-b border-white/10 bg-black/20 flex items-center justify-between">
@@ -1454,6 +1562,215 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                         </div>
 
                         <div className="flex-1 overflow-auto custom-scrollbar-dark p-6 space-y-8 select-text">
+                          {/* R3.1: Tab bar */}
+                          <div className="flex items-center gap-1 border-b border-white/10 -mt-2 -mx-2 px-2">
+                            {([
+                              { key: 'analysis', label: zh ? '指标分析' : 'Analysis' },
+                              { key: 'snapshot', label: zh ? '指标快照' : 'Snapshot' },
+                              { key: 'compliance', label: zh ? '合规检查' : 'Compliance' },
+                              { key: 'raw', label: zh ? '原始输出' : 'Raw Output' },
+                            ] as { key: InspDetailTab; label: string }[]).map(t => (
+                              <button
+                                key={t.key}
+                                onClick={() => { setInspDetailTab(t.key); setTrendData(null); }}
+                                className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                                  inspDetailTab === t.key ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-white/40 hover:text-white/70'
+                                }`}
+                              >
+                                {t.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* TAB: 指标分析 (R3.2-R3.4, R3.9) */}
+                          {inspDetailTab === 'analysis' && (
+                            <div className="space-y-4">
+                              {/* R3.9: Correlated risks card at top */}
+                              {correlatedRisks.length > 0 && (
+                                <div className="space-y-2">
+                                  <h4 className="text-[11px] font-bold text-red-400 uppercase tracking-widest flex items-center gap-2">
+                                    <AlertTriangle size={12} />
+                                    {zh ? '关联风险预警' : 'Correlated Risk Alerts'}
+                                  </h4>
+                                  {correlatedRisks.map((risk, i) => (
+                                    <div key={i} className={`p-3 rounded-lg border ${
+                                      risk.severity === 'critical' ? 'bg-red-500/10 border-red-500/30' : 'bg-amber-500/10 border-amber-500/30'
+                                    }`}>
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="flex-1">
+                                          <div className="text-xs font-bold text-white/90 mb-1">⚠️ {risk.rule_name}</div>
+                                          <div className="text-[11px] text-white/60 leading-relaxed">{risk.description}</div>
+                                          {risk.suggestion && <div className="text-[11px] text-cyan-400/70 mt-1.5">💡 {risk.suggestion}</div>}
+                                        </div>
+                                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                                          risk.severity === 'critical' ? 'bg-red-500/30 text-red-300' : 'bg-amber-500/30 text-amber-300'
+                                        }`}>{risk.severity?.toUpperCase()}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Trend chart (R5.6) */}
+                              {trendData && (
+                                <div className="rounded-lg border border-cyan-500/20 bg-black/30 p-4">
+                                  <div className="flex items-center justify-between mb-3">
+                                    <span className="text-[11px] font-bold text-cyan-400">
+                                      {zh ? '趋势：' : 'Trend: '}{trendData.metric}
+                                    </span>
+                                    <button
+                                      onClick={() => setTrendData(null)}
+                                      className="text-[10px] text-white/30 hover:text-white/60"
+                                    >✕</button>
+                                  </div>
+                                  {trendLoading ? (
+                                    <div className="text-center py-6 text-white/30 text-xs">{zh ? '加载中...' : 'Loading...'}</div>
+                                  ) : trendData.series.length > 0 ? (
+                                    <ResponsiveContainer width="100%" height={200}>
+                                      <LineChart data={trendData.series}>
+                                        <CartesianGrid stroke="#334155" strokeDasharray="3 3" />
+                                        <XAxis dataKey="ts" stroke="#64748b" fontSize={10} tickFormatter={(v) => String(v).slice(5, 16)} />
+                                        <YAxis stroke="#64748b" fontSize={10} />
+                                        <RTooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }} />
+                                        <Line type="monotone" dataKey="value" stroke="#00bceb" strokeWidth={2} dot={false} />
+                                      </LineChart>
+                                    </ResponsiveContainer>
+                                  ) : (
+                                    <div className="text-center py-6 text-white/30 text-xs italic">
+                                      {zh ? '暂无历史数据，首次巡检后将自动记录' : 'No history yet — data appears after future runs'}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* R3.2: Analysis table */}
+                              {analysis.length > 0 ? (
+                                <table className="w-full text-[11px]">
+                                  <thead>
+                                    <tr className="text-white/50 border-b border-white/10">
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '指标' : 'Metric'}</th>
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '当前值' : 'Value'}</th>
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '状态' : 'Status'}</th>
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '诊断结论' : 'Conclusion'}</th>
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '建议' : 'Suggestion'}</th>
+                                      <th className="text-right py-2 px-2 font-bold uppercase tracking-wider">{zh ? '操作' : 'Actions'}</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {analysis.map((a, i) => {
+                                      const rowBg = a.status === 'critical' ? 'bg-red-500/10' : a.status === 'warning' ? 'bg-amber-500/10' : '';
+                                      const isNumeric = typeof a.value === 'number';
+                                      return (
+                                        <tr key={i} className={`${rowBg} border-b border-white/5`}>
+                                          <td className="py-2 px-2 text-white/90 font-bold">{a.metric}</td>
+                                          <td className="py-2 px-2 text-white/70 font-mono">{String(a.value ?? '—')}</td>
+                                          <td className="py-2 px-2">
+                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                              a.status === 'critical' ? 'bg-red-500/30 text-red-300' : a.status === 'warning' ? 'bg-amber-500/30 text-amber-300' : 'bg-emerald-500/30 text-emerald-300'
+                                            }`}>{a.status?.toUpperCase()}</span>
+                                          </td>
+                                          <td className="py-2 px-2 text-white/50">{a.conclusion}</td>
+                                          <td className="py-2 px-2 text-white/50">{a.suggestion}</td>
+                                          <td className="py-2 px-2 text-right">
+                                            {isNumeric && a.key && (
+                                              <button
+                                                onClick={() => fetchTrend(res.device_id, a.key)}
+                                                className="text-[9px] font-bold text-cyan-400 hover:text-cyan-300 px-2 py-1 rounded border border-cyan-500/30 hover:bg-cyan-500/10"
+                                              >
+                                                {zh ? '趋势' : 'Trend'}
+                                              </button>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <div className="text-white/30 text-center py-6 text-xs italic">{zh ? '暂无分析结果' : 'No analysis available'}</div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* TAB: 指标快照 (R3.5-R3.7) */}
+                          {inspDetailTab === 'snapshot' && (
+                            <div className="space-y-2">
+                              {Object.keys(metricsObj).length === 0 ? (
+                                <div className="text-white/30 text-center py-6 text-xs italic">{zh ? '暂无指标数据' : 'No metrics'}</div>
+                              ) : (
+                                <table className="w-full text-[11px]">
+                                  <thead>
+                                    <tr className="text-white/50 border-b border-white/10">
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '指标键' : 'Metric Key'}</th>
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '值 / 错误' : 'Value / Error'}</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {Object.entries(metricsObj).map(([key, val]) => {
+                                      const isError = val && typeof val === 'object' && 'error' in (val as any);
+                                      return (
+                                        <tr key={key} className="border-b border-white/5">
+                                          <td className={`py-2 px-2 font-mono ${isError ? 'text-red-400' : 'text-white/80'}`}>{key}</td>
+                                          <td className="py-2 px-2">
+                                            {isError ? (
+                                              <span className="text-red-400 text-[10px]">⚠ {(val as any).error}</span>
+                                            ) : (
+                                              <span className="text-white/70 font-mono">{String(val)}</span>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          )}
+
+                          {/* TAB: 合规检查 (R3.8) */}
+                          {inspDetailTab === 'compliance' && (
+                            <div className="space-y-2">
+                              {complianceItems.length === 0 ? (
+                                <div className="text-white/30 text-center py-6 text-xs italic">
+                                  {zh ? '暂无合规检查项' : 'No compliance checks defined'}
+                                </div>
+                              ) : (
+                                <table className="w-full text-[11px]">
+                                  <thead>
+                                    <tr className="text-white/50 border-b border-white/10">
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '合规项' : 'Item'}</th>
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '当前值' : 'Value'}</th>
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '状态' : 'Status'}</th>
+                                      <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '说明' : 'Description'}</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {complianceItems.map((c, i) => {
+                                      const passing = c.status === 'healthy';
+                                      return (
+                                        <tr key={i} className="border-b border-white/5">
+                                          <td className="py-2 px-2 text-white/90 font-bold">{c.metric}</td>
+                                          <td className="py-2 px-2 text-white/70 font-mono">{String(c.value ?? '—')}</td>
+                                          <td className="py-2 px-2">
+                                            {passing ? (
+                                              <span className="inline-flex items-center gap-1 text-emerald-400 text-[10px] font-bold">✓ {zh ? '通过' : 'Pass'}</span>
+                                            ) : (
+                                              <span className="inline-flex items-center gap-1 text-red-400 text-[10px] font-bold">✗ {zh ? '失败' : 'Fail'}</span>
+                                            )}
+                                          </td>
+                                          <td className="py-2 px-2 text-white/50">{c.conclusion}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          )}
+
+                          {/* TAB: 原始输出 (existing) */}
+                          {inspDetailTab === 'raw' && (
+                          <>
                           {/* 1. Findings Section */}
                           {findings.length > 0 && (
                             <div className="space-y-3">
@@ -1647,6 +1964,8 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                               )}
                             </div>
                           </div>
+                          </>
+                          )}
                         </div>
                       </>
                     );

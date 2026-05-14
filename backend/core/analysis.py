@@ -78,7 +78,7 @@ def summarize_run_analysis(device_results: List[Dict[str, Any]]) -> Dict[str, An
     common_issues = {}
     
     for res in device_results:
-        analysis = res.get('analysis') or []
+        analysis = json.loads(res.get('analysis_json') or '[]')
         for item in analysis:
             if item['status'] != 'healthy':
                 total_anomalies += 1
@@ -105,3 +105,126 @@ def summarize_run_analysis(device_results: List[Dict[str, Any]]) -> Dict[str, An
     }
     
     return summary
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Correlation Rule Engine (Task 5.2, R4.1–R4.3)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def correlate_risk_patterns(
+    metrics: Dict[str, Any],
+    rules: List[Dict[str, Any]],
+    historical_metrics: Dict[str, Any] = None,
+) -> List[Dict[str, Any]]:
+    """
+    对单台设备的 metrics 执行所有关联规则匹配。
+
+    Args:
+        metrics: 设备当前指标字典 {check_key: value}
+        rules: 关联规则列表（从数据库加载），每条含 conditions_json, name_zh, severity, suggestion 等
+        historical_metrics: 可选的上一次巡检指标（用于 change_pct 类条件）
+
+    Returns:
+        触发的关联风险列表：
+        [{rule_name, description, severity, suggestion, triggered_metrics}]
+    """
+    if not rules or not metrics:
+        return []
+
+    triggered: List[Dict[str, Any]] = []
+
+    for rule in rules:
+        # 跳过禁用规则
+        if not rule.get('enabled', 1):
+            continue
+
+        conditions_raw = rule.get('conditions_json', '[]')
+        if isinstance(conditions_raw, str):
+            try:
+                conditions = json.loads(conditions_raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        else:
+            conditions = conditions_raw
+
+        if not conditions:
+            continue
+
+        # 检查所有条件是否满足
+        all_satisfied = True
+        triggered_metrics: Dict[str, Any] = {}
+
+        for cond in conditions:
+            metric_key = cond.get('metric', '')
+            op = cond.get('op', '>')
+            threshold = cond.get('value')
+
+            if threshold is None:
+                all_satisfied = False
+                break
+
+            # 获取指标值
+            actual_value = metrics.get(metric_key)
+
+            # 如果指标值是 error 结构 {value: None, error: ...}，视为不满足
+            if isinstance(actual_value, dict):
+                all_satisfied = False
+                break
+
+            if actual_value is None:
+                all_satisfied = False
+                break
+
+            # 尝试数值比较
+            try:
+                actual_num = float(actual_value)
+                threshold_num = float(threshold)
+            except (TypeError, ValueError):
+                # 非数值比较（== / !=）
+                if op == '==':
+                    if str(actual_value) != str(threshold):
+                        all_satisfied = False
+                        break
+                elif op == '!=':
+                    if str(actual_value) == str(threshold):
+                        all_satisfied = False
+                        break
+                else:
+                    all_satisfied = False
+                    break
+                triggered_metrics[metric_key] = actual_value
+                continue
+
+            # 数值比较
+            satisfied = False
+            if op == '>':
+                satisfied = actual_num > threshold_num
+            elif op == '>=':
+                satisfied = actual_num >= threshold_num
+            elif op == '<':
+                satisfied = actual_num < threshold_num
+            elif op == '<=':
+                satisfied = actual_num <= threshold_num
+            elif op == '==':
+                satisfied = actual_num == threshold_num
+            elif op == '!=':
+                satisfied = actual_num != threshold_num
+            else:
+                satisfied = False
+
+            if not satisfied:
+                all_satisfied = False
+                break
+
+            triggered_metrics[metric_key] = actual_value
+
+        if all_satisfied:
+            triggered.append({
+                'rule_name': rule.get('name_zh') or rule.get('name', ''),
+                'description': rule.get('description', ''),
+                'severity': rule.get('severity', 'warning'),
+                'suggestion': rule.get('suggestion', ''),
+                'triggered_metrics': triggered_metrics,
+            })
+
+    return triggered
