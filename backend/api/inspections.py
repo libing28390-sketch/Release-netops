@@ -1,6 +1,6 @@
 """API routes for device inspection (巡检管理)."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
 from fastapi.responses import FileResponse
 import os
 import tempfile
@@ -209,3 +209,50 @@ def export_inspection_report(
         raise HTTPException(status_code=500, detail=f"报表生成失败: {str(e)}")
 
 from datetime import datetime # Ensure datetime is available
+
+
+@router.post('/inspections/parse-output')
+def parse_inspection_output(
+    payload: dict = Body(...),
+    _user=require_role('Viewer'),
+):
+    """
+    通用 TextFSM 解析端点（不依赖 execution_id / device_id）。
+    请求体：{ "platform": "cisco_ios", "command": "show version", "output": "..." }
+    供巡检详情页的每个命令块调用，返回结构化解析结果。
+    """
+    from core.textfsm import parse_with_textfsm, _find_template
+
+    platform = (payload.get('platform') or '').strip()
+    command = (payload.get('command') or '').strip()
+    raw_output = (payload.get('output') or '').strip()
+
+    if not platform or not command:
+        return {'success': False, 'message': '需要提供 platform 和 command 参数', 'data': None}
+
+    if not raw_output:
+        return {'success': False, 'message': '没有可解析的输出内容', 'data': None}
+
+    template_path = _find_template(platform, command)
+    if not template_path:
+        return {
+            'success': False,
+            'message': f'未找到 {platform} / {command} 的解析模板',
+            'data': None,
+            'has_template': False,
+        }
+
+    records = parse_with_textfsm(platform, command, raw_output)
+    if not records:
+        return {
+            'success': True,
+            'message': '模板匹配为空，请检查输出格式是否与模板一致',
+            'data': {'records': [], 'count': 0, 'fields': []},
+        }
+
+    fields = list(records[0].keys()) if records else []
+    return {
+        'success': True,
+        'message': f'解析成功，共 {len(records)} 条记录',
+        'data': {'records': records, 'count': len(records), 'fields': fields},
+    }

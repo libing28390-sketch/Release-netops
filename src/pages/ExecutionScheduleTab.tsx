@@ -3,8 +3,10 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, Clock, Plus, X, Trash2, Activity, RotateCcw,
   Play, Shield, CheckCircle2, CalendarRange, AlertTriangle,
-  Eye, Download, Search, FileText, ChevronRight
+  Eye, Download, Search, FileText, ChevronRight,
+  FileSpreadsheet, FileJson, Loader2, Table2, Copy, Check
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import Pagination from '../components/Pagination';
 import OutputActions from '../components/OutputActions';
 import DateTimePicker from '../components/DateTimePicker';
@@ -114,6 +116,9 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   const [logDetailLoading, setLogDetailLoading] = useState(false);
   const [selectedInspDeviceId, setSelectedInspDeviceId] = useState<string | null>(null);
   const [collapsedCmds, setCollapsedCmds] = useState<Record<string, boolean>>({});
+  // TextFSM parse state for inspection command blocks
+  const [inspParseResults, setInspParseResults] = useState<Record<string, { loading: boolean; data: any; error: string }>>({});
+  const [inspCopiedKey, setInspCopiedKey] = useState<string | null>(null);
   
   const [inspectionDetail, setInspectionDetail] = useState<any>(null);
   const [pbDetail, setPbDetail] = useState<any>(null);
@@ -342,6 +347,77 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
     cmds.forEach(c => next[c] = true);
     setCollapsedCmds(next);
   };
+
+  /** Parse a single inspection command output via TextFSM */
+  const handleParseInspCmd = useCallback(async (
+    blockKey: string,
+    platform: string,
+    command: string,
+    rawOutput: string,
+  ) => {
+    setInspParseResults(prev => ({ ...prev, [blockKey]: { loading: true, data: null, error: '' } }));
+    try {
+      const res = await fetch('/api/inspections/parse-output', {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform, command, output: rawOutput }),
+      });
+      const json = await res.json();
+      if (json.success && json.data?.count > 0) {
+        setInspParseResults(prev => ({ ...prev, [blockKey]: { loading: false, data: json.data, error: '' } }));
+      } else if (json.has_template === false) {
+        setInspParseResults(prev => ({ ...prev, [blockKey]: { loading: false, data: null, error: zh ? `未找到 ${platform} / ${command} 的解析模板` : `No template for ${platform} / ${command}` } }));
+      } else {
+        setInspParseResults(prev => ({ ...prev, [blockKey]: { loading: false, data: null, error: json.message || (zh ? '解析无结果' : 'No parse results') } }));
+      }
+    } catch {
+      setInspParseResults(prev => ({ ...prev, [blockKey]: { loading: false, data: null, error: zh ? '解析请求失败' : 'Parse request failed' } }));
+    }
+  }, [authHeaders, zh]);
+
+  /** Export parsed records to .xlsx */
+  const downloadInspExcel = useCallback((records: Record<string, any>[], fields: string[], filename: string) => {
+    if (!records?.length) return;
+    const data = records.map(r => {
+      const row: Record<string, any> = {};
+      for (const f of fields) row[f] = r[f] ?? '';
+      return row;
+    });
+    const ws = XLSX.utils.json_to_sheet(data, { header: fields });
+    ws['!cols'] = fields.map(f => {
+      const maxLen = Math.max(f.length, ...data.map(r => String(r[f] ?? '').length));
+      return { wch: Math.min(Math.max(maxLen + 2, 10), 60) };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Parsed');
+    XLSX.writeFile(wb, filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`);
+  }, []);
+
+  /** Export parsed records as JSON */
+  const downloadInspJSON = useCallback((records: Record<string, any>[], filename: string) => {
+    if (!records?.length) return;
+    const blob = new Blob([JSON.stringify(records, null, 2)], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename.endsWith('.json') ? filename : `${filename}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  /** Copy text to clipboard with brief feedback */
+  const copyInspText = useCallback((text: string, key: string) => {
+    navigator.clipboard.writeText(text).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    });
+    setInspCopiedKey(key);
+    setTimeout(() => setInspCopiedKey(null), 2000);
+  }, []);
 
   const handleSelectPbDevice = async (device_id: string) => {
     setSelectedPbDevice(device_id);
@@ -1306,7 +1382,11 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                       return (
                         <div
                           key={res.id}
-                          onClick={() => setSelectedInspDeviceId(res.device_id)}
+                          onClick={() => {
+                            setSelectedInspDeviceId(res.device_id);
+                            setCollapsedCmds({});
+                            setInspParseResults({});
+                          }}
                           className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
                             isSelected 
                               ? 'bg-[#164e63] text-white border-transparent shadow-md' 
@@ -1451,20 +1531,101 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                   const outputStr = String(output);
                                   const isError = outputStr.startsWith('__ERROR__') || outputStr.includes('% Invalid input') || outputStr.includes('error');
                                   const isCollapsed = collapsedCmds[cmd] ?? (!isError && Object.keys(rawOutputs).length > 3);
-                                  
+                                  const blockKey = `${res.device_id}::${cmd}`;
+                                  const parseState = inspParseResults[blockKey];
+                                  const isCopied = inspCopiedKey === blockKey;
+
                                   return (
                                     <div key={i} className={`rounded-lg overflow-hidden border transition-all ${
                                       isError ? 'border-red-500/30 bg-red-500/5' : 'border-white/5 bg-black/20'
                                     }`}>
-                                      <div 
+                                      <div
                                         onClick={() => toggleCmdCollapse(cmd)}
                                         className="px-4 py-2 bg-white/5 flex items-center justify-between cursor-pointer hover:bg-white/[0.08]"
                                       >
-                                        <div className="flex items-center gap-3">
-                                          <ChevronRight size={14} className={`text-white/20 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
-                                          <span className={`text-[11px] font-mono font-bold ${isError ? 'text-red-400' : 'text-cyan-400/80'}`}>&gt; {cmd}</span>
-                                          {!isCollapsed && <OutputActions text={outputStr} filename={`${res.hostname}_${cmd.replace(/\s+/g, '_')}`} theme="dark" zh={zh} />}
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <ChevronRight size={14} className={`text-white/20 transition-transform shrink-0 ${isCollapsed ? '' : 'rotate-90'}`} />
+                                          <span className={`text-[11px] font-mono font-bold truncate ${isError ? 'text-red-400' : 'text-cyan-400/80'}`}>&gt; {cmd}</span>
                                         </div>
+                                        {/* Action toolbar — shown when expanded */}
+                                        {!isCollapsed && (
+                                          <div className="flex items-center gap-1 shrink-0 ml-3" onClick={e => e.stopPropagation()}>
+                                            {/* Copy */}
+                                            <button
+                                              onClick={() => copyInspText(outputStr, blockKey)}
+                                              className={`flex items-center gap-1 p-1 rounded border transition-all text-[9px] font-mono ${isCopied ? 'bg-emerald-900/40 border-emerald-500/40 text-emerald-400' : 'bg-white/5 border-white/10 text-white/30 hover:text-white/60 hover:border-white/20'}`}
+                                              title={zh ? '复制' : 'Copy'}
+                                            >
+                                              {isCopied ? <Check size={11} /> : <Copy size={11} />}
+                                            </button>
+                                            {/* Download TXT */}
+                                            <button
+                                              onClick={() => {
+                                                const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                                const blob = new Blob([outputStr], { type: 'text/plain' });
+                                                const url = URL.createObjectURL(blob);
+                                                const a = document.createElement('a');
+                                                a.href = url; a.download = `${res.hostname}_${safeCmd}.txt`; a.click();
+                                                URL.revokeObjectURL(url);
+                                              }}
+                                              className="flex items-center gap-1 p-1 rounded border bg-white/5 border-white/10 text-white/30 hover:text-cyan-400 hover:border-cyan-500/40 transition-all"
+                                              title={zh ? '下载原始文本 (.txt)' : 'Download raw .txt'}
+                                            >
+                                              <Download size={11} />
+                                              <span className="text-[9px] font-mono">txt</span>
+                                            </button>
+                                            {/* Parse / Parsed toggle */}
+                                            <button
+                                              onClick={() => {
+                                                if (!parseState || (!parseState.data && !parseState.loading)) {
+                                                  void handleParseInspCmd(blockKey, res.platform || 'cisco_ios', cmd, outputStr);
+                                                }
+                                              }}
+                                              disabled={parseState?.loading}
+                                              className={`flex items-center gap-1 px-2 py-1 rounded border text-[9px] font-mono transition-all ${
+                                                parseState?.data
+                                                  ? 'bg-cyan-900/40 border-cyan-500/40 text-cyan-300'
+                                                  : parseState?.error
+                                                  ? 'bg-amber-900/20 border-amber-500/30 text-amber-400/60'
+                                                  : 'bg-white/5 border-white/10 text-white/30 hover:text-cyan-400 hover:border-cyan-500/40'
+                                              }`}
+                                              title={parseState?.error || (zh ? '用 TextFSM 解析' : 'Parse with TextFSM')}
+                                            >
+                                              {parseState?.loading
+                                                ? <Loader2 size={11} className="animate-spin" />
+                                                : <Table2 size={11} />}
+                                              <span>{parseState?.data ? (zh ? '已解析' : 'Parsed') : (zh ? '解析' : 'Parse')}</span>
+                                            </button>
+                                            {/* Download Excel — only when parsed */}
+                                            {parseState?.data?.count > 0 && (
+                                              <button
+                                                onClick={() => {
+                                                  const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                                  downloadInspExcel(parseState.data.records, parseState.data.fields, `${res.hostname}_${safeCmd}_parsed`);
+                                                }}
+                                                className="flex items-center gap-1 p-1 rounded border bg-emerald-900/30 border-emerald-500/40 text-emerald-400 hover:bg-emerald-900/50 transition-all"
+                                                title={zh ? '下载解析结果 (Excel)' : 'Download parsed as Excel'}
+                                              >
+                                                <FileSpreadsheet size={11} />
+                                                <span className="text-[9px] font-mono">xlsx</span>
+                                              </button>
+                                            )}
+                                            {/* Download JSON — only when parsed */}
+                                            {parseState?.data?.count > 0 && (
+                                              <button
+                                                onClick={() => {
+                                                  const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
+                                                  downloadInspJSON(parseState.data.records, `${res.hostname}_${safeCmd}_parsed`);
+                                                }}
+                                                className="flex items-center gap-1 p-1 rounded border bg-indigo-900/30 border-indigo-500/40 text-indigo-400 hover:bg-indigo-900/50 transition-all"
+                                                title={zh ? '下载解析结果 (JSON)' : 'Download parsed as JSON'}
+                                              >
+                                                <FileJson size={11} />
+                                                <span className="text-[9px] font-mono">json</span>
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
                                         {isCollapsed && (
                                           <span className="text-[10px] text-white/20 font-mono italic truncate max-w-[300px]">
                                             {outputStr.substring(0, 60).replace(/\n/g, ' ')}...
