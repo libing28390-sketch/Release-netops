@@ -123,6 +123,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   // Inspection device detail tab (R3.1: 原始输出 / 指标快照 / 指标分析 / 合规检查)
   type InspDetailTab = 'raw' | 'snapshot' | 'analysis' | 'compliance';
   const [inspDetailTab, setInspDetailTab] = useState<InspDetailTab>('analysis');
+  const [inspParseViewMode, setInspParseViewMode] = useState<Record<string, 'raw' | 'parsed'>>({});
   // Trend chart state for analysis tab (R5.5–R5.7)
   const [trendData, setTrendData] = useState<{ deviceId: string; metric: string; series: any[]; firstInspection?: boolean } | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
@@ -363,6 +364,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
     rawOutput: string,
   ) => {
     setInspParseResults(prev => ({ ...prev, [blockKey]: { loading: true, data: null, error: '' } }));
+    setInspParseViewMode(prev => ({ ...prev, [blockKey]: 'parsed' }));
     try {
       const res = await fetch('/api/inspections/parse-output', {
         method: 'POST',
@@ -411,6 +413,246 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
     a.click();
     URL.revokeObjectURL(url);
   }, []);
+
+  /** Split raw output string by command markers (# show ...) */
+  const splitOutputByCommand = useCallback((output: string, commands: string[]): Array<{ command: string; output: string }> => {
+    if (!output && commands.length === 0) return [];
+
+    const markerRe = /^#[ \t]+(?:[^:\n]+:[ \t]+)?(.+)$/m;
+    const hasMarkers = markerRe.test(output);
+
+    if (hasMarkers) {
+      const blocks: Array<{ command: string; output: string }> = [];
+      const lines = output.split('\n');
+      let currentCmd = '';
+      let currentLines: string[] = [];
+
+      for (const line of lines) {
+        const m = line.match(/^#[ \t]+(?:[^:\n]+:[ \t]+)?(.+)$/);
+        if (m) {
+          if (currentCmd || currentLines.some(l => l.trim())) {
+            blocks.push({ command: currentCmd, output: currentLines.join('\n').trim() });
+          }
+          currentCmd = m[1].trim();
+          currentLines = [];
+        } else {
+          currentLines.push(line);
+        }
+      }
+      if (currentCmd || currentLines.some(l => l.trim())) {
+        blocks.push({ command: currentCmd, output: currentLines.join('\n').trim() });
+      }
+      const valid = blocks.filter(b => b.command || b.output);
+      if (valid.length > 0) return valid;
+    }
+
+    if (commands.length > 0) {
+      return commands.map(cmd => ({ command: cmd, output: output.trim() }));
+    }
+
+    return output.trim() ? [{ command: '', output: output.trim() }] : [];
+  }, []);
+
+  /** Export a Playbook execution result to Excel (multi-sheet) */
+  const handleDownloadPlaybookExcel = useCallback(async (log: any) => {
+    const wb = XLSX.utils.book_new();
+    const allFindings: any[] = [];
+    const deviceScores: Record<string, { score: number; status: string; topFinding: string }> = {};
+    
+    // 1. Fetch devices list first
+    let deviceList: any[] = [];
+    try {
+      const resp = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=500`, { headers: authHeaders });
+      if (resp.ok) {
+        const data = await resp.json();
+        deviceList = Array.isArray(data) ? data : (data.items || []);
+      }
+    } catch (err) {
+      console.error('Fetch devices failed:', err);
+    }
+
+    // 2. Process devices and perform Risk Analysis
+    const exportLimit = 30; // Limit detailed analysis to first 30 devices to balance depth and speed
+    const processedDevicesData: any[] = [];
+
+    for (const dev of deviceList.slice(0, exportLimit)) {
+      try {
+        const dResp = await fetch(`/api/playbooks/${log.id}/devices/${dev.device_id}`, { headers: authHeaders });
+        if (!dResp.ok) continue;
+        const detail = await dResp.json();
+        
+        let phases: Record<string, any> = {};
+        try { phases = JSON.parse(detail.phases_json || '{}'); } catch { phases = {}; }
+        
+        const devFindings: any[] = [];
+        const rows: any[] = [];
+        
+        for (const [phaseName, pdata] of Object.entries(phases)) {
+          const pd: any = pdata || {};
+          const cmds: string[] = pd.commands || [];
+          const outputStr: string = typeof pd.output === 'string' ? pd.output : JSON.stringify(pd.output || '');
+          const blocks = splitOutputByCommand(outputStr, cmds);
+          
+          for (const blk of blocks) {
+            rows.push({
+              [zh ? '阶段' : 'Phase']: phaseName,
+              [zh ? '命令' : 'Command']: blk.command || '-',
+              [zh ? '输出' : 'Output']: blk.output || '',
+            });
+
+            // --- INTELLIGENT RISK ANALYSIS ---
+            if (blk.command && blk.output && blk.output.length > 10) {
+              try {
+                // Try to parse via TextFSM to extract metrics
+                const pResp = await fetch('/api/inspections/parse-output', {
+                  method: 'POST',
+                  headers: { ...authHeaders, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ platform: detail.platform || 'cisco_ios', command: blk.command, output: blk.output }),
+                });
+                const pJson = await pResp.json();
+                if (pJson.success && pJson.data?.records) {
+                  const records = pJson.data.records;
+                  records.forEach((rec: any) => {
+                    // CPU Rules
+                    const cpu = parseFloat(rec.cpu_5min || rec.cpu_usage || rec.cpu_load || '0');
+                    if (cpu > 80) devFindings.push({ level: 'Critical', item: zh ? 'CPU 利用率' : 'CPU Usage', val: `${cpu}%`, limit: '< 80%', advice: zh ? '检查高负载进程' : 'Check high load processes' });
+                    else if (cpu > 60) devFindings.push({ level: 'Warning', item: zh ? 'CPU 利用率' : 'CPU Usage', val: `${cpu}%`, limit: '< 60%', advice: zh ? '观察负载趋势' : 'Monitor load trend' });
+                    
+                    // Memory Rules
+                    const mem = parseFloat(rec.mem_used_percent || rec.used_percent || '0');
+                    if (mem > 90) devFindings.push({ level: 'Critical', item: zh ? '内存占用' : 'Mem Usage', val: `${mem}%`, limit: '< 90%', advice: zh ? '检查内存泄露风险' : 'Check memory leak risk' });
+                    
+                    // BGP/OSPF Protocol Rules
+                    if (rec.state) {
+                      const s = String(rec.state);
+                      if (s.toLowerCase().includes('idle') || s.toLowerCase().includes('active') || s.toLowerCase().includes('down')) {
+                        devFindings.push({ level: 'Critical', item: zh ? '邻居状态' : 'Neighbor State', val: s, limit: 'Established/Full', advice: zh ? '检查对端连通性与配置' : 'Check peer connectivity and config' });
+                      }
+                    }
+
+                    // Interface Error Rules
+                    const inErr = parseInt(rec.input_errors || rec.in_errors || '0');
+                    const outErr = parseInt(rec.output_errors || rec.out_errors || '0');
+                    if (inErr > 0 || outErr > 0) {
+                      devFindings.push({ level: 'Warning', item: zh ? '接口错包' : 'Interface Errors', val: `In:${inErr}, Out:${outErr}`, limit: '0', advice: zh ? '检查物理链路/光模块' : 'Check physical link/SFP' });
+                    }
+                  });
+                }
+              } catch (e) { /* silent parse fail */ }
+            }
+          }
+        }
+
+        // Calculate health score for this device
+        let score = 100;
+        devFindings.forEach(f => {
+          if (f.level === 'Critical') score -= 20;
+          else if (f.level === 'Warning') score -= 5;
+        });
+        score = Math.max(0, score);
+        
+        deviceScores[dev.device_id] = {
+          score,
+          status: score >= 90 ? (zh ? '优秀' : 'Excellent') : score >= 75 ? (zh ? '良好' : 'Good') : score >= 60 ? (zh ? '预警' : 'Warning') : (zh ? '故障' : 'Critical'),
+          topFinding: devFindings[0]?.item || (zh ? '无异常' : 'No issues')
+        };
+
+        // Aggregate findings
+        devFindings.forEach(f => allFindings.push({
+          [zh ? '设备主机名' : 'Hostname']: dev.hostname,
+          [zh ? 'IP 地址' : 'IP Address']: dev.ip_address,
+          [zh ? '等级' : 'Level']: f.level,
+          [zh ? '检查项' : 'Check Item']: f.item,
+          [zh ? '当前值' : 'Actual']: f.val,
+          [zh ? '标准值' : 'Threshold']: f.limit,
+          [zh ? '处置建议' : 'Advice']: f.advice,
+        }));
+
+        processedDevicesData.push({ dev, rows });
+      } catch (e) { console.error(e); }
+    }
+
+    // --- GENERATE SHEETS ---
+
+    // Sheet 1: Enhanced Overview
+    const avgScore = Object.values(deviceScores).length > 0 
+      ? (Object.values(deviceScores).reduce((acc, v) => acc + v.score, 0) / Object.values(deviceScores).length).toFixed(1)
+      : '100';
+    
+    const overviewRows = [
+      { [zh ? '巡检项' : 'Metric']: zh ? '任务名称' : 'Task Name', [zh ? '数据' : 'Value']: log.name || '-' },
+      { [zh ? '巡检项' : 'Metric']: zh ? '全网健康评分' : 'Network Health Score', [zh ? '数据' : 'Value']: avgScore },
+      { [zh ? '巡检项' : 'Metric']: zh ? '发现异常总数' : 'Total Findings', [zh ? '数据' : 'Value']: allFindings.length },
+      { [zh ? '巡检项' : 'Metric']: 'Execution ID', [zh ? '数据' : 'Value']: log.id },
+      { [zh ? '巡检项' : 'Metric']: zh ? '执行人' : 'Operator', [zh ? '数据' : 'Value']: log.created_by || '-' },
+      { [zh ? '巡检项' : 'Metric']: zh ? '触发时间' : 'Triggered At', [zh ? '数据' : 'Value']: new Date(log.started_at).toLocaleString() },
+      { [zh ? '巡检项' : 'Metric']: zh ? '状态' : 'Status', [zh ? '数据' : 'Value']: log.status || '-' },
+      { [zh ? '巡检项' : 'Metric']: zh ? '总设备数' : 'Total Devices', [zh ? '数据' : 'Value']: log.total_devices ?? 0 },
+    ];
+    const wsOverview = XLSX.utils.json_to_sheet(overviewRows);
+    wsOverview['!cols'] = [{ wch: 25 }, { wch: 60 }];
+    XLSX.utils.book_append_sheet(wb, wsOverview, zh ? '巡检结论' : 'Summary');
+
+    // Sheet 2: Findings Detail
+    if (allFindings.length > 0) {
+      const wsFindings = XLSX.utils.json_to_sheet(allFindings);
+      wsFindings['!cols'] = [{ wch: 15 }, { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 12 }, { wch: 30 }];
+      XLSX.utils.book_append_sheet(wb, wsFindings, zh ? '异常发现明细' : 'Findings Detail');
+    }
+
+    // Sheet 3: Device Dashboard
+    const dashboardRows = deviceList.map((d: any) => {
+      const info = deviceScores[d.device_id] || { score: 100, status: zh ? '正常' : 'OK', topFinding: '-' };
+      return {
+        [zh ? '主机名' : 'Hostname']: d.hostname,
+        [zh ? 'IP 地址' : 'IP Address']: d.ip_address || '',
+        [zh ? '健康得分' : 'Score']: info.score,
+        [zh ? '评价' : 'Status']: info.status,
+        [zh ? '核心异常' : 'Top Finding']: info.topFinding,
+        [zh ? '运行状态' : 'Exec Status']: d.status || '',
+        [zh ? '耗时(ms)' : 'Duration']: d.duration_ms ?? 0,
+      };
+    });
+    const wsDash = XLSX.utils.json_to_sheet(dashboardRows);
+    wsDash['!cols'] = [{ wch: 18 }, { wch: 15 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 12 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, wsDash, zh ? '设备健康看板' : 'Health Dashboard');
+
+    // Sheet 4..N: Raw command outputs (First 10 devices only to keep file size sane)
+    processedDevicesData.slice(0, 10).forEach(({ dev, rows }) => {
+      if (rows.length > 0) {
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws['!cols'] = [{ wch: 12 }, { wch: 40 }, { wch: 80 }];
+        const sheetName = (dev.hostname || dev.ip_address || dev.device_id).replace(/[\\/?*[\]:]/g, '_').slice(0, 31);
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      }
+    });
+
+    const safeName = (log.name || 'inspection').replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '_').slice(0, 50);
+    XLSX.writeFile(wb, `Intelligent_Inspection_${safeName}_${log.id.slice(0, 8)}.xlsx`);
+  }, [authHeaders, zh, splitOutputByCommand]);
+
+  /** Export a Playbook execution result to JSON */
+  const handleDownloadPlaybookJSON = useCallback(async (log: any) => {
+    try {
+      const r1 = await fetch(`/api/playbooks/${log.id}`, { headers: authHeaders });
+      const r2 = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=500`, { headers: authHeaders });
+      if (r1.ok && r2.ok) {
+        const j1 = await r1.json();
+        const j2 = await r2.json();
+        const dlData = { summary: j1, devices: Array.isArray(j2) ? j2 : (j2.items || []) };
+        const blob = new Blob([JSON.stringify(dlData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `playbook_execution_${log.id}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      console.error('Playbook JSON export error:', err);
+      showToast(zh ? 'JSON 导出失败' : 'JSON export failed', 'error');
+    }
+  }, [authHeaders, zh, showToast]);
 
   /** Copy text to clipboard with brief feedback */
   const copyInspText = useCallback((text: string, key: string) => {
@@ -1294,38 +1536,44 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                       <FileText size={12} />
                                       HTML
                                     </button>
+                                    <button
+                                      onClick={async () => {
+                                        try {
+                                          const resp = await fetch(`/api/inspections/${log.id}`, { headers: authHeaders });
+                                          if (resp.ok) {
+                                            const j = await resp.json();
+                                            downloadInspJSON(j.data || j, `Nexora_Inspection_${log.id}.json`);
+                                          }
+                                        } catch (err) {
+                                          showToast(zh ? 'JSON 导出失败' : 'JSON export failed', 'error');
+                                        }
+                                      }}
+                                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50/40 hover:bg-slate-50 transition-all active:scale-95"
+                                      title={zh ? '导出 JSON 原始数据' : 'Export JSON data'}
+                                    >
+                                      <FileJson size={12} />
+                                      JSON
+                                    </button>
                                   </>
                                 ) : (
-                                  <button
-                                    onClick={async () => {
-                                      // Playbook JSON download (original behavior)
-                                      let dlData = null;
-                                      let fn = `execution_${log.id}.json`;
-                                      try {
-                                        const r1 = await fetch(`/api/playbooks/${log.id}`, { headers: authHeaders });
-                                        const r2 = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=100`, { headers: authHeaders });
-                                        if (r1.ok && r2.ok) {
-                                          const j1 = await r1.json();
-                                          const j2 = await r2.json();
-                                          dlData = { summary: j1, devices: Array.isArray(j2) ? j2 : (j2.items || []) };
-                                          fn = `playbook_execution_${log.id}.json`;
-                                        }
-                                        if (dlData) {
-                                          const blob = new Blob([JSON.stringify(dlData, null, 2)], { type: 'application/json' });
-                                          const url = URL.createObjectURL(blob);
-                                          const a = document.createElement('a');
-                                          a.href = url;
-                                          a.download = fn;
-                                          a.click();
-                                          URL.revokeObjectURL(url);
-                                        }
-                                      } catch (err) { console.error(err); }
-                                    }}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-all active:scale-95"
-                                  >
-                                    <Download size={12} />
-                                    {zh ? '下载' : 'Download'}
-                                  </button>
+                                  <>
+                                    <button
+                                      onClick={() => handleDownloadPlaybookExcel(log)}
+                                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-emerald-600 border border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50 transition-all active:scale-95"
+                                      title={zh ? '导出 Excel 报表' : 'Export Excel report'}
+                                    >
+                                      <FileSpreadsheet size={12} />
+                                      Excel
+                                    </button>
+                                    <button
+                                      onClick={() => handleDownloadPlaybookJSON(log)}
+                                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-all active:scale-95"
+                                      title={zh ? '导出 JSON 原始数据' : 'Export JSON data'}
+                                    >
+                                      <FileJson size={12} />
+                                      JSON
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -1444,6 +1692,26 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                   >
                     <FileText size={14} />
                     HTML
+                  </button>
+                </>
+              )}
+              {selectedLog.source === 'playbook' && (
+                <>
+                  <button
+                    onClick={() => handleDownloadPlaybookExcel(selectedLog)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-700 border border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50 transition-all active:scale-95"
+                    title={zh ? '导出 Excel 报表' : 'Export Excel'}
+                  >
+                    <FileSpreadsheet size={14} />
+                    Excel
+                  </button>
+                  <button
+                    onClick={() => handleDownloadPlaybookJSON(selectedLog)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-all active:scale-95"
+                    title={zh ? '导出 JSON 原始数据' : 'Export JSON'}
+                  >
+                    <FileJson size={14} />
+                    JSON
                   </button>
                 </>
               )}
@@ -1867,6 +2135,27 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                         {/* Action toolbar — shown when expanded */}
                                         {!isCollapsed && (
                                           <div className="flex items-center gap-1 shrink-0 ml-3" onClick={e => e.stopPropagation()}>
+                                            {/* Raw / Parsed toggle */}
+                                            <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-white/5 border border-white/10 mr-1">
+                                              <button
+                                                onClick={() => setInspParseViewMode(prev => ({ ...prev, [blockKey]: 'raw' }))}
+                                                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold transition-all ${(!inspParseViewMode[blockKey] || inspParseViewMode[blockKey] === 'raw') ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/60'}`}
+                                              >
+                                                Raw
+                                              </button>
+                                              <button
+                                                onClick={() => {
+                                                  if (!parseState || (!parseState.data && !parseState.loading)) {
+                                                    void handleParseInspCmd(blockKey, res.platform || 'cisco_ios', cmd, outputStr);
+                                                  } else {
+                                                    setInspParseViewMode(prev => ({ ...prev, [blockKey]: 'parsed' }));
+                                                  }
+                                                }}
+                                                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold transition-all ${(inspParseViewMode[blockKey] === 'parsed') ? 'bg-white/10 text-cyan-400' : 'text-white/30 hover:text-white/60'}`}
+                                              >
+                                                {parseState?.loading ? <Loader2 size={9} className="animate-spin" /> : 'Parsed'}
+                                              </button>
+                                            </div>
                                             {/* Copy */}
                                             <button
                                               onClick={() => copyInspText(outputStr, blockKey)}
