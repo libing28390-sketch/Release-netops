@@ -114,17 +114,19 @@ def _check_ssh(ip: str, port: int = 22, timeout: int = 3) -> dict[str, Any]:
 def _execute_shell_script(ip: str, script_content: str, device: dict) -> str:
     """真实执行 Shell 脚本并返回输出"""
     import paramiko
+    from core.crypto import resolve_device_credentials
     try:
-        username = device.get('username') or 'root'
-        # 获取解密后的密码 (假设系统中已有加密处理逻辑，此处简写)
-        password = device.get('password') or ''
+        username, password, port = resolve_device_credentials(device)
         
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(ip, username=username, password=password, timeout=10)
+        ssh.connect(ip, port=port, username=username, password=password, timeout=10)
         stdin, stdout, stderr = ssh.exec_command(script_content)
         output = stdout.read().decode('utf-8', errors='ignore').strip()
+        err_output = stderr.read().decode('utf-8', errors='ignore').strip()
         ssh.close()
+        if not output and err_output:
+            return f"ERROR: {err_output}"
         return output
     except Exception as e:
         return f"ERROR: {str(e)}"
@@ -906,6 +908,7 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
 
     metrics_results = {}
     findings = []
+    raw_outputs = {}
 
     conn = get_db_connection()
     try:
@@ -919,6 +922,23 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                 continue
 
             raw_output = _execute_shell_script(ip, script_row['content'], device)
+            cmd_key = item.get('check_key') or f"script_{script_id}"
+            raw_outputs[cmd_key] = raw_output
+
+            if "ERROR:" in raw_output:
+                result['ssh_ok'] = 0
+                result['ssh_error'] = raw_output
+                result['health_status'] = 'critical'
+                result['health_score'] = 0
+                findings.append(make_finding(
+                    'connectivity_error',
+                    f"SSH 连接或脚本执行失败 ({item.get('name_zh')}): {raw_output}",
+                    raw_error=raw_output,
+                    severity='critical',
+                ))
+                metrics_results[item['check_key']] = {'value': None, 'error': raw_output}
+                continue
+
             val = _extract_numeric_value(raw_output)
 
             if val is not None:
@@ -954,8 +974,11 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
     finally:
         conn.close()
 
-    result['metrics_json'] = json.dumps(metrics_results)
+    result['metrics_json'] = json.dumps(metrics_results, ensure_ascii=False)
     result['findings_json'] = json.dumps(findings, ensure_ascii=False)
+    result['raw_outputs_json'] = json.dumps(raw_outputs, ensure_ascii=False)
+    result['analysis_json'] = '[]'
+    result['correlated_risks_json'] = '[]'
 
     # 映射常用字段以保证 Dashboard 兼容
     result['cpu_usage'] = metrics_results.get('cpu_util')

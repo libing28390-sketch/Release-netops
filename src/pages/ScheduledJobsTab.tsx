@@ -5,7 +5,7 @@ import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
   Database, Activity, Power, PowerOff,
-  Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight,
+  Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight, ChevronUp, Filter,
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import TagConditionPicker, { type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter, parseTagFilter } from '../components/TagConditionPicker';
@@ -237,6 +237,39 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [showScriptDropdown, setShowScriptDropdown] = useState(false);
 
   const isEditMode = editingJob !== null;
+
+  // Category & Filter state
+  const [activeCategory, setActiveCategory] = useState<'all' | 'system' | 'backup' | 'inspection' | 'script_run'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [systemCollapsed, setSystemCollapsed] = useState(false);
+
+  const filteredJobs = useMemo(() => {
+    return jobs.filter(j => {
+      const q = searchQuery.trim().toLowerCase();
+      const matchQ = !q || j.name.toLowerCase().includes(q) || (j.commands || '').toLowerCase().includes(q) || (j.device_filter || '').toLowerCase().includes(q);
+      if (!matchQ) return false;
+      if (activeCategory === 'all') return true;
+      if (activeCategory === 'system') return false;
+      return j.action_type === activeCategory;
+    });
+  }, [jobs, searchQuery, activeCategory]);
+
+  const filteredSystemJobs = useMemo(() => {
+    return systemJobs.filter(sj => {
+      const q = searchQuery.trim().toLowerCase();
+      const name = (zh ? sj.name_zh : sj.name_en).toLowerCase();
+      const desc = (zh ? sj.description_zh : sj.description_en).toLowerCase();
+      return !q || name.includes(q) || desc.includes(q);
+    });
+  }, [systemJobs, searchQuery, zh]);
+
+  const stats = useMemo(() => {
+    const backupCnt = jobs.filter(j => j.action_type === 'backup').length;
+    const inspCnt = jobs.filter(j => j.action_type === 'inspection').length;
+    const scriptCnt = jobs.filter(j => j.action_type === 'script_run').length;
+    const activeCnt = jobs.filter(j => j.enabled === 1).length;
+    return { backupCnt, inspCnt, scriptCnt, activeCnt };
+  }, [jobs]);
 
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('netops_token');
@@ -712,124 +745,259 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
 
-      {/* ═══ System Jobs (platform-managed, read-only) ═══ */}
-      {systemJobs.length > 0 && (
-        <div className="rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50 to-white shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-slate-900/5 text-slate-600 flex items-center justify-center">
-              <Lock size={13} />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-sm font-bold text-[#0f172a] flex items-center gap-2">
-                {zh ? '系统任务' : 'System Jobs'}
-                <span className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded bg-slate-200/70 text-slate-600">
-                  {zh ? '平台内置' : 'Platform'}
-                </span>
-              </h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">
-                {zh
-                  ? '由平台托管的周期性任务，不占用审批流程；如需调整请进入对应模块。'
-                  : 'Platform-managed recurring tasks. They do not require approval; adjust them in the linked modules.'}
-              </p>
-            </div>
-            <span className="text-[10px] font-bold text-slate-400 px-2 py-0.5 rounded-full bg-slate-100">
+      {/* ═══ 顶层多维分类导航与搜索栏 ═══ */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80 shadow-inner">
+        <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar py-0.5">
+          <button
+            onClick={() => setActiveCategory('all')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+              activeCategory === 'all'
+                ? 'bg-white text-cyan-700 shadow-sm border border-cyan-100'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <span>{zh ? '全部作业' : 'All Jobs'}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'all' ? 'bg-cyan-100 text-cyan-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+              {jobs.length + systemJobs.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveCategory('system')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+              activeCategory === 'system'
+                ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Lock size={14} className={activeCategory === 'system' ? 'text-slate-800' : 'text-slate-400'} />
+            <span>{zh ? '系统内置' : 'System Managed'}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'system' ? 'bg-slate-200 text-slate-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
               {systemJobs.length}
             </span>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {systemJobs.map((sj) => {
-              const icon = sj.action_type === 'backup'
-                ? Database
-                : sj.action_type === 'inspection'
-                  ? Activity
-                  : sj.action_type === 'arp_sweep'
-                    ? Search
-                    : sj.action_type === 'password_rotation'
-                      ? Shield
-                      : CalendarClock;
-              const Icon = icon;
-              const nextAt = sj.next_run_at
-                ? new Date(sj.next_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', {
-                    hour12: false, month: '2-digit', day: '2-digit',
-                    hour: '2-digit', minute: '2-digit',
-                  })
-                : null;
-              return (
-                <div
-                  key={sj.id}
-                  className={`flex items-center gap-4 px-5 py-3 hover:bg-slate-50 transition-colors ${sj.deep_link ? 'cursor-pointer group/sys' : ''}`}
-                  onClick={() => { if (sj.deep_link) navigate(sj.deep_link); }}
+          </button>
+
+          <button
+            onClick={() => setActiveCategory('backup')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+              activeCategory === 'backup'
+                ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Database size={14} className={activeCategory === 'backup' ? 'text-indigo-600' : 'text-slate-400'} />
+            <span>{zh ? '配置自动备份' : 'Config Backup'}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'backup' ? 'bg-indigo-100 text-indigo-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+              {stats.backupCnt}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveCategory('inspection')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+              activeCategory === 'inspection'
+                ? 'bg-white text-emerald-700 shadow-sm border border-emerald-100'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Activity size={14} className={activeCategory === 'inspection' ? 'text-emerald-600' : 'text-slate-400'} />
+            <span>{zh ? '智能巡检' : 'Smart Inspection'}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'inspection' ? 'bg-emerald-100 text-emerald-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+              {stats.inspCnt}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveCategory('script_run')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+              activeCategory === 'script_run'
+                ? 'bg-white text-amber-700 shadow-sm border border-amber-100'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Zap size={14} className={activeCategory === 'script_run' ? 'text-amber-600' : 'text-slate-400'} />
+            <span>{zh ? '自动化脚本' : 'Automated Script'}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'script_run' ? 'bg-amber-100 text-amber-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+              {stats.scriptCnt}
+            </span>
+          </button>
+        </div>
+
+        <div className="relative min-w-[260px] shrink-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder={zh ? '检索作业名称、命令或 IP 范围...' : 'Search jobs, commands, IP scope...'}
+            className="w-full h-9 pl-9 pr-8 bg-white/90 border border-slate-200/80 rounded-xl text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-cyan-500 focus:bg-white shadow-sm transition-all"
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ═══ 系统内置作业守护进程 (表格形式，与系统明亮底色完美统一) ═══ */}
+      {(activeCategory === 'all' || activeCategory === 'system') && filteredSystemJobs.length > 0 && (
+        <div className="rounded-2xl border border-slate-200/80 bg-white shadow-sm overflow-hidden mb-6 transition-all">
+          <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-cyan-100 text-cyan-700 flex items-center justify-center font-bold">
+                <Lock size={14} />
+              </div>
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                {zh ? '平台内置常驻系统守护进程' : 'Platform Managed System Daemons'}
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-50 text-cyan-700 border border-cyan-100 font-normal tracking-normal">
+                  {zh ? '内核自动调度，无需人工审批' : 'Kernel Managed'}
+                </span>
+              </h3>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-mono font-bold text-slate-600 bg-white px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-2xs">
+                {filteredSystemJobs.length} {zh ? '个常驻任务' : 'Daemons'}
+              </span>
+              {activeCategory === 'all' && (
+                <button
+                  onClick={() => setSystemCollapsed(c => !c)}
+                  className="p-1 rounded-lg bg-slate-200/60 text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition-all flex items-center gap-1 text-xs px-2.5 py-1"
                 >
-                  <div className="w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center shrink-0 shadow-sm">
-                    <Icon size={16} className="text-slate-500" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-bold text-[#0f172a] truncate">
-                        {zh ? sj.name_zh : sj.name_en}
-                      </p>
-                      <span className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
-                        {sj.id}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                      {zh ? sj.description_zh : sj.description_en}
-                    </p>
-                    <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-400 flex-wrap">
-                      {sj.trigger && (
-                        <span className="flex items-center gap-1">
-                          <CalendarClock size={10} />
-                          <code className="font-mono truncate max-w-[220px]">{sj.trigger}</code>
-                        </span>
-                      )}
-                      {nextAt && (
-                        <>
-                          <span className="text-slate-200">·</span>
-                          <span>{zh ? '下次' : 'Next'}: {nextAt}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  {sj.deep_link && (
-                    <div className="shrink-0 flex items-center gap-1 text-[11px] font-semibold text-slate-400 group-hover/sys:text-cyan-600 transition-colors">
-                      {zh ? '查看详情' : 'Details'}
-                      <ArrowUpRight size={12} />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                  <span>{systemCollapsed ? (zh ? '展开列表' : 'Expand') : (zh ? '收起面板' : 'Collapse')}</span>
+                  {systemCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                </button>
+              )}
+            </div>
           </div>
+
+          {(!systemCollapsed || activeCategory === 'system') && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 bg-slate-50/40 uppercase tracking-wider">
+                    <th className="py-2.5 px-4">{zh ? '任务名称 / 标识' : 'Job Name / ID'}</th>
+                    <th className="py-2.5 px-4">{zh ? '任务说明' : 'Description'}</th>
+                    <th className="py-2.5 px-4">{zh ? '触发发条 (CRON)' : 'Trigger'}</th>
+                    <th className="py-2.5 px-4">{zh ? '预计下次执行' : 'Next Run'}</th>
+                    <th className="py-2.5 px-4 text-right">{zh ? '规则配置管理' : 'Management'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {filteredSystemJobs.map(sj => {
+                    const isInsp = sj.action_type === 'inspection';
+                    const isBackup = sj.action_type === 'backup';
+                    const isSec = sj.action_type === 'password_rotation';
+                    const icon = isBackup ? Database : isInsp ? Activity : isSec ? Shield : CalendarClock;
+                    const Icon = icon;
+                    const nextAt = sj.next_run_at
+                      ? new Date(sj.next_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', {
+                          hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                        })
+                      : '-';
+
+                    return (
+                      <tr
+                        key={sj.id}
+                        className="hover:bg-slate-50/80 transition-colors group/row"
+                      >
+                        <td className="py-3 px-4 font-bold text-slate-800 min-w-[180px]">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${
+                              isInsp ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
+                              isBackup ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' :
+                              isSec ? 'bg-amber-50 text-amber-600 border border-amber-100' :
+                              'bg-cyan-50 text-cyan-600 border border-cyan-100'
+                            }`}>
+                              <Icon size={13} />
+                            </div>
+                            <div>
+                              <div className="font-bold text-xs text-slate-800">{zh ? sj.name_zh : sj.name_en}</div>
+                              <code className="text-[10px] text-slate-400 font-mono">{sj.id}</code>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 max-w-[280px] truncate" title={zh ? sj.description_zh : sj.description_en}>
+                          {zh ? sj.description_zh : sj.description_en}
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-cyan-700 font-medium">
+                          <span className="bg-cyan-50 px-2 py-0.5 rounded border border-cyan-100">{sj.trigger || 'CRON Daemon'}</span>
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
+                          {nextAt !== '-' && (
+                            <span className="inline-flex items-center gap-1.5 font-mono">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                              {nextAt}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {sj.deep_link ? (
+                            <button
+                              onClick={() => navigate(sj.deep_link!)}
+                              className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
+                                isInsp ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' :
+                                isBackup ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' :
+                                'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100'
+                              }`}
+                            >
+                              <span>{zh ? '配置规则' : 'Configure'}</span>
+                              <ArrowUpRight size={12} />
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 italic">{zh ? '内核保护' : 'Kernel Protected'}</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
-      {/* User-defined jobs header */}
-      {systemJobs.length > 0 && (
-        <div className="flex items-center gap-2 px-1">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-black/40">
-            {zh ? '用户定义作业' : 'User-defined Jobs'}
+      {/* ═══ 用户自定义作业分栏标题 ═══ */}
+      {activeCategory !== 'system' && (
+        <div className="flex items-center gap-3 px-1 pt-2">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+            <span>
+              {activeCategory === 'all' && (zh ? '用户自定义作业' : 'User-defined Jobs')}
+              {activeCategory === 'backup' && (zh ? '配置自动备份作业' : 'Config Backup Jobs')}
+              {activeCategory === 'inspection' && (zh ? '智能巡检作业' : 'Smart Inspection Jobs')}
+              {activeCategory === 'script_run' && (zh ? '自动化脚本作业' : 'Automated Script Jobs')}
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-slate-200/70 text-slate-700 text-[10px] font-mono">
+              {filteredJobs.length} {zh ? '项' : 'items'}
+            </span>
           </h3>
-          <div className="flex-1 h-px bg-black/[0.05]" />
-          <span className="text-[10px] text-black/30">
-            {zh ? `共 ${total} 条` : `${total} total`}
-          </span>
+          <div className="flex-1 h-px bg-slate-200" />
+          {searchQuery && (
+            <span className="text-xs text-cyan-600 font-semibold bg-cyan-50 px-2.5 py-0.5 rounded-full border border-cyan-100">
+              {zh ? `过滤出 ${filteredJobs.length} 项` : `Filtered ${filteredJobs.length}`}
+            </span>
+          )}
         </div>
       )}
 
-      {/* Job List */}
-      {loading ? (
-        <div className="flex items-center justify-center py-16 text-black/30">
-          <RotateCcw size={14} className="animate-spin mr-2" />
-          <span className="text-xs">{zh ? '加载中...' : 'Loading...'}</span>
+      {/* ═══ 作业列表呈现 ═══ */}
+      {activeCategory === 'system' ? null : loading ? (
+        <div className="flex items-center justify-center py-16 text-slate-400">
+          <RotateCcw size={16} className="animate-spin mr-2 text-cyan-600" />
+          <span className="text-xs">{zh ? '数据加载中...' : 'Loading jobs...'}</span>
         </div>
-      ) : jobs.length > 0 ? (
+      ) : filteredJobs.length > 0 ? (
         <div className="flex-1 overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar">
-          <div className="space-y-2">
-            {jobs.map(job => {
+          <div className="space-y-2.5">
+            {filteredJobs.map(job => {
               const atInfo = ACTION_TYPES.find(a => a.value === job.action_type);
               const AtIcon = atInfo?.icon || Database;
               const isEnabled = !!job.enabled;
               const scopeDesc = describeScope(job.device_scope, job.device_filter, zh);
+              const isInsp = job.action_type === 'inspection';
+              const isBackup = job.action_type === 'backup';
+              const isScript = job.action_type === 'script_run';
               return (
                 <motion.div
                   key={job.id}
@@ -837,60 +1005,80 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   onClick={() => setDetailJob(job)}
-                  className={`rounded-2xl border bg-white shadow-sm transition-all hover:shadow-md cursor-pointer group ${isEnabled ? 'border-black/[0.06]' : 'border-black/[0.04] opacity-60'}`}
+                  className={`rounded-2xl border transition-all hover:shadow-md cursor-pointer group overflow-hidden ${
+                    isEnabled ? 'bg-white border-slate-200/90 shadow-sm' : 'bg-slate-50 border-slate-200/50 opacity-60'
+                  }`}
                 >
-                  <div className="flex items-center gap-4 px-5 py-3.5">
-                    {/* Icon */}
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isEnabled ? 'bg-gradient-to-br from-cyan-50 to-cyan-100/60' : 'bg-slate-50'}`}>
-                      <AtIcon className={`w-[18px] h-[18px] ${isEnabled ? 'text-cyan-600' : 'text-slate-400'}`} />
+                  <div className="flex items-center gap-4 px-5 py-4">
+                    {/* 分类定制色彩底座 Icon */}
+                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
+                      isEnabled
+                        ? isInsp ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                          : isBackup ? 'bg-indigo-50 text-indigo-600 border-indigo-100'
+                          : isScript ? 'bg-amber-50 text-amber-600 border-amber-100'
+                          : 'bg-cyan-50 text-cyan-600 border-cyan-100'
+                        : 'bg-slate-100 text-slate-400 border-slate-200'
+                    }`}>
+                      <AtIcon size={20} />
                     </div>
 
                     {/* Main info */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-bold text-[#164e63] truncate">{job.name}</p>
-                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${isEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                      <div className="flex items-center gap-2.5">
+                        <p className="text-sm font-bold text-[#0f172a] truncate group-hover:text-cyan-700 transition-colors">
+                          {job.name}
+                        </p>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                          isEnabled ? 'bg-emerald-100/80 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'
+                        }`}>
                           {isEnabled ? (zh ? '运行中' : 'Active') : (zh ? '已停用' : 'Disabled')}
                         </span>
                         {job.last_run_status && (
-                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
-                            job.last_run_status === 'success' 
-                              ? 'bg-green-50 text-green-600 border border-green-100' 
-                              : 'bg-red-50 text-red-600 border border-red-100'
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                            job.last_run_status === 'success'
+                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                              : 'bg-rose-50 text-rose-600 border border-rose-100'
                           }`}>
-                            <div className={`w-1 h-1 rounded-full ${job.last_run_status === 'success' ? 'bg-green-500' : 'bg-red-500'}`} />
-                            {job.last_run_status === 'success' ? (zh ? '成功' : 'Success') : (zh ? '失败' : 'Failed')}
+                            <div className={`w-1.5 h-1.5 rounded-full ${job.last_run_status === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                            {job.last_run_status === 'success' ? (zh ? '执行成功' : 'Success') : (zh ? '执行失败' : 'Failed')}
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 mt-1 text-[11px] text-black/40 flex-wrap">
-                        <span className="flex items-center gap-1">
-                          <CalendarClock size={10} />
+
+                      <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500 flex-wrap">
+                        <span className="flex items-center gap-1 font-mono font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                          <CalendarClock size={12} className="text-cyan-600" />
                           {describeCron(job.cron_expr, zh)}
                         </span>
-                        <span className="text-black/10">·</span>
-                        <span>{zh ? (atInfo?.labelZh || job.action_type) : (atInfo?.labelEn || job.action_type)}</span>
-                        <span className="text-black/10">·</span>
-                        <span>{scopeDesc}</span>
+                        <span className="text-slate-300">·</span>
+                        <span className={`font-semibold ${isInsp ? 'text-emerald-700' : isBackup ? 'select-none text-indigo-700' : isScript ? 'text-amber-700' : 'text-slate-700'}`}>
+                          {zh ? (atInfo?.labelZh || job.action_type) : (atInfo?.labelEn || job.action_type)}
+                        </span>
+                        <span className="text-slate-300">·</span>
+                        <span className="flex items-center gap-1 text-slate-600 font-medium">
+                          <Target size={12} className="text-slate-400" />
+                          {scopeDesc}
+                        </span>
+
                         {job.action_type === 'script_run' && job.script_id && (
                           <>
-                            <span className="text-black/10">·</span>
-                            <span className="flex items-center gap-1 text-[#00a9ce] font-bold">
-                              <FileCode size={10} />
+                            <span className="text-slate-300">·</span>
+                            <span className="flex items-center gap-1 text-[#00a9ce] font-bold bg-cyan-50 px-2 py-0.5 rounded border border-cyan-100">
+                              <FileCode size={12} />
                               {(availableScripts || []).find(s => s.id === job.script_id)?.name || job.script_id}
                             </span>
                           </>
                         )}
                         {job.run_count > 0 && (
                           <>
-                            <span className="text-black/10">·</span>
-                            <span>{zh ? `已执行 ${job.run_count} 次` : `${job.run_count} runs`}</span>
+                            <span className="text-slate-300">·</span>
+                            <span className="font-mono text-slate-600">{zh ? `累计触发 ${job.run_count} 次` : `${job.run_count} runs`}</span>
                           </>
                         )}
                         {job.last_run_at && (
                           <>
-                            <span className="text-black/10">·</span>
-                            <span>{zh ? '最近' : 'Last'}: {new Date(job.last_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                            <span className="text-slate-300">·</span>
+                            <span>{zh ? '最近运行' : 'Last run'}: <span className="font-mono">{new Date(job.last_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span></span>
                           </>
                         )}
                       </div>
@@ -900,36 +1088,36 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                     <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                       <button
                         onClick={() => setDetailJob(job)}
-                        className="p-2 rounded-lg text-black/25 hover:bg-cyan-50 hover:text-cyan-600 transition-all opacity-0 group-hover:opacity-100"
-                        title={zh ? '查看详情' : 'View Detail'}
+                        className="p-2 rounded-xl text-slate-400 hover:bg-cyan-50 hover:text-cyan-600 transition-all opacity-0 group-hover:opacity-100"
+                        title={zh ? '查看运行详情' : 'View Detail'}
                       >
-                        <Eye size={14} />
+                        <Eye size={16} />
                       </button>
                       <button
                         onClick={() => openEditModal(job)}
-                        className="p-2 rounded-lg text-black/25 hover:bg-cyan-50 hover:text-cyan-600 transition-all"
-                        title={zh ? '编辑' : 'Edit'}
+                        className="p-2 rounded-xl text-slate-400 hover:bg-cyan-50 hover:text-cyan-600 transition-all"
+                        title={zh ? '编辑配置' : 'Edit'}
                       >
-                        <Pencil size={14} />
+                        <Pencil size={16} />
                       </button>
                       <button
                         onClick={() => toggleJobEnabled(job)}
-                        className={`p-2 rounded-lg transition-all ${isEnabled ? 'text-black/25 hover:bg-amber-50 hover:text-amber-600' : 'text-black/25 hover:bg-emerald-50 hover:text-emerald-600'}`}
-                        title={isEnabled ? (zh ? '停用' : 'Disable') : (zh ? '启用' : 'Enable')}
+                        className={`p-2 rounded-xl transition-all ${isEnabled ? 'text-slate-400 hover:bg-amber-50 hover:text-amber-600' : 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
+                        title={isEnabled ? (zh ? '暂停执行' : 'Disable') : (zh ? '恢复启动' : 'Enable')}
                       >
-                        {isEnabled ? <PowerOff size={14} /> : <Power size={14} />}
+                        {isEnabled ? <PowerOff size={16} /> : <Power size={16} />}
                       </button>
                       {deleteConfirmId === job.id ? (
-                        <div className="flex items-center gap-1 ml-1">
+                        <div className="flex items-center gap-1.5 ml-1">
                           <button
                             onClick={() => deleteJob(job.id)}
-                            className="px-2 py-1 rounded-lg bg-red-500 text-white text-[10px] font-bold hover:bg-red-600 transition-all"
+                            className="px-2.5 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-all shadow-sm"
                           >
-                            {zh ? '确认' : 'Yes'}
+                            {zh ? '确认删除' : 'Yes'}
                           </button>
                           <button
                             onClick={() => setDeleteConfirmId(null)}
-                            className="px-2 py-1 rounded-lg border border-black/10 text-[10px] font-semibold text-black/40 hover:bg-black/5 transition-all"
+                            className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-all"
                           >
                             {zh ? '取消' : 'No'}
                           </button>
@@ -937,22 +1125,22 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                       ) : (
                         <button
                           onClick={() => setDeleteConfirmId(job.id)}
-                          className="p-2 rounded-lg text-black/20 hover:bg-red-50 hover:text-red-500 transition-all"
-                          title={zh ? '删除' : 'Delete'}
+                          className="p-2 rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all"
+                          title={zh ? '删除作业' : 'Delete'}
                         >
-                          <Trash2 size={14} />
+                          <Trash2 size={16} />
                         </button>
                       )}
                     </div>
                   </div>
 
                   {/* Bottom meta */}
-                  <div className="px-5 py-2 border-t border-black/[0.03] flex items-center gap-4 text-[10px] text-black/25">
-                    <span className="font-mono">{job.cron_expr}</span>
-                    <span className="text-black/8">|</span>
-                    <span>{zh ? '审批' : 'Approved'}: {job.approved_by || '\u2014'}</span>
-                    <span className="text-black/8">|</span>
-                    <span>{zh ? '创建' : 'Created'}: {job.created_by} · {new Date(job.created_at).toLocaleDateString(zh ? 'zh-CN' : 'en-US')}</span>
+                  <div className="px-5 py-2.5 bg-slate-50/80 border-t border-slate-100 flex items-center gap-4 text-[11px] text-slate-500">
+                    <span className="font-mono text-slate-600 font-semibold">{job.cron_expr}</span>
+                    <span className="text-slate-300">|</span>
+                    <span>{zh ? '审批授权人' : 'Approver'}: <span className="font-bold text-slate-700">{job.approved_by || '\u2014'}</span></span>
+                    <span className="text-slate-300">|</span>
+                    <span>{zh ? '创建者' : 'Creator'}: <span className="font-medium text-slate-700">{job.created_by}</span> · <span className="font-mono">{new Date(job.created_at).toLocaleDateString(zh ? 'zh-CN' : 'en-US')}</span></span>
                   </div>
                 </motion.div>
               );
@@ -960,15 +1148,21 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           </div>
         </div>
       ) : (
-        <div className="rounded-2xl border-2 border-dashed border-black/[0.06] p-16 text-center">
-          <CalendarClock className="w-10 h-10 text-black/10 mx-auto mb-3" />
-          <p className="text-sm text-black/35 font-medium">{zh ? '暂无定时作业' : 'No scheduled jobs'}</p>
-          <p className="text-[11px] text-black/25 mt-1 mb-4">{zh ? '创建周期性自动化任务，如每日配置备份、定时巡检' : 'Create periodic tasks like daily config backup or scheduled inspection'}</p>
+        <div className="rounded-3xl border-2 border-dashed border-slate-200/80 p-16 text-center bg-white/50">
+          <div className="w-16 h-16 rounded-2xl bg-cyan-50 text-cyan-600 flex items-center justify-center mx-auto mb-4 border border-cyan-100 shadow-sm">
+            <CalendarClock size={32} />
+          </div>
+          <p className="text-base text-slate-800 font-bold">{zh ? '未找到符合条件的定时作业' : 'No matching scheduled jobs'}</p>
+          <p className="text-xs text-slate-500 mt-1 mb-6 max-w-md mx-auto leading-relaxed">
+            {zh
+              ? '当前分类或搜索条件下暂无匹配的周期性自动化作业。您可以点击上方重置筛选，或立即创建每日备份与智能巡检任务。'
+              : 'No scheduled jobs found matching current filters. Create a new recurring job anytime.'}
+          </p>
           <button
             onClick={openCreateModal}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold hover:bg-cyan-700 transition-all shadow-sm"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 text-white text-xs font-bold hover:from-cyan-400 hover:to-cyan-500 transition-all shadow shadow-cyan-500/20 active:scale-[0.98]"
           >
-            <Plus size={13} />
+            <Plus size={16} />
             {zh ? '新建定时作业' : 'New Scheduled Job'}
           </button>
         </div>

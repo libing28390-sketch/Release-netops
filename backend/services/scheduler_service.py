@@ -209,6 +209,7 @@ async def run_scheduled_automation_job(job_id: str):
                         None,
                         lambda: service.orchestrator.execute_single(d, 'script', commands_str)
                     )
+                    logger.info(f"[Scheduler] Linux execution raw result for {d.get('hostname')}: success={exec_results_raw.get('success')}, err={exec_results_raw.get('stderr') or exec_results_raw.get('error')}")
                     exec_results = [{
                         'success': exec_results_raw.get('success', False),
                         'output': exec_results_raw.get('stdout', '') or exec_results_raw.get('output', ''),
@@ -243,10 +244,16 @@ async def run_scheduled_automation_job(job_id: str):
                         None,
                         lambda: service.execute_commands(d, cmds_snapshot, is_config=bool(job['is_config']))
                     )
+                    log_summary = [(r.get('success'), r.get('stderr') or r.get('error') or '') for r in exec_results]
+                    logger.info(f"[Scheduler] CLI execution raw result for {d.get('hostname')}: {log_summary}")
 
                 # ── Normalise output ─────────────────────────────────────────
                 def _get_output(r: dict) -> str:
-                    return r.get('output') or r.get('stdout') or ''
+                    out_val = r.get('output') or r.get('stdout') or ''
+                    err_val = r.get('error') or r.get('stderr') or ''
+                    if not out_val and err_val:
+                        return f"ERROR: {err_val}"
+                    return out_val
 
                 success = all(r.get('success', False) for r in exec_results)
 

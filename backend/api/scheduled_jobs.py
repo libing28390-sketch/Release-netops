@@ -88,13 +88,13 @@ _SYSTEM_JOB_CATALOG = {
         'deep_link': '/ip-locator',
     },
     'inspection_scheduler': {
-        'name_zh': '周期巡检',
-        'name_en': 'Scheduled Inspection',
-        'description_zh': '按计划执行健康巡检（Ping / SSH / 精细化指标），结果进入巡检概览。',
-        'description_en': 'Runs health inspections (ping / SSH / per-item checks) on schedule.',
+        'name_zh': '周期巡检 (主发条引擎)',
+        'name_en': 'Inspection Master Daemon',
+        'description_zh': '内置主调度器，按周期轮询并触发左侧导航栏【巡检计划】中用户自定义的各设备巡检策略。',
+        'description_en': 'Master daemon polling and triggering active user-defined inspection plans on schedule.',
         'category': 'collection',
         'action_type': 'inspection',
-        'deep_link': '/automation/inspection',
+        'deep_link': '/automation/schedule',
     },
     'host_resource_sampler': {
         'name_zh': '宿主机资源采样',

@@ -453,204 +453,29 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
     return output.trim() ? [{ command: '', output: output.trim() }] : [];
   }, []);
 
-  /** Export a Playbook execution result to Excel (multi-sheet) */
-  const handleDownloadPlaybookExcel = useCallback(async (log: any) => {
-    const wb = XLSX.utils.book_new();
-    const allFindings: any[] = [];
-    const deviceScores: Record<string, { score: number; status: string; topFinding: string }> = {};
-    
-    // 1. Fetch devices list first
-    let deviceList: any[] = [];
+
+  /** Centralized export handler for all report formats */
+  const handleExportReport = useCallback(async (logId: string, format: string, source: string = 'inspection') => {
     try {
-      const resp = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=500`, { headers: authHeaders });
+      const sourceParam = source === 'playbook' ? '&source=playbook' : '';
+      const resp = await fetch(`/api/inspections/${logId}/export?format=${format}${sourceParam}`, { headers: authHeaders });
       if (resp.ok) {
-        const data = await resp.json();
-        deviceList = Array.isArray(data) ? data : (data.items || []);
-      }
-    } catch (err) {
-      console.error('Fetch devices failed:', err);
-    }
-
-    // 2. Process devices and perform Risk Analysis
-    const exportLimit = 30; // Limit detailed analysis to first 30 devices to balance depth and speed
-    const processedDevicesData: any[] = [];
-
-    for (const dev of deviceList.slice(0, exportLimit)) {
-      try {
-        const dResp = await fetch(`/api/playbooks/${log.id}/devices/${dev.device_id}`, { headers: authHeaders });
-        if (!dResp.ok) continue;
-        const detail = await dResp.json();
-        
-        let phases: Record<string, any> = {};
-        try { phases = JSON.parse(detail.phases_json || '{}'); } catch { phases = {}; }
-        
-        const devFindings: any[] = [];
-        const rows: any[] = [];
-        
-        for (const [phaseName, pdata] of Object.entries(phases)) {
-          const pd: any = pdata || {};
-          const cmds: string[] = pd.commands || [];
-          const outputStr: string = typeof pd.output === 'string' ? pd.output : JSON.stringify(pd.output || '');
-          const blocks = splitOutputByCommand(outputStr, cmds);
-          
-          for (const blk of blocks) {
-            rows.push({
-              [zh ? '阶段' : 'Phase']: phaseName,
-              [zh ? '命令' : 'Command']: blk.command || '-',
-              [zh ? '输出' : 'Output']: blk.output || '',
-            });
-
-            // --- INTELLIGENT RISK ANALYSIS ---
-            if (blk.command && blk.output && blk.output.length > 10) {
-              try {
-                // Try to parse via TextFSM to extract metrics
-                const pResp = await fetch('/api/inspections/parse-output', {
-                  method: 'POST',
-                  headers: { ...authHeaders, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ platform: detail.platform || 'cisco_ios', command: blk.command, output: blk.output }),
-                });
-                const pJson = await pResp.json();
-                if (pJson.success && pJson.data?.records) {
-                  const records = pJson.data.records;
-                  records.forEach((rec: any) => {
-                    // CPU Rules
-                    const cpu = parseFloat(rec.cpu_5min || rec.cpu_usage || rec.cpu_load || '0');
-                    if (cpu > 80) devFindings.push({ level: 'Critical', item: zh ? 'CPU 利用率' : 'CPU Usage', val: `${cpu}%`, limit: '< 80%', advice: zh ? '检查高负载进程' : 'Check high load processes' });
-                    else if (cpu > 60) devFindings.push({ level: 'Warning', item: zh ? 'CPU 利用率' : 'CPU Usage', val: `${cpu}%`, limit: '< 60%', advice: zh ? '观察负载趋势' : 'Monitor load trend' });
-                    
-                    // Memory Rules
-                    const mem = parseFloat(rec.mem_used_percent || rec.used_percent || '0');
-                    if (mem > 90) devFindings.push({ level: 'Critical', item: zh ? '内存占用' : 'Mem Usage', val: `${mem}%`, limit: '< 90%', advice: zh ? '检查内存泄露风险' : 'Check memory leak risk' });
-                    
-                    // BGP/OSPF Protocol Rules
-                    if (rec.state) {
-                      const s = String(rec.state);
-                      if (s.toLowerCase().includes('idle') || s.toLowerCase().includes('active') || s.toLowerCase().includes('down')) {
-                        devFindings.push({ level: 'Critical', item: zh ? '邻居状态' : 'Neighbor State', val: s, limit: 'Established/Full', advice: zh ? '检查对端连通性与配置' : 'Check peer connectivity and config' });
-                      }
-                    }
-
-                    // Interface Error Rules
-                    const inErr = parseInt(rec.input_errors || rec.in_errors || '0');
-                    const outErr = parseInt(rec.output_errors || rec.out_errors || '0');
-                    if (inErr > 0 || outErr > 0) {
-                      devFindings.push({ level: 'Warning', item: zh ? '接口错包' : 'Interface Errors', val: `In:${inErr}, Out:${outErr}`, limit: '0', advice: zh ? '检查物理链路/光模块' : 'Check physical link/SFP' });
-                    }
-                  });
-                }
-              } catch (e) { /* silent parse fail */ }
-            }
-          }
-        }
-
-        // Calculate health score for this device
-        let score = 100;
-        devFindings.forEach(f => {
-          if (f.level === 'Critical') score -= 20;
-          else if (f.level === 'Warning') score -= 5;
-        });
-        score = Math.max(0, score);
-        
-        deviceScores[dev.device_id] = {
-          score,
-          status: score >= 90 ? (zh ? '优秀' : 'Excellent') : score >= 75 ? (zh ? '良好' : 'Good') : score >= 60 ? (zh ? '预警' : 'Warning') : (zh ? '故障' : 'Critical'),
-          topFinding: devFindings[0]?.item || (zh ? '无异常' : 'No issues')
-        };
-
-        // Aggregate findings
-        devFindings.forEach(f => allFindings.push({
-          [zh ? '设备主机名' : 'Hostname']: dev.hostname,
-          [zh ? 'IP 地址' : 'IP Address']: dev.ip_address,
-          [zh ? '等级' : 'Level']: f.level,
-          [zh ? '检查项' : 'Check Item']: f.item,
-          [zh ? '当前值' : 'Actual']: f.val,
-          [zh ? '标准值' : 'Threshold']: f.limit,
-          [zh ? '处置建议' : 'Advice']: f.advice,
-        }));
-
-        processedDevicesData.push({ dev, rows });
-      } catch (e) { console.error(e); }
-    }
-
-    // --- GENERATE SHEETS ---
-
-    // Sheet 1: Enhanced Overview
-    const avgScore = Object.values(deviceScores).length > 0 
-      ? (Object.values(deviceScores).reduce((acc, v) => acc + v.score, 0) / Object.values(deviceScores).length).toFixed(1)
-      : '100';
-    
-    const overviewRows = [
-      { [zh ? '巡检项' : 'Metric']: zh ? '任务名称' : 'Task Name', [zh ? '数据' : 'Value']: log.name || '-' },
-      { [zh ? '巡检项' : 'Metric']: zh ? '全网健康评分' : 'Network Health Score', [zh ? '数据' : 'Value']: avgScore },
-      { [zh ? '巡检项' : 'Metric']: zh ? '发现异常总数' : 'Total Findings', [zh ? '数据' : 'Value']: allFindings.length },
-      { [zh ? '巡检项' : 'Metric']: 'Execution ID', [zh ? '数据' : 'Value']: log.id },
-      { [zh ? '巡检项' : 'Metric']: zh ? '执行人' : 'Operator', [zh ? '数据' : 'Value']: log.created_by || '-' },
-      { [zh ? '巡检项' : 'Metric']: zh ? '触发时间' : 'Triggered At', [zh ? '数据' : 'Value']: new Date(log.started_at).toLocaleString() },
-      { [zh ? '巡检项' : 'Metric']: zh ? '状态' : 'Status', [zh ? '数据' : 'Value']: log.status || '-' },
-      { [zh ? '巡检项' : 'Metric']: zh ? '总设备数' : 'Total Devices', [zh ? '数据' : 'Value']: log.total_devices ?? 0 },
-    ];
-    const wsOverview = XLSX.utils.json_to_sheet(overviewRows);
-    wsOverview['!cols'] = [{ wch: 25 }, { wch: 60 }];
-    XLSX.utils.book_append_sheet(wb, wsOverview, zh ? '巡检结论' : 'Summary');
-
-    // Sheet 2: Findings Detail
-    if (allFindings.length > 0) {
-      const wsFindings = XLSX.utils.json_to_sheet(allFindings);
-      wsFindings['!cols'] = [{ wch: 15 }, { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 12 }, { wch: 30 }];
-      XLSX.utils.book_append_sheet(wb, wsFindings, zh ? '异常发现明细' : 'Findings Detail');
-    }
-
-    // Sheet 3: Device Dashboard
-    const dashboardRows = deviceList.map((d: any) => {
-      const info = deviceScores[d.device_id] || { score: 100, status: zh ? '正常' : 'OK', topFinding: '-' };
-      return {
-        [zh ? '主机名' : 'Hostname']: d.hostname,
-        [zh ? 'IP 地址' : 'IP Address']: d.ip_address || '',
-        [zh ? '健康得分' : 'Score']: info.score,
-        [zh ? '评价' : 'Status']: info.status,
-        [zh ? '核心异常' : 'Top Finding']: info.topFinding,
-        [zh ? '运行状态' : 'Exec Status']: d.status || '',
-        [zh ? '耗时(ms)' : 'Duration']: d.duration_ms ?? 0,
-      };
-    });
-    const wsDash = XLSX.utils.json_to_sheet(dashboardRows);
-    wsDash['!cols'] = [{ wch: 18 }, { wch: 15 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 12 }, { wch: 10 }];
-    XLSX.utils.book_append_sheet(wb, wsDash, zh ? '设备健康看板' : 'Health Dashboard');
-
-    // Sheet 4..N: Raw command outputs (First 10 devices only to keep file size sane)
-    processedDevicesData.slice(0, 10).forEach(({ dev, rows }) => {
-      if (rows.length > 0) {
-        const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [{ wch: 12 }, { wch: 40 }, { wch: 80 }];
-        const sheetName = (dev.hostname || dev.ip_address || dev.device_id).replace(/[\\/?*[\]:]/g, '_').slice(0, 31);
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
-      }
-    });
-
-    const safeName = (log.name || 'inspection').replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '_').slice(0, 50);
-    XLSX.writeFile(wb, `Intelligent_Inspection_${safeName}_${log.id.slice(0, 8)}.xlsx`);
-  }, [authHeaders, zh, splitOutputByCommand]);
-
-  /** Export a Playbook execution result to JSON */
-  const handleDownloadPlaybookJSON = useCallback(async (log: any) => {
-    try {
-      const r1 = await fetch(`/api/playbooks/${log.id}`, { headers: authHeaders });
-      const r2 = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=500`, { headers: authHeaders });
-      if (r1.ok && r2.ok) {
-        const j1 = await r1.json();
-        const j2 = await r2.json();
-        const dlData = { summary: j1, devices: Array.isArray(j2) ? j2 : (j2.items || []) };
-        const blob = new Blob([JSON.stringify(dlData, null, 2)], { type: 'application/json' });
+        const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `playbook_execution_${log.id}.json`;
+        const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const prefix = source === 'playbook' ? 'Playbook' : 'Inspection';
+        const ext = format === 'xlsx' ? 'xlsx' : format === 'html' ? 'html' : format === 'pdf' ? 'pdf' : 'json';
+        a.download = `Nexora_${prefix}_Report_${logId}_${today}.${ext}`;
         a.click();
         URL.revokeObjectURL(url);
+      } else {
+        showToast(zh ? `${format.toUpperCase()} 导出失败 (${resp.status})` : `${format.toUpperCase()} export failed (${resp.status})`, 'error');
       }
     } catch (err) {
-      console.error('Playbook JSON export error:', err);
-      showToast(zh ? 'JSON 导出失败' : 'JSON export failed', 'error');
+      console.error(`Export ${format} failed:`, err);
+      showToast(zh ? `${format.toUpperCase()} 导出异常` : `${format.toUpperCase()} export error`, 'error');
     }
   }, [authHeaders, zh, showToast]);
 
@@ -1422,164 +1247,78 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            {log.source === 'inspection' ? (
-                              <div className="flex items-center gap-3">
-                                <div className="flex flex-col">
-                                  <span className="text-xs font-bold text-black/60">{log.total_devices} {zh ? '台设备' : 'Devices'}</span>
-                                  <div className="flex items-center gap-1.5 mt-1">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-bold text-black/60">{log.total_devices} {zh ? '台设备' : 'Devices'}</span>
+                              <div className="flex items-center gap-1.5 mt-1">
+                                {log.source === 'inspection' ? (
+                                  <>
                                     <span className="text-[10px] text-black/40">{zh ? '平均分' : 'Avg Score'}:</span>
                                     <span className={`text-[11px] font-black tabular-nums ${
                                     (log.avg_health_score || 0) >= 80 ? 'text-emerald-600' : (log.avg_health_score || 0) >= 60 ? 'text-amber-600' : 'text-red-600'
                                     }`}>
                                       {log.avg_health_score?.toFixed(1) ?? '—'}
                                     </span>
-                                  </div>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="flex items-center gap-3">
-                                  <div className="flex flex-col">
-                                    <span className="text-xs font-bold text-black/60">{log.total_devices} {zh ? '台设备' : 'Devices'}</span>
-                                    <div className="flex items-center gap-1.5 mt-1">
-                                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                                      <span className="text-[10px] text-emerald-600 font-bold">{log.success_count}</span>
-                                      <div className="w-1.5 h-1.5 rounded-full bg-red-400 ml-1" />
-                                      <span className="text-[10px] text-red-600 font-bold">{log.failed_count}</span>
-                                      {log.partial_count ? (
-                                        <>
-                                          <div className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-1" />
-                                          <span className="text-[10px] text-amber-600 font-bold">{log.partial_count}</span>
-                                        </>
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </td>
-                            <td className="px-6 py-4">
-                              <span className="text-xs font-bold text-black/40">{log.created_by}</span>
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                {onRerun && (
-                                  <button
-                                    onClick={() => onRerun(log)}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-amber-600 border border-amber-100 bg-amber-50 hover:bg-amber-100 transition-all active:scale-95"
-                                    title={zh ? '重新执行' : 'Rerun'}
-                                  >
-                                    <RotateCcw size={12} />
-                                    {zh ? '重试' : 'Retry'}
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => handleSelectLog(log)}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-cyan-600 border border-cyan-100 bg-cyan-50/20 hover:bg-cyan-50 transition-all active:scale-95"
-                                >
-                                  <Eye size={12} />
-                                  {zh ? '查看' : 'View'}
-                                </button>
-                                {log.source === 'inspection' ? (
-                                  <>
-                                    {/* R7.1: Excel export */}
-                                    <button
-                                      onClick={async () => {
-                                        try {
-                                          const resp = await fetch(`/api/inspections/${log.id}/export?format=xlsx`, { headers: authHeaders });
-                                          if (resp.ok) {
-                                            const blob = await resp.blob();
-                                            const url = URL.createObjectURL(blob);
-                                            const a = document.createElement('a');
-                                            a.href = url;
-                                            const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-                                            a.download = `Nexora_Inspection_${log.id}_${today}.xlsx`;
-                                            a.click();
-                                            URL.revokeObjectURL(url);
-                                          } else {
-                                            showToast(zh ? `Excel 导出失败 (${resp.status})` : `Excel export failed (${resp.status})`, 'error');
-                                          }
-                                        } catch (err) {
-                                          console.error('Export Excel failed:', err);
-                                          showToast(zh ? 'Excel 导出失败' : 'Excel export failed', 'error');
-                                        }
-                                      }}
-                                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-emerald-600 border border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50 transition-all active:scale-95"
-                                      title={zh ? '导出 Excel 报表' : 'Export Excel report'}
-                                    >
-                                      <FileSpreadsheet size={12} />
-                                      Excel
-                                    </button>
-                                    {/* R7.1/R7.7: HTML export */}
-                                    <button
-                                      onClick={async () => {
-                                        try {
-                                          const resp = await fetch(`/api/inspections/${log.id}/export?format=html`, { headers: authHeaders });
-                                          if (resp.ok) {
-                                            const blob = await resp.blob();
-                                            const url = URL.createObjectURL(blob);
-                                            const a = document.createElement('a');
-                                            a.href = url;
-                                            const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-                                            a.download = `Nexora_Inspection_${log.id}_${today}.html`;
-                                            a.click();
-                                            URL.revokeObjectURL(url);
-                                          } else {
-                                            showToast(zh ? `HTML 导出失败 (${resp.status})` : `HTML export failed (${resp.status})`, 'error');
-                                          }
-                                        } catch (err) {
-                                          console.error('Export HTML failed:', err);
-                                          showToast(zh ? 'HTML 导出失败' : 'HTML export failed', 'error');
-                                        }
-                                      }}
-                                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-indigo-600 border border-indigo-200 bg-indigo-50/40 hover:bg-indigo-50 transition-all active:scale-95"
-                                      title={zh ? '导出 HTML 报表（含 ECharts 图表）' : 'Export HTML report (with ECharts)'}
-                                    >
-                                      <FileText size={12} />
-                                      HTML
-                                    </button>
-                                    <button
-                                      onClick={async () => {
-                                        try {
-                                          const resp = await fetch(`/api/inspections/${log.id}`, { headers: authHeaders });
-                                          if (resp.ok) {
-                                            const j = await resp.json();
-                                            downloadInspJSON(j.data || j, `Nexora_Inspection_${log.id}.json`);
-                                          }
-                                        } catch (err) {
-                                          showToast(zh ? 'JSON 导出失败' : 'JSON export failed', 'error');
-                                        }
-                                      }}
-                                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50/40 hover:bg-slate-50 transition-all active:scale-95"
-                                      title={zh ? '导出 JSON 原始数据' : 'Export JSON data'}
-                                    >
-                                      <FileJson size={12} />
-                                      JSON
-                                    </button>
                                   </>
                                 ) : (
                                   <>
-                                    <button
-                                      onClick={() => handleDownloadPlaybookExcel(log)}
-                                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-emerald-600 border border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50 transition-all active:scale-95"
-                                      title={zh ? '导出 Excel 报表' : 'Export Excel report'}
-                                    >
-                                      <FileSpreadsheet size={12} />
-                                      Excel
-                                    </button>
-                                    <button
-                                      onClick={() => handleDownloadPlaybookJSON(log)}
-                                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-all active:scale-95"
-                                      title={zh ? '导出 JSON 原始数据' : 'Export JSON data'}
-                                    >
-                                      <FileJson size={12} />
-                                      JSON
-                                    </button>
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                    <span className="text-[10px] text-emerald-600 font-bold">{log.success_count}</span>
+                                    <div className="w-1.5 h-1.5 rounded-full bg-red-400 ml-1" />
+                                    <span className="text-[10px] text-red-600 font-bold">{log.failed_count}</span>
                                   </>
                                 )}
                               </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="text-xs font-bold text-black/40">{log.created_by}</span>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => handleSelectLog(log)}
+                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-cyan-600 border border-cyan-100 bg-cyan-50/20 hover:bg-cyan-50 transition-all active:scale-95"
+                              >
+                                <Eye size={12} />
+                                {zh ? '查看' : 'View'}
+                              </button>
+                              
+                              {/* ── R7.1: 标准化导出按钮组 ── */}
+                              <div className="flex items-center gap-1 ml-2 pl-2 border-l border-black/5">
+                                <button
+                                  onClick={() => handleExportReport(log.id, 'html', log.source)}
+                                  className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-all active:scale-90"
+                                  title={zh ? '导出 HTML' : 'Export HTML'}
+                                >
+                                  <FileText size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleExportReport(log.id, 'pdf', log.source)}
+                                  className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition-all active:scale-90"
+                                  title={zh ? '导出 PDF' : 'Export PDF'}
+                                >
+                                  <FileText size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleExportReport(log.id, 'xlsx', log.source)}
+                                  className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-all active:scale-90"
+                                  title={zh ? '导出 Excel' : 'Export Excel'}
+                                >
+                                  <FileSpreadsheet size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleExportReport(log.id, 'json', log.source)}
+                                  className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-50 transition-all active:scale-90"
+                                  title={zh ? '导出 JSON' : 'Export JSON'}
+                                >
+                                  <FileJson size={14} />
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               ) : (
@@ -1623,7 +1362,6 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
           className="relative bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl h-[90vh] overflow-hidden flex flex-col z-10 border border-black/10"
         >
-          {/* Modal Header */}
           <div className="px-6 py-4 border-b border-black/5 flex items-center justify-between bg-black/[0.015] flex-shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 border border-indigo-100">
@@ -1637,84 +1375,37 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {selectedLog.source === 'inspection' && (
-                <>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const resp = await fetch(`/api/inspections/${selectedLog.id}/export?format=xlsx`, { headers: authHeaders });
-                        if (resp.ok) {
-                          const blob = await resp.blob();
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-                          a.download = `Nexora_Inspection_${selectedLog.id}_${today}.xlsx`;
-                          a.click();
-                          URL.revokeObjectURL(url);
-                        } else {
-                          showToast(zh ? `Excel 导出失败 (${resp.status})` : `Excel export failed (${resp.status})`, 'error');
-                        }
-                      } catch (err) {
-                        console.error(err);
-                        showToast(zh ? 'Excel 导出失败' : 'Excel export failed', 'error');
-                      }
-                    }}
-                    title={zh ? '导出 Excel 报表（含 7 个 Sheet）' : 'Export Excel report (7 sheets)'}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-700 border border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50 transition-all active:scale-95"
-                  >
-                    <FileSpreadsheet size={14} />
-                    Excel
-                  </button>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const resp = await fetch(`/api/inspections/${selectedLog.id}/export?format=html`, { headers: authHeaders });
-                        if (resp.ok) {
-                          const blob = await resp.blob();
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-                          a.download = `Nexora_Inspection_${selectedLog.id}_${today}.html`;
-                          a.click();
-                          URL.revokeObjectURL(url);
-                        } else {
-                          showToast(zh ? `HTML 导出失败 (${resp.status})` : `HTML export failed (${resp.status})`, 'error');
-                        }
-                      } catch (err) {
-                        console.error(err);
-                        showToast(zh ? 'HTML 导出失败' : 'HTML export failed', 'error');
-                      }
-                    }}
-                    title={zh ? '导出 HTML 报表（含 ECharts 图表，可直接发邮件）' : 'Export HTML report (ECharts inline)'}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-700 border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-50 transition-all active:scale-95"
-                  >
-                    <FileText size={14} />
-                    HTML
-                  </button>
-                </>
-              )}
-              {selectedLog.source === 'playbook' && (
-                <>
-                  <button
-                    onClick={() => handleDownloadPlaybookExcel(selectedLog)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-700 border border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50 transition-all active:scale-95"
-                    title={zh ? '导出 Excel 报表' : 'Export Excel'}
-                  >
-                    <FileSpreadsheet size={14} />
-                    Excel
-                  </button>
-                  <button
-                    onClick={() => handleDownloadPlaybookJSON(selectedLog)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-all active:scale-95"
-                    title={zh ? '导出 JSON 原始数据' : 'Export JSON'}
-                  >
-                    <FileJson size={14} />
-                    JSON
-                  </button>
-                </>
-              )}
+              {/* ── R7.1: 详情弹窗标准化导出按钮组 ── */}
+              <div className="flex items-center gap-1 bg-black/5 p-1 rounded-xl mr-2">
+                <button
+                  onClick={() => handleExportReport(selectedLog.id, 'html', selectedLog.source)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-700 hover:bg-white transition-all shadow-sm"
+                >
+                  <FileText size={14} />
+                  HTML
+                </button>
+                <button
+                  onClick={() => handleExportReport(selectedLog.id, 'pdf', selectedLog.source)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-rose-700 hover:bg-white transition-all shadow-sm"
+                >
+                  <FileText size={14} />
+                  PDF
+                </button>
+                <button
+                  onClick={() => handleExportReport(selectedLog.id, 'xlsx', selectedLog.source)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-700 hover:bg-white transition-all shadow-sm"
+                >
+                  <FileSpreadsheet size={14} />
+                  Excel
+                </button>
+                <button
+                  onClick={() => handleExportReport(selectedLog.id, 'json', selectedLog.source)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:bg-white transition-all shadow-sm"
+                >
+                  <FileJson size={14} />
+                  JSON
+                </button>
+              </div>
               <button
                 onClick={() => setIsDetailModalOpen(false)}
                 className="p-2 rounded-xl text-black/20 hover:bg-black/5 hover:text-black/40 transition-all"
@@ -2239,8 +1930,46 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                         )}
                                       </div>
                                       {!isCollapsed && (
-                                        <div className={`p-4 font-mono text-[11px] whitespace-pre-wrap leading-relaxed ${isError ? 'text-red-300/80' : 'text-white/60'}`}>
-                                          {outputStr}
+                                        <div className={`p-4 font-mono text-[11px] ${inspParseViewMode[blockKey] === 'parsed' ? '' : 'whitespace-pre-wrap'} leading-relaxed ${isError ? 'text-red-300/80' : 'text-white/60'}`}>
+                                          {inspParseViewMode[blockKey] === 'parsed' ? (
+                                            <>
+                                              {parseState?.loading ? (
+                                                <div className="flex items-center gap-2 py-4 text-cyan-400/50">
+                                                  <Loader2 size={16} className="animate-spin" />
+                                                  <span>{zh ? '正在解析中...' : 'Parsing...'}</span>
+                                                </div>
+                                              ) : parseState?.error ? (
+                                                <div className="py-4 text-amber-500/80 italic">
+                                                  ⚠ {parseState.error}
+                                                </div>
+                                              ) : parseState?.data?.records ? (
+                                                <div className="overflow-x-auto custom-scrollbar-dark pb-2">
+                                                  <table className="w-full text-left border-collapse border border-white/10">
+                                                    <thead>
+                                                      <tr className="bg-white/5 border-b border-white/10">
+                                                        {parseState.data.fields.map((f: string) => (
+                                                          <th key={f} className="px-3 py-2 text-[10px] font-bold text-cyan-400/80 uppercase tracking-wider border-r border-white/10 last:border-r-0">{f}</th>
+                                                        ))}
+                                                      </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-white/5">
+                                                      {parseState.data.records.map((rec: any, idx: number) => (
+                                                        <tr key={idx} className="hover:bg-white/[0.03]">
+                                                          {parseState.data.fields.map((f: string) => (
+                                                            <td key={f} className="px-3 py-2 text-[10px] text-white/60 whitespace-nowrap border-r border-white/5 last:border-r-0">{String(rec[f] ?? '—')}</td>
+                                                          ))}
+                                                        </tr>
+                                                      ))}
+                                                    </tbody>
+                                                  </table>
+                                                </div>
+                                              ) : (
+                                                <div className="py-4 text-white/20 italic">{zh ? '未解析或解析无结果' : 'Not parsed or no results'}</div>
+                                              )}
+                                            </>
+                                          ) : (
+                                            outputStr
+                                          )}
                                         </div>
                                       )}
                                     </div>
@@ -2334,41 +2063,51 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                   </div>
                   <div className="flex-1 p-6 font-mono text-xs text-[#d4d4d4] overflow-auto whitespace-pre-wrap select-text relative">
                     {pbDeviceDetail?.phases ? (
-                      Object.entries(pbDeviceDetail.phases).map(([phase, output]: any) => {
-                        const cmds = (output?.commands || []).map((c: string) => `> ${c}`).join('\n');
-                        const body = output?.output
-                          || ((output?.commands && output.commands.length > 0) ? output.commands.join('\n') : '');
-                        const phaseText = `${cmds ? cmds + '\n' : ''}${body || '—'}`;
+                      Object.entries(pbDeviceDetail.phases).map(([phase, pdata]: any) => {
+                        const pd = pdata || {};
+                        const cmds = pd.commands || [];
+                        const outputStr = typeof pd.output === 'string' ? pd.output : JSON.stringify(pd.output || '');
+                        const blocks = splitOutputByCommand(outputStr, cmds);
                         const dev = devices.find(d => d.id === selectedPbDevice);
-                        const phaseFilename = `${dev?.hostname || selectedPbDevice || 'device'}_${phase}`;
+
                         return (
-                          <div key={phase} className="mb-4 group/phase">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-[#a170e8] font-bold"># PHASE: {phase.toUpperCase()}</span>
-                              <OutputActions
-                                text={phaseText}
-                                filename={phaseFilename}
-                                theme="dark"
-                                zh={zh}
-                              />
+                          <div key={phase} className="mb-6 group/phase">
+                            <div className="flex items-center gap-2 mb-3">
+                              <div className="h-px flex-1 bg-white/5" />
+                              <span className="text-[#a170e8] text-[10px] font-black uppercase tracking-[0.2em]"># PHASE: {phase.toUpperCase()}</span>
+                              <div className="h-px flex-1 bg-white/5" />
                             </div>
-                            <div className="pl-4 border-l border-[#a170e8]/20 text-[#e0e0e0]">
-                              {output.commands && output.commands.length > 0 && (
-                                <div className="text-cyan-400/50 mb-2 font-bold italic">
-                                  {output.commands.map((cmd: string, i: number) => (
-                                    <div key={i}>&gt; {cmd}</div>
-                                  ))}
-                                </div>
-                              )}
-                              {/* output field = actual device response text
-                                  fallback: if no output field, treat commands array as raw output lines */}
-                              {output.output
-                                ? output.output
-                                : output.status === 'success' && output.commands && output.commands.length > 0
-                                  ? <span className="text-yellow-400/70 italic">{zh ? '命令执行成功，但设备未返回数据（如 ARP 表为空）' : 'Command succeeded but device returned no data'}</span>
-                                  : (output.commands && output.commands.length > 0
-                                      ? output.commands.join('\n')
-                                      : '—')}
+                            
+                            <div className="space-y-3">
+                              {blocks.map((blk, bi) => {
+                                const bOutput = blk.output || '';
+                                const bIsError = bOutput.includes('__ERROR__') || bOutput.includes('% Invalid input') || bOutput.includes('error');
+                                
+                                return (
+                                  <div key={bi} className={`rounded-lg overflow-hidden border transition-all ${
+                                    bIsError ? 'border-red-500/30 bg-red-500/5' : 'border-white/5 bg-black/20'
+                                  }`}>
+                                    <div className="px-4 py-2 bg-white/5 flex items-center justify-between">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <ChevronRight size={14} className="text-white/20 shrink-0 rotate-90" />
+                                        <span className={`text-[11px] font-mono font-bold truncate ${bIsError ? 'text-red-400' : 'text-cyan-400/80'}`}>&gt; {blk.command || 'system'}</span>
+                                      </div>
+                                      <div className="flex items-center gap-1 shrink-0 ml-3">
+                                        <OutputActions
+                                          text={blk.output}
+                                          filename={`${dev?.hostname || 'device'}_${phase}_cmd${bi}`}
+                                          theme="dark"
+                                          zh={zh}
+                                          iconOnly={true}
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className={`p-4 font-mono text-[11px] whitespace-pre-wrap leading-relaxed ${bIsError ? 'text-red-300/80' : 'text-[#d4d4d4]'}`}>
+                                      {blk.output || (pd.status === 'success' ? (zh ? '命令执行成功，但无回显' : 'Success, no output') : '—')}
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         );

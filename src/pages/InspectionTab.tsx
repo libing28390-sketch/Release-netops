@@ -321,7 +321,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
     }
   };
 
-  const handleDownloadReport = async (runId: string, format: 'xlsx' | 'html' = 'xlsx') => {
+  const handleDownloadReport = async (runId: string, format: 'xlsx' | 'html' | 'json' | 'pdf' = 'xlsx') => {
     try {
       const resp = await fetch(`/api/inspections/${runId}/export?format=${format}`, { headers: authHeaders });
       if (!resp.ok) {
@@ -624,24 +624,40 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                     <h3 className="text-base font-bold text-[#0b2340]">{isZh ? '巡检详情' : 'Inspection Detail'}</h3>
                     <p className="text-[11px] text-black/35 mt-0.5">{new Date(selectedRunDetail.started_at).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}</p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleDownloadReport(selectedRunDetail.id, 'xlsx')}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md active:scale-95 transition-all"
-                      title={isZh ? '下载 Excel 报表（含 7 个 Sheet）' : 'Download Excel report (7 sheets)'}
-                    >
-                      <Download className="w-4 h-4" />
-                      Excel
-                    </button>
-                    <button
-                      onClick={() => handleDownloadReport(selectedRunDetail.id, 'html')}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-500 shadow-md active:scale-95 transition-all"
-                      title={isZh ? '下载 HTML 报表（含 ECharts 图表）' : 'Download HTML report (ECharts inline)'}
-                    >
-                      <Download className="w-4 h-4" />
-                      HTML
-                    </button>
-                  </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleDownloadReport(selectedRunDetail.id, 'xlsx')}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md active:scale-95 transition-all"
+                        title={isZh ? '下载 Excel 报表（含 7 个 Sheet）' : 'Download Excel report (7 sheets)'}
+                      >
+                        <Download className="w-4 h-4" />
+                        Excel
+                      </button>
+                      <button
+                        onClick={() => handleDownloadReport(selectedRunDetail.id, 'html')}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-500 shadow-md active:scale-95 transition-all"
+                        title={isZh ? '下载 HTML 报表（含 ECharts 图表）' : 'Download HTML report (ECharts inline)'}
+                      >
+                        <Download className="w-4 h-4" />
+                        HTML
+                      </button>
+                      <button
+                        onClick={() => handleDownloadReport(selectedRunDetail.id, 'pdf')}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-rose-600 text-white hover:bg-rose-500 shadow-md active:scale-95 transition-all"
+                        title={isZh ? '下载 PDF 报表（适合打印和归档）' : 'Download PDF report (Archive-ready)'}
+                      >
+                        <Download className="w-4 h-4" />
+                        PDF
+                      </button>
+                      <button
+                        onClick={() => handleDownloadReport(selectedRunDetail.id, 'json')}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-slate-700 text-white hover:bg-slate-600 shadow-md active:scale-95 transition-all"
+                        title={isZh ? '下载 JSON 原始数据（机器可读）' : 'Download raw JSON data'}
+                      >
+                        <Download className="w-4 h-4" />
+                        JSON
+                      </button>
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

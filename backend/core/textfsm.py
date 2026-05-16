@@ -99,12 +99,29 @@ def parse_with_textfsm(platform: str, command: str, output: str) -> list[dict[st
     """
     import textfsm
 
+    # ── R3.4: 增强数据清洗，移除命令回显与 Nexora 标记 ────────────────
+    cleaned_lines = []
+    # 移除以 # 开头的行（Nexora 内部命令标记）以及常见的空行
+    for line in output.splitlines():
+        trimmed = line.strip()
+        # 排除以 # 开头的标记行
+        if trimmed.startswith('#'): continue
+        # 排除包含该命令本身的行（回显清除）
+        if command.lower() in trimmed.lower() and len(trimmed) < len(command) + 5:
+            continue
+        cleaned_lines.append(line)
+    
+    clean_output = '\n'.join(cleaned_lines).strip()
+    # 如果清洗后为空，则使用原输出（保守策略）
+    if not clean_output:
+        clean_output = output
+
     template_path = _find_template(platform, command)
     if template_path:
         try:
             with open(template_path, encoding='utf-8') as f:
                 fsm = textfsm.TextFSM(f)
-            result = fsm.ParseTextToDicts(output)
+            result = fsm.ParseTextToDicts(clean_output)
             return result if isinstance(result, list) else []
         except Exception as e:
             logger.warning('TextFSM parse failed for %s/%s: %s', platform, command, e)
@@ -112,7 +129,7 @@ def parse_with_textfsm(platform: str, command: str, output: str) -> list[dict[st
     # 回退到 ntc_templates parse_output（兼容旧逻辑）
     try:
         from ntc_templates.parse import parse_output
-        parsed = parse_output(platform=platform, command=command, data=output)
+        parsed = parse_output(platform=platform, command=command, data=clean_output)
         return parsed if isinstance(parsed, list) else []
     except Exception:
         return []

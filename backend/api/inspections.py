@@ -4,9 +4,17 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from fastapi.responses import FileResponse
 import os
 import tempfile
+import logging
+
+logger = logging.getLogger(__name__)
 
 from core.rbac import require_role
-from core.report_generator import generate_inspection_excel
+from core.report_generator import (
+    generate_inspection_excel,
+    generate_inspection_html,
+    generate_inspection_json,
+    generate_inspection_pdf,
+)
 from schemas.schemas import InspectionRunRequest, InspectionScheduleCreate, InspectionScheduleUpdate, InspectionItemCreate
 from services.inspection_service import (
     compare_runs,
@@ -337,6 +345,160 @@ def delete_correlation_rule(rule_id: str, _user=require_role('Operator')):
 
 
 # ⚠️ {run_id} 路径参数路由放最后，避免遮蔽上方字面路由
+
+@router.get('/inspections/{run_id}/export')
+def export_inspection_report(
+    run_id: str,
+    format: str = Query('xlsx', pattern='^(xlsx|html|json|pdf)$', description='导出格式: xlsx, html, json 或 pdf'),
+    source: str = Query('inspection', description='数据源: inspection 或 playbook'),
+    customer_name: str = Query('', description='客户名称（HTML/PDF 报表）'),
+    engineer_name: str = Query('', description='工程师名称（HTML/PDF 报表）'),
+    _user=require_role('Viewer'),
+):
+    """
+    R7.1: 支持 format 参数 (xlsx, html, json, pdf)
+    R7.7: 文件名格式 Nexora_Inspection_{run_id}_{YYYYMMDD}.{ext}
+    """
+    conn = get_db_connection()
+    try:
+        if source == 'playbook':
+            # --- PLAYBOOK TO INSPECTION MAPPING ---
+            row = conn.execute('SELECT * FROM playbook_executions WHERE id = ?', (run_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail='Playbook 记录不存在')
+            
+            detail = dict(row)
+            # Fetch device results
+            dev_rows = conn.execute('SELECT * FROM execution_device_results WHERE execution_id = ?', (run_id,)).fetchall()
+            results = []
+            
+            # Intelligent Parsing (replicates frontend logic in backend for PDF/HTML support)
+            from core.textfsm import parse_with_textfsm
+            
+            total_score = 0
+            for dr in dev_rows:
+                dr_dict = dict(dr)
+                
+                # 联查真实的 platform 和 role (解决 execution_device_results 表中无对应字段导致的通用设备回退)
+                dev_id = dr_dict.get('device_id')
+                ip_addr = dr_dict.get('ip_address')
+                dev_row = None
+                if dev_id:
+                    dev_row = conn.execute("SELECT platform, role FROM devices WHERE id = ?", (dev_id,)).fetchone()
+                if not dev_row and ip_addr:
+                    dev_row = conn.execute("SELECT platform, role FROM devices WHERE ip_address = ?", (ip_addr,)).fetchone()
+                
+                if dev_row:
+                    dr_dict['platform'] = dev_row['platform'] or dr_dict.get('platform', '')
+                    dr_dict['role'] = dev_row['role'] or dr_dict.get('role', '')
+
+                phases = {}
+                try: phases = json.loads(dr_dict.get('phases_json') or '{}')
+                except: pass
+                
+                metrics = {}
+                findings = []
+                score = 100
+
+                status_str = str(dr_dict.get('status') or '').strip().lower()
+                is_failed = (status_str in ('failed', 'error')) or ('fail' in status_str)
+                err_msg = dr_dict.get('error_message') or ''
+
+                for p_name, p_data in phases.items():
+                    if isinstance(p_data, dict):
+                        p_st = str(p_data.get('status') or '').strip().lower()
+                        if p_st in ('failed', 'error') or 'fail' in p_st:
+                            is_failed = True
+                            if not err_msg and p_data.get('output'):
+                                err_msg = str(p_data.get('output')).strip()
+                        output = p_data.get('output', '')
+                        if not isinstance(output, str): output = str(output)
+                        
+                        if 'show version' in output.lower() or 'display version' in output.lower():
+                            recs = parse_with_textfsm(dr_dict.get('platform', 'cisco_ios'), 'show version', output)
+                            if recs: metrics['version'] = recs[0]
+                        
+                        if 'error' in output.lower() or 'drop' in output.lower():
+                            findings.append({'severity': 'warning', 'item': '接口异常检查', 'message': '接口出现 error/drop 丢包', 'description': '命令输出中含有 error/drop 关键字，可能存在潜在风险。'})
+                            score -= 5
+
+                if is_failed:
+                    score = 0
+                    findings.append({
+                        'severity': 'critical',
+                        'item': '设备连接与作业状态',
+                        'message': f"作业执行失败 ({err_msg or '设备连接超时或被拒绝'})",
+                        'description': f"异常原因: {err_msg or '无法连接到远程设备端口，网络不在线或连接超时。'}"
+                    })
+
+                final_score = max(0, score)
+                dr_dict['metrics_json'] = json.dumps(metrics)
+                dr_dict['findings_json'] = json.dumps(findings, ensure_ascii=False)
+                dr_dict['health_score'] = final_score
+                dr_dict['health_status'] = 'healthy' if final_score >= 90 else ('warning' if final_score >= 70 else 'critical')
+                total_score += final_score
+                results.append(dr_dict)
+            
+            detail['results'] = results
+            detail['avg_health_score'] = round(total_score / len(results), 1) if results else 100
+            detail['total_devices'] = len(results)
+            detail['started_at'] = detail.get('started_at') or detail.get('created_at')
+            detail['report_type'] = 'playbook'
+            detail['name'] = detail.get('scenario_name') or detail.get('playbook_name') or detail.get('name') or 'Playbook 自动化执行'
+        else:
+            detail = get_inspection_run_detail(run_id)
+            if not detail:
+                raise HTTPException(status_code=404, detail='巡检记录不存在')
+            results = detail.pop('results', [])
+            detail['report_type'] = 'inspection'
+            detail['name'] = detail.get('name') or '例行网络巡检'
+    finally:
+        conn.close()
+
+    today = datetime.now().strftime('%Y%m%d')
+    ext = format
+    media_type = 'application/octet-stream'
+    
+    if format == 'xlsx':
+        suffix = '.xlsx'
+        media_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    elif format == 'html':
+        suffix = '.html'
+        media_type = 'text/html'
+    elif format == 'json':
+        suffix = '.json'
+        media_type = 'application/json'
+    elif format == 'pdf':
+        suffix = '.pdf'
+        media_type = 'application/pdf'
+    else:
+        raise HTTPException(status_code=400, detail="不支持的导出格式")
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix=f'inspection_{run_id}_')
+    os.close(tmp_fd)
+
+    try:
+        if format == 'xlsx':
+            generate_inspection_excel(detail, results, tmp_path)
+        elif format == 'html':
+            generate_inspection_html(detail, results, tmp_path, customer_name, engineer_name)
+        elif format == 'json':
+            generate_inspection_json(detail, results, tmp_path)
+        elif format == 'pdf':
+            generate_inspection_pdf(detail, results, tmp_path, customer_name, engineer_name)
+            
+        return FileResponse(
+            tmp_path,
+            filename=f"Nexora_Inspection_{run_id}_{today}.{ext}",
+            media_type=media_type,
+        )
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        logger.error(f"Report generation failed for {format}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"报表生成失败 ({format}): {str(e)}")
+
+
 @router.get('/inspections/{run_id}')
 def inspection_run_detail(
     run_id: str,
@@ -346,58 +508,6 @@ def inspection_run_detail(
     if not detail:
         raise HTTPException(status_code=404, detail='巡检记录不存在')
     return {'success': True, 'data': detail, 'message': ''}
-
-@router.get('/inspections/{run_id}/export')
-def export_inspection_report(
-    run_id: str,
-    format: str = Query('xlsx', pattern='^(xlsx|html)$', description='导出格式: xlsx 或 html'),
-    customer_name: str = Query('', description='客户名称（HTML 报表）'),
-    engineer_name: str = Query('', description='工程师名称（HTML 报表）'),
-    _user=require_role('Viewer'),
-):
-    """
-    R7.1: 支持 format 参数 (xlsx 默认 / html)
-    R7.7: 文件名格式 Nexora_Inspection_{run_id}_{YYYYMMDD}.{ext}
-    """
-    from core.report_generator import generate_inspection_html
-
-    detail = get_inspection_run_detail(run_id)
-    if not detail:
-        raise HTTPException(status_code=404, detail='巡检记录不存在')
-
-    results = detail.pop('results', [])
-    today = datetime.now().strftime('%Y%m%d')
-
-    if format == 'html':
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.html', prefix=f'inspection_{run_id}_')
-        os.close(tmp_fd)
-        try:
-            generate_inspection_html(detail, results, tmp_path, customer_name, engineer_name)
-            return FileResponse(
-                tmp_path,
-                filename=f"Nexora_Inspection_{run_id}_{today}.html",
-                media_type='text/html; charset=utf-8',
-            )
-        except Exception as e:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-            raise HTTPException(status_code=500, detail=f"HTML 报表生成失败: {str(e)}")
-
-    # 默认 xlsx
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix='.xlsx', prefix=f'inspection_{run_id}_')
-    os.close(tmp_fd)
-
-    try:
-        generate_inspection_excel(detail, results, tmp_path)
-        return FileResponse(
-            tmp_path,
-            filename=f"Nexora_Inspection_{run_id}_{today}.xlsx",
-            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        )
-    except Exception as e:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise HTTPException(status_code=500, detail=f"报表生成失败: {str(e)}")
 
 from datetime import datetime # Ensure datetime is available
 

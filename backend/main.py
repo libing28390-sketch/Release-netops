@@ -1572,6 +1572,11 @@ async def status_monitor():
                 except Exception as intf_err:
                     logger.debug(f"[SNMP] {ip} interface collection failed: {intf_err}")
 
+            is_server_asset = (str(device.get('asset_type') or '').strip().lower() == 'server') or \
+                              (str(device.get('platform') or '').strip().lower() in ('linux', 'ubuntu', 'debian', 'centos', 'rhel', 'server'))
+            if is_server_asset:
+                snmp_available = True  # Linux 服务器采用 SSH 巡检，免除传统 SNMP 可达性告警监控
+
             snmp_rule = resolve_alert_rule('snmp_unreachable', device_row=device, ip_address=ip)
             snmp_key = f"snmp_unreachable:{dev_id}"
             if snmp_available:
@@ -1581,7 +1586,7 @@ async def status_monitor():
                     False,
                     resolved_alert_severity(snmp_rule, 'major'),
                     'SNMP Unreachable',
-                    f"{dev_label} SNMP 采集已恢复正常",
+                    f"{dev_label} 为 Linux 服务器资产，默认采用 SSH 巡检通道，已自动免除 SNMP 监控告警" if is_server_asset else f"{dev_label} SNMP 采集已恢复正常",
                     dev_id,
                     ip_address=ip,
                     status='resolved',

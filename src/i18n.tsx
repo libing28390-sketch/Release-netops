@@ -380,8 +380,26 @@ interface I18nContextProps {
 
 const I18nContext = createContext<I18nContextProps | undefined>(undefined);
 
+const STORAGE_KEY = 'netops_preferred_language';
+
 export const I18nProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [language, setLanguage] = useState<Language>('en');
+  const [language, setLangState] = useState<Language>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved === 'zh' || saved === 'en') {
+      return saved;
+    }
+    const navLang = navigator.language || navigator.languages?.[0];
+    return navLang?.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  });
+
+  const setLanguage = (lang: Language) => {
+    setLangState(lang);
+    try {
+      localStorage.setItem(STORAGE_KEY, lang);
+    } catch (e) {
+      console.warn('Failed to save language to localStorage:', e);
+    }
+  };
 
   const t = (key: string) => {
     return translations[key]?.[language] || key;

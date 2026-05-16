@@ -66,3 +66,43 @@ def decrypt_credential(stored: str | None) -> str | None:
     except InvalidToken:
         logger.error("Failed to decrypt credential — key mismatch or data corruption")
         return None
+
+
+def resolve_device_credentials(device: dict) -> tuple[str, str, int]:
+    """
+    统一解析设备的登录用户名、解密后的密码以及SSH端口。
+    采用多级回退策略：优先 normal_username -> 回退 username -> 最终 admin_username。
+    自动处理解密。
+    """
+    if not isinstance(device, dict):
+        return 'root', '', 22
+
+    normal_user = (device.get('normal_username') or '').strip()
+    normal_pass = (device.get('normal_password') or '').strip()
+    if normal_user and normal_pass:
+        username = normal_user
+        try:
+            password = decrypt_credential(normal_pass) or normal_pass
+        except Exception:
+            password = normal_pass
+    else:
+        username = (device.get('username') or '').strip()
+        raw_password = (device.get('password') or '').strip()
+        if not username or not raw_password:
+            username = (device.get('admin_username') or '').strip() or username
+            raw_password = (device.get('admin_password') or '').strip() or raw_password
+        try:
+            password = decrypt_credential(raw_password) or raw_password
+        except Exception:
+            password = raw_password
+
+    if not username:
+        username = 'root'
+
+    try:
+        port = int(device.get('port') or device.get('management_port') or 22)
+    except Exception:
+        port = 22
+
+    return username, password, port
+
