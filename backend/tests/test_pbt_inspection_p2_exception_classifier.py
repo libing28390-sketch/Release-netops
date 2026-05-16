@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, settings, assume
 from hypothesis import strategies as st
 
-from backend.core.exception_classifier import (
+from core.exception_classifier import (
     classify_exception,
     make_finding,
     EXCEPTION_TYPES,

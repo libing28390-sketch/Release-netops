@@ -1718,11 +1718,7 @@ def _init_db_logic(conn):
     ensure_column('devices', 'device_category', "TEXT DEFAULT ''")   # switch / router / firewall / load_balancer / other
     ensure_column('devices', 'power_watts', "INTEGER DEFAULT 0")     # rated power consumption in watts
 
-    # Migration: rack power capacity
-    ensure_column('racks', 'power_capacity_watts', "INTEGER DEFAULT 0")   # max PDU capacity in watts
 
-    # Migration: device type power consumption
-    ensure_column('device_types', 'power_watts', "INTEGER DEFAULT 0")     # rated power per device type
 
     # Backfill for dual-auth assets created before normal_username column existed.
     # Keep behavior predictable: normal access should use normal_username first.
@@ -2150,6 +2146,7 @@ def _init_db_logic(conn):
     )
     ''')
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_racks_name_dc ON racks(name, datacenter)')
+    ensure_column('racks', 'power_capacity_watts', "INTEGER DEFAULT 0")   # max PDU capacity in watts
 
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS device_types (
@@ -2165,6 +2162,7 @@ def _init_db_logic(conn):
     )
     ''')
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_device_types_model_vendor ON device_types(model, vendor)')
+    ensure_column('device_types', 'power_watts', "INTEGER DEFAULT 0")     # rated power per device type
 
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS rack_devices (

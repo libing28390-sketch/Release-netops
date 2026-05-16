@@ -4,7 +4,7 @@ Task 1.1: Verify summarize_run_analysis() reads from analysis_json field correct
 """
 import json
 import pytest
-from backend.core.analysis import summarize_run_analysis
+from core.analysis import summarize_run_analysis
 
 
 def test_summarize_run_analysis_reads_analysis_json():
