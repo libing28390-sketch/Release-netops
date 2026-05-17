@@ -428,6 +428,12 @@ async def login(request: Request, payload: dict = Body(...)):
     conn = get_db_connection()
     try:
         user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+        if user:
+            db_pwd = user['password']
+            logger.info(f"[Auth Debug] User found: '{safe_username}', input_pwd_len={len(password or '')}, db_pwd_hash_prefix='{db_pwd[:12] if db_pwd else 'empty'}', is_bcrypt={_is_bcrypt_hash(db_pwd)}")
+        else:
+            logger.warning(f"[Auth Debug] User NOT found in database: '{safe_username}'")
+
         if user and await _verify_password(password, user['password']):
             logger.info(f"Login successful for user: {safe_username}")
             last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -766,6 +772,7 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         notification_channels_str = json.dumps(notification_channels_raw) if notification_channels_raw is not None else (existing['notification_channels'] or '{}')
         change_groups_str = json.dumps(change_groups, ensure_ascii=False)
         password = user.get('password')
+        old_password = user.get('old_password') or user.get('oldPassword')
         fixed_pin = user.get('fixedPin')
         display_name = str(user.get('display_name', existing['display_name'] if 'display_name' in existing.keys() else '') or '').strip()
         phone = str(user.get('phone', existing['phone'] if 'phone' in existing.keys() else '') or '').strip()
@@ -776,6 +783,8 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
             hashed_pin = await _hash_password(str(fixed_pin))
             
         if password:
+            if not old_password or not await _verify_password(old_password, existing['password']):
+                raise HTTPException(status_code=400, detail="Current password is incorrect / 当前密码不正确")
             strength_err = _validate_password_strength(password)
             if strength_err:
                 raise HTTPException(status_code=400, detail=strength_err)

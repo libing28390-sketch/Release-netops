@@ -738,12 +738,10 @@ fi
 # 8. 生产环境安全与精简清理
 # ============================================================
 info "清理生产环境冗余测试与开发文档文件..."
-if [ -d "$PROJECT_DIR/backend/tests" ]; then
-    rm -rf "$PROJECT_DIR/backend/tests" 2>/dev/null || true
-    ok "已安全移除后端单元测试目录 (backend/tests)"
-fi
-find "$PROJECT_DIR" -maxdepth 2 -type f -name "*.md" ! -name "README.md" -exec rm -f {} + 2>/dev/null || true
-ok "已安全清理冗余架构与规划文档"
+rm -rf "$PROJECT_DIR/backend/tests" "$PROJECT_DIR/brain" "$PROJECT_DIR/scratch" "$PROJECT_DIR/skills" "$PROJECT_DIR/reports" "$PROJECT_DIR/docs" 2>/dev/null || true
+ok "已安全移除后端单元测试及各类排障草稿目录"
+find "$PROJECT_DIR" -maxdepth 2 -type f -name "*.md" ! -name "README.md" ! -name "DEPLOY.md" -exec rm -f {} + 2>/dev/null || true
+ok "已安全清理冗余架构与规划文档 (保留 README.md 与 DEPLOY.md)"
 
 # ============================================================
 # 完成

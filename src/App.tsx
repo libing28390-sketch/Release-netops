@@ -1161,7 +1161,7 @@ const App: React.FC = () => {
   const [lifecycleConfirmChecked, setLifecycleConfirmChecked] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showProfilePwd, setShowProfilePwd] = useState(false);
-  const [profileForm, setProfileForm] = useState<ProfileFormState>({ username: '', password: '', confirmPassword: '', fixedPin: '' });
+  const [profileForm, setProfileForm] = useState<ProfileFormState>({ username: '', oldPassword: '', password: '', confirmPassword: '', fixedPin: '' });
   const [notificationChannels, setNotificationChannels] = useState<{
     feishu:   { webhook_url: string; enabled: boolean; creator_username?: string };
     dingtalk: { webhook_url: string; enabled: boolean; secret: string; creator_username?: string };
@@ -1348,6 +1348,7 @@ const App: React.FC = () => {
   const openProfileModal = () => {
     setProfileForm({
       username: currentUser.username || currentUserRecord?.username || '',
+      oldPassword: '',
       password: '',
       confirmPassword: '',
       fixedPin: currentUserRecord?.fixed_pin || '',
@@ -1403,8 +1404,12 @@ const App: React.FC = () => {
       showToast(t('fillAllFields'), 'error');
       return;
     }
+    if (profileForm.password && !profileForm.oldPassword) {
+      showToast(language === 'zh' ? '修改密码请先输入当前密码' : 'Please enter current password', 'error');
+      return;
+    }
     if (profileForm.password && profileForm.password !== profileForm.confirmPassword) {
-      showToast('Passwords do not match', 'error');
+      showToast(language === 'zh' ? '两次输入的密码不一致' : 'Passwords do not match', 'error');
       return;
     }
 
@@ -1419,7 +1424,10 @@ const App: React.FC = () => {
         phone: profileForm.phone.trim(),
         email: profileForm.email.trim(),
       };
-      if (profileForm.password) payload.password = profileForm.password;
+      if (profileForm.password) {
+        payload.password = profileForm.password;
+        payload.old_password = profileForm.oldPassword;
+      }
 
       const response = await fetch(`/api/users/${profileUserId}`, {
         method: 'PUT',

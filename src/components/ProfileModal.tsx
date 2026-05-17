@@ -12,6 +12,7 @@ interface AvatarPreset {
 
 export interface ProfileFormState {
   username: string;
+  oldPassword?: string;
   password: string;
   confirmPassword: string;
   fixedPin: string;
@@ -237,14 +238,35 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
           </div>
 
           <div>
-            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>修改密码</label>
+            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>
+              {language === 'zh' ? '当前密码' : 'Current Password'}
+            </label>
+            <div className="relative">
+              <input
+                type={showProfilePwd ? 'text' : 'password'}
+                value={profileForm.oldPassword || ''}
+                onChange={(event) => onProfileFormChange((prev) => ({ ...prev, oldPassword: event.target.value }))}
+                title="Current password"
+                placeholder={language === 'zh' ? '修改密码前请先验证当前密码' : 'Enter current password to change'}
+                className={`w-full rounded-xl px-3 pr-10 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
+              />
+              <button type="button" title={showProfilePwd ? '隐藏' : '显示'} onClick={onToggleProfilePassword} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/35 hover:text-black/60'}`}>
+                {showProfilePwd ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>
+              {language === 'zh' ? '新密码' : 'New Password'}
+            </label>
             <div className="relative">
               <input
                 type={showProfilePwd ? 'text' : 'password'}
                 value={profileForm.password}
                 onChange={(event) => onProfileFormChange((prev) => ({ ...prev, password: event.target.value }))}
                 title="New password"
-                placeholder="留空则保持原密码不变"
+                placeholder={language === 'zh' ? '留空则保持原密码不变' : 'Leave empty to keep current password'}
                 className={`w-full rounded-xl px-3 pr-10 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
               />
               <button type="button" title={showProfilePwd ? '隐藏密码' : '显示密码'} onClick={onToggleProfilePassword} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/35 hover:text-black/60'}`}>
@@ -254,13 +276,15 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
           </div>
 
           <div>
-            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>确认密码</label>
+            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>
+              {language === 'zh' ? '确认新密码' : 'Confirm New Password'}
+            </label>
             <input
               type={showProfilePwd ? 'text' : 'password'}
               value={profileForm.confirmPassword}
               onChange={(event) => onProfileFormChange((prev) => ({ ...prev, confirmPassword: event.target.value }))}
               title="Confirm password"
-              placeholder="请再次输入新密码"
+              placeholder={language === 'zh' ? '请再次输入新密码' : 'Confirm new password'}
               className={`w-full rounded-xl px-3 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
             />
           </div>
