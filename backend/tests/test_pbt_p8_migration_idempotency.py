@@ -114,7 +114,8 @@ class TestEnsureColumnIdempotency:
     @settings(max_examples=5, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_n_calls_same_schema(self, n_calls, tmp_path):
         """P8 (Hypothesis): N calls produce same schema as 1 call."""
-        db_path = str(tmp_path / f"hyp_{n_calls}.db")
+        import uuid
+        db_path = str(tmp_path / f"hyp_{uuid.uuid4().hex}.db")
         conn = sqlite3.connect(db_path)
         conn.execute("CREATE TABLE t (id TEXT PRIMARY KEY, val TEXT)")
         conn.execute("INSERT INTO t VALUES ('x', 'hello')")

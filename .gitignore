@@ -39,3 +39,4 @@ zhihu*.md
 
 # Root license
 license.json
+backend/tests/test_pbt_p8_migration_idempotency.py

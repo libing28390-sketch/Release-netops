@@ -2499,16 +2499,32 @@ def _init_db_logic(conn):
                 (expected, item_id, '')
             )
 
-    admin_exists = cursor.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone()
-    if not admin_exists:
+    admin_row = cursor.execute("SELECT id, password FROM users WHERE username = 'admin'").fetchone()
+    if not admin_row:
         import bcrypt
         # Default password: admin
         hashed = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
-        cursor.execute(
-            "INSERT INTO users (id, username, password, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), "admin", hashed, "Administrator", "active", now)
-        )
+        if _USE_PG:
+            cursor.execute(
+                "INSERT INTO users (id, username, password, role, status, created_at) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (username) DO NOTHING",
+                (str(uuid.uuid4()), "admin", hashed, "Administrator", "active", now)
+            )
+        else:
+            cursor.execute(
+                "INSERT OR IGNORE INTO users (id, username, password, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "admin", hashed, "Administrator", "active", now)
+            )
         logger.info("[Database] Default admin user created (admin/admin)")
+    else:
+        pwd = admin_row['password'] if hasattr(admin_row, '__getitem__') else admin_row[1]
+        if not pwd or (not pwd.startswith('$2b$') and not pwd.startswith('$2a$') and pwd != 'admin'):
+            import bcrypt
+            hashed = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
+            if _USE_PG:
+                cursor.execute("UPDATE users SET password = %s WHERE username = 'admin'", (hashed,))
+            else:
+                cursor.execute("UPDATE users SET password = ? WHERE username = 'admin'", (hashed,))
+            logger.info("[Database] Corrupted admin password auto-repaired to default (admin/admin)")
 
     conn.commit()
 

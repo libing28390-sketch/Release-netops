@@ -207,6 +207,7 @@ sudo apt-get update -qq --allow-releaseinfo-change 2>/dev/null || \
 sudo apt-get install -y -qq \
     python3 python3-venv python3-dev \
     build-essential libffi-dev libssl-dev \
+    pkg-config libcairo2-dev libgirepository1.0-dev \
     nginx libcap2-bin \
     curl git ca-certificates > /dev/null 2>&1
 ok "系统依赖安装完成（含 Nginx、Git）"
@@ -732,6 +733,17 @@ else
         sleep 2
     done
 fi
+
+# ============================================================
+# 8. 生产环境安全与精简清理
+# ============================================================
+info "清理生产环境冗余测试与开发文档文件..."
+if [ -d "$PROJECT_DIR/backend/tests" ]; then
+    rm -rf "$PROJECT_DIR/backend/tests" 2>/dev/null || true
+    ok "已安全移除后端单元测试目录 (backend/tests)"
+fi
+find "$PROJECT_DIR" -maxdepth 2 -type f -name "*.md" ! -name "README.md" -exec rm -f {} + 2>/dev/null || true
+ok "已安全清理冗余架构与规划文档"
 
 # ============================================================
 # 完成
