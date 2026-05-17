@@ -9,6 +9,7 @@ from database import get_db_connection
 from services.automation_service import AutomationService
 from services.notification_service import dispatch_to_all_users
 from core.crypto import decrypt_credential
+from services.vault_service import resolve_device_credentials
 # Import inspection service to handle specialized inspection jobs
 from services.inspection_service import run_inspection
 
@@ -78,7 +79,8 @@ async def run_scheduled_automation_job(job_id: str):
                     trigger_type='scheduled',
                     schedule_id=None,
                     created_by=f'scheduler:{job_id}',
-                    check_items=custom_check_items
+                    check_items=custom_check_items,
+                    use_admin_creds=bool(job.get('use_admin_creds', 0))
                 )
             )
             
@@ -159,26 +161,15 @@ async def run_scheduled_automation_job(job_id: str):
                 return
 
             d = dict(device)
-            # Use normal (least-privilege) credentials for scheduled command execution.
-            # Admin credentials are only needed for config changes; read-only health
-            # checks and monitoring scripts should run as the normal user.
-            normal_user = d.get('normal_username', '').strip()
-            normal_pass = d.get('normal_password', '').strip()
-            if normal_user and normal_pass:
-                d['username'] = normal_user
-                d['password'] = decrypt_credential(normal_pass) or ''
-                logger.info(f"[Scheduler] Using normal credentials for device {d.get('hostname', d.get('ip_address'))}")
+            creds = resolve_device_credentials(d)
+            if job.get('use_admin_creds', 0) == 1:
+                d['username'] = creds.get('admin_username') or creds.get('username') or ''
+                d['password'] = creds.get('admin_password') or creds.get('password') or ''
+                logger.info(f"[Scheduler] Using admin/privileged credentials (User: '{d.get('username', 'unknown')}') for device {d.get('hostname', d.get('ip_address'))} (use_admin_creds=1)")
             else:
-                # Fallback: no normal creds configured, use whatever is available
-                fallback_user = d.get('username', '').strip()
-                fallback_pass = decrypt_credential(d.get('password') or '') or ''
-                if not fallback_user or not fallback_pass:
-                    # Last resort: admin creds
-                    fallback_user = d.get('admin_username', '').strip() or fallback_user
-                    fallback_pass = decrypt_credential(d.get('admin_password') or '') or fallback_pass
-                d['username'] = fallback_user
-                d['password'] = fallback_pass
-                logger.info(f"[Scheduler] No normal credentials, falling back to '{fallback_user}' for device {d.get('hostname', d.get('ip_address'))}")
+                d['username'] = creds.get('normal_username') or creds.get('username') or creds.get('admin_username') or ''
+                d['password'] = creds.get('normal_password') or creds.get('password') or creds.get('admin_password') or ''
+                logger.info(f"[Scheduler] Using normal credentials (User: '{d.get('username', 'unknown')}') for device {d.get('hostname', d.get('ip_address'))}")
 
             # 记录设备开始执行（使用独立连接，避免并发冲突）
             dev_started_at = datetime.now().isoformat()
@@ -263,6 +254,7 @@ async def run_scheduled_automation_job(job_id: str):
                 _sentinel_begin = "---NETOPS_BEGIN---"
                 _sentinel_end   = "---NETOPS_END---"
 
+                cmd_iter = iter(cmds_snapshot) if not is_shell_script else None
                 for r in exec_results:
                     out = str(_get_output(r))
                     if is_shell_script and not is_server:
@@ -271,7 +263,15 @@ async def run_scheduled_automation_job(job_id: str):
                         elif _sentinel_begin in out:
                             out = out.split(_sentinel_begin)[-1].strip() + "\n[Warning: Execution might be incomplete]"
 
-                    processed_commands.append(out)
+                    cmd_label = next(cmd_iter, None) if cmd_iter else None
+                    if cmd_label:
+                        if job.get('is_config'):
+                            cmd_str = " | ".join(cmds_snapshot)
+                            processed_commands.append(f"# {cmd_str}\n{out}")
+                        else:
+                            processed_commands.append(f"# {cmd_label}\n{out}")
+                    else:
+                        processed_commands.append(out)
 
                     lines = out.split('\n')
                     found_crit = False

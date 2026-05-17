@@ -3722,21 +3722,25 @@ async def _exec_commands(service, device: dict, commands: list, is_config: bool)
             all_ok = True
             cmd_iter = iter(commands)
             for r in results:
-                # Try to pair each result with its command for labeling
                 cmd_label = next(cmd_iter, None)
                 if r.get('success', False):
-                    # Different drivers use different output keys:
-                    # NetmikoDriver (engine) → 'stdout'
-                    # Legacy drivers         → 'output'
                     out = r.get('output') or r.get('stdout') or ''
-                    if cmd_label and not is_config:
-                        output_lines.append(f"# {cmd_label}\n{out}")
+                    if cmd_label:
+                        if is_config:
+                            cmd_str = " | ".join(commands)
+                            output_lines.append(f"# {cmd_str}\n{out}")
+                        else:
+                            output_lines.append(f"# {cmd_label}\n{out}")
                     else:
                         output_lines.append(out)
                 else:
                     err = r.get('error') or r.get('stderr') or ''
-                    if cmd_label and not is_config:
-                        output_lines.append(f"# {cmd_label}\nERROR: {err}")
+                    if cmd_label:
+                        if is_config:
+                            cmd_str = " | ".join(commands)
+                            output_lines.append(f"# {cmd_str}\nERROR: {err}")
+                        else:
+                            output_lines.append(f"# {cmd_label}\nERROR: {err}")
                     else:
                         output_lines.append(f"ERROR: {err}")
                     all_ok = False

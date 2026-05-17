@@ -17,6 +17,7 @@ data/netops.db-wal
 backend/data/*.db
 data/pam_recordings/
 data/pam_audit/
+data/change_order_attachments/
 *.cast
 
 # License files

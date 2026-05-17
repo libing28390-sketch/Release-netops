@@ -211,6 +211,7 @@ class ConnectivityProbeRequest(BaseModel):
 class InspectionRunRequest(BaseModel):
     scope_type: str = 'all'
     scope_filter: str = ''
+    use_admin_creds: bool = False
 
     @field_validator('scope_type')
     @classmethod
@@ -230,6 +231,7 @@ class InspectionScheduleCreate(BaseModel):
     scope_filter: str = ''
     description: str = ''
     check_items: list[str] = []
+    use_admin_creds: bool = False
 
     @field_validator('scope_type')
     @classmethod
@@ -248,6 +250,7 @@ class InspectionScheduleUpdate(BaseModel):
     scope_type: str | None = None
     scope_filter: str | None = None
     enabled: bool | None = None
+    use_admin_creds: bool | None = None
     description: str | None = None
     check_items: list[str] | None = None
 
@@ -263,6 +266,7 @@ class InspectionItemBase(BaseModel):
     command: str = ''
     vendor: str = ''
     oid: str = ''
+    use_admin_creds: bool = False
 
 class InspectionItemCreate(InspectionItemBase):
     pass

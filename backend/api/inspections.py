@@ -109,6 +109,7 @@ def trigger_inspection(
         scope_filter=body.scope_filter,
         trigger_type='manual',
         created_by=user.get('username', 'unknown'),
+        use_admin_creds=body.use_admin_creds,
     )
     if not result.get('success'):
         raise HTTPException(status_code=400, detail=result.get('message', '巡检失败'))

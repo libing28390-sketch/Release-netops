@@ -414,16 +414,17 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
     URL.revokeObjectURL(url);
   }, []);
 
-  /** Split raw output string by command markers (# show ...) */
+  /** Split raw output string by command markers (# show ...) or intelligent signature alignment */
   const splitOutputByCommand = useCallback((output: string, commands: string[]): Array<{ command: string; output: string }> => {
-    if (!output && commands.length === 0) return [];
+    if (!output && (!commands || commands.length === 0)) return [];
+    const safeOutput = output || '';
+    const safeCommands = commands || [];
 
+    // 1. Try standard marker split: lines starting with "# <cmd>"
     const markerRe = /^#[ \t]+(?:[^:\n]+:[ \t]+)?(.+)$/m;
-    const hasMarkers = markerRe.test(output);
-
-    if (hasMarkers) {
+    if (markerRe.test(safeOutput)) {
       const blocks: Array<{ command: string; output: string }> = [];
-      const lines = output.split('\n');
+      const lines = safeOutput.split('\n');
       let currentCmd = '';
       let currentLines: string[] = [];
 
@@ -446,11 +447,228 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
       if (valid.length > 0) return valid;
     }
 
-    if (commands.length > 0) {
-      return commands.map(cmd => ({ command: cmd, output: output.trim() }));
+    // 2. If we only have 0 or 1 command, return full blob directly
+    if (safeCommands.length === 0) {
+      return safeOutput.trim() ? [{ command: '', output: safeOutput.trim() }] : [];
+    }
+    if (safeCommands.length === 1) {
+      return [{ command: safeCommands[0], output: safeOutput.trim() }];
     }
 
-    return output.trim() ? [{ command: '', output: output.trim() }] : [];
+    // 3. Multi-command split strategy (Resonance & Signature matching inspired by Excel export)
+    const lines = safeOutput.split('\n');
+    
+    // 3a. Search for command prompts in lines (e.g. "SW1# show version" or "show version")
+    const cleanPromptRe = /^.*?[\#\>\$]\s*/;
+    const foundHeaders: Array<{ lineIdx: number; cmd: string }> = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const sLine = lines[i].replace(cleanPromptRe, '').trim().toLowerCase();
+      for (const cmd of safeCommands) {
+        const cLower = cmd.trim().toLowerCase();
+        if (sLine === cLower || sLine.startsWith(cLower + ' ')) {
+          foundHeaders.push({ lineIdx: i, cmd });
+          break;
+        }
+      }
+    }
+
+    // If we found command headers matching our expected commands
+    if (foundHeaders.length > 0) {
+      const extractedMap: Record<string, string> = {};
+      for (let i = 0; i < foundHeaders.length; i++) {
+        const startIdx = foundHeaders[i].lineIdx;
+        const cmdName = foundHeaders[i].cmd;
+        const endIdx = i + 1 < foundHeaders.length ? foundHeaders[i + 1].lineIdx : lines.length;
+        const contentLines = lines.slice(startIdx + 1, endIdx);
+        extractedMap[cmdName] = contentLines.join('\n').trim();
+      }
+
+      return safeCommands.map(cmd => ({
+        command: cmd,
+        output: (extractedMap[cmd] !== undefined && extractedMap[cmd].trim() !== '') 
+          ? extractedMap[cmd] 
+          : 'ℹ️ 无返回内容或未采集。'
+      }));
+    }
+
+    // 3b. If no prompt headers found, use Signature & Sequential Boundary Analysis
+    const sigMap: Record<string, string[]> = {
+      'show version': ['cisco ios software', 'linux software', 'cisco internetwork operating system', 'software (i86bi', 'rom: bootstrap'],
+      'show processes cpu': ['cpu utilization for five seconds', 'pid runtime', 'cpu utilization'],
+      'show processes memory': ['processor pool total', 'pid tty allocated', 'holding getbufs', 'memory pool'],
+      'show environment temperature': ['temperature', 'temperature status', 'inlet temperature', 'fan status', 'temp'],
+      'show environment power': ['power supply', 'power status', 'watts', 'power consumption', 'psu'],
+      'show environment': ['environmental status', 'temperature', 'power', 'fan'],
+      'show interfaces status': ['port name status', 'duplex speed', 'port status', 'port vlan duplex speed'],
+      'show interfaces': ['line protocol is', 'hardware is', '5 minute input rate', 'full-duplex'],
+      'show ip bgp summary': ['bgp router identifier', 'neighbor v as', 'bgp table version'],
+      'show ip bgp': ['bgp routing table', 'bgp router identifier'],
+      'show ip ospf neighbor': ['neighbor id pri state', 'ospf process'],
+      'show ip ospf': ['routing process "ospf', 'ospf router with id'],
+      'show ip route summary': ['ip routing table', 'route source', 'subnets'],
+      'show ip route': ['codes: l - local', 'gateway of last resort', 'routing table'],
+      'show running-config': ['building configuration', 'current configuration', 'version 15.'],
+      'show ip int': ['interface ip-address ok?'],
+      'show inventory': ['name:', 'descr:', 'chassis'],
+      'show clock': ['utc', 'cst', 'pst', 'est'],
+    };
+
+    const getSigs = (c: string): string[] => {
+      const cLower = c.trim().toLowerCase();
+      for (const [key, sigs] of Object.entries(sigMap)) {
+        if (cLower.includes(key)) return sigs;
+      }
+      return [];
+    };
+
+    const resultBlocks: Array<{ command: string; output: string }> = [];
+    let currIdx = 0;
+    const totalLines = lines.length;
+    let cmdI = 0;
+    const totalCmds = safeCommands.length;
+    const errRe = /^\s*(?:%|invalid|unknown|syntax error|bad command|unrecognized)/i;
+
+    while (cmdI < totalCmds) {
+      const cmd = safeCommands[cmdI];
+      if (currIdx >= totalLines) {
+        resultBlocks.push({ command: cmd, output: 'ℹ️ 无返回内容或未采集。' });
+        cmdI++;
+        continue;
+      }
+
+      const currentIsError = errRe.test(lines[currIdx]);
+
+      if (!currentIsError) {
+        let endIdx = totalLines;
+        for (let offset = 0; offset < totalLines - currIdx; offset++) {
+          const absIdx = currIdx + offset;
+          const l = lines[absIdx];
+          const lLower = l.trim().toLowerCase();
+
+          if (offset > 1 && errRe.test(l)) {
+            endIdx = absIdx;
+            break;
+          }
+
+          let matchedNext = false;
+          for (let nextCIdx = cmdI + 1; nextCIdx < totalCmds; nextCIdx++) {
+            const nextCmd = safeCommands[nextCIdx];
+            if (lLower.includes(nextCmd.toLowerCase()) && lLower.length < nextCmd.length + 15) {
+              endIdx = absIdx;
+              matchedNext = true;
+              break;
+            }
+            const sigs = getSigs(nextCmd);
+            if (sigs.length > 0 && sigs.some(sig => lLower.includes(sig))) {
+              endIdx = absIdx;
+              matchedNext = true;
+              break;
+            }
+          }
+          if (matchedNext) break;
+        }
+
+        const cmdContent = lines.slice(currIdx, endIdx).join('\n').trim();
+        resultBlocks.push({ command: cmd, output: cmdContent || 'ℹ️ 执行成功，但无回显' });
+        currIdx = endIdx;
+        cmdI++;
+      } else {
+        // Error block resonance alignment
+        let nextSuccessCmdIdx = -1;
+        let foundSuccessLineIdx = totalLines;
+
+        for (let nextCIdx = cmdI + 1; nextCIdx < totalCmds; nextCIdx++) {
+          const nextCmd = safeCommands[nextCIdx];
+          const sigs = getSigs(nextCmd);
+
+          for (let offset = 0; offset < totalLines - currIdx; offset++) {
+            const absIdx = currIdx + offset;
+            const l = lines[absIdx];
+            const lLower = l.trim().toLowerCase();
+            if (!errRe.test(l)) {
+              if (lLower.includes(nextCmd.toLowerCase()) && lLower.length < nextCmd.length + 15) {
+                nextSuccessCmdIdx = nextCIdx;
+                foundSuccessLineIdx = absIdx;
+                break;
+              }
+              if (sigs.length > 0 && sigs.some(sig => lLower.includes(sig))) {
+                nextSuccessCmdIdx = nextCIdx;
+                foundSuccessLineIdx = absIdx;
+                break;
+              }
+            }
+          }
+          if (nextSuccessCmdIdx !== -1) break;
+        }
+
+        const chunkLines = lines.slice(currIdx, foundSuccessLineIdx);
+        const countToAssign = (nextSuccessCmdIdx !== -1 ? nextSuccessCmdIdx : totalCmds) - cmdI;
+
+        if (countToAssign === 1) {
+          resultBlocks.push({ command: cmd, output: chunkLines.join('\n').trim() });
+        } else {
+          const errChunks: string[] = [];
+          let currErrChunk: string[] = [];
+          for (const cl of chunkLines) {
+            const clStr = cl.trim();
+            const isCaretOnly = clStr.length > 0 && clStr.split('').every(ch => ch === '^' || ch === ' ');
+            const isErrStart = errRe.test(cl) || isCaretOnly;
+            const hasRealText = currErrChunk.some(x => /[a-zA-Z0-9%]/.test(x));
+
+            if (isErrStart && hasRealText) {
+              errChunks.push(currErrChunk.join('\n').trim());
+              currErrChunk = [cl];
+            } else {
+              currErrChunk.push(cl);
+            }
+          }
+          if (currErrChunk.length > 0) {
+            errChunks.push(currErrChunk.join('\n').trim());
+          }
+          const validErrChunks = errChunks.filter(ch => ch.trim() !== '');
+
+          const cmdsToAssign = safeCommands.slice(cmdI, cmdI + countToAssign);
+          const assignedOut: Record<string, string> = {};
+          const remainingErrs = [...validErrChunks];
+          const remainingCmds = [...cmdsToAssign];
+
+          for (const errTxt of [...remainingErrs]) {
+            const errLower = errTxt.toLowerCase();
+            let matchedCmd: string | undefined = undefined;
+            if (errLower.includes('bgp')) {
+              matchedCmd = remainingCmds.find(c => c.toLowerCase().includes('bgp'));
+            } else if (errLower.includes('ospf')) {
+              matchedCmd = remainingCmds.find(c => c.toLowerCase().includes('ospf'));
+            } else if (errLower.includes('interface') || errLower.includes('drop') || errLower.includes('line protocol')) {
+              matchedCmd = remainingCmds.find(c => c.toLowerCase().includes('interface') || c.toLowerCase().includes('int'));
+            }
+
+            if (matchedCmd) {
+              assignedOut[matchedCmd] = errTxt;
+              remainingErrs.splice(remainingErrs.indexOf(errTxt), 1);
+              remainingCmds.splice(remainingCmds.indexOf(matchedCmd), 1);
+            }
+          }
+
+          for (const errTxt of remainingErrs) {
+            if (remainingCmds.length > 0) {
+              const cmdTarget = remainingCmds.shift()!;
+              assignedOut[cmdTarget] = errTxt;
+            }
+          }
+
+          for (const cName of cmdsToAssign) {
+            resultBlocks.push({ command: cName, output: assignedOut[cName] || 'ℹ️ 执行成功，但无回显' });
+          }
+        }
+
+        currIdx = foundSuccessLineIdx;
+        cmdI = nextSuccessCmdIdx !== -1 ? nextSuccessCmdIdx : totalCmds;
+      }
+    }
+
+    return resultBlocks;
   }, []);
 
 
@@ -2060,6 +2278,41 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                         );
                       })()}
                     </div>
+                    {selectedPbDevice && pbDeviceDetail?.phases && (
+                      <div className="flex items-center gap-3">
+                        <button 
+                          onClick={() => {
+                            const next = { ...collapsedCmds };
+                            Object.entries(pbDeviceDetail.phases).forEach(([ph, pdata]: any) => {
+                              const cmds = (pdata || {}).commands || [];
+                              const outStr = typeof (pdata || {}).output === 'string' ? pdata.output : JSON.stringify((pdata || {}).output || '');
+                              const blocks = splitOutputByCommand(outStr, cmds);
+                              blocks.forEach((_, bi) => next[`pb_${selectedPbDevice}_${ph}_${bi}`] = false);
+                            });
+                            setCollapsedCmds(next);
+                          }}
+                          className="text-[10px] font-bold text-cyan-400/60 hover:text-cyan-400 transition-colors cursor-pointer"
+                        >
+                          {zh ? '全部展开' : 'Expand All'}
+                        </button>
+                        <div className="w-px h-2.5 bg-white/10" />
+                        <button 
+                          onClick={() => {
+                            const next = { ...collapsedCmds };
+                            Object.entries(pbDeviceDetail.phases).forEach(([ph, pdata]: any) => {
+                              const cmds = (pdata || {}).commands || [];
+                              const outStr = typeof (pdata || {}).output === 'string' ? pdata.output : JSON.stringify((pdata || {}).output || '');
+                              const blocks = splitOutputByCommand(outStr, cmds);
+                              blocks.forEach((_, bi) => next[`pb_${selectedPbDevice}_${ph}_${bi}`] = true);
+                            });
+                            setCollapsedCmds(next);
+                          }}
+                          className="text-[10px] font-bold text-white/30 hover:text-white/60 transition-colors cursor-pointer"
+                        >
+                          {zh ? '全部折叠' : 'Collapse All'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="flex-1 p-6 font-mono text-xs text-[#d4d4d4] overflow-auto whitespace-pre-wrap select-text relative">
                     {pbDeviceDetail?.phases ? (
@@ -2082,17 +2335,27 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                               {blocks.map((blk, bi) => {
                                 const bOutput = blk.output || '';
                                 const bIsError = bOutput.includes('__ERROR__') || bOutput.includes('% Invalid input') || bOutput.includes('error');
+                                const bKey = `pb_${selectedPbDevice}_${phase}_${bi}`;
+                                const isCollapsed = collapsedCmds[bKey] ?? false;
                                 
                                 return (
                                   <div key={bi} className={`rounded-lg overflow-hidden border transition-all ${
                                     bIsError ? 'border-red-500/30 bg-red-500/5' : 'border-white/5 bg-black/20'
                                   }`}>
-                                    <div className="px-4 py-2 bg-white/5 flex items-center justify-between">
+                                    <div 
+                                      onClick={() => toggleCmdCollapse(bKey)}
+                                      className="px-4 py-2 bg-white/5 flex items-center justify-between cursor-pointer hover:bg-white/[0.08] select-none"
+                                    >
                                       <div className="flex items-center gap-2 min-w-0">
-                                        <ChevronRight size={14} className="text-white/20 shrink-0 rotate-90" />
+                                        <ChevronRight size={14} className={`text-white/20 shrink-0 transition-transform duration-200 ${isCollapsed ? '' : 'rotate-90'}`} />
                                         <span className={`text-[11px] font-mono font-bold truncate ${bIsError ? 'text-red-400' : 'text-cyan-400/80'}`}>&gt; {blk.command || 'system'}</span>
                                       </div>
-                                      <div className="flex items-center gap-1 shrink-0 ml-3">
+                                      <div className="flex items-center gap-2 shrink-0 ml-3" onClick={e => e.stopPropagation()}>
+                                        {isCollapsed && (
+                                          <span className="text-[10px] text-white/30 font-mono italic truncate max-w-[250px] hidden sm:inline">
+                                            {bOutput.substring(0, 60).replace(/\n/g, ' ')}...
+                                          </span>
+                                        )}
                                         <OutputActions
                                           text={blk.output}
                                           filename={`${dev?.hostname || 'device'}_${phase}_cmd${bi}`}
@@ -2102,9 +2365,11 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                                         />
                                       </div>
                                     </div>
-                                    <div className={`p-4 font-mono text-[11px] whitespace-pre-wrap leading-relaxed ${bIsError ? 'text-red-300/80' : 'text-[#d4d4d4]'}`}>
-                                      {blk.output || (pd.status === 'success' ? (zh ? '命令执行成功，但无回显' : 'Success, no output') : '—')}
-                                    </div>
+                                    {!isCollapsed && (
+                                      <div className={`p-4 font-mono text-[11px] whitespace-pre-wrap leading-relaxed ${bIsError ? 'text-red-300/80' : 'text-[#d4d4d4]'}`}>
+                                        {blk.output || (pd.status === 'success' ? (zh ? '命令执行成功，但无回显' : 'Success, no output') : '—')}
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}

@@ -5,7 +5,7 @@ import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
   Database, Activity, Power, PowerOff,
-  Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight, ChevronUp, Filter,
+  Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight, ChevronUp, Filter, ShieldAlert, User,
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import TagConditionPicker, { type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter, parseTagFilter } from '../components/TagConditionPicker';
@@ -75,6 +75,7 @@ interface ScheduledJob {
   last_run_at: string;
   last_run_status: string;
   run_count: number;
+  use_admin_creds?: number;
   created_by: string;
   created_at: string;
   major_type?: string;
@@ -115,6 +116,7 @@ interface FormState {
   script_id: string;
   is_config: boolean;
   config_reason: string;
+  use_admin_creds: boolean;
   major_type: string;
 }
 
@@ -134,6 +136,7 @@ const INITIAL_FORM: FormState = {
   script_id: '',
   is_config: false,
   config_reason: '',
+  use_admin_creds: false,
   major_type: 'collection', // UI helper state
 };
 
@@ -222,7 +225,12 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [ipValidating, setIpValidating] = useState(false);
   const [ipError, setIpError] = useState('');
 
-  // Approval (create only)
+  // Candidate IP / Device Selection modal
+  const [candidateModalOpen, setCandidateModalOpen] = useState(false);
+  const [candidateList, setCandidateList] = useState<Array<{ ip: string; hostname: string; tags: any[]; selected: boolean }>>([]);
+  const [candidateSearching, setCandidateSearching] = useState(false);
+
+  // Approval (create & update)
   const [approvers, setApprovers] = useState<EligibleApprover[]>([]);
   const [approverUsername, setApproverUsername] = useState('');
   const [approvalToken, setApprovalToken] = useState('');
@@ -230,6 +238,20 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
   const [approvalCountdown, setApprovalCountdown] = useState(0);
   const [approvalError, setApprovalError] = useState('');
+
+  // Delete approval state
+  const [deleteApprovalOpen, setDeleteApprovalOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ScheduledJob | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deleteApprover, setDeleteApprover] = useState('');
+  const [deleteToken, setDeleteToken] = useState('');
+  const [deleteCode, setDeleteCode] = useState('');
+  const [deleteStatus, setDeleteStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
+  const [deleteCountdown, setDeleteCountdown] = useState(0);
+  const [deleteError, setDeleteError] = useState('');
+
+  // Enabling job tracker
+  const [enablingJobId, setEnablingJobId] = useState<string | null>(null);
 
   // Script selection
   const [availableScripts, setAvailableScripts] = useState<{ id: string; name: string; status: string; category: string }[]>([]);
@@ -350,6 +372,12 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     return () => clearTimeout(t);
   }, [approvalCountdown]);
 
+  useEffect(() => {
+    if (deleteCountdown <= 0) return;
+    const t = setTimeout(() => setDeleteCountdown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [deleteCountdown]);
+
   /* === MODAL HELPERS === */
   const resetFormState = () => {
     setForm({ ...INITIAL_FORM });
@@ -384,6 +412,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       script_id: job.script_id || '',
       is_config: !!job.is_config,
       config_reason: job.config_reason || '',
+      use_admin_creds: !!job.use_admin_creds,
       major_type: job.action_type === 'backup' ? 'collection' : 'change', // Simple inference
     });
     if (job.device_scope === 'tag') {
@@ -450,10 +479,11 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const closeModal = () => {
     setModalOpen(false);
     setEditingJob(null);
+    setEnablingJobId(null);
     setPresetOpen(false);
   };
 
-  /* === APPROVAL (create only) === */
+  /* === APPROVAL (create & update) === */
   const requestApproval = async () => {
     if (!approverUsername) return;
     setApprovalStatus('sending');
@@ -465,13 +495,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         headers: authHeaders,
         body: JSON.stringify({
           approver_username: approverUsername,
-          config_reason: form.config_reason || `${zh ? '创建定时作业' : 'Create scheduled job'}: ${form.name}`,
+          config_reason: form.config_reason || `${zh ? (isEditMode ? '修改定时作业' : '创建定时作业') : (isEditMode ? 'Update job' : 'Create job')}: ${form.name}`,
           device_hostname: form.device_scope === 'all' ? (zh ? '全部设备' : 'All devices') : form.device_filter,
           command_preview: '',
           approval_type: 'scheduled_job',
           extra_fields: {
             action_type: zh ? (actionLabel?.labelZh || form.action_type) : (actionLabel?.labelEn || form.action_type),
             schedule_desc: describeCron(form.cron_expr, zh),
+            operation: isEditMode ? 'UPDATE' : 'CREATE',
           },
         }),
       });
@@ -511,85 +542,195 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
   };
 
-  /* === IP validation (supports multiple IPs, allows non-inventory) === */
+  /* === APPROVAL (delete) === */
+  const requestDeleteApproval = async () => {
+    if (!deleteApprover || !deleteTarget) return;
+    setDeleteStatus('sending');
+    setDeleteError('');
+    try {
+      const r = await fetch('/api/config-approval/request', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          approver_username: deleteApprover,
+          config_reason: deleteReason || `${zh ? '删除定时作业' : 'Delete scheduled job'}: ${deleteTarget.name}`,
+          device_hostname: deleteTarget.device_scope === 'all' ? (zh ? '全部设备' : 'All devices') : deleteTarget.device_filter,
+          command_preview: '',
+          approval_type: 'scheduled_job_delete',
+          extra_fields: { action_type: 'DELETE', job_name: deleteTarget.name },
+        }),
+      });
+      const j = await r.json();
+      if (r.ok && j.success) {
+        setDeleteToken(j.approval_token);
+        setDeleteStatus('sent');
+        setDeleteCountdown(300);
+        showToast(zh ? '删除验证码已发至审批人' : 'Delete code sent to approver', 'success');
+      } else {
+        setDeleteStatus('idle');
+        setDeleteError(j.detail || j.message || 'Failed');
+      }
+    } catch {
+      setDeleteStatus('idle');
+      setDeleteError(zh ? '发送验证码失败' : 'Failed to send code');
+    }
+  };
+
+  const verifyDeleteApproval = async () => {
+    if (!deleteToken || !deleteCode) return;
+    try {
+      const r = await fetch('/api/config-approval/verify', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ approval_token: deleteToken, code: deleteCode }),
+      });
+      const j = await r.json();
+      if (r.ok && j.success) {
+        setDeleteStatus('verified');
+        showToast(zh ? '删除审批验证通过' : 'Delete approval verified', 'success');
+      } else {
+        setDeleteError(j.detail || j.message || 'Invalid code');
+      }
+    } catch {
+      setDeleteError(zh ? '验证失败' : 'Verification failed');
+    }
+  };
+
+  const executeDeleteJob = async () => {
+    if (!deleteTarget || deleteStatus !== 'verified') return;
+    try {
+      const url = `/api/scheduled-jobs/${deleteTarget.id}?approval_token=${encodeURIComponent(deleteToken)}&approval_code=${encodeURIComponent(deleteCode)}`;
+      const r = await fetch(url, { method: 'DELETE', headers: authHeaders });
+      const j = await r.json();
+      if (r.ok && j.success) {
+        setDeleteApprovalOpen(false);
+        setDeleteTarget(null);
+        fetchJobs();
+        showToast(zh ? '定时作业已永久安全删除' : 'Job successfully deleted', 'success');
+      } else {
+        setDeleteError(j.detail || j.message || 'Deletion failed');
+      }
+    } catch {
+      setDeleteError(zh ? '删除请求操作失败' : 'Deletion failed');
+    }
+  };
+
+  /* === Candidate IP search (Modal for checking/selection before adding) === */
   const validateAndAddIps = async (raw: string) => {
-    const ips = raw.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
-    if (ips.length === 0) return;
+    const queries = raw.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+    if (queries.length === 0) return;
     setIpError('');
     setIpValidating(true);
-    const notFound: string[] = [];
-    const duplicates: string[] = [];
+    setCandidateSearching(true);
+
+    const candidatesMap: Record<string, { ip: string; hostname: string; tags: any[]; selected: boolean }> = {};
+
     try {
-      for (const ip of ips) {
-        if (ipDevices.some(d => d.ip === ip)) { duplicates.push(ip); continue; }
-        try {
-          let found = false;
-          // 1) Search devices table
-          const r = await fetch(`/api/devices?search=${encodeURIComponent(ip)}&mode=light&page_size=50`, { headers: authHeaders });
-          if (r.ok) {
-            const j = await r.json();
-            const items = Array.isArray(j) ? j : (j.items || j.data?.items || j.data || []);
-            const device = items.find((d: { ip_address: string; hostname?: string }) => 
-              d.ip_address === ip || d.hostname === ip
-            ) || items[0];
-            if (device) {
-              found = true;
-              setIpDevices(prev => {
-                if (prev.some(d => d.ip === device.ip_address)) return prev;
-                return [...prev, {
-                  ip: device.ip_address,
-                  hostname: device.hostname || '',
-                  tags: (device.tags || []).map((t: { id: string; label: string; label_zh: string; color: string }) => ({
+      for (const query of queries) {
+        let found = false;
+        // 1) Search devices table (add ALL fuzzy matches to candidates)
+        const r = await fetch(`/api/devices?search=${encodeURIComponent(query)}&mode=light&page_size=50`, { headers: authHeaders });
+        if (r.ok) {
+          const j = await r.json();
+          const items = Array.isArray(j) ? j : (j.items || j.data?.items || j.data || []);
+          if (items.length > 0) {
+            found = true;
+            for (const dev of items) {
+              const ip = dev.ip_address;
+              if (ip && !ipDevices.some(existing => existing.ip === ip)) {
+                candidatesMap[ip] = {
+                  ip,
+                  hostname: dev.hostname || '',
+                  tags: (dev.tags || []).map((t: any) => ({
                     id: t.id, label: t.label, label_zh: t.label_zh, color: t.color || '#94a3b8',
                   })),
-                }];
-              });
+                  selected: true, // Default checked
+                };
+              }
             }
           }
-          // 2) Fallback: search physical_assets table
-          if (!found) {
-            try {
-              const ar = await fetch(`/api/assets?q=${encodeURIComponent(ip)}&page_size=50`, { headers: authHeaders });
-              if (ar.ok) {
-                const aj = await ar.json();
-                const assets = Array.isArray(aj) ? aj : (aj.items || aj.data?.items || aj.data || []);
-                const asset = assets.find((a: { management_ip?: string; business_ip?: string; hostname?: string }) =>
-                  a.management_ip === ip || a.business_ip === ip || a.hostname === ip
-                ) || assets[0];
-                if (asset) {
-                  found = true;
-                  setIpDevices(prev => {
-                    if (prev.some(d => d.ip === ip)) return prev;
-                    return [...prev, { ip, hostname: asset.hostname || '', tags: [] }];
-                  });
+        }
+
+        // 2) Fallback: search physical_assets table
+        if (!found) {
+          try {
+            const ar = await fetch(`/api/assets?q=${encodeURIComponent(query)}&page_size=50`, { headers: authHeaders });
+            if (ar.ok) {
+              const aj = await ar.json();
+              const assets = Array.isArray(aj) ? aj : (aj.items || aj.data?.items || aj.data || []);
+              if (assets.length > 0) {
+                found = true;
+                for (const a of assets) {
+                  const ip = a.management_ip || a.business_ip || query;
+                  if (ip && !ipDevices.some(existing => existing.ip === ip)) {
+                    candidatesMap[ip] = candidatesMap[ip] || {
+                      ip,
+                      hostname: a.hostname || '',
+                      tags: [],
+                      selected: true,
+                    };
+                  }
                 }
               }
-            } catch { /* ignore asset fallback errors */ }
-          }
-          if (!found) {
-            notFound.push(ip);
-            setIpDevices(prev => {
-              if (prev.some(d => d.ip === ip)) return prev;
-              return [...prev, { ip, hostname: '', tags: [] }];
-            });
-          }
-        } catch {
-          notFound.push(ip);
-          setIpDevices(prev => {
-            if (prev.some(d => d.ip === ip)) return prev;
-            return [...prev, { ip, hostname: '', tags: [] }];
-          });
+            }
+          } catch { /* ignore */ }
+        }
+
+        // 3) If neither found, treat as manual IP input
+        if (!found && !ipDevices.some(existing => existing.ip === query)) {
+          candidatesMap[query] = candidatesMap[query] || {
+            ip: query,
+            hostname: '',
+            tags: [],
+            selected: true,
+          };
         }
       }
-      setIpInput('');
-      if (notFound.length > 0) {
-        setIpError(zh ? `以下 IP 不存在于设备列表：${notFound.join(', ')}（已添加，执行时将尝试连接）` : `IP not in inventory: ${notFound.join(', ')} (added, will attempt connection at runtime)`);
+
+      const candidateArray = Object.values(candidatesMap);
+      if (candidateArray.length > 0) {
+        setCandidateList(candidateArray);
+        setCandidateModalOpen(true);
+      } else {
+        setIpError(zh ? '输入的 IP 或查询目标已全部添加或无匹配结果' : 'All queried IPs are already added or no results');
       }
     } catch {
       setIpError(zh ? '查询设备失败' : 'Device lookup failed');
     } finally {
       setIpValidating(false);
+      setCandidateSearching(false);
     }
+  };
+
+  const confirmAddCandidates = () => {
+    const selectedCandidates = candidateList.filter(c => c.selected);
+    if (selectedCandidates.length === 0) return;
+
+    setIpDevices(prev => {
+      const next = [...prev];
+      for (const c of selectedCandidates) {
+        if (!next.some(existing => existing.ip === c.ip)) {
+          next.push({
+            ip: c.ip,
+            hostname: c.hostname,
+            tags: c.tags,
+          });
+        }
+      }
+      return next;
+    });
+    setIpInput('');
+    setCandidateModalOpen(false);
+    setCandidateList([]);
+  };
+
+  const toggleCandidateSelected = (idx: number) => {
+    setCandidateList(prev => prev.map((c, i) => i === idx ? { ...c, selected: !c.selected } : c));
+  };
+
+  const toggleAllCandidates = () => {
+    const allSel = candidateList.length > 0 && candidateList.every(c => c.selected);
+    setCandidateList(prev => prev.map(c => ({ ...c, selected: !allSel })));
   };
 
   const removeIpDevice = (ip: string) => {
@@ -606,7 +747,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const createJob = async () => {
     if (!form.name.trim()) return;
     if (approvalStatus !== 'verified') {
-      showToast(zh ? '请先完成审批验证' : 'Please complete approval verification first', 'error');
+      showToast(zh ? '请先发送验证码并完成审批验证' : 'Please complete approval verification first', 'error');
       return;
     }
     try {
@@ -615,6 +756,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         headers: authHeaders,
         body: JSON.stringify({
           ...form,
+          use_admin_creds: form.use_admin_creds ? 1 : 0,
           device_filter: resolveFilter(),
           job_type: 'cron',
           approval_token: approvalToken,
@@ -636,6 +778,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   const updateJob = async () => {
     if (!editingJob || !form.name.trim()) return;
+    if (approvalStatus !== 'verified') {
+      showToast(zh ? '请先发送验证码并完成审批验证' : 'Please complete approval verification first', 'error');
+      return;
+    }
     try {
       const r = await fetch(`/api/scheduled-jobs/${editingJob.id}`, {
         method: 'PUT',
@@ -649,20 +795,22 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           script_id: form.script_id,
           commands: form.commands,
           config_reason: form.config_reason,
+          use_admin_creds: form.use_admin_creds ? 1 : 0,
           approval_token: approvalToken,
           approval_code: approvalCode,
+          ...(enablingJobId === editingJob.id ? { enabled: true } : {}),
         }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
         closeModal();
         fetchJobs();
-        showToast(zh ? '作业已更新' : 'Job updated', 'success');
+        showToast(enablingJobId === editingJob.id ? (zh ? '作业已成功启用' : 'Job enabled') : (zh ? '作业已更新' : 'Job updated'), 'success');
       } else {
         showToast(j.detail || j.message || 'Failed', 'error');
       }
     } catch {
-      showToast(zh ? '更新失败' : 'Update failed', 'error');
+      showToast(zh ? '操作失败' : 'Operation failed', 'error');
     }
   };
 
@@ -680,6 +828,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const toggleJobEnabled = async (job: ScheduledJob) => {
     const nextEnabled = !job.enabled;
     if (!nextEnabled) {
+      // 停用作业不需要审核，直接停用
       try {
         const r = await fetch(`/api/scheduled-jobs/${job.id}/toggle`, {
           method: 'PUT',
@@ -688,12 +837,15 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         });
         if (r.ok) {
           fetchJobs();
-          showToast(zh ? '作业已停用' : 'Job disabled', 'success');
+          showToast(zh ? '作业已安全停用' : 'Job disabled', 'success');
         }
       } catch { /* ignore */ }
       return;
     }
-    showToast(zh ? '启用作业需要重新创建并通过审批' : 'Enabling a job requires re-creation with approval', 'info');
+    // 启用作业需要审核
+    setEnablingJobId(job.id);
+    openEditModal(job);
+    showToast(zh ? '恢复启用定时作业需完成审批授权' : 'Enabling job requires approval verification', 'info');
   };
 
   const submitForm = () => {
@@ -1043,6 +1195,17 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                             {job.last_run_status === 'success' ? (zh ? '执行成功' : 'Success') : (zh ? '执行失败' : 'Failed')}
                           </span>
                         )}
+                        {job.use_admin_creds ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">
+                            <ShieldAlert size={12} className="text-amber-600" />
+                            {zh ? '特权执行 (Admin)' : 'Privileged'}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 shadow-sm">
+                            <User size={12} className="text-slate-500" />
+                            {zh ? '普通执行 (User)' : 'Normal'}
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500 flex-wrap">
@@ -1110,7 +1273,19 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                       {deleteConfirmId === job.id ? (
                         <div className="flex items-center gap-1.5 ml-1">
                           <button
-                            onClick={() => deleteJob(job.id)}
+                            onClick={() => {
+                              setDeleteConfirmId(null);
+                              setDeleteTarget(job);
+                              setDeleteReason(`${zh ? '申请删除作业' : 'Delete job'}: ${job.name}`);
+                              setDeleteApprover('');
+                              setDeleteToken('');
+                              setDeleteCode('');
+                              setDeleteStatus('idle');
+                              setDeleteCountdown(0);
+                              setDeleteError('');
+                              fetchApprovers();
+                              setDeleteApprovalOpen(true);
+                            }}
                             className="px-2.5 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-all shadow-sm"
                           >
                             {zh ? '确认删除' : 'Yes'}
@@ -1355,6 +1530,228 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* --- Delete Approval Modal --- */}
+      <AnimatePresence>
+        {deleteApprovalOpen && deleteTarget && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          >
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteApprovalOpen(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative w-full max-w-md rounded-2xl bg-white border border-slate-100 shadow-2xl overflow-hidden z-10"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="bg-rose-50 border-b border-rose-100 px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5 text-rose-700">
+                  <Shield className="w-5 h-5 text-rose-600" />
+                  <h3 className="font-bold text-sm">{zh ? '删除安全校验与工单授权' : 'Delete Security Verification'}</h3>
+                </div>
+                <button onClick={() => setDeleteApprovalOpen(false)} className="text-rose-400 hover:text-rose-600 p-1">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4 text-xs text-slate-600">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
+                  <span className="text-[10px] text-slate-400 font-semibold">{zh ? '即将永久删除作业' : 'Target Job to Delete'}</span>
+                  <div className="font-bold text-slate-800 text-sm truncate">{deleteTarget.name}</div>
+                  <div className="font-mono text-[10px] text-slate-500">{deleteTarget.cron_expr} · {deleteTarget.action_type}</div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-700 block">{zh ? '删除原因说明' : 'Deletion Reason'}</label>
+                  <input
+                    type="text" value={deleteReason} onChange={e => setDeleteReason(e.target.value)}
+                    placeholder={zh ? '输入删除原因...' : 'Enter reason...'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-700 block">{zh ? '选择授权审批人' : 'Select Approver'}</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={deleteApprover} onChange={e => setDeleteApprover(e.target.value)}
+                      disabled={deleteStatus === 'sending' || deleteStatus === 'sent'}
+                      className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all"
+                    >
+                      <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
+                      {approvers.map(u => (
+                        <option key={u.id} value={u.username}>{u.username} ({u.role})</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button" onClick={requestDeleteApproval}
+                      disabled={!deleteApprover || !deleteReason.trim() || deleteStatus === 'sending' || (deleteStatus === 'sent' && deleteCountdown > 0)}
+                      className={`px-3 py-2 rounded-xl font-bold whitespace-nowrap transition-all flex items-center gap-1 ${
+                        deleteApprover && deleteReason.trim() && !(deleteStatus === 'sent' && deleteCountdown > 0)
+                          ? 'bg-rose-600 text-white hover:bg-rose-700 shadow-sm'
+                          : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      {deleteStatus === 'sending' ? <RotateCcw className="w-3 h-3 animate-spin" />
+                        : deleteStatus === 'sent' && deleteCountdown > 0 ? `${Math.floor(deleteCountdown / 60)}:${String(deleteCountdown % 60).padStart(2, '0')}`
+                        : (zh ? '发验证码' : 'Send Code')}
+                    </button>
+                  </div>
+                </div>
+
+                {deleteStatus === 'sent' && (
+                  <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                    <label className="text-[11px] text-slate-500 block">{zh ? '输入 6 位工单验证码' : 'Enter 6-digit verification code'}</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={deleteCode} onChange={e => { setDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setDeleteError(''); }}
+                        placeholder="000000" maxLength={6}
+                        className="w-32 tracking-[0.3em] text-center font-mono rounded-xl border border-slate-200 py-2 text-sm outline-none focus:border-rose-500 transition-all"
+                      />
+                      <button
+                        type="button" onClick={verifyDeleteApproval} disabled={deleteCode.length !== 6}
+                        className={`px-4 py-2 rounded-xl font-bold transition-all ${deleteCode.length === 6 ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                      >
+                        {zh ? '验证' : 'Verify'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {deleteError && (
+                  <div className="flex items-center gap-1.5 text-rose-600 text-xs pt-1">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{deleteError}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="px-6 py-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button" onClick={() => setDeleteApprovalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-slate-600 hover:bg-slate-100 transition-all"
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  type="button" onClick={executeDeleteJob} disabled={deleteStatus !== 'verified'}
+                  className="px-4 py-2 rounded-xl bg-rose-600 text-white font-bold hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-md shadow-rose-600/10"
+                >
+                  {zh ? '确认安全删除' : 'Secure Delete'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- Candidate IP / Device Selection Modal --- */}
+      <AnimatePresence>
+        {candidateModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+          >
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setCandidateModalOpen(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col z-10 max-h-[80vh]"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900 to-[#0f172a] text-white flex items-center justify-between border-b border-white/10">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-cyan-500/20 flex items-center justify-center border border-cyan-400/20 text-cyan-400">
+                    <Target size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold">{zh ? '选择匹配的目标设备' : 'Select Matched Target Devices'}</h3>
+                    <p className="text-[10px] text-slate-400">{zh ? `共检索到 ${candidateList.length} 台候选目标` : `Found ${candidateList.length} candidate device(s)`}</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setCandidateModalOpen(false)} className="text-slate-400 hover:text-white transition-colors p-1">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="px-6 py-3 bg-slate-50 border-b border-slate-200/80 flex items-center justify-between text-xs text-slate-600">
+                <label className="flex items-center gap-2 font-bold cursor-pointer hover:text-slate-900 select-none">
+                  <input
+                    type="checkbox"
+                    checked={candidateList.length > 0 && candidateList.every(c => c.selected)}
+                    onChange={toggleAllCandidates}
+                    className="w-4 h-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                  />
+                  <span>{zh ? '全选 / 全不选' : 'Select All'}</span>
+                </label>
+                <span className="font-mono text-[11px] bg-white px-2 py-0.5 rounded border border-slate-200 font-bold text-slate-700 shadow-2xs">
+                  {zh ? `已勾选 ${candidateList.filter(c => c.selected).length} / ${candidateList.length} 台` : `${candidateList.filter(c => c.selected).length} / ${candidateList.length} selected`}
+                </span>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-2 custom-scrollbar max-h-[50vh]">
+                {candidateList.map((cand, idx) => (
+                  <div
+                    key={cand.ip}
+                    onClick={() => toggleCandidateSelected(idx)}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all cursor-pointer ${
+                      cand.selected
+                        ? 'border-cyan-400 bg-cyan-50/60 shadow-2xs text-slate-900 font-bold'
+                        : 'border-slate-200/80 bg-white text-slate-500 hover:border-slate-300 opacity-70'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={cand.selected}
+                      onChange={() => {}} // parent div onClick handles toggle
+                      className="w-4 h-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500 pointer-events-none shrink-0"
+                    />
+                    <span className="font-mono text-xs text-[#0f172a] shrink-0 w-32">{cand.ip}</span>
+                    {cand.hostname ? (
+                      <span className="text-xs text-slate-600 truncate flex-1">{cand.hostname}</span>
+                    ) : (
+                      <span className="text-xs text-amber-600/80 italic flex-1 font-normal">{zh ? '手动输入目标 (非资产表)' : 'Manual Target'}</span>
+                    )}
+                    {cand.tags.length > 0 && (
+                      <div className="flex items-center gap-1 shrink-0 max-w-[150px] overflow-hidden">
+                        {cand.tags.slice(0, 2).map(t => (
+                          <span key={t.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-white border border-black/5">
+                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: t.color || '#94a3b8' }} />
+                            <span className="truncate">{zh ? (t.label_zh || t.label) : t.label}</span>
+                          </span>
+                        ))}
+                        {cand.tags.length > 2 && <span className="text-[9px] text-slate-400">+{cand.tags.length - 2}</span>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="px-6 py-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setCandidateModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-xs text-slate-600 hover:bg-slate-100 transition-all"
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmAddCandidates}
+                  disabled={candidateList.filter(c => c.selected).length === 0}
+                  className="px-5 py-2 rounded-xl bg-[#164e63] text-white font-bold text-xs hover:bg-[#0891b2] transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-cyan-950/10"
+                >
+                  {zh ? `确认添加 (${candidateList.filter(c => c.selected).length}台)` : `Add Selected (${candidateList.filter(c => c.selected).length})`}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {modalOpen && (
           <motion.div
@@ -1377,7 +1774,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               <div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.06]">
                 <h3 className="text-base font-bold text-[#164e63] flex items-center gap-2">
                   {isEditMode ? <Pencil size={16} className="text-cyan-500" /> : <Plus size={16} className="text-cyan-500" />}
-                  {isEditMode ? (zh ? '编辑定时作业' : 'Edit Scheduled Job') : (zh ? '新建定时作业' : 'New Scheduled Job')}
+                  {enablingJobId === editingJob?.id ? (zh ? '安全启用授权验证' : 'Enable Scheduled Job (Auth Required)') : isEditMode ? (zh ? '编辑定时作业' : 'Edit Scheduled Job') : (zh ? '新建定时作业' : 'New Scheduled Job')}
                 </h3>
                 <button onClick={closeModal} className="p-1.5 rounded-lg text-black/30 hover:bg-black/5 transition-all">
                   <X size={16} />
@@ -1559,12 +1956,17 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                             onChange={e => { setIpInput(e.target.value); setIpError(''); }}
                             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); validateAndAddIps(ipInput); } }}
                             disabled={ipValidating}
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all font-mono pr-10"
-                            placeholder={zh ? '输入 IP 后回车验证,支持逗号/空格/分号分隔' : 'Enter IPs, press Enter to validate'}
+                            className="w-full pl-3.5 pr-12 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all font-mono"
+                            placeholder={zh ? '输入 IP/关键词 后回车查询，弹窗勾选添加' : 'Enter IP/query and press Enter to select'}
                           />
-                          {ipValidating && (
-                            <RotateCcw size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-cyan-500 animate-spin" />
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => validateAndAddIps(ipInput)}
+                            disabled={!ipInput.trim() || ipValidating}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-cyan-600 hover:bg-cyan-50 transition-all disabled:opacity-30"
+                          >
+                            {ipValidating ? <RotateCcw size={14} className="animate-spin" /> : <Search size={14} />}
+                          </button>
                         </div>
 
                         {ipError && (
@@ -1732,6 +2134,55 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                           />
                         </div>
                       )}
+
+                      {/* Execution User / Role Level */}
+                      <div className="space-y-2 pt-1">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                          {zh ? '执行凭证与特权借用等级' : 'Execution Credentials & Privilege Level'}
+                        </label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, use_admin_creds: false }))}
+                            className={`flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all ${
+                              !form.use_admin_creds
+                                ? 'border-cyan-500 bg-cyan-50/50 text-[#164e63] shadow-sm font-semibold'
+                                : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center border mt-0.5 shrink-0 ${!form.use_admin_creds ? 'border-cyan-600 bg-cyan-600 text-white' : 'border-slate-300'}`}>
+                              {!form.use_admin_creds && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold flex items-center gap-1.5">
+                                <User className="w-3.5 h-3.5 text-cyan-600 shrink-0" />
+                                <span className="truncate">{zh ? '普通运维操作员' : 'Normal Operator'}</span>
+                              </div>
+                              <div className="text-[10px] text-black/40 font-normal mt-0.5 leading-snug">{zh ? '日常例行巡检与常规低危命令，使用标准受限凭据连接' : 'Routine inspection & standard commands using normal creds'}</div>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, use_admin_creds: true }))}
+                            className={`flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all ${
+                              form.use_admin_creds
+                                ? 'border-amber-500 bg-amber-50/50 text-amber-900 shadow-sm font-semibold'
+                                : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center border mt-0.5 shrink-0 ${form.use_admin_creds ? 'border-amber-600 bg-amber-600 text-white' : 'border-slate-300'}`}>
+                              {form.use_admin_creds && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold flex items-center gap-1.5 text-amber-800">
+                                <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                <span className="truncate">{zh ? '特权借用 (Enable/Admin)' : 'Privileged Borrowing'}</span>
+                              </div>
+                              <div className="text-[10px] text-amber-700/70 font-normal mt-0.5 leading-snug">{zh ? '高危或管理作业自动申请使用硬件保险箱中的提权密码' : 'Auto borrow enable/admin credentials from hardware vault'}</div>
+                            </div>
+                          </button>
+                        </div>
+                      </div>
 
                       {/* Approval (create & edit) */}
                       <div className="rounded-xl border border-black/8 overflow-hidden">

@@ -176,7 +176,7 @@ def _netmiko_platform_type(platform: str) -> str:
     return mapping.get(platform, 'cisco_ios')
 
 
-def _netmiko_collect(device: dict[str, Any], commands: list[str]) -> dict[str, str]:
+def _netmiko_collect(device: dict[str, Any], commands: list[str], use_admin_creds: bool = False) -> dict[str, str]:
     """
     一次 SSH 连接执行多条命令，返回 {command: output} 字典。
     命令失败单条用 '__ERROR__: xxx' 标记，整体连接失败抛异常。
@@ -185,31 +185,19 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str]) -> dict[str, s
     """
     from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
     from drivers.ssh_compat import build_netmiko_compatibility_kwargs
-    from core.crypto import decrypt_credential
+    from services.vault_service import resolve_device_credentials
 
     platform = (device.get('platform') or 'cisco_ios').lower()
     is_slow = platform in {'huawei_vrp', 'huawei_vrpv8', 'h3c_comware', 'hp_comware'}
 
-    # 凭据解密 — 与 scheduler_service 保持一致的多级回退策略
-    # 优先 normal → 回退 username → 最终 admin
-    normal_user = (device.get('normal_username') or '').strip()
-    normal_pass = (device.get('normal_password') or '').strip()
-    if normal_user and normal_pass:
-        username = normal_user
-        try:
-            password = decrypt_credential(normal_pass) or normal_pass
-        except Exception:
-            password = normal_pass
+    # 统一使用 Vault 凭据解析服务
+    creds = resolve_device_credentials(device)
+    if use_admin_creds:
+        username = creds.get('admin_username') or creds.get('username') or ''
+        password = creds.get('admin_password') or creds.get('password') or ''
     else:
-        username = (device.get('username') or '').strip()
-        raw_password = (device.get('password') or '').strip()
-        if not username or not raw_password:
-            username = (device.get('admin_username') or '').strip() or username
-            raw_password = (device.get('admin_password') or '').strip() or raw_password
-        try:
-            password = decrypt_credential(raw_password) or raw_password
-        except Exception:
-            password = raw_password
+        username = creds.get('normal_username') or creds.get('username') or creds.get('admin_username') or ''
+        password = creds.get('normal_password') or creds.get('password') or creds.get('admin_password') or ''
 
     params = {
         'device_type': _netmiko_platform_type(platform),
@@ -225,12 +213,9 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str]) -> dict[str, s
     }
     params.update(build_netmiko_compatibility_kwargs())
 
-    secret = device.get('enable_password') or device.get('secret') or ''
+    secret = creds.get('enable_password') or ''
     if secret:
-        try:
-            params['secret'] = decrypt_credential(secret) or secret
-        except Exception:
-            params['secret'] = secret
+        params['secret'] = secret
 
     results: dict[str, str] = {}
     try:
@@ -515,7 +500,7 @@ def _get_last_metrics_dict(device_id: str) -> dict | None:
     return None
 
 
-def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: list[dict]) -> dict[str, Any]:
+def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: list[dict], use_admin_creds: bool = False) -> dict[str, Any]:
     """
     网络设备巡检：一次 SSH 连接采集所有命令，TextFSM 解析，阈值/计数/对比判定。
     """
@@ -592,9 +577,13 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         result['findings_json'] = '[]'
         return result
 
+    # 如果有任何单个指标要求特权，则开启特权
+    if any(item.get('use_admin_creds', 0) == 1 for item in inspection_items):
+        use_admin_creds = True
+
     # 4. 一次 SSH 连接采集所有命令
     try:
-        raw_outputs = _netmiko_collect(device, commands_needed)
+        raw_outputs = _netmiko_collect(device, commands_needed, use_admin_creds)
         result['ssh_ok'] = 1
     except Exception as e:
         result['ssh_ok'] = 0
@@ -831,7 +820,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
 
     return result
 
-def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], check_items: list[str] | None = None) -> dict[str, Any]:
+def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], check_items: list[str] | None = None, use_admin_creds: bool = False) -> dict[str, Any]:
     device_id = str(device.get('id') or '')
     ip = device.get('ip_address') or ''
     hostname = device.get('hostname') or ip
@@ -853,6 +842,9 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
     finally:
         conn.close()
 
+    if any(it.get('use_admin_creds', 0) == 1 for it in matched_items):
+        use_admin_creds = True
+
     # ── 按平台类型路由 ──
     # 网络设备：走 NetmikoDriver CLI 采集 + TextFSM 解析
     # 服务器：走 Paramiko Shell 脚本采集（原有逻辑）
@@ -862,7 +854,7 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
     if is_network_device:
         # 只选 CLI 方式的指标
         cli_items = [it for it in matched_items if (it.get('method') or '').upper() == 'CLI']
-        return _inspect_network_device(device, alert_stats, cli_items)
+        return _inspect_network_device(device, alert_stats, cli_items, use_admin_creds)
 
     if is_server:
         # 只选 Shell 方式的指标（原有逻辑）
@@ -1003,6 +995,7 @@ def run_inspection(
     schedule_id: str | None = None,
     created_by: str = 'system',
     check_items: list[str] | None = None,
+    use_admin_creds: bool = False,
 ) -> dict[str, Any]:
     conn = get_db_connection()
     try:
@@ -1034,7 +1027,7 @@ def run_inspection(
         with ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENT, len(devices))) as executor:
             futures = {
                 executor.submit(
-                    _inspect_single_device, dict(d), alert_stats_map.get(str(d.get('id') or ''), {}), check_items
+                    _inspect_single_device, dict(d), alert_stats_map.get(str(d.get('id') or ''), {}), check_items, use_admin_creds
                 ): d
                 for d in devices
             }
@@ -1198,7 +1191,8 @@ def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, An
         'id, hostname, ip_address, platform, status, compliance, role, site, '
         'cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data, '
         'username, password, normal_username, normal_password, '
-        'admin_username, admin_password, management_port, enable_password'
+        'admin_username, admin_password, management_port, enable_password, '
+        'credential_source, vault_path'
     )
     if scope_type == 'all':
         rows = conn.execute(f'SELECT {select} FROM devices ORDER BY hostname').fetchall()
@@ -1491,19 +1485,21 @@ def create_inspection_item(item_data: dict[str, Any]) -> dict[str, Any]:
     try:
         item_id = str(uuid.uuid4())
         now = _beijing_now_iso()
+        use_admin = 1 if item_data.get('use_admin_creds') else 0
         conn.execute(
             '''INSERT INTO inspection_items
-                (id, name, name_zh, category, check_key, description, method, command, vendor, oid, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (id, name, name_zh, category, check_key, description, method, command, vendor, oid, use_admin_creds, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (item_id, item_data['name'], item_data['name_zh'], item_data['category'],
              item_data['check_key'], item_data.get('description', ''), 
              item_data.get('method', 'SNMP'), item_data.get('command', ''),
-             item_data.get('vendor', ''), item_data.get('oid', ''), now, now)
+             item_data.get('vendor', ''), item_data.get('oid', ''), use_admin, now, now)
         )
         conn.commit()
         item_data['id'] = item_id
         item_data['created_at'] = now
         item_data['updated_at'] = now
+        item_data['use_admin_creds'] = bool(use_admin)
         return item_data
     finally:
         conn.close()
@@ -1511,13 +1507,13 @@ def create_inspection_item(item_data: dict[str, Any]) -> dict[str, Any]:
 def update_inspection_item(item_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
-        allowed = {'name', 'name_zh', 'category', 'check_key', 'description', 'method', 'command', 'vendor', 'oid'}
+        allowed = {'name', 'name_zh', 'category', 'check_key', 'description', 'method', 'command', 'vendor', 'oid', 'use_admin_creds'}
         sets = []
         params = []
         for k, v in updates.items():
             if k in allowed:
                 sets.append(f"{k}=?")
-                params.append(v)
+                params.append(int(bool(v)) if k == 'use_admin_creds' else v)
         if not sets:
             return None
         sets.append('updated_at=?')

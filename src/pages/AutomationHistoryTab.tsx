@@ -162,12 +162,18 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
   const [parseViewMode, setParseViewMode] = useState<Record<string, 'raw' | 'parsed'>>({});
   const [parseResults, setParseResults] = useState<Record<string, { loading: boolean; data: any; error: string }>>({});
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [collapsedBlocks, setCollapsedBlocks] = useState<Record<string, boolean>>({});
+
+  const toggleBlockCollapse = useCallback((key: string) => {
+    setCollapsedBlocks(prev => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   // Reset parse state when device changes
   useEffect(() => {
     setParseViewMode({});
     setParseResults({});
     setCopiedKey(null);
+    setCollapsedBlocks({});
   }, [selectedDeviceDetail]);
 
   useEffect(() => {
@@ -248,17 +254,15 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
    * so each command can still be individually parsed via TextFSM.
    */
   const splitOutputByCommand = useCallback((output: string, commands: string[]): Array<{ command: string; output: string }> => {
-    if (!output && commands.length === 0) return [];
+    if (!output && (!commands || commands.length === 0)) return [];
+    const safeOutput = output || '';
+    const safeCommands = commands || [];
 
-    // Try to detect new format: lines starting with "# <cmd>" as section markers
-    // Matches: "# show version" or "# interfaces: show ip interface brief"
+    // 1. Try standard marker split: lines starting with "# <cmd>"
     const markerRe = /^#[ \t]+(?:[^:\n]+:[ \t]+)?(.+)$/m;
-    const hasMarkers = markerRe.test(output);
-
-    if (hasMarkers) {
-      // Split on marker lines
+    if (markerRe.test(safeOutput)) {
       const blocks: Array<{ command: string; output: string }> = [];
-      const lines = output.split('\n');
+      const lines = safeOutput.split('\n');
       let currentCmd = '';
       let currentLines: string[] = [];
 
@@ -281,14 +285,228 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
       if (valid.length > 0) return valid;
     }
 
-    // Old format or no markers: one block per command, all share the full output
-    // This lets each command be independently parsed even though we can't split the text
-    if (commands.length > 0) {
-      return commands.map(cmd => ({ command: cmd, output: output.trim() }));
+    // 2. If we only have 0 or 1 command, return full blob directly
+    if (safeCommands.length === 0) {
+      return safeOutput.trim() ? [{ command: '', output: safeOutput.trim() }] : [];
+    }
+    if (safeCommands.length === 1) {
+      return [{ command: safeCommands[0], output: safeOutput.trim() }];
     }
 
-    // Absolute fallback: single unnamed block
-    return output.trim() ? [{ command: '', output: output.trim() }] : [];
+    // 3. Multi-command split strategy (Resonance & Signature matching inspired by Excel export)
+    const lines = safeOutput.split('\n');
+    
+    // 3a. Search for command prompts in lines (e.g. "SW1# show version" or "show version")
+    const cleanPromptRe = /^.*?[\#\>\$]\s*/;
+    const foundHeaders: Array<{ lineIdx: number; cmd: string }> = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const sLine = lines[i].replace(cleanPromptRe, '').trim().toLowerCase();
+      for (const cmd of safeCommands) {
+        const cLower = cmd.trim().toLowerCase();
+        if (sLine === cLower || sLine.startsWith(cLower + ' ')) {
+          foundHeaders.push({ lineIdx: i, cmd });
+          break;
+        }
+      }
+    }
+
+    // If we found command headers matching our expected commands
+    if (foundHeaders.length > 0) {
+      const extractedMap: Record<string, string> = {};
+      for (let i = 0; i < foundHeaders.length; i++) {
+        const startIdx = foundHeaders[i].lineIdx;
+        const cmdName = foundHeaders[i].cmd;
+        const endIdx = i + 1 < foundHeaders.length ? foundHeaders[i + 1].lineIdx : lines.length;
+        const contentLines = lines.slice(startIdx + 1, endIdx);
+        extractedMap[cmdName] = contentLines.join('\n').trim();
+      }
+
+      return safeCommands.map(cmd => ({
+        command: cmd,
+        output: (extractedMap[cmd] !== undefined && extractedMap[cmd].trim() !== '') 
+          ? extractedMap[cmd] 
+          : 'ℹ️ 无返回内容或未采集。'
+      }));
+    }
+
+    // 3b. If no prompt headers found, use Signature & Sequential Boundary Analysis
+    const sigMap: Record<string, string[]> = {
+      'show version': ['cisco ios software', 'linux software', 'cisco internetwork operating system', 'software (i86bi', 'rom: bootstrap'],
+      'show processes cpu': ['cpu utilization for five seconds', 'pid runtime', 'cpu utilization'],
+      'show processes memory': ['processor pool total', 'pid tty allocated', 'holding getbufs', 'memory pool'],
+      'show environment temperature': ['temperature', 'temperature status', 'inlet temperature', 'fan status', 'temp'],
+      'show environment power': ['power supply', 'power status', 'watts', 'power consumption', 'psu'],
+      'show environment': ['environmental status', 'temperature', 'power', 'fan'],
+      'show interfaces status': ['port name status', 'duplex speed', 'port status', 'port vlan duplex speed'],
+      'show interfaces': ['line protocol is', 'hardware is', '5 minute input rate', 'full-duplex'],
+      'show ip bgp summary': ['bgp router identifier', 'neighbor v as', 'bgp table version'],
+      'show ip bgp': ['bgp routing table', 'bgp router identifier'],
+      'show ip ospf neighbor': ['neighbor id pri state', 'ospf process'],
+      'show ip ospf': ['routing process "ospf', 'ospf router with id'],
+      'show ip route summary': ['ip routing table', 'route source', 'subnets'],
+      'show ip route': ['codes: l - local', 'gateway of last resort', 'routing table'],
+      'show running-config': ['building configuration', 'current configuration', 'version 15.'],
+      'show ip int': ['interface ip-address ok?'],
+      'show inventory': ['name:', 'descr:', 'chassis'],
+      'show clock': ['utc', 'cst', 'pst', 'est'],
+    };
+
+    const getSigs = (c: string): string[] => {
+      const cLower = c.trim().toLowerCase();
+      for (const [key, sigs] of Object.entries(sigMap)) {
+        if (cLower.includes(key)) return sigs;
+      }
+      return [];
+    };
+
+    const resultBlocks: Array<{ command: string; output: string }> = [];
+    let currIdx = 0;
+    const totalLines = lines.length;
+    let cmdI = 0;
+    const totalCmds = safeCommands.length;
+    const errRe = /^\s*(?:%|invalid|unknown|syntax error|bad command|unrecognized)/i;
+
+    while (cmdI < totalCmds) {
+      const cmd = safeCommands[cmdI];
+      if (currIdx >= totalLines) {
+        resultBlocks.push({ command: cmd, output: 'ℹ️ 无返回内容或未采集。' });
+        cmdI++;
+        continue;
+      }
+
+      const currentIsError = errRe.test(lines[currIdx]);
+
+      if (!currentIsError) {
+        let endIdx = totalLines;
+        for (let offset = 0; offset < totalLines - currIdx; offset++) {
+          const absIdx = currIdx + offset;
+          const l = lines[absIdx];
+          const lLower = l.trim().toLowerCase();
+
+          if (offset > 1 && errRe.test(l)) {
+            endIdx = absIdx;
+            break;
+          }
+
+          let matchedNext = false;
+          for (let nextCIdx = cmdI + 1; nextCIdx < totalCmds; nextCIdx++) {
+            const nextCmd = safeCommands[nextCIdx];
+            if (lLower.includes(nextCmd.toLowerCase()) && lLower.length < nextCmd.length + 15) {
+              endIdx = absIdx;
+              matchedNext = true;
+              break;
+            }
+            const sigs = getSigs(nextCmd);
+            if (sigs.length > 0 && sigs.some(sig => lLower.includes(sig))) {
+              endIdx = absIdx;
+              matchedNext = true;
+              break;
+            }
+          }
+          if (matchedNext) break;
+        }
+
+        const cmdContent = lines.slice(currIdx, endIdx).join('\n').trim();
+        resultBlocks.push({ command: cmd, output: cmdContent || 'ℹ️ 执行成功，但无回显' });
+        currIdx = endIdx;
+        cmdI++;
+      } else {
+        // Error block resonance alignment
+        let nextSuccessCmdIdx = -1;
+        let foundSuccessLineIdx = totalLines;
+
+        for (let nextCIdx = cmdI + 1; nextCIdx < totalCmds; nextCIdx++) {
+          const nextCmd = safeCommands[nextCIdx];
+          const sigs = getSigs(nextCmd);
+
+          for (let offset = 0; offset < totalLines - currIdx; offset++) {
+            const absIdx = currIdx + offset;
+            const l = lines[absIdx];
+            const lLower = l.trim().toLowerCase();
+            if (!errRe.test(l)) {
+              if (lLower.includes(nextCmd.toLowerCase()) && lLower.length < nextCmd.length + 15) {
+                nextSuccessCmdIdx = nextCIdx;
+                foundSuccessLineIdx = absIdx;
+                break;
+              }
+              if (sigs.length > 0 && sigs.some(sig => lLower.includes(sig))) {
+                nextSuccessCmdIdx = nextCIdx;
+                foundSuccessLineIdx = absIdx;
+                break;
+              }
+            }
+          }
+          if (nextSuccessCmdIdx !== -1) break;
+        }
+
+        const chunkLines = lines.slice(currIdx, foundSuccessLineIdx);
+        const countToAssign = (nextSuccessCmdIdx !== -1 ? nextSuccessCmdIdx : totalCmds) - cmdI;
+
+        if (countToAssign === 1) {
+          resultBlocks.push({ command: cmd, output: chunkLines.join('\n').trim() });
+        } else {
+          const errChunks: string[] = [];
+          let currErrChunk: string[] = [];
+          for (const cl of chunkLines) {
+            const clStr = cl.trim();
+            const isCaretOnly = clStr.length > 0 && clStr.split('').every(ch => ch === '^' || ch === ' ');
+            const isErrStart = errRe.test(cl) || isCaretOnly;
+            const hasRealText = currErrChunk.some(x => /[a-zA-Z0-9%]/.test(x));
+
+            if (isErrStart && hasRealText) {
+              errChunks.push(currErrChunk.join('\n').trim());
+              currErrChunk = [cl];
+            } else {
+              currErrChunk.push(cl);
+            }
+          }
+          if (currErrChunk.length > 0) {
+            errChunks.push(currErrChunk.join('\n').trim());
+          }
+          const validErrChunks = errChunks.filter(ch => ch.trim() !== '');
+
+          const cmdsToAssign = safeCommands.slice(cmdI, cmdI + countToAssign);
+          const assignedOut: Record<string, string> = {};
+          const remainingErrs = [...validErrChunks];
+          const remainingCmds = [...cmdsToAssign];
+
+          for (const errTxt of [...remainingErrs]) {
+            const errLower = errTxt.toLowerCase();
+            let matchedCmd: string | undefined = undefined;
+            if (errLower.includes('bgp')) {
+              matchedCmd = remainingCmds.find(c => c.toLowerCase().includes('bgp'));
+            } else if (errLower.includes('ospf')) {
+              matchedCmd = remainingCmds.find(c => c.toLowerCase().includes('ospf'));
+            } else if (errLower.includes('interface') || errLower.includes('drop') || errLower.includes('line protocol')) {
+              matchedCmd = remainingCmds.find(c => c.toLowerCase().includes('interface') || c.toLowerCase().includes('int'));
+            }
+
+            if (matchedCmd) {
+              assignedOut[matchedCmd] = errTxt;
+              remainingErrs.splice(remainingErrs.indexOf(errTxt), 1);
+              remainingCmds.splice(remainingCmds.indexOf(matchedCmd), 1);
+            }
+          }
+
+          for (const errTxt of remainingErrs) {
+            if (remainingCmds.length > 0) {
+              const cmdTarget = remainingCmds.shift()!;
+              assignedOut[cmdTarget] = errTxt;
+            }
+          }
+
+          for (const cName of cmdsToAssign) {
+            resultBlocks.push({ command: cName, output: assignedOut[cName] || 'ℹ️ 执行成功，但无回显' });
+          }
+        }
+
+        currIdx = foundSuccessLineIdx;
+        cmdI = nextSuccessCmdIdx !== -1 ? nextSuccessCmdIdx : totalCmds;
+      }
+    }
+
+    return resultBlocks;
   }, []);
 
   /** Export parsed records to a real .xlsx file */
@@ -1062,27 +1280,54 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                             </span>
                                           )}
                                         </div>
-                                        {/* Phase-level download of full raw output */}
-                                        {rawOutput && (
-                                          <div className="flex items-center gap-1.5">
-                                            <button
-                                              onClick={() => copyText(rawOutput, `${phase}-all`)}
-                                              className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] font-medium transition-all shadow-sm ${copiedKey === `${phase}-all` ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-black/10 text-black/40 hover:text-black/70 hover:border-black/20'}`}
-                                              title={isZh ? '复制全部输出' : 'Copy all output'}
-                                            >
-                                              {copiedKey === `${phase}-all` ? <Check size={10} /> : <Copy size={10} />}
-                                              <span>{isZh ? '复制全部' : 'Copy all'}</span>
-                                            </button>
-                                            <button
-                                              onClick={() => downloadText(rawOutput, `${hostname}_${phase}_raw.txt`)}
-                                              className="flex items-center gap-1 px-2 py-1 rounded-md border bg-white border-black/10 text-[10px] font-medium text-black/40 hover:text-black/70 hover:border-black/20 transition-all shadow-sm"
-                                              title={isZh ? '下载全部输出' : 'Download all output'}
-                                            >
-                                              <Download size={10} />
-                                              <span>{isZh ? '下载' : 'Download'}</span>
-                                            </button>
-                                          </div>
-                                        )}
+                                        <div className="flex items-center gap-2">
+                                          {cmdBlocks.length > 0 && (
+                                            <div className="flex items-center gap-1.5 mr-2">
+                                              <button
+                                                onClick={() => {
+                                                  const next = { ...collapsedBlocks };
+                                                  cmdBlocks.forEach((b, bi) => next[`${phase}::${b.command || bi}`] = false);
+                                                  setCollapsedBlocks(next);
+                                                }}
+                                                className="text-[10px] font-bold text-[#0891b2] hover:text-[#0e7490] transition-colors cursor-pointer"
+                                              >
+                                                {isZh ? '全部展开' : 'Expand All'}
+                                              </button>
+                                              <div className="w-px h-2.5 bg-black/10" />
+                                              <button
+                                                onClick={() => {
+                                                  const next = { ...collapsedBlocks };
+                                                  cmdBlocks.forEach((b, bi) => next[`${phase}::${b.command || bi}`] = true);
+                                                  setCollapsedBlocks(next);
+                                                }}
+                                                className="text-[10px] font-bold text-black/35 hover:text-black/60 transition-colors cursor-pointer"
+                                              >
+                                                {isZh ? '全部折叠' : 'Collapse All'}
+                                              </button>
+                                            </div>
+                                          )}
+                                          {/* Phase-level download of full raw output */}
+                                          {rawOutput && (
+                                            <div className="flex items-center gap-1.5 border-l border-black/5 pl-2">
+                                              <button
+                                                onClick={() => copyText(rawOutput, `${phase}-all`)}
+                                                className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] font-medium transition-all shadow-sm ${copiedKey === `${phase}-all` ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-black/10 text-black/40 hover:text-black/70 hover:border-black/20'}`}
+                                                title={isZh ? '复制全部输出' : 'Copy all output'}
+                                              >
+                                                {copiedKey === `${phase}-all` ? <Check size={10} /> : <Copy size={10} />}
+                                                <span>{isZh ? '复制全部' : 'Copy all'}</span>
+                                              </button>
+                                              <button
+                                                onClick={() => downloadText(rawOutput, `${hostname}_${phase}_raw.txt`)}
+                                                className="flex items-center gap-1 px-2 py-1 rounded-md border bg-white border-black/10 text-[10px] font-medium text-black/40 hover:text-black/70 hover:border-black/20 transition-all shadow-sm"
+                                                title={isZh ? '下载全部输出' : 'Download all output'}
+                                              >
+                                                <Download size={10} />
+                                                <span>{isZh ? '下载' : 'Download'}</span>
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
                                       </div>
 
                                       {/* Per-command blocks */}
@@ -1094,18 +1339,28 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                           const isCopied = copiedKey === `${blockKey}-copy`;
                                           const hasOutput = !!block.output;
                                           const displayCmd = block.command || commands[bi] || '';
+                                          const isCollapsed = collapsedBlocks[blockKey] ?? false;
 
                                           return (
                                             <div key={blockKey} className="bg-white">
                                               {/* Command bar — GitHub-style, always shown when we have a command */}
                                               {displayCmd && (
-                                                <div className="flex items-center justify-between px-4 py-2 bg-[#f6f8fa] border-b border-black/[0.06]">
+                                                <div 
+                                                  onClick={() => toggleBlockCollapse(blockKey)}
+                                                  className="flex items-center justify-between px-4 py-2 bg-[#f6f8fa] border-b border-black/[0.06] cursor-pointer hover:bg-black/[0.03] transition-colors select-none"
+                                                >
                                                   <div className="flex items-center gap-2 min-w-0">
+                                                    <ChevronRight size={14} className={`text-black/30 shrink-0 transition-transform duration-200 ${isCollapsed ? '' : 'rotate-90'}`} />
                                                     <span className="text-[10px] text-black/30 font-mono select-none">$</span>
                                                     <code className="text-[11px] font-mono text-[#0550ae] font-semibold truncate">{displayCmd}</code>
                                                   </div>
                                                   {hasOutput && (
-                                                    <div className="flex items-center gap-1 shrink-0 ml-3">
+                                                    <div className="flex items-center gap-1 shrink-0 ml-3" onClick={e => e.stopPropagation()}>
+                                                      {isCollapsed && (
+                                                        <span className="text-[10px] text-black/30 font-mono italic truncate max-w-[200px] sm:max-w-[300px] mr-2 hidden md:inline">
+                                                          {block.output.substring(0, 60).replace(/\n/g, ' ')}...
+                                                        </span>
+                                                      )}
                                                       {/* Raw / Parsed toggle */}
                                                       <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-black/[0.05] border border-black/[0.06]">
                                                         <button
@@ -1188,7 +1443,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                               )}
 
                                               {/* Output content */}
-                                              {hasOutput && (
+                                              {!isCollapsed && hasOutput && (
                                                 <div className="px-0">
                                                   {viewMode === 'parsed' ? (
                                                     parseState?.loading ? (

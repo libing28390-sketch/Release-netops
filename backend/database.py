@@ -569,7 +569,9 @@ def _init_db_logic(conn):
         psu_status TEXT DEFAULT 'redundant',
         sys_name TEXT,
         sys_location TEXT,
-        sys_contact TEXT
+        sys_contact TEXT,
+        credential_source TEXT DEFAULT 'local',
+        vault_path TEXT DEFAULT ''
     )
     ''')
         
@@ -624,7 +626,9 @@ def _init_db_logic(conn):
         ('enable_password_expires_at', "TEXT DEFAULT ''"),
         ('management_port', "INTEGER DEFAULT 22"),
         ('is_managed', "INTEGER DEFAULT 0"),
-        ('takeover_error', "TEXT DEFAULT ''")
+        ('takeover_error', "TEXT DEFAULT ''"),
+        ('credential_source', "TEXT DEFAULT 'local'"),
+        ('vault_path', "TEXT DEFAULT ''")
     ]:
         ensure_column('devices', col, dtype)
 
@@ -2087,6 +2091,7 @@ def _init_db_logic(conn):
         last_run_at TEXT DEFAULT '',
         last_run_status TEXT DEFAULT '',
         run_count INTEGER DEFAULT 0,
+        use_admin_creds INTEGER DEFAULT 0,
         created_by TEXT DEFAULT 'system',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -2095,6 +2100,8 @@ def _init_db_logic(conn):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_job_type ON scheduled_jobs(job_type)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_status ON scheduled_jobs(status)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_enabled ON scheduled_jobs(enabled)')
+
+    ensure_column('scheduled_jobs', 'use_admin_creds', 'INTEGER DEFAULT 0')
 
     # ── Tag System: definitions + device-tag junction ──
     cursor.execute('''
@@ -2199,6 +2206,7 @@ def _init_db_logic(conn):
         critical_threshold REAL,
         vendor TEXT DEFAULT '',
         oid TEXT DEFAULT '',
+        use_admin_creds INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
@@ -2213,6 +2221,7 @@ def _init_db_logic(conn):
                        ('parse_filter', "TEXT DEFAULT ''"),              # count/diff 类型的过滤条件 (JSON)
                        ('fallback_regex', "TEXT DEFAULT ''"),            # TextFSM 失败时的正则兜底
                        ('enabled', 'INTEGER DEFAULT 1'),                  # 是否启用该指标
+                       ('use_admin_creds', 'INTEGER DEFAULT 0'),
                        # Migration (R9.2): 合规检查体系
                        ('expected_value', "TEXT DEFAULT ''")]:           # 合规检查的期望值
         ensure_column('inspection_items', col, dtype)

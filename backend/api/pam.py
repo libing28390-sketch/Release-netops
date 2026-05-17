@@ -577,10 +577,26 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
     # 3. SSH connection
     try:
         import asyncssh
+
+        class PAMAuthBannerClient(asyncssh.SSHClient):
+            def __init__(self):
+                super().__init__()
+                self.auth_banner_text = ""
+
+            def auth_banner(self, message: str, language: str) -> None:
+                if message:
+                    self.auth_banner_text += message
+
+        client_ref = [None]
+        def custom_client_factory():
+            client = PAMAuthBannerClient()
+            client_ref[0] = client
+            return client
+
         logger.info(f"[PAM] Attempting SSH connection to {ip}:{port} as {username}...")
         ssh_conn = await asyncssh.connect(
             ip, port=port, username=username, password=password,
-            known_hosts=None, client_factory=None,
+            known_hosts=None, client_factory=custom_client_factory,
             login_timeout=15,
             # Support legacy devices that only use CBC ciphers
             encryption_algs=[
@@ -663,6 +679,19 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
         device_id=session['device_id'],
         details={'login_username': username, 'target_ip': ip, 'access_level': session['access_level'], 'recording': recording_path},
     )
+
+    # 5.5 If the device sent an SSH_MSG_USERAUTH_BANNER during handshake, relay it now
+    if client_ref[0] and client_ref[0].auth_banner_text:
+        banner_msg = client_ref[0].auth_banner_text
+        if not banner_msg.endswith('\r\n') and not banner_msg.endswith('\n'):
+            banner_msg += '\r\n'
+        try:
+            await websocket.send_text(json.dumps({'type': 'output', 'data': banner_msg}))
+            if recording_path:
+                with open(recording_path, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps([0.1, "o", banner_msg]) + "\n")
+        except Exception as b_err:
+            logger.warning(f"[PAM] Failed to send auth banner for {session_id}: {b_err}")
 
     # 6. IO relay
     close_reason = 'user_disconnect'
