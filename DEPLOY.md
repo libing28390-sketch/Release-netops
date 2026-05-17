@@ -51,17 +51,25 @@ The script auto-detects whether `systemd` is available and falls back to `servic
 
 ```bash
 # Recommended: download first, then execute
-curl -fsSL -o /tmp/deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
+curl -fsSL -o /tmp/deploy.sh https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh
 chmod +x /tmp/deploy.sh
 bash /tmp/deploy.sh
 ```
 
 Or pipe directly (also supported):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
+curl -fsSL https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh | bash
 ```
 
 #### Inside a cloned directory
+
+> **Interactive Customization Wizard & Environment Setup:**
+> When executing the script, an interactive startup prompt (with a 10-second timeout) allows you to seamlessly configure:
+> - Custom PostgreSQL database password
+> - Custom backend API listening port (default: 8003)
+> - Custom external Nginx proxy port (default: 80)
+> 
+> You can also pre-configure your `.env` file manually (`cp .env.example .env`). The script will auto-detect and retain your pre-configured settings.
 
 ```bash
 chmod +x deploy-ubuntu.sh
@@ -71,23 +79,25 @@ chmod +x deploy-ubuntu.sh
 #### What the script does
 
 1. Installs system packages: Python 3, Node.js 22, Nginx, PostgreSQL, libcap2-bin
-2. Creates a Python virtual environment and installs `backend/requirements.txt`
-3. Installs Node.js dependencies and builds the frontend (`dist/`)
-4. Generates `.env` from `.env.example` with random `SECRET_KEY` and `CREDENTIAL_ENCRYPTION_KEY`
-5. Creates PostgreSQL user `netops` and database `netops` with a random password
-6. Sets `CAP_NET_RAW` on the venv Python binary (for ICMP ping)
-7. Writes and enables an Nginx reverse proxy config on port 80
-8. **systemd environments**: registers and starts a `netops.service` unit
-9. **Container environments**: starts the backend with `nohup` and writes PID to `data/netops.pid`
+2. Clones or synchronizes the latest repository from Gitee (`https://gitee.com/leerbon/netops.git`)
+3. Interactively requests custom database credentials & listening ports
+4. Creates a Python virtual environment and installs `backend/requirements.txt`
+5. Installs Node.js dependencies and builds the frontend (`dist/`)
+6. Generates `.env` from `.env.example` with random encryption keys
+7. Creates PostgreSQL database and sets up credentials
+8. Sets `CAP_NET_RAW` on the venv Python binary (for ICMP ping)
+9. Writes and enables an Nginx reverse proxy config on your chosen port
+10. **systemd environments**: registers and starts a `netops.service` unit
+11. **Container environments**: starts the backend with `nohup` and writes PID to `data/netops.pid`
 
 #### After deployment
 
 | Item | Value |
 |------|-------|
-| Access URL | `http://<server-ip>` |
+| Access URL | `http://<server-ip>:<nginx-port>` |
 | Default credentials | `admin / admin` |
 | Backend port | 8003 (internal, not exposed) |
-| Nginx port | 80 |
+| Nginx port | User selected (default: 80) |
 | Backend logs (systemd) | `sudo journalctl -u netops -f` |
 | Backend logs (container) | `tail -f data/netops.log` |
 
@@ -130,7 +140,7 @@ newgrp docker   # or re-login
 #### Start
 
 ```bash
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
 # Build frontend first (required — Dockerfile copies dist/)
@@ -203,7 +213,7 @@ For custom environments or development.
 
 ```bash
 # 1. Clone
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
 # 2. Python environment
@@ -298,18 +308,26 @@ Nginx (:80)
 #### 全新服务器（无需预装任何依赖）
 
 ```bash
-# 推荐：先下载再执行，避免管道模式下的 stdin 问题
-curl -fsSL -o /tmp/deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
+# 推荐：先下载再执行，国内极速直达
+curl -fsSL -o /tmp/deploy.sh https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh
 chmod +x /tmp/deploy.sh
 bash /tmp/deploy.sh
 ```
 
 也支持管道方式：
 ```bash
-curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
+curl -fsSL https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh | bash
 ```
 
 #### 已克隆项目目录内执行
+
+> **交互式环境向导与参数自定义（全新亮点）：**
+> 在执行部署脚本时，内置带 10 秒倒计时自动保护的交互式向导！支持直接在终端输入自定义：
+> - 数据库 PostgreSQL 独立登录口令
+> - 后端 API 内部监听端口（默认 8003）
+> - 外部 Nginx 代理访问端口（默认 80）
+> 
+> 您也可在执行前提前配置 `.env` (`cp .env.example .env`)，部署脚本将完美检测并继承您的既有配置。
 
 ```bash
 chmod +x deploy-ubuntu.sh
@@ -319,23 +337,25 @@ chmod +x deploy-ubuntu.sh
 #### 脚本自动完成的步骤
 
 1. 安装系统包：Python 3、Node.js 22、Nginx、PostgreSQL、libcap2-bin
-2. 创建 Python 虚拟环境并安装 `backend/requirements.txt`
-3. 安装 Node.js 依赖并构建前端（`dist/`）
-4. 从 `.env.example` 生成 `.env`，随机生成 `SECRET_KEY` 和 `CREDENTIAL_ENCRYPTION_KEY`
-5. 创建 PostgreSQL 用户 `netops` 和数据库 `netops`，随机生成密码
-6. 为虚拟环境 Python 设置 `CAP_NET_RAW`（用于 ICMP ping）
-7. 写入并启用 Nginx 反向代理配置（监听 80 端口）
-8. **systemd 环境**：注册并启动 `netops.service` 系统服务
-9. **容器环境**：以 `nohup` 后台方式启动后端，PID 写入 `data/netops.pid`
+2. 自动从 Gitee 极速拉取或同步最新仓库代码 (`https://gitee.com/leerbon/netops.git`)
+3. 交互式询问并设定自定义口令及端口
+4. 创建 Python 虚拟环境并安装 `backend/requirements.txt`
+5. 安装 Node.js 依赖并构建前端（`dist/`）
+6. 从 `.env.example` 生成 `.env`，随机生成各类加密密钥
+7. 初始化 PostgreSQL 数据库及授权
+8. 为虚拟环境 Python 设置 `CAP_NET_RAW`（用于 ICMP ping）
+9. 写入并启用 Nginx 反向代理配置（监听您设定的端口）
+10. **systemd 环境**：注册并启动 `netops.service` 系统服务
+11. **容器环境**：以 `nohup` 后台方式启动后端，PID 写入 `data/netops.pid`
 
 #### 部署完成后
 
 | 项目 | 值 |
 |------|-----|
-| 访问地址 | `http://<服务器IP>` |
+| 访问地址 | `http://<服务器IP>:<Nginx访问端口>` |
 | 默认账号 | `admin / admin` |
 | 后端端口 | 8003（内部，不对外暴露） |
-| Nginx 端口 | 80 |
+| Nginx 端口 | 用户自定义（默认：80） |
 | 后端日志（systemd） | `sudo journalctl -u netops -f` |
 | 后端日志（容器） | `tail -f data/netops.log` |
 
@@ -377,7 +397,7 @@ newgrp docker   # 或重新登录
 #### 启动
 
 ```bash
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
 # 先构建前端（必须，Dockerfile 会复制 dist/）
@@ -450,7 +470,7 @@ server_name netops.example.com;
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
 # 2. Python 环境

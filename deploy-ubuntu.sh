@@ -40,7 +40,7 @@ fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
 # ---------- 配置 ----------
 NODE_MAJOR=22
 PYTHON_MIN="3.10"
-GIT_REPO="https://github.com/libing28390-sketch/Release-netops.git"
+GIT_REPO="${GIT_REPO:-https://gitee.com/leerbon/netops.git}"
 PROJECT_NAME="netops-automation"
 SERVICE_NAME="netops"
 BACKEND_PORT=8003

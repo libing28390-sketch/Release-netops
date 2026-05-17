@@ -178,7 +178,7 @@ The script auto-detects the environment and uses `systemd` or `service` accordin
 
 ```bash
 # Recommended: download first, then execute
-curl -fsSL -o /tmp/deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
+curl -fsSL -o /tmp/deploy.sh https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh
 chmod +x /tmp/deploy.sh
 bash /tmp/deploy.sh
 ```
@@ -186,17 +186,18 @@ bash /tmp/deploy.sh
 Or pipe directly (also supported):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
+curl -fsSL https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh | bash
 ```
 
 **Inside an existing cloned directory:**
 
-> **Environment Configuration (Optional but Recommended):**
-> Before running the deploy script, it is highly recommended to copy `.env.example` to `.env` and customize settings such as database credentials, encryption keys, and data retention policies. The deployment script will detect and preserve your pre-configured `.env` file.
-> ```bash
-> cp .env.example .env
-> # Edit .env to customize your parameters
-> ```
+> **Interactive Customization & Environment Configuration:**
+> The deployment script features an elegant interactive startup wizard with a 10-second auto-timeout. When running the script, you will be interactively prompted to customize key environment settings:
+> - Custom PostgreSQL password (or auto-generate)
+> - Custom backend API port (default: 8003)
+> - Custom Nginx public port (default: 80)
+> 
+> Alternatively, you can pre-configure your `.env` file manually (`cp .env.example .env`). The deployment script will detect and preserve any existing custom settings.
 
 ```bash
 chmod +x deploy-ubuntu.sh
@@ -205,13 +206,15 @@ chmod +x deploy-ubuntu.sh
 
 The script handles everything automatically:
 - Installs system dependencies (Python, Node.js 22, Nginx, PostgreSQL)
+- Clones/Updates repository from Gitee (`https://gitee.com/leerbon/netops.git`)
+- Interactively prompts for custom database credentials & ports
 - Creates a Python virtual environment and installs all dependencies
 - Builds the frontend production bundle
-- Generates `.env` with random `SECRET_KEY` and `CREDENTIAL_ENCRYPTION_KEY`
-- Configures Nginx as a reverse proxy on port 80
+- Generates `.env` with random encryption keys
+- Configures Nginx as a reverse proxy on your selected port
 - Registers and starts the backend as a systemd service (or background process in containers)
 
-After deployment, access the platform at `http://<server-ip>`.
+After deployment, access the platform at `http://<server-ip>:<nginx-port>`.
 
 Default credentials: `admin / admin` — **change immediately after first login.**
 
@@ -223,7 +226,7 @@ Requires Docker and Docker Compose. Includes PostgreSQL, backend, and Nginx in o
 
 ```bash
 # Clone the repository
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
 # Build frontend and start all containers
@@ -262,7 +265,7 @@ docker compose restart netops    # Restart backend
 **Prerequisites:** Node.js 18+, Python 3.10+, PostgreSQL 17
 
 ```bash
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
 # Python environment
@@ -389,8 +392,8 @@ Nexora 使用签名 License 文件控制功能权限和设备数量上限。
 **全新服务器（什么都不用预装）：**
 
 ```bash
-# 推荐：先下载再执行，避免管道模式下的 stdin 问题
-curl -fsSL -o /tmp/deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
+# 推荐：先下载再执行，国内极速直达
+curl -fsSL -o /tmp/deploy.sh https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh
 chmod +x /tmp/deploy.sh
 bash /tmp/deploy.sh
 ```
@@ -398,17 +401,18 @@ bash /tmp/deploy.sh
 也支持管道方式：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
+curl -fsSL https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh | bash
 ```
 
 **已克隆项目目录内执行：**
 
-> **环境配置说明（强烈建议）：**
-> 在执行部署脚本前，建议先将 `.env.example` 复制为 `.env` 并按需提前修改配置（如自定义数据库连接、加密密钥及遥测数据保留时长等）。部署脚本执行时会自动检测并完美保留您提前配置好的 `.env` 文件。
-> ```bash
-> cp .env.example .env
-> # 编辑 .env 自定义各项环境变量
-> ```
+> **交互式环境引导与配置自定义（全新亮点）：**
+> 本一键部署脚本内置带 10 秒倒计时自动保护的交互式向导！在执行脚本启动时，支持直接在命令行终端交互式自定义：
+> - 自定义 PostgreSQL 数据库密码（或留空自动生成强密码）
+> - 自定义后端 API 监听端口（默认 8003）
+> - 自定义外部 Nginx 代理访问端口（默认 80）
+> 
+> 此外，您也可以在执行前将 `.env.example` 复制为 `.env` 并提前填入自定义变量。部署脚本会自动检测并完美继承您的既有环境配置！
 
 ```bash
 chmod +x deploy-ubuntu.sh
@@ -417,13 +421,15 @@ chmod +x deploy-ubuntu.sh
 
 脚本自动完成以下所有步骤：
 - 安装系统依赖（Python、Node.js 22、Nginx、PostgreSQL）
+- 自动从 Gitee 极速源拉取/同步最新代码 (`https://gitee.com/leerbon/netops.git`)
+- 交互式询问并注入数据库口令及监听端口
 - 创建 Python 虚拟环境并安装全部依赖
 - 构建前端生产版本
-- 自动生成 `.env`，随机生成 `SECRET_KEY` 和 `CREDENTIAL_ENCRYPTION_KEY`
-- 配置 Nginx 反向代理（监听 80 端口）
+- 自动生成 `.env`，随机生成各类加密密钥
+- 配置 Nginx 反向代理（监听您选择的外部端口）
 - 注册并启动后端服务（systemd 服务或容器后台进程）
 
-部署完成后访问 `http://<服务器IP>`。
+部署完成后访问 `http://<服务器IP>:<Nginx访问端口>`。
 
 默认账号：`admin / admin`，**首次登录后请立即修改密码。**
 
@@ -435,7 +441,7 @@ chmod +x deploy-ubuntu.sh
 
 ```bash
 # 克隆项目
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
 # 构建前端并启动所有容器
@@ -474,7 +480,7 @@ docker compose restart netops    # 重启后端
 **前置条件**：Node.js 18+、Python 3.10+、PostgreSQL 17
 
 ```bash
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
+git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
 # Python 环境
