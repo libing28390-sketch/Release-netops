@@ -64,6 +64,27 @@ def _safe_encrypt(plaintext: str) -> str:
         return ''
 
 
+def _sync_device_type_power(conn, vendor: str, model: str, power_watts: int, device_role: str = 'switch', u_height: int = 1) -> None:
+    """Sync power_watts and role to device_types table to ensure rack power calculation is accurate."""
+    if not model:
+        return
+    v = (vendor or '').strip()
+    m = model.strip()
+    p = power_watts or 0
+    row = conn.execute('SELECT id, power_watts FROM device_types WHERE model = ? AND vendor = ?', (m, v)).fetchone()
+    if row:
+        if p > 0 and row['power_watts'] != p:
+            conn.execute('UPDATE device_types SET power_watts = ?, updated_at = ? WHERE id = ?', (p, _utc_now(), row['id']))
+    else:
+        dt_id = str(uuid.uuid4())
+        now = _utc_now()
+        conn.execute(
+            '''INSERT INTO device_types (id, model, vendor, u_height, device_role, is_full_depth, description, power_watts, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            (dt_id, m, v, u_height or 1, device_role or 'switch', 1, 'Auto-created from asset onboarding', p, now, now)
+        )
+
+
 def _create_linked_device(conn, asset_id: str, body) -> str:
     """Create a devices row linked to a physical_assets row."""
     device_id = str(uuid.uuid4())
@@ -97,8 +118,8 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
             username, password, sn, model, version, role, site, uptime,
             connection_method, vendor, snmp_community, snmp_port,
             normal_username, normal_password, admin_username, admin_password,
-            enable_password, auth_model
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            enable_password, auth_model, device_category, power_watts
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         device_id, asset_id,
         body.hostname, body.management_ip,
@@ -111,6 +132,8 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         admin_user,  _safe_encrypt(admin_pwd),
         _safe_encrypt(enable_pwd),
         auth_model,
+        getattr(body, 'device_category', '') or '',
+        getattr(body, 'power_watts', 0) or 0,
     ))
     return device_id
 
@@ -133,6 +156,8 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
         'snmp_community': getattr(body, 'snmp_community', None),
         'snmp_port': getattr(body, 'snmp_port', None),
         'auth_model': getattr(body, 'auth_model', None),
+        'device_category': getattr(body, 'device_category', None),
+        'power_watts': getattr(body, 'power_watts', None),
     }
     # Handle username/password specially (including PAM)
     u_fields = [
@@ -160,6 +185,7 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
     if set_parts:
         params.append(row['id'])
         conn.execute(f"UPDATE devices SET {', '.join(set_parts)} WHERE id = ?", params)
+
 
 
 def _delete_linked_device(conn, asset_id: str) -> None:
@@ -224,6 +250,8 @@ class AssetCreate(BaseModel):
     auth_model: str = 'single'
     snmp_community: str = 'public'
     snmp_port: int = 161
+    device_category: str = ''
+    power_watts: int = 0
 
     @field_validator('u_height')
     @classmethod
@@ -239,6 +267,16 @@ class AssetCreate(BaseModel):
         if vi < 1 or vi > 60:
             return None
         return vi
+
+    @field_validator('power_watts', mode='before')
+    @classmethod
+    def validate_power_watts(cls, v):
+        if v is None or v == '':
+            return 0
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return 0
 
 
 class AssetUpdate(BaseModel):
@@ -280,6 +318,19 @@ class AssetUpdate(BaseModel):
     snmp_community: Optional[str] = None
     snmp_port: Optional[int] = None
     management_port: Optional[int] = None
+    device_category: Optional[str] = None
+    power_watts: Optional[int] = None
+
+    @field_validator('power_watts', mode='before')
+    @classmethod
+    def validate_power_watts_update(cls, v):
+        if v is None or v == '':
+            return 0
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return 0
+
 
 
 class BatchTakeoverRequest(BaseModel):
@@ -472,9 +523,9 @@ def create_asset(body: AssetCreate):
                 platform, connection_method, username, password,
                 normal_username, normal_password, admin_username, admin_password,
                 enable_password, auth_model,
-                snmp_community, snmp_port,
+                snmp_community, snmp_port, device_category, power_watts,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
@@ -491,7 +542,7 @@ def create_asset(body: AssetCreate):
             _safe_encrypt(getattr(body, 'admin_password', '') or ''),
             _safe_encrypt(getattr(body, 'enable_password', '') or ''),
             getattr(body, 'auth_model', '') or 'single',
-            body.snmp_community, body.snmp_port,
+            body.snmp_community, body.snmp_port, body.device_category, body.power_watts,
             now, now
         ))
 
@@ -500,6 +551,8 @@ def create_asset(body: AssetCreate):
         if body.asset_type in ('network_device', 'server'):
             device_id = _create_linked_device(conn, asset_id, body)
             logger.info('Auto-created device %s for asset %s (%s)', device_id, asset_id, body.asset_type)
+
+        _sync_device_type_power(conn, body.vendor, body.model, body.power_watts, body.device_role, body.u_height)
 
         conn.commit()
         return {'id': asset_id, 'device_id': device_id}
@@ -605,7 +658,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
             'status', 'lifecycle_status', 'purchase_date', 'warranty_expiry', 'department', 'notes',
             'platform', 'connection_method', 'username', 'password',
             'normal_username', 'normal_password', 'admin_username', 'admin_password', 'enable_password', 'auth_model',
-            'snmp_community', 'snmp_port', 'management_port'
+            'snmp_community', 'snmp_port', 'management_port', 'device_category', 'power_watts'
         ]
         for field in updatable:
             val = getattr(body, field, None)
@@ -637,7 +690,18 @@ def update_asset(asset_id: str, body: AssetUpdate):
                         (body.lifecycle_status, asset_id)
                     )
 
+            row_dict = dict(row)
+            _sync_device_type_power(
+                conn,
+                body.vendor if body.vendor is not None else row_dict.get('vendor', ''),
+                body.model if body.model is not None else row_dict.get('model', ''),
+                body.power_watts if body.power_watts is not None else row_dict.get('power_watts', 0),
+                body.device_role if body.device_role is not None else row_dict.get('device_role', 'switch'),
+                body.u_height if body.u_height is not None else row_dict.get('u_height', 1)
+            )
+
             conn.commit()
+
 
             # Auto-rotate default password when transitioning to production
             # Run in background thread to avoid blocking HTTP response (~8-10s SSH)

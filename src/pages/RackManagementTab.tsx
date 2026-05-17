@@ -1,4 +1,4 @@
-﻿/**
+/**
  * RackManagementTab - Production-grade draggable rack visualization
  *
  * - @dnd-kit drag engine: snap-to-grid, conflict detection, drag preview
@@ -47,6 +47,7 @@ interface RackDevice {
   serial_number: string; asset_id: string;
   model: string; vendor: string; u_height: number;
   device_role: string; is_full_depth: number;
+  power_watts?: number;
 }
 
 interface RackLayout {
@@ -85,6 +86,56 @@ const ROLE_COLORS: Record<string, { bg: string; border: string; text: string; la
   patch_panel: { bg: '#64748b', border: '#475569', text: '#ffffff', label: 'Patch Panel', labelZh: '配线架' },
   other:       { bg: '#94a3b8', border: '#64748b', text: '#ffffff', label: 'Other',       labelZh: '其他' },
 };
+
+function getNormalizedRoleColor(role?: string, name?: string, model?: string) {
+  if (!role && !name && !model) return ROLE_COLORS.other;
+
+  const combined = `${role || ''} ${name || ''} ${model || ''}`.trim().toLowerCase();
+  const roleNorm = (role || '').trim().toLowerCase();
+
+  if (ROLE_COLORS[roleNorm]) return ROLE_COLORS[roleNorm];
+
+  if (combined.includes('switch') || combined.includes('sw') || combined.includes('tor') || 
+      combined.includes('core') || combined.includes('dist') || combined.includes('spine') || 
+      combined.includes('leaf') || combined.includes('access') || combined.includes('acc')) {
+    if (combined.includes('server') || combined.includes('srv') || combined.includes('ubuntu') || combined.includes('linux') || combined.includes('win') || combined.includes('dell') || combined.includes('hpe')) {
+      return ROLE_COLORS.server;
+    }
+    return ROLE_COLORS.switch;
+  }
+
+  if (combined.includes('server') || combined.includes('srv') || combined.includes('host') || 
+      combined.includes('blade') || combined.includes('compute') || combined.includes('node') || 
+      combined.includes('vm') || combined.includes('esxi') || combined.includes('ubuntu') || 
+      combined.includes('linux') || combined.includes('centos') || combined.includes('windows') || 
+      combined.includes('poweredge') || combined.includes('proliant')) {
+    return ROLE_COLORS.server;
+  }
+
+  if (combined.includes('router') || combined.includes('rtr') || combined.includes('gateway') || 
+      combined.includes('isr') || combined.includes('asr') || combined.includes('wan') || 
+      combined.includes('border')) {
+    return ROLE_COLORS.router;
+  }
+
+  if (combined.includes('firewall') || combined.includes('fw') || combined.includes('security') || 
+      combined.includes('sec') || combined.includes('usg') || combined.includes('asa') || 
+      combined.includes('forti') || combined.includes('palo')) {
+    return ROLE_COLORS.firewall;
+  }
+
+  if (combined.includes('storage') || combined.includes('san') || combined.includes('nas') || combined.includes('disk')) {
+    return ROLE_COLORS.storage;
+  }
+
+  if (combined.includes('pdu') || combined.includes('power')) return ROLE_COLORS.pdu;
+  if (combined.includes('ups') || combined.includes('battery') || combined.includes('apc')) return ROLE_COLORS.ups;
+  if (combined.includes('patch') || combined.includes('panel') || combined.includes('pp')) return ROLE_COLORS.patch_panel;
+  if (combined.includes('load') || combined.includes('balancer') || combined.includes('lb')) return ROLE_COLORS.switch;
+
+  return ROLE_COLORS.other;
+}
+
 
 /** Pixels per rack unit */
 const U_PX = 26;
@@ -216,16 +267,24 @@ function pickStartUForAsset(
    Helpers
    ================================================================ */
 
-const DeviceIcon: React.FC<{ role: string; size?: number }> = ({ role, size = 14 }) => {
-  switch (role) {
-    case 'switch': return <Layers size={size} />;
-    case 'router': return <Zap size={size} />;
-    case 'firewall': return <ShieldAlert size={size} />;
-    case 'server': return <Server size={size} />;
-    case 'storage': return <HardDrive size={size} />;
-    case 'ups': case 'pdu': return <Zap size={size} />;
-    default: return <Package size={size} />;
-  }
+const DeviceIcon: React.FC<{ role?: string; name?: string; model?: string; size?: number }> = ({ role, name, model, size = 14 }) => {
+  const combined = `${role || ''} ${name || ''} ${model || ''}`.trim().toLowerCase();
+  const norm = (role || '').trim().toLowerCase();
+  if (norm === 'switch') return <Layers size={size} />;
+  if (norm === 'router') return <Zap size={size} />;
+  if (norm === 'firewall') return <ShieldAlert size={size} />;
+  if (norm === 'server') return <Server size={size} />;
+  if (norm === 'storage') return <HardDrive size={size} />;
+  if (norm === 'ups' || norm === 'pdu') return <Zap size={size} />;
+
+  if (combined.includes('server') || combined.includes('srv') || combined.includes('host') || combined.includes('blade') || combined.includes('ubuntu') || combined.includes('linux')) return <Server size={size} />;
+  if (combined.includes('switch') || combined.includes('sw') || combined.includes('tor') || combined.includes('core') || combined.includes('dist') || combined.includes('access') || combined.includes('acc')) return <Layers size={size} />;
+  if (combined.includes('router') || combined.includes('rtr') || combined.includes('gateway')) return <Zap size={size} />;
+  if (combined.includes('firewall') || combined.includes('fw') || combined.includes('sec')) return <ShieldAlert size={size} />;
+  if (combined.includes('storage') || combined.includes('san') || combined.includes('nas')) return <HardDrive size={size} />;
+  if (combined.includes('ups') || combined.includes('pdu') || combined.includes('power') || combined.includes('apc')) return <Zap size={size} />;
+
+  return <Package size={size} />;
 };
 
 /** Convert U-number to top-offset px (U42 at top, U1 at bottom) */
@@ -314,7 +373,7 @@ const DraggableDevice: React.FC<{
   const [showTooltip, setShowTooltip] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const rc = ROLE_COLORS[device.device_role] || ROLE_COLORS.other;
+  const rc = getNormalizedRoleColor(device.device_role, device.name, device.model);
   const h = device.u_height * U_PX;
   const topPx = uToY(device.start_u + device.u_height - 1, totalU);
 
@@ -332,7 +391,7 @@ const DraggableDevice: React.FC<{
       };
 
   const endU = device.start_u + device.u_height - 1;
-  const roleName = zh ? (ROLE_COLORS[device.device_role]?.labelZh || device.device_role) : (ROLE_COLORS[device.device_role]?.label || device.device_role);
+  const roleName = zh ? rc.labelZh : rc.label;
   const statusInfo = STATUS_LABEL[device.status] || { zh: device.status, en: device.status };
   const powerColor = device.status === 'active' ? '#4ade80' : device.status === 'planned' ? '#fbbf24' : '#ef4444';
 
@@ -406,8 +465,11 @@ const DraggableDevice: React.FC<{
               <p>{zh ? '状态' : 'Status'}: {zh ? statusInfo.zh : statusInfo.en}</p>
               {device.serial_number && <p>SN: <span className="font-mono text-[10px]">{device.serial_number}</span></p>}
               <p className="flex items-center gap-1.5 mt-1">
-                {zh ? '电源' : 'Power'}: <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: powerColor, boxShadow: device.status === 'active' ? `0 0 6px ${powerColor}` : 'none' }} />
+                {zh ? '电源' : 'Power'}: <span className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: powerColor, boxShadow: device.status === 'active' ? `0 0 6px ${powerColor}` : 'none' }} />
                 <span style={{ color: powerColor }}>{zh ? statusInfo.zh : statusInfo.en}</span>
+                <span className="text-slate-500 mx-1">|</span>
+                <Zap size={11} className="text-amber-400 flex-shrink-0" />
+                <span className="font-mono text-amber-300 font-semibold">{device.power_watts ?? 0} W</span>
               </p>
             </div>
             {/* Arrow */}
@@ -762,7 +824,7 @@ const RackElevation: React.FC<{
                       })}
                       {/* Devices in this segment */}
                       {segDevices.map(d => {
-                        const rc = ROLE_COLORS[d.device_role] || ROLE_COLORS.other;
+                        const rc = getNormalizedRoleColor(d.device_role, d.name, d.model);
                         const devH = d.u_height * U_PX;
                         const devTop = (seg.uEnd - (d.start_u + d.u_height - 1)) * U_PX;
                         return (
@@ -780,7 +842,7 @@ const RackElevation: React.FC<{
                             }}
                           >
                             <PowerLed status={d.status} size={d.u_height >= 2 ? 8 : 6} />
-                            <DeviceIcon role={d.device_role} size={d.u_height >= 2 ? 15 : 12} />
+                            <DeviceIcon role={d.device_role} name={d.name} model={d.model} size={d.u_height >= 2 ? 15 : 12} />
                             <span className={`font-bold truncate ${d.u_height >= 2 ? 'text-[12px]' : 'text-[10px]'}`}>{d.name}</span>
                             <span className="text-[9px] font-mono opacity-60 pr-1.5 flex-shrink-0 ml-auto">{d.u_height}U</span>
                           </div>
@@ -891,6 +953,35 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [assetSearch, setAssetSearch] = useState('');
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
 
+  // 全网已上架的资产/设备集合（用于过滤候选安装列表，防止重复上架）
+  const installedAssetSet = useMemo(() => {
+    const ids = new Set<string>();
+    const snSet = new Set<string>();
+    const nameSet = new Set<string>();
+
+    allLayouts.forEach(ly => {
+      ly.devices.forEach(d => {
+        if (d.asset_id) ids.add(d.asset_id);
+        if (d.serial_number) snSet.add(d.serial_number.trim().toLowerCase());
+        if (d.name) nameSet.add(d.name.trim().toLowerCase());
+      });
+    });
+
+    return { ids, snSet, nameSet };
+  }, [allLayouts]);
+
+  // 过滤出未上架的可用资产
+  const availableAssets = useMemo(() => {
+    return assets.filter(a => {
+      if (a.id && installedAssetSet.ids.has(a.id)) return false;
+      const snNorm = (a.serial_number || '').trim().toLowerCase();
+      if (snNorm && snNorm !== '—' && installedAssetSet.snSet.has(snNorm)) return false;
+      const nameNorm = (a.hostname || a.asset_tag || '').trim().toLowerCase();
+      if (nameNorm && installedAssetSet.nameSet.has(nameNorm)) return false;
+      return true;
+    });
+  }, [assets, installedAssetSet]);
+
   const datacenters = useMemo(() => {
     const dcs = new Set(racks.map(r => r.datacenter).filter(Boolean));
     return Array.from(dcs).sort();
@@ -988,7 +1079,13 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
     if (!rackId) return;
     setLoading(true);
     try {
-      setLayout(await fetchJson<RackLayout>(`${API}/racks/${rackId}/layout`));
+      const data = await fetchJson<RackLayout>(`${API}/racks/${rackId}/layout`);
+      setLayout(data);
+      setAllLayouts(prev => {
+        const exists = prev.some(l => l.id === rackId);
+        if (exists) return prev.map(l => l.id === rackId ? data : l);
+        return [...prev, data];
+      });
       setError('');
     } catch (e: any) { setError(e.message); setLayout(null); }
     finally { setLoading(false); }
@@ -1384,7 +1481,7 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
       const device = devMap.get(uNumber);
       if (device) {
         const h = device.u_height * uH;
-        const rc = ROLE_COLORS[device.device_role] || ROLE_COLORS.other;
+        const rc = getNormalizedRoleColor(device.device_role, device.name, device.model);
         
         // Device Panel Gradient
         const devGrad = ctx.createLinearGradient(lw + 2, y + 1, lw + 2, y + h - 1);
@@ -1536,10 +1633,12 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                   { label: zh ? '设备' : 'Devices', value: stats.total_devices, color: '#6366f1', icon: <Server size={14} /> },
                   { label: zh ? 'U位' : 'U', value: `${stats.used_u}/${stats.total_u}`, color: '#10b981', icon: <Layers size={14} /> },
                   { label: zh ? '利用率' : 'Util', value: `${stats.utilization}%`, color: stats.utilization > 80 ? '#ef4444' : stats.utilization > 60 ? '#f59e0b' : '#10b981', icon: <Eye size={14} /> },
-                  ...(stats.total_power_capacity_watts ? [{
-                    label: zh ? '功率' : 'Power',
-                    value: `${stats.total_power_used_watts ?? 0}/${stats.total_power_capacity_watts}W`,
-                    color: (stats.power_utilization_pct ?? 0) > 80 ? '#ef4444' : (stats.power_utilization_pct ?? 0) > 60 ? '#f59e0b' : '#10b981',
+                  ...(stats.total_power_used_watts != null ? [{
+                    label: zh ? '总功率' : 'Power',
+                    value: stats.total_power_capacity_watts
+                      ? `${stats.total_power_used_watts}/${stats.total_power_capacity_watts}W`
+                      : `${stats.total_power_used_watts}W (${zh ? '未设上限' : 'No cap'})`,
+                    color: stats.total_power_capacity_watts && (stats.power_utilization_pct ?? 0) > 80 ? '#ef4444' : stats.total_power_capacity_watts && (stats.power_utilization_pct ?? 0) > 60 ? '#f59e0b' : '#10b981',
                     icon: <Zap size={14} />,
                   }] : []),
                 ].map((s, i) => (
@@ -1574,10 +1673,12 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
             { label: zh ? '已安装设备' : 'Devices', value: stats.total_devices, color: '#6366f1', icon: <Server size={16} /> },
             { label: zh ? '总U位' : 'Total U', value: `${stats.used_u} / ${stats.total_u}`, color: '#10b981', icon: <Layers size={16} /> },
             { label: zh ? '利用率' : 'Utilization', value: `${stats.utilization}%`, color: stats.utilization > 80 ? '#ef4444' : stats.utilization > 60 ? '#f59e0b' : '#10b981', icon: <Eye size={16} /> },
-            ...(stats.total_power_capacity_watts ? [{
+            ...(stats.total_power_used_watts != null ? [{
               label: zh ? '机柜功率' : 'Power',
-              value: `${stats.total_power_used_watts ?? 0} / ${stats.total_power_capacity_watts} W`,
-              color: (stats.power_utilization_pct ?? 0) > 80 ? '#ef4444' : (stats.power_utilization_pct ?? 0) > 60 ? '#f59e0b' : '#10b981',
+              value: stats.total_power_capacity_watts
+                ? `${stats.total_power_used_watts} / ${stats.total_power_capacity_watts} W`
+                : `${stats.total_power_used_watts} W (${zh ? '未设上限' : 'No cap'})`,
+              color: stats.total_power_capacity_watts && (stats.power_utilization_pct ?? 0) > 80 ? '#ef4444' : stats.total_power_capacity_watts && (stats.power_utilization_pct ?? 0) > 60 ? '#f59e0b' : '#10b981',
               icon: <Zap size={16} />,
             }] : []),
           ].map((s, i) => (
@@ -1614,48 +1715,78 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
           <div className="flex-1 overflow-auto p-1.5 space-y-0.5">
             {filteredRacks.length === 0 ? (
               <p className="text-center text-xs py-8" style={{ color: 'var(--muted-text)' }}>{zh ? '暂无机柜' : 'No racks'}</p>
-            ) : filteredRacks.map(rack => (
-              <button
-                key={rack.id}
-                onClick={() => setSelectedRackId(rack.id)}
-                className={`w-full text-left rounded-lg px-3 py-2 transition-all group ${rack.id === selectedRackId ? 'ring-1 ring-cyan-500/50' : ''}`}
-                style={{ background: rack.id === selectedRackId ? 'var(--app-hover-bg)' : 'transparent', color: 'var(--body-text)' }}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[13px] font-semibold truncate">{rack.name}</span>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={(e) => { e.stopPropagation(); openEditRack(rack); }} className="p-0.5 rounded hover:bg-black/10"><Pencil size={11} /></button>
-                    <button onClick={(e) => { e.stopPropagation(); handleDeleteRack(rack.id); }} className="p-0.5 rounded hover:bg-red-100 text-red-500"><Trash2 size={11} /></button>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  {rack.datacenter && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#06b6d415', color: '#06b6d4' }}>{rack.datacenter}</span>}
-                  <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.total_u}U</span>
-                </div>
-                {/* Show matching device names when searching */}
-                {searchQuery && (() => {
-                  const q = searchQuery.toLowerCase();
-                  const ly = allLayouts.find(l => l.id === rack.id);
-                  const matches = ly?.devices.filter(d =>
-                    d.name.toLowerCase().includes(q) ||
-                    d.model.toLowerCase().includes(q) ||
-                    d.vendor.toLowerCase().includes(q) ||
-                    (d.serial_number && d.serial_number.toLowerCase().includes(q))
-                  ) || [];
-                  return matches.length > 0 ? (
-                    <div className="mt-1 space-y-0.5">
-                      {matches.slice(0, 3).map(m => (
-                        <div key={m.id} className="text-[9px] truncate flex items-center gap-1" style={{ color: '#06b6d4' }}>
-                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: (ROLE_COLORS[m.device_role]?.bg || '#94a3b8') }} />
-                          {m.name} <span style={{ color: 'var(--muted-text)' }}>U{m.start_u}</span>
-                        </div>
-                      ))}
-                      {matches.length > 3 && <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>+{matches.length - 3} {zh ? '更多' : 'more'}</span>}
+            ) : filteredRacks.map(rack => {
+              const ly = allLayouts.find(l => l.id === rack.id);
+              const pUsed = (ly as any)?.power_used_watts ?? 0;
+              const pCap = (ly as any)?.power_capacity_watts ?? 0;
+              const pPct = (ly as any)?.power_utilization_pct ?? 0;
+              return (
+                <button
+                  key={rack.id}
+                  onClick={() => setSelectedRackId(rack.id)}
+                  className={`w-full text-left rounded-lg px-3 py-2 transition-all group ${rack.id === selectedRackId ? 'ring-1 ring-cyan-500/50' : ''}`}
+                  style={{ background: rack.id === selectedRackId ? 'var(--app-hover-bg)' : 'transparent', color: 'var(--body-text)' }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] font-semibold truncate">{rack.name}</span>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={(e) => { e.stopPropagation(); openEditRack(rack); }} className="p-0.5 rounded hover:bg-black/10"><Pencil size={11} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDeleteRack(rack.id); }} className="p-0.5 rounded hover:bg-red-100 text-red-500"><Trash2 size={11} /></button>
                     </div>
-                  ) : null;
-                })()}
-              </button>
-            ))}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {rack.datacenter && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#06b6d415', color: '#06b6d4' }}>{rack.datacenter}</span>}
+                    <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.total_u}U</span>
+                  </div>
+                  {/* Show matching device names when searching */}
+                  {searchQuery && (() => {
+                    const q = searchQuery.toLowerCase();
+                    const matches = ly?.devices.filter(d =>
+                      d.name.toLowerCase().includes(q) ||
+                      d.model.toLowerCase().includes(q) ||
+                      d.vendor.toLowerCase().includes(q) ||
+                      (d.serial_number && d.serial_number.toLowerCase().includes(q))
+                    ) || [];
+                    return matches.length > 0 ? (
+                      <div className="mt-1 space-y-0.5">
+                        {matches.slice(0, 3).map(m => (
+                          <div key={m.id} className="text-[9px] truncate flex items-center gap-1" style={{ color: '#06b6d4' }}>
+                            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: getNormalizedRoleColor(m.device_role, m.name, m.model).bg }} />
+                            {m.name} <span style={{ color: 'var(--muted-text)' }}>U{m.start_u}</span>
+                          </div>
+                        ))}
+                        {matches.length > 3 && <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>+{matches.length - 3} {zh ? '更多' : 'more'}</span>}
+                      </div>
+                    ) : null;
+                  })()}
+                  {/* Power Bar */}
+                  {ly && (
+                    <div className="mt-1.5 pt-1.5 border-t border-black/5 dark:border-white/5 space-y-1">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-slate-500 flex items-center gap-1 font-medium">
+                          <Zap size={10} className="text-amber-500" />
+                          {zh ? '功率' : 'Power'}
+                        </span>
+                        <span className="font-mono font-semibold" style={{ color: pCap > 0 && pPct > 80 ? '#ef4444' : pCap > 0 && pPct > 60 ? '#f59e0b' : '#10b981' }}>
+                          {pCap > 0 ? `${pUsed} / ${pCap} W (${pPct}%)` : `${pUsed} W`}
+                        </span>
+                      </div>
+                      {pCap > 0 && (
+                        <div className="w-full bg-slate-200 dark:bg-slate-700 h-1 rounded-full overflow-hidden">
+                          <div
+                            className="h-full transition-all duration-300 rounded-full"
+                            style={{
+                              width: `${Math.min(100, pPct)}%`,
+                              background: pPct > 80 ? '#ef4444' : pPct > 60 ? '#f59e0b' : '#10b981'
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -1758,7 +1889,7 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
               {drawerVisible && selectedDeviceId && (() => {
                 const device = layout.devices.find(d => d.id === selectedDeviceId);
                 if (!device) return null;
-                const rc = ROLE_COLORS[device.device_role] || ROLE_COLORS.other;
+                const rc = getNormalizedRoleColor(device.device_role, device.name, device.model);
                 const statusInfo = STATUS_LABEL[device.status] || { zh: device.status, en: device.status };
                 const endU = device.start_u + device.u_height - 1;
                 return (
@@ -1807,6 +1938,10 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                                 <span className="w-2 h-2 rounded-full" style={{ background: 'currentColor' }} />
                                 {zh ? statusInfo.zh : statusInfo.en}
                               </span>
+                              <span className="text-xs px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1" style={{ background: '#f59e0b20', color: '#f59e0b' }}>
+                                <Zap size={13} />
+                                {device.power_watts ?? 0} W
+                              </span>
                             </div>
                             <div className="grid grid-cols-2 gap-x-2.5 gap-y-2 text-[11px]">
                               <div>
@@ -1818,16 +1953,22 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                                 <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.model || '—'}</div>
                               </div>
                               <div>
+                                <label className="block text-[10px] font-semibold mb-0.5 text-amber-500 font-medium">{zh ? '额定功率' : 'Rated Power'}</label>
+                                <div className="px-2.5 py-1.5 rounded border font-mono font-bold text-amber-500 flex items-center gap-1" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)' }}>
+                                  <Zap size={12} /> {device.power_watts ?? 0} W
+                                </div>
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? 'U位' : 'Unit'}</label>
+                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>U{device.start_u}{endU !== device.start_u ? `-U${endU}` : ''}</div>
+                              </div>
+                              <div>
                                 <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '序列号' : 'Serial No.'}</label>
                                 <div className="px-2.5 py-1.5 rounded border font-mono text-[10px]" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.serial_number || '—'}</div>
                               </div>
                               <div>
                                 <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '资产ID' : 'Asset ID'}</label>
                                 <div className="px-2.5 py-1.5 rounded border font-mono text-[10px]" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.asset_id || '—'}</div>
-                              </div>
-                              <div>
-                                <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? 'U位' : 'Unit'}</label>
-                                <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>U{device.start_u}{endU !== device.start_u ? `-U${endU}` : ''}</div>
                               </div>
                               <div>
                                 <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '位置' : 'Side'}</label>
@@ -1852,85 +1993,93 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
           )}
         </div>
 
-        {/* Right: device list */}
         {/* Right: installed device list */}
-        <div className="w-64 flex-shrink-0 rounded-xl overflow-hidden flex flex-col" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-          {!layout ? (
-            <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--muted-text)' }}>
-              {zh ? '请选择机柜' : 'Select a rack'}
-            </div>
-          ) : (
-            <>
-              <div className="p-3 border-b" style={{ borderColor: 'var(--card-border)' }}>
-                <h4 className="text-[12px] font-semibold" style={{ color: 'var(--heading-text)' }}>
-                  {zh ? '已安装设备' : 'Installed Devices'} ({layout?.devices.length || 0})
-                </h4>
-                <p className="text-[10px] mt-1" style={{ color: 'var(--muted-text)' }}>
-                  {zh ? '点击查看详情' : 'Click to view details'}
-                </p>
+        {showDeviceList && (
+          <div className="w-64 flex-shrink-0 rounded-xl overflow-hidden flex flex-col" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+            {!layout ? (
+              <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--muted-text)' }}>
+                {zh ? '请选择机柜' : 'Select a rack'}
               </div>
-              <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
-                {layout.devices.length === 0 ? (
-                  <p className="text-xs py-6 text-center" style={{ color: 'var(--muted-text)' }}>
-                    {zh ? '暂无设备' : 'No devices'}
+            ) : (
+              <>
+                <div className="p-3 border-b" style={{ borderColor: 'var(--card-border)' }}>
+                  <h4 className="text-[12px] font-semibold" style={{ color: 'var(--heading-text)' }}>
+                    {zh ? '已安装设备' : 'Installed Devices'} ({layout?.devices.length || 0})
+                  </h4>
+                  <p className="text-[10px] mt-1" style={{ color: 'var(--muted-text)' }}>
+                    {zh ? '点击查看详情' : 'Click to view details'}
                   </p>
-                ) : layout.devices.map(d => {
-                  const rc = ROLE_COLORS[d.device_role] || ROLE_COLORS.other;
-                  const isSelected = selectedDeviceId === d.id;
-                  return (
-                    <button
-                      key={d.id}
-                      onClick={() => handleDeviceSelect(d.id)}
-                      className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-all text-[12px] ${isSelected ? 'ring-1 ring-cyan-500 bg-cyan-50' : 'hover:bg-black/5 border border-transparent'}`}
-                    >
-                      <div className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0" style={{ background: rc.bg + '20', color: rc.bg }}>
-                        <DeviceIcon role={d.device_role} size={12} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold truncate" style={{ color: 'var(--heading-text)' }}>{d.name}</p>
-                        <p className="text-[10px]" style={{ color: 'var(--muted-text)' }}>U{d.start_u}</p>
-                      </div>
-                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: d.status === 'active' ? '#4ade80' : d.status === 'planned' ? '#fbbf24' : '#ef4444' }} />
-                    </button>
-                  );
-                })}
+                </div>
+                <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+                  {layout.devices.length === 0 ? (
+                    <p className="text-xs py-6 text-center" style={{ color: 'var(--muted-text)' }}>
+                      {zh ? '暂无设备' : 'No devices'}
+                    </p>
+                  ) : layout.devices.map(d => {
+                    const rc = getNormalizedRoleColor(d.device_role, d.name, d.model);
+                    const isSelected = selectedDeviceId === d.id;
+                    return (
+                      <button
+                        key={d.id}
+                        onClick={() => handleDeviceSelect(d.id)}
+                        className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-all text-[12px] ${isSelected ? 'ring-1 ring-cyan-500 bg-cyan-50' : 'hover:bg-black/5 border border-transparent'}`}
+                      >
+                        <div className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0" style={{ background: rc.bg + '20', color: rc.bg }}>
+                          <DeviceIcon role={d.device_role} name={d.name} model={d.model} size={12} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold truncate" style={{ color: 'var(--heading-text)' }}>{d.name}</p>
+                          <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--muted-text)' }}>
+                            <span>U{d.start_u}</span>
+                            <span>•</span>
+                            <span className="font-mono text-amber-500 flex items-center gap-0.5 font-semibold">
+                              <Zap size={10} /> {d.power_watts ?? 0}W
+                            </span>
+                          </div>
+                        </div>
+                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: d.status === 'active' ? '#4ade80' : d.status === 'planned' ? '#fbbf24' : '#ef4444' }} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            {/* Legend */}
+            {layout && layout.devices.length > 0 && (
+              <div className="p-3 border-t space-y-1.5" style={{ borderColor: 'var(--card-border)' }}>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '电源' : 'Power'}:</span>
+                  {[
+                    { color: '#4ade80', glow: true,  label: zh ? '通电' : 'ON' },
+                    { color: '#ef4444', glow: false, label: zh ? '断电' : 'OFF' },
+                    { color: '#fbbf24', glow: false, label: zh ? '规划' : 'Plan' },
+                  ].map((item, i) => (
+                    <div key={i} className="flex items-center gap-1">
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{
+                          background: item.color,
+                          boxShadow: item.glow ? `0 0 4px ${item.color}` : 'none',
+                        }}
+                      />
+                      <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>{item.label}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '设备类型' : 'Device Types'}:</span>
+                  {Object.entries(ROLE_COLORS).map(([role, rc]) => (
+                    <div key={role} className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded" style={{ background: rc.bg }} />
+                      <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>{zh ? rc.labelZh : rc.label}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </>
-          )}
-          {/* Legend */}
-          {layout && layout.devices.length > 0 && (
-            <div className="p-3 border-t space-y-1.5" style={{ borderColor: 'var(--card-border)' }}>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '电源' : 'Power'}:</span>
-                {[
-                  { color: '#4ade80', glow: true,  label: zh ? '通电' : 'ON' },
-                  { color: '#ef4444', glow: false, label: zh ? '断电' : 'OFF' },
-                  { color: '#fbbf24', glow: false, label: zh ? '规划' : 'Plan' },
-                ].map((item, i) => (
-                  <div key={i} className="flex items-center gap-1">
-                    <span
-                      className="w-2 h-2 rounded-full"
-                      style={{
-                        background: item.color,
-                        boxShadow: item.glow ? `0 0 4px ${item.color}` : 'none',
-                      }}
-                    />
-                    <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>{item.label}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '设备类型' : 'Device Types'}:</span>
-                {Object.entries(ROLE_COLORS).map(([role, rc]) => (
-                  <div key={role} className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded" style={{ background: rc.bg }} />
-                    <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>{zh ? rc.labelZh : rc.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
+
       </div>
 
       {/* -- Error toast -- */}
@@ -2105,19 +2254,21 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                   )}
                 </div>
 
-                {/* Device list (server-side search via ?q=) */}
+                {/* Device list (client-side filter out installed) */}
                 <div>
                   {assetsLoading ? (
                     <div className="p-3 text-center text-[11px]" style={{ color: 'var(--muted-text)' }}>{zh ? '加载中...' : 'Loading...'}</div>
-                  ) : assets.length === 0 ? (
+                  ) : availableAssets.length === 0 ? (
                     <div className="p-3 text-center text-[11px]" style={{ color: 'var(--muted-text)' }}>
-                      {assetSearch.trim()
-                        ? (zh ? '未找到匹配的设备' : 'No devices match your search')
-                        : (zh ? '资产库中无可用设备' : 'No devices available in asset library')}
+                      {assets.length > 0
+                        ? (zh ? '已加载的设备均已在机柜中上架' : 'All loaded devices are already installed in racks')
+                        : assetSearch.trim()
+                          ? (zh ? '未找到匹配的设备' : 'No devices match your search')
+                          : (zh ? '资产库中无可用设备' : 'No devices available in asset library')}
                     </div>
                   ) : (
                     <div className="max-h-56 overflow-y-auto rounded-lg border" style={{ borderColor: 'var(--card-border)', background: 'var(--app-hover-bg)' }}>
-                      {assets.map(a => (
+                      {availableAssets.map(a => (
                         <button
                           key={a.id}
                           onClick={() => {
@@ -2140,7 +2291,9 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                   {assets.length > 0 && (
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px]" style={{ color: 'var(--muted-text)' }}>
                       <span>
-                        {zh ? `已加载 ${assets.length} / ${assetTotal} 台` : `Loaded ${assets.length} / ${assetTotal}`}
+                        {zh
+                          ? `未上架可用 ${availableAssets.length} 台 (共已加载 ${assets.length} / ${assetTotal} 台)`
+                          : `Available ${availableAssets.length} (Loaded ${assets.length} / ${assetTotal})`}
                       </span>
                       {installAssetsCanLoadMore && (
                         <button
@@ -2351,9 +2504,14 @@ const RackManagementTab: React.FC<Props> = ({ language }) => {
                         <td className="px-2 py-1.5" style={{ color: 'var(--muted-text)' }}>{dt.vendor}</td>
                         <td className="px-2 py-1.5 text-center font-mono" style={{ color: 'var(--body-text)' }}>{dt.u_height}</td>
                         <td className="px-2 py-1.5">
-                          <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" style={{ background: (ROLE_COLORS[dt.device_role]?.bg || '#94a3b8') + '20', color: ROLE_COLORS[dt.device_role]?.bg || '#94a3b8' }}>
-                            {zh ? (ROLE_COLORS[dt.device_role]?.labelZh || dt.device_role) : (ROLE_COLORS[dt.device_role]?.label || dt.device_role)}
-                          </span>
+                          {(() => {
+                            const rcDt = getNormalizedRoleColor(dt.device_role, dt.model, dt.vendor);
+                            return (
+                              <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" style={{ background: rcDt.bg + '20', color: rcDt.bg }}>
+                                {zh ? rcDt.labelZh : rcDt.label}
+                              </span>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))}

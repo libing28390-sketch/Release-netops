@@ -613,7 +613,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
 
       {activeTab === 'inventory' && inventorySubPage === 'servers' && (
         <Suspense fallback={lazyPanelFallback}>
-          <InventoryServersTab language={language} t={t} />
+          <InventoryServersTab language={language} t={t} setActiveTab={setActiveTab} setSelectedDevice={setSelectedDevice} />
         </Suspense>
       )}
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { motion } from 'motion/react';
 
 function buildPaginationItems(currentPage: number, totalPages: number) {
@@ -83,16 +83,25 @@ const Pagination: React.FC<PaginationProps> = ({ currentPage, totalItems, onPage
         )}
 
         {/* Page Numbers */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2">
+          <button
+            disabled={currentPage === 1}
+            onClick={() => onPageChange(1)}
+            title={zh ? '第一页' : 'First page'}
+            className="p-2 rounded-xl border border-black/[0.05] bg-white text-black/40 hover:text-black hover:border-black/10 disabled:opacity-20 transition-all active:scale-90"
+          >
+            <ChevronsLeft size={16} />
+          </button>
           <button
             disabled={currentPage === 1}
             onClick={() => onPageChange(currentPage - 1)}
+            title={zh ? '上一页' : 'Previous page'}
             className="p-2 rounded-xl border border-black/[0.05] bg-white text-black/40 hover:text-black hover:border-black/10 disabled:opacity-20 transition-all active:scale-90"
           >
             <ChevronLeft size={16} />
           </button>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 sm:gap-1.5">
             {pageItems.map((item, index) => {
               if (typeof item !== 'number') {
                 return <span key={index} className="px-1 text-black/20 font-bold">...</span>;
@@ -117,9 +126,18 @@ const Pagination: React.FC<PaginationProps> = ({ currentPage, totalItems, onPage
           <button
             disabled={currentPage === totalPages}
             onClick={() => onPageChange(currentPage + 1)}
+            title={zh ? '下一页' : 'Next page'}
             className="p-2 rounded-xl border border-black/[0.05] bg-white text-black/40 hover:text-black hover:border-black/10 disabled:opacity-20 transition-all active:scale-90 group"
           >
             <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
+          </button>
+          <button
+            disabled={currentPage === totalPages}
+            onClick={() => onPageChange(totalPages)}
+            title={zh ? '最后一页' : 'Last page'}
+            className="p-2 rounded-xl border border-black/[0.05] bg-white text-black/40 hover:text-black hover:border-black/10 disabled:opacity-20 transition-all active:scale-90"
+          >
+            <ChevronsRight size={16} />
           </button>
         </div>
       </div>

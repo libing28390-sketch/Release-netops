@@ -191,6 +191,13 @@ curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/m
 
 **Inside an existing cloned directory:**
 
+> **Environment Configuration (Optional but Recommended):**
+> Before running the deploy script, it is highly recommended to copy `.env.example` to `.env` and customize settings such as database credentials, encryption keys, and data retention policies. The deployment script will detect and preserve your pre-configured `.env` file.
+> ```bash
+> cp .env.example .env
+> # Edit .env to customize your parameters
+> ```
+
 ```bash
 chmod +x deploy-ubuntu.sh
 ./deploy-ubuntu.sh
@@ -395,6 +402,13 @@ curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/m
 ```
 
 **已克隆项目目录内执行：**
+
+> **环境配置说明（强烈建议）：**
+> 在执行部署脚本前，建议先将 `.env.example` 复制为 `.env` 并按需提前修改配置（如自定义数据库连接、加密密钥及遥测数据保留时长等）。部署脚本执行时会自动检测并完美保留您提前配置好的 `.env` 文件。
+> ```bash
+> cp .env.example .env
+> # 编辑 .env 自定义各项环境变量
+> ```
 
 ```bash
 chmod +x deploy-ubuntu.sh

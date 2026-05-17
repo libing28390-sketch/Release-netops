@@ -17,7 +17,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import DateTimePicker from '../components/DateTimePicker';
 import Pagination from '../components/Pagination';
 import { fetchAllPaginatedItems } from '../utils/pagination';
-import { AssetReadonlyDetailInner } from '../components/AssetReadonlyDetail';
+import { AssetReadonlyDetailInner, CATEGORY_MAP } from '../components/AssetReadonlyDetail';
 import PageHero from '../components/PageHero';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -42,6 +42,8 @@ interface Asset {
   management_port?: number;
   is_managed?: number;
   takeover_error?: string;
+  device_category?: string;
+  power_watts?: number | string;
 }
 
 interface AssetSummary {
@@ -171,7 +173,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
   const [summary, setSummary]           = useState<AssetSummary | null>(null);
   const [total, setTotal]               = useState(0);
   const [page, setPage]                 = useState(1);
-  const [pageSize, setPageSize]         = useState(20);
+  const [pageSize, setPageSize]         = useState(10);
   const [loading, setLoading]           = useState(true);
 
   const [search, setSearch]             = useState('');
@@ -344,6 +346,9 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       auth_model: 'dual',
       snmp_community: (a as any).snmp_community || 'public',
       snmp_port: String((a as any).snmp_port || '161'),
+      management_port: String(a.management_port || '22'),
+      device_category: a.device_category || '',
+      power_watts: a.power_watts != null ? String(a.power_watts) : '',
     });
     setShowModal(true);
   };
@@ -408,6 +413,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
         ...form,
         u_height: Math.max(1, Math.min(60, parseInt(String(form.u_height), 10) || 1)),
         planned_start_u,
+        power_watts: parseInt(String(form.power_watts), 10) || 0,
         // Trim enable_password: a single space means "toggle open but no value entered" → treat as empty
         enable_password: (form.enable_password || '').trim(),
       };
@@ -465,6 +471,9 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
       auth_model: 'dual',
       snmp_community: a.snmp_community || 'public',
       snmp_port: String(a.snmp_port || '161'),
+      management_port: String(a.management_port || '22'),
+      device_category: a.device_category || '',
+      power_watts: a.power_watts != null ? String(a.power_watts) : '',
     });
     setModalError(null);
     setShowModal(true);
@@ -1476,7 +1485,8 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                   <button key={t.value} onClick={() => setForm(f => ({ 
                       ...f, 
                       asset_type: t.value,
-                      platform: t.value === 'server' ? 'linux' : 'cisco_ios'
+                      platform: t.value === 'server' ? 'linux' : 'cisco_ios',
+                      device_category: '',
                     }))}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                       form.asset_type === t.value ? 'bg-[#00bceb]/10 border-[#00bceb]/25 text-[#0088b0] font-semibold' : 'bg-black/[0.01] border-black/5 text-black/30 hover:bg-black/[0.02]'
@@ -1539,12 +1549,27 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                   <select value={form.device_category} onChange={e => setForm(f => ({ ...f, device_category: e.target.value }))} title="Device Category"
                     className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25">
                     <option value="">{zh ? '请选择' : 'Select...'}</option>
-                    <option value="switch">{zh ? '交换机' : 'Switch'}</option>
-                    <option value="router">{zh ? '路由器' : 'Router'}</option>
-                    <option value="firewall">{zh ? '防火墙' : 'Firewall'}</option>
-                    <option value="load_balancer">{zh ? '负载均衡' : 'Load Balancer'}</option>
-                    <option value="wireless_ap">{zh ? '无线 AP' : 'Wireless AP'}</option>
-                    <option value="other">{zh ? '其他' : 'Other'}</option>
+                    {form.asset_type === 'server' ? (
+                      <>
+                        <option value="rack_server">{zh ? '机架式服务器' : 'Rack Server'}</option>
+                        <option value="blade_server">{zh ? '刀片服务器' : 'Blade Server'}</option>
+                        <option value="tower_server">{zh ? '塔式服务器' : 'Tower Server'}</option>
+                        <option value="high_density">{zh ? '高密度服务器' : 'High-Density Server'}</option>
+                        <option value="gpu_server">{zh ? 'GPU 服务器' : 'GPU Server'}</option>
+                        <option value="storage_server">{zh ? '存储服务器' : 'Storage Server'}</option>
+                        <option value="virtual_host">{zh ? '虚拟/物理宿主机' : 'Virtual Host'}</option>
+                        <option value="other">{zh ? '其他' : 'Other'}</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="switch">{zh ? '交换机' : 'Switch'}</option>
+                        <option value="router">{zh ? '路由器' : 'Router'}</option>
+                        <option value="firewall">{zh ? '防火墙' : 'Firewall'}</option>
+                        <option value="load_balancer">{zh ? '负载均衡' : 'Load Balancer'}</option>
+                        <option value="wireless_ap">{zh ? '无线 AP' : 'Wireless AP'}</option>
+                        <option value="other">{zh ? '其他' : 'Other'}</option>
+                      </>
+                    )}
                   </select>
                 </div>
                 <Field label={zh ? '额定功率 (W)' : 'Power (W)'} value={form.power_watts} onChange={v => setForm(f => ({ ...f, power_watts: v }))} placeholder="e.g. 350" />

@@ -251,7 +251,7 @@ const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const changeTicket = propChangeTicket !== undefined ? propChangeTicket : localChangeTicket;
   const setChangeTicket = propSetChangeTicket || localSetChangeTicket;
 
-  const DEVICE_PAGE_SIZE = 20;
+  const DEVICE_PAGE_SIZE = 10;
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'validate' | 'apply'>('validate');
   const logEndRef = useRef<HTMLDivElement>(null);

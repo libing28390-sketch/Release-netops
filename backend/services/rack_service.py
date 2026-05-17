@@ -201,7 +201,7 @@ def _check_u_constraints(conn, rack_id: str, start_u: int, u_height: int,
 def list_rack_devices(conn, rack_id: str) -> list[dict]:
     """Return all devices in a rack with device type info, sorted by start_u."""
     rows = conn.execute("""
-        SELECT rd.*, dt.model, dt.vendor, dt.u_height, dt.device_role, dt.is_full_depth
+        SELECT rd.*, dt.model, dt.vendor, dt.u_height, dt.device_role, dt.is_full_depth, dt.power_watts
         FROM rack_devices rd
         JOIN device_types dt ON rd.device_type_id = dt.id
         WHERE rd.rack_id = ?
@@ -212,7 +212,7 @@ def list_rack_devices(conn, rack_id: str) -> list[dict]:
 
 def get_rack_device(conn, device_id: str) -> dict:
     row = conn.execute("""
-        SELECT rd.*, dt.model, dt.vendor, dt.u_height, dt.device_role, dt.is_full_depth
+        SELECT rd.*, dt.model, dt.vendor, dt.u_height, dt.device_role, dt.is_full_depth, dt.power_watts
         FROM rack_devices rd
         JOIN device_types dt ON rd.device_type_id = dt.id
         WHERE rd.id = ?

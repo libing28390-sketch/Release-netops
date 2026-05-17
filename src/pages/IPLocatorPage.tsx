@@ -141,7 +141,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
   const [arpFilter, setArpFilter] = useState('');
   const [arpSweeping, setArpSweeping] = useState(false);
   const [arpPage, setArpPage] = useState(1);
-  const [arpPageSize, setArpPageSize] = useState(20);
+  const [arpPageSize, setArpPageSize] = useState(10);
 
   // ── MAC Changes state ──
   const [macChanges, setMacChanges] = useState<MacChangesData | null>(null);
@@ -149,7 +149,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
   const [macChangesError, setMacChangesError] = useState('');
   const [macFilter, setMacFilter] = useState('');
   const [macPage, setMacPage] = useState(1);
-  const [macPageSize, setMacPageSize] = useState(20);
+  const [macPageSize, setMacPageSize] = useState(10);
 
   const token = localStorage.getItem('netops_token') || '';
 

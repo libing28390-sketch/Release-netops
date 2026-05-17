@@ -1693,6 +1693,8 @@ def _init_db_logic(conn):
     # Rack planning on assets: device height (U) and optional planned start RU for DCIM install flow
     ensure_column('physical_assets', 'u_height', 'INTEGER NOT NULL DEFAULT 1')
     ensure_column('physical_assets', 'planned_start_u', 'INTEGER')
+    ensure_column('physical_assets', 'device_category', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'power_watts', "INTEGER DEFAULT 0")
 
     # Migration: link devices to physical_assets (Plan-A unification)
     ensure_column('devices', 'asset_id', 'TEXT')
@@ -1735,6 +1737,23 @@ def _init_db_logic(conn):
           AND COALESCE(username, '') != ''
         '''
     )
+
+    # Backfill power_watts and device_category from devices to physical_assets
+    cursor.execute(
+        '''
+        UPDATE physical_assets
+        SET power_watts = COALESCE((SELECT d.power_watts FROM devices d WHERE d.asset_id = physical_assets.id LIMIT 1), 0)
+        WHERE COALESCE(power_watts, 0) = 0
+        '''
+    )
+    cursor.execute(
+        '''
+        UPDATE physical_assets
+        SET device_category = COALESCE((SELECT d.device_category FROM devices d WHERE d.asset_id = physical_assets.id LIMIT 1), '')
+        WHERE COALESCE(device_category, '') = ''
+        '''
+    )
+
 
     # PAM access workflow state
     cursor.execute('''

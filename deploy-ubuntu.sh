@@ -212,7 +212,35 @@ sudo apt-get install -y -qq \
 ok "系统依赖安装完成（含 Nginx、Git）"
 
 # ============================================================
-# 1.1 PostgreSQL 安装与启动
+# 1.1 项目目录检测 / 代码准备
+# ============================================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/backend/main.py" ]; then
+    PROJECT_DIR="$SCRIPT_DIR"
+    ok "检测到项目目录: $PROJECT_DIR"
+else
+    INSTALL_BASE="${INSTALL_DIR:-/opt}"
+    PROJECT_DIR="$INSTALL_BASE/$PROJECT_NAME"
+    if [ -d "$PROJECT_DIR/.git" ]; then
+        info "项目目录已存在，拉取最新代码..."
+        cd "$PROJECT_DIR"
+        # 远端可能做过 force push（历史重写），--ff-only 会失败
+        # 直接 reset 到远端最新状态，确保与发布版本完全一致
+        git fetch origin main 2>&1 || warn "git fetch 失败，使用当前版本继续"
+        git reset --hard origin/main 2>&1 && ok "代码已同步到最新版本: $PROJECT_DIR" || warn "git reset 失败，使用当前版本继续"
+    else
+        info "从 Git 克隆项目..."
+        sudo mkdir -p "$INSTALL_BASE"
+        sudo chown "$RUN_USER:$(id -gn $RUN_USER)" "$INSTALL_BASE" 2>/dev/null || true
+        git clone "$GIT_REPO" "$PROJECT_DIR"
+        ok "项目克隆完成: $PROJECT_DIR"
+    fi
+fi
+
+info "目标目录: $PROJECT_DIR"
+
+# ============================================================
+# 1.2 PostgreSQL 安装与数据库初始化
 # ============================================================
 info "检查并安装 PostgreSQL..."
 if ! command -v psql &> /dev/null; then
@@ -286,34 +314,6 @@ else
         ok "PostgreSQL 数据库 ($PG_DB) 创建完成"
     fi
 fi
-
-# ============================================================
-# 1.5 项目目录检测 / 克隆
-# ============================================================
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -f "$SCRIPT_DIR/backend/main.py" ]; then
-    PROJECT_DIR="$SCRIPT_DIR"
-    ok "检测到项目目录: $PROJECT_DIR"
-else
-    INSTALL_BASE="${INSTALL_DIR:-/opt}"
-    PROJECT_DIR="$INSTALL_BASE/$PROJECT_NAME"
-    if [ -d "$PROJECT_DIR/.git" ]; then
-        info "项目目录已存在，拉取最新代码..."
-        cd "$PROJECT_DIR"
-        # 远端可能做过 force push（历史重写），--ff-only 会失败
-        # 直接 reset 到远端最新状态，确保与发布版本完全一致
-        git fetch origin main 2>&1 || warn "git fetch 失败，使用当前版本继续"
-        git reset --hard origin/main 2>&1 && ok "代码已同步到最新版本: $PROJECT_DIR" || warn "git reset 失败，使用当前版本继续"
-    else
-        info "从 Git 克隆项目..."
-        sudo mkdir -p "$INSTALL_BASE"
-        sudo chown "$RUN_USER:$(id -gn $RUN_USER)" "$INSTALL_BASE" 2>/dev/null || true
-        git clone "$GIT_REPO" "$PROJECT_DIR"
-        ok "项目克隆完成: $PROJECT_DIR"
-    fi
-fi
-
-info "目标目录: $PROJECT_DIR"
 
 # ============================================================
 # 2. Python 版本检查
@@ -430,9 +430,42 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
         sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$NEW_SECRET/" "$PROJECT_DIR/.env"
         sed -i "s/^CREDENTIAL_ENCRYPTION_KEY=.*/CREDENTIAL_ENCRYPTION_KEY=$NEW_CRED_KEY/" "$PROJECT_DIR/.env"
 
+        # 交互式询问是否需要自定义常见变量（设置 10 秒超时自动静默）
+        if [ -t 0 ]; then
+            echo ""
+            info "============================================================"
+            info "  环境配置定制 (.env)"
+            info "  系统已生成高强度加密密钥与随机数据库凭证。"
+            info "  是否需自定义数据库密码或端口？(10 秒无操作则自动静默继续)"
+            info "============================================================"
+            read -t 10 -p "是否手动配置？[y/N]: " CUSTOMIZE_ENV || CUSTOMIZE_ENV="N"
+            if [[ "$CUSTOMIZE_ENV" =~ ^[Yy]$ ]]; then
+                echo ""
+                read -p "请输入自定义 PostgreSQL 密码 [直接回车保持自动随机]: " INPUT_PG_PASS
+                if [ -n "$INPUT_PG_PASS" ]; then
+                    PG_PASS="$INPUT_PG_PASS"
+                    sudo -u postgres psql -c "ALTER USER $PG_USER WITH PASSWORD '$PG_PASS';" > /dev/null || true
+                    ok "已将 PostgreSQL 用户 $PG_USER 密码更新为您指定的密码"
+                fi
+                read -p "请输入后端监听端口 [默认 $BACKEND_PORT]: " INPUT_PORT
+                if [ -n "$INPUT_PORT" ] && [[ "$INPUT_PORT" =~ ^[0-9]+$ ]]; then
+                    BACKEND_PORT="$INPUT_PORT"
+                    ok "后端服务端口设定为 $BACKEND_PORT"
+                fi
+                read -p "请输入 Nginx 外部监听端口 [默认 $NGINX_PORT]: " INPUT_NGINX
+                if [ -n "$INPUT_NGINX" ] && [[ "$INPUT_NGINX" =~ ^[0-9]+$ ]]; then
+                    NGINX_PORT="$INPUT_NGINX"
+                    ok "Nginx 代理端口设定为 $NGINX_PORT"
+                fi
+            else
+                info "采用默认安全配置继续..."
+            fi
+            echo ""
+        fi
+
         if [ -n "$PG_PASS" ]; then
             sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://$PG_USER:$PG_PASS@localhost:5432/$PG_DB|" "$PROJECT_DIR/.env"
-            ok "已创建 .env（SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY 已随机生成，PostgreSQL 凭证已写入）"
+            ok "已创建 .env（SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY 已生成，PostgreSQL 凭证已更新）"
         else
             sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://$PG_USER:YOUR_PASSWORD@localhost:5432/$PG_DB|" "$PROJECT_DIR/.env"
             warn ".env 已创建，但数据库密码需要手动更新 (DATABASE_URL)"

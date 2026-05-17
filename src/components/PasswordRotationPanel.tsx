@@ -86,7 +86,7 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);

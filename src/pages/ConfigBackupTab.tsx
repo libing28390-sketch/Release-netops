@@ -45,7 +45,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState('');
 
   // Live progress state

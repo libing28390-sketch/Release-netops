@@ -47,7 +47,28 @@ export interface AssetRecord {
   notes: string;
   created_at: string;
   updated_at: string;
+  device_category?: string;
+  power_watts?: number | string;
 }
+
+export const CATEGORY_MAP: Record<string, { zh: string; en: string }> = {
+  // Network
+  switch: { zh: '交换机', en: 'Switch' },
+  router: { zh: '路由器', en: 'Router' },
+  firewall: { zh: '防火墙', en: 'Firewall' },
+  load_balancer: { zh: '负载均衡', en: 'Load Balancer' },
+  wireless_ap: { zh: '无线 AP', en: 'Wireless AP' },
+  // Server
+  rack_server: { zh: '机架式服务器', en: 'Rack Server' },
+  blade_server: { zh: '刀片服务器', en: 'Blade Server' },
+  tower_server: { zh: '塔式服务器', en: 'Tower Server' },
+  high_density: { zh: '高密度服务器', en: 'High-Density Server' },
+  gpu_server: { zh: 'GPU 服务器', en: 'GPU Server' },
+  storage_server: { zh: '存储服务器', en: 'Storage Server' },
+  virtual_host: { zh: '虚拟/物理宿主机', en: 'Virtual Host' },
+  // Shared
+  other: { zh: '其他', en: 'Other' },
+};
 
 function statusMeta(v: string) {
   return STATUSES.find(s => s.value === v) || STATUSES[3];
@@ -109,6 +130,8 @@ export function AssetReadonlyDetailInner({ asset: a, zh }: { asset: AssetRecord;
         <ReadonlyField label={zh ? '型号' : 'Model'} value={a.model || '—'} />
         <ReadonlyField label={zh ? '资产编号' : 'Asset Tag'} value={a.asset_tag || '—'} />
         <ReadonlyField label={zh ? '序列号' : 'Serial No.'} value={a.serial_number || '—'} />
+        <ReadonlyField label={zh ? '设备分类' : 'Category'} value={CATEGORY_MAP[a.device_category || '']?.[zh ? 'zh' : 'en'] || (a.device_category || '—')} />
+        <ReadonlyField label={zh ? '额定功率' : 'Power (W)'} value={a.power_watts != null && String(a.power_watts) !== '0' && String(a.power_watts) !== '' ? `${a.power_watts} W` : '—'} />
         <ReadonlyField label={zh ? '管理IP' : 'Mgmt IP'} value={a.management_ip || '—'} mono />
         {a.asset_type === 'server' && (
           <ReadonlyField label={zh ? '业务IP' : 'Biz IP'} value={a.business_ip || '—'} mono />
@@ -184,5 +207,7 @@ export function normalizeAssetApiRow(row: Record<string, unknown>): AssetRecord 
     notes: s('notes'),
     created_at: s('created_at'),
     updated_at: s('updated_at'),
+    device_category: s('device_category'),
+    power_watts: row['power_watts'] != null ? String(row['power_watts']) : '',
   };
 }

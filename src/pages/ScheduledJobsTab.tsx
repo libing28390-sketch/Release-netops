@@ -204,7 +204,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [systemJobs, setSystemJobs] = useState<SystemScheduledJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState(0);
 
   // Modal
@@ -1345,7 +1345,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
       {total > 0 && (
         <div className="mt-auto pt-4 border-t border-black/5 bg-white">
-          <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} language={language} />
+          <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={setPageSize} language={language} />
         </div>
       )}
 

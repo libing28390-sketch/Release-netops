@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Search, Plus, Download, Upload, Trash2, Pencil,
   Server, ChevronDown, ChevronUp, ChevronRight,
-  CheckCircle2, XCircle, AlertTriangle, Wrench, X, Activity, ShieldCheck, ShieldAlert, RefreshCw, Key,
+  CheckCircle2, XCircle, AlertTriangle, Wrench, X, Activity, ShieldCheck, ShieldAlert, RefreshCw, Terminal,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../components/Pagination';
@@ -25,6 +25,8 @@ interface ServerAsset {
 interface Props {
   language: string;
   t: (key: string) => string;
+  setActiveTab?: (tab: string) => void;
+  setSelectedDevice?: (device: any) => void;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -38,7 +40,7 @@ const STATUSES = [
   { value: 'decommissioned', zh: '已退役', en: 'Retired',     dot: 'bg-slate-400',   badge: 'bg-slate-500/10 text-slate-500 dark:text-slate-400 border-slate-500/20' },
 ] as const;
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 10;
 
 const statusMeta = (v: string) => STATUSES.find(s => s.value === v) || STATUSES[3];
 
@@ -179,7 +181,7 @@ const DetailModal: React.FC<{
    Main Component
    ═══════════════════════════════════════════════════════ */
 
-const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
+const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSelectedDevice }) => {
   const zh = language === 'zh';
 
   /* ─── State ─── */
@@ -299,28 +301,19 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
     });
   };
 
-  const handleRotate = async (server: ServerAsset) => {
-    if (!window.confirm(zh ? `确定要手动触发服务器 ${server.hostname} 的密码轮换吗？` : `Confirm manual password rotation for ${server.hostname}?`)) return;
-    
-    setVerifyingIds(prev => new Set(prev).add(server.id));
-    try {
-      const r = await fetch(`/api/assets/${server.id}/rotate`, { method: 'POST' });
-      if (r.ok) {
-        const data = await r.json();
-        if (data.rotation_pending) {
-          // Update local status immediately
-          setVerifyResults(prev => ({ 
-            ...prev, 
-            [server.id]: { ...(prev[server.id] || {}), rotating: true } 
-          }));
-        }
-      }
-    } catch { /* noop */ }
-    setVerifyingIds(prev => {
-      const next = new Set(prev);
-      next.delete(server.id);
-      return next;
-    });
+  const handleManage = (server: ServerAsset) => {
+    if (setSelectedDevice && setActiveTab) {
+      setSelectedDevice({
+        id: server.id,
+        hostname: server.hostname || server.management_ip,
+        ip_address: server.management_ip,
+        vendor: server.vendor || 'Linux',
+        platform: 'linux',
+        role: server.device_role || 'server',
+        status: server.status,
+      });
+      setActiveTab('automation');
+    }
   };
 
   /* ─── Selection ─── */
@@ -612,11 +605,17 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
                     <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
                         <button
+                          onClick={(e) => { e.stopPropagation(); handleManage(server); }}
+                          title={zh ? '配置连接' : 'Config Connection'}
+                          className="inline-flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-semibold bg-[#00bceb]/10 text-[#0096bd] dark:text-[#5dd8f0] hover:bg-[#00bceb]/20 transition-all">
+                          <Terminal size={13} />
+                        </button>
+                        <button
                           onClick={(e) => { e.stopPropagation(); handleVerify(server); }}
                           disabled={verifyingIds.has(server.id)}
-                          title={zh ? '连接测试 (Ping/SSH)' : 'Connectivity Test (Ping/SSH)'}
-                          className={`inline-flex items-center justify-center w-7 h-7 rounded-md transition-all
-                            ${verifyingIds.has(server.id) ? 'bg-black/5 text-black/20' : 'text-black/30 dark:text-white/25 hover:bg-[#00bceb]/10 hover:text-[#00bceb]'}`}>
+                          title={zh ? '测试连接' : 'Test Connection'}
+                          className={`inline-flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-semibold transition-all
+                            ${verifyingIds.has(server.id) ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'bg-violet-500/10 text-violet-600 dark:text-violet-400 hover:bg-violet-500/20'}`}>
                           {verifyingIds.has(server.id) ? (
                             <RefreshCw size={13} className="animate-spin" />
                           ) : verifyResults[server.id] ? (
@@ -629,15 +628,6 @@ const InventoryServersTab: React.FC<Props> = ({ language, t }) => {
                             <Activity size={13} />
                           )}
                         </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleRotate(server); }}
-                          disabled={verifyingIds.has(server.id)}
-                          title={zh ? '手动轮换密码' : 'Manual Password Rotation'}
-                          className={`inline-flex items-center justify-center w-7 h-7 rounded-md transition-all
-                            ${verifyingIds.has(server.id) ? 'bg-black/5 text-black/20' : 'text-black/30 dark:text-white/25 hover:bg-amber-500/10 hover:text-amber-500'}`}>
-                          <Key size={13} />
-                        </button>
-                        {/* Delete removed — use Asset Management for CRUD */}
                       </div>
                     </td>
                   </tr>
