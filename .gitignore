@@ -31,6 +31,8 @@ backup/
 data/logs/
 .vscode/
 zhihu*.md
+_out/
+backend/tests/_out/
 
 # Local DBs
 *.db
