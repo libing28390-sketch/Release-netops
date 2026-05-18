@@ -165,10 +165,12 @@ async def run_scheduled_automation_job(job_id: str):
             if job.get('use_admin_creds', 0) == 1:
                 d['username'] = creds.get('admin_username') or creds.get('username') or ''
                 d['password'] = creds.get('admin_password') or creds.get('password') or ''
+                d['enable_password'] = creds.get('enable_password') or ''
                 logger.info(f"[Scheduler] Using admin/privileged credentials (User: '{d.get('username', 'unknown')}') for device {d.get('hostname', d.get('ip_address'))} (use_admin_creds=1)")
             else:
                 d['username'] = creds.get('normal_username') or creds.get('username') or creds.get('admin_username') or ''
                 d['password'] = creds.get('normal_password') or creds.get('password') or creds.get('admin_password') or ''
+                d['enable_password'] = creds.get('enable_password') or ''
                 logger.info(f"[Scheduler] Using normal credentials (User: '{d.get('username', 'unknown')}') for device {d.get('hostname', d.get('ip_address'))}")
 
             # 记录设备开始执行（使用独立连接，避免并发冲突）

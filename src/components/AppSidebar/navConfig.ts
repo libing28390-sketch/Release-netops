@@ -39,8 +39,8 @@ export const navConfig: NavGroup[] = [
     children: [
       { id: 'alert-desk',    label: '告警中心', labelEn: 'Alert Center',  path: '/alerts',         icon: 'Bell' },
       { id: 'alert-history', label: '历史告警', labelEn: 'Alert History', path: '/alert-history',  icon: 'History' },
-      { id: 'alert-rules',   label: '告警规则', labelEn: 'Alert Rules',   path: '/alert-rules',    icon: 'SlidersHorizontal' },
-      { id: 'maintenance',   label: '维护期',   labelEn: 'Maintenance',   path: '/maintenance',    icon: 'Wrench' },
+      { id: 'alert-rules',   label: '告警规则', labelEn: 'Alert Rules',   path: '/alert-rules',    icon: 'SlidersHorizontal', requiredRole: 'Operator' },
+      { id: 'maintenance',   label: '维护期',   labelEn: 'Maintenance',   path: '/maintenance',    icon: 'Wrench', requiredRole: 'Operator' },
     ],
   },
   {
@@ -65,10 +65,10 @@ export const navConfig: NavGroup[] = [
     icon: 'FileText',
     children: [
       { id: 'config-backup',   label: '备份中心', labelEn: 'Backup Center',   path: '/config/backup',    icon: 'Archive' },
-      { id: 'config-schedule', label: '备份计划', labelEn: 'Backup Schedule', path: '/config/schedule',  icon: 'CalendarClock' },
+      { id: 'config-schedule', label: '备份计划', labelEn: 'Backup Schedule', path: '/config/schedule',  icon: 'CalendarClock', requiredRole: 'Operator' },
       { id: 'config-diff',     label: '配置对比', labelEn: 'Config Diff',     path: '/config/diff',      icon: 'GitCompare' },
       { id: 'config-search',   label: '配置搜索', labelEn: 'Config Search',   path: '/config/search',    icon: 'Search' },
-      { id: 'configuration',   label: '配置模板', labelEn: 'Templates',       path: '/config/templates', icon: 'FileCode2' },
+      { id: 'configuration',   label: '配置模板', labelEn: 'Templates',       path: '/config/templates', icon: 'FileCode2', requiredRole: 'Operator' },
     ],
   },
   {
@@ -80,12 +80,12 @@ export const navConfig: NavGroup[] = [
       { id: 'auto-exec',           label: '自动化任务', labelEn: 'Automation',           path: '/automation/execute', activeMatch: '/automation/execute,/automation/playbooks,/automation/scenarios', icon: 'Zap' },
       { id: 'inspection',          label: '巡检概览',   labelEn: 'Inspection Overview',  path: '/automation/inspection',          icon: 'ClipboardCheck' },
       { id: 'inspection-records',  label: '巡检记录',   labelEn: 'Inspection Records',   path: '/automation/inspection-records',  icon: 'FileSearch' },
-      { id: 'exec-schedule',       label: '执行计划',   labelEn: 'Execution Schedules',  path: '/automation/schedule',            icon: 'CalendarClock' },
+      { id: 'exec-schedule',       label: '执行计划',   labelEn: 'Execution Schedules',  path: '/automation/schedule',            icon: 'CalendarClock', requiredRole: 'Operator' },
       { id: 'exec-history',        label: '执行历史',   labelEn: 'Execution History',    path: '/automation/history',             icon: 'History' },
-      { id: 'scheduled-jobs',      label: '定时作业',   labelEn: 'Scheduled Jobs',       path: '/automation/scheduled-jobs',      icon: 'Timer' },
+      { id: 'scheduled-jobs',      label: '定时作业',   labelEn: 'Scheduled Jobs',       path: '/automation/scheduled-jobs',      icon: 'Timer', requiredRole: 'Operator' },
       { id: 'inspection-metrics',  label: '巡检指标',   labelEn: 'Inspection Metrics',   path: '/automation/metrics',             icon: 'BarChart2' },
-      { id: 'textfsm-templates',   label: '解析模板',   labelEn: 'Parse Templates',      path: '/automation/textfsm-templates',   icon: 'FileCode2' },
-      { id: 'scripts',             label: '操作管理',   labelEn: 'Operations',           path: '/automation/scripts',             icon: 'Code2' },
+      { id: 'textfsm-templates',   label: '解析模板',   labelEn: 'Parse Templates',      path: '/automation/textfsm-templates',   icon: 'FileCode2', requiredRole: 'Operator' },
+      { id: 'scripts',             label: '操作管理',   labelEn: 'Operations',           path: '/automation/scripts',             icon: 'Code2', requiredRole: 'Operator' },
     ],
   },
   {
@@ -119,8 +119,8 @@ export const navConfig: NavGroup[] = [
     labelEn: 'MANAGEMENT',
     section: true,
     children: [
-      { id: 'audit',        label: '审计日志', labelEn: 'Audit Logs',        icon: 'Clock',  path: '/audit' },
-      { id: 'users',        label: '用户管理', labelEn: 'Users',             icon: 'User',   path: '/users' },
+      { id: 'audit',        label: '审计日志', labelEn: 'Audit Logs',        icon: 'Clock',  path: '/audit',       requiredRole: 'Administrator' },
+      { id: 'users',        label: '用户管理', labelEn: 'Users',             icon: 'User',   path: '/users',       requiredRole: 'Administrator' },
       { id: 'credentials',  label: '凭据轮换', labelEn: 'Password Rotation', icon: 'Key',    path: '/credentials', requiredRole: 'Administrator' },
       { id: 'license',      label: '授权管理', labelEn: 'License',           icon: 'Shield', path: '/license',     requiredRole: 'Administrator' },
     ],

@@ -108,28 +108,33 @@ const TopHeader: React.FC<TopHeaderProps> = ({
   const appSearchRef = useRef<HTMLInputElement>(null);
   const { systemInfo } = useSystem();
 
+const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, Viewer: 1 };
+
   const appEntries = useMemo(() => [
-    { id: 'dashboard',  label: '首页',       labelEn: 'Dashboard',    icon: LayoutDashboard, path: '/dashboard',          accent: '#06b6d4' },
-    { id: 'access',     label: '操作工作台', labelEn: 'Operation Workspace', icon: Globe,           path: '/access',             accent: '#13c2c2' },
-    { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   icon: Activity,          path: '/overview',           accent: '#1677ff' },
-    { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       icon: Bell,              path: '/alerts',             accent: '#fa8c16' },
-    { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       icon: Server,            path: '/assets',             accent: '#1677ff' },
-    { id: 'config',     label: '配置管理',   labelEn: 'Config',       icon: FileCode2,         path: '/config/backup',      accent: '#722ed1' },
-    { id: 'automation', label: '自动化',     labelEn: 'Automation',   icon: Zap,               path: '/automation/execute', accent: '#0891b2' },
-    { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff' },
-    { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      icon: BarChart2,         path: '/capacity',           accent: '#13c2c2' },
-    { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     icon: SlidersHorizontal, path: '/audit',            accent: '#8c8c8c' },
+    { id: 'dashboard',  label: '首页',       labelEn: 'Dashboard',    icon: LayoutDashboard, path: '/dashboard',          accent: '#06b6d4', minRole: 'Viewer' },
+    { id: 'access',     label: '操作工作台', labelEn: 'Operation Workspace', icon: Globe,           path: '/access',             accent: '#13c2c2', minRole: 'Viewer' },
+    { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   icon: Activity,          path: '/overview',           accent: '#1677ff', minRole: 'Viewer' },
+    { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       icon: Bell,              path: '/alerts',             accent: '#fa8c16', minRole: 'Viewer' },
+    { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       icon: Server,            path: '/assets',             accent: '#1677ff', minRole: 'Viewer' },
+    { id: 'config',     label: '配置管理',   labelEn: 'Config',       icon: FileCode2,         path: '/config/backup',      accent: '#722ed1', minRole: 'Viewer' },
+    { id: 'automation', label: '自动化',     labelEn: 'Automation',   icon: Zap,               path: '/automation/execute', accent: '#0891b2', minRole: 'Viewer' },
+    { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff', minRole: 'Viewer' },
+    { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      icon: BarChart2,         path: '/capacity',           accent: '#13c2c2', minRole: 'Viewer' },
+    { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     icon: SlidersHorizontal, path: '/audit',            accent: '#8c8c8c', minRole: 'Administrator' },
   ], []);
 
+  const userRoleLvl = ROLE_LEVEL[currentUser?.role || 'Viewer'] || 1;
+
   const filteredApps = useMemo(() => {
+    const validApps = appEntries.filter(a => userRoleLvl >= (ROLE_LEVEL[a.minRole || 'Viewer'] || 1));
     const q = appSearch.trim().toLowerCase();
-    if (!q) return appEntries;
-    return appEntries.filter(a =>
+    if (!q) return validApps;
+    return validApps.filter(a =>
       a.label.toLowerCase().includes(q) ||
       a.labelEn.toLowerCase().includes(q) ||
       a.id.toLowerCase().includes(q)
     );
-  }, [appSearch, appEntries]);
+  }, [appSearch, appEntries, userRoleLvl]);
 
   // Close app switcher on outside click
   useEffect(() => {
@@ -394,13 +399,15 @@ const TopHeader: React.FC<TopHeaderProps> = ({
                       <p className={`text-[11px] truncate ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/45'}`}>{language === 'zh' ? (currentUser.role === 'Administrator' ? '管理员' : currentUser.role === 'Operator' ? '操作员' : currentUser.role === 'Viewer' ? '只读用户' : (currentUser.role || '管理员')) : (currentUser.role || 'Administrator')}</p>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => setMenuView('switch')}
-                    title={language === 'zh' ? '切换账户' : 'Switch account'}
-                    className={`p-1.5 rounded-lg transition-colors ${resolvedTheme === 'dark' ? 'bg-white/5 hover:bg-white/10 text-white/60' : 'bg-black/[0.04] hover:bg-black/[0.08] text-black/50'}`}
-                  >
-                    <ArrowLeftRight size={14} />
-                  </button>
+                  {currentUser?.role === 'Administrator' && (
+                    <button 
+                      onClick={() => setMenuView('switch')}
+                      title={language === 'zh' ? '切换账户' : 'Switch account'}
+                      className={`p-1.5 rounded-lg transition-colors ${resolvedTheme === 'dark' ? 'bg-white/5 hover:bg-white/10 text-white/60' : 'bg-black/[0.04] hover:bg-black/[0.08] text-black/50'}`}
+                    >
+                      <ArrowLeftRight size={14} />
+                    </button>
+                  )}
                 </div>
 
                 <div className={`py-1 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
