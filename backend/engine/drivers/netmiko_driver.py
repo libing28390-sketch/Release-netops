@@ -54,7 +54,9 @@ class NetmikoDriver(BaseDriver):
             'password': self.password,
             'port': self.port,
             'secret': enable_pwd or self.password,
-            'timeout': 15,
+            'timeout': 20,
+            'global_delay_factor': 1.5,
+            'blocking_timeout': 30,
         }
         self.conn = ConnectHandler(**device_params)
         # Always call enable() for Cisco devices so Netmiko's internal state
@@ -66,15 +68,11 @@ class NetmikoDriver(BaseDriver):
             try:
                 self.conn.enable()
             except Exception:
-                # enable() failed — stay at '>' level.
-                # Query commands (show, display, ping) work fine without enable.
-                # Config commands will fail later if the account lacks privilege.
                 pass
         
         pool.set_connection(self.device_info, self.conn)
 
     def disconnect(self):
-        # 实际不切断，交给 Pool 管理或手动清理
         pass
 
     def execute(self, mode: ExecutionMode, content: Any, **kwargs) -> Dict[str, Any]:
@@ -83,7 +81,13 @@ class NetmikoDriver(BaseDriver):
             self.connect()
             
             if mode == ExecutionMode.COMMAND:
-                output = self.conn.send_command(content)
+                try:
+                    output = self.conn.send_command(content, read_timeout=30)
+                except Exception as e:
+                    if "Pattern not detected" in str(e) or "Timeout" in str(e) or "socket" in str(e).lower():
+                        output = self.conn.send_command_timing(content, read_timeout=30)
+                    else:
+                        raise e
                 return {
                     "success": True, "stdout": output, "device": self.ip,
                     "duration": time.perf_counter() - start_time

@@ -253,7 +253,15 @@ class NetmikoDriver(BaseDriver):
             # Override with kwargs (e.g. expect_string)
             params.update(kwargs)
             
-            output = self.conn.send_command(command, **params)
+            try:
+                output = self.conn.send_command(command, **params)
+            except Exception as e:
+                if "Pattern not detected" in str(e) or "Timeout" in str(e):
+                    logger.warning(f"[send_command] strict prompt failed on {self.host}, falling back to timing mode")
+                    output = self.conn.send_command_timing(command, read_timeout=params['read_timeout'])
+                else:
+                    raise e
+            
             elapsed = time.time() - start_time
             err_line = self._check_cli_errors(output)
             if err_line:

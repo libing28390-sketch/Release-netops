@@ -43,3 +43,10 @@ backend/tests/_out/
 license.json
 backend/tests/test_pbt_p8_migration_idempotency.py
 tools/license_issuer/issued/registry.json
+
+# Video Presentation & TTS Generation
+azure_presentation/
+video_presentation/
+scripts/generate_azure_speech.py
+scripts/generate_video_audio.py
+test_dragon.mp3
