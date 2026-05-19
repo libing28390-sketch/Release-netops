@@ -112,15 +112,15 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
 
   const appEntries = useMemo(() => [
     { id: 'dashboard',  label: '首页',       labelEn: 'Dashboard',    icon: LayoutDashboard, path: '/dashboard',          accent: '#06b6d4', minRole: 'Viewer' },
-    { id: 'access',     label: '操作工作台', labelEn: 'Operation Workspace', icon: Globe,           path: '/access',             accent: '#13c2c2', minRole: 'Viewer' },
-    { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   icon: Activity,          path: '/overview',           accent: '#1677ff', minRole: 'Viewer' },
-    { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       icon: Bell,              path: '/alerts',             accent: '#fa8c16', minRole: 'Viewer' },
-    { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       icon: Server,            path: '/assets',             accent: '#1677ff', minRole: 'Viewer' },
+    { id: 'access',     label: '操作工作台', labelEn: 'Operation Workspace', icon: Globe,           path: '/access/workspace',    accent: '#13c2c2', minRole: 'Viewer' },
+    { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   icon: Activity,          path: '/monitor/overview',   accent: '#1677ff', minRole: 'Viewer' },
+    { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       icon: Bell,              path: '/alerts/desk',        accent: '#fa8c16', minRole: 'Viewer' },
+    { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       icon: Server,            path: '/assets/dashboard',   accent: '#1677ff', minRole: 'Viewer' },
     { id: 'config',     label: '配置管理',   labelEn: 'Config',       icon: FileCode2,         path: '/config/backup',      accent: '#722ed1', minRole: 'Viewer' },
-    { id: 'automation', label: '自动化',     labelEn: 'Automation',   icon: Zap,               path: '/automation/execute', accent: '#0891b2', minRole: 'Viewer' },
-    { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff', minRole: 'Viewer' },
-    { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      icon: BarChart2,         path: '/capacity',           accent: '#13c2c2', minRole: 'Viewer' },
-    { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     icon: SlidersHorizontal, path: '/audit',            accent: '#8c8c8c', minRole: 'Administrator' },
+    { id: 'automation', label: '自动化',     labelEn: 'Automation',   icon: Zap,               path: '/automation/tasks',   accent: '#0891b2', minRole: 'Viewer' },
+    { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      icon: ClipboardList,     path: '/change-orders/all',  accent: '#1677ff', minRole: 'Viewer' },
+    { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      icon: BarChart2,         path: '/capacity/analysis',  accent: '#13c2c2', minRole: 'Viewer' },
+    { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     icon: SlidersHorizontal, path: '/management/audit',   accent: '#8c8c8c', minRole: 'Administrator' },
   ], []);
 
   const userRoleLvl = ROLE_LEVEL[currentUser?.role || 'Viewer'] || 1;

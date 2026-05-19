@@ -58,15 +58,15 @@ interface AppEntry {
 /* ─────────────── App definitions ─────────────── */
 
 const apps: AppEntry[] = [
-  { id: 'access',     label: '操作工作台', labelEn: 'Operation Workspace', desc: '终端接入与登录',     descEn: 'Terminal access',      icon: Activity,          path: '/access',             accent: '#13c2c2' },
-  { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   desc: '设备状态与流量',     descEn: 'Status & traffic',     icon: Activity,          path: '/overview',           accent: '#1677ff' },
-  { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       desc: '告警查看与处置',     descEn: 'View & handle alerts', icon: Bell,              path: '/alerts',             accent: '#fa8c16' },
-  { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       desc: '设备台账与资产',     descEn: 'Inventory & assets',   icon: Server,            path: '/assets',             accent: '#1677ff' },
+  { id: 'access',     label: '操作工作台', labelEn: 'Operation Workspace', desc: '终端接入与登录',     descEn: 'Terminal access',      icon: Activity,          path: '/access/workspace',    accent: '#13c2c2' },
+  { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   desc: '设备状态与流量',     descEn: 'Status & traffic',     icon: Activity,          path: '/monitor/overview',   accent: '#1677ff' },
+  { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       desc: '告警查看与处置',     descEn: 'View & handle alerts', icon: Bell,              path: '/alerts/desk',        accent: '#fa8c16' },
+  { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       desc: '设备台账与资产',     descEn: 'Inventory & assets',   icon: Server,            path: '/assets/dashboard',   accent: '#1677ff' },
   { id: 'config',     label: '配置管理',   labelEn: 'Config',       desc: '备份、差异与合规',   descEn: 'Backup & compliance',  icon: FileCode2,         path: '/config/backup',      accent: '#722ed1' },
-  { id: 'automation', label: '自动化',     labelEn: 'Automation',   desc: '作业执行与编排',     descEn: 'Jobs & orchestration', icon: Zap,               path: '/automation/execute', accent: '#0891b2' },
-  { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      desc: '变更审批与跟踪',     descEn: 'Change & approval',    icon: ClipboardList,     path: '/change-orders',      accent: '#1677ff' },
-  { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      desc: '趋势分析与报表',     descEn: 'Trends & reports',     icon: BarChart2,         path: '/capacity',           accent: '#13c2c2' },
-  { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     desc: '用户、审计与系统',   descEn: 'Users, audit & system', icon: SlidersHorizontal, path: '/audit',              accent: '#8c8c8c' },
+  { id: 'automation', label: '自动化',     labelEn: 'Automation',   desc: '作业执行与编排',     descEn: 'Jobs & orchestration', icon: Zap,               path: '/automation/tasks',   accent: '#0891b2' },
+  { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      desc: '变更审批与跟踪',     descEn: 'Change & approval',    icon: ClipboardList,     path: '/change-orders/all',  accent: '#1677ff' },
+  { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      desc: '趋势分析与报表',     descEn: 'Trends & reports',     icon: BarChart2,         path: '/capacity/analysis',  accent: '#13c2c2' },
+  { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     desc: '用户、审计与系统',   descEn: 'Users, audit & system', icon: SlidersHorizontal, path: '/management/audit',   accent: '#8c8c8c' },
 ];
 
 /* ─────────────── Helpers ─────────────── */

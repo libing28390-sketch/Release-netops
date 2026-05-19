@@ -523,18 +523,42 @@ const App: React.FC = () => {
     target_interface_snapshot: TopologyInterfaceSnapshot | null;
   };
 
-  // Redirect bare /automation to /automation/execute
+  // Redirect bare paths and legacy paths to standardized hierarchical paths
   React.useEffect(() => {
-    if (activeTab === 'automation' && !automationPage) {
-      navigate('/automation/execute', { replace: true });
+    const p = location.pathname;
+    const redirects: Record<string, string> = {
+      '/monitor': '/monitor/overview',
+      '/access': '/access/workspace',
+      '/alerts': '/alerts/desk',
+      '/assets': '/assets/dashboard',
+      '/config': '/config/backup',
+      '/automation': '/automation/tasks',
+      '/change-orders': '/change-orders/all',
+      '/capacity': '/capacity/analysis',
+      '/management': '/management/audit',
+      '/overview': '/monitor/overview',
+      '/monitoring': '/monitor/telemetry',
+      '/topology': '/monitor/topology',
+      '/pam-audit': '/access/pam-audit',
+      '/alert-history': '/alerts/history',
+      '/alert-rules': '/alerts/rules',
+      '/maintenance': '/alerts/maintenance',
+      '/inventory/devices': '/assets/devices',
+      '/inventory/servers': '/assets/servers',
+      '/inventory/interfaces': '/assets/interfaces',
+      '/ipam': '/assets/ipam',
+      '/ip-locator': '/assets/toolbox',
+      '/tags': '/assets/tags',
+      '/racks': '/assets/racks',
+      '/audit': '/management/audit',
+      '/users': '/management/users',
+      '/credentials': '/management/credentials',
+      '/license': '/management/license',
+    };
+    if (redirects[p]) {
+      navigate(redirects[p], { replace: true });
     }
-  }, [activeTab, automationPage, navigate]);
-  // Redirect bare /change-orders to /change-orders/all
-  React.useEffect(() => {
-    if (activeTab === 'change-orders' && !changeOrderPage) {
-      navigate('/change-orders/all', { replace: true });
-    }
-  }, [activeTab, changeOrderPage, navigate]);
+  }, [location.pathname, navigate]);
   // Load playbook scenarios & platforms once when entering change-orders tab
   React.useEffect(() => {
     if (activeTab === 'change-orders') {
@@ -562,51 +586,51 @@ const App: React.FC = () => {
   }, []);
 
   const getSidebarRecentLabel = useCallback((path: string): string => {
-    if (path === '/dashboard') return language === 'zh' ? '功能中心' : 'Home';
-    if (path === '/overview') return language === 'zh' ? '运营总览' : 'Overview';
-    if (path === '/monitoring') return language === 'zh' ? '监控中心' : 'Monitoring Center';
-    if (path === '/topology') return language === 'zh' ? '网络拓扑' : 'Topology';
-    if (path === '/automation/inspection') return language === 'zh' ? '巡检概览' : 'Inspection Overview';
-    if (path === '/automation/inspection-records') return language === 'zh' ? '巡检记录' : 'Inspection Records';
-    if (path === '/automation/schedule') return language === 'zh' ? '执行计划' : 'Execution Schedules';
-    if (path === '/automation/schedule-history') return language === 'zh' ? '执行历史' : 'Execution History';
-    if (path === '/automation/scheduled-jobs') return language === 'zh' ? '定时作业' : 'Scheduled Jobs';
-    if (path === '/automation/metrics') return language === 'zh' ? '巡检指标项' : 'Inspection Metrics';
-    if (path === '/automation/textfsm-templates') return language === 'zh' ? 'TextFSM 解析模板' : 'TextFSM Parse Templates';
-    if (path === '/change-orders/all') return language === 'zh' ? '全部工单' : 'All Orders';
-    if (path === '/change-orders/my-todo') return language === 'zh' ? '个人待办' : 'My Todo';
-    if (path === '/change-orders/group-todo') return language === 'zh' ? '组内待办' : 'Group Todo';
-    if (path === '/change-orders/participated') return language === 'zh' ? '我参与的' : 'My Participated';
-    if (path === '/change-orders/focus') return language === 'zh' ? '我的关注' : 'My Focus';
-    if (path === '/change-orders/drafts') return language === 'zh' ? '草稿箱' : 'Drafts';
-    if (path === '/change-orders/new') return language === 'zh' ? '新建工单' : 'New Order';
-    if (path === '/alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
-    if (path === '/alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
-    if (path === '/alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';
-    if (path === '/maintenance') return language === 'zh' ? '维护期' : 'Maintenance';
-    if (path === '/inventory/devices') return t('deviceList');
-    if (path === '/pam-audit') return language === 'zh' ? '受控审计' : 'PAM Audit';
-    if (path === '/inventory/servers') return language === 'zh' ? '服务器' : 'Servers';
-    if (path === '/inventory/interfaces') return t('interfaceMonitoring');
-    if (path === '/ipam') return language === 'zh' ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt';
-    if (path === '/ip-locator') return language === 'zh' ? 'IP 定位' : 'IP Toolbox';
-    if (path === '/assets') return language === 'zh' ? '资产管理' : 'Assets';
-    if (path === '/access') return language === 'zh' ? '操作工作台' : 'Operation Workspace';
-    if (path === '/automation/execute') return t('directExecution');
-    if (path === '/automation/scenarios') return t('scenarioLibrary');
-    if (path === '/automation/queries' || path === '/automation/schedule-history') return language === 'zh' ? '执行历史' : 'Execution History';
-    if (path === '/config/backup') return t('backupHistory');
-    if (path === '/config/diff') return t('diffCompare');
-    if (path === '/config/search') return t('configSearchTab');
-    if (path === '/config/schedule') return language === 'zh' ? '备份计划' : 'Backup Schedule';
-    if (path === '/config/drift') return language === 'zh' ? '配置漂移' : 'Config Drift';
-    if (path === '/compliance') return t('compliance');
-    if (path === '/capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
-    if (path === '/reports') return language === 'zh' ? '报表中心' : 'Reports';
-    if (path === '/audit') return t('auditLogs');
-    if (path === '/config/templates') return language === 'zh' ? '配置管理' : 'Config Management';
-    if (path === '/users') return t('userManagement');
-    return path.replace('/', '');
+    const zh = language === 'zh';
+    const labels: Record<string, string> = {
+      '/dashboard': zh ? '功能中心' : 'Home',
+      '/monitor/overview': zh ? '运营总览' : 'Overview',
+      '/monitor/telemetry': zh ? '监控中心' : 'Monitoring Center',
+      '/monitor/topology': zh ? '网络拓扑' : 'Topology',
+      '/automation/inspections': zh ? '巡检概览' : 'Inspection Overview',
+      '/automation/records': zh ? '巡检记录' : 'Inspection Records',
+      '/automation/schedules': zh ? '执行计划' : 'Execution Schedules',
+      '/automation/history': zh ? '执行历史' : 'Execution History',
+      '/automation/scheduled-jobs': zh ? '定时作业' : 'Scheduled Jobs',
+      '/automation/metrics': zh ? '巡检指标项' : 'Inspection Metrics',
+      '/automation/textfsm': zh ? 'TextFSM 解析模板' : 'TextFSM Parse Templates',
+      '/change-orders/all': zh ? '全部工单' : 'All Orders',
+      '/change-orders/my-todo': zh ? '个人待办' : 'My Todo',
+      '/change-orders/group-todo': zh ? '组内待办' : 'Group Todo',
+      '/change-orders/participated': zh ? '我参与的' : 'My Participated',
+      '/change-orders/focus': zh ? '我的关注' : 'My Focus',
+      '/change-orders/drafts': zh ? '草稿箱' : 'Drafts',
+      '/change-orders/new': zh ? '新建工单' : 'New Order',
+      '/alerts/desk': zh ? '告警信息' : 'Alert Desk',
+      '/alerts/history': zh ? '历史告警' : 'Alert History',
+      '/alerts/rules': zh ? '告警规则' : 'Alert Rules',
+      '/alerts/maintenance': zh ? '维护期' : 'Maintenance',
+      '/assets/devices': t('deviceList'),
+      '/access/pam-audit': zh ? '受控审计' : 'PAM Audit',
+      '/assets/servers': zh ? '服务器' : 'Servers',
+      '/assets/interfaces': t('interfaceMonitoring'),
+      '/assets/ipam': zh ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt',
+      '/assets/toolbox': zh ? 'IP 定位' : 'IP Toolbox',
+      '/assets/dashboard': zh ? '资产管理' : 'Assets',
+      '/access/workspace': zh ? '操作工作台' : 'Operation Workspace',
+      '/automation/tasks': t('directExecution'),
+      '/config/backup': t('backupHistory'),
+      '/config/diff': t('diffCompare'),
+      '/config/search': t('configSearchTab'),
+      '/config/schedule': zh ? '备份计划' : 'Backup Schedule',
+      '/config/drift': zh ? '配置漂移' : 'Config Drift',
+      '/capacity/analysis': zh ? '容量规划' : 'Capacity Planning',
+      '/capacity/reports': zh ? '报表中心' : 'Reports',
+      '/management/audit': t('auditLogs'),
+      '/config/templates': zh ? '配置管理' : 'Config Management',
+      '/management/users': t('userManagement'),
+    };
+    return labels[path] || path.replace('/', '');
   }, [language, t]);
 
   const recentSidebarItems = useMemo(() => {
@@ -1744,8 +1768,9 @@ const App: React.FC = () => {
 
   // 合规趋势：基于过去N天任务执行成功率
   const complianceTrend = useMemo(() => {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const daysEn = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const daysZh = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    const monthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return Array.from({ length: trendDays }, (_, i) => {
       const d = new Date();
       d.setDate(d.getDate() - (trendDays - 1 - i));
@@ -1759,10 +1784,12 @@ const App: React.FC = () => {
         const success = dayJobs.filter(j => j.status === 'success').length;
         rate = Math.round((success / dayJobs.length) * 100);
       }
-      const label = trendDays <= 7 ? days[d.getDay()] : `${months[d.getMonth()]} ${d.getDate()}`;
+      const label = trendDays <= 7
+        ? (language === 'zh' ? daysZh[d.getDay()] : daysEn[d.getDay()])
+        : (language === 'zh' ? `${d.getMonth() + 1}月${d.getDate()}日` : `${monthsEn[d.getMonth()]} ${d.getDate()}`);
       return { name: label, rate };
     });
-  }, [jobs, devices, trendDays]);
+  }, [jobs, devices, trendDays, language]);
 
   // 平台分布：基于真实设备数据
   const platformData = useMemo(() => {
@@ -1783,6 +1810,7 @@ const App: React.FC = () => {
       name: PLATFORM_LABELS[platform] || platform,
       value: Math.round((count / total) * 100),
       color: PLATFORM_COLORS[platform] || '#94a3b8',
+      platform,
     }));
   }, [devices]);
 
