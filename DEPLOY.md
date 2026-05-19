@@ -103,14 +103,14 @@ The script auto-detects whether `systemd` is available and falls back to `servic
 
 ```bash
 # Recommended: download first, then execute
-curl -fsSL -o /tmp/deploy.sh https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh
+curl -fsSL -o /tmp/deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
 chmod +x /tmp/deploy.sh
 bash /tmp/deploy.sh
 ```
 
 Or pipe directly (also supported):
 ```bash
-curl -fsSL https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh | bash
+curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
 ```
 
 #### Inside a cloned directory
@@ -131,7 +131,7 @@ chmod +x deploy-ubuntu.sh
 #### What the script does
 
 1. Installs system packages: Python 3, Node.js 22, Nginx, PostgreSQL, libcap2-bin
-2. Clones or synchronizes the latest repository from Gitee (`https://gitee.com/leerbon/netops.git`)
+2. Clones or synchronizes the latest repository from GitHub (`https://github.com/libing28390-sketch/Release-netops.git`)
 3. Interactively requests custom database credentials & listening ports
 4. Creates a Python virtual environment and installs `backend/requirements.txt`
 5. Installs Node.js dependencies and builds the frontend (`dist/`)
@@ -193,7 +193,7 @@ newgrp docker   # or re-login
 
 ##### Step 1: Clone repository and prepare environment file
 ```bash
-git clone https://gitee.com/leerbon/netops.git netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
 cd netops-automation
 
 # Copy environment template
@@ -281,7 +281,7 @@ For custom environments or development.
 
 ```bash
 # 1. Clone
-git clone https://gitee.com/leerbon/netops.git netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
 cd netops-automation
 
 # 2. Python environment
@@ -376,14 +376,14 @@ Nginx (:80)
 
 ```bash
 # 推荐：先下载再执行，国内极速直达
-curl -fsSL -o /tmp/deploy.sh https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh
+curl -fsSL -o /tmp/deploy.sh https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh
 chmod +x /tmp/deploy.sh
 bash /tmp/deploy.sh
 ```
 
 也支持管道方式：
 ```bash
-curl -fsSL https://gitee.com/leerbon/netops/raw/main/deploy-ubuntu.sh | bash
+curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/main/deploy-ubuntu.sh | bash
 ```
 
 #### 已克隆项目目录内执行
@@ -404,7 +404,7 @@ chmod +x deploy-ubuntu.sh
 #### 脚本自动完成的步骤
 
 1. 安装系统包：Python 3、Node.js 22、Nginx、PostgreSQL、libcap2-bin
-2. 自动从 Gitee 极速拉取或同步最新仓库代码 (`https://gitee.com/leerbon/netops.git`)
+2. 自动从 GitHub 极速拉取或同步最新仓库代码 (`https://github.com/libing28390-sketch/Release-netops.git`)
 3. 交互式询问并设定自定义口令及端口
 4. 创建 Python 虚拟环境并安装 `backend/requirements.txt`
 5. 安装 Node.js 依赖并构建前端（`dist/`）
@@ -465,7 +465,7 @@ newgrp docker   # 或重新登录
 
 ##### 第一步：克隆项目并准备环境文件
 ```bash
-git clone https://gitee.com/leerbon/netops.git netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
 cd netops-automation
 
 # 拷贝环境配置模版
@@ -553,7 +553,7 @@ server_name netops.example.com;
 
 ```bash
 # 1. 克隆项目
-git clone https://gitee.com/leerbon/netops.git netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
 cd netops-automation
 
 # 2. Python 环境
