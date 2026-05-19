@@ -7,49 +7,58 @@ on:
   workflow_dispatch: # 允许在网页上点击按钮手动触发
 
 jobs:
-  build_and_sync:
+  build_so:
     runs-on: ubuntu-latest # 强制使用 Ubuntu 环境以编译生成 .so 文件
-    
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: 1. 拉取开发库代码
         uses: actions/checkout@v4
 
-      - name: 2. 配置 Python 多版本环境
+      - name: 2. 配置 Python 环境 (${{ matrix.python-version }})
         uses: actions/setup-python@v5
         with:
-          python-version: |
-            3.10
-            3.11
-            3.12
+          python-version: ${{ matrix.python-version }}
 
-      - name: 3. 安装 Cython 编译依赖（所有版本）
+      - name: 3. 安装 Cython 编译依赖
         run: |
-          python3.10 -m pip install cython setuptools
-          python3.11 -m pip install cython setuptools
-          python3.12 -m pip install cython setuptools
+          python -m pip install --upgrade pip
+          python -m pip install cython setuptools
 
-      - name: 4. 编译核心安全代码（Python 3.10 / 3.11 / 3.12）
+      - name: 4. 编译核心安全代码
         run: |
-          # 编译函数：每个版本独立编译，互不干扰
-          compile_for_version() {
-            local pybin="$1"
-            echo "--- 编译 $($pybin --version) ---"
-            # 清理上一次编译的 build/ 目录，避免版本混用
-            rm -rf build/
-            $pybin scripts/compile_license.py build_ext --inplace
-          }
-
-          compile_for_version python3.10
-          compile_for_version python3.11
-          compile_for_version python3.12
-
-          # 清理最终残留的 build/ 目录
+          # 清理上一次编译的 build/ 目录，避免版本混用
           rm -rf build/
+          python scripts/compile_license.py build_ext --inplace
 
-          echo "--- 编译产物 ---"
-          ls backend/license_auth/*.so 2>/dev/null || echo "警告: 未找到 .so 文件"
+      - name: 5. 暂存编译产物 (.so)
+        uses: actions/upload-artifact@v4
+        with:
+          name: so-binaries-${{ matrix.python-version }}
+          path: backend/license_auth/*.so
 
-      - name: 5. 彻底清理敏感文件与原始源码
+  release:
+    runs-on: ubuntu-latest
+    needs: build_so
+    steps:
+      - name: 1. 拉取开发库代码
+        uses: actions/checkout@v4
+
+      - name: 2. 下载所有 Python 版本的编译产物 (.so)
+        uses: actions/download-artifact@v4
+        with:
+          path: temp_artifacts/
+
+      - name: 3. 归档编译好的 .so 文件到对应目录
+        run: |
+          # 移动下载的各个版本 .so 文件到存放目录
+          find temp_artifacts/ -name "*.so" -exec cp {} backend/license_auth/ \;
+          rm -rf temp_artifacts/
+          echo "--- 包含的 .so 编译产物 ---"
+          ls -lh backend/license_auth/*.so
+
+      - name: 4. 彻底清理敏感文件与原始源码
         run: |
           # ── License 核心：删除原始 Python 源码及 Cython 中间 C 文件 ──
           rm -f backend/license_auth/verifier.py   backend/license_auth/verifier.c
@@ -100,7 +109,7 @@ jobs:
           # ── GitHub Actions 配置（发布仓库不需要 CI）──
           rm -rf .github/
           
-      - name: 6. 将处理后的安全代码推送到对外发布仓库
+      - name: 5. 将处理后的安全代码推送到对外发布仓库
         run: |
           # 配置自动化机器人的 Git 身份
           git config --global user.name "GitHub Action Bot"
