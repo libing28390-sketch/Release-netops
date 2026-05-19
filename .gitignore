@@ -50,6 +50,4 @@ video_presentation/
 scripts/generate_azure_speech.py
 scripts/generate_video_audio.py
 test_dragon.mp3
-tools/license_issuer/issued/registry.json
-tools/license_issuer/issued/registry.json
-tools/license_issuer/issued/registry.json
+docs/tts_scripts/

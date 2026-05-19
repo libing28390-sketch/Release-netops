@@ -40,6 +40,19 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
   const now24h = Date.now() - 86400000;
   const failedCount24h = jobs.filter(j => j.status === 'failed' && j.created_at && new Date(j.created_at).getTime() > now24h).length;
 
+  const hasDevices = devices.length > 0;
+
+  // Find latest unread notification to display message context
+  const latestAlert = [...notifications]
+    .filter(n => !n.read)
+    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())[0];
+
+  const latestAlertColor = latestAlert?.severity === 'critical'
+    ? 'text-red-600 dark:text-red-400'
+    : latestAlert?.severity === 'major' || latestAlert?.severity === 'high'
+      ? 'text-orange-600 dark:text-orange-400'
+      : 'text-black/45 dark:text-white/40';
+
   // Alert severity breakdown from notifications
   const criticalAlerts = notifications.filter(n => n.severity === 'critical' && !n.read).length;
   const majorAlerts = notifications.filter(n => (n.severity === 'major' || n.severity === 'high') && !n.read).length;
@@ -57,8 +70,6 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
 
   // Job success rate trend (for overlay on compliance chart)
   const jobSuccessTrend = complianceTrend.map((point, i) => {
-    const days7 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const d = new Date();
     d.setDate(d.getDate() - (complianceTrend.length - 1 - i));
     const dateStr = d.toISOString().slice(0, 10);
@@ -67,9 +78,9 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
     return { ...point, jobRate: successRate };
   });
 
-  const healthLevel = hostResources?.status === 'critical' || unreadNotificationCount >= 5 || onlinePct < 30 || (devices.length > 0 && compPct === 0)
+  const healthLevel = hostResources?.status === 'critical' || unreadNotificationCount >= 5 || (hasDevices && onlinePct < 30) || (hasDevices && compPct === 0)
     ? 'critical'
-    : hostResources?.status === 'degraded' || unreadNotificationCount > 0 || onlinePct < 60 || compPct < 50
+    : hostResources?.status === 'degraded' || unreadNotificationCount > 0 || (hasDevices && onlinePct < 60) || (hasDevices && compPct < 50)
       ? 'degraded'
       : 'healthy';
   const healthLabel = healthLevel === 'critical' ? t('systemCritical') : healthLevel === 'degraded' ? t('systemDegraded') : t('systemHealthy');
@@ -102,10 +113,10 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             <span className={`px-3 py-1 text-[10px] font-bold rounded-full uppercase tracking-wider ${healthColor} ${healthLevel === 'critical' ? 'animate-pulse' : ''}`}>
               {healthLabel}
             </span>
-            <button onClick={() => navigate('/monitoring')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs'}>
+            <button onClick={() => navigate('/monitor/telemetry')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs'}>
               {language === 'zh' ? '查看平台资源' : 'View Host Resources'}
             </button>
-            <button onClick={() => navigate('/automation/execute')} className={primaryActionBtnClass + ' !py-1.5 !text-xs'}>
+            <button onClick={() => navigate('/automation/tasks')} className={primaryActionBtnClass + ' !py-1.5 !text-xs'}>
               {t('openAutomation')}
             </button>
           </>
@@ -115,7 +126,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
       <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4">
         {/* Total Assets */}
-        <div onClick={() => setActiveTab('inventory')} className="bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-[#005073]/20 transition-all cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
+        <div onClick={() => navigate('/assets/devices')} className="bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-[#005073]/20 transition-all cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('totalAssets')}</p>
             <p className="text-3xl font-bold monitoring-data text-[#005073]">{assetsTotal}</p>
@@ -126,39 +137,71 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
 
         {/* Online Nodes — with inline micro progress bar */}
-        <div onClick={() => setActiveTab('inventory')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 group hover:shadow-md hover:border-emerald-200 transition-all cursor-pointer ${onlinePct < 30 ? 'border-l-[3px] border-l-red-500' : onlinePct < 60 ? 'border-l-[3px] border-l-orange-400' : ''}`}>
+        <div 
+          onClick={() => {
+            const hasOffline = devices.some(d => d.status === 'offline');
+            if (hasOffline) {
+              navigate('/inventory/devices?status=offline');
+            } else {
+              navigate('/inventory/devices');
+            }
+          }}
+          className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 group hover:shadow-md hover:border-emerald-200 transition-all cursor-pointer ${
+            hasDevices ? (onlinePct < 30 ? 'border-l-[3px] border-l-red-500' : onlinePct < 60 ? 'border-l-[3px] border-l-orange-400' : '') : ''
+          }`}
+        >
           <div className="flex items-center justify-between">
             <div className="min-w-0">
               <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('onlineNodes')}</p>
               <div className="flex items-baseline gap-1.5">
-                <span className={`text-3xl font-bold monitoring-data ${onlinePct < 30 ? 'text-red-600' : onlinePct < 60 ? 'text-orange-600' : 'text-emerald-600'}`}>{onlineCount}</span>
+                <span className={`text-3xl font-bold monitoring-data ${
+                  hasDevices ? (onlinePct < 30 ? 'text-red-600' : onlinePct < 60 ? 'text-orange-600' : 'text-emerald-600') : 'text-[#005073]'
+                }`}>{onlineCount}</span>
                 <span className="text-sm text-black/30 font-medium">/ {devices.length}</span>
               </div>
             </div>
-            <div className={`p-3 rounded-xl ${onlinePct < 30 ? 'bg-red-50 text-red-600' : onlinePct < 60 ? 'bg-orange-50 text-orange-600' : 'bg-emerald-50 text-emerald-600'} group-hover:scale-110 transition-transform`}>
+            <div className={`p-3 rounded-xl ${
+              hasDevices 
+                ? (onlinePct < 30 ? 'bg-red-50 text-red-600' : onlinePct < 60 ? 'bg-orange-50 text-orange-600' : 'bg-emerald-50 text-emerald-600')
+                : 'bg-slate-50 text-slate-500'
+            } group-hover:scale-110 transition-transform`}>
               <Activity size={24} />
             </div>
           </div>
           {/* Micro progress bar */}
           <div className="mt-2 w-full h-1.5 bg-black/5 rounded-full overflow-hidden">
-            <div className={`h-full rounded-full transition-all duration-700 ${onlinePct < 30 ? 'bg-red-500' : onlinePct < 60 ? 'bg-orange-400' : 'bg-emerald-500'}`} style={{ width: `${onlinePct}%` }} />
+            <div className={`h-full rounded-full transition-all duration-700 ${
+              hasDevices ? (onlinePct < 30 ? 'bg-red-500' : onlinePct < 60 ? 'bg-orange-400' : 'bg-emerald-500') : 'bg-slate-300'
+            }`} style={{ width: `${hasDevices ? onlinePct : 0}%` }} />
           </div>
-          <p className="text-[10px] text-black/30 font-medium mt-1">{onlinePct}% {language === 'zh' ? '在线' : 'online'}</p>
+          <p className="text-[10px] text-black/30 font-medium mt-1">
+            {hasDevices 
+              ? `${onlinePct}% ${language === 'zh' ? '在线' : 'online'}` 
+              : (language === 'zh' ? '暂无设备' : 'No devices')}
+          </p>
         </div>
 
         {/* Compliance */}
-        <div onClick={() => setActiveTab('compliance')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-[#00bceb]/20 transition-all cursor-pointer ${compPct === 0 ? 'border-l-[3px] border-l-red-500' : compPct < 50 ? 'border-l-[3px] border-l-orange-400' : ''}`}>
+        <div onClick={() => navigate('/compliance')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-[#00bceb]/20 transition-all cursor-pointer ${
+          hasDevices ? (compPct === 0 ? 'border-l-[3px] border-l-red-500' : compPct < 50 ? 'border-l-[3px] border-l-orange-400' : '') : ''
+        }`}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('complianceRate')}</p>
-            <p className={`text-3xl font-bold monitoring-data ${compPct === 0 ? 'text-red-600' : compPct < 50 ? 'text-orange-600' : 'text-[#00bceb]'}`}>{compPct}%</p>
+            <p className={`text-3xl font-bold monitoring-data ${
+              hasDevices ? (compPct === 0 ? 'text-red-600' : compPct < 50 ? 'text-orange-600' : 'text-[#00bceb]') : 'text-[#005073]'
+            }`}>{hasDevices ? `${compPct}%` : '--'}</p>
           </div>
-          <div className={`p-3 rounded-xl ${compPct === 0 ? 'bg-red-50 text-red-600' : compPct < 50 ? 'bg-orange-50 text-orange-600' : 'bg-[#00bceb]/5 text-[#00bceb]'} group-hover:scale-110 transition-transform`}>
+          <div className={`p-3 rounded-xl ${
+            hasDevices 
+              ? (compPct === 0 ? 'bg-red-50 text-red-600' : compPct < 50 ? 'bg-orange-50 text-orange-600' : 'bg-[#00bceb]/5 text-[#00bceb]')
+              : 'bg-slate-50 text-slate-500'
+          } group-hover:scale-110 transition-transform`}>
             <ShieldCheck size={24} />
           </div>
         </div>
 
         {/* Failed Tasks (24h) */}
-        <div onClick={() => setActiveTab('history')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-red-200 transition-all cursor-pointer ${failedCount24h > 0 ? 'border-l-[3px] border-l-red-500' : ''}`}>
+        <div onClick={() => navigate('/automation/history')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-red-200 transition-all cursor-pointer ${failedCount24h > 0 ? 'border-l-[3px] border-l-red-500' : ''}`}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('failedTasks')}</p>
             <div className="flex items-baseline gap-1.5">
@@ -172,7 +215,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
 
         {/* Platform Host — expanded with CPU/MEM/DISK bars */}
-        <div onClick={() => navigate('/monitoring')} className={`col-span-2 md:col-span-1 bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 group hover:shadow-md hover:border-[#005073]/20 transition-all cursor-pointer ${hostResources?.status === 'critical' ? 'border-l-[3px] border-l-red-500' : hostResources?.status === 'degraded' ? 'border-l-[3px] border-l-orange-400' : ''}`}>
+        <div onClick={() => navigate('/monitor/telemetry')} className={`col-span-2 md:col-span-1 bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 group hover:shadow-md hover:border-[#005073]/20 transition-all cursor-pointer ${hostResources?.status === 'critical' ? 'border-l-[3px] border-l-red-500' : hostResources?.status === 'degraded' ? 'border-l-[3px] border-l-orange-400' : ''}`}>
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '平台宿主机' : 'Platform Host'}</p>
             <div className={`p-2 rounded-lg ${hostResources?.status === 'critical' ? 'bg-red-50 text-red-600' : hostResources?.status === 'degraded' ? 'bg-orange-50 text-orange-600' : 'bg-[#005073]/5 text-[#005073]'} group-hover:scale-110 transition-transform`}>
@@ -189,9 +232,9 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 <div key={res.label} className="flex items-center gap-1.5">
                   <span className="text-[9px] font-bold text-black/30 w-7 shrink-0">{res.label}</span>
                   <div className="flex-1 h-1.5 bg-black/5 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full transition-all duration-700 ${res.value > 90 ? 'bg-red-500' : res.value > 70 ? 'bg-orange-400' : 'bg-[#00bceb]'}`} style={{ width: `${Math.round(res.value)}%` }} />
+                    <div className={`h-full rounded-full transition-all duration-700 ${res.value > 80 ? 'bg-red-500 animate-pulse' : res.value > 65 ? 'bg-orange-400' : 'bg-[#00bceb]'}`} style={{ width: `${Math.round(res.value)}%` }} />
                   </div>
-                  <span className={`text-[10px] font-bold w-8 text-right ${res.value > 90 ? 'text-red-600' : res.value > 70 ? 'text-orange-600' : 'text-black/50'}`}>{Math.round(res.value)}%</span>
+                  <span className={`text-[10px] font-bold w-8 text-right ${res.value > 80 ? 'text-red-600 font-extrabold' : res.value > 65 ? 'text-orange-600 font-bold' : 'text-black/50'}`}>{Math.round(res.value)}%</span>
                 </div>
               ))}
             </div>
@@ -203,17 +246,21 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
 
       {/* Alert Summary Strip */}
       {unreadNotificationCount > 0 && (
-        <div onClick={() => navigate('/alerts')} className="bg-white rounded-2xl border border-black/5 shadow-sm px-6 py-4 flex items-center justify-between cursor-pointer hover:shadow-md hover:border-black/10 transition-all group">
-          <div className="flex items-center gap-4">
+        <div onClick={() => navigate('/alerts/desk')} className="bg-white rounded-2xl border border-black/5 shadow-sm px-6 py-4 flex items-center justify-between cursor-pointer hover:shadow-md hover:border-black/10 transition-all group">
+          <div className="flex items-center gap-4 flex-1 min-w-0">
             <div className="p-2.5 rounded-xl bg-red-50 text-red-600 group-hover:scale-110 transition-transform">
               <Bell size={20} />
             </div>
-            <div>
+            <div className="flex-1 min-w-0">
               <p className="text-sm font-bold text-[#00172D]">{t('activeAlertsShort')}</p>
-              <p className="text-[10px] text-black/40 mt-0.5">{language === 'zh' ? '点击查看告警中心' : 'Click to view Alert Center'}</p>
+              <p className={`text-[10px] font-semibold mt-0.5 truncate max-w-[200px] sm:max-w-[400px] md:max-w-[600px] ${latestAlertColor}`}>
+                {latestAlert 
+                  ? `${language === 'zh' ? '最新告警' : 'Latest'}: ${latestAlert.title || latestAlert.message}`
+                  : (language === 'zh' ? '点击查看告警中心' : 'Click to view Alert Center')}
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             {criticalAlerts > 0 && (
               <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 text-red-700">
                 <AlertCircle size={12} /> {criticalAlerts} {language === 'zh' ? '严重' : 'Critical'}
@@ -324,14 +371,26 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               <span className="text-[10px] text-black/40 font-medium">{language === 'zh' ? '总设备' : 'Total'}</span>
             </div>
           </div>
-          <div className="mt-6 space-y-3">
+          <div className="mt-6 space-y-2">
             {platformData.map((item, i) => (
-              <div key={i} className="flex items-center justify-between">
+              <div 
+                key={i} 
+                onClick={() => {
+                  const pKey = (item as any).platform;
+                  if (pKey) {
+                    navigate(`/inventory/devices?platform=${pKey}`);
+                  } else {
+                    navigate('/inventory/devices');
+                  }
+                }}
+                className="flex items-center justify-between cursor-pointer hover:bg-black/[0.04] p-1 px-2 rounded-xl transition-all group"
+                title={language === 'zh' ? `点击查看所有 ${item.name} 设备` : `Click to view all ${item.name} devices`}
+              >
                 <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 rounded-full" style={{backgroundColor: item.color}} />
-                  <span className="text-xs font-semibold text-black/60">{item.name}</span>
+                  <div className="w-2.5 h-2.5 rounded-full group-hover:scale-110 transition-transform duration-300" style={{backgroundColor: item.color}} />
+                  <span className="text-xs font-semibold text-black/60 group-hover:text-black/85 transition-colors">{item.name}</span>
                 </div>
-                <span className="text-xs font-bold text-[#00172D]">{item.value}%</span>
+                <span className="text-xs font-bold text-[#00172D] group-hover:text-[#00bceb] transition-colors">{item.value}%</span>
               </div>
             ))}
           </div>
@@ -378,13 +437,13 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               </div>
             ))}
             {jobs.length === 0 && (
-              <div className="text-center py-10">
-                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#00bceb]/5 mb-3">
-                  <Zap size={24} className="text-[#00bceb]/30" />
+              <div className="text-center py-5">
+                <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-[#00bceb]/5 mb-2">
+                  <Zap size={18} className="text-[#00bceb]/40" />
                 </div>
-                <p className="text-sm text-black/35 font-medium">{language === 'zh' ? '一切正常，暂无新任务' : 'All clear — no recent tasks'}</p>
-                <button onClick={() => navigate('/automation/execute')} className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-[#00bceb]/10 text-[#008db1] hover:bg-[#00bceb]/20 transition-all">
-                  <Play size={12} />
+                <p className="text-xs text-black/45 font-medium">{language === 'zh' ? '一切正常，暂无新任务' : 'All clear — no recent tasks'}</p>
+                <button onClick={() => navigate('/automation/tasks')} className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-[#00bceb]/10 text-[#008db1] hover:bg-[#00bceb]/20 transition-all">
+                  <Play size={10} />
                   {language === 'zh' ? '执行任务' : 'Run a Task'}
                 </button>
               </div>
@@ -415,13 +474,13 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               </div>
             ))}
             {scheduledTasks.filter(st => st.status === 'active').length === 0 && (
-              <div className="text-center py-10">
-                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-orange-50 mb-3">
-                  <Clock size={24} className="text-orange-300" />
+              <div className="text-center py-5">
+                <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-orange-50 mb-2">
+                  <Clock size={18} className="text-orange-400/70" />
                 </div>
-                <p className="text-sm text-black/35 font-medium">{language === 'zh' ? '暂无计划中的任务' : 'No scheduled tasks yet'}</p>
-                <button onClick={() => navigate('/config/schedule')} className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all">
-                  <CalendarPlus size={12} />
+                <p className="text-xs text-black/45 font-medium">{language === 'zh' ? '暂无计划中的任务' : 'No scheduled tasks yet'}</p>
+                <button onClick={() => navigate('/config/schedule')} className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all">
+                  <CalendarPlus size={10} />
                   {language === 'zh' ? '创建定时任务' : 'Create Schedule'}
                 </button>
               </div>

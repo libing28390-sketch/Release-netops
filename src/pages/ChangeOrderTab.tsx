@@ -22,7 +22,7 @@ import type { User as UserOption, SessionUser, ConfigTemplate } from '../types';
    ═══════════════════════════════════════════════════════════════════ */
 
 const FEATURE_CONTROL_SHEET = import.meta.env.VITE_FEATURE_CONTROL_SHEET === '0' ? false : true;
-const FEATURE_TODO_SUBTABS = true; // Stage-3: split "个人待办" into 待我审核/待我实施/待我修改
+const FEATURE_TODO_SUBTABS = false; // Stage-3: split "个人待办" into 待我审核/待我实施/待我修改
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
@@ -1278,7 +1278,9 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       // View tab specific filters
       if (viewTab === 'my_todo' && currentUser.username) {
         params.set('my_todo', currentUser.username);
-        params.set('my_todo_kind', myTodoSubTab);
+        if (FEATURE_TODO_SUBTABS) {
+          params.set('my_todo_kind', myTodoSubTab);
+        }
       } else if (viewTab === 'group_todo' && Array.isArray(currentUser.change_groups) && currentUser.change_groups.length > 0) {
         params.set('group_todo', currentUser.change_groups.join(','));
       } else if (viewTab === 'my_focus' && currentUser.id) {
