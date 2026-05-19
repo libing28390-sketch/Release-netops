@@ -2,7 +2,7 @@
 FROM node:20-alpine AS frontend-build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --silent
+RUN npm config set registry https://registry.npmmirror.com && npm ci --silent
 COPY . .
 RUN npm run build
 
@@ -14,9 +14,19 @@ LABEL maintainer="NetOps Team"
 LABEL python.version="3.10"
 LABEL description="Nexora NetOps Platform"
 
-# System dependencies
-RUN apt-get update -qq && \
+# System dependencies (use mirror in China for speed)
+RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list 2>/dev/null || true && \
+    sed -i 's/security.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list 2>/dev/null || true && \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \
+        sed -i 's/security.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update -qq && \
     apt-get install -y --no-install-recommends \
+        build-essential \
+        python3-dev \
+        libcairo2-dev \
+        pkg-config \
         libffi-dev \
         libssl-dev \
         libcap2-bin && \
@@ -26,15 +36,33 @@ WORKDIR /app
 
 # Python dependencies (install before copying code for better layer caching)
 COPY backend/requirements.txt /app/backend/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /app/backend/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ && \
+    pip install --no-cache-dir -r /app/backend/requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
 # Copy backend source
 COPY backend/ /app/backend/
 
-# Verify the license_auth .so is loadable with this Python version
-RUN python -c "import sys; sys.path.insert(0, '/app/backend'); from license_auth.verifier import LicenseVerifier; print('[OK] license_auth.verifier loaded successfully')" || \
-    (echo '[FAIL] license_auth .so is not compatible with Python '$(python --version)'. Re-run the release workflow to recompile.' && exit 1)
+# Compile license modules using Cython during container build to match Python runtime version
+# We write the compilation script inline to avoid dependency on host scripts directory
+RUN pip install --no-cache-dir cython -i https://mirrors.aliyun.com/pypi/simple/ && \
+    echo 'from setuptools import setup, Extension' > /app/compile.py && \
+    echo 'from Cython.Build import cythonize' >> /app/compile.py && \
+    echo 'extensions = [' >> /app/compile.py && \
+    echo '    Extension("backend.license_auth.verifier", ["backend/license_auth/verifier.py"]),' >> /app/compile.py && \
+    echo '    Extension("backend.license_auth.crypto", ["backend/license_auth/crypto.py"]),' >> /app/compile.py && \
+    echo '    Extension("backend.license_auth.middleware", ["backend/license_auth/middleware.py"]),' >> /app/compile.py && \
+    echo ']' >> /app/compile.py && \
+    echo 'setup(ext_modules=cythonize(extensions, compiler_directives={"language_level": "3", "always_allow_keywords": True}), script_args=["build_ext", "--inplace"])' >> /app/compile.py && \
+    python /app/compile.py && \
+    rm -f /app/compile.py && \
+    rm -f /app/backend/license_auth/verifier.py /app/backend/license_auth/crypto.py /app/backend/license_auth/middleware.py && \
+    rm -f /app/backend/license_auth/*.c && \
+    rm -rf /app/build && \
+    pip uninstall -y cython
+
+# Verify the compiled modules can be imported
+RUN python -c "import sys; sys.path.insert(0, '/app/backend'); from license_auth.verifier import get_license_verifier, bootstrap_license_protection; print('[OK] license_auth compiled modules loaded successfully')" || \
+    (echo '[FAIL] license_auth compiled modules are not compatible or import failed.' && exit 1)
 
 # Copy environment template
 COPY .env.example /app/.env.example

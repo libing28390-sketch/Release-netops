@@ -391,6 +391,10 @@ Nexora 使用签名 License 文件控制功能权限和设备数量上限。
 
 ### 部署方式
 
+> [!IMPORTANT]
+> **中国大陆部署建议 / Network Optimization for China Mainland:**
+> 由于国内网络限制，在部署过程中可能会遇到 APT、npm、pip 或 Docker 镜像拉取超时。本项目已在 Docker 构建阶段默认内置了国内镜像源（USTC/Aliyun/npmmirror）。若在宿主机上手动部署或遇到 Docker 镜像拉取超时（`context deadline exceeded`），请务必参考 [DEPLOY.md 中的中国大陆网络优化说明](DEPLOY.md#network-optimizations-for-mainland-china---中国大陆部署网络优化) 配置国内镜像加速器。
+
 #### 方式一 — Ubuntu 一键部署（推荐）
 
 支持 Ubuntu 20.04 / 22.04 / 24.04、GitHub Codespaces 及 Docker 容器环境。

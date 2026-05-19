@@ -17,6 +17,58 @@
 
 ---
 
+## Network Optimizations for Mainland China / 中国大陆部署网络优化
+
+> [!TIP]
+> **Docker Builds are Auto-optimized:**
+> The `Dockerfile` has built-in optimizations for Chinese networks. It automatically configures **USTC mirror** for APT, **Aliyun mirror** for PyPI (pip), and **npmmirror** for Node.js dependencies. You do not need to customize mirrors manually during Docker builds.
+> 
+> **Docker 镜像构建已内置镜像源：**
+> 项目的 `Dockerfile` 中已预配置国内镜像加速源。系统包安装自动使用 **中科大源 (USTC)**，Python 依赖包安装自动使用 **阿里云源 (Aliyun)**，前端依赖构建自动使用 **淘宝 NPM 镜像 (npmmirror)**，无需手动更改。
+
+### Speeding Up Manual & Bare-Metal Deployments / 宿主机与手动部署加速建议
+
+If you are performing a bare-metal deployment (via `./deploy-ubuntu.sh` or manually), we highly recommend setting up local mirrors on your host machine to prevent network timeouts:
+
+如果您在宿主机上使用一键脚本或手动部署，为了避免发生网络超时、失败，建议先配置如下国内镜像源：
+
+1. **Python pip mirror / 临时使用或永久配置 pip 国内源**
+   ```bash
+   # 永久设置 PyPI 镜像源（推荐阿里云或清华源）
+   pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+   ```
+2. **Node.js npm registry / 配置淘宝 NPM 镜像**
+   ```bash
+   # 永久设置 NPM 镜像源
+   npm config set registry https://registry.npmmirror.com
+   ```
+3. **Ubuntu APT Source / 修改 Ubuntu APT 软件源**
+   If `apt-get update` hangs, backup and replace `/etc/apt/sources.list` with Aliyun or Tsinghua mirrors.
+   若宿主机 `apt-get update` 卡死，建议备份并替换 `/etc/apt/sources.list` 为阿里云或清华大学开源镜像源。
+
+### Troubleshooting Docker Pull Failures / 解决 Docker 镜像拉取超时
+When running `docker compose up -d`, you might encounter `context deadline exceeded` due to network blocks on Docker Hub. To solve this, configure a registry mirror in `/etc/docker/daemon.json`:
+
+执行 `docker compose up -d` 时，如果遇到 `context deadline exceeded` 报错（由于 Docker Hub 受限导致基础镜像 `postgres` 或 `nginx` 拉取超时），请在 `/etc/docker/daemon.json` 中配置国内可用的镜像加速器：
+
+```json
+{
+  "registry-mirrors": [
+    "https://dockerpull.cn",
+    "https://docker.unsee.tech",
+    "https://docker.pullpic.ru"
+  ]
+}
+```
+After editing, restart the Docker daemon:
+保存后，重启 Docker 守护进程使配置生效：
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+```
+
+---
+
 ## English
 
 ### Architecture Overview
