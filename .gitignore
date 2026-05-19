@@ -51,3 +51,6 @@ scripts/generate_azure_speech.py
 scripts/generate_video_audio.py
 test_dragon.mp3
 docs/tts_scripts/
+
+# Cython intermediate files
+backend/license_auth/*.c

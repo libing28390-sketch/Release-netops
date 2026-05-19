@@ -22,6 +22,15 @@ def build():
         Extension("backend.license_auth.middleware", ["backend/license_auth/middleware.py"]),
     ]
     
+    # 清理已有的旧 .c 中间文件，强制 Cython 重新生成，防止缓存旧代码
+    import glob
+    for c_file in glob.glob(os.path.join(project_root, "backend/license_auth/*.c")):
+        try:
+            os.remove(c_file)
+            print(f"已清理旧的 C 源码: {c_file}")
+        except Exception:
+            pass
+
     print("开始编译核心模块...")
     setup(
         ext_modules=cythonize(
