@@ -30,6 +30,7 @@ logger = logging.getLogger("license.middleware")
 _EXEMPT_PREFIXES = (
     "/api/license/status", # explicit status check
     "/api/license/upload", # explicit upload
+    "/api/license/machine-id", # retrieve machine id
     "/api/health",       # health check
     "/api/setup",        # initial setup
     "/api/login",        # user authentication (login)

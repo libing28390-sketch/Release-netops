@@ -139,22 +139,40 @@ newgrp docker   # or re-login
 
 #### Start
 
+##### Step 1: Clone repository and prepare environment file
 ```bash
 git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
-# Build frontend first (required — Dockerfile copies dist/)
-npm install && npm run build
-
-# Start all containers
-docker compose up -d --build
+# Copy environment template
+cp .env.example .env
 ```
 
-Access at `http://localhost`.
+Open `.env` and configure:
+- Custom PostgreSQL passwords/usernames.
+- Security keys (`SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`).
+- **Leave `MACHINE_ID_OVERRIDE` blank** for now.
 
-#### Environment variables
+##### Step 2: Start the containers
+```bash
+# Start all containers (frontend will automatically build inside the container)
+docker compose up -d --build
+```
+Access the application at `http://<server-ip>`.
 
-Create a `.env` file before starting:
+##### Step 3: Retrieve Machine ID and bind License (For non-trial licenses)
+If you are using a licensed edition (Standard/Professional/Enterprise):
+1. Visit `http://<server-ip>/api/license/machine-id` (or run `curl http://localhost/api/license/machine-id`) to retrieve your unique Machine ID.
+2. Edit `.env` and set `MACHINE_ID_OVERRIDE=YOUR-COPIED-MACHINE-ID`.
+3. Restart/recreate the containers to apply the configuration:
+   ```bash
+   docker compose up -d
+   ```
+4. Place your `license.json` file in `data/license.json` or upload it in the UI under **Settings → License**.
+
+#### Environment variables reference
+
+An example `.env` file structure:
 
 ```env
 # Database
@@ -175,8 +193,6 @@ CORS_ORIGINS=https://netops.example.com
 PLATFORM_URL=https://netops.example.com
 ALERT_NOTIFY_WEBHOOK_URL=
 ```
-
-Get your Machine ID: `http://<server>/api/license/machine-id`
 
 #### Common commands
 
@@ -269,7 +285,6 @@ sudo systemctl restart netops
 
 # Docker
 git pull
-npm install && npm run build
 docker compose up -d --build
 ```
 
@@ -396,22 +411,40 @@ newgrp docker   # 或重新登录
 
 #### 启动
 
+##### 第一步：克隆项目并准备环境文件
 ```bash
 git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
-# 先构建前端（必须，Dockerfile 会复制 dist/）
-npm install && npm run build
-
-# 启动所有容器
-docker compose up -d --build
+# 拷贝环境配置模版
+cp .env.example .env
 ```
 
-访问地址：`http://localhost`
+打开 `.env` 文件，配置如下参数：
+- 数据库连接信息 (`POSTGRES_USER`, `POSTGRES_PASSWORD` 等)
+- 安全密钥 (`SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`)
+- **此时先保持 `MACHINE_ID_OVERRIDE` 为空**。
 
-#### 环境变量配置
+##### 第二步：启动所有容器
+```bash
+# 启动所有容器（前端会在 Docker 容器内自动构建，宿主机无需安装 Node.js/npm）
+docker compose up -d --build
+```
+启动后，可通过浏览器访问 `http://<服务器IP>`。
 
-启动前创建 `.env` 文件：
+##### 第三步：获取机器 ID 并绑定 License（非试用版必填）
+如果您使用的是商业授权版本（标准版/专业版/企业版）：
+1. 访问 `http://<服务器IP>/api/license/machine-id`（或在宿主机运行 `curl http://localhost/api/license/machine-id`）来获取这台机器的唯一机器码。
+2. 编辑 `.env` 文件，将获取到的机器码填入 `MACHINE_ID_OVERRIDE=你的机器码`。
+3. 运行以下命令应用并重启后端容器：
+   ```bash
+   docker compose up -d
+   ```
+4. 将厂商提供的 `license.json` 文件放置到 `data/license.json`（或登录系统后，在 **设置 → License** 界面上传）。
+
+#### 环境变量参考
+
+`.env` 配置文件结构参考：
 
 ```env
 # 数据库
@@ -432,8 +465,6 @@ CORS_ORIGINS=https://netops.example.com
 PLATFORM_URL=https://netops.example.com
 ALERT_NOTIFY_WEBHOOK_URL=
 ```
-
-机器 ID 获取：访问 `http://<服务器>/api/license/machine-id`
 
 #### 常用命令
 
@@ -526,6 +557,5 @@ sudo systemctl restart netops
 
 # Docker 部署
 git pull
-npm install && npm run build
 docker compose up -d --build
 ```

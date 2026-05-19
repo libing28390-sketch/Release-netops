@@ -361,5 +361,36 @@
     "max_version": "99.9.9",
     "notes": null,
     "filename": "license_cisco_20260517_224849.json"
+  },
+  {
+    "license_id": "95001ec3-f522-49d1-b0d2-2e7df8739093",
+    "company": "nexora",
+    "license_type": "enterprise",
+    "issued_at": "2026-05-18T15:24:52.173342+00:00",
+    "expire_at": "2027-05-18T23:59:59",
+    "device_limit": 1000,
+    "server_limit": 1000,
+    "features": [
+      "automation",
+      "config_management",
+      "monitoring",
+      "alerting",
+      "rbac",
+      "change_orders",
+      "inspections",
+      "topology",
+      "ipam",
+      "capacity",
+      "compliance",
+      "reports",
+      "api_access",
+      "scheduled_jobs",
+      "password_rotation",
+      "access_center"
+    ],
+    "machine_id": "889B-17A8-F63D-16BB",
+    "max_version": "99.9.9",
+    "notes": null,
+    "filename": "license_nexora_20260518_232452.json"
   }
 ]

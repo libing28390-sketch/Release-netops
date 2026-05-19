@@ -224,29 +224,36 @@ Default credentials: `admin / admin` — **change immediately after first login.
 
 Requires Docker and Docker Compose. Includes PostgreSQL, backend, and Nginx in one stack.
 
+##### Step 1: Clone repository and prepare environment file
 ```bash
-# Clone the repository
 git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
-# Build frontend and start all containers
-npm install && npm run build
+# Copy environment template
+cp .env.example .env
+```
+
+Open `.env` and configure:
+- Custom PostgreSQL passwords/usernames.
+- Security keys (`SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`).
+- **Leave `MACHINE_ID_OVERRIDE` blank** for now.
+
+##### Step 2: Start the containers
+```bash
+# Start all containers (frontend will automatically build inside the container)
 docker compose up -d --build
 ```
+Access the application at `http://localhost`.
 
-Access at `http://localhost` (Nginx on port 80).
-
-**Key environment variables** (set in `.env` before starting):
-
-```env
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=your-secure-password
-POSTGRES_DB=netops
-CREDENTIAL_ENCRYPTION_KEY=your-random-32-char-key
-MACHINE_ID_OVERRIDE=YOUR-MACHINE-ID   # required for non-trial licenses
-```
-
-Get your Machine ID from: `http://<server>/api/license/machine-id`
+##### Step 3: Retrieve Machine ID and bind License (For non-trial licenses)
+If you are using a licensed edition (Standard/Professional/Enterprise):
+1. Visit `http://localhost/api/license/machine-id` (or run `curl http://localhost/api/license/machine-id`) to retrieve your unique Machine ID.
+2. Edit `.env` and set `MACHINE_ID_OVERRIDE=YOUR-COPIED-MACHINE-ID`.
+3. Restart/recreate the containers to apply the configuration:
+   ```bash
+   docker compose up -d
+   ```
+4. Place your `license.json` file in `data/license.json` or upload it in the UI under **Settings → License**.
 
 **Common Docker commands:**
 
@@ -437,31 +444,38 @@ chmod +x deploy-ubuntu.sh
 
 #### 方式二 — Docker Compose 部署
 
-包含 PostgreSQL、后端、Nginx 三个容器，一条命令启动完整环境。
+包含 PostgreSQL、后端、Nginx 三个容器，无需安装 Node.js/npm/Python 等环境，一条命令启动完整环境。
 
+##### 第一步：克隆项目并准备环境文件
 ```bash
-# 克隆项目
 git clone https://gitee.com/leerbon/netops.git netops-automation
 cd netops-automation
 
-# 构建前端并启动所有容器
-npm install && npm run build
+# 拷贝环境配置模版
+cp .env.example .env
+```
+
+打开 `.env` 文件，配置如下参数：
+- 数据库连接信息 (`POSTGRES_USER`, `POSTGRES_PASSWORD` 等)
+- 安全密钥 (`SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`)
+- **此时先保持 `MACHINE_ID_OVERRIDE` 为空**。
+
+##### 第二步：启动所有容器
+```bash
+# 启动所有容器（前端会在 Docker 容器内自动构建，宿主机无需安装 Node.js/npm）
 docker compose up -d --build
 ```
+启动后，可通过浏览器访问 `http://localhost`。
 
-访问地址：`http://localhost`（Nginx 监听 80 端口）。
-
-**启动前在 `.env` 中配置关键变量：**
-
-```env
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=你的安全密码
-POSTGRES_DB=netops
-CREDENTIAL_ENCRYPTION_KEY=随机32位密钥
-MACHINE_ID_OVERRIDE=你的机器ID   # 非试用版 License 必填
-```
-
-机器 ID 获取方式：访问 `http://<服务器>/api/license/machine-id`
+##### 第三步：获取机器 ID 并绑定 License（非试用版必填）
+如果您使用的是商业授权版本（标准版/专业版/企业版）：
+1. 访问 `http://localhost/api/license/machine-id`（或在宿主机运行 `curl http://localhost/api/license/machine-id`）来获取这台机器的唯一机器码。
+2. 编辑 `.env` 文件，将获取到的机器码填入 `MACHINE_ID_OVERRIDE=你的机器码`。
+3. 运行以下命令应用并重启后端容器：
+   ```bash
+   docker compose up -d
+   ```
+4. 将厂商提供的 `license.json` 文件放置到 `data/license.json`（或登录系统后，在 **设置 → License** 界面上传）。
 
 **常用 Docker 命令：**
 
@@ -580,6 +594,5 @@ sudo systemctl restart netops
 
 # Docker 部署
 git pull
-npm install && npm run build
 docker compose up -d --build
 ```
