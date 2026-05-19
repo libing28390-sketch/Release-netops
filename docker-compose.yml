@@ -23,6 +23,7 @@ services:
       - "8003"
     environment:
       - NODE_ENV=production
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-netops}
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-change-me-to-a-random-secret}
       - MACHINE_ID_OVERRIDE=${MACHINE_ID_OVERRIDE:-}
