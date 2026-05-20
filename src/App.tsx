@@ -50,7 +50,6 @@ import { useAutomation } from './hooks/useAutomation';
 import { useMonitoring } from './hooks/useMonitoring';
 import { useUserManagement } from './hooks/useUserManagement';
 import { useHistoryAuditCompliance } from './hooks/useHistoryAuditCompliance';
-import { useInventoryPageData } from './hooks/useInventoryPageData';
 import { useTopologyVisibleDevices } from './hooks/useTopologyVisibleDevices';
 import { useTopologySelectionSync } from './hooks/useTopologySelectionSync';
 import { useResourceSignals } from './hooks/useResourceSignals';

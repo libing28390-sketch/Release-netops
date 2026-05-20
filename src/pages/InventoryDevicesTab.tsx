@@ -147,6 +147,21 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
       .catch(() => {});
   }, []);
 
+  // ── Fetch inventory data whenever filters / pagination / refresh tick change ──
+  useEffect(() => {
+    void fetchInventory();
+  }, [
+    fetchInventory,
+    inventorySearch,
+    inventoryPlatformFilter,
+    inventoryRoleFilter,
+    inventoryStatusFilter,
+    inventoryPage,
+    inventoryPageSize,
+    inventorySortConfig,
+    inventoryRefreshTick,
+  ]);
+
   useEffect(() => {
     if (!batchTagOpen) return;
     const handler = (e: MouseEvent) => {
