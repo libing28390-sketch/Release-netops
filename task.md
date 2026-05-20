@@ -1,0 +1,14 @@
+- `[x]` Phase 3.1: Inventory Domain
+  - `[x]` Create `src/store/inventoryStore.ts`
+  - `[x]` Extract `inventoryRows`, `inventoryTotal`, `inventoryPage`, filters, sorting states from `App.tsx`
+  - `[x]` Extract device handlers (`handleImport`, `handleExport`, `handleDeleteDevice`, etc.) from `App.tsx`
+  - `[x]` Update `src/pages/InventoryDevicesTab.tsx` to use `useInventoryStore`
+  - `[x]` Remove props from `App.tsx` passing into `AppMainContent.tsx` for Inventory
+- `[x]` Phase 3.2: Monitoring Domain
+  - `[x]` Create `src/store/monitoringStore.ts`
+  - `[x]` Extract all `monitorXxx` states and fetch handlers from `App.tsx`
+  - `[x]` Update `src/components/MonitoringCenter.tsx` to use `useMonitoringStore`
+  - `[x]` Remove props from `App.tsx` for Monitoring
+- `[x]` Phase 3.3: AppMainContent Cleanup
+  - `[x]` Clean up `appProps` in `AppMainContent.tsx`
+  - `[x]` Verify TypeScript types via `tsc --noEmit`
