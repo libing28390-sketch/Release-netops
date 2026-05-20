@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useInventoryStore } from '../store/inventoryStore';
+import { useInventoryTableActions } from '../hooks/useInventoryTableActions';
 import {
   Upload, Download, Plus, Search, Activity,
   AlertTriangle, CheckCircle2, XCircle, Server, Router,
@@ -89,32 +91,8 @@ const ColumnToggle: React.FC<{
    Main Component
    ════════════════════════════════════════════════════════ */
 interface InventoryDevicesTabProps {
-  inventoryRows: Device[];
-  inventoryTotal: number;
-  inventoryStatusCounts: Record<string, number>;
-  inventoryPage: number;
-  setInventoryPage: (v: number) => void;
-  inventoryPageSize: number;
-  setInventoryPageSize: (v: number) => void;
-  inventorySearch: string;
-  setInventorySearch: (v: string) => void;
-  inventoryPlatformFilter: string;
-  setInventoryPlatformFilter: (v: string) => void;
-  inventoryRoleFilter: string;
-  setInventoryRoleFilter: (v: string) => void;
-  inventoryStatusFilter: string;
-  setInventoryStatusFilter: (v: string) => void;
-  inventoryLifecycleFilter: string;
-  setInventoryLifecycleFilter: (v: string) => void;
-  inventorySortConfig: { key: string; direction: 'asc' | 'desc' } | null;
-  inventoryLoading: boolean;
-  selectedDeviceIds: string[];
-  setSelectedDeviceIds: React.Dispatch<React.SetStateAction<string[]>>;
-  handleSort: (key: string) => void;
   handleImport: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleExport: () => void;
-  handleDeleteDevice: (id: string) => void;
-  handleDeleteSelected: () => void;
   handleShowDetails: (device: Device) => void;
   handleTestConnection: (device: Device, mode?: 'quick' | 'deep') => void;
   deviceConnectionChecks: Record<string, DeviceConnectionCheckSummary>;
@@ -131,22 +109,28 @@ interface InventoryDevicesTabProps {
 }
 
 const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
-  inventoryRows, inventoryTotal, inventoryStatusCounts, inventoryPage, setInventoryPage,
-  inventoryPageSize, setInventoryPageSize,
-  inventorySearch, setInventorySearch,
-  inventoryPlatformFilter, setInventoryPlatformFilter,
-  inventoryRoleFilter, setInventoryRoleFilter,
-  inventoryStatusFilter, setInventoryStatusFilter,
-  inventoryLifecycleFilter, setInventoryLifecycleFilter,
-  inventorySortConfig, inventoryLoading,
-  selectedDeviceIds, setSelectedDeviceIds,
-  handleSort, handleImport, handleExport,
-  handleDeleteDevice, handleDeleteSelected, handleShowDetails,
+  handleImport, handleExport,
+  handleShowDetails,
   handleTestConnection,
   deviceConnectionChecks, connectionTestingDeviceId,
   setShowAddModal, setShowEditModal, setEditingDevice, setEditForm,
   setSelectedDevice, setActiveTab, onRefresh, language, t,
 }) => {
+  const {
+    inventoryRows, inventoryTotal, inventoryStatusCounts, inventoryPage, setInventoryPage,
+    inventoryPageSize, setInventoryPageSize,
+    inventorySearch, setInventorySearch,
+    inventoryPlatformFilter, setInventoryPlatformFilter,
+    inventoryRoleFilter, setInventoryRoleFilter,
+    inventoryStatusFilter, setInventoryStatusFilter,
+    inventoryLifecycleFilter, setInventoryLifecycleFilter,
+    inventorySortConfig, inventoryLoading,
+    selectedDeviceIds, setSelectedDeviceIds,
+    fetchInventory, inventoryRefreshTick
+  } = useInventoryStore();
+
+  const { handleSort, handleDeleteDevice, handleDeleteSelected } = useInventoryTableActions();
+
   const [quickFilter, setQuickFilter] = useState<'all' | 'offline' | 'warning' | 'healthy'>('all');
   const [columns, setColumns] = useState<ColumnVisibility>({ ...DEFAULT_COLUMNS });
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);

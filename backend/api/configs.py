@@ -153,25 +153,21 @@ def list_devices_with_backups(
     conn = get_db_connection()
     try:
         # Platform whitelist — keep in sync with run_scheduled_backup().
-        platform_filter = (
-            "(LOWER(COALESCE(d.platform,'')) LIKE '%cisco%' "
-            " OR LOWER(COALESCE(d.platform,'')) LIKE '%arista%' "
-            " OR LOWER(COALESCE(d.platform,'')) LIKE '%rgos%' "
-            " OR LOWER(COALESCE(d.platform,'')) LIKE '%ruijie%' "
-            " OR LOWER(COALESCE(d.platform,'')) LIKE '%juniper%' "
-            " OR LOWER(COALESCE(d.platform,'')) LIKE '%junos%' "
-            " OR LOWER(COALESCE(d.platform,'')) LIKE '%huawei%' "
-            " OR LOWER(COALESCE(d.platform,'')) LIKE '%vrp%' "
-            " OR LOWER(COALESCE(d.platform,'')) LIKE '%h3c%' "
-            " OR LOWER(COALESCE(d.platform,'')) LIKE '%comware%')"
+        platform_keywords = [
+            'cisco', 'arista', 'rgos', 'ruijie', 'juniper',
+            'junos', 'huawei', 'vrp', 'h3c', 'comware',
+        ]
+        platform_conditions = " OR ".join(
+            "LOWER(COALESCE(d.platform,'')) LIKE ?" for _ in platform_keywords
         )
+        platform_params = [f"%{kw}%" for kw in platform_keywords]
 
-        where_sql = f"WHERE {platform_filter}"
-        params: list = []
+        where_sql = f"WHERE ({platform_conditions})"
+        params: list = list(platform_params)
         if search and search.strip():
             fuzzy = f"%{search.strip().lower()}%"
             where_sql += " AND (LOWER(d.hostname) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ?)"
-            params = [fuzzy, fuzzy]
+            params.extend([fuzzy, fuzzy])
 
         count_sql = f'''
             SELECT COUNT(DISTINCT d.id)
