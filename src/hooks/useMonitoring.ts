@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import type { HostResourceSnapshot } from '../types';
+import { useCallback, useEffect, useRef } from 'react';
+import { useMonitoringStore } from '../store/monitoringStore';
 
 interface UseMonitoringProps {
   isAuthenticated: boolean;
@@ -13,38 +13,66 @@ const isAbortError = (error: unknown) => {
   return typeof error === 'object' && (error as { name?: string }).name === 'AbortError';
 };
 
-export const useMonitoring = ({ isAuthenticated, activeTab, language }: UseMonitoringProps) => {
-  const [monitorSearch, setMonitorSearch] = useState('');
-  const [monitorSearchResults, setMonitorSearchResults] = useState<any[]>([]);
-  const [monitorSearching, setMonitorSearching] = useState(false);
-  const [monitorSelectedDevice, setMonitorSelectedDevice] = useState<any | null>(null);
-  const [monitorOverview, setMonitorOverview] = useState<any | null>(null);
-  const [monitorRealtime, setMonitorRealtime] = useState<any | null>(null);
-  const [monitorTrend, setMonitorTrend] = useState<any | null>(null);
-  const [monitorTrendInterface, setMonitorTrendInterface] = useState('');
-  const [monitorTrendResolution, setMonitorTrendResolution] = useState<'1m' | '5m'>('1m');
-  const [monitorTrendStartInput, setMonitorTrendStartInput] = useState('');
-  const [monitorTrendEndInput, setMonitorTrendEndInput] = useState('');
-  const [monitorTrendRange, setMonitorTrendRange] = useState<{ start_time?: string; end_time?: string }>({});
-  const [monitorTrendZoom, setMonitorTrendZoom] = useState<{ startIndex: number; endIndex: number } | null>(null);
-  const [monitorTrendDragStart, setMonitorTrendDragStart] = useState<number | null>(null);
-  const [monitorTrendDragEnd, setMonitorTrendDragEnd] = useState<number | null>(null);
-  const [monitorTrendMetrics, setMonitorTrendMetrics] = useState<string[]>(['in_bps', 'out_bps']);
-  const [monitorTrendUiMode, setMonitorTrendUiMode] = useState<'pro' | 'compact'>(() => {
-    const saved = localStorage.getItem('netops_monitor_trend_ui_mode');
-    return saved === 'pro' ? 'pro' : 'compact';
-  });
-  const [monitorAlerts, setMonitorAlerts] = useState<any[]>([]);
-  const [monitorAlertTotal, setMonitorAlertTotal] = useState(0);
-  const [monitorAlertsPage, setMonitorAlertsPage] = useState(1);
-  const [monitorAlertsPageSize] = useState(10);
-  const [monitorAlertsSeverity, setMonitorAlertsSeverity] = useState('all');
-  const [monitorAlertsPhase, setMonitorAlertsPhase] = useState('all');
-  const [monitorLoading, setMonitorLoading] = useState(false);
-  const [monitorPageVisible, setMonitorPageVisible] = useState(() => typeof document === 'undefined' ? true : document.visibilityState === 'visible');
-  const [monitorDashboardSiteFilter, setMonitorDashboardSiteFilter] = useState('all');
-  const [monitorDashboardAlertFilter, setMonitorDashboardAlertFilter] = useState<'all' | 'critical' | 'major' | 'warning'>('all');
-  const [hostResources, setHostResources] = useState<HostResourceSnapshot | null>(null);
+export const useMonitoring = ({ isAuthenticated, activeTab }: UseMonitoringProps) => {
+  const {
+    monitorSearch,
+    monitorSearchResults,
+    monitorSearching,
+    monitorSelectedDevice,
+    monitorOverview,
+    monitorRealtime,
+    monitorTrend,
+    monitorTrendInterface,
+    monitorTrendResolution,
+    monitorTrendStartInput,
+    monitorTrendEndInput,
+    monitorTrendRange,
+    monitorTrendZoom,
+    monitorTrendDragStart,
+    monitorTrendDragEnd,
+    monitorTrendMetrics,
+    monitorTrendUiMode,
+    monitorAlerts,
+    monitorAlertTotal,
+    monitorAlertsPage,
+    monitorAlertsPageSize,
+    monitorAlertsSeverity,
+    monitorAlertsPhase,
+    monitorLoading,
+    monitorPageVisible,
+    monitorDashboardSiteFilter,
+    monitorDashboardAlertFilter,
+    hostResources,
+    setMonitorSearch,
+    setMonitorSearchResults,
+    setMonitorSearching,
+    setMonitorSelectedDevice,
+    setMonitorOverview,
+    setMonitorRealtime,
+    setMonitorTrend,
+    setMonitorTrendInterface,
+    setMonitorTrendResolution,
+    setMonitorTrendStartInput,
+    setMonitorTrendEndInput,
+    setMonitorTrendRange,
+    setMonitorTrendZoom,
+    setMonitorTrendDragStart,
+    setMonitorTrendDragEnd,
+    setMonitorTrendMetrics,
+    setMonitorTrendUiMode,
+    setMonitorAlerts,
+    setMonitorAlertTotal,
+    setMonitorAlertsPage,
+    setMonitorAlertsSeverity,
+    setMonitorAlertsPhase,
+    setMonitorLoading,
+    setMonitorPageVisible,
+    setMonitorDashboardSiteFilter,
+    setMonitorDashboardAlertFilter,
+    setHostResources,
+    resetMonitoringState,
+  } = useMonitoringStore();
+
   const monitorRequestEpochRef = useRef(0);
 
   const fetchMonitoringOverview = useCallback(async (forceRefresh = false, signal?: AbortSignal) => {
@@ -59,29 +87,31 @@ export const useMonitoring = ({ isAuthenticated, activeTab, language }: UseMonit
     } catch (error) {
       if (isAbortError(error)) return;
     }
-  }, []);
+  }, [setMonitorOverview]);
 
   const fetchHostResources = useCallback(async (signal?: AbortSignal) => {
     try {
       const resp = await fetch('/api/health/resources', { signal });
       if (!resp.ok) return;
-      const payload = await resp.json() as HostResourceSnapshot;
+      const payload = await resp.json();
       setHostResources(payload);
     } catch (error) {
       if (isAbortError(error)) return;
     }
-  }, []);
+  }, [setHostResources]);
 
   const fetchMonitoringAlerts = useCallback(async (signal?: AbortSignal) => {
     const reqEpoch = monitorRequestEpochRef.current;
+    // Read latest values directly from store to avoid stale closure
+    const state = useMonitoringStore.getState();
     try {
       const params = new URLSearchParams({
-        page: String(monitorAlertsPage),
-        page_size: String(monitorAlertsPageSize),
-        severity: monitorAlertsSeverity,
-        phase: monitorAlertsPhase,
+        page: String(state.monitorAlertsPage),
+        page_size: String(state.monitorAlertsPageSize),
+        severity: state.monitorAlertsSeverity,
+        phase: state.monitorAlertsPhase,
       });
-      if (monitorSelectedDevice?.id) params.set('device_id', monitorSelectedDevice.id);
+      if (state.monitorSelectedDevice?.id) params.set('device_id', state.monitorSelectedDevice.id);
       const resp = await fetch(`/api/monitoring/alerts?${params.toString()}`, { signal });
       if (!resp.ok) return;
       const data = await resp.json();
@@ -91,7 +121,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, language }: UseMonit
     } catch (error) {
       if (isAbortError(error)) return;
     }
-  }, [monitorAlertsPage, monitorAlertsPageSize, monitorAlertsSeverity, monitorAlertsPhase, monitorSelectedDevice?.id]);
+  }, [setMonitorAlerts, setMonitorAlertTotal]);
 
   const fetchMonitoringRealtime = useCallback(async (deviceId: string, signal?: AbortSignal) => {
     const reqEpoch = monitorRequestEpochRef.current;
@@ -126,31 +156,8 @@ export const useMonitoring = ({ isAuthenticated, activeTab, language }: UseMonit
   useEffect(() => {
     monitorRequestEpochRef.current += 1;
     if (activeTab === 'monitoring' || activeTab === 'health') return;
-    setMonitorSearch('');
-    setMonitorSearchResults([]);
-    setMonitorSearching(false);
-    setMonitorSelectedDevice(null);
-    setMonitorOverview(null);
-    setMonitorRealtime(null);
-    setMonitorTrend(null);
-    setMonitorTrendInterface('');
-    setMonitorTrendResolution('1m');
-    setMonitorTrendStartInput('');
-    setMonitorTrendEndInput('');
-    setMonitorTrendRange({});
-    setMonitorTrendZoom(null);
-    setMonitorTrendDragStart(null);
-    setMonitorTrendDragEnd(null);
-    setMonitorTrendMetrics(['in_bps', 'out_bps']);
-    setMonitorAlerts([]);
-    setMonitorAlertTotal(0);
-    setMonitorAlertsPage(1);
-    setMonitorAlertsSeverity('all');
-    setMonitorAlertsPhase('all');
-    setMonitorLoading(false);
-    setMonitorDashboardSiteFilter('all');
-    setMonitorDashboardAlertFilter('all');
-  }, [activeTab]);
+    resetMonitoringState();
+  }, [activeTab, resetMonitoringState]);
 
   // Page visibility
   useEffect(() => {
@@ -160,7 +167,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, language }: UseMonit
     handleVisibilityChange();
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
+  }, [setMonitorPageVisible]);
 
   // Host resources polling
   useEffect(() => {
@@ -219,7 +226,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, language }: UseMonit
   // Reset alerts page on filter change
   useEffect(() => {
     setMonitorAlertsPage(1);
-  }, [monitorAlertsSeverity, monitorAlertsPhase, monitorSelectedDevice?.id]);
+  }, [monitorAlertsSeverity, monitorAlertsPhase, monitorSelectedDevice?.id, setMonitorAlertsPage]);
 
   // Search devices
   useEffect(() => {
@@ -254,7 +261,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, language }: UseMonit
       window.clearTimeout(timer);
       if (searchController) searchController.abort();
     };
-  }, [isAuthenticated, activeTab, monitorSearch]);
+  }, [isAuthenticated, activeTab, monitorSearch, setMonitorSearchResults, setMonitorSearching]);
 
   // Realtime + trend data loading
   useEffect(() => {
@@ -306,7 +313,13 @@ export const useMonitoring = ({ isAuthenticated, activeTab, language }: UseMonit
       if (realtimeController) realtimeController.abort();
       if (trendController) trendController.abort();
     };
-  }, [isAuthenticated, activeTab, monitorSelectedDevice?.id, monitorTrendInterface, monitorTrendResolution, monitorTrendRange.start_time, monitorTrendRange.end_time, fetchMonitoringRealtime, fetchMonitoringTrend, monitorPageVisible]);
+  }, [
+    isAuthenticated, activeTab, monitorSelectedDevice?.id,
+    monitorTrendInterface, monitorTrendResolution,
+    monitorTrendRange.start_time, monitorTrendRange.end_time,
+    fetchMonitoringRealtime, fetchMonitoringTrend, monitorPageVisible,
+    setMonitorRealtime, setMonitorTrend, setMonitorLoading,
+  ]);
 
   // Reset trend state on device change
   useEffect(() => {
@@ -314,17 +327,13 @@ export const useMonitoring = ({ isAuthenticated, activeTab, language }: UseMonit
     setMonitorTrendStartInput('');
     setMonitorTrendEndInput('');
     setMonitorTrendRange({});
-  }, [monitorSelectedDevice?.id]);
+  }, [monitorSelectedDevice?.id, setMonitorTrendInterface, setMonitorTrendStartInput, setMonitorTrendEndInput, setMonitorTrendRange]);
 
   useEffect(() => {
     setMonitorTrendZoom(null);
     setMonitorTrendDragStart(null);
     setMonitorTrendDragEnd(null);
-  }, [monitorSelectedDevice?.id, monitorTrendInterface, monitorTrendResolution]);
-
-  useEffect(() => {
-    localStorage.setItem('netops_monitor_trend_ui_mode', monitorTrendUiMode);
-  }, [monitorTrendUiMode]);
+  }, [monitorSelectedDevice?.id, monitorTrendInterface, monitorTrendResolution, setMonitorTrendZoom, setMonitorTrendDragStart, setMonitorTrendDragEnd]);
 
   return {
     monitorSearch, setMonitorSearch,

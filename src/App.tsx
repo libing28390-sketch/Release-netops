@@ -3,6 +3,9 @@ import { motion } from 'motion/react';
 import { Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import * as htmlToImage from 'html-to-image';
 import { Plus, Server, CheckCircle, CheckCircle2, XCircle, RotateCcw, Play, Activity, LayoutDashboard, Database, Zap, ShieldCheck, History, LogOut, Search, Bell, Settings, Download, Upload, FileText, ChevronLeft, ChevronRight, Filter, Globe, TrendingUp, PieChart as PieChartIcon, Clock, Edit2, AlertCircle, FolderOpen, Eye, EyeOff, Sun, Moon, User as UserIcon, ChevronDown, Copy, Menu, PanelLeftClose, Monitor, ExternalLink, Trash2, Wrench, Maximize2, Minimize2, BarChart3, GitCompareArrows, Cpu, Network, Pin, AlertTriangle, X } from 'lucide-react';
+import { useUiStore } from './store/uiStore';
+import { useConfigStore } from './store/configStore';
+import { useAutomationStore } from './store/automationStore';
 import { useI18n } from './i18n.tsx';
 import * as XLSX from 'xlsx';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from 'recharts';
@@ -34,23 +37,23 @@ import LoginScreen from './components/LoginScreen';
 import SetupWizard from './components/SetupWizard';
 import TestConnectionResultModal from './components/TestConnectionResultModal';
 import SnmpTestResultModal from './components/SnmpTestResultModal';
+import { AppModals } from './components/modals/AppModals';
 import { buildConnectionTestMessage, buildConnectionTestHint, buildConnectionCheckStatus, connectionCheckBadgeMeta, formatConnectionCheckTime } from './utils/connectionHelpers';
 import { useConfigDiff } from './hooks/useConfigDiff';
 import { useTheme } from './hooks/useTheme';
 import { useNotifications } from './hooks/useNotifications';
 import { useAuth } from './hooks/useAuth';
 import { useInventory } from './hooks/useInventory';
+import { useInventoryStore } from './store/inventoryStore';
+import { useInventoryDeleteActions } from './hooks/useInventoryDeleteActions';
 import { useAutomation } from './hooks/useAutomation';
 import { useMonitoring } from './hooks/useMonitoring';
 import { useUserManagement } from './hooks/useUserManagement';
 import { useHistoryAuditCompliance } from './hooks/useHistoryAuditCompliance';
 import { useInventoryPageData } from './hooks/useInventoryPageData';
-import { useInventoryUiState } from './hooks/useInventoryUiState';
 import { useTopologyVisibleDevices } from './hooks/useTopologyVisibleDevices';
 import { useTopologySelectionSync } from './hooks/useTopologySelectionSync';
 import { useResourceSignals } from './hooks/useResourceSignals';
-import { useInventoryDeleteActions } from './hooks/useInventoryDeleteActions';
-import { useInventoryTableActions } from './hooks/useInventoryTableActions';
 import { useConfigRollbackAction } from './hooks/useConfigRollbackAction';
 import { exportInventoryToExcel } from './utils/inventoryExport';
 import { normalizeTopologyPort, getTopologyOperationalTone, type TopologyOperationalState } from './utils/topologyCore';
@@ -69,6 +72,54 @@ import { getRouteContext } from './utils/routeContext';
 // Sparkline imported from ./components/Sparkline
 
 const App: React.FC = () => {
+
+  const {
+    sidebarCollapsed, setSidebarCollapsed,
+    showSetupWizard, setShowSetupWizard,
+    showUserMenu, setShowUserMenu,
+    showNotifications, setShowNotifications,
+    cmdPaletteOpen, setCmdPaletteOpen,
+    isMobile, setIsMobile,
+    showAddScenarioModal, setShowAddScenarioModal
+  } = useUiStore();
+
+  const {
+    retentionDays, setRetentionDays,
+    configSnapshots, setConfigSnapshots,
+    configSnapshotsLoading, setConfigSnapshotsLoading,
+    configCenterDevice, setConfigCenterDevice,
+    configViewContent, setConfigViewContent,
+    configViewSnapshot, setConfigViewSnapshot,
+    configSnapshotKeyword, setConfigSnapshotKeyword,
+    configSearchQuery, setConfigSearchQuery,
+    configSearchResults, setConfigSearchResults,
+    configSearchLoading, setConfigSearchLoading,
+    isTakingSnapshot, setIsTakingSnapshot,
+    activeBackupRunId, setActiveBackupRunId,
+    scheduleEnabled, setScheduleEnabled,
+    scheduleCron, setScheduleCron,
+    scheduleLoading, setScheduleLoading
+  } = useConfigStore();
+
+  const {
+    playbookHistoryPage, setPlaybookHistoryPage,
+    playbookHistoryTotal, setPlaybookHistoryTotal,
+    playbookHistoryStatusFilter, setPlaybookHistoryStatusFilter,
+    playbookHistoryScenarioSearch, setPlaybookHistoryScenarioSearch,
+    selectedExecDevices, setSelectedExecDevices,
+    selectedExecDevicesTotal, setSelectedExecDevicesTotal,
+    selectedExecDevicesPage, setSelectedExecDevicesPage,
+    selectedExecDevicesStatusFilter, setSelectedExecDevicesStatusFilter,
+    selectedExecDevicesLoading, setSelectedExecDevicesLoading,
+    selectedExecutionDetail, setSelectedExecutionDetail,
+    selectedExecutionLoading, setSelectedExecutionLoading,
+    selectedDeviceDetail, setSelectedDeviceDetail,
+    selectedDeviceDetailLoading, setSelectedDeviceDetailLoading,
+    newScenarioForm, setNewScenarioForm,
+    newScenarioVariables, setNewScenarioVariables,
+    scenarioDraftOrigin, setScenarioDraftOrigin,
+    isSavingScenario, setIsSavingScenario
+  } = useAutomationStore();
   const { t, language, setLanguage } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
@@ -115,9 +166,6 @@ const App: React.FC = () => {
     }, 5000);
   }, []);
 
-  const [showSetupWizard, setShowSetupWizard] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
   
   const {
@@ -358,22 +406,7 @@ const App: React.FC = () => {
   // Quick Query (read-only commands, no history saved)
 
   // ---------- Config Center ----------
-  const [retentionDays, setRetentionDays] = useState<number>(365);
-  const [configSnapshots, setConfigSnapshots] = useState<ConfigSnapshot[]>([]);
-  const [configSnapshotsLoading, setConfigSnapshotsLoading] = useState(false);
-  const [configCenterDevice, setConfigCenterDevice] = useState<Device | null>(null);
-  const [configViewContent, setConfigViewContent] = useState<string>('');
-  const [configViewSnapshot, setConfigViewSnapshot] = useState<ConfigSnapshot | null>(null);
-  const [configSnapshotKeyword, setConfigSnapshotKeyword] = useState('');
-  const [configSearchQuery, setConfigSearchQuery] = useState('');
-  const [configSearchResults, setConfigSearchResults] = useState<any[]>([]);
-  const [configSearchLoading, setConfigSearchLoading] = useState(false);
-  const [isTakingSnapshot, setIsTakingSnapshot] = useState(false);
-  const [activeBackupRunId, setActiveBackupRunId] = useState<string | null>(null);
   // Schedule state
-  const [scheduleEnabled, setScheduleEnabled] = useState(true);
-  const [scheduleCron, setScheduleCron] = useState('0 2 * * *');
-  const [scheduleLoading, setScheduleLoading] = useState(false);
   const [configGroupOpen, setConfigGroupOpen] = useState(() => location.pathname.startsWith('/config') || location.pathname === '/compliance');
   const [automationGroupOpen, setAutomationGroupOpen] = useState(() => location.pathname.startsWith('/automation'));
   const [inventoryGroupOpen, setInventoryGroupOpen] = useState(() => location.pathname.startsWith('/inventory'));
@@ -386,8 +419,6 @@ const App: React.FC = () => {
   const [automationSectionOpen, setAutomationSectionOpen] = useState(true);
   const [capacitySectionOpen, setCapacitySectionOpen] = useState(true);
   const [managementSectionOpen, setManagementSectionOpen] = useState(true);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 768);
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
   const [recentSidebarPaths, setRecentSidebarPaths] = useState<string[]>([]);
   const [pinnedPaths, setPinnedPaths] = useState<string[]>(() => {
     try {
@@ -397,45 +428,10 @@ const App: React.FC = () => {
       return [];
     }
   });
-  const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
   const [cmdPaletteQuery, setCmdPaletteQuery] = useState('');
   // showCustomCommandModal moved to useAutomation
   // showCmdPreviewModal moved to useAutomation
-  const [showAddScenarioModal, setShowAddScenarioModal] = useState(false);
-  const [newScenarioForm, setNewScenarioForm] = useState({
-    name: '',
-    name_zh: '',
-    description: '',
-    description_zh: '',
-    category: 'Custom',
-    icon: '🧩',
-    risk: 'medium',
-    platform: 'cisco_ios',
-    pre_check: '',
-    execute: '',
-    post_check: '',
-    rollback: '',
-  });
-  const [newScenarioVariables, setNewScenarioVariables] = useState<Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>>([]);
-  const [scenarioDraftOrigin, setScenarioDraftOrigin] = useState<{ kind: 'manual' | 'template'; templateName?: string; variableKeys: string[] }>({
-    kind: 'manual',
-    variableKeys: [],
-  });
-  const [isSavingScenario, setIsSavingScenario] = useState(false);
-  const [selectedExecutionDetail, setSelectedExecutionDetail] = useState<any | null>(null);
-  const [selectedExecutionLoading, setSelectedExecutionLoading] = useState(false);
   // History pagination & lazy device loading
-  const [playbookHistoryPage, setPlaybookHistoryPage] = useState(1);
-  const [playbookHistoryTotal, setPlaybookHistoryTotal] = useState(0);
-  const [playbookHistoryStatusFilter, setPlaybookHistoryStatusFilter] = useState('all');
-  const [playbookHistoryScenarioSearch, setPlaybookHistoryScenarioSearch] = useState('');
-  const [selectedExecDevices, setSelectedExecDevices] = useState<any[]>([]);
-  const [selectedExecDevicesTotal, setSelectedExecDevicesTotal] = useState(0);
-  const [selectedExecDevicesPage, setSelectedExecDevicesPage] = useState(1);
-  const [selectedExecDevicesStatusFilter, setSelectedExecDevicesStatusFilter] = useState('all');
-  const [selectedExecDevicesLoading, setSelectedExecDevicesLoading] = useState(false);
-  const [selectedDeviceDetail, setSelectedDeviceDetail] = useState<any | null>(null);
-  const [selectedDeviceDetailLoading, setSelectedDeviceDetailLoading] = useState(false);
 
   const handleRefreshHistory = useCallback(async (
     page = playbookHistoryPage,
@@ -1872,47 +1868,16 @@ const App: React.FC = () => {
   } = useHistoryAuditCompliance({ isAuthenticated, activeTab, language, currentUser, showToast });
 
   // Inventory Filters & Sorting
+
+
+  // State pulled from inventory store
   const {
-    inventoryPage,
-    setInventoryPage,
-    inventoryPageSize,
-    setInventoryPageSize,
-    inventorySearch,
-    setInventorySearch,
-    inventoryPlatformFilter,
-    setInventoryPlatformFilter,
-    inventoryRoleFilter,
-    setInventoryRoleFilter,
-    inventoryStatusFilter,
-    setInventoryStatusFilter,
-    inventoryLifecycleFilter,
-    setInventoryLifecycleFilter,
-    inventorySortConfig,
-    setInventorySortConfig,
-    selectedDeviceIds,
-    setSelectedDeviceIds,
-  } = useInventoryUiState();
-  const {
-    inventoryRefreshTick,
-    setInventoryRefreshTick,
-    inventoryRows,
-    inventoryTotal,
-    inventoryStatusCounts,
-    inventoryLoading,
-    assetsTotal,
-  } = useInventoryPageData({
-    isAuthenticated,
-    activeTab,
-    inventorySubPage,
-    inventorySearch,
-    inventoryPlatformFilter,
-    inventoryRoleFilter,
-    inventoryStatusFilter,
-    inventoryPage,
-    inventoryPageSize,
-    inventorySortConfig,
-    normalizeDeviceRecord,
-  });
+    inventoryTotal, inventoryPage, inventoryPageSize, setInventoryPage,
+    setInventorySearch, setInventoryPlatformFilter, setInventoryRoleFilter, setInventoryStatusFilter,
+    setInventorySortConfig, selectedDeviceIds, setSelectedDeviceIds, setInventoryRefreshTick
+  } = useInventoryStore();
+
+  const { confirmDeleteDevice } = useInventoryDeleteActions(showToast);
 
   // 全局快捷键处理 (ESC / Ctrl+K)
   useEffect(() => {
@@ -2298,24 +2263,14 @@ const App: React.FC = () => {
 
   // History, Audit, Compliance effects/handlers moved to useHistoryAuditCompliance hook
 
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deviceToDelete, setDeviceToDelete] = useState<string | null>(null);
-  const [isDeletingSelected, setIsDeletingSelected] = useState(false);
-
   const {
-    handleSort,
-    handleDeleteDevice,
-    handleDeleteSelected,
-  } = useInventoryTableActions({
-    selectedDeviceIds,
-    inventorySortConfig,
-    setInventorySortConfig,
-    setDeviceToDelete,
-    setIsDeletingSelected,
+    showDeleteModal,
     setShowDeleteModal,
-  });
-
-  const [automationPlatformFilter, setAutomationPlatformFilter] = useState('all');
+    deviceToDelete,
+    setDeviceToDelete,
+    isDeletingSelected,
+    setIsDeletingSelected,
+  } = useInventoryStore();
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionTestDevice, setConnectionTestDevice] = useState<Device | null>(null);
   const [connectionTestMode, setConnectionTestMode] = useState<'quick' | 'deep'>('quick');
@@ -2584,18 +2539,7 @@ const App: React.FC = () => {
     showToast,
   });
 
-  const { confirmDeleteDevice } = useInventoryDeleteActions({
-    deviceToDelete,
-    isDeletingSelected,
-    selectedDeviceIds,
-    setDevices,
-    setSelectedDeviceIds,
-    setInventoryRefreshTick,
-    showToast,
-    setShowDeleteModal,
-    setDeviceToDelete,
-    setIsDeletingSelected,
-  });
+  // Deleted hook for delete actions
 
   const handleSaveEdit = async () => {
     if (!editingDevice) return;
@@ -3414,76 +3358,8 @@ const App: React.FC = () => {
     dashBannerCollapsed,
     setDashBannerCollapsed,
     dashLastRefresh,
-    monitorSearch,
-    setMonitorSearch,
-    monitorSearchResults,
-    monitorSearching,
-    monitorSelectedDevice,
-    setMonitorSelectedDevice,
-    monitorOverview,
-    monitorRealtime,
-    monitorTrend,
-    monitorTrendInterface,
-    setMonitorTrendInterface,
-    monitorTrendResolution,
-    setMonitorTrendResolution,
-    monitorTrendStartInput,
-    setMonitorTrendStartInput,
-    monitorTrendEndInput,
-    setMonitorTrendEndInput,
-    monitorTrendRange,
-    setMonitorTrendRange,
-    monitorTrendZoom,
-    setMonitorTrendZoom,
-    monitorTrendDragStart,
-    setMonitorTrendDragStart,
-    monitorTrendDragEnd,
-    setMonitorTrendDragEnd,
-    monitorTrendMetrics,
-    setMonitorTrendMetrics,
-    monitorTrendUiMode,
-    setMonitorTrendUiMode,
-    monitorAlerts,
-    monitorAlertTotal,
-    monitorAlertsPage,
-    setMonitorAlertsPage,
-    monitorAlertsPageSize,
-    monitorAlertsSeverity,
-    setMonitorAlertsSeverity,
-    monitorAlertsPhase,
-    setMonitorAlertsPhase,
-    monitorLoading,
-    monitorPageVisible,
-    monitorDashboardSiteFilter,
-    setMonitorDashboardSiteFilter,
-    monitorDashboardAlertFilter,
-    setMonitorDashboardAlertFilter,
-    inventoryRows,
-    inventoryTotal,
-    inventoryStatusCounts,
-    inventoryPage,
-    setInventoryPage,
-    inventoryPageSize,
-    setInventoryPageSize,
-    inventorySearch,
-    setInventorySearch,
-    inventoryPlatformFilter,
-    setInventoryPlatformFilter,
-    inventoryRoleFilter,
-    setInventoryRoleFilter,
-    inventoryStatusFilter,
-    setInventoryStatusFilter,
-    inventoryLifecycleFilter,
-    setInventoryLifecycleFilter,
-    inventorySortConfig,
-    inventoryLoading,
-    selectedDeviceIds,
-    setSelectedDeviceIds,
-    handleSort,
     handleImport,
     handleExport,
-    handleDeleteDevice,
-    handleDeleteSelected,
     handleShowDetails,
     handleTestConnection,
     deviceConnectionChecks,
@@ -3681,17 +3557,11 @@ const App: React.FC = () => {
     setAuditStatusFilter,
     auditTimeFilter,
     setAuditTimeFilter,
-    assetsTotal,
     scheduledTasks,
     unreadNotificationCount,
-    fetchMonitoringOverview,
-    fetchMonitoringAlerts,
-    fetchMonitoringRealtime,
-    fetchHostResources,
-    setMonitorRealtime,
+    isAuthenticated,
     setSelectedTopologyDeviceId,
     setSelectedTopologyLinkKey,
-    setInventoryRefreshTick,
     topologyDiscoveryRunning,
     topologyStats,
     topologyLinkStats,
@@ -4001,307 +3871,36 @@ const App: React.FC = () => {
         />
       )}
 
-      <ProfileModal
-        open={showProfileModal}
-        language={language}
-        resolvedTheme={resolvedTheme}
-        currentRole={currentUser.role || currentUserRecord?.role || 'Administrator'}
-        currentUserLastLogin={currentUserLastLogin}
-        profileAvatarPreview={profileAvatarPreview}
-        avatarPresets={avatarPresets}
-        profileForm={profileForm}
-        showProfilePwd={showProfilePwd}
-        notificationChannels={notificationChannels}
-        notifyTestLoading={notifyTestLoading}
-        renderAvatarContent={renderAvatarContent}
-        onClose={() => setShowProfileModal(false)}
-        onSave={handleSaveProfile}
-        onAvatarFileChange={handleProfileAvatarChange}
-        onClearAvatar={() => setProfileAvatarPreview('')}
-        onSelectAvatarPreset={setProfileAvatarPreview}
-        onProfileFormChange={setProfileForm}
-        onToggleProfilePassword={() => setShowProfilePwd((value) => !value)}
-        onNotificationChannelToggle={(channel) => setNotificationChannels((prev) => ({ ...prev, [channel]: { ...prev[channel], enabled: !prev[channel].enabled } }))}
-        onNotificationWebhookChange={(channel, value) => setNotificationChannels((prev) => ({ ...prev, [channel]: { ...prev[channel], webhook_url: value } }))}
-        onNotificationSecretChange={(value) => setNotificationChannels((prev) => ({ ...prev, dingtalk: { ...prev.dingtalk, secret: value } }))}
-        onTestNotificationChannel={async (channel) => {
-          const profileUserId = currentUser.id ?? currentUserRecord?.id;
-          if (!profileUserId) return;
-          const currentChannel = notificationChannels[channel];
-          setNotifyTestLoading(channel);
-          try {
-            const response = await fetch(`/api/users/${profileUserId}/notify-test`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('sessionToken') || ''}`,
-              },
-              body: JSON.stringify({
-                platform: channel,
-                webhook_url: currentChannel.webhook_url,
-                secret: channel === 'dingtalk' ? notificationChannels.dingtalk.secret : '',
-              }),
-            });
-            const data = await response.json();
-            if (response.ok) showToast(`${channel === 'feishu' ? '飞书' : channel === 'dingtalk' ? '钉钉' : '企业微信'} 测试消息已发送 ✓`, 'success');
-            else showToast(`发送失败: ${data.detail || data.error}`, 'error');
-          } catch {
-            showToast('连接错误', 'error');
-          } finally {
-            setNotifyTestLoading('');
-          }
-        }}
-      />
-
-      {/* Test Connection Result Modal */}
-      {showTestResult && (
-        <TestConnectionResultModal
-          open={showTestResult}
-          language={language}
-          isTestingConnection={isTestingConnection}
-          connectionTestMode={connectionTestMode}
-          connectionTestDevice={connectionTestDevice}
-          selectedDevice={selectedDevice}
-          testResult={testResult}
-          onClose={() => setShowTestResult(false)}
-          onRetry={handleTestConnection}
-        />
-      )}
-
-      <ImportInventoryModal
-        open={showImportModal}
-        language={language}
-        t={t}
-        onClose={() => setShowImportModal(false)}
-        onImport={() => {
-          alert('Import feature simulation: Data processed successfully.');
-          setShowImportModal(false);
-        }}
-      />
-
-      <ConfigDiffModal
-        open={showDiff}
-        language={language}
-        t={t}
-        selectedDevice={selectedDevice}
-        currentDiff={currentDiff}
-        onClose={() => setShowDiff(false)}
-        onCommit={() => {
-          void runTask('VLAN Update');
-        }}
-      />
-
-      <HistoricalConfigModal
-        open={showConfigModal}
-        language={language}
-        t={t}
-        selectedDevice={selectedDevice}
-        viewingConfig={viewingConfig}
-        onClose={() => setShowConfigModal(false)}
-        onRollback={() => {
-          if (!selectedDevice || !viewingConfig) return;
-          void handleRollbackConfig(selectedDevice, viewingConfig);
-        }}
-      />
-
-      <ScheduleTaskModal
-        open={showScheduleModal}
-        language={language}
-        t={t}
-        selectedDevice={selectedDevice}
-        schedulingTask={schedulingTask}
-        scheduleForm={scheduleForm}
-        onScheduleFormChange={setScheduleForm}
-        onClose={() => setShowScheduleModal(false)}
-        onSubmit={handleScheduleTask}
-      />
-
-      <RemediationModal
-        open={showRemediationModal}
-        language={language}
-        t={t}
-        device={remediatingDevice}
-        onClose={() => setShowRemediationModal(false)}
-        onConfirm={confirmRemediation}
-      />
-
-      <DeleteConfirmModal
-        open={showDeleteModal}
-        language={language}
-        isDeletingSelected={isDeletingSelected}
-        selectedDeviceCount={selectedDeviceIds.length}
-        onClose={() => {
-          setShowDeleteModal(false);
-          setDeviceToDelete(null);
-          setIsDeletingSelected(false);
-        }}
-        onConfirm={() => {
-          void confirmDeleteDevice();
-        }}
-      />
-
-      {/* Edit Device Modal */}
-      {/* Add Device Modal */}
-      {showAddModal && (
-        <DeviceFormModal
-          mode="add"
-          language={language}
-          form={addForm}
-          passwordVisible={showAddDevicePwd}
-          onFormChange={setAddForm}
-          onTogglePasswordVisibility={() => setShowAddDevicePwd((value) => !value)}
-          onClose={() => setShowAddModal(false)}
-          onSubmit={handleAddDevice}
-        />
-      )}
-
-      {showEditModal && editingDevice && (
-        <DeviceFormModal
-          mode="edit"
-          language={language}
-          form={editForm}
-          passwordVisible={showEditDevicePwd}
-          onFormChange={setEditForm}
-          onTogglePasswordVisibility={() => setShowEditDevicePwd((value) => !value)}
-          onClose={() => setShowEditModal(false)}
-          onSubmit={handleSaveEdit}
-        />
-      )}
-
-      {/* Lifecycle → Production Confirmation Modal */}
-      {showLifecycleConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-center gap-3 border-b border-black/5 bg-amber-50 p-5 rounded-t-2xl">
-              <div className="rounded-lg bg-amber-100 p-2 text-amber-600">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-              </div>
-              <h3 className="text-base font-semibold text-black">
-                {language === 'zh' ? '投产确认' : 'Production Confirmation'}
-              </h3>
-            </div>
-            <div className="p-5 space-y-4">
-              <p className="text-sm text-black/70 leading-relaxed">
-                {language === 'zh'
-                  ? '您正在将设备状态设置为「已投产」。请确认该设备的默认口令已完成上手（密码已从出厂默认修改为正式口令）。'
-                  : 'You are setting this device to "Production". Please confirm that the default credentials have been changed from factory defaults to production passwords.'}
-              </p>
-              <label className="flex items-start gap-2.5 cursor-pointer select-none group">
-                <input
-                  type="checkbox"
-                  checked={lifecycleConfirmChecked}
-                  onChange={(e) => setLifecycleConfirmChecked(e.target.checked)}
-                  className="mt-0.5 rounded border-black/20 text-[#00bceb] focus:ring-[#00bceb] focus:ring-offset-0"
-                />
-                <span className="text-sm font-medium text-black/80 group-hover:text-black">
-                  {language === 'zh'
-                    ? '我确认该设备默认口令已上手，密码已修改为正式口令'
-                    : 'I confirm the default credentials have been changed to production passwords'}
-                </span>
-              </label>
-            </div>
-            <div className="flex gap-3 border-t border-black/5 bg-black/[0.01] p-5 rounded-b-2xl">
-              <button
-                onClick={() => { setShowLifecycleConfirm(null); setLifecycleConfirmChecked(false); }}
-                className="flex-1 rounded-xl border border-black/10 px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-all hover:bg-black/5"
-              >
-                {language === 'zh' ? '取消' : 'Cancel'}
-              </button>
-              <button
-                disabled={!lifecycleConfirmChecked}
-                onClick={() => {
-                  if (showLifecycleConfirm === 'add') {
-                    handleAddDevice();
-                  } else {
-                    handleSaveEdit();
-                  }
-                }}
-                className={`flex-1 rounded-xl px-4 py-2.5 text-xs font-bold uppercase tracking-widest text-white shadow-lg transition-all
-                  ${lifecycleConfirmChecked
-                    ? 'bg-amber-500 shadow-amber-500/20 hover:bg-amber-600 cursor-pointer'
-                    : 'bg-black/20 shadow-none cursor-not-allowed'}`}
-              >
-                {language === 'zh' ? '确认投产' : 'Confirm Production'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Device Details Modal */}
-      {showDetailsModal && viewingDevice && (
-        <DeviceDetailModal
-          language={language}
-          t={t}
-          viewingDevice={viewingDevice}
-          viewingDeviceAlerts={viewingDeviceAlerts}
-          deviceDetailLoading={deviceDetailLoading}
-          viewingDeviceConnectionSummary={viewingDevice.id ? deviceConnectionChecks[viewingDevice.id] : null}
-          connectionTestingDeviceId={connectionTestingDeviceId}
-          onClose={() => setShowDetailsModal(false)}
-          deviceTrendRangeHours={deviceTrendRangeHours}
-          onDeviceTrendRangeHoursChange={setDeviceTrendRangeHours}
-          deviceHealthTrend={deviceHealthTrend}
-          deviceHealthTrendLoading={deviceHealthTrendLoading}
-          deviceOperationalData={deviceOperationalData}
-          deviceOperationalDataLoading={deviceOperationalDataLoading}
-          onLoadOperationalData={loadDeviceOperationalData}
-          onTestConnection={handleTestConnection}
-          isTestingConnection={isTestingConnection}
-          onSnmpTest={handleSnmpTest}
-          snmpTestingId={snmpTestingId}
-          onSnmpSyncNow={handleSnmpSyncNow}
-          snmpSyncingId={snmpSyncingId}
-          onGoToAutomation={(device) => {
-            setSelectedDevice(device);
-            setActiveTab('automation');
-            setShowDetailsModal(false);
-          }}
-        />
-      )}
-
-      {/* SNMP Test Result Modal */}
-      {showSnmpTestResult && (
-        <SnmpTestResultModal
-          open={showSnmpTestResult}
-          language={language}
-          result={snmpTestResult}
-          onClose={() => setShowSnmpTestResult(false)}
-        />
-      )}
-
-      <AuditEventDetailModal
-        event={selectedAuditEvent as any}
-        language={language}
-        t={t}
-        onClose={() => setSelectedAuditEvent(null)}
-      />
-
-      <ComplianceFindingDetailModal
-        finding={selectedFinding as any}
-        language={language}
-        t={t}
-        onClose={() => setSelectedFinding(null)}
-        onStatusChange={(value) => setSelectedFinding((prev) => (prev ? { ...prev, status: value } : prev))}
-        onOwnerChange={(value) => setSelectedFinding((prev) => (prev ? { ...prev, owner: value } : prev))}
-        onNoteChange={(value) => setSelectedFinding((prev) => (prev ? { ...prev, note: value } : prev))}
-        onSave={() => {
-          if (!selectedFinding) return;
-          void updateComplianceFinding(selectedFinding.id, {
-            status: selectedFinding.status,
-            owner: selectedFinding.owner,
-            note: selectedFinding.note,
-          });
-        }}
-      />
-
-      <JobOutputModal
-        job={selectedJob}
-        t={t}
-        onClose={() => setSelectedJob(null)}
-        onCopy={async () => {
-          const copied = await copyTextWithFallback(selectedJob?.output || '');
-          showToast(t('copied'), copied ? 'success' : 'error');
+      <AppModals
+        {...{
+          showProfileModal, language, resolvedTheme, currentUser, currentUserRecord,
+          currentUserLastLogin, profileAvatarPreview, avatarPresets, profileForm,
+          showProfilePwd, notificationChannels, notifyTestLoading, renderAvatarContent,
+          setShowProfileModal, handleSaveProfile, handleProfileAvatarChange,
+          setProfileAvatarPreview, setProfileForm, setShowProfilePwd, setNotificationChannels,
+          setNotifyTestLoading, showToast,
+          showTestResult, isTestingConnection, connectionTestMode, connectionTestDevice,
+          selectedDevice, testResult, setShowTestResult, handleTestConnection,
+          showImportModal, t, setShowImportModal,
+          showDiff, currentDiff, setShowDiff, runTask,
+          showConfigModal, viewingConfig, setShowConfigModal, handleRollbackConfig,
+          showScheduleModal, schedulingTask, scheduleForm, setScheduleForm, setShowScheduleModal, handleScheduleTask,
+          showRemediationModal, remediatingDevice, setShowRemediationModal, confirmRemediation,
+          showDeleteModal, isDeletingSelected, selectedDeviceIds, setShowDeleteModal,
+          setDeviceToDelete, setIsDeletingSelected, confirmDeleteDevice,
+          showAddModal, addForm, showAddDevicePwd, setAddForm, setShowAddDevicePwd, setShowAddModal, handleAddDevice,
+          showEditModal, editingDevice, editForm, showEditDevicePwd, setEditForm, setShowEditDevicePwd, setShowEditModal, handleSaveEdit,
+          showLifecycleConfirm, lifecycleConfirmChecked, setLifecycleConfirmChecked, setShowLifecycleConfirm,
+          showDetailsModal, viewingDevice, viewingDeviceAlerts, deviceDetailLoading, deviceConnectionChecks,
+          connectionTestingDeviceId, deviceTrendRangeHours, setDeviceTrendRangeHours, deviceHealthTrend, deviceHealthTrendLoading,
+          deviceOperationalData, deviceOperationalDataLoading, loadDeviceOperationalData,
+          handleSnmpTest, snmpTestingId, handleSnmpSyncNow, snmpSyncingId,
+          setSelectedDevice, setShowDetailsModal,
+          showSnmpTestResult, snmpTestResult, setShowSnmpTestResult,
+          selectedAuditEvent, setSelectedAuditEvent,
+          selectedFinding, setSelectedFinding, updateComplianceFinding,
+          selectedJob, setSelectedJob, copyTextWithFallback,
+          navigate,
         }}
       />
 

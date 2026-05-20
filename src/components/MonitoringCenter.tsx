@@ -12,6 +12,8 @@ import type { Device, HostResourceSnapshot, HostResourceHistoryPayload } from '.
 import DateTimePicker from './DateTimePicker';
 import PageHero from './PageHero';
 import { useChartTheme } from '../hooks/useChartTheme';
+import { useMonitoringStore } from '../store/monitoringStore';
+import { useMonitoring } from '../hooks/useMonitoring';
 
 type MonitorDevice = {
   id?: string;
@@ -25,58 +27,9 @@ type MonitorDevice = {
 
 interface MonitoringCenterProps {
   language: 'zh' | 'en';
-  monitorSearch: string;
-  setMonitorSearch: (value: string) => void;
-  monitorSearchResults: any[];
-  monitorSearching: boolean;
-  monitorSelectedDevice: MonitorDevice | null;
-  setMonitorSelectedDevice: (value: any) => void;
-  monitorOverview: any | null;
-  monitorRealtime: any | null;
-  monitorTrend: any | null;
-  monitorTrendInterface: string;
-  setMonitorTrendInterface: (value: string) => void;
-  monitorTrendResolution: '1m' | '5m';
-  setMonitorTrendResolution: (value: '1m' | '5m') => void;
-  monitorTrendStartInput: string;
-  setMonitorTrendStartInput: (value: string) => void;
-  monitorTrendEndInput: string;
-  setMonitorTrendEndInput: (value: string) => void;
-  monitorTrendRange: { start_time?: string; end_time?: string };
-  setMonitorTrendRange: (value: { start_time?: string; end_time?: string }) => void;
-  monitorTrendZoom: { startIndex: number; endIndex: number } | null;
-  setMonitorTrendZoom: (value: { startIndex: number; endIndex: number } | null) => void;
-  monitorTrendDragStart: number | null;
-  setMonitorTrendDragStart: (value: number | null) => void;
-  monitorTrendDragEnd: number | null;
-  setMonitorTrendDragEnd: (value: number | null) => void;
-  monitorTrendMetrics: string[];
-  setMonitorTrendMetrics: React.Dispatch<React.SetStateAction<string[]>>;
-  monitorTrendUiMode: 'pro' | 'compact';
-  setMonitorTrendUiMode: (value: 'pro' | 'compact') => void;
-  monitorAlerts: any[];
-  monitorAlertTotal: number;
-  monitorAlertsPage: number;
-  setMonitorAlertsPage: (value: number) => void;
-  monitorAlertsPageSize: number;
-  monitorAlertsSeverity: string;
-  setMonitorAlertsSeverity: (value: string) => void;
-  monitorAlertsPhase: string;
-  setMonitorAlertsPhase: (value: string) => void;
-  monitorLoading: boolean;
-  monitorPageVisible: boolean;
-  monitorDashboardSiteFilter: string;
-  setMonitorDashboardSiteFilter: (value: string) => void;
-  monitorDashboardAlertFilter: 'all' | 'critical' | 'major' | 'warning';
-  setMonitorDashboardAlertFilter: (value: 'all' | 'critical' | 'major' | 'warning') => void;
   devices: Device[];
-  hostResources: HostResourceSnapshot | null;
-  fetchMonitoringOverview: () => void | Promise<void>;
-  fetchMonitoringAlerts: () => void | Promise<void>;
-  fetchMonitoringRealtime: (deviceId: string) => Promise<any>;
-  fetchHostResources: () => void | Promise<void>;
-  setMonitorRealtime: (value: any) => void;
   showToast: (message: string, type?: string) => void;
+  isAuthenticated?: boolean;
 }
 
 /* ─── sub-components ─── */
@@ -236,7 +189,7 @@ const MonitoringPagination: React.FC<{
   );
 };
 
-const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
+const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: allDevices, showToast, isAuthenticated = true }) => {
   const ct = useChartTheme();
   const navigate = useNavigate();
   const [refreshing, setRefreshing] = useState(false);
@@ -249,8 +202,9 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
   const [impactedShowAll, setImpactedShowAll] = useState(false);
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [hostResourceAlertView, setHostResourceAlertView] = useState<'active' | 'history'>('active');
+
+  // Read all monitoring state from store
   const {
-    language,
     monitorSearch,
     setMonitorSearch,
     monitorSearchResults,
@@ -259,6 +213,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
     setMonitorSelectedDevice,
     monitorOverview,
     monitorRealtime,
+    setMonitorRealtime,
     monitorTrend,
     monitorTrendInterface,
     setMonitorTrendInterface,
@@ -295,15 +250,16 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = (props) => {
     setMonitorDashboardSiteFilter,
     monitorDashboardAlertFilter,
     setMonitorDashboardAlertFilter,
-    devices: allDevices,
     hostResources,
+  } = useMonitoringStore();
+
+  // Get fetch functions from the hook (they use store internally)
+  const {
     fetchMonitoringOverview,
     fetchMonitoringAlerts,
     fetchMonitoringRealtime,
     fetchHostResources,
-    setMonitorRealtime,
-    showToast,
-  } = props;
+  } = useMonitoring({ isAuthenticated, activeTab: 'monitoring', language });
 
   const fetchHostResourceHistory = useCallback(async (rangeHours = hostResourceRange) => {
     setHostResourceHistoryLoading(true);

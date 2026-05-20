@@ -1,32 +1,24 @@
 import { useCallback } from 'react';
 import type { Device } from '../types';
 import { deleteDevicesByIds } from '../utils/deviceDelete';
+import { useInventoryStore } from '../store/inventoryStore';
 
-interface UseInventoryDeleteActionsParams {
-  deviceToDelete: string | null;
-  isDeletingSelected: boolean;
-  selectedDeviceIds: string[];
-  setDevices: React.Dispatch<React.SetStateAction<Device[]>>;
-  setSelectedDeviceIds: React.Dispatch<React.SetStateAction<string[]>>;
-  setInventoryRefreshTick: React.Dispatch<React.SetStateAction<number>>;
-  showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
-  setShowDeleteModal: React.Dispatch<React.SetStateAction<boolean>>;
-  setDeviceToDelete: React.Dispatch<React.SetStateAction<string | null>>;
-  setIsDeletingSelected: React.Dispatch<React.SetStateAction<boolean>>;
-}
+export const useInventoryDeleteActions = (
+  showToast: (message: string, type?: 'success' | 'error' | 'info') => void,
+  setDevices?: React.Dispatch<React.SetStateAction<Device[]>>,
+) => {
+  const {
+    deviceToDelete,
+    setDeviceToDelete,
+    isDeletingSelected,
+    setIsDeletingSelected,
+    showDeleteModal,
+    setShowDeleteModal,
+    selectedDeviceIds,
+    setSelectedDeviceIds,
+    setInventoryRefreshTick,
+  } = useInventoryStore();
 
-export const useInventoryDeleteActions = ({
-  deviceToDelete,
-  isDeletingSelected,
-  selectedDeviceIds,
-  setDevices,
-  setSelectedDeviceIds,
-  setInventoryRefreshTick,
-  showToast,
-  setShowDeleteModal,
-  setDeviceToDelete,
-  setIsDeletingSelected,
-}: UseInventoryDeleteActionsParams) => {
   const confirmDeleteDevice = useCallback(async () => {
     if (!deviceToDelete && !isDeletingSelected) return;
 
@@ -34,8 +26,9 @@ export const useInventoryDeleteActions = ({
       if (selectedDeviceIds.length === 0) return;
       const { successCount, failCount } = await deleteDevicesByIds(selectedDeviceIds);
       const selectedIdSet = new Set(selectedDeviceIds);
-      setDevices((prev) => prev.filter((d) => !selectedIdSet.has(d.id)));
-
+      if (setDevices) {
+        setDevices((prev) => prev.filter((d) => !selectedIdSet.has(d.id)));
+      }
       setSelectedDeviceIds([]);
       setInventoryRefreshTick((v) => v + 1);
       if (failCount === 0) {
@@ -47,8 +40,10 @@ export const useInventoryDeleteActions = ({
       try {
         const response = await fetch(`/api/devices/${deviceToDelete}`, { method: 'DELETE' });
         if (response.ok) {
-          setDevices((prev) => prev.filter((d) => d.id !== deviceToDelete));
-          setSelectedDeviceIds((prev) => prev.filter((selectedId) => selectedId !== deviceToDelete));
+          if (setDevices) {
+            setDevices((prev) => prev.filter((d) => d.id !== deviceToDelete));
+          }
+          setSelectedDeviceIds((prev: string[]) => prev.filter((id) => id !== deviceToDelete));
           setInventoryRefreshTick((v) => v + 1);
           showToast('Device deleted successfully', 'success');
         } else {
@@ -78,5 +73,11 @@ export const useInventoryDeleteActions = ({
 
   return {
     confirmDeleteDevice,
+    showDeleteModal,
+    setShowDeleteModal,
+    deviceToDelete,
+    setDeviceToDelete,
+    isDeletingSelected,
+    setIsDeletingSelected,
   };
 };

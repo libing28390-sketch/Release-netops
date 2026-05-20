@@ -1,5 +1,7 @@
 import React, { Suspense, lazy, useMemo } from 'react';
 import { useSystem } from '../hooks/useSystem';
+import { useInventoryStore } from '../store/inventoryStore';
+import { useMonitoringStore } from '../store/monitoringStore';
 
 const MonitoringCenter = lazy(() => import('./MonitoringCenter.tsx'));
 const DeviceHealthTab = lazy(() => import('../pages/DeviceHealthTab'));
@@ -53,6 +55,8 @@ const lazyPanelFallback = (
 
 const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
   const { isFeatureEnabled } = useSystem();
+  const { assetsTotal } = useInventoryStore();
+  const { monitorOverview } = useMonitoringStore();
   const props = appProps as any;
   const {
     activeTab,
@@ -78,71 +82,6 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     dashBannerCollapsed,
     setDashBannerCollapsed,
     dashLastRefresh,
-    monitorSearch,
-    setMonitorSearch,
-    monitorSearchResults,
-    monitorSearching,
-    monitorSelectedDevice,
-    setMonitorSelectedDevice,
-    monitorOverview,
-    monitorRealtime,
-    monitorTrend,
-    monitorTrendInterface,
-    setMonitorTrendInterface,
-    monitorTrendResolution,
-    setMonitorTrendResolution,
-    monitorTrendStartInput,
-    setMonitorTrendStartInput,
-    monitorTrendEndInput,
-    setMonitorTrendEndInput,
-    monitorTrendRange,
-    setMonitorTrendRange,
-    monitorTrendZoom,
-    setMonitorTrendZoom,
-    monitorTrendDragStart,
-    setMonitorTrendDragStart,
-    monitorTrendDragEnd,
-    setMonitorTrendDragEnd,
-    monitorTrendMetrics,
-    setMonitorTrendMetrics,
-    monitorTrendUiMode,
-    setMonitorTrendUiMode,
-    monitorAlerts,
-    monitorAlertTotal,
-    monitorAlertsPage,
-    setMonitorAlertsPage,
-    monitorAlertsPageSize,
-    monitorAlertsSeverity,
-    setMonitorAlertsSeverity,
-    monitorAlertsPhase,
-    setMonitorAlertsPhase,
-    monitorLoading,
-    monitorPageVisible,
-    monitorDashboardSiteFilter,
-    setMonitorDashboardSiteFilter,
-    monitorDashboardAlertFilter,
-    setMonitorDashboardAlertFilter,
-    inventoryRows,
-    inventoryTotal,
-    inventoryStatusCounts,
-    inventoryPage,
-    setInventoryPage,
-    inventoryPageSize,
-    setInventoryPageSize,
-    inventorySearch,
-    setInventorySearch,
-    inventoryPlatformFilter,
-    setInventoryPlatformFilter,
-    inventoryRoleFilter,
-    setInventoryRoleFilter,
-    inventoryStatusFilter,
-    setInventoryStatusFilter,
-    inventoryLifecycleFilter,
-    setInventoryLifecycleFilter,
-    inventorySortConfig,
-    inventoryLoading,
-    selectedDeviceIds,
-    setSelectedDeviceIds,
     handleSort,
     handleImport,
     handleExport,
@@ -273,7 +212,6 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     setDiffOnlyChanges,
     setDiffShowFullBoth,
     setDiffBlockQuery,
-    setInventoryRefreshTick,
     configTemplates,
     configVariableKeys,
     configMissingVariables,
@@ -342,7 +280,6 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     setAuditStatusFilter,
     auditTimeFilter,
     setAuditTimeFilter,
-    assetsTotal,
     playbookHistoryPageSize,
     setPlaybookHistoryPageSize,
     autoRefreshEnabled,
@@ -424,57 +361,8 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
           <MonitoringCenter
             devices={devices}
             language={language}
-            monitorSearch={monitorSearch}
-            setMonitorSearch={setMonitorSearch}
-            monitorSearchResults={monitorSearchResults}
-            monitorSearching={monitorSearching}
-            monitorSelectedDevice={monitorSelectedDevice}
-            setMonitorSelectedDevice={setMonitorSelectedDevice}
-            monitorOverview={monitorOverview}
-            monitorRealtime={monitorRealtime}
-            monitorTrend={monitorTrend}
-            monitorTrendInterface={monitorTrendInterface}
-            setMonitorTrendInterface={setMonitorTrendInterface}
-            monitorTrendResolution={monitorTrendResolution}
-            setMonitorTrendResolution={setMonitorTrendResolution}
-            monitorTrendStartInput={monitorTrendStartInput}
-            setMonitorTrendStartInput={setMonitorTrendStartInput}
-            monitorTrendEndInput={monitorTrendEndInput}
-            setMonitorTrendEndInput={setMonitorTrendEndInput}
-            monitorTrendRange={monitorTrendRange}
-            setMonitorTrendRange={setMonitorTrendRange}
-            monitorTrendZoom={monitorTrendZoom}
-            setMonitorTrendZoom={setMonitorTrendZoom}
-            monitorTrendDragStart={monitorTrendDragStart}
-            setMonitorTrendDragStart={setMonitorTrendDragStart}
-            monitorTrendDragEnd={monitorTrendDragEnd}
-            setMonitorTrendDragEnd={setMonitorTrendDragEnd}
-            monitorTrendMetrics={monitorTrendMetrics}
-            setMonitorTrendMetrics={setMonitorTrendMetrics}
-            monitorTrendUiMode={monitorTrendUiMode}
-            setMonitorTrendUiMode={setMonitorTrendUiMode}
-            monitorAlerts={monitorAlerts}
-            monitorAlertTotal={monitorAlertTotal}
-            monitorAlertsPage={monitorAlertsPage}
-            setMonitorAlertsPage={setMonitorAlertsPage}
-            monitorAlertsPageSize={monitorAlertsPageSize}
-            monitorAlertsSeverity={monitorAlertsSeverity}
-            setMonitorAlertsSeverity={setMonitorAlertsSeverity}
-            monitorAlertsPhase={monitorAlertsPhase}
-            setMonitorAlertsPhase={setMonitorAlertsPhase}
-            monitorLoading={monitorLoading}
-            monitorPageVisible={monitorPageVisible}
-            monitorDashboardSiteFilter={monitorDashboardSiteFilter}
-            setMonitorDashboardSiteFilter={setMonitorDashboardSiteFilter}
-            monitorDashboardAlertFilter={monitorDashboardAlertFilter}
-            setMonitorDashboardAlertFilter={setMonitorDashboardAlertFilter}
-            hostResources={hostResources}
-            fetchMonitoringOverview={() => props.fetchMonitoringOverview(true)}
-            fetchMonitoringAlerts={props.fetchMonitoringAlerts}
-            fetchMonitoringRealtime={props.fetchMonitoringRealtime}
-            fetchHostResources={props.fetchHostResources}
-            setMonitorRealtime={props.setMonitorRealtime}
             showToast={showToast}
+            isAuthenticated={props.isAuthenticated}
           />
         </Suspense>
       )}
@@ -566,32 +454,8 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
       {activeTab === 'inventory' && inventorySubPage === 'devices' && (
         <Suspense fallback={lazyPanelFallback}>
           <InventoryDevicesTab
-            inventoryRows={inventoryRows}
-            inventoryTotal={inventoryTotal}
-            inventoryStatusCounts={inventoryStatusCounts}
-            inventoryPage={inventoryPage}
-            setInventoryPage={setInventoryPage}
-            inventoryPageSize={inventoryPageSize}
-            setInventoryPageSize={setInventoryPageSize}
-            inventorySearch={inventorySearch}
-            setInventorySearch={setInventorySearch}
-            inventoryPlatformFilter={inventoryPlatformFilter}
-            setInventoryPlatformFilter={setInventoryPlatformFilter}
-            inventoryRoleFilter={inventoryRoleFilter}
-            setInventoryRoleFilter={setInventoryRoleFilter}
-            inventoryStatusFilter={inventoryStatusFilter}
-            setInventoryStatusFilter={setInventoryStatusFilter}
-            inventoryLifecycleFilter={inventoryLifecycleFilter}
-            setInventoryLifecycleFilter={setInventoryLifecycleFilter}
-            inventorySortConfig={inventorySortConfig}
-            inventoryLoading={inventoryLoading}
-            selectedDeviceIds={selectedDeviceIds}
-            setSelectedDeviceIds={setSelectedDeviceIds}
-            handleSort={handleSort}
             handleImport={handleImport}
             handleExport={handleExport}
-            handleDeleteDevice={handleDeleteDevice}
-            handleDeleteSelected={handleDeleteSelected}
             handleShowDetails={handleShowDetails}
             handleTestConnection={handleTestConnection}
             deviceConnectionChecks={deviceConnectionChecks}
