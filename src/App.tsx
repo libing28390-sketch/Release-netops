@@ -1179,13 +1179,14 @@ const App: React.FC = () => {
   const [trendDays, setTrendDays] = useState<7 | 30>(7);
   const [dashBannerCollapsed, setDashBannerCollapsed] = useState(false);
   const [dashLastRefresh, setDashLastRefresh] = useState<Date>(new Date());
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   const [showAddDevicePwd, setShowAddDevicePwd] = useState(false);
   const [showEditDevicePwd, setShowEditDevicePwd] = useState(false);
   const [showLifecycleConfirm, setShowLifecycleConfirm] = useState<'add' | 'edit' | null>(null);
   const [lifecycleConfirmChecked, setLifecycleConfirmChecked] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showProfilePwd, setShowProfilePwd] = useState(false);
-  const [profileForm, setProfileForm] = useState<ProfileFormState>({ username: '', oldPassword: '', password: '', confirmPassword: '', fixedPin: '' });
+  const [profileForm, setProfileForm] = useState<ProfileFormState>({ username: '', oldPassword: '', password: '', confirmPassword: '', fixedPin: '', displayName: '', phone: '', email: '' });
   const [notificationChannels, setNotificationChannels] = useState<{
     feishu:   { webhook_url: string; enabled: boolean; creator_username?: string };
     dingtalk: { webhook_url: string; enabled: boolean; secret: string; creator_username?: string };
@@ -1742,20 +1743,25 @@ const App: React.FC = () => {
     setIsLoading(true);
     Promise.all([fetchSharedData(), fetchDevicesData()]).finally(() => setIsLoading(false));
 
-    const sharedInterval = setInterval(fetchSharedData, 15000);
-    // Reduce heavy full device refresh pressure while inventory table uses server-side paging.
-    const devicePollMs = activeTab === 'inventory' && inventorySubPage === 'devices'
-      ? 30000
-      : activeTab === 'inventory' && inventorySubPage === 'interfaces'
-        ? 10000
-        : 15000;
-    const devicesInterval = setInterval(fetchDevicesData, devicePollMs);
+    let sharedInterval: any;
+    let devicesInterval: any;
+
+    if (autoRefreshEnabled) {
+      sharedInterval = setInterval(fetchSharedData, 15000);
+      // Reduce heavy full device refresh pressure while inventory table uses server-side paging.
+      const devicePollMs = activeTab === 'inventory' && inventorySubPage === 'devices'
+        ? 30000
+        : activeTab === 'inventory' && inventorySubPage === 'interfaces'
+          ? 10000
+          : 15000;
+      devicesInterval = setInterval(fetchDevicesData, devicePollMs);
+    }
 
     return () => {
-      clearInterval(sharedInterval);
-      clearInterval(devicesInterval);
+      if (sharedInterval) clearInterval(sharedInterval);
+      if (devicesInterval) clearInterval(devicesInterval);
     };
-  }, [isAuthenticated, fetchSharedData, fetchDevicesData, activeTab, inventorySubPage]);
+  }, [isAuthenticated, fetchSharedData, fetchDevicesData, activeTab, inventorySubPage, autoRefreshEnabled]);
 
   // Force refresh when switching between submenus so returning pages always show latest data.
   useEffect(() => {
@@ -3755,6 +3761,12 @@ const App: React.FC = () => {
     openAuditEventDetail,
     findMatchingPlatform,
     handleRerun,
+    selectedJob,
+    setSelectedJob,
+    autoRefreshEnabled,
+    setAutoRefreshEnabled,
+    fetchSharedData,
+    fetchDevicesData,
   };
 
 

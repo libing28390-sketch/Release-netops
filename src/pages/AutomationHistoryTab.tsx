@@ -1201,7 +1201,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                       return (
                                         <OutputActions
                                           text={logText}
-                                          filename={`log_${selectedDeviceDetail.hostname || selectedDeviceDetail.device_id || 'device'}`}
+                                          filename={`log_${selectedDeviceDetail.hostname || selectedDeviceDetail.ip_address || 'device'}`}
                                           theme="light"
                                           zh={isZh}
                                         />

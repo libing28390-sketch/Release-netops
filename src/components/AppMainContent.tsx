@@ -345,6 +345,12 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     assetsTotal,
     playbookHistoryPageSize,
     setPlaybookHistoryPageSize,
+    autoRefreshEnabled,
+    setAutoRefreshEnabled,
+    fetchSharedData,
+    fetchDevicesData,
+    selectedJob,
+    setSelectedJob,
   } = props;
 
   const isStandaloneScrollTab = 
@@ -395,6 +401,12 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             dashBannerCollapsed={dashBannerCollapsed}
             setDashBannerCollapsed={setDashBannerCollapsed}
             dashLastRefresh={dashLastRefresh}
+            autoRefreshEnabled={autoRefreshEnabled}
+            setAutoRefreshEnabled={setAutoRefreshEnabled}
+            fetchSharedData={fetchSharedData}
+            fetchDevicesData={fetchDevicesData}
+            selectedJob={selectedJob}
+            setSelectedJob={setSelectedJob}
             hostResources={hostResources}
             unreadNotificationCount={props.unreadNotificationCount}
             notifications={notifications}

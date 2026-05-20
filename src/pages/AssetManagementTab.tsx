@@ -1131,7 +1131,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                                 'bg-blue-400'
                               }`} />
                               {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}
-                              {a.is_managed === 1 && <Lock size={8} className="text-emerald-500/50" title={zh ? '凭据受管' : 'Managed'} />}
+                              {a.is_managed === 1 && <span title={zh ? '凭据受管' : 'Managed'}><Lock size={8} className="text-emerald-500/50" /></span>}
                             </span>
                             {a.takeover_error && (
                               <div className="flex items-center gap-1 text-[8px] text-red-500 font-medium bg-red-50 px-1 rounded animate-in fade-in slide-in-from-left-1" title={a.takeover_error}>

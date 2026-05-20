@@ -1,5 +1,5 @@
 import React from 'react';
-import { Server, Activity, ShieldCheck, AlertCircle, AlertTriangle, Bell, TrendingUp, PieChart as PieChartIcon, History, Clock, ChevronRight, X, Zap, MonitorSmartphone, Cpu, HardDrive, MemoryStick, Play, CalendarPlus, LayoutDashboard } from 'lucide-react';
+import { Server, Activity, ShieldCheck, AlertCircle, AlertTriangle, Bell, TrendingUp, PieChart as PieChartIcon, History, Clock, ChevronRight, X, Zap, MonitorSmartphone, Cpu, HardDrive, MemoryStick, Play, CalendarPlus, LayoutDashboard, Pause, RefreshCw } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, PieChart, Pie, Cell } from 'recharts';
 import type { Device, Job, ScheduledTask, HostResourceSnapshot, NotificationItem } from '../types';
 import { sectionHeaderRowClass, primaryActionBtnClass, secondaryActionBtnClass } from '../components/shared';
@@ -17,6 +17,12 @@ interface DashboardTabProps {
   dashBannerCollapsed: boolean;
   setDashBannerCollapsed: (v: boolean) => void;
   dashLastRefresh: Date;
+  autoRefreshEnabled: boolean;
+  setAutoRefreshEnabled: (v: boolean) => void;
+  fetchSharedData: () => Promise<void>;
+  fetchDevicesData: () => Promise<void>;
+  selectedJob: Job | null;
+  setSelectedJob: (j: Job | null) => void;
   hostResources: HostResourceSnapshot | null;
   unreadNotificationCount: number;
   notifications: NotificationItem[];
@@ -30,9 +36,24 @@ interface DashboardTabProps {
 const DashboardTab: React.FC<DashboardTabProps> = ({
   devices, jobs, scheduledTasks, trendDays, setTrendDays,
   complianceTrend, platformData, dashBannerCollapsed, setDashBannerCollapsed,
-  dashLastRefresh, hostResources, unreadNotificationCount, notifications, language, t, setActiveTab, navigate,
+  dashLastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchSharedData, fetchDevicesData, selectedJob, setSelectedJob,
+  hostResources, unreadNotificationCount, notifications, language, t, setActiveTab, navigate,
   assetsTotal,
 }) => {
+  const [isManualRefreshing, setIsManualRefreshing] = React.useState(false);
+  const handleManualRefresh = async () => {
+    setIsManualRefreshing(true);
+    try {
+      await Promise.all([fetchSharedData(), fetchDevicesData()]);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  };
+
+  const [showComplianceLine, setShowComplianceLine] = React.useState(true);
+  const [showJobSuccessLine, setShowJobSuccessLine] = React.useState(true);
   const ct = useChartTheme();
   const onlineCount = devices.filter(d => d.status === 'online').length;
   const onlinePct = devices.length > 0 ? Math.round((onlineCount / devices.length) * 100) : 0;
@@ -101,37 +122,65 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         title={t('networkOverview')}
         subtitle={t('dashboardSubtitle')}
         actions={
-          <>
-            <span className="text-[10px]" style={{ color: 'var(--dim-text)' }}>
-              {t('lastRefreshed')} {dashAgoSec}{t('secondsAgo')}
-            </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <style dangerouslySetInnerHTML={{__html: `
+              @keyframes shimmer {
+                100% { transform: translateX(100%); }
+              }
+              @keyframes breathe-glow {
+                0%, 100% { box-shadow: 0 0 4px rgba(239, 68, 68, 0.15), inset 0 0 2px rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.15); }
+                50% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.4), inset 0 0 6px rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.35); }
+              }
+            `}} />
+            <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.03] border border-black/5 dark:border-white/5">
+              <span className="text-[10px] text-black/50 dark:text-white/40 font-semibold select-none">
+                {t('lastRefreshed')} {dashAgoSec}s {language === 'zh' ? '前' : 'ago'}
+              </span>
+              <div className="h-3 w-[1px] bg-black/10 dark:bg-white/10 mx-1.5" />
+              <button 
+                onClick={handleManualRefresh} 
+                disabled={isManualRefreshing}
+                className="text-black/45 dark:text-white/40 hover:text-black dark:hover:text-white transition-colors flex items-center"
+                title={language === 'zh' ? '手动刷新' : 'Refresh Now'}
+              >
+                <RefreshCw size={11} className={`${isManualRefreshing ? 'animate-spin' : ''}`} />
+              </button>
+              <div className="h-3 w-[1px] bg-black/10 dark:bg-white/10 mx-1.5" />
+              <button 
+                onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)} 
+                className={`${autoRefreshEnabled ? 'text-emerald-500' : 'text-black/30 dark:text-white/30'} hover:opacity-80 transition-colors flex items-center`}
+                title={autoRefreshEnabled ? (language === 'zh' ? '已开启自动刷新(15s)' : 'Auto-refresh active(15s)') : (language === 'zh' ? '自动刷新已暂停' : 'Auto-refresh paused')}
+              >
+                {autoRefreshEnabled ? <Play size={11} fill="currentColor" /> : <Pause size={11} fill="currentColor" />}
+              </button>
+            </div>
             {hostResources && (
-              <span className="px-3 py-1 text-[10px] font-bold rounded-full uppercase tracking-wider bg-[#00172D]/5 text-[#00172D]">
+              <span className="px-3 py-1.5 text-[10px] font-bold rounded-xl uppercase tracking-wider bg-black/[0.03] dark:bg-white/[0.03] border border-black/5 dark:border-white/5 text-[#00172D] dark:text-white/70">
                 {hostStatusText}
               </span>
             )}
-            <span className={`px-3 py-1 text-[10px] font-bold rounded-full uppercase tracking-wider ${healthColor} ${healthLevel === 'critical' ? 'animate-pulse' : ''}`}>
+            <span className={`px-3 py-1.5 text-[10px] font-bold rounded-xl uppercase tracking-wider ${healthColor} ${healthLevel === 'critical' ? 'animate-pulse' : ''}`}>
               {healthLabel}
             </span>
-            <button onClick={() => navigate('/monitor/telemetry')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs'}>
+            <button onClick={() => navigate('/monitor/telemetry')} className={secondaryActionBtnClass + ' !py-1.5 !text-xs !rounded-xl'}>
               {language === 'zh' ? '查看平台资源' : 'View Host Resources'}
             </button>
-            <button onClick={() => navigate('/automation/tasks')} className={primaryActionBtnClass + ' !py-1.5 !text-xs'}>
+            <button onClick={() => navigate('/automation/tasks')} className={primaryActionBtnClass + ' !py-1.5 !text-xs !rounded-xl'}>
               {t('openAutomation')}
             </button>
-          </>
+          </div>
         }
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4">
         {/* Total Assets */}
-        <div onClick={() => navigate('/assets/devices')} className="bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-[#005073]/20 transition-all cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
+        <div onClick={() => navigate('/assets/devices')} className="bg-white/80 dark:bg-[#0d1527]/90 px-5 py-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/5 flex items-center justify-between group hover:shadow-lg hover:-translate-y-1 hover:border-[#005073]/30 dark:hover:border-[#005073]/50 hover:shadow-[#005073]/10 dark:hover:shadow-[#005073]/20 transition-all duration-300 cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
           <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('totalAssets')}</p>
-            <p className="text-3xl font-bold monitoring-data text-[#005073]">{assetsTotal}</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30 mb-1">{t('totalAssets')}</p>
+            <p className="text-3xl font-bold monitoring-data text-[#005073] dark:text-[#00bceb]">{assetsTotal}</p>
           </div>
-          <div className="p-3 rounded-xl bg-[#005073]/5 text-[#005073] group-hover:scale-110 transition-transform">
+          <div className="p-3 rounded-xl bg-[#005073]/5 dark:bg-[#005073]/20 text-[#005073] dark:text-[#00bceb] group-hover:scale-110 transition-transform">
             <Server size={24} />
           </div>
         </div>
@@ -146,35 +195,37 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               navigate('/inventory/devices');
             }
           }}
-          className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 group hover:shadow-md hover:border-emerald-200 transition-all cursor-pointer ${
+          className={`bg-white/80 dark:bg-[#0d1527]/90 px-5 py-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/5 group hover:shadow-lg hover:-translate-y-1 hover:border-emerald-200 dark:hover:border-emerald-500/50 hover:shadow-emerald-500/10 dark:hover:shadow-emerald-500/20 transition-all duration-300 cursor-pointer ${
             hasDevices ? (onlinePct < 30 ? 'border-l-[3px] border-l-red-500' : onlinePct < 60 ? 'border-l-[3px] border-l-orange-400' : '') : ''
           }`}
         >
           <div className="flex items-center justify-between">
             <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('onlineNodes')}</p>
+              <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30 mb-1">{t('onlineNodes')}</p>
               <div className="flex items-baseline gap-1.5">
                 <span className={`text-3xl font-bold monitoring-data ${
-                  hasDevices ? (onlinePct < 30 ? 'text-red-600' : onlinePct < 60 ? 'text-orange-600' : 'text-emerald-600') : 'text-[#005073]'
+                  hasDevices ? (onlinePct < 30 ? 'text-red-600 dark:text-red-400' : onlinePct < 60 ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-[#005073] dark:text-[#00bceb]'
                 }`}>{onlineCount}</span>
-                <span className="text-sm text-black/30 font-medium">/ {devices.length}</span>
+                <span className="text-sm text-black/30 dark:text-white/30 font-medium">/ {devices.length}</span>
               </div>
             </div>
             <div className={`p-3 rounded-xl ${
               hasDevices 
-                ? (onlinePct < 30 ? 'bg-red-50 text-red-600' : onlinePct < 60 ? 'bg-orange-50 text-orange-600' : 'bg-emerald-50 text-emerald-600')
-                : 'bg-slate-50 text-slate-500'
+                ? (onlinePct < 30 ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : onlinePct < 60 ? 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400' : 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400')
+                : 'bg-slate-50 dark:bg-slate-900 text-slate-500'
             } group-hover:scale-110 transition-transform`}>
               <Activity size={24} />
             </div>
           </div>
           {/* Micro progress bar */}
-          <div className="mt-2 w-full h-1.5 bg-black/5 rounded-full overflow-hidden">
-            <div className={`h-full rounded-full transition-all duration-700 ${
-              hasDevices ? (onlinePct < 30 ? 'bg-red-500' : onlinePct < 60 ? 'bg-orange-400' : 'bg-emerald-500') : 'bg-slate-300'
-            }`} style={{ width: `${hasDevices ? onlinePct : 0}%` }} />
+          <div className="mt-2 w-full h-1.5 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden relative">
+            <div className={`h-full rounded-full transition-all duration-700 relative overflow-hidden ${
+              hasDevices ? (onlinePct < 30 ? 'bg-red-500 animate-pulse' : onlinePct < 60 ? 'bg-orange-400' : 'bg-emerald-500') : 'bg-slate-300 dark:bg-slate-700'
+            }`} style={{ width: `${hasDevices ? onlinePct : 0}%` }}>
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-[shimmer_2.5s_infinite] -translate-x-full" />
+            </div>
           </div>
-          <p className="text-[10px] text-black/30 font-medium mt-1">
+          <p className="text-[10px] text-black/30 dark:text-white/40 font-semibold mt-1.5">
             {hasDevices 
               ? `${onlinePct}% ${language === 'zh' ? '在线' : 'online'}` 
               : (language === 'zh' ? '暂无设备' : 'No devices')}
@@ -182,77 +233,101 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
 
         {/* Compliance */}
-        <div onClick={() => navigate('/compliance')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-[#00bceb]/20 transition-all cursor-pointer ${
+        <div onClick={() => navigate('/compliance')} className={`bg-white/80 dark:bg-[#0d1527]/90 px-5 py-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/5 flex items-center justify-between group hover:shadow-lg hover:-translate-y-1 hover:border-[#00bceb]/30 dark:hover:border-[#00bceb]/50 hover:shadow-[#00bceb]/10 dark:hover:shadow-[#00bceb]/20 transition-all duration-300 cursor-pointer ${
           hasDevices ? (compPct === 0 ? 'border-l-[3px] border-l-red-500' : compPct < 50 ? 'border-l-[3px] border-l-orange-400' : '') : ''
         }`}>
           <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('complianceRate')}</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30 mb-1">{t('complianceRate')}</p>
             <p className={`text-3xl font-bold monitoring-data ${
-              hasDevices ? (compPct === 0 ? 'text-red-600' : compPct < 50 ? 'text-orange-600' : 'text-[#00bceb]') : 'text-[#005073]'
+              hasDevices ? (compPct === 0 ? 'text-red-600 dark:text-red-400' : compPct < 50 ? 'text-orange-600 dark:text-orange-400' : 'text-[#00bceb] dark:text-[#00bceb]') : 'text-[#005073] dark:text-[#00bceb]'
             }`}>{hasDevices ? `${compPct}%` : '--'}</p>
           </div>
           <div className={`p-3 rounded-xl ${
             hasDevices 
-              ? (compPct === 0 ? 'bg-red-50 text-red-600' : compPct < 50 ? 'bg-orange-50 text-orange-600' : 'bg-[#00bceb]/5 text-[#00bceb]')
-              : 'bg-slate-50 text-slate-500'
+              ? (compPct === 0 ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : compPct < 50 ? 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400' : 'bg-[#00bceb]/5 dark:bg-[#00bceb]/20 text-[#00bceb] dark:text-[#00bceb]')
+              : 'bg-slate-50 dark:bg-slate-900 text-slate-500'
           } group-hover:scale-110 transition-transform`}>
             <ShieldCheck size={24} />
           </div>
         </div>
 
         {/* Failed Tasks (24h) */}
-        <div onClick={() => navigate('/automation/history')} className={`bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 flex items-center justify-between group hover:shadow-md hover:border-red-200 transition-all cursor-pointer ${failedCount24h > 0 ? 'border-l-[3px] border-l-red-500' : ''}`}>
+        <div onClick={() => navigate('/automation/history')} className={`bg-white/80 dark:bg-[#0d1527]/90 px-5 py-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/5 flex items-center justify-between group hover:shadow-lg hover:-translate-y-1 hover:border-red-200 dark:hover:border-red-500/50 hover:shadow-red-500/10 dark:hover:shadow-red-500/20 transition-all duration-300 cursor-pointer ${failedCount24h > 0 ? 'border-l-[3px] border-l-red-500 animate-[breathe-glow_3s_infinite_ease-in-out]' : ''}`}>
           <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-black/30 mb-1">{t('failedTasks')}</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30 mb-1">{t('failedTasks')}</p>
             <div className="flex items-baseline gap-1.5">
-              <span className={`text-3xl font-bold monitoring-data ${failedCount24h > 0 ? 'text-red-600' : 'text-black/40'}`}>{failedCount24h}</span>
-              <span className="text-[10px] text-black/25 font-medium">24h</span>
+              <span className={`text-3xl font-bold monitoring-data ${failedCount24h > 0 ? 'text-red-600 dark:text-red-400' : 'text-black/40 dark:text-white/30'}`}>{failedCount24h}</span>
+              <span className="text-[10px] text-black/25 dark:text-white/40 font-bold">24h</span>
             </div>
           </div>
-          <div className={`p-3 rounded-xl ${failedCount24h > 0 ? 'bg-red-50 text-red-600' : 'bg-black/5 text-black/40'} group-hover:scale-110 transition-transform`}>
+          <div className={`p-3 rounded-xl ${failedCount24h > 0 ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : 'bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40'} group-hover:scale-110 transition-transform`}>
             <AlertCircle size={24} />
           </div>
         </div>
 
-        {/* Platform Host — expanded with CPU/MEM/DISK bars */}
-        <div onClick={() => navigate('/monitor/telemetry')} className={`col-span-2 md:col-span-1 bg-white px-5 py-4 rounded-2xl shadow-sm border border-black/5 group hover:shadow-md hover:border-[#005073]/20 transition-all cursor-pointer ${hostResources?.status === 'critical' ? 'border-l-[3px] border-l-red-500' : hostResources?.status === 'degraded' ? 'border-l-[3px] border-l-orange-400' : ''}`}>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '平台宿主机' : 'Platform Host'}</p>
-            <div className={`p-2 rounded-lg ${hostResources?.status === 'critical' ? 'bg-red-50 text-red-600' : hostResources?.status === 'degraded' ? 'bg-orange-50 text-orange-600' : 'bg-[#005073]/5 text-[#005073]'} group-hover:scale-110 transition-transform`}>
-              <MonitorSmartphone size={18} />
+        {/* Platform Host — expanded with circular SVG gauge charts */}
+        <div onClick={() => navigate('/monitor/telemetry')} className={`col-span-2 md:col-span-1 bg-white/80 dark:bg-[#0d1527]/90 px-5 py-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/5 group hover:shadow-lg hover:-translate-y-1 hover:border-[#00bceb]/30 dark:hover:border-[#00bceb]/50 hover:shadow-[#00bceb]/10 dark:hover:shadow-[#00bceb]/20 transition-all duration-300 cursor-pointer ${hostResources?.status === 'critical' ? 'border-l-[3px] border-l-red-500' : hostResources?.status === 'degraded' ? 'border-l-[3px] border-l-orange-400' : ''}`}>
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30">{language === 'zh' ? '平台宿主机' : 'Platform Host'}</p>
+            <div className={`p-2 rounded-lg ${hostResources?.status === 'critical' ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : hostResources?.status === 'degraded' ? 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400' : 'bg-[#005073]/5 dark:bg-[#005073]/20 text-[#005073] dark:text-[#00bceb]'} group-hover:scale-110 transition-transform`}>
+              <MonitorSmartphone size={16} />
             </div>
           </div>
           {hostResources ? (
-            <div className="space-y-1.5">
+            <div className="flex items-center justify-around gap-1 mt-1">
               {[
-                { label: 'CPU', value: hostResources.cpu_percent || 0, icon: Cpu },
-                { label: 'MEM', value: hostResources.memory_percent || 0, icon: MemoryStick },
-                { label: 'DISK', value: hostResources.disk_percent || 0, icon: HardDrive },
-              ].map(res => (
-                <div key={res.label} className="flex items-center gap-1.5">
-                  <span className="text-[9px] font-bold text-black/30 w-7 shrink-0">{res.label}</span>
-                  <div className="flex-1 h-1.5 bg-black/5 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full transition-all duration-700 ${res.value > 80 ? 'bg-red-500 animate-pulse' : res.value > 65 ? 'bg-orange-400' : 'bg-[#00bceb]'}`} style={{ width: `${Math.round(res.value)}%` }} />
+                { label: 'CPU', value: hostResources.cpu_percent || 0 },
+                { label: 'MEM', value: hostResources.memory_percent || 0 },
+                { label: 'DISK', value: hostResources.disk_percent || 0 },
+              ].map(res => {
+                const radius = 14;
+                const circ = 2 * Math.PI * radius;
+                const strokePct = circ * (1 - res.value / 100);
+                const strokeColor = res.value > 80 ? 'stroke-red-500' : res.value > 65 ? 'stroke-orange-400' : 'stroke-[#00bceb]';
+                const textTone = res.value > 80 ? 'text-red-500 font-extrabold' : res.value > 65 ? 'text-orange-500 font-bold' : 'text-[#005073] dark:text-[#00bceb] font-bold';
+                return (
+                  <div key={res.label} className="flex flex-col items-center">
+                    <div className="relative w-10 h-10 flex items-center justify-center">
+                      <svg className="w-10 h-10 transform -rotate-90">
+                        <circle cx="20" cy="20" r={radius} className="stroke-black/5 dark:stroke-white/5 fill-transparent" strokeWidth="2.5" />
+                        <circle 
+                          cx="20" 
+                          cy="20" 
+                          r={radius} 
+                          className={`fill-transparent ${strokeColor} transition-all duration-700`} 
+                          strokeWidth="2.5" 
+                          strokeDasharray={circ} 
+                          strokeDashoffset={strokePct}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <span className={`absolute text-[8px] tracking-tighter ${textTone}`}>{Math.round(res.value)}%</span>
+                    </div>
+                    <span className="text-[8px] font-extrabold text-black/35 dark:text-white/40 uppercase mt-0.5">{res.label}</span>
                   </div>
-                  <span className={`text-[10px] font-bold w-8 text-right ${res.value > 80 ? 'text-red-600 font-extrabold' : res.value > 65 ? 'text-orange-600 font-bold' : 'text-black/50'}`}>{Math.round(res.value)}%</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
-            <p className="text-2xl font-bold text-black/20 monitoring-data">--</p>
+            <p className="text-2xl font-bold text-black/20 dark:text-white/20 monitoring-data">--</p>
           )}
         </div>
       </div>
 
       {/* Alert Summary Strip */}
       {unreadNotificationCount > 0 && (
-        <div onClick={() => navigate('/alerts/desk')} className="bg-white rounded-2xl border border-black/5 shadow-sm px-6 py-4 flex items-center justify-between cursor-pointer hover:shadow-md hover:border-black/10 transition-all group">
+        <div 
+          onClick={() => navigate('/alerts/desk')} 
+          className={`bg-white/80 dark:bg-[#0d1527]/90 rounded-2xl border border-black/5 dark:border-white/5 shadow-sm px-6 py-4 flex items-center justify-between cursor-pointer hover:shadow-lg transition-all group duration-300 ${
+            criticalAlerts > 0 ? 'animate-[breathe-glow_3s_infinite_ease-in-out]' : ''
+          }`}
+        >
           <div className="flex items-center gap-4 flex-1 min-w-0">
-            <div className="p-2.5 rounded-xl bg-red-50 text-red-600 group-hover:scale-110 transition-transform">
+            <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 group-hover:scale-110 transition-transform">
               <Bell size={20} />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-[#00172D]">{t('activeAlertsShort')}</p>
+              <p className="text-sm font-bold text-[#00172D] dark:text-white">{t('activeAlertsShort')}</p>
               <p className={`text-[10px] font-semibold mt-0.5 truncate max-w-[200px] sm:max-w-[400px] md:max-w-[600px] ${latestAlertColor}`}>
                 {latestAlert 
                   ? `${language === 'zh' ? '最新告警' : 'Latest'}: ${latestAlert.title || latestAlert.message}`
@@ -260,53 +335,61 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
             {criticalAlerts > 0 && (
-              <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 text-red-700">
+              <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300">
                 <AlertCircle size={12} /> {criticalAlerts} {language === 'zh' ? '严重' : 'Critical'}
               </span>
             )}
             {majorAlerts > 0 && (
-              <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-orange-100 text-orange-700">
+              <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300">
                 <AlertTriangle size={12} /> {majorAlerts} {language === 'zh' ? '重要' : 'Major'}
               </span>
             )}
             {warningAlerts > 0 && (
-              <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
+              <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300">
                 {warningAlerts} {language === 'zh' ? '警告' : 'Warning'}
               </span>
             )}
             {infoAlerts > 0 && (
-              <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700">
+              <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">
                 {infoAlerts} {language === 'zh' ? '信息' : 'Info'}
               </span>
             )}
-            <ChevronRight size={16} className="text-black/20 group-hover:text-black/40 transition-colors" />
+            <ChevronRight size={16} className="text-black/20 dark:text-white/20 group-hover:text-black/40 dark:group-hover:text-white/40 transition-colors" />
           </div>
         </div>
       )}
 
       <div className="grid grid-cols-12 gap-3 md:gap-4">
-        <div className="col-span-12 lg:col-span-8 bg-white rounded-2xl border border-black/5 p-4 md:p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-6">
+        <div className="col-span-12 lg:col-span-8 bg-white/80 dark:bg-[#0d1527]/85 backdrop-blur-md rounded-2xl border border-black/5 dark:border-white/5 p-4 md:p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
             <div>
-              <h3 className="text-sm font-bold text-[#00172D] flex items-center gap-2">
+              <h3 className="text-sm font-bold text-[#00172D] dark:text-white flex items-center gap-2">
                 <TrendingUp size={18} className="text-[#00bceb]" />
                 {t('complianceTrend')}
               </h3>
-              <p className="text-xs text-black/40 mt-0.5">{t('complianceTrendSub')}</p>
+              <p className="text-xs text-black/40 dark:text-white/40 mt-0.5">{t('complianceTrendSub')}</p>
             </div>
-            <div className="flex gap-2">
-              <div className="flex items-center gap-1.5 mr-3">
-                <span className="w-4 h-0.5 bg-[#00bceb] rounded-full block" />
-                <span className="text-[9px] text-black/40">{ language === 'zh' ? '合规率' : 'Compliance' }</span>
-              </div>
-              <div className="flex items-center gap-1.5 mr-4">
-                <span className="w-4 h-0.5 bg-emerald-500 rounded-full block" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #10b981, #10b981 3px, transparent 3px, transparent 6px)' }} />
-                <span className="text-[9px] text-black/40">{ language === 'zh' ? '作业成功率' : 'Job Success' }</span>
-              </div>
-              <button onClick={() => setTrendDays(7)} className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${trendDays === 7 ? 'bg-black/10 text-black/70' : 'text-black/40 hover:bg-black/5'}`}>{t('days7')}</button>
-              <button onClick={() => setTrendDays(30)} className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${trendDays === 30 ? 'bg-black/10 text-black/70' : 'text-black/40 hover:bg-black/5'}`}>{t('days30')}</button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button 
+                onClick={() => setShowComplianceLine(!showComplianceLine)}
+                className={`flex items-center gap-1.5 mr-2 px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-all select-none ${showComplianceLine ? '' : 'opacity-40'}`}
+                title={language === 'zh' ? '点击显示/隐藏合规率' : 'Click to Toggle Compliance Rate'}
+              >
+                <span className="w-3.5 h-0.5 bg-[#00bceb] rounded-full block" />
+                <span className="text-[9px] font-bold text-black/50 dark:text-white/50">{ language === 'zh' ? '合规率' : 'Compliance' }</span>
+              </button>
+              <button 
+                onClick={() => setShowJobSuccessLine(!showJobSuccessLine)}
+                className={`flex items-center gap-1.5 mr-3 px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-all select-none ${showJobSuccessLine ? '' : 'opacity-40'}`}
+                title={language === 'zh' ? '点击显示/隐藏作业成功率' : 'Click to Toggle Job Success Rate'}
+              >
+                <span className="w-3.5 h-0.5 bg-emerald-500 rounded-full block animate-[pulse_2s_infinite]" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #10b981, #10b981 3px, transparent 3px, transparent 6px)' }} />
+                <span className="text-[9px] font-bold text-black/50 dark:text-white/50">{ language === 'zh' ? '作业成功率' : 'Job Success' }</span>
+              </button>
+              <button onClick={() => setTrendDays(7)} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${trendDays === 7 ? 'bg-black/10 dark:bg-white/10 text-black/75 dark:text-white/80' : 'text-black/40 dark:text-white/40 hover:bg-black/5 dark:hover:bg-white/5'}`}>{t('days7')}</button>
+              <button onClick={() => setTrendDays(30)} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${trendDays === 30 ? 'bg-black/10 dark:bg-white/10 text-black/75 dark:text-white/80' : 'text-black/40 dark:text-white/40 hover:bg-black/5 dark:hover:bg-white/5'}`}>{t('days30')}</button>
             </div>
           </div>
           <div className="h-[280px] w-full">
@@ -342,22 +425,22 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 />
                 {/* Average reference line */}
                 <ReferenceLine y={trendAvg} stroke={ct.reference} strokeDasharray="6 4" strokeWidth={1} label={{ value: `${language === 'zh' ? '均值' : 'Avg'} ${trendAvg}%`, position: 'insideTopRight', fill: ct.reference, fontSize: 10 }} />
-                <Area type="monotone" dataKey="rate" stroke="#00bceb" strokeWidth={3} fillOpacity={1} fill="url(#colorRate)" name="rate" />
-                <Area type="monotone" dataKey="jobRate" stroke="#10b981" strokeWidth={2} strokeDasharray="5 3" fillOpacity={0} dot={false} connectNulls name="jobRate" />
+                {showComplianceLine && <Area type="monotone" dataKey="rate" stroke="#00bceb" strokeWidth={3} fillOpacity={1} fill="url(#colorRate)" name="rate" />}
+                {showJobSuccessLine && <Area type="monotone" dataKey="jobRate" stroke="#10b981" strokeWidth={2} strokeDasharray="5 3" fillOpacity={0} dot={false} connectNulls name="jobRate" />}
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        <div className="col-span-12 lg:col-span-4 bg-white rounded-2xl border border-black/5 p-4 md:p-6 shadow-sm">
-          <h3 className="text-sm font-bold text-[#00172D] mb-6 flex items-center gap-2">
+        <div className="col-span-12 lg:col-span-4 bg-white/80 dark:bg-[#0d1527]/85 backdrop-blur-md rounded-2xl border border-black/5 dark:border-white/5 p-4 md:p-6 shadow-sm">
+          <h3 className="text-sm font-bold text-[#00172D] dark:text-white mb-6 flex items-center gap-2">
             <PieChartIcon size={18} className="text-emerald-500" />
             {t('platformDistribution')}
           </h3>
           <div className="h-[200px] w-full relative" role="img" aria-label={language === 'zh' ? '平台分布图' : 'Platform distribution chart'}>
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={platformData} innerRadius={65} outerRadius={85} paddingAngle={platformData.length > 4 ? 4 : 8} dataKey="value" stroke="none">
+                <Pie data={platformData} innerRadius={63} outerRadius={83} paddingAngle={platformData.length > 4 ? 4 : 8} cornerRadius={4} dataKey="value" stroke="none">
                   {platformData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
@@ -367,11 +450,11 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             </ResponsiveContainer>
             {/* P1: Total device count in donut center */}
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-2xl font-bold text-[#00172D] monitoring-data">{devices.length}</span>
-              <span className="text-[10px] text-black/40 font-medium">{language === 'zh' ? '总设备' : 'Total'}</span>
+              <span className="text-3xl font-extrabold text-[#00172D] dark:text-white tracking-tight monitoring-data">{devices.length}</span>
+              <span className="text-[10px] text-black/40 dark:text-white/40 font-semibold uppercase tracking-wider">{language === 'zh' ? '总设备' : 'Total'}</span>
             </div>
           </div>
-          <div className="mt-6 space-y-2">
+          <div className="mt-6 space-y-1.5">
             {platformData.map((item, i) => (
               <div 
                 key={i} 
@@ -383,14 +466,14 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                     navigate('/inventory/devices');
                   }
                 }}
-                className="flex items-center justify-between cursor-pointer hover:bg-black/[0.04] p-1 px-2 rounded-xl transition-all group"
+                className="flex items-center justify-between cursor-pointer hover:bg-black/[0.04] dark:hover:bg-white/[0.04] p-1.5 px-2 rounded-xl transition-all group"
                 title={language === 'zh' ? `点击查看所有 ${item.name} 设备` : `Click to view all ${item.name} devices`}
               >
                 <div className="flex items-center gap-3">
                   <div className="w-2.5 h-2.5 rounded-full group-hover:scale-110 transition-transform duration-300" style={{backgroundColor: item.color}} />
-                  <span className="text-xs font-semibold text-black/60 group-hover:text-black/85 transition-colors">{item.name}</span>
+                  <span className="text-xs font-semibold text-black/60 dark:text-white/70 group-hover:text-[#00bceb] transition-colors">{item.name}</span>
                 </div>
-                <span className="text-xs font-bold text-[#00172D] group-hover:text-[#00bceb] transition-colors">{item.value}%</span>
+                <span className="text-xs font-bold text-[#00172D] dark:text-[#00bceb] group-hover:scale-105 transition-transform">{item.value}%</span>
               </div>
             ))}
           </div>
@@ -398,14 +481,14 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
       </div>
 
       <div className="grid grid-cols-12 gap-3 md:gap-4">
-        <div className="col-span-12 lg:col-span-7 bg-white rounded-2xl border border-black/5 p-4 md:p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-6">
+        <div className="col-span-12 lg:col-span-7 bg-white/80 dark:bg-[#0d1527]/85 backdrop-blur-md rounded-2xl border border-black/5 dark:border-white/5 p-4 md:p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
             <div>
-              <h3 className="text-sm font-bold text-[#00172D] flex items-center gap-2">
-                <History size={18} className="text-black/40" />
+              <h3 className="text-sm font-bold text-[#00172D] dark:text-white flex items-center gap-2">
+                <History size={18} className="text-black/40 dark:text-white/40" />
                 {t('recentActivity')}
               </h3>
-              <p className="text-xs text-black/40 mt-1">{t('recentActivitySub')}</p>
+              <p className="text-xs text-black/40 dark:text-white/40 mt-1">{t('recentActivitySub')}</p>
             </div>
             <button className="text-[10px] font-bold uppercase text-[#00bceb] hover:underline" onClick={() => setActiveTab('history')}>
               {t('viewAuditLog')}
@@ -413,26 +496,33 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           </div>
           <div className="space-y-2">
             {jobs.slice(0, 5).map(job => (
-              <div key={job.id} className="flex items-center justify-between p-4 hover:bg-black/[0.02] rounded-xl transition-all border border-transparent hover:border-black/5">
+              <div 
+                key={job.id} 
+                onClick={() => setSelectedJob(job)}
+                className="flex items-center justify-between p-4 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] rounded-xl transition-all border border-transparent hover:border-black/5 dark:hover:border-white/5 cursor-pointer group/item"
+                title={language === 'zh' ? '点击查看执行日志' : 'Click to View Execution Log'}
+              >
                 <div className="flex items-center gap-4">
-                  <div className={`p-2.5 rounded-xl ${
-                    job.status === 'success' ? 'bg-emerald-50 text-emerald-600' :
-                    job.status === 'failed' ? 'bg-red-50 text-red-600' : 'bg-[#00bceb]/10 text-[#00bceb]'
+                  <div className={`p-2.5 rounded-xl transition-colors ${
+                    job.status === 'success' ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400' :
+                    job.status === 'failed' ? 'bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400' : 'bg-[#00bceb]/10 dark:bg-[#00bceb]/20 text-[#00bceb] dark:text-[#00bceb]'
                   }`}>
-                    <Zap size={18} />
+                    <Zap size={18} className="group-hover/item:scale-110 transition-transform duration-300" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-[#00172D]">{job.task_name}</p>
-                    <p className="text-[10px] text-black/40 font-medium uppercase tracking-wider">{new Date(job.created_at).toLocaleString()}</p>
+                    <p className="text-sm font-bold text-[#00172D] dark:text-white group-hover/item:text-[#00bceb] transition-colors">{job.task_name}</p>
+                    <p className="text-[10px] text-black/40 dark:text-white/40 font-medium uppercase tracking-wider">{new Date(job.created_at).toLocaleString()}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
                   <span className={`text-[10px] font-bold uppercase px-3 py-1 rounded-full ${
-                    job.status === 'success' ? 'bg-emerald-100 text-emerald-700' : job.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                    job.status === 'success' ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300' : 
+                    job.status === 'failed' ? 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300' : 
+                    'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
                   }`}>
                     {job.status}
                   </span>
-                  <ChevronRight size={14} className="text-black/20" />
+                  <ChevronRight size={14} className="text-black/20 dark:text-white/20 group-hover/item:translate-x-1 transition-transform" />
                 </div>
               </div>
             ))}
@@ -451,25 +541,25 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           </div>
         </div>
 
-        <div className="col-span-12 lg:col-span-5 bg-white rounded-2xl border border-black/5 p-4 md:p-6 shadow-sm">
-          <h3 className="text-sm font-bold text-[#00172D] mb-6 flex items-center gap-2">
+        <div className="col-span-12 lg:col-span-5 bg-white/80 dark:bg-[#0d1527]/85 backdrop-blur-md rounded-2xl border border-black/5 dark:border-white/5 p-4 md:p-6 shadow-sm">
+          <h3 className="text-sm font-bold text-[#00172D] dark:text-white mb-6 flex items-center gap-2">
             <Clock size={18} className="text-orange-500" />
             {t('upcomingTasks')}
           </h3>
           <div className="space-y-4">
             {scheduledTasks.filter(st => st.status === 'active').slice(0, 4).map(task => (
-              <div key={task.id} className="flex items-center justify-between p-4 bg-[#F0F2F5] rounded-2xl border border-black/5 group hover:bg-white hover:shadow-md transition-all">
+              <div key={task.id} className="flex items-center justify-between p-4 bg-[#F0F2F5] dark:bg-[#0d1527]/40 rounded-2xl border border-black/5 dark:border-white/5 group hover:bg-white dark:hover:bg-[#0d1527] hover:shadow-md transition-all">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all">
+                  <div className="w-10 h-10 bg-white dark:bg-slate-900 rounded-xl shadow-sm flex items-center justify-center text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all">
                     <Clock size={18} />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-[#00172D]">{task.task_name}</p>
-                    <p className="text-[10px] text-black/40 font-medium">{task.scheduled_time} ({task.timezone})</p>
+                    <p className="text-sm font-bold text-[#00172D] dark:text-white">{task.task_name}</p>
+                    <p className="text-[10px] text-black/40 dark:text-white/40 font-medium">{task.scheduled_time} ({task.timezone})</p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-[10px] font-bold uppercase text-[#005073] bg-[#005073]/10 px-2 py-1 rounded-lg">{task.schedule_type}</p>
+                  <p className="text-[10px] font-bold uppercase text-[#005073] dark:text-[#00bceb] bg-[#005073]/10 dark:bg-[#00bceb]/20 px-2.5 py-1 rounded-lg">{task.schedule_type}</p>
                 </div>
               </div>
             ))}
