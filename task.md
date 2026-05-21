@@ -1,3 +1,4 @@
+## Phase 3 (已完成)
 - `[x]` Phase 3.1: Inventory Domain
   - `[x]` Create `src/store/inventoryStore.ts`
   - `[x]` Extract `inventoryRows`, `inventoryTotal`, `inventoryPage`, filters, sorting states from `App.tsx`
@@ -12,3 +13,76 @@
 - `[x]` Phase 3.3: AppMainContent Cleanup
   - `[x]` Clean up `appProps` in `AppMainContent.tsx`
   - `[x]` Verify TypeScript types via `tsc --noEmit`
+
+## Phase 4 — 继续轻量化拆分 App.tsx (起点 ~3912 行 → 目标 ~700 行)
+
+- `[x]` Phase 4.1: Avatar + PageTitle 工具化
+  - `[x]` Create `src/utils/avatarPresets.tsx` (avatarPresets / resolvePreset / renderAvatarContent)
+  - `[x]` Create `src/hooks/usePageTitle.ts`
+  - `[x]` Update `App.tsx` to consume them
+  - `[x]` Verify via `npm run lint`
+  - 进度: App.tsx 3912 → 3821 行 (-91)
+- `[x]` Phase 4.2: Sidebar Nav + Command Palette
+  - `[x]` Create `src/hooks/useCommandPalette.ts`
+  - `[x]` Remove dead Sidebar group/section state from `App.tsx` (Sidebar 组件未被实例化使用)
+  - 进度: App.tsx 3821 → 3643 行 (-178)
+  - 注: 原 Sidebar.tsx 组件未被实际渲染，相关 GroupOpen/SectionOpen/recentSidebarPaths state 全部删除；如未来复用 Sidebar 需要重新接线
+- `[x]` Phase 4.3: License Domain
+  - `[x]` Create `src/hooks/useLicense.ts` (status / 60s polling / TAB_FEATURE_MAP enforcement)
+  - 进度: App.tsx 3643 → 3553 行 (-90)
+- `[x]` Phase 4.4: Profile Domain
+  - `[x]` Create `src/hooks/useUserProfile.ts`
+  - 进度: App.tsx 3553 → 3459 行 (-94)
+- `[x]` Phase 4.5: Scenario Draft Domain
+  - `[x]` Create `src/hooks/useScenarioDraft.ts`
+  - 进度: App.tsx 3459 → 3380 行 (-79)
+  - 备注: `handleCreateScenarioDraftFromTemplate` 暂留 App.tsx，依赖 config workspace state，待 Phase 4.7 一起迁
+- `[x]` Phase 4.6: Topology Domain
+  - `[x]` Create `src/hooks/useTopology.ts` (state + describeLink + evaluateSnapshot + 9 个 useMemo + handleExportMap + handleTriggerDiscovery)
+  - `[x]` 顺手清理 App.tsx 中的死代码 legacy* helpers
+  - 进度: App.tsx 3380 → 3002 行 (-378)
+  - 备注: 暂未做 store 化（store 抽离推迟到真有跨组件需求时再做）；TopologyPage 现仍通过 mainContentProps 接收数据，4.12 一并处理
+- `[x]` Phase 4.7: Config Workspace Domain
+  - `[x]` Create `src/hooks/useConfigWorkspace.ts`
+  - 进度: App.tsx 3002 → 2722 行 (-280)
+- `[x]` Phase 4.8: Config Snapshots & Backup Domain
+  - `[x]` Create `src/hooks/useConfigSnapshots.ts`
+  - `[x]` Extract `copyTextWithFallback` to `src/utils/clipboard.ts`
+  - 进度: App.tsx 2722 → 2377 行 (-345)
+- `[x]` Phase 4.9: Device Form Actions
+  - `[x]` Create `src/hooks/useDeviceFormActions.ts`
+  - 进度: App.tsx 2377 → 2277 行 (-100)
+- `[x]` Phase 4.10: Device Connection / SNMP / Detail
+  - `[x]` Create `src/hooks/useDeviceConnectionAndSnmp.ts`
+  - `[x]` Create `src/hooks/useDeviceDetail.ts`
+  - 进度: App.tsx 2277 → 2116 行 (-161)
+- `[x]` Phase 4.11: Inventory Import & Routing Misc
+  - `[x]` Create `src/hooks/useInventoryImportExport.ts`
+  - 进度: App.tsx 2116 → 2030 行 (-86)
+  - 备注: 顺手清理了已不再使用的 `import * as XLSX`
+- `[x]` Phase 4.12: 紧凑化 `mainContentProps`
+  - `[x]` 把 290+ 行的对象字面量压缩成约 70 行（按域分组、单行多字段）
+  - 进度: App.tsx 2030 → 1812 行 (-218)
+  - 备注: 完整 Context 化重构（去掉 prop drilling）需要重写 1000+ 行的 `AppMainContent.tsx` 与各页面消费方式，作为后续 Phase 5 单独跟进，避免在一次提交中引入大面积变更
+
+## 总结
+- App.tsx 起点 3912 行 → 终点 **1812 行**（-2100，约 **-54%**）
+- 新增 11 个 hook + 2 个 utils：
+  - `src/hooks/usePageTitle.ts`
+  - `src/hooks/useCommandPalette.ts`
+  - `src/hooks/useLicense.ts`
+  - `src/hooks/useUserProfile.ts`
+  - `src/hooks/useScenarioDraft.ts`
+  - `src/hooks/useTopology.ts`
+  - `src/hooks/useConfigWorkspace.ts`
+  - `src/hooks/useConfigSnapshots.ts`
+  - `src/hooks/useDeviceFormActions.ts`
+  - `src/hooks/useDeviceConnectionAndSnmp.ts`
+  - `src/hooks/useDeviceDetail.ts`
+  - `src/hooks/useInventoryImportExport.ts`
+  - `src/utils/avatarPresets.tsx`
+  - `src/utils/clipboard.ts`
+- 验证：每一步均通过 `npm run lint`（tsc --noEmit）；多次跑 `npm run build` 全部通过
+- 后续可选改进 (Phase 5)：
+  - 完整 Context 化以消除 `mainContentProps` prop drilling
+  - 把 `AppMainContent.tsx` (1047 行) 中各 case 的 page wrapper 重新拆分；可能需要让 page 直接消费 hook/store
