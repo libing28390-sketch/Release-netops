@@ -357,15 +357,36 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
             parse_filter, fallback_regex, 1,    # enabled=1
         ))
 
-    # ── Cisco IOS / IOS-XE ────────────────────────────────────────
-    _item('net_cisco_ios_cpu', 'Cisco IOS CPU', 'Cisco IOS CPU 利用率', 'Network', 'cisco_ios_cpu',
-          'CPU 利用率（5 秒）', 'show processes cpu sorted', 'cisco_ios',
-          80, 90, 'numeric', 'cisco_ios_show_processes_cpu', 'CPU_USAGE_5_SEC',
-          fallback_regex=r'CPU utilization.*?(\d+)%/\d+%')
-    _item('net_cisco_ios_intf_down', 'Cisco IOS Interface Down', 'Cisco IOS 接口 Down 数', 'Network', 'cisco_ios_intf_down',
-          '统计 notconnect/down 的接口数量', 'show interfaces status', 'cisco_ios',
-          1, 3, 'count', 'cisco_ios_show_interfaces_status', 'STATUS',
-          parse_filter='{"field":"STATUS","op":"in","value":["notconnect","disabled","err-disabled","down"]}')
+    def _snmp_item(id_, name, name_zh, category, check_key, desc, vendor, oid,
+                   w, c, parse_type='numeric'):
+        """注册 SNMP 方式采集的指标，由 snmp_service 统一采集。"""
+        items.append((
+            id_, name, name_zh, category, check_key, desc,
+            'SNMP', '', '',                    # method=SNMP, command=空, script_id=空
+            w, c, vendor, oid, now, now,
+            parse_type, '', '',                # textfsm_template=空, parse_field=空
+            '', '', 1,                         # parse_filter=空, fallback_regex=空, enabled=1
+        ))
+
+    # ═══════════════════════════════════════════════════════════════
+    # SNMP 性能指标 — CPU / Memory / Temp / Fan / PSU / Interface Down
+    # 通过 snmp_service.collect_device_metrics() 和 collect_interface_data() 采集
+    # ═══════════════════════════════════════════════════════════════
+
+    # ── Cisco IOS / IOS-XE (SNMP + CLI) ───────────────────────────
+    _snmp_item('net_cisco_ios_cpu', 'Cisco IOS CPU', 'Cisco IOS CPU 利用率', 'Network', 'cisco_ios_cpu',
+              'CPU 利用率 (SNMP)', 'cisco_ios', '1.3.6.1.4.1.9.9.109.1.1.1.1.8', 80, 90)
+    _snmp_item('net_cisco_ios_mem', 'Cisco IOS Memory', 'Cisco IOS 内存利用率', 'Network', 'cisco_ios_mem',
+              '内存利用率 (SNMP)', 'cisco_ios', '1.3.6.1.4.1.9.9.48.1.1.1.5', 80, 90)
+    _snmp_item('net_cisco_ios_temp', 'Cisco IOS Temperature', 'Cisco IOS 温度', 'Network', 'cisco_ios_temp',
+              '设备温度 (SNMP)', 'cisco_ios', '1.3.6.1.4.1.9.9.13.1.3.1.3', 55, 70)
+    _snmp_item('net_cisco_ios_fan', 'Cisco IOS Fan', 'Cisco IOS 风扇状态', 'Network', 'cisco_ios_fan',
+              '风扇状态 (SNMP)', 'cisco_ios', '1.3.6.1.4.1.9.9.13.1.4.1.3', None, None, 'status')
+    _snmp_item('net_cisco_ios_psu', 'Cisco IOS PSU', 'Cisco IOS 电源状态', 'Network', 'cisco_ios_psu',
+              '电源状态 (SNMP)', 'cisco_ios', '1.3.6.1.4.1.9.9.13.1.5.1.3', None, None, 'status')
+    _snmp_item('net_cisco_ios_intf_down', 'Cisco IOS Interface Down', 'Cisco IOS 接口 Down 数', 'Network', 'cisco_ios_intf_down',
+              '统计 down 的接口数量 (SNMP)', 'cisco_ios', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
+    # CLI 协议/路由指标
     _item('net_cisco_ios_bgp_down', 'Cisco IOS BGP Peer Down', 'Cisco IOS BGP 邻居 Down 数', 'Network', 'cisco_ios_bgp_down',
           '统计非 Established 的 BGP 邻居', 'show ip bgp summary', 'cisco_ios',
           1, 2, 'count', 'cisco_ios_show_ip_bgp_summary', 'STATE_OR_PREFIXES_RECEIVED',
@@ -374,28 +395,39 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
           '路由总数（与上次对比，变化 >10% 告警）', 'show ip route summary', 'cisco_ios',
           10, 30, 'diff', 'cisco_ios_show_ip_route_summary', 'TOTAL_ROUTE_COUNT')
 
-    # ── Cisco NX-OS ───────────────────────────────────────────────
-    _item('net_cisco_nxos_cpu', 'Cisco NX-OS CPU', 'Cisco NX-OS CPU 利用率', 'Network', 'cisco_nxos_cpu',
-          'CPU 利用率（5 秒）', 'show processes cpu', 'cisco_nxos',
-          80, 90, 'numeric', 'cisco_nxos_show_processes_cpu', 'CPU_5_SEC')
+    # ── Cisco NX-OS (SNMP + CLI) ──────────────────────────────────
+    _snmp_item('net_cisco_nxos_cpu', 'Cisco NX-OS CPU', 'Cisco NX-OS CPU 利用率', 'Network', 'cisco_nxos_cpu',
+              'CPU 利用率 (SNMP)', 'cisco_nxos', '1.3.6.1.4.1.9.9.109.1.1.1.1.8', 80, 90)
+    _snmp_item('net_cisco_nxos_mem', 'Cisco NX-OS Memory', 'Cisco NX-OS 内存利用率', 'Network', 'cisco_nxos_mem',
+              '内存利用率 (SNMP)', 'cisco_nxos', '1.3.6.1.4.1.9.9.305.1.1.2.0', 80, 90)
+    _snmp_item('net_cisco_nxos_temp', 'Cisco NX-OS Temperature', 'Cisco NX-OS 温度', 'Network', 'cisco_nxos_temp',
+              '设备温度 (SNMP)', 'cisco_nxos', '1.3.6.1.4.1.9.9.91.1.1.1.1.4', 55, 70)
+    _snmp_item('net_cisco_nxos_fan', 'Cisco NX-OS Fan', 'Cisco NX-OS 风扇状态', 'Network', 'cisco_nxos_fan',
+              '风扇状态 (SNMP)', 'cisco_nxos', '1.3.6.1.4.1.9.9.117.1.4.1.1.1', None, None, 'status')
+    _snmp_item('net_cisco_nxos_psu', 'Cisco NX-OS PSU', 'Cisco NX-OS 电源状态', 'Network', 'cisco_nxos_psu',
+              '电源状态 (SNMP)', 'cisco_nxos', '1.3.6.1.4.1.9.9.117.1.1.2.1.2', None, None, 'status')
+    _snmp_item('net_cisco_nxos_intf_down', 'Cisco NX-OS Interface Down', 'Cisco NX-OS 接口 Down 数', 'Network', 'cisco_nxos_intf_down',
+              '统计 down 的接口数量 (SNMP)', 'cisco_nxos', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
+    # CLI
     _item('net_cisco_nxos_bgp_down', 'Cisco NX-OS BGP Peer Down', 'Cisco NX-OS BGP 邻居 Down 数', 'Network', 'cisco_nxos_bgp_down',
           '统计非 Established 的 BGP 邻居', 'show bgp ipv4 unicast summary', 'cisco_nxos',
           1, 2, 'count', 'cisco_nxos_show_ip_bgp_summary', 'STATE_PFXRCD',
           parse_filter='{"field":"STATE_PFXRCD","op":"not_numeric"}')
 
-    # ── 华为 VRPv5 (S系列/AR/老NE) ────────────────────────────────
-    _item('net_huawei_vrp_cpu', '华为 VRPv5 CPU', '华为 VRPv5 CPU 利用率', 'Network', 'huawei_vrp_cpu',
-          'CPU 利用率', 'display cpu-usage', 'huawei_vrp',
-          80, 90, 'numeric', 'huawei_vrp_display_cpu_usage', 'CPU_5_SEC',
-          fallback_regex=r'CPU utilization for five seconds:\s+(\d+)%')
-    _item('net_huawei_vrp_mem', '华为 VRPv5 Memory', '华为 VRPv5 内存利用率', 'Network', 'huawei_vrp_mem',
-          '内存利用率', 'display memory-usage', 'huawei_vrp',
-          80, 90, 'numeric', 'huawei_vrp_display_memory_usage', 'MEMORY_USING_PCT',
-          fallback_regex=r'Memory Using Percentage Is:\s+(\d+)%')
-    _item('net_huawei_vrp_intf_down', '华为 VRPv5 Interface Down', '华为 VRPv5 接口 Down 数', 'Network', 'huawei_vrp_intf_down',
-          '统计 down 的接口数量', 'display interface brief', 'huawei_vrp',
-          1, 3, 'count', 'huawei_vrp_display_interface_brief', 'PHY',
-          parse_filter='{"field":"PHY","op":"in","value":["down","*down"]}')
+    # ── 华为 VRPv5 (SNMP + CLI) ───────────────────────────────────
+    _snmp_item('net_huawei_vrp_cpu', '华为 VRPv5 CPU', '华为 VRPv5 CPU 利用率', 'Network', 'huawei_vrp_cpu',
+              'CPU 利用率 (SNMP)', 'huawei_vrp', '1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5', 80, 90)
+    _snmp_item('net_huawei_vrp_mem', '华为 VRPv5 Memory', '华为 VRPv5 内存利用率', 'Network', 'huawei_vrp_mem',
+              '内存利用率 (SNMP)', 'huawei_vrp', '1.3.6.1.4.1.2011.5.25.31.1.1.1.1.7', 80, 90)
+    _snmp_item('net_huawei_vrp_temp', '华为 VRPv5 Temperature', '华为 VRPv5 温度', 'Network', 'huawei_vrp_temp',
+              '设备温度 (SNMP)', 'huawei_vrp', '1.3.6.1.4.1.2011.5.25.31.1.1.1.1.11', 55, 70)
+    _snmp_item('net_huawei_vrp_fan', '华为 VRPv5 Fan', '华为 VRPv5 风扇状态', 'Network', 'huawei_vrp_fan',
+              '风扇状态 (SNMP)', 'huawei_vrp', '1.3.6.1.4.1.2011.5.25.31.1.1.10.1.7', None, None, 'status')
+    _snmp_item('net_huawei_vrp_psu', '华为 VRPv5 PSU', '华为 VRPv5 电源状态', 'Network', 'huawei_vrp_psu',
+              '电源状态 (SNMP)', 'huawei_vrp', '1.3.6.1.4.1.2011.5.25.31.1.1.13.1.2', None, None, 'status')
+    _snmp_item('net_huawei_vrp_intf_down', '华为 VRPv5 Interface Down', '华为 VRPv5 接口 Down 数', 'Network', 'huawei_vrp_intf_down',
+              '统计 down 的接口数量 (SNMP)', 'huawei_vrp', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
+    # CLI
     _item('net_huawei_vrp_bgp_down', '华为 VRPv5 BGP Peer Down', '华为 VRPv5 BGP 邻居 Down 数', 'Network', 'huawei_vrp_bgp_down',
           '统计非 Established 的 BGP 邻居', 'display bgp peer', 'huawei_vrp',
           1, 2, 'count', 'huawei_vrp_display_bgp_peer', 'STATE',
@@ -405,33 +437,39 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
           10, 30, 'diff', 'huawei_vrp_display_ip_routing_table_statistics', 'ACTIVE_COUNT',
           parse_filter='{"field":"PROTO","op":"==","value":"Total"}')
 
-    # ── 华为 VRPv8 (CE系列/新NE) ──────────────────────────────────
-    _item('net_huawei_vrpv8_cpu', '华为 VRPv8 CPU', '华为 VRPv8 CPU 利用率', 'Network', 'huawei_vrpv8_cpu',
-          'CPU 利用率', 'display cpu-usage', 'huawei_vrpv8',
-          80, 90, 'numeric', 'huawei_vrp_display_cpu_usage', 'CPU_USAGE_PCT',
-          fallback_regex=r'CPU Usage:\s+(\d+)(?:\.\d+)?%')
-    _item('net_huawei_vrpv8_mem', '华为 VRPv8 Memory', '华为 VRPv8 内存利用率', 'Network', 'huawei_vrpv8_mem',
-          '内存利用率', 'display memory-usage', 'huawei_vrpv8',
-          80, 90, 'numeric', 'huawei_vrp_display_memory_usage', 'MEMORY_USING_PCT',
-          fallback_regex=r'Memory Using Percentage Is:\s+(\d+)%')
+    # ── 华为 VRPv8 (SNMP + CLI) ───────────────────────────────────
+    _snmp_item('net_huawei_vrpv8_cpu', '华为 VRPv8 CPU', '华为 VRPv8 CPU 利用率', 'Network', 'huawei_vrpv8_cpu',
+              'CPU 利用率 (SNMP)', 'huawei_vrpv8', '1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5', 80, 90)
+    _snmp_item('net_huawei_vrpv8_mem', '华为 VRPv8 Memory', '华为 VRPv8 内存利用率', 'Network', 'huawei_vrpv8_mem',
+              '内存利用率 (SNMP)', 'huawei_vrpv8', '1.3.6.1.4.1.2011.5.25.31.1.1.1.1.7', 80, 90)
+    _snmp_item('net_huawei_vrpv8_temp', '华为 VRPv8 Temperature', '华为 VRPv8 温度', 'Network', 'huawei_vrpv8_temp',
+              '设备温度 (SNMP)', 'huawei_vrpv8', '1.3.6.1.4.1.2011.5.25.31.1.1.1.1.11', 55, 70)
+    _snmp_item('net_huawei_vrpv8_fan', '华为 VRPv8 Fan', '华为 VRPv8 风扇状态', 'Network', 'huawei_vrpv8_fan',
+              '风扇状态 (SNMP)', 'huawei_vrpv8', '1.3.6.1.4.1.2011.5.25.31.1.1.10.1.7', None, None, 'status')
+    _snmp_item('net_huawei_vrpv8_psu', '华为 VRPv8 PSU', '华为 VRPv8 电源状态', 'Network', 'huawei_vrpv8_psu',
+              '电源状态 (SNMP)', 'huawei_vrpv8', '1.3.6.1.4.1.2011.5.25.31.1.1.13.1.2', None, None, 'status')
+    _snmp_item('net_huawei_vrpv8_intf_down', '华为 VRPv8 Interface Down', '华为 VRPv8 接口 Down 数', 'Network', 'huawei_vrpv8_intf_down',
+              '统计 down 的接口数量 (SNMP)', 'huawei_vrpv8', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
+    # CLI
     _item('net_huawei_vrpv8_route_total', '华为 VRPv8 Route Total', '华为 VRPv8 路由总数', 'Network', 'huawei_vrpv8_route_total',
           '路由总数（与上次对比）', 'display ip routing-table statistics', 'huawei_vrpv8',
           10, 30, 'diff', 'huawei_vrp_display_ip_routing_table_statistics', 'ACTIVE_COUNT',
           parse_filter='{"field":"PROTO","op":"==","value":"Total"}')
 
-    # ── H3C Comware ───────────────────────────────────────────────
-    _item('net_h3c_cpu', 'H3C Comware CPU', 'H3C Comware CPU 利用率', 'Network', 'h3c_comware_cpu',
-          'CPU 利用率', 'display cpu-usage', 'h3c_comware',
-          80, 90, 'numeric', 'hp_comware_display_cpu_usage', 'CPU_5_SEC',
-          fallback_regex=r'(\d+)%\s+in\s+last\s+5\s+seconds')
-    _item('net_h3c_mem', 'H3C Comware Memory', 'H3C Comware 内存利用率', 'Network', 'h3c_comware_mem',
-          '内存利用率（计算 Used/Total）', 'display memory', 'h3c_comware',
-          80, 90, 'numeric', 'hp_comware_display_memory', 'USED_KB',
-          fallback_regex=r'Used\s*\(kB\):\s+(\d+)')
-    _item('net_h3c_intf_down', 'H3C Comware Interface Down', 'H3C Comware 接口 Down 数', 'Network', 'h3c_comware_intf_down',
-          '统计 DOWN 的接口数量', 'display interface brief', 'h3c_comware',
-          1, 3, 'count', 'hp_comware_display_interface_brief', 'LINK',
-          parse_filter='{"field":"LINK","op":"in","value":["DOWN","down"]}')
+    # ── H3C Comware (SNMP + CLI) ──────────────────────────────────
+    _snmp_item('net_h3c_cpu', 'H3C Comware CPU', 'H3C Comware CPU 利用率', 'Network', 'h3c_comware_cpu',
+              'CPU 利用率 (SNMP)', 'h3c_comware', '1.3.6.1.4.1.25506.2.6.1.1.1.1.6', 80, 90)
+    _snmp_item('net_h3c_mem', 'H3C Comware Memory', 'H3C Comware 内存利用率', 'Network', 'h3c_comware_mem',
+              '内存利用率 (SNMP)', 'h3c_comware', '1.3.6.1.4.1.25506.2.6.1.1.1.1.8', 80, 90)
+    _snmp_item('net_h3c_temp', 'H3C Comware Temperature', 'H3C Comware 温度', 'Network', 'h3c_comware_temp',
+              '设备温度 (SNMP)', 'h3c_comware', '1.3.6.1.4.1.25506.2.6.1.1.1.1.12', 55, 70)
+    _snmp_item('net_h3c_fan', 'H3C Comware Fan', 'H3C Comware 风扇状态', 'Network', 'h3c_comware_fan',
+              '风扇状态 (SNMP)', 'h3c_comware', '1.3.6.1.4.1.25506.2.6.1.1.1.1.19', None, None, 'status')
+    _snmp_item('net_h3c_psu', 'H3C Comware PSU', 'H3C Comware 电源状态', 'Network', 'h3c_comware_psu',
+              '电源状态 (SNMP)', 'h3c_comware', '1.3.6.1.4.1.25506.2.6.1.1.1.1.21', None, None, 'status')
+    _snmp_item('net_h3c_intf_down', 'H3C Comware Interface Down', 'H3C Comware 接口 Down 数', 'Network', 'h3c_comware_intf_down',
+              '统计 down 的接口数量 (SNMP)', 'h3c_comware', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
+    # CLI
     _item('net_h3c_bgp_down', 'H3C Comware BGP Peer Down', 'H3C Comware BGP 邻居 Down 数', 'Network', 'h3c_comware_bgp_down',
           '统计非 Established 的 BGP 邻居', 'display bgp peer ipv4', 'h3c_comware',
           1, 2, 'count', 'hp_comware_display_bgp_peer_ipv4', 'STATE',
@@ -441,23 +479,37 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
           10, 30, 'diff', 'hp_comware_display_ip_routing_table_statistics', 'ACTIVE',
           parse_filter='{"field":"PROTO","op":"==","value":"Total"}')
 
-    # ── Juniper JunOS ─────────────────────────────────────────────
-    _item('net_juniper_cpu', 'Juniper JunOS CPU', 'Juniper JunOS CPU 利用率', 'Network', 'juniper_junos_cpu',
-          'CPU 利用率（100 - Idle）', 'show chassis routing-engine', 'juniper_junos',
-          80, 90, 'numeric', 'juniper_junos_show_chassis_routing_engine', 'CPU_IDLE',
-          fallback_regex=r'Idle\s+(\d+)\s+percent')
-    _item('net_juniper_mem', 'Juniper JunOS Memory', 'Juniper JunOS 内存利用率', 'Network', 'juniper_junos_mem',
-          '内存利用率', 'show chassis routing-engine', 'juniper_junos',
-          80, 90, 'numeric', 'juniper_junos_show_chassis_routing_engine', 'MEMORY_UTIL_PCT',
-          fallback_regex=r'Memory utilization\s+(\d+)\s+percent')
+    # ── Juniper JunOS (SNMP + CLI) ────────────────────────────────
+    _snmp_item('net_juniper_cpu', 'Juniper JunOS CPU', 'Juniper JunOS CPU 利用率', 'Network', 'juniper_junos_cpu',
+              'CPU 利用率 (SNMP)', 'juniper_junos', '1.3.6.1.4.1.2636.3.1.13.1.8', 80, 90)
+    _snmp_item('net_juniper_mem', 'Juniper JunOS Memory', 'Juniper JunOS 内存利用率', 'Network', 'juniper_junos_mem',
+              '内存利用率 (SNMP)', 'juniper_junos', '1.3.6.1.4.1.2636.3.1.13.1.11', 80, 90)
+    _snmp_item('net_juniper_temp', 'Juniper JunOS Temperature', 'Juniper JunOS 温度', 'Network', 'juniper_junos_temp',
+              '设备温度 (SNMP)', 'juniper_junos', '1.3.6.1.4.1.2636.3.1.13.1.7', 55, 70)
+    _snmp_item('net_juniper_fan', 'Juniper JunOS Fan', 'Juniper JunOS 风扇状态', 'Network', 'juniper_junos_fan',
+              '风扇状态 (SNMP)', 'juniper_junos', '1.3.6.1.4.1.2636.3.1.13.1.6', None, None, 'status')
+    _snmp_item('net_juniper_psu', 'Juniper JunOS PSU', 'Juniper JunOS 电源状态', 'Network', 'juniper_junos_psu',
+              '电源状态 (SNMP)', 'juniper_junos', '1.3.6.1.4.1.2636.3.1.13.1.6', None, None, 'status')
+    _snmp_item('net_juniper_intf_down', 'Juniper JunOS Interface Down', 'Juniper JunOS 接口 Down 数', 'Network', 'juniper_junos_intf_down',
+              '统计 down 的接口数量 (SNMP)', 'juniper_junos', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
+    # CLI
     _item('net_juniper_route_total', 'Juniper JunOS Route Total', 'Juniper JunOS 路由总数', 'Network', 'juniper_junos_route_total',
           '路由总数（与上次对比）', 'show route summary', 'juniper_junos',
           10, 30, 'diff', 'juniper_junos_show_route_summary', 'ACTIVE_ROUTE_COUNT')
 
-    # ── Arista EOS ────────────────────────────────────────────────
-    _item('net_arista_cpu', 'Arista EOS CPU', 'Arista EOS CPU 利用率', 'Network', 'arista_eos_cpu',
-          'CPU 利用率', 'show processes top once', 'arista_eos',
-          80, 90, 'numeric', 'arista_eos_show_processes_top_once', 'CPU_USER')
+    # ── Arista EOS (SNMP) ─────────────────────────────────────────
+    _snmp_item('net_arista_cpu', 'Arista EOS CPU', 'Arista EOS CPU 利用率', 'Network', 'arista_eos_cpu',
+              'CPU 利用率 (SNMP)', 'arista_eos', '1.3.6.1.2.1.25.3.3.1.2', 80, 90)
+    _snmp_item('net_arista_mem', 'Arista EOS Memory', 'Arista EOS 内存利用率', 'Network', 'arista_eos_mem',
+              '内存利用率 (SNMP)', 'arista_eos', '1.3.6.1.2.1.25.2.3.1.6', 80, 90)
+    _snmp_item('net_arista_temp', 'Arista EOS Temperature', 'Arista EOS 温度', 'Network', 'arista_eos_temp',
+              '设备温度 (SNMP)', 'arista_eos', '1.3.6.1.2.1.99.1.1.1.4', 55, 70)
+    _snmp_item('net_arista_fan', 'Arista EOS Fan', 'Arista EOS 风扇状态', 'Network', 'arista_eos_fan',
+              '风扇状态 (SNMP)', 'arista_eos', '1.3.6.1.2.1.99.1.1.1.4', None, None, 'status')
+    _snmp_item('net_arista_psu', 'Arista EOS PSU', 'Arista EOS 电源状态', 'Network', 'arista_eos_psu',
+              '电源状态 (SNMP)', 'arista_eos', '1.3.6.1.2.1.99.1.1.1.4', None, None, 'status')
+    _snmp_item('net_arista_intf_down', 'Arista EOS Interface Down', 'Arista EOS 接口 Down 数', 'Network', 'arista_eos_intf_down',
+              '统计 down 的接口数量 (SNMP)', 'arista_eos', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
 
     # ── 合规检查指标（R8.1, R8.2）— category='compliance' ────────
     # NTP 服务器配置

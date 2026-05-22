@@ -88,6 +88,8 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const [pageSize, setPageSize] = useState(10);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  const [methodFilter, setMethodFilter] = useState<string>('All');
+  const [vendorFilter, setVendorFilter] = useState<string>('All');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [scripts, setScripts] = useState<any[]>([]);
 
@@ -262,24 +264,60 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
 
   const filteredItems = useMemo(() => {
     let result = items;
-    
+
     // Category Filter
     if (categoryFilter !== 'All') {
       result = result.filter(i => i.category === categoryFilter);
     }
 
-    // Search Query
+    // Method Filter
+    if (methodFilter !== 'All') {
+      result = result.filter(i => (i.method || '').toUpperCase() === methodFilter);
+    }
+
+    // Vendor Filter
+    if (vendorFilter !== 'All') {
+      result = result.filter(i => (i.vendor || '') === vendorFilter);
+    }
+
+    // Search Query — 支持名称 / check_key / OID / 命令 / 描述 全文模糊匹配
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(i => 
-        (i.name || '').toLowerCase().includes(q) || 
-        (i.name_zh || '').toLowerCase().includes(q) || 
+      result = result.filter(i =>
+        (i.name || '').toLowerCase().includes(q) ||
+        (i.name_zh || '').toLowerCase().includes(q) ||
         (i.category || '').toLowerCase().includes(q) ||
-        (i.check_key || '').toLowerCase().includes(q)
+        (i.check_key || '').toLowerCase().includes(q) ||
+        (i.oid || '').toLowerCase().includes(q) ||
+        (i.command || '').toLowerCase().includes(q) ||
+        (i.description || '').toLowerCase().includes(q) ||
+        (i.vendor || '').toLowerCase().includes(q)
       );
     }
     return result;
-  }, [items, searchQuery, categoryFilter]);
+  }, [items, searchQuery, categoryFilter, methodFilter, vendorFilter]);
+
+  // 当前展示数据涉及的厂商列表 — 用于 Vendor 下拉过滤器（按当前 category 筛选过的列表生成，避免无效选项）
+  const availableVendors = useMemo(() => {
+    const pool = categoryFilter === 'All' ? items : items.filter(i => i.category === categoryFilter);
+    const set = new Set<string>();
+    pool.forEach(i => { if (i.vendor) set.add(i.vendor); });
+    return Array.from(set).sort();
+  }, [items, categoryFilter]);
+
+  // 当前展示数据涉及的方法列表 — 类似厂商
+  const availableMethods = useMemo(() => {
+    const pool = categoryFilter === 'All' ? items : items.filter(i => i.category === categoryFilter);
+    const set = new Set<string>();
+    pool.forEach(i => { if (i.method) set.add(i.method.toUpperCase()); });
+    return Array.from(set).sort();
+  }, [items, categoryFilter]);
+
+  // 切换 category 时重置 method/vendor，避免遗留无效过滤值
+  useEffect(() => {
+    setMethodFilter('All');
+    setVendorFilter('All');
+  }, [categoryFilter]);
 
   const paginatedItems = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
@@ -288,7 +326,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, categoryFilter]);
+  }, [searchQuery, categoryFilter, methodFilter, vendorFilter]);
 
   const groupedItems = useMemo(() => {
     const groups: Record<string, Record<string, InspectionItem[]>> = {};
@@ -377,6 +415,77 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                 </button>
               );
             })}
+          </div>
+        </div>
+
+        {/* Secondary filter row: Method chips + Vendor dropdown + active filter summary */}
+        <div className="px-5 py-3 border-b border-black/5 bg-white">
+          <div className="flex items-center flex-wrap gap-3">
+            <div className="flex items-center gap-1.5">
+              <Filter className="w-3.5 h-3.5 text-black/30" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">{zh ? '采集方式' : 'Method'}</span>
+            </div>
+            <button
+              onClick={() => setMethodFilter('All')}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all border ${
+                methodFilter === 'All'
+                  ? 'bg-[#0b2340] text-white border-[#0b2340]'
+                  : 'bg-white text-black/50 border-black/10 hover:border-black/20'
+              }`}
+            >
+              {zh ? '全部' : 'All'}
+            </button>
+            {availableMethods.map(m => {
+              const cfg = m === 'SNMP' ? 'bg-blue-500 text-white border-blue-500'
+                        : m === 'CLI' ? 'bg-cyan-600 text-white border-cyan-600'
+                        : m === 'SSH' ? 'bg-emerald-500 text-white border-emerald-500'
+                        : m === 'SHELL' ? 'bg-violet-500 text-white border-violet-500'
+                        : m === 'ICMP' ? 'bg-amber-500 text-white border-amber-500'
+                        : m === 'TCP' ? 'bg-orange-500 text-white border-orange-500'
+                        : 'bg-slate-500 text-white border-slate-500';
+              const count = (categoryFilter === 'All' ? items : items.filter(i => i.category === categoryFilter))
+                .filter(i => (i.method || '').toUpperCase() === m).length;
+              return (
+                <button
+                  key={m}
+                  onClick={() => setMethodFilter(methodFilter === m ? 'All' : m)}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all border ${
+                    methodFilter === m
+                      ? cfg
+                      : 'bg-white text-black/50 border-black/10 hover:border-black/20'
+                  }`}
+                >
+                  {m}
+                  <span className={`ml-1.5 px-1 py-0 rounded text-[8px] ${methodFilter === m ? 'bg-white/25' : 'bg-black/[0.05]'}`}>{count}</span>
+                </button>
+              );
+            })}
+
+            <div className="ml-2 flex items-center gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">{zh ? '厂商' : 'Vendor'}</span>
+            </div>
+            <select
+              value={vendorFilter}
+              onChange={e => setVendorFilter(e.target.value)}
+              className="px-3 py-1 rounded-lg border border-black/10 bg-white text-[11px] font-medium text-black/70 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 shadow-sm"
+            >
+              <option value="All">{zh ? '全部厂商' : 'All Vendors'}</option>
+              {availableVendors.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+
+            {(searchQuery || categoryFilter !== 'All' || methodFilter !== 'All' || vendorFilter !== 'All') && (
+              <button
+                onClick={() => { setSearchQuery(''); setCategoryFilter('All'); setMethodFilter('All'); setVendorFilter('All'); }}
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider text-black/40 hover:text-red-500 hover:bg-red-50 transition-all"
+                title={zh ? '清除全部筛选' : 'Clear all filters'}
+              >
+                <X className="w-3 h-3" />
+                {zh ? '清除筛选' : 'Clear'}
+                <span className="ml-1 px-1 py-0 rounded bg-black/[0.04] text-[9px] tabular-nums">
+                  {filteredItems.length}/{items.length}
+                </span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -767,37 +876,72 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                                     {item.script_id ? (zh ? '自动化采集脚本源代码' : 'AUTOMATED SCRIPT SOURCE') : (zh ? '数据采集与指令' : 'ACQUISITION & COMMAND')}
                                                   </h4>
                                                   <div className="flex gap-2">
-                                                    {item.oid && <span className="px-2.5 py-1 rounded-lg bg-indigo-500 text-white text-[10px] font-black shadow-lg shadow-indigo-500/20">OID: {item.oid}</span>}
+                                                    {item.oid && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); copyToClipboard(item.oid, `${item.id}-oid`); }}
+                                                        title={zh ? '点击复制 OID' : 'Click to copy OID'}
+                                                        className={`group/oid inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black shadow-lg transition-all active:scale-95 ${
+                                                          copiedId === `${item.id}-oid`
+                                                            ? 'bg-emerald-500 text-white shadow-emerald-500/20'
+                                                            : 'bg-indigo-500 text-white shadow-indigo-500/20 hover:bg-indigo-600'
+                                                        }`}
+                                                      >
+                                                        {copiedId === `${item.id}-oid` ? (
+                                                          <>
+                                                            <Check className="w-3 h-3" />
+                                                            <span>{zh ? '已复制' : 'Copied'}</span>
+                                                          </>
+                                                        ) : (
+                                                          <>
+                                                            <span className="font-mono tracking-tight">OID: {item.oid}</span>
+                                                            <Copy className="w-3 h-3 opacity-60 group-hover/oid:opacity-100 transition-opacity" />
+                                                          </>
+                                                        )}
+                                                      </button>
+                                                    )}
                                                     <span className="px-2.5 py-1 rounded-lg bg-cyan-500 text-white text-[10px] font-black shadow-lg shadow-cyan-500/20">{item.method}</span>
                                                   </div>
                                                 </div>
-                                                <div className="bg-[#00172d] p-4 rounded-xl border border-white/5 relative group/code overflow-hidden shadow-inner">
+                                                <div className="bg-[#00172d] p-4 rounded-xl border border-white/5 relative overflow-hidden shadow-inner">
                                                   <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
-                                                  <div className="relative group/copy-cmd">
-                                                    <code className="text-[11px] text-cyan-300 font-mono whitespace-pre-wrap break-all relative z-10 block pr-8 leading-relaxed">
-                                                      {item.script_id 
-                                                        ? (scripts.find(s => s.id === item.script_id)?.content || '# Script content loading...') 
-                                                        : (item.command || '# No command defined')}
-                                                    </code>
-                                                    <button 
-                                                      onClick={(e) => { e.stopPropagation(); copyToClipboard(item.command, `${item.id}-cmd`); }}
-                                                      className={`absolute top-0 right-0 z-20 p-1.5 rounded-lg transition-all ${
-                                                        copiedId === `${item.id}-cmd` 
-                                                        ? 'bg-green-500/20 text-green-400 opacity-100' 
-                                                        : 'bg-white/5 hover:bg-white/10 text-cyan-300/50 hover:text-cyan-300 opacity-0 group-hover/copy-cmd:opacity-100'
-                                                      }`}
-                                                      title={zh ? '复制指令' : 'Copy Command'}
-                                                    >
-                                                      {copiedId === `${item.id}-cmd` ? (
-                                                        <div className="flex items-center gap-1">
-                                                          <Check className="w-3 h-3 animate-in zoom-in duration-200" />
-                                                          <span className="text-[9px] font-bold">{zh ? '已复制' : 'Copied'}</span>
-                                                        </div>
-                                                      ) : (
-                                                        <Copy className="w-3 h-3" />
-                                                      )}
-                                                    </button>
-                                                  </div>
+                                                  {(() => {
+                                                    const codeText = item.script_id
+                                                      ? (scripts.find(s => s.id === item.script_id)?.content || '# Script content loading...')
+                                                      : (item.command || (item.method?.toUpperCase() === 'SNMP' ? '# SNMP-only metric — no CLI command' : '# No command defined'));
+                                                    const copyKey = `${item.id}-cmd`;
+                                                    const isCopied = copiedId === copyKey;
+                                                    return (
+                                                      <div className="relative">
+                                                        <code className="text-[11px] text-cyan-300 font-mono whitespace-pre-wrap break-all relative z-10 block pr-24 leading-relaxed">
+                                                          {codeText}
+                                                        </code>
+                                                        {/* GitHub-style always-visible copy button */}
+                                                        <button
+                                                          type="button"
+                                                          onClick={(e) => { e.stopPropagation(); copyToClipboard(codeText, copyKey); }}
+                                                          title={zh ? '复制代码' : 'Copy code'}
+                                                          className={`absolute top-0 right-0 z-20 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border transition-all active:scale-95 ${
+                                                            isCopied
+                                                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                                              : 'bg-white/5 text-cyan-200/80 border-white/10 hover:bg-white/10 hover:text-cyan-100'
+                                                          }`}
+                                                        >
+                                                          {isCopied ? (
+                                                            <>
+                                                              <Check className="w-3 h-3" />
+                                                              <span>{zh ? '已复制' : 'Copied'}</span>
+                                                            </>
+                                                          ) : (
+                                                            <>
+                                                              <Copy className="w-3 h-3" />
+                                                              <span>{zh ? '复制' : 'Copy'}</span>
+                                                            </>
+                                                          )}
+                                                        </button>
+                                                      </div>
+                                                    );
+                                                  })()}
                                                 </div>
                                               </div>
                                             </div>

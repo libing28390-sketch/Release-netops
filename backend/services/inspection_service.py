@@ -23,11 +23,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import asyncio
 from database import get_db_connection
 from services.device_health_service import (
     evaluate_device_health,
     _build_open_alert_stats,
 )
+from services.snmp_service import collect_device_metrics, collect_interface_data
 from core.textfsm import parse_with_textfsm
 from core.analysis import analyze_device_inspection, summarize_run_analysis, correlate_risk_patterns
 from core.exception_classifier import make_finding
@@ -500,9 +502,111 @@ def _get_last_metrics_dict(device_id: str) -> dict | None:
     return None
 
 
+def _extract_snmp_item_value(item: dict, snmp_metrics: dict, snmp_interfaces: list[dict]) -> tuple[Any, str]:
+    """
+    从 SNMP 采集结果中提取指标值。
+    snmp_metrics 来自 collect_device_metrics(): {cpu_usage, memory_usage, temp, fan_status, psu_status}
+    snmp_interfaces 来自 collect_interface_data(): [{name, status, ...}, ...]
+
+    根据 check_key 后缀匹配:
+      *_cpu / *cpu           -> cpu_usage
+      *_mem / *memory        -> memory_usage
+      *_temp / *temperature  -> temp
+      *_fan                  -> fan_status
+      *_psu                  -> psu_status
+      *_intf_down / *interface_down -> 统计 down 接口数
+    """
+    check_key = (item.get('check_key') or '').lower()
+
+    # CPU
+    if check_key.endswith('_cpu') or check_key.endswith('cpu'):
+        val = snmp_metrics.get('cpu_usage')
+        if val is None:
+            return None, 'SNMP 采集 CPU 利用率失败或设备不支持'
+        return float(val), ''
+
+    # Memory
+    if check_key.endswith('_mem') or check_key.endswith('memory') or check_key.endswith('_memory'):
+        val = snmp_metrics.get('memory_usage')
+        if val is None:
+            return None, 'SNMP 采集内存利用率失败或设备不支持'
+        return float(val), ''
+
+    # Temperature
+    if check_key.endswith('_temp') or check_key.endswith('temperature'):
+        val = snmp_metrics.get('temp')
+        if val is None:
+            return None, 'SNMP 采集温度失败或设备不支持'
+        return float(val), ''
+
+    # Fan
+    if check_key.endswith('_fan'):
+        val = snmp_metrics.get('fan_status')
+        if val is None:
+            return None, 'SNMP 采集风扇状态失败或设备不支持'
+        return val, ''
+
+    # PSU
+    if check_key.endswith('_psu'):
+        val = snmp_metrics.get('psu_status')
+        if val is None:
+            return None, 'SNMP 采集电源状态失败或设备不支持'
+        return val, ''
+
+    # Interface Down count
+    if 'intf_down' in check_key or 'interface_down' in check_key:
+        if not snmp_interfaces:
+            return 0, ''
+        down_count = sum(
+            1 for iface in snmp_interfaces
+            if str(iface.get('status', '')).lower() in ('down', '2', 'notconnect')
+            and str(iface.get('admin_status', '')).lower() not in ('down', '2')  # 排除管理员手动 shutdown 的
+        )
+        return down_count, ''
+
+    return None, f'未知的 SNMP 指标 check_key: {check_key}'
+
+
+def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
+    """
+    在 ThreadPoolExecutor 线程中同步执行异步 SNMP 采集。
+    返回 (snmp_metrics, snmp_interfaces)。
+    """
+    ip = device.get('ip_address') or ''
+    platform = device.get('platform') or 'cisco_ios'
+    community = device.get('snmp_community') or 'public'
+    port = int(device.get('snmp_port') or 161)
+
+    snmp_metrics: dict = {}
+    snmp_interfaces: list[dict] = []
+
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            snmp_metrics = loop.run_until_complete(
+                collect_device_metrics(ip, platform, community, port)
+            )
+        except Exception as e:
+            logger.warning(f"SNMP metrics collection failed for {ip}: {e}")
+            snmp_metrics = {}
+        try:
+            snmp_interfaces = loop.run_until_complete(
+                collect_interface_data(ip, community, port)
+            )
+        except Exception as e:
+            logger.warning(f"SNMP interface collection failed for {ip}: {e}")
+            snmp_interfaces = []
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.warning(f"SNMP event loop creation failed for {ip}: {e}")
+
+    return snmp_metrics, snmp_interfaces
+
+
 def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: list[dict], use_admin_creds: bool = False) -> dict[str, Any]:
     """
-    网络设备巡检：一次 SSH 连接采集所有命令，TextFSM 解析，阈值/计数/对比判定。
+    网络设备巡检：支持 SNMP 性能指标采集 + SSH/CLI 协议/合规指标采集。
     """
     device_id = str(device.get('id') or '')
     ip = device.get('ip_address') or ''
@@ -553,74 +657,109 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         result['findings_json'] = json.dumps(findings, ensure_ascii=False)
         return result
 
-    # 2. SSH 端口探测
-    mgmt_port = int(device.get('management_port') or 22)
-    ssh_check = _check_ssh(ip, port=mgmt_port, timeout=3)
-    if not ssh_check.get('success'):
-        result['ssh_ok'] = 0
-        result['ssh_error'] = ssh_check.get('error', '')
-        # R2.4: SSH 端口不通
-        findings.append(make_finding(
-            'connectivity_error',
-            f'SSH 端口 {mgmt_port} 不通，请检查防火墙策略或 SSH 服务状态',
-            raw_error=ssh_check.get('error', ''),
-        ))
-        result['health_status'] = 'critical'
-        result['health_score'] = 20
-        result['findings_json'] = json.dumps(findings, ensure_ascii=False)
-        return result
+    # ── 分流：SNMP 性能指标 vs CLI 协议/合规指标 ──
+    cli_items = [it for it in inspection_items if (it.get('method') or '').upper() == 'CLI']
+    snmp_items = [it for it in inspection_items if (it.get('method') or '').upper() == 'SNMP']
 
-    # 3. 收集所有需要的命令（去重）
-    commands_needed = sorted({item.get('command') or '' for item in inspection_items if item.get('command')})
-    if not commands_needed:
-        result['ssh_ok'] = 1
-        result['findings_json'] = '[]'
-        return result
+    # 2a. SNMP 采集（不需要 SSH）
+    snmp_metrics: dict = {}
+    snmp_interfaces: list[dict] = []
+    if snmp_items:
+        snmp_metrics, snmp_interfaces = _collect_snmp_for_inspection(device)
+        # 填充 result 的标准字段
+        if snmp_metrics.get('cpu_usage') is not None:
+            result['cpu_usage'] = snmp_metrics['cpu_usage']
+        if snmp_metrics.get('memory_usage') is not None:
+            result['memory_usage'] = snmp_metrics['memory_usage']
+        if snmp_metrics.get('temp') is not None:
+            result['temperature'] = snmp_metrics['temp']
+        if snmp_metrics.get('fan_status') is not None:
+            result['fan_status'] = snmp_metrics['fan_status']
+        if snmp_metrics.get('psu_status') is not None:
+            result['psu_status'] = snmp_metrics['psu_status']
+        # 接口统计
+        if snmp_interfaces:
+            result['interface_total'] = len(snmp_interfaces)
+            result['interface_up'] = sum(1 for i in snmp_interfaces if str(i.get('status', '')).lower() in ('up', '1'))
+            result['interface_down'] = result['interface_total'] - result['interface_up']
 
-    # 如果有任何单个指标要求特权，则开启特权
-    if any(item.get('use_admin_creds', 0) == 1 for item in inspection_items):
-        use_admin_creds = True
-
-    # 4. 一次 SSH 连接采集所有命令
-    try:
-        raw_outputs = _netmiko_collect(device, commands_needed, use_admin_creds)
-        result['ssh_ok'] = 1
-    except Exception as e:
-        result['ssh_ok'] = 0
-        err_str = str(e)
-        result['ssh_error'] = err_str
-        # R2.5/R2.6/R2.7: SSH 认证失败 / 连接超时 / 会话中断
-        # 根据原始错误内容路由到对应的标准化消息
-        err_lower = err_str.lower()
-        if 'authentication' in err_lower or '认证失败' in err_str:
-            findings.append(make_finding(
-                'auth_error',
-                'SSH 认证失败，请核查账号密码或密钥配置',
-                raw_error=err_str,
-            ))
-        elif 'timeout' in err_lower or 'timed out' in err_lower or '连接超时' in err_str:
+    # 2b. SSH/CLI 采集（仅在有 CLI 指标时执行）
+    raw_outputs: dict[str, str] = {}
+    if cli_items:
+        mgmt_port = int(device.get('management_port') or 22)
+        ssh_check = _check_ssh(ip, port=mgmt_port, timeout=3)
+        if not ssh_check.get('success'):
+            result['ssh_ok'] = 0
+            result['ssh_error'] = ssh_check.get('error', '')
             findings.append(make_finding(
                 'connectivity_error',
-                'SSH 连接超时，设备响应缓慢或网络延迟过高',
-                raw_error=err_str,
+                f'SSH 端口 {mgmt_port} 不通，请检查防火墙策略或 SSH 服务状态',
+                raw_error=ssh_check.get('error', ''),
             ))
-        elif 'reset' in err_lower or 'disconnected' in err_lower or '中断' in err_str:
-            findings.append(make_finding(
-                'connectivity_error',
-                'SSH 会话意外中断，设备可能已重启或连接被重置',
-                raw_error=err_str,
-                severity='warning',
-            ))
+            # SSH 失败但 SNMP 已采集，不直接 return，降低 health 继续处理 SNMP 指标
+            if not snmp_items:
+                result['health_status'] = 'critical'
+                result['health_score'] = 20
+                result['findings_json'] = json.dumps(findings, ensure_ascii=False)
+                return result
+            # 有 SNMP 指标，继续处理
+            result['health_status'] = 'warning'
+            cli_items = []  # 清空 CLI 指标，不再尝试 SSH 采集
         else:
-            findings.append(make_finding(
-                'connectivity_error',
-                f'SSH 采集失败: {err_str}',
-                raw_error=err_str,
-            ))
-        result['health_status'] = 'critical'
-        result['health_score'] = 30
-        result['findings_json'] = json.dumps(findings, ensure_ascii=False)
-        return result
+            # 3. 收集所有需要的命令（去重）
+            commands_needed = sorted({item.get('command') or '' for item in cli_items if item.get('command')})
+            if commands_needed:
+                # 如果有任何单个指标要求特权，则开启特权
+                if any(item.get('use_admin_creds', 0) == 1 for item in cli_items):
+                    use_admin_creds = True
+
+                # 4. 一次 SSH 连接采集所有命令
+                try:
+                    raw_outputs = _netmiko_collect(device, commands_needed, use_admin_creds)
+                    result['ssh_ok'] = 1
+                except Exception as e:
+                    result['ssh_ok'] = 0
+                    err_str = str(e)
+                    result['ssh_error'] = err_str
+                    # R2.5/R2.6/R2.7: SSH 认证失败 / 连接超时 / 会话中断
+                    err_lower = err_str.lower()
+                    if 'authentication' in err_lower or '认证失败' in err_str:
+                        findings.append(make_finding(
+                            'auth_error',
+                            'SSH 认证失败，请核查账号密码或密钥配置',
+                            raw_error=err_str,
+                        ))
+                    elif 'timeout' in err_lower or 'timed out' in err_lower or '连接超时' in err_str:
+                        findings.append(make_finding(
+                            'connectivity_error',
+                            'SSH 连接超时，设备响应缓慢或网络延迟过高',
+                            raw_error=err_str,
+                        ))
+                    elif 'reset' in err_lower or 'disconnected' in err_lower or '中断' in err_str:
+                        findings.append(make_finding(
+                            'connectivity_error',
+                            'SSH 会话意外中断，设备可能已重启或连接被重置',
+                            raw_error=err_str,
+                            severity='warning',
+                        ))
+                    else:
+                        findings.append(make_finding(
+                            'connectivity_error',
+                            f'SSH 采集失败: {err_str}',
+                            raw_error=err_str,
+                        ))
+                    # SSH 失败：如果有 SNMP 指标，不直接 return
+                    if not snmp_items:
+                        result['health_status'] = 'critical'
+                        result['health_score'] = 30
+                        result['findings_json'] = json.dumps(findings, ensure_ascii=False)
+                        return result
+                    result['health_status'] = 'warning'
+                    cli_items = []  # 不再处理 CLI 指标
+            result['ssh_ok'] = 1
+    else:
+        # 无 CLI 指标，跳过 SSH，标记 ssh_ok = 1
+        result['ssh_ok'] = 1
 
     # R2.8: Enable 提权失败 — 记录 warning finding，但继续执行
     enable_err = raw_outputs.pop('__ENABLE_FAILED__', None)
@@ -634,16 +773,22 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         if result['health_status'] == 'healthy':
             result['health_status'] = 'warning'
 
-    # 5. 对每个指标进行解析和判定
+    # 5. 对每个指标进行解析和判定（合并 CLI + SNMP 指标）
     health_deduct = 0
-    for item in inspection_items:
+    active_items = cli_items + snmp_items  # 实际要评估的指标列表
+    for item in active_items:
         check_key = item.get('check_key') or ''
         name_zh = item.get('name_zh') or item.get('name') or check_key
         parse_type = (item.get('parse_type') or 'numeric').lower()
         warn_threshold = item.get('warning_threshold')
         crit_threshold = item.get('critical_threshold')
+        item_method = (item.get('method') or '').upper()
 
-        value, err = _extract_item_value(item, raw_outputs)
+        # 根据采集方式调度提取器
+        if item_method == 'SNMP':
+            value, err = _extract_snmp_item_value(item, snmp_metrics, snmp_interfaces)
+        else:
+            value, err = _extract_item_value(item, raw_outputs)
 
         if err and value is None:
             # 命令级 / 解析级异常：写入 metrics_json 的 error 子字段（R2.9–R2.16）
@@ -705,6 +850,22 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                     health_deduct += 10
                     if result['health_status'] == 'healthy':
                         result['health_status'] = 'warning'
+
+        # SNMP status 类型（Fan/PSU 等）— 检查状态是否正常
+        elif parse_type == 'status' and item_method == 'SNMP' and value is not None:
+            val_str = str(value).strip().lower()
+            # 正常状态关键字
+            normal_keywords = ('normal', 'ok', 'up', 'true', '1', 'running', 'operational')
+            is_normal = any(kw in val_str for kw in normal_keywords)
+            if not is_normal and val_str not in ('', 'none', 'n/a'):
+                findings.append(make_finding(
+                    'data_error',
+                    f"{name_zh} 状态异常: {value}",
+                    severity='warning',
+                ))
+                health_deduct += 10
+                if result['health_status'] == 'healthy':
+                    result['health_status'] = 'warning'
 
         # R8.3: 合规判定 — parse_type='status' 且 expected_value 非空时对比
         elif parse_type == 'status' and item.get('expected_value') and value is not None:
@@ -852,9 +1013,11 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
     is_server = platform_name in {p.lower() for p in _SERVER_PLATFORMS}
 
     if is_network_device:
-        # 只选 CLI 方式的指标
+        # 选 CLI 和 SNMP 方式的指标
         cli_items = [it for it in matched_items if (it.get('method') or '').upper() == 'CLI']
-        return _inspect_network_device(device, alert_stats, cli_items, use_admin_creds)
+        snmp_items = [it for it in matched_items if (it.get('method') or '').upper() == 'SNMP']
+        all_items = cli_items + snmp_items
+        return _inspect_network_device(device, alert_stats, all_items, use_admin_creds)
 
     if is_server:
         # 只选 Shell 方式的指标（原有逻辑）
@@ -1192,7 +1355,7 @@ def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, An
         'cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data, '
         'username, password, normal_username, normal_password, '
         'admin_username, admin_password, management_port, enable_password, '
-        'credential_source, vault_path'
+        'credential_source, vault_path, snmp_community, snmp_port'
     )
     if scope_type == 'all':
         rows = conn.execute(f'SELECT {select} FROM devices ORDER BY hostname').fetchall()

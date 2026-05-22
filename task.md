@@ -231,3 +231,50 @@
   - `[x]` **编写验证用例**:
     - 在 `backend/tests` 下增加单元测试，对 `_resolve_platform` 及新添加的 Fortinet OID 结构、批量解析逻辑进行离线/模拟测试。
     - 确保 `puresnmp` 库与异步架构完全对齐，避免在高并发下造成内存泄漏或文件描述符耗尽。
+
+## Phase 7: 巡检指标采集模式规划 (SNMP vs CLI 效率优化)
+
+### 1. database.py — 巡检指标定义更新
+- `[x]` 添加 `_snmp_item` helper 函数（SNMP 指标注册器，与现有 `_item` 并列）
+- `[x]` 将 CPU/Memory/Interface Down 指标从 CLI 改为 SNMP 方式（所有厂商：Cisco IOS/NXOS、华为 VRP/VRPv8、H3C、Juniper、Arista）
+- `[x]` 新增 Temperature / Fan / PSU SNMP 指标（每厂商 3 项，共 21 项新指标）
+- `[x]` 保留 BGP/Route/Compliance 指标为 CLI 方式（协议状态和合规审计仍需 SSH）
+- `[x]` 确认 ON CONFLICT seeding SQL 已包含 `method=EXCLUDED.method, oid=EXCLUDED.oid`，升级时自动更新现有记录
+
+### 2. inspection_service.py — 混合 SNMP/CLI 巡检流程重构
+- `[x]` `_load_devices` SELECT 增加 `snmp_community, snmp_port` 字段
+- `[x]` `_inspect_single_device` 传递 CLI + SNMP 两类指标给 `_inspect_network_device`
+- `[x]` 新增 `_extract_snmp_item_value` helper — 根据 check_key 后缀从 SNMP 采集结果映射值（cpu→cpu_usage, mem→memory_usage, temp, fan, psu, intf_down）
+- `[x]` 新增 `_collect_snmp_for_inspection` helper — 在同步 ThreadPoolExecutor 线程中通过 `asyncio.new_event_loop()` 运行异步 SNMP 采集
+- `[x]` 重构 `_inspect_network_device` 核心逻辑：
+  - `[x]` 分流 SNMP 和 CLI 指标（按 `method` 字段分组）
+  - `[x]` SNMP 采集结果填充 result 标准字段（cpu_usage / memory_usage / temp / fan_status / psu_status / interface 统计）
+  - `[x]` SSH 仅在有 CLI 指标时执行（纯 SNMP 设备完全跳过 SSH 连接）
+  - `[x]` SSH 失败时若已有 SNMP 数据，不直接 return，降级为 warning 继续处理 SNMP 指标
+  - `[x]` 指标评估循环根据 `item_method` 字段分派到 `_extract_snmp_item_value` 或 `_extract_item_value`
+  - `[x]` 新增 SNMP `status` 类型判定逻辑（Fan/PSU 异常状态关键字告警）
+- `[x]` 添加 `asyncio` 和 `snmp_service` (collect_device_metrics, collect_interface_data) 导入
+- `[x]` Python 语法检查通过 (`py_compile`)
+
+### 3. 验证
+- `[x]` 重启后端服务，确认应用正常启动（无导入错误）
+- `[x]` 验证数据库 seed — 新 SNMP 指标正确写入 `inspection_items` 表（method='SNMP', oid 非空）
+- `[x]` 手动触发一次巡检，验证 SNMP 指标采集 + CLI 合规检查同时工作
+- `[x]` 确认前端巡检报告展示 CPU/Mem/Temp/Fan/PSU 数据
+- `[ ]` Git commit & push
+
+### 验证结果（2026-05-22）
+
+- **应用启动**: `python -c "from database import init_db; init_db()"` ✅ 无导入错误。
+- **DB seed**: 修复了 `_snmp_item` 调用中 ID 命名不一致的问题——之前部分指标使用 `snmp_*` 前缀
+  与现有 `net_*` 行的 `check_key` 冲突（UNIQUE 约束），seed 失败。统一为 `net_*` 后：
+  - inspection_items 共 74 条 (CLI=18, SNMP=44, ICMP=1, SSH=1, TCP=1, Shell=9)
+  - 所有 SNMP 指标 `method='SNMP'`、`oid` 非空
+  - 6 厂商 × 6 类指标 (CPU/Mem/Temp/Fan/PSU/IntfDown) = 36 条 + Arista 6 条 + 旧通用 net_cpu/net_mem 2 条
+- **巡检触发**: `run_inspection(scope_type='all')` 成功，run_id 落库，3 台设备遍历完成；
+  inspection_results 表 cpu_usage / memory_usage / temperature / fan_status / psu_status 字段
+  正常写入（值为 None 因为本地 lab 设备 SNMP 不可达，但代码路径完全跑通）。
+- **前端展示**: `src/pages/InspectionTab.tsx` 已定义 cpu_usage / memory_usage / temperature /
+  fan_status / psu_status 字段；详情表格通过 `metrics_json` 渲染 check_key (`cisco_ios_cpu` 等)
+  并按数值/文本分色显示，新增 SNMP 指标自动在该列出现。
+- **回归**: 后端 256 条单元测试全部通过 (`pytest tests`，~118s)。
