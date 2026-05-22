@@ -36,9 +36,9 @@ interface UsersTabProps {
   editUserForm: UserFormState;
   setEditUserForm: (v: UserFormState) => void;
   showNewUserPwd: boolean;
-  setShowNewUserPwd: (fn: (v: boolean) => boolean) => void;
+  setShowNewUserPwd: React.Dispatch<React.SetStateAction<boolean>>;
   showEditUserPwd: boolean;
-  setShowEditUserPwd: (fn: (v: boolean) => boolean) => void;
+  setShowEditUserPwd: React.Dispatch<React.SetStateAction<boolean>>;
   handleAddUser: () => void;
   handleEditUser: () => void;
   language: string;

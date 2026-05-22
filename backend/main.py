@@ -56,7 +56,7 @@ from api.access import router as access_router
 from license_auth.middleware import LicenseMiddleware
 from license_auth.verifier import get_license_verifier, bootstrap_license_protection
 from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
-from services.background_monitor_service import status_monitor
+from engine.orchestrator import get_telemetry_orchestrator
 import logging
 import os
 import asyncio
@@ -90,8 +90,9 @@ async def _bg_init():
     try:
         # Sync dynamic scheduled jobs from database
         sync_scheduler_jobs(scheduler)
-        # Start status monitor (infinite loop)
-        asyncio.create_task(status_monitor())
+        # Start status monitor loops (A/B Loops)
+        telemetry_orch = get_telemetry_orchestrator()
+        telemetry_orch.start_loops()
         logger.info("[Background] Core background tasks initialized.")
     except Exception as e:
         logger.error(f"[Background] Initialization failed: {e}")
@@ -147,6 +148,14 @@ async def lifespan(app: FastAPI):
 
     yield
     # ── shutdown ──
+    try:
+        from engine.orchestrator import get_telemetry_orchestrator
+        telemetry_orch = get_telemetry_orchestrator()
+        telemetry_orch.stop_loops()
+        logger.info("[Background] Telemetry loops stopped")
+    except Exception as e:
+        logger.warning(f"[Background] Failed to stop telemetry loops: {e}")
+
     scheduler.shutdown(wait=False)
     logger.info("[Scheduler] APScheduler stopped")
 
@@ -525,3 +534,6 @@ if __name__ == "__main__":
         uvicorn.run("main:app", host="0.0.0.0", port=port, workers=workers, loop=loop_type)
     else:
         uvicorn.run("main:app", host="0.0.0.0", port=port, loop=loop_type, **reload_kwargs)
+
+# Reloader validation check comment
+

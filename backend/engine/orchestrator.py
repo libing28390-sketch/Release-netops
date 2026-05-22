@@ -65,3 +65,98 @@ class ExecutionOrchestrator:
 
 def get_orchestrator() -> ExecutionOrchestrator:
     return ExecutionOrchestrator()
+
+class TelemetryOrchestrator:
+    """
+    A/B Dual Loops Telemetry Scheduler
+    """
+    _instance = None
+    
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, 'initialized'): return
+        self.a_loop_task = None
+        self.b_loop_task = None
+        self.initialized = True
+
+    async def a_loop(self):
+        """A-Loop: 高频任务 (15s) - Ping 探活及接口状态 (ifOperStatus) 检测"""
+        from services.background_monitor_service import process_device_fast
+        from database import _db_quick
+        import asyncio
+        import os
+        from database import DB_PATH
+        import sys
+
+        logger.info("[Orchestrator] Starting A-Loop (High-Frequency)")
+        monitor_concurrency = 20 if sys.platform != 'win32' else 2
+        sem = asyncio.Semaphore(monitor_concurrency)
+        
+        while True:
+            try:
+                if os.path.exists(DB_PATH):
+                    devices = _db_quick("SELECT * FROM devices WHERE status != 'pending'", fetchall=True)
+                    async def bounded_fast(d):
+                        async with sem:
+                            await process_device_fast(d)
+                    
+                    await asyncio.gather(*(bounded_fast(d) for d in devices))
+            except Exception as e:
+                logger.error(f"[Orchestrator A-Loop] Error: {e}")
+            await asyncio.sleep(15)
+
+    async def b_loop(self):
+        """B-Loop: 中低频任务 (60s+) - CPU/内存/硬件环境/接口全量性能数据"""
+        from services.background_monitor_service import process_device_slow, _run_telemetry_maintenance, sync_lldp_neighbor_alerts
+        from database import _db_quick
+        import asyncio
+        import os
+        from database import DB_PATH
+        import sys
+
+        logger.info("[Orchestrator] Starting B-Loop (Low-Frequency)")
+        monitor_concurrency = 20 if sys.platform != 'win32' else 2
+        sem = asyncio.Semaphore(monitor_concurrency)
+        maintenance_counter = 0
+
+        while True:
+            try:
+                if os.path.exists(DB_PATH):
+                    devices = _db_quick("SELECT * FROM devices WHERE status = 'online'", fetchall=True)
+                    async def bounded_slow(d):
+                        async with sem:
+                            await process_device_slow(d)
+                            
+                    await asyncio.gather(*(bounded_slow(d) for d in devices))
+                    
+                    maintenance_counter += 1
+                    if maintenance_counter >= 12: # Run ~every 12 mins
+                        maintenance_counter = 0
+                        _run_telemetry_maintenance()
+                        
+                    sync_lldp_neighbor_alerts()
+            except Exception as e:
+                logger.error(f"[Orchestrator B-Loop] Error: {e}")
+            await asyncio.sleep(60)
+
+    def start_loops(self):
+        import asyncio
+        if not self.a_loop_task:
+            self.a_loop_task = asyncio.create_task(self.a_loop())
+        if not self.b_loop_task:
+            self.b_loop_task = asyncio.create_task(self.b_loop())
+
+    def stop_loops(self):
+        if self.a_loop_task:
+            self.a_loop_task.cancel()
+            self.a_loop_task = None
+        if self.b_loop_task:
+            self.b_loop_task.cancel()
+            self.b_loop_task = None
+
+def get_telemetry_orchestrator() -> TelemetryOrchestrator:
+    return TelemetryOrchestrator()

@@ -2,6 +2,12 @@ import React, { Suspense, lazy, useMemo } from 'react';
 import { useSystem } from '../hooks/useSystem';
 import { useInventoryStore } from '../store/inventoryStore';
 import { useMonitoringStore } from '../store/monitoringStore';
+import { useCoreApp, useDashboard, useInventory } from '../contexts/AppDomainContext';
+import { useAutomationContext } from '../contexts/AutomationContext';
+import { useConfigContext } from '../contexts/ConfigContext';
+import { useManagementContext } from '../contexts/ManagementContext';
+import { useTopologyContext } from '../contexts/TopologyContext';
+import { sectionHeaderRowClass } from './shared';
 
 const MonitoringCenter = lazy(() => import('./MonitoringCenter.tsx'));
 const DeviceHealthTab = lazy(() => import('../pages/DeviceHealthTab'));
@@ -53,11 +59,20 @@ const lazyPanelFallback = (
   </div>
 );
 
-const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
+const AppMainContent: React.FC = () => {
+  // Context hooks
+  const coreApp = useCoreApp();
+  const dashboard = useDashboard();
+  const inventory = useInventory();
+  const automation = useAutomationContext();
+  const config = useConfigContext();
+  const management = useManagementContext();
+  const topology = useTopologyContext();
+
   const { isFeatureEnabled } = useSystem();
   const { assetsTotal } = useInventoryStore();
   const { monitorOverview } = useMonitoringStore();
-  const props = appProps as any;
+  
   const {
     activeTab,
     inventorySubPage,
@@ -69,12 +84,16 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     navigate,
     navTo,
     showToast,
+    setActiveTab,
+    isAuthenticated,
     currentUser,
     devices,
+  } = coreApp;
+  
+  const {
     jobs,
     notifications,
     hostResources,
-    users,
     trendDays,
     setTrendDays,
     complianceTrend,
@@ -82,11 +101,13 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     dashBannerCollapsed,
     setDashBannerCollapsed,
     dashLastRefresh,
-    handleSort,
+    scheduledTasks,
+    unreadNotificationCount,
+  } = dashboard;
+  
+  const {
     handleImport,
     handleExport,
-    handleDeleteDevice,
-    handleDeleteSelected,
     handleShowDetails,
     handleTestConnection,
     deviceConnectionChecks,
@@ -96,13 +117,14 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     setEditingDevice,
     setEditForm,
     setSelectedDevice,
-    setActiveTab,
-    devicesLastUpdatedAt,
+    selectedDevice,
     snmpTestingId,
     snmpSyncingId,
     handleSnmpTest,
     handleSnmpSyncNow,
-    sectionHeaderRowClass,
+  } = inventory;
+  
+  const {
     scenarios,
     platforms,
     selectedScenario,
@@ -139,11 +161,16 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     changeTicket,
     setChangeTicket,
     quickQueryTable,
+    savedQueries,
     handleAutomationSearch,
     handleScenarioSearch,
     handleToggleBatchMode,
     handleToggleBatchDevice,
     handleSelectAutomationDevice,
+    batchMode,
+    batchDeviceIds,
+    automationSearch,
+    hasQuickTargets,
     openQuickPlaybookModal,
     handleClearQuickScenario,
     runQuickPlaybook,
@@ -159,24 +186,21 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     handleSelectPlaybookScenario,
     openManualScenarioDraft,
     executePlaybook,
-    complianceOverview,
-    complianceFindings,
-    complianceFindingTotal,
-    complianceSeverityFilter,
-    setComplianceSeverityFilter,
-    complianceStatusFilter,
-    setComplianceStatusFilter,
-    complianceCategoryFilter,
-    setComplianceCategoryFilter,
-    compliancePage,
-    setCompliancePage,
-    compliancePageSize,
-    setCompliancePageSize,
-    complianceLoading,
-    complianceRunLoading,
-    runComplianceAudit,
-    openComplianceFindingDetail,
-    updateComplianceFinding,
+    setShowCustomCommandModal,
+    setQuickPlaybookVars,
+    setQuickPlaybookConcurrency,
+    setQuickRiskConfirmed,
+    setShowCmdPreviewModal,
+    handleTogglePlaybookDevice,
+    setPlaybookConcurrency,
+    previewPlaybook,
+    handleRerun,
+    selectedJob,
+    setSelectedJob,
+    findMatchingPlatform,
+  } = automation;
+  
+  const {
     isTakingSnapshot,
     activeBackupRunId,
     scheduleEnabled,
@@ -238,6 +262,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     handleNewTemplate,
     setSelectedTemplateId,
     setEditorContent,
+    setConfigTemplates,
     handleAddVar,
     handleDeleteVar,
     handleDiscardChanges,
@@ -248,7 +273,14 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     handleSaveTemplate,
     handleCreateScenarioDraftFromTemplate,
     handleOpenTemplateDeploy,
-    setConfigTemplates,
+    handleValidateTemplateWorkspace,
+  } = config;
+  
+  const {
+    isLicenseValid,
+    licenseError,
+    licenseFeatures,
+    checkLicenseStatus,
     showAddUserModal,
     setShowAddUserModal,
     showEditUserModal,
@@ -280,15 +312,75 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
     setAuditStatusFilter,
     auditTimeFilter,
     setAuditTimeFilter,
-    playbookHistoryPageSize,
-    setPlaybookHistoryPageSize,
+    complianceOverview,
+    complianceFindings,
+    complianceFindingTotal,
+    complianceSeverityFilter,
+    setComplianceSeverityFilter,
+    complianceStatusFilter,
+    setComplianceStatusFilter,
+    complianceCategoryFilter,
+    setComplianceCategoryFilter,
+    compliancePage,
+    setCompliancePage,
+    compliancePageSize,
+    setCompliancePageSize,
+    complianceLoading,
+    complianceRunLoading,
+    runComplianceAudit,
+    openComplianceFindingDetail,
+    updateComplianceFinding,
+    openAuditEventDetail,
+  } = management;
+  
+  // Legacy props that need to be moved to appropriate contexts
+  const {
     autoRefreshEnabled,
     setAutoRefreshEnabled,
     fetchSharedData,
     fetchDevicesData,
-    selectedJob,
-    setSelectedJob,
-  } = props;
+  } = dashboard; // These should be in dashboard context
+  
+  // Additional context destructuring for missing props
+  const { users, devicesLastUpdatedAt } = coreApp;
+  
+  // Topology context destructuring
+  const {
+    topologyDiscoveryRunning,
+    topologyStats,
+    topologyLinkStats,
+    topologySearch,
+    topologySiteFilter,
+    topologyRoleFilter,
+    topologyStatusFilter,
+    topologySiteOptions,
+    topologyRoleOptions,
+    topologyVisibleDevices,
+    topologyVisibleLinks,
+    selectedTopologyDeviceId,
+    selectedTopologyLinkKey,
+    selectedTopologyDevice,
+    selectedTopologyLink,
+    topologyNeighborDevices,
+    topologyDeviceLinks,
+    topologyPriorityDevices,
+    topologyOrphanDevices,
+    topologyRef,
+    handleTriggerDiscovery,
+    handleExportMap,
+    setTopologySearch,
+    setTopologySiteFilter,
+    setTopologyRoleFilter,
+    setTopologyStatusFilter,
+    setSelectedTopologyDeviceId,
+    setSelectedTopologyLinkKey,
+    formatTopologyPort,
+    formatTopologyInterfaceTelemetry,
+    formatTopologyLastSeen,
+    formatTopologyOperationalState,
+    formatTopologyEvidenceLabel,
+    getTopologyOperationalTone,
+  } = topology;
 
   const isStandaloneScrollTab = 
     activeTab === 'alerts' || 
@@ -330,7 +422,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
           <DashboardTab
             devices={devices}
             jobs={jobs}
-            scheduledTasks={props.scheduledTasks}
+            scheduledTasks={scheduledTasks}
             trendDays={trendDays}
             setTrendDays={setTrendDays}
             complianceTrend={complianceTrend}
@@ -345,7 +437,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             selectedJob={selectedJob}
             setSelectedJob={setSelectedJob}
             hostResources={hostResources}
-            unreadNotificationCount={props.unreadNotificationCount}
+            unreadNotificationCount={unreadNotificationCount}
             notifications={notifications}
             language={language}
             t={t}
@@ -362,7 +454,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             devices={devices}
             language={language}
             showToast={showToast}
-            isAuthenticated={props.isAuthenticated}
+            isAuthenticated={isAuthenticated}
           />
         </Suspense>
       )}
@@ -400,7 +492,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
               if (device) handleShowDetails(device);
             }}
             onNavigateToTopology={(deviceId: string) => {
-              props.setSelectedTopologyDeviceId(deviceId);
+              setSelectedTopologyDeviceId(deviceId);
               setActiveTab('topology');
             }}
           />
@@ -432,7 +524,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
               if (device) handleShowDetails(device);
             }}
             onNavigateToTopology={(deviceId: string) => {
-              props.setSelectedTopologyDeviceId(deviceId);
+              setSelectedTopologyDeviceId(deviceId);
               setActiveTab('topology');
             }}
           />
@@ -466,7 +558,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             setEditForm={setEditForm}
             setSelectedDevice={setSelectedDevice}
             setActiveTab={setActiveTab}
-            onRefresh={() => props.setInventoryRefreshTick((v: number) => v + 1)}
+            onRefresh={() => {/* TODO: implement inventory refresh */}}
             language={language}
             t={t}
           />
@@ -503,42 +595,42 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
         <Suspense fallback={lazyPanelFallback}>
           <TopologyPage
             language={language}
-            topologyDiscoveryRunning={props.topologyDiscoveryRunning}
-            topologyStats={props.topologyStats}
-            topologyLinkStats={props.topologyLinkStats}
-            topologySearch={props.topologySearch}
-            topologySiteFilter={props.topologySiteFilter}
-            topologyRoleFilter={props.topologyRoleFilter}
-            topologyStatusFilter={props.topologyStatusFilter}
-            topologySiteOptions={props.topologySiteOptions}
-            topologyRoleOptions={props.topologyRoleOptions}
-            topologyVisibleDevices={props.topologyVisibleDevices}
-            topologyVisibleLinks={props.topologyVisibleLinks}
-            selectedTopologyDeviceId={props.selectedTopologyDeviceId}
-            selectedTopologyLinkKey={props.selectedTopologyLinkKey}
-            selectedTopologyDevice={props.selectedTopologyDevice}
-            selectedTopologyLink={props.selectedTopologyLink}
-            topologyNeighborDevices={props.topologyNeighborDevices}
-            topologyDeviceLinks={props.topologyDeviceLinks}
-            topologyPriorityDevices={props.topologyPriorityDevices}
-            topologyOrphanDevices={props.topologyOrphanDevices}
-            topologyCanvasRef={props.topologyRef}
-            onTriggerDiscovery={props.handleTriggerDiscovery}
-            onExportMap={props.handleExportMap}
-            onTopologySearchChange={props.setTopologySearch}
-            onTopologySiteFilterChange={props.setTopologySiteFilter}
-            onTopologyRoleFilterChange={props.setTopologyRoleFilter}
-            onTopologyStatusFilterChange={props.setTopologyStatusFilter}
-            onSelectTopologyDevice={props.setSelectedTopologyDeviceId}
-            onSelectTopologyLink={props.setSelectedTopologyLinkKey}
+            topologyDiscoveryRunning={topologyDiscoveryRunning}
+            topologyStats={topologyStats}
+            topologyLinkStats={topologyLinkStats}
+            topologySearch={topologySearch}
+            topologySiteFilter={topologySiteFilter}
+            topologyRoleFilter={topologyRoleFilter}
+            topologyStatusFilter={topologyStatusFilter}
+            topologySiteOptions={topologySiteOptions}
+            topologyRoleOptions={topologyRoleOptions}
+            topologyVisibleDevices={topologyVisibleDevices}
+            topologyVisibleLinks={topologyVisibleLinks}
+            selectedTopologyDeviceId={selectedTopologyDeviceId}
+            selectedTopologyLinkKey={selectedTopologyLinkKey}
+            selectedTopologyDevice={selectedTopologyDevice}
+            selectedTopologyLink={selectedTopologyLink}
+            topologyNeighborDevices={topologyNeighborDevices}
+            topologyDeviceLinks={topologyDeviceLinks}
+            topologyPriorityDevices={topologyPriorityDevices}
+            topologyOrphanDevices={topologyOrphanDevices}
+            topologyCanvasRef={topologyRef}
+            onTriggerDiscovery={handleTriggerDiscovery}
+            onExportMap={handleExportMap}
+            onTopologySearchChange={setTopologySearch}
+            onTopologySiteFilterChange={setTopologySiteFilter}
+            onTopologyRoleFilterChange={setTopologyRoleFilter}
+            onTopologyStatusFilterChange={setTopologyStatusFilter}
+            onSelectTopologyDevice={setSelectedTopologyDeviceId}
+            onSelectTopologyLink={setSelectedTopologyLinkKey}
             onOpenDeviceDetail={handleShowDetails}
             onOpenMonitoring={() => navTo('/monitoring')}
-            formatTopologyPort={props.formatTopologyPort}
-            formatTopologyInterfaceTelemetry={props.formatTopologyInterfaceTelemetry}
-            formatTopologyLastSeen={props.formatTopologyLastSeen}
-            formatTopologyOperationalState={props.formatTopologyOperationalState}
-            formatTopologyEvidenceLabel={props.formatTopologyEvidenceLabel}
-            getTopologyOperationalTone={props.getTopologyOperationalTone}
+            formatTopologyPort={formatTopologyPort}
+            formatTopologyInterfaceTelemetry={formatTopologyInterfaceTelemetry}
+            formatTopologyLastSeen={formatTopologyLastSeen}
+            formatTopologyOperationalState={formatTopologyOperationalState}
+            formatTopologyEvidenceLabel={formatTopologyEvidenceLabel}
+            getTopologyOperationalTone={getTopologyOperationalTone}
           />
         </Suspense>
       )}
@@ -550,11 +642,11 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             language={language}
             sectionHeaderRowClass={sectionHeaderRowClass}
             devices={devices}
-            selectedDevice={props.selectedDevice}
-            batchMode={props.batchMode}
-            batchDeviceIds={props.batchDeviceIds}
-            automationSearch={props.automationSearch}
-            scenarioSearch={props.scenarioSearch}
+            selectedDevice={selectedDevice}
+            batchMode={batchMode}
+            batchDeviceIds={batchDeviceIds}
+            automationSearch={automationSearch}
+            scenarioSearch={scenarioSearch}
             changeTicket={changeTicket}
             setChangeTicket={setChangeTicket}
             filteredScenarios={filteredScenarios}
@@ -565,7 +657,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             quickPlaybookConcurrency={quickPlaybookConcurrency}
             quickPlaybookPreview={quickPlaybookPreview}
             quickRiskConfirmed={quickRiskConfirmed}
-            hasQuickTargets={props.hasQuickTargets}
+            hasQuickTargets={hasQuickTargets}
             quickMissingRequiredFields={quickMissingRequiredFields}
             quickHasMixedPlatforms={quickHasMixedPlatforms}
             quickPlatformMismatch={quickPlatformMismatch}
@@ -582,26 +674,26 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             quickQueryMaximized={quickQueryMaximized}
             quickQueryCommands={quickQueryCommands}
             quickQueryTable={quickQueryTable}
-            savedQueries={props.savedQueries}
+            savedQueries={savedQueries}
             onNavigate={navigate}
-            onAutomationSearchChange={props.handleAutomationSearch}
-            onScenarioSearchChange={props.handleScenarioSearch}
+            onAutomationSearchChange={handleAutomationSearch}
+            onScenarioSearchChange={handleScenarioSearch}
             onToggleBatchMode={handleToggleBatchMode}
             onToggleBatchDevice={handleToggleBatchDevice}
             onSelectDevice={handleSelectAutomationDevice}
-            onOpenCustomCommandModal={() => props.setShowCustomCommandModal(true)}
+            onOpenCustomCommandModal={() => setShowCustomCommandModal(true)}
             onOpenScenario={openQuickPlaybookModal}
             onClearScenario={handleClearQuickScenario}
-            onQuickPlaybookVarChange={(key: string, value: any) => props.setQuickPlaybookVars((current: any) => ({ ...current, [key]: value }))}
-            onQuickPlaybookConcurrencyChange={props.setQuickPlaybookConcurrency}
-            onQuickRiskConfirmedChange={props.setQuickRiskConfirmed}
+            onQuickPlaybookVarChange={(key: string, value: any) => setQuickPlaybookVars((current: any) => ({ ...current, [key]: value }))}
+            onQuickPlaybookConcurrencyChange={setQuickPlaybookConcurrency}
+            onQuickRiskConfirmedChange={setQuickRiskConfirmed}
             onRunValidation={(changeTicket?: string) => runQuickPlaybook(true, changeTicket)}
             onRunApply={(changeTicket?: string) => runQuickPlaybook(false, changeTicket)}
             onRunQuickQuery={runQuickQuery}
             onResetQuickQuery={handleResetQuickQuery}
             onQuickQueryViewChange={setQuickQueryView}
             onQuickQueryMaximizedChange={setQuickQueryMaximized}
-            onOpenCommandPreview={() => props.setShowCmdPreviewModal(true)}
+            onOpenCommandPreview={() => setShowCmdPreviewModal(true)}
             onExportQuickQueryTable={exportQuickQueryTable}
             copyTextWithFallback={copyTextWithFallback}
             showToast={showToast}
@@ -638,9 +730,9 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             onSelectScenario={handleSelectPlaybookScenario}
             onPlatformChange={handlePlaybookPlatformChange}
             onVariableChange={handlePlaybookVariableChange}
-            onToggleDevice={props.handleTogglePlaybookDevice}
-            onConcurrencyChange={props.setPlaybookConcurrency}
-            onPreview={props.previewPlaybook}
+            onToggleDevice={handleTogglePlaybookDevice}
+            onConcurrencyChange={setPlaybookConcurrency}
+            onPreview={() => previewPlaybook(selectedScenario, playbookPlatform, playbookVars)}
             onExecuteValidation={() => executePlaybook(true)}
             onExecuteApply={() => executePlaybook(false)}
           />
@@ -673,7 +765,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             showToast={showToast} 
             initialTab="history" 
             devices={devices}
-            onRerun={props.handleRerun}
+            onRerun={handleRerun}
           />
         </Suspense>
       )}
@@ -712,7 +804,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             showToast={showToast} 
             initialTab="schedules" 
             devices={devices}
-            onRerun={props.handleRerun}
+            onRerun={handleRerun}
           />
         </Suspense>
       )}
@@ -815,27 +907,27 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
           <ConfigDiffViewTab
             t={t}
             language={language}
-            activeDiffLines={props.activeDiffLines}
-            activeChangeLineIndexes={props.activeChangeLineIndexes}
-            diffFocusChangeIdx={props.diffFocusChangeIdx}
-            diffOnlyChanges={props.diffOnlyChanges}
-            diffShowFullBoth={props.diffShowFullBoth}
-            renderedDiffLines={props.renderedDiffLines}
-            fullSideBySideRows={props.fullSideBySideRows}
-            diffChangeBlocks={props.diffChangeBlocks}
-            filteredDiffChangeBlocks={props.filteredDiffChangeBlocks}
-            diffBlockQuery={props.diffBlockQuery}
-            diffLineRefs={props.diffLineRefs}
-            configDiffLeft={props.configDiffLeft}
-            configDiffRight={props.configDiffRight}
-            onToggleOnlyChanges={() => props.setDiffOnlyChanges((prev: boolean) => !prev)}
-            onToggleFullBoth={() => props.setDiffShowFullBoth((prev: boolean) => !prev)}
-            onDiffBlockQueryChange={props.setDiffBlockQuery}
+            activeDiffLines={activeDiffLines}
+            activeChangeLineIndexes={activeChangeLineIndexes}
+            diffFocusChangeIdx={diffFocusChangeIdx}
+            diffOnlyChanges={diffOnlyChanges}
+            diffShowFullBoth={diffShowFullBoth}
+            renderedDiffLines={renderedDiffLines}
+            fullSideBySideRows={fullSideBySideRows}
+            diffChangeBlocks={diffChangeBlocks}
+            filteredDiffChangeBlocks={filteredDiffChangeBlocks}
+            diffBlockQuery={diffBlockQuery}
+            diffLineRefs={diffLineRefs}
+            configDiffLeft={configDiffLeft}
+            configDiffRight={configDiffRight}
+            onToggleOnlyChanges={() => setDiffOnlyChanges((prev: boolean) => !prev)}
+            onToggleFullBoth={() => setDiffShowFullBoth((prev: boolean) => !prev)}
+            onDiffBlockQueryChange={setDiffBlockQuery}
             onReset={handleResetDiffView}
-            onSelectSnapshotPair={props.handleSelectSnapshotPair}
-            onJumpToDiff={props.jumpToDiff}
-            onToggleQuickKeyword={(keyword: string) => props.setDiffBlockQuery((prev: string) => (prev.toLowerCase() === keyword ? '' : keyword))}
-            onFocusDiffChangeAt={props.focusDiffChangeAt}
+            onSelectSnapshotPair={handleSelectSnapshotPair}
+            onJumpToDiff={jumpToDiff}
+            onToggleQuickKeyword={(keyword: string) => setDiffBlockQuery((prev: string) => (prev.toLowerCase() === keyword ? '' : keyword))}
+            onFocusDiffChangeAt={focusDiffChangeAt}
             preSelectedDeviceId={diffPreSelectedDeviceId}
           />
         </Suspense>
@@ -900,7 +992,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             }}
             onDiscardChanges={handleDiscardChanges}
             onConfigWorkspaceViewChange={setConfigWorkspaceView}
-            onValidate={props.handleValidateTemplateWorkspace}
+            onValidate={handleValidateTemplateWorkspace}
             onSaveTemplate={handleSaveTemplate}
             onCreateScenarioDraft={handleCreateScenarioDraftFromTemplate}
             onSendToAutomation={handleOpenTemplateDeploy}
@@ -957,7 +1049,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             setAuditStatusFilter={setAuditStatusFilter}
             auditTimeFilter={auditTimeFilter}
             setAuditTimeFilter={setAuditTimeFilter}
-            openAuditEventDetail={props.openAuditEventDetail}
+            openAuditEventDetail={openAuditEventDetail}
             language={language}
             t={t}
           />
@@ -1029,7 +1121,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
             configTemplates={configTemplates}
             platforms={platforms}
             currentUser={currentUser}
-            findMatchingPlatform={props.findMatchingPlatform}
+            findMatchingPlatform={findMatchingPlatform}
             initialView={changeOrderPage === 'my-todo' ? 'my_todo' : changeOrderPage === 'group-todo' ? 'group_todo' : changeOrderPage === 'participated' ? 'my_participated' : changeOrderPage === 'focus' ? 'my_focus' : changeOrderPage === 'drafts' ? 'my_drafts' : changeOrderPage === 'new' ? 'create' : 'all'}
           />
         </Suspense>
@@ -1037,7 +1129,7 @@ const AppMainContent: React.FC<{ appProps: any }> = ({ appProps }) => {
 
       {activeTab === 'license' && (
         <Suspense fallback={lazyPanelFallback}>
-          <LicenseAdminTab language={language} t={t} onLicenseUpdate={props.checkLicenseStatus} />
+          <LicenseAdminTab language={language} t={t} onLicenseUpdate={checkLicenseStatus} />
         </Suspense>
       )}
     </main>

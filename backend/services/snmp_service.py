@@ -245,6 +245,16 @@ VENDOR_OIDS = {
         'psu': '1.3.6.1.4.1.2636.3.1.13.1.6',              # jnxOperatingState for PSU entries
         'psu_descr': '1.3.6.1.4.1.2636.3.1.13.1.5',        # jnxOperatingDescr (filter "Power")
     },
+    # ── Fortinet FortiOS (FortiGate) ──
+    'fortinet_fortios': {
+        'cpu': '1.3.6.1.4.1.12356.101.4.1.3.0',           # fgSysCpuUsage
+        'mem': '1.3.6.1.4.1.12356.101.4.1.4.0',           # fgSysMemUsage
+        'temp': '1.3.6.1.4.1.12356.101.4.3.2.1.3',        # fgHwSensorEntValue (temp sensors)
+        'fan': '1.3.6.1.4.1.12356.101.4.3.2.1.3',         # fgHwSensorEntValue (fan sensors)
+        'psu': '1.3.6.1.4.1.12356.101.4.3.2.1.3',         # fgHwSensorEntValue (psu sensors)
+        'sensor_name': '1.3.6.1.4.1.12356.101.4.3.2.1.2', # fgHwSensorEntName
+        'sensor_alarm': '1.3.6.1.4.1.12356.101.4.3.2.1.4',# fgHwSensorEntAlarmStatus
+    },
 }
 
 # Map platform string -> vendor key
@@ -266,6 +276,8 @@ def _resolve_platform(platform: str) -> str:
         return 'arista_eos'
     if 'juniper' in p or 'junos' in p:
         return 'juniper_junos'
+    if 'forti' in p:
+        return 'fortinet_fortios'
     return 'cisco_ios'  # default
 
 
@@ -326,6 +338,33 @@ async def _snmp_walk(ip: str, community: str, oid: str, port: int = 161, timeout
         logger.debug(f"SNMP WALK {ip} {oid} failed: {e}")
     return results
 
+
+async def _snmp_bulk_walk(ip: str, community: str, oid: str, port: int = 161, timeout: float = 5, max_repetitions: int = 20) -> list[tuple[str, str]]:
+    """Bulk Walk an OID subtree via puresnmp, using GETBULK for high performance."""
+    results: list[tuple[str, str]] = []
+    base_oid = oid.rstrip('.')
+    sem = _get_snmp_semaphore()
+
+    async def _collect():
+        from puresnmp import Client, V2C, PyWrapper
+        client = PyWrapper(Client(ip, V2C(community), port=port))
+        # bulkwalk significantly reduces UDP round-trips
+        async for varbind in client.bulkwalk([base_oid], bulk_size=max_repetitions):
+            oid_str = str(varbind.oid)
+            suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + '.') else oid_str
+            v = _val_to_str(varbind.value)
+            if 'endOfMibView' in v:
+                return
+            results.append((suffix, v))
+
+    async with sem:
+      try:
+        await asyncio.wait_for(_collect(), timeout=timeout)
+      except asyncio.TimeoutError:
+        logger.debug(f"SNMP BULK_WALK {ip} {oid} timeout after {timeout}s ({len(results)} rows collected)")
+      except Exception as e:
+        logger.debug(f"SNMP BULK_WALK {ip} {oid} failed: {e}")
+    return results
 
 # ═══════════════════════════════════════════════════════════════
 # High-level collection functions
@@ -414,7 +453,7 @@ async def collect_device_metrics(ip: str, platform: str, community: str = 'publi
                 val = await _snmp_get(ip, community, mem_pct_oid, port)
                 if val and val.isdigit():
                     result['memory_usage'] = int(val)
-        elif vendor in ('huawei_vrp', 'h3c_comware', 'juniper_junos'):
+        elif vendor in ('huawei_vrp', 'h3c_comware', 'juniper_junos', 'fortinet_fortios'):
             # Direct percentage OID
             mem_oid = oids.get('mem')
             if mem_oid:
@@ -472,129 +511,200 @@ async def collect_device_metrics(ip: str, platform: str, community: str = 'publi
                 if total > 0:
                     result['memory_usage'] = int((used / total) * 100)
 
-        # ── Temperature ──
-        if vendor in ('cisco_nxos', 'cisco_iosxr', 'arista_eos'):
-            # Use ENTITY-SENSOR-MIB / CISCO-ENTITY-SENSOR-MIB: match type=8 (celsius)
-            type_oid = oids.get('temp_sensor_type')
-            value_oid = oids.get('temp_sensor_value')
-            if type_oid and value_oid:
-                type_rows = await _snmp_walk(ip, community, type_oid, port)
-                value_rows = await _snmp_walk(ip, community, value_oid, port)
-                value_map = {idx: v for idx, v in value_rows}
-                for idx, t in type_rows:
-                    if t == '8' and idx in value_map:  # 8 = celsius
-                        v = value_map[idx]
-                        if v.isdigit() and 0 < int(v) < 200:
-                            result['temp'] = int(v)
-                            break
-        else:
-            temp_oid = oids.get('temp')
-            if temp_oid:
-                rows = await _snmp_walk(ip, community, temp_oid, port)
-                if rows:
-                    for _, v in rows:
-                        if v.isdigit() and 0 < int(v) < 200:
-                            result['temp'] = int(v)
-                            break
-
-        # ── Fan ──
-        fan_oid = oids.get('fan')
-        if fan_oid:
-            if vendor == 'cisco_nxos' or vendor == 'cisco_iosxr':
-                # cefcFanTrayOperStatus: 2=up, 4=warning → ok; 3=down → fail
-                rows = await _snmp_walk(ip, community, fan_oid, port)
-                if rows:
-                    all_ok = all(int(v) in (2, 4) for _, v in rows if v.isdigit())
-                    result['fan_status'] = 'ok' if all_ok else 'fail'
-            elif vendor == 'juniper_junos':
-                # jnxOperatingState: 2=running, 5=runningAtFullSpeed → normal
-                descr_rows = await _snmp_walk(ip, community, oids.get('fan_descr', ''), port)
-                state_rows = await _snmp_walk(ip, community, fan_oid, port)
-                state_map = {idx: int(v) for idx, v in state_rows if v.isdigit()}
+        # ── Temperature, Fan, PSU ──
+        if vendor == 'fortinet_fortios':
+            try:
+                names = await _snmp_walk(ip, community, oids['sensor_name'], port)
+                values = await _snmp_walk(ip, community, oids['temp'], port) # temp/fan/psu point to the same OID
+                alarms = await _snmp_walk(ip, community, oids['sensor_alarm'], port)
+                
+                name_map = {idx: v for idx, v in names}
+                val_map = {idx: v for idx, v in values}
+                alarm_map = {idx: v for idx, v in alarms}
+                
+                # Temp
+                for idx, name in names:
+                    name_lower = name.lower()
+                    if 'temp' in name_lower and idx in val_map:
+                        v = val_map[idx]
+                        if v.isdigit():
+                            val_int = int(v)
+                            if val_int > 200:
+                                val_int = val_int // 10
+                            if 0 < val_int < 200:
+                                result['temp'] = val_int
+                                break
+                
+                # Fan
                 fan_ok = True
-                for idx, desc in descr_rows:
-                    desc_lower = desc.lower()
-                    if 'fan' in desc_lower and idx in state_map:
-                        if state_map[idx] not in (2, 3, 5):  # 2=running, 3=ready, 5=fullSpeed
-                            fan_ok = False
-                if descr_rows:
+                fan_found = False
+                for idx, name in names:
+                    name_lower = name.lower()
+                    if 'fan' in name_lower:
+                        fan_found = True
+                        if idx in alarm_map:
+                            if alarm_map[idx] != '0':
+                                fan_ok = False
+                        elif idx in val_map:
+                            v = val_map[idx]
+                            if v.isdigit() and int(v) == 0:
+                                fan_ok = False
+                if fan_found:
                     result['fan_status'] = 'ok' if fan_ok else 'fail'
-            elif vendor == 'arista_eos':
-                # ENTITY-SENSOR-MIB: filter type=10 (rpm), value > 0 means spinning
-                type_oid = oids.get('fan_type')
-                if type_oid:
-                    type_rows = await _snmp_walk(ip, community, type_oid, port)
-                    value_rows = await _snmp_walk(ip, community, fan_oid, port)
-                    value_map = {idx: v for idx, v in value_rows}
-                    fan_entries = [(idx, value_map.get(idx, '0')) for idx, t in type_rows if t == '10']
-                    if fan_entries:
-                        all_ok = all(v.isdigit() and int(v) > 0 for _, v in fan_entries)
-                        result['fan_status'] = 'ok' if all_ok else 'fail'
-            else:
-                # Cisco IOS/Huawei/H3C: 1 = normal
-                rows = await _snmp_walk(ip, community, fan_oid, port)
-                if rows:
-                    all_ok = all(int(v) == 1 for _, v in rows if v.isdigit())
-                    result['fan_status'] = 'ok' if all_ok else 'fail'
-
-        # ── PSU ──
-        psu_oid = oids.get('psu')
-        if psu_oid:
-            if vendor == 'cisco_nxos' or vendor == 'cisco_iosxr':
-                # cefcFRUPowerOperStatus: 2=on → normal; 3=offAdmin, etc → fail
-                rows = await _snmp_walk(ip, community, psu_oid, port)
-                if rows:
-                    on_count = sum(1 for _, v in rows if v.isdigit() and int(v) == 2)
-                    if on_count >= 2:
-                        result['psu_status'] = 'redundant'
-                    elif on_count == 1:
-                        result['psu_status'] = 'single'
-                    else:
-                        result['psu_status'] = 'fail'
-            elif vendor == 'juniper_junos':
-                # jnxOperatingState for Power Supply / PEM entries: 2=running, 5=fullSpeed
-                descr_rows = await _snmp_walk(ip, community, oids.get('psu_descr', ''), port)
-                state_rows = await _snmp_walk(ip, community, psu_oid, port)
-                state_map = {idx: int(v) for idx, v in state_rows if v.isdigit()}
+                
+                # PSU
                 psu_ok_count = 0
-                for idx, desc in descr_rows:
-                    desc_lower = desc.lower()
-                    if ('power' in desc_lower or 'pem' in desc_lower) and idx in state_map:
-                        if state_map[idx] in (2, 3, 5):  # running/ready/fullSpeed
-                            psu_ok_count += 1
-                if psu_ok_count >= 2:
-                    result['psu_status'] = 'redundant'
-                elif psu_ok_count == 1:
-                    result['psu_status'] = 'single'
-                elif descr_rows:
-                    result['psu_status'] = 'fail'
-            elif vendor == 'arista_eos':
-                # ENTITY-SENSOR-MIB type=3 (voltsAC/DC) — non-zero = PSU present and active
-                type_oid = oids.get('psu_type')
-                if type_oid:
-                    type_rows = await _snmp_walk(ip, community, type_oid, port)
-                    value_rows = await _snmp_walk(ip, community, psu_oid, port)
-                    value_map = {idx: v for idx, v in value_rows}
-                    psu_entries = [(idx, value_map.get(idx, '0')) for idx, t in type_rows if t == '3']
-                    on_count = sum(1 for _, v in psu_entries if v.isdigit() and int(v) > 0)
-                    if on_count >= 2:
-                        result['psu_status'] = 'redundant'
-                    elif on_count == 1:
-                        result['psu_status'] = 'single'
-                    elif psu_entries:
+                psu_fail_count = 0
+                psu_found = False
+                for idx, name in names:
+                    name_lower = name.lower()
+                    if 'psu' in name_lower or 'power supply' in name_lower or 'pwr' in name_lower:
+                        psu_found = True
+                        if idx in alarm_map:
+                            if alarm_map[idx] == '0':
+                                psu_ok_count += 1
+                            else:
+                                psu_fail_count += 1
+                        elif idx in val_map:
+                            v = val_map[idx]
+                            if v.isdigit() and int(v) > 0:
+                                psu_ok_count += 1
+                            else:
+                                psu_fail_count += 1
+                if psu_found:
+                    if psu_fail_count > 0:
                         result['psu_status'] = 'fail'
-            else:
-                # Cisco IOS / Huawei / H3C: 1 = normal
-                rows = await _snmp_walk(ip, community, psu_oid, port)
-                if rows:
-                    normal_count = sum(1 for _, v in rows if v.isdigit() and int(v) == 1)
-                    if normal_count >= 2:
+                    elif psu_ok_count >= 2:
                         result['psu_status'] = 'redundant'
-                    elif normal_count == 1:
+                    elif psu_ok_count == 1:
                         result['psu_status'] = 'single'
                     else:
                         result['psu_status'] = 'fail'
+            except Exception as e:
+                logger.warning(f"Fortinet sensor collection failed for {ip}: {e}")
+        else:
+            # ── Temperature ──
+            if vendor in ('cisco_nxos', 'cisco_iosxr', 'arista_eos'):
+                # Use ENTITY-SENSOR-MIB / CISCO-ENTITY-SENSOR-MIB: match type=8 (celsius)
+                type_oid = oids.get('temp_sensor_type')
+                value_oid = oids.get('temp_sensor_value')
+                if type_oid and value_oid:
+                    type_rows = await _snmp_walk(ip, community, type_oid, port)
+                    value_rows = await _snmp_walk(ip, community, value_oid, port)
+                    value_map = {idx: v for idx, v in value_rows}
+                    for idx, t in type_rows:
+                        if t == '8' and idx in value_map:  # 8 = celsius
+                            v = value_map[idx]
+                            if v.isdigit() and 0 < int(v) < 200:
+                                result['temp'] = int(v)
+                                break
+            else:
+                temp_oid = oids.get('temp')
+                if temp_oid:
+                    rows = await _snmp_walk(ip, community, temp_oid, port)
+                    if rows:
+                        for _, v in rows:
+                            if v.isdigit() and 0 < int(v) < 200:
+                                result['temp'] = int(v)
+                                break
 
+            # ── Fan ──
+            fan_oid = oids.get('fan')
+            if fan_oid:
+                if vendor == 'cisco_nxos' or vendor == 'cisco_iosxr':
+                    # cefcFanTrayOperStatus: 2=up, 4=warning → ok; 3=down → fail
+                    rows = await _snmp_walk(ip, community, fan_oid, port)
+                    if rows:
+                        all_ok = all(int(v) in (2, 4) for _, v in rows if v.isdigit())
+                        result['fan_status'] = 'ok' if all_ok else 'fail'
+                elif vendor == 'juniper_junos':
+                    # jnxOperatingState: 2=running, 5=runningAtFullSpeed → normal
+                    descr_rows = await _snmp_walk(ip, community, oids.get('fan_descr', ''), port)
+                    state_rows = await _snmp_walk(ip, community, fan_oid, port)
+                    state_map = {idx: int(v) for idx, v in state_rows if v.isdigit()}
+                    fan_ok = True
+                    for idx, desc in descr_rows:
+                        desc_lower = desc.lower()
+                        if 'fan' in desc_lower and idx in state_map:
+                            if state_map[idx] not in (2, 3, 5):  # 2=running, 3=ready, 5=fullSpeed
+                                fan_ok = False
+                    if descr_rows:
+                        result['fan_status'] = 'ok' if fan_ok else 'fail'
+                elif vendor == 'arista_eos':
+                    # ENTITY-SENSOR-MIB: filter type=10 (rpm), value > 0 means spinning
+                    type_oid = oids.get('fan_type')
+                    if type_oid:
+                        type_rows = await _snmp_walk(ip, community, type_oid, port)
+                        value_rows = await _snmp_walk(ip, community, fan_oid, port)
+                        value_map = {idx: v for idx, v in value_rows}
+                        fan_entries = [(idx, value_map.get(idx, '0')) for idx, t in type_rows if t == '10']
+                        if fan_entries:
+                            all_ok = all(v.isdigit() and int(v) > 0 for _, v in fan_entries)
+                            result['fan_status'] = 'ok' if all_ok else 'fail'
+                else:
+                    # Cisco IOS/Huawei/H3C: 1 = normal
+                    rows = await _snmp_walk(ip, community, fan_oid, port)
+                    if rows:
+                        all_ok = all(int(v) == 1 for _, v in rows if v.isdigit())
+                        result['fan_status'] = 'ok' if all_ok else 'fail'
+
+            # ── PSU ──
+            psu_oid = oids.get('psu')
+            if psu_oid:
+                if vendor == 'cisco_nxos' or vendor == 'cisco_iosxr':
+                    # cefcFRUPowerOperStatus: 2=on → normal; 3=offAdmin, etc → fail
+                    rows = await _snmp_walk(ip, community, psu_oid, port)
+                    if rows:
+                        on_count = sum(1 for _, v in rows if v.isdigit() and int(v) == 2)
+                        if on_count >= 2:
+                            result['psu_status'] = 'redundant'
+                        elif on_count == 1:
+                            result['psu_status'] = 'single'
+                        else:
+                            result['psu_status'] = 'fail'
+                elif vendor == 'juniper_junos':
+                    # jnxOperatingState for Power Supply / PEM entries: 2=running, 5=fullSpeed
+                    descr_rows = await _snmp_walk(ip, community, oids.get('psu_descr', ''), port)
+                    state_rows = await _snmp_walk(ip, community, psu_oid, port)
+                    state_map = {idx: int(v) for idx, v in state_rows if v.isdigit()}
+                    psu_ok_count = 0
+                    for idx, desc in descr_rows:
+                        desc_lower = desc.lower()
+                        if ('power' in desc_lower or 'pem' in desc_lower) and idx in state_map:
+                            if state_map[idx] in (2, 3, 5):  # running/ready/fullSpeed
+                                psu_ok_count += 1
+                    if psu_ok_count >= 2:
+                        result['psu_status'] = 'redundant'
+                    elif psu_ok_count == 1:
+                        result['psu_status'] = 'single'
+                    elif descr_rows:
+                        result['psu_status'] = 'fail'
+                elif vendor == 'arista_eos':
+                    # ENTITY-SENSOR-MIB type=3 (voltsAC/DC) — non-zero = PSU present and active
+                    type_oid = oids.get('psu_type')
+                    if type_oid:
+                        type_rows = await _snmp_walk(ip, community, type_oid, port)
+                        value_rows = await _snmp_walk(ip, community, psu_oid, port)
+                        value_map = {idx: v for idx, v in value_rows}
+                        psu_entries = [(idx, value_map.get(idx, '0')) for idx, t in type_rows if t == '3']
+                        on_count = sum(1 for _, v in psu_entries if v.isdigit() and int(v) > 0)
+                        if on_count >= 2:
+                            result['psu_status'] = 'redundant'
+                        elif on_count == 1:
+                            result['psu_status'] = 'single'
+                        elif psu_entries:
+                            result['psu_status'] = 'fail'
+                else:
+                    # Cisco IOS / Huawei / H3C: 1 = normal
+                    rows = await _snmp_walk(ip, community, psu_oid, port)
+                    if rows:
+                        normal_count = sum(1 for _, v in rows if v.isdigit() and int(v) == 1)
+                        if normal_count >= 2:
+                            result['psu_status'] = 'redundant'
+                        elif normal_count == 1:
+                            result['psu_status'] = 'single'
+                        else:
+                            result['psu_status'] = 'fail'
     except Exception as e:
         logger.warning(f"SNMP metrics collection failed for {ip}: {e}")
 
@@ -635,7 +745,7 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
 
     Performance: after obtaining interface index (ifName), all remaining OID
     walks are issued in parallel via asyncio.gather to reduce per-device
-    collection latency.
+    collection latency. Uses GetBulk to drastically reduce UDP packets.
     """
     cache_key = f"intf:{ip}:{port}"
     cached = _get_result_cache(cache_key)
@@ -645,32 +755,32 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
     interfaces = {}
     try:
         # Step 1: ifName (preferred) or ifDescr — must be first to build index
-        name_rows = await _snmp_walk(ip, community, IF_NAME, port)
+        name_rows = await _snmp_bulk_walk(ip, community, IF_NAME, port)
         if not name_rows:
-            name_rows = await _snmp_walk(ip, community, IF_DESCR, port)
+            name_rows = await _snmp_bulk_walk(ip, community, IF_DESCR, port)
         for idx, val in name_rows:
             interfaces[idx] = {'name': val, 'index': idx}
 
-        # Step 2: Parallel fetch of all independent OIDs
+        # Step 2: Parallel fetch of all independent OIDs using GetBulk
         (status_rows, hspeed_rows, speed_rows,
          hc_in_rows, hc_out_rows, alias_rows,
          in_err_rows, out_err_rows, in_disc_rows, out_disc_rows,
          in_ucast_rows, out_ucast_rows,
          sys_uptime_raw, lc_rows) = await asyncio.gather(
-            _snmp_walk(ip, community, IF_OPER_STATUS, port),
-            _snmp_walk(ip, community, IF_HIGH_SPEED, port),
-            _snmp_walk(ip, community, IF_SPEED, port),
-            _snmp_walk(ip, community, IF_HC_IN, port),
-            _snmp_walk(ip, community, IF_HC_OUT, port),
-            _snmp_walk(ip, community, IF_ALIAS, port),
-            _snmp_walk(ip, community, IF_IN_ERRORS, port),
-            _snmp_walk(ip, community, IF_OUT_ERRORS, port),
-            _snmp_walk(ip, community, IF_IN_DISCARDS, port),
-            _snmp_walk(ip, community, IF_OUT_DISCARDS, port),
-            _snmp_walk(ip, community, IF_IN_UCAST, port),
-            _snmp_walk(ip, community, IF_OUT_UCAST, port),
+            _snmp_bulk_walk(ip, community, IF_OPER_STATUS, port),
+            _snmp_bulk_walk(ip, community, IF_HIGH_SPEED, port),
+            _snmp_bulk_walk(ip, community, IF_SPEED, port),
+            _snmp_bulk_walk(ip, community, IF_HC_IN, port),
+            _snmp_bulk_walk(ip, community, IF_HC_OUT, port),
+            _snmp_bulk_walk(ip, community, IF_ALIAS, port),
+            _snmp_bulk_walk(ip, community, IF_IN_ERRORS, port),
+            _snmp_bulk_walk(ip, community, IF_OUT_ERRORS, port),
+            _snmp_bulk_walk(ip, community, IF_IN_DISCARDS, port),
+            _snmp_bulk_walk(ip, community, IF_OUT_DISCARDS, port),
+            _snmp_bulk_walk(ip, community, IF_IN_UCAST, port),
+            _snmp_bulk_walk(ip, community, IF_OUT_UCAST, port),
             _snmp_get(ip, community, SYS_UPTIME, port),
-            _snmp_walk(ip, community, IF_LAST_CHANGE, port),
+            _snmp_bulk_walk(ip, community, IF_LAST_CHANGE, port),
         )
 
         # HC counter fallback: if 64-bit counters empty, try 32-bit
@@ -678,8 +788,8 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
         out_rows = hc_out_rows
         if not in_rows or not out_rows:
             fb_in, fb_out = await asyncio.gather(
-                _snmp_walk(ip, community, IF_IN_OCTETS, port) if not in_rows else asyncio.sleep(0, result=in_rows),
-                _snmp_walk(ip, community, IF_OUT_OCTETS, port) if not out_rows else asyncio.sleep(0, result=out_rows),
+                _snmp_bulk_walk(ip, community, IF_IN_OCTETS, port) if not in_rows else asyncio.sleep(0, result=in_rows),
+                _snmp_bulk_walk(ip, community, IF_OUT_OCTETS, port) if not out_rows else asyncio.sleep(0, result=out_rows),
             )
             if not in_rows:
                 in_rows = fb_in

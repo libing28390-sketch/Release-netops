@@ -14,7 +14,7 @@ interface Device {
   asset_id?: string;
   hostname: string;
   ip_address: string;
-  status: 'online' | 'offline';
+  status: 'online' | 'offline' | 'pending';
   platform?: string;
   normal_username?: string;
   admin_username?: string;

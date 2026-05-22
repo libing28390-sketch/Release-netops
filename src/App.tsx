@@ -76,6 +76,7 @@ import { useDeviceFormActions } from './hooks/useDeviceFormActions';
 import { useDeviceConnectionAndSnmp } from './hooks/useDeviceConnectionAndSnmp';
 import { useDeviceDetail } from './hooks/useDeviceDetail';
 import { useInventoryImportExport } from './hooks/useInventoryImportExport';
+import { AppProviders } from './contexts/AppProviders';
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
 
@@ -1450,21 +1451,42 @@ const App: React.FC = () => {
     </div>
   );
 
-  const mainContentProps = {
-    // route + i18n
+  if (activeTab === 'terminal') {
+    const params = new URLSearchParams(location.search);
+    const sessionToken = params.get('session') || '';
+    const hostname = params.get('hostname') || 'Terminal';
+
+    return (
+      <div className="w-screen h-screen bg-black overflow-hidden">
+        <TerminalWindow 
+          sessionToken={sessionToken} 
+          hostname={hostname} 
+          language={language}
+        />
+      </div>
+    );
+  }
+
+  // Create Context values
+  const coreAppValue = {
     activeTab, inventorySubPage, configPage, automationPage, changeOrderPage, language, t, navigate, navTo, showToast, setActiveTab, isAuthenticated,
-    // current user / users
     currentUser, users,
-    // dashboard data
-    devices, jobs, notifications, hostResources, trendDays, setTrendDays, complianceTrend, platformData,
+    devices, fetchDevicesData, devicesLastUpdatedAt,
+  };
+
+  const dashboardValue = {
+    jobs, notifications, hostResources, trendDays, setTrendDays, complianceTrend, platformData,
     dashBannerCollapsed, setDashBannerCollapsed, dashLastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchSharedData, fetchDevicesData,
-    // inventory & device flow
+    scheduledTasks, unreadNotificationCount,
+  };
+
+  const inventoryValue = {
     handleImport, handleExport, handleShowDetails, handleTestConnection, deviceConnectionChecks, connectionTestingDeviceId,
-    setShowAddModal, setShowEditModal, setEditingDevice, setEditForm, setSelectedDevice, devicesLastUpdatedAt,
+    setShowAddModal, setShowEditModal, setEditingDevice, setEditForm, setSelectedDevice, selectedDevice,
     snmpTestingId, snmpSyncingId, handleSnmpTest, handleSnmpSyncNow,
-    // styling helper
-    sectionHeaderRowClass,
-    // automation domain
+  };
+
+  const automationValue = {
     scenarios, platforms, selectedScenario, scenarioSearch, playbookVars, playbookPreview, playbookPlatform, playbookDeviceIds,
     playbookConcurrency, playbookDryRun, executionStatus,
     quickPlaybookScenario, quickPlaybookVars, quickPlaybookPlatform, quickPlaybookDryRun, quickPlaybookConcurrency, quickPlaybookPreview, quickRiskConfirmed,
@@ -1486,46 +1508,48 @@ const App: React.FC = () => {
     handleRefreshHistory, setPlaybookHistoryScenarioSearch, setPlaybookHistoryPage, setPlaybookHistoryStatusFilter,
     handleSelectExecution, handleDeleteExecution, handleExecDevicesStatusFilterChange, handleExecDevicesPageChange, handleSelectExecDevice,
     findMatchingPlatform, handleRerun, selectedJob, setSelectedJob,
-    // compliance
-    complianceOverview, complianceFindings, complianceFindingTotal,
-    complianceSeverityFilter, setComplianceSeverityFilter, complianceStatusFilter, setComplianceStatusFilter,
-    complianceCategoryFilter, setComplianceCategoryFilter,
-    compliancePage, setCompliancePage, compliancePageSize, setCompliancePageSize, complianceLoading, complianceRunLoading,
-    runComplianceAudit, openComplianceFindingDetail, updateComplianceFinding,
-    // config snapshots / schedule
+    selectedDevice,
+  };
+
+  const configValue = {
     isTakingSnapshot, activeBackupRunId,
     scheduleEnabled, setScheduleEnabled, scheduleCron, setScheduleCron, scheduleLoading,
     retentionDays, setRetentionDays, saveScheduleConfig, configSnapshots,
-    // license
-    isLicenseValid, licenseError, licenseFeatures, checkLicenseStatus,
     handleRunBackupAllOnline, handleBackupSingleDevice,
-    // config diff
     handleNavigateToConfigDiff, diffPreSelectedDeviceId, activeDiffLines, activeChangeLineIndexes, diffFocusChangeIdx,
     diffOnlyChanges, diffShowFullBoth, renderedDiffLines, fullSideBySideRows, diffChangeBlocks, filteredDiffChangeBlocks,
     diffBlockQuery, diffLineRefs, focusDiffChangeAt, configDiffLeft, configDiffRight,
     handleResetDiffView, handleSelectSnapshotPair, jumpToDiff,
     setDiffOnlyChanges, setDiffShowFullBoth, setDiffBlockQuery,
-    // config workspace
     configTemplates, configVariableKeys, configMissingVariables, configScopedDevices, configScopedOnlineCount, configReadinessScore,
     configValidationIssues, configValidationWarnings, configWorkspaceView,
     selectedTemplateId, selectedConfigTemplate, globalVars, editorContent, configRenderedPreview,
     configScopePlatform, configScopeRole, configScopeSite, configPlatformOptions, configRoleOptions, configSiteOptions,
     extractVars, getPlatformLabel,
     handleImportVars, handleNewTemplate, handleAddVar, handleDeleteVar, handleDiscardChanges, handleValidateTemplateWorkspace,
+    handleSaveTemplate, handleCreateScenarioDraftFromTemplate, handleOpenTemplateDeploy,
     setConfigWorkspaceView, setSelectedTemplateId, setEditorContent, setConfigTemplates,
-    // user management
+    setConfigScopePlatform, setConfigScopeRole, setConfigScopeSite,
+  };
+
+  const managementValue = {
+    isLicenseValid, licenseError, licenseFeatures, checkLicenseStatus,
     showAddUserModal, setShowAddUserModal, showEditUserModal, setShowEditUserModal, editingUser, setEditingUser,
     newUserForm, setNewUserForm, editUserForm, setEditUserForm,
     showNewUserPwd, setShowNewUserPwd, showEditUserPwd, setShowEditUserPwd,
     handleAddUser, handleEditUser,
-    // audit
     auditRows, auditTotal, auditPage, setAuditPage, auditPageSize, setAuditPageSize, auditLoading,
     auditCategoryFilter, setAuditCategoryFilter, auditSeverityFilter, setAuditSeverityFilter,
     auditStatusFilter, setAuditStatusFilter, auditTimeFilter, setAuditTimeFilter,
     openAuditEventDetail,
-    // misc
-    scheduledTasks, unreadNotificationCount,
-    // topology
+    complianceOverview, complianceFindings, complianceFindingTotal,
+    complianceSeverityFilter, setComplianceSeverityFilter, complianceStatusFilter, setComplianceStatusFilter,
+    complianceCategoryFilter, setComplianceCategoryFilter,
+    compliancePage, setCompliancePage, compliancePageSize, setCompliancePageSize, complianceLoading, complianceRunLoading,
+    runComplianceAudit, openComplianceFindingDetail, updateComplianceFinding,
+  };
+
+  const topologyValue = {
     setSelectedTopologyDeviceId, setSelectedTopologyLinkKey, topologyDiscoveryRunning,
     topologyStats, topologyLinkStats,
     topologySearch, topologySiteFilter, topologyRoleFilter, topologyStatusFilter,
@@ -1538,28 +1562,20 @@ const App: React.FC = () => {
     getTopologyOperationalTone,
   };
 
-
-  if (activeTab === 'terminal') {
-    const params = new URLSearchParams(location.search);
-    const sessionToken = params.get('session') || '';
-    const hostname = params.get('hostname') || 'Terminal';
-
-    return (
-      <div className="w-screen h-screen bg-black overflow-hidden">
-        <TerminalWindow 
-          sessionToken={sessionToken} 
-          hostname={hostname} 
-          language={language}
-        />
-      </div>
-    );
-  }
-
   return (
     <AppRuntimeBoundary language={language}>
-      <AppLayout
-        language={language}
-        resolvedTheme={resolvedTheme}
+      <AppProviders
+        coreApp={coreAppValue}
+        dashboard={dashboardValue}
+        inventory={inventoryValue}
+        automation={automationValue}
+        config={configValue}
+        management={managementValue}
+        topology={topologyValue}
+      >
+        <AppLayout
+          language={language}
+          resolvedTheme={resolvedTheme}
         themeMode={themeMode}
         sidebarCollapsed={sidebarCollapsed}
         activeTab={activeTab}
@@ -1632,8 +1648,7 @@ const App: React.FC = () => {
         toast={toast}
         onCloseToast={() => setToast(null)}
       >
-
-        <AppMainContent appProps={mainContentProps} />
+        <AppMainContent />
 
       {/* ── Command Preview Modal ── */}
       {showCustomCommandModal && (
@@ -1804,7 +1819,8 @@ const App: React.FC = () => {
       />
 
       {/* Toast Notification */}
-    </AppLayout>
+        </AppLayout>
+      </AppProviders>
     </AppRuntimeBoundary>
   );
 };
