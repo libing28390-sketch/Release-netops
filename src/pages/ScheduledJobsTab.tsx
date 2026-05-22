@@ -208,7 +208,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [total, setTotal] = useState(0);
 
   // Modal
-  const [modalOpen, setModalOpen] = useState(false);
+  const [showAddJob, setShowAddJob] = useState(false);
   const [detailJob, setDetailJob] = useState<ScheduledJob | null>(null);
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null);
   const [viewingScript, setViewingScript] = useState<any>(null); // New state for script content view
@@ -352,9 +352,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
   useEffect(() => { fetchSystemJobs(); }, [fetchSystemJobs]);
   useEffect(() => { 
-    if (modalOpen) fetchApprovers(); 
-    if ((modalOpen || detailJob) && (form.action_type === 'script_run' || detailJob?.action_type === 'script_run')) fetchScripts();
-  }, [modalOpen, detailJob, isEditMode, fetchApprovers, fetchScripts, form.action_type]);
+    if (showAddJob) fetchApprovers(); 
+    if ((showAddJob || detailJob) && (form.action_type === 'script_run' || detailJob?.action_type === 'script_run')) fetchScripts();
+  }, [showAddJob, detailJob, isEditMode, fetchApprovers, fetchScripts, form.action_type]);
 
   // Auto-load script content when detail modal opens for a script_run job
   useEffect(() => {
@@ -394,10 +394,16 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     setApprovalError('');
   };
 
-  const openCreateModal = () => {
-    resetFormState();
-    setEditingJob(null);
-    setModalOpen(true);
+  const toggleAddJob = () => {
+    if (showAddJob) {
+      setShowAddJob(false);
+      setEditingJob(null);
+      setEnablingJobId(null);
+    } else {
+      resetFormState();
+      setEditingJob(null);
+      setShowAddJob(true);
+    }
   };
 
   const openEditModal = (job: ScheduledJob) => {
@@ -453,7 +459,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     setApprovalStatus('idle');
     setApprovalCountdown(0);
     setApprovalError('');
-    setModalOpen(true);
+    setShowAddJob(true);
   };
 
   const fetchAndShowScriptDetail = async (scriptId: string) => {
@@ -477,7 +483,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const closeModal = () => {
-    setModalOpen(false);
+    setShowAddJob(false);
     setEditingJob(null);
     setEnablingJobId(null);
     setPresetOpen(false);
@@ -885,11 +891,15 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               {zh ? '刷新' : 'Refresh'}
             </button>
             <button
-              onClick={openCreateModal}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 text-white text-xs font-bold shadow-sm hover:from-cyan-400 hover:to-cyan-500 transition-all active:scale-[0.97]"
+              onClick={toggleAddJob}
+              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-[0.97] ${
+                showAddJob
+                  ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  : 'bg-gradient-to-r from-cyan-500 to-cyan-600 text-white hover:from-cyan-400 hover:to-cyan-500'
+              }`}
             >
-              <Plus className="w-3.5 h-3.5" />
-              {zh ? '新建定时作业' : 'New Scheduled Job'}
+              {showAddJob ? <X size={16} /> : <Plus size={16} />}
+              {showAddJob ? (zh ? '取消新建' : 'Cancel') : (zh ? '新建定时作业' : 'New Scheduled Job')}
             </button>
           </>
         }
@@ -897,892 +907,24 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
 
-      {/* ═══ 顶层多维分类导航与搜索栏 ═══ */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80 shadow-inner">
-        <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar py-0.5">
-          <button
-            onClick={() => setActiveCategory('all')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
-              activeCategory === 'all'
-                ? 'bg-white text-cyan-700 shadow-sm border border-cyan-100'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            <span>{zh ? '全部作业' : 'All Jobs'}</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'all' ? 'bg-cyan-100 text-cyan-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
-              {jobs.length + systemJobs.length}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveCategory('system')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
-              activeCategory === 'system'
-                ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            <Lock size={14} className={activeCategory === 'system' ? 'text-slate-800' : 'text-slate-400'} />
-            <span>{zh ? '系统内置' : 'System Managed'}</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'system' ? 'bg-slate-200 text-slate-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
-              {systemJobs.length}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveCategory('backup')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
-              activeCategory === 'backup'
-                ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            <Database size={14} className={activeCategory === 'backup' ? 'text-indigo-600' : 'text-slate-400'} />
-            <span>{zh ? '配置自动备份' : 'Config Backup'}</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'backup' ? 'bg-indigo-100 text-indigo-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
-              {stats.backupCnt}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveCategory('inspection')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
-              activeCategory === 'inspection'
-                ? 'bg-white text-emerald-700 shadow-sm border border-emerald-100'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            <Activity size={14} className={activeCategory === 'inspection' ? 'text-emerald-600' : 'text-slate-400'} />
-            <span>{zh ? '智能巡检' : 'Smart Inspection'}</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'inspection' ? 'bg-emerald-100 text-emerald-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
-              {stats.inspCnt}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveCategory('script_run')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
-              activeCategory === 'script_run'
-                ? 'bg-white text-amber-700 shadow-sm border border-amber-100'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            <Zap size={14} className={activeCategory === 'script_run' ? 'text-amber-600' : 'text-slate-400'} />
-            <span>{zh ? '自动化脚本' : 'Automated Script'}</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'script_run' ? 'bg-amber-100 text-amber-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
-              {stats.scriptCnt}
-            </span>
-          </button>
-        </div>
-
-        <div className="relative min-w-[260px] shrink-0">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder={zh ? '检索作业名称、命令或 IP 范围...' : 'Search jobs, commands, IP scope...'}
-            className="w-full h-9 pl-9 pr-8 bg-white/90 border border-slate-200/80 rounded-xl text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-cyan-500 focus:bg-white shadow-sm transition-all"
-          />
-          {searchQuery && (
-            <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600">
-              <X size={14} />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* ═══ 系统内置作业守护进程 (表格形式，与系统明亮底色完美统一) ═══ */}
-      {(activeCategory === 'all' || activeCategory === 'system') && filteredSystemJobs.length > 0 && (
-        <div className="rounded-2xl border border-slate-200/80 bg-white shadow-sm overflow-hidden mb-6 transition-all">
-          <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-lg bg-cyan-100 text-cyan-700 flex items-center justify-center font-bold">
-                <Lock size={14} />
-              </div>
-              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                {zh ? '平台内置常驻系统守护进程' : 'Platform Managed System Daemons'}
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-50 text-cyan-700 border border-cyan-100 font-normal tracking-normal">
-                  {zh ? '内核自动调度，无需人工审批' : 'Kernel Managed'}
-                </span>
-              </h3>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-mono font-bold text-slate-600 bg-white px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-2xs">
-                {filteredSystemJobs.length} {zh ? '个常驻任务' : 'Daemons'}
-              </span>
-              {activeCategory === 'all' && (
-                <button
-                  onClick={() => setSystemCollapsed(c => !c)}
-                  className="p-1 rounded-lg bg-slate-200/60 text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition-all flex items-center gap-1 text-xs px-2.5 py-1"
-                >
-                  <span>{systemCollapsed ? (zh ? '展开列表' : 'Expand') : (zh ? '收起面板' : 'Collapse')}</span>
-                  {systemCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                </button>
-              )}
-            </div>
-          </div>
-
-          {(!systemCollapsed || activeCategory === 'system') && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 bg-slate-50/40 uppercase tracking-wider">
-                    <th className="py-2.5 px-4">{zh ? '任务名称 / 标识' : 'Job Name / ID'}</th>
-                    <th className="py-2.5 px-4">{zh ? '任务说明' : 'Description'}</th>
-                    <th className="py-2.5 px-4">{zh ? '触发发条 (CRON)' : 'Trigger'}</th>
-                    <th className="py-2.5 px-4">{zh ? '预计下次执行' : 'Next Run'}</th>
-                    <th className="py-2.5 px-4 text-right">{zh ? '规则配置管理' : 'Management'}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {filteredSystemJobs.map(sj => {
-                    const isInsp = sj.action_type === 'inspection';
-                    const isBackup = sj.action_type === 'backup';
-                    const isSec = sj.action_type === 'password_rotation';
-                    const icon = isBackup ? Database : isInsp ? Activity : isSec ? Shield : CalendarClock;
-                    const Icon = icon;
-                    const nextAt = sj.next_run_at
-                      ? new Date(sj.next_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', {
-                          hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-                        })
-                      : '-';
-
-                    return (
-                      <tr
-                        key={sj.id}
-                        className="hover:bg-slate-50/80 transition-colors group/row"
-                      >
-                        <td className="py-3 px-4 font-bold text-slate-800 min-w-[180px]">
-                          <div className="flex items-center gap-2">
-                            <div className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${
-                              isInsp ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
-                              isBackup ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' :
-                              isSec ? 'bg-amber-50 text-amber-600 border border-amber-100' :
-                              'bg-cyan-50 text-cyan-600 border border-cyan-100'
-                            }`}>
-                              <Icon size={13} />
-                            </div>
-                            <div>
-                              <div className="font-bold text-xs text-slate-800">{zh ? sj.name_zh : sj.name_en}</div>
-                              <code className="text-[10px] text-slate-400 font-mono">{sj.id}</code>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="py-3 px-4 text-slate-600 max-w-[280px] truncate" title={zh ? sj.description_zh : sj.description_en}>
-                          {zh ? sj.description_zh : sj.description_en}
-                        </td>
-                        <td className="py-3 px-4 font-mono text-[11px] text-cyan-700 font-medium">
-                          <span className="bg-cyan-50 px-2 py-0.5 rounded border border-cyan-100">{sj.trigger || 'CRON Daemon'}</span>
-                        </td>
-                        <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
-                          {nextAt !== '-' && (
-                            <span className="inline-flex items-center gap-1.5 font-mono">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                              {nextAt}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          {sj.deep_link ? (
-                            <button
-                              onClick={() => navigate(sj.deep_link!)}
-                              className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
-                                isInsp ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' :
-                                isBackup ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' :
-                                'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100'
-                              }`}
-                            >
-                              <span>{zh ? '配置规则' : 'Configure'}</span>
-                              <ArrowUpRight size={12} />
-                            </button>
-                          ) : (
-                            <span className="text-[11px] text-slate-400 italic">{zh ? '内核保护' : 'Kernel Protected'}</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ═══ 用户自定义作业分栏标题 ═══ */}
-      {activeCategory !== 'system' && (
-        <div className="flex items-center gap-3 px-1 pt-2">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-            <span>
-              {activeCategory === 'all' && (zh ? '用户自定义作业' : 'User-defined Jobs')}
-              {activeCategory === 'backup' && (zh ? '配置自动备份作业' : 'Config Backup Jobs')}
-              {activeCategory === 'inspection' && (zh ? '智能巡检作业' : 'Smart Inspection Jobs')}
-              {activeCategory === 'script_run' && (zh ? '自动化脚本作业' : 'Automated Script Jobs')}
-            </span>
-            <span className="px-2 py-0.5 rounded-full bg-slate-200/70 text-slate-700 text-[10px] font-mono">
-              {filteredJobs.length} {zh ? '项' : 'items'}
-            </span>
-          </h3>
-          <div className="flex-1 h-px bg-slate-200" />
-          {searchQuery && (
-            <span className="text-xs text-cyan-600 font-semibold bg-cyan-50 px-2.5 py-0.5 rounded-full border border-cyan-100">
-              {zh ? `过滤出 ${filteredJobs.length} 项` : `Filtered ${filteredJobs.length}`}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* ═══ 作业列表呈现 ═══ */}
-      {activeCategory === 'system' ? null : loading ? (
-        <div className="flex items-center justify-center py-16 text-slate-400">
-          <RotateCcw size={16} className="animate-spin mr-2 text-cyan-600" />
-          <span className="text-xs">{zh ? '数据加载中...' : 'Loading jobs...'}</span>
-        </div>
-      ) : filteredJobs.length > 0 ? (
-        <div className="flex-1 overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar">
-          <div className="space-y-2.5">
-            {filteredJobs.map(job => {
-              const atInfo = ACTION_TYPES.find(a => a.value === job.action_type);
-              const AtIcon = atInfo?.icon || Database;
-              const isEnabled = !!job.enabled;
-              const scopeDesc = describeScope(job.device_scope, job.device_filter, zh);
-              const isInsp = job.action_type === 'inspection';
-              const isBackup = job.action_type === 'backup';
-              const isScript = job.action_type === 'script_run';
-              return (
-                <motion.div
-                  key={job.id}
-                  layout
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  onClick={() => setDetailJob(job)}
-                  className={`rounded-2xl border transition-all hover:shadow-md cursor-pointer group overflow-hidden ${
-                    isEnabled ? 'bg-white border-slate-200/90 shadow-sm' : 'bg-slate-50 border-slate-200/50 opacity-60'
-                  }`}
-                >
-                  <div className="flex items-center gap-4 px-5 py-4">
-                    {/* 分类定制色彩底座 Icon */}
-                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
-                      isEnabled
-                        ? isInsp ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
-                          : isBackup ? 'bg-indigo-50 text-indigo-600 border-indigo-100'
-                          : isScript ? 'bg-amber-50 text-amber-600 border-amber-100'
-                          : 'bg-cyan-50 text-cyan-600 border-cyan-100'
-                        : 'bg-slate-100 text-slate-400 border-slate-200'
-                    }`}>
-                      <AtIcon size={20} />
-                    </div>
-
-                    {/* Main info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2.5">
-                        <p className="text-sm font-bold text-[#0f172a] truncate group-hover:text-cyan-700 transition-colors">
-                          {job.name}
-                        </p>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                          isEnabled ? 'bg-emerald-100/80 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'
-                        }`}>
-                          {isEnabled ? (zh ? '运行中' : 'Active') : (zh ? '已停用' : 'Disabled')}
-                        </span>
-                        {job.last_run_status && (
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                            job.last_run_status === 'success'
-                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                              : 'bg-rose-50 text-rose-600 border border-rose-100'
-                          }`}>
-                            <div className={`w-1.5 h-1.5 rounded-full ${job.last_run_status === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                            {job.last_run_status === 'success' ? (zh ? '执行成功' : 'Success') : (zh ? '执行失败' : 'Failed')}
-                          </span>
-                        )}
-                        {job.use_admin_creds ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">
-                            <ShieldAlert size={12} className="text-amber-600" />
-                            {zh ? '特权执行 (Admin)' : 'Privileged'}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 shadow-sm">
-                            <User size={12} className="text-slate-500" />
-                            {zh ? '普通执行 (User)' : 'Normal'}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500 flex-wrap">
-                        <span className="flex items-center gap-1 font-mono font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
-                          <CalendarClock size={12} className="text-cyan-600" />
-                          {describeCron(job.cron_expr, zh)}
-                        </span>
-                        <span className="text-slate-300">·</span>
-                        <span className={`font-semibold ${isInsp ? 'text-emerald-700' : isBackup ? 'select-none text-indigo-700' : isScript ? 'text-amber-700' : 'text-slate-700'}`}>
-                          {zh ? (atInfo?.labelZh || job.action_type) : (atInfo?.labelEn || job.action_type)}
-                        </span>
-                        <span className="text-slate-300">·</span>
-                        <span className="flex items-center gap-1 text-slate-600 font-medium">
-                          <Target size={12} className="text-slate-400" />
-                          {scopeDesc}
-                        </span>
-
-                        {job.action_type === 'script_run' && job.script_id && (
-                          <>
-                            <span className="text-slate-300">·</span>
-                            <span className="flex items-center gap-1 text-[#00a9ce] font-bold bg-cyan-50 px-2 py-0.5 rounded border border-cyan-100">
-                              <FileCode size={12} />
-                              {(availableScripts || []).find(s => s.id === job.script_id)?.name || job.script_id}
-                            </span>
-                          </>
-                        )}
-                        {job.run_count > 0 && (
-                          <>
-                            <span className="text-slate-300">·</span>
-                            <span className="font-mono text-slate-600">{zh ? `累计触发 ${job.run_count} 次` : `${job.run_count} runs`}</span>
-                          </>
-                        )}
-                        {job.last_run_at && (
-                          <>
-                            <span className="text-slate-300">·</span>
-                            <span>{zh ? '最近运行' : 'Last run'}: <span className="font-mono">{new Date(job.last_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span></span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                      <button
-                        onClick={() => setDetailJob(job)}
-                        className="p-2 rounded-xl text-slate-400 hover:bg-cyan-50 hover:text-cyan-600 transition-all opacity-0 group-hover:opacity-100"
-                        title={zh ? '查看运行详情' : 'View Detail'}
-                      >
-                        <Eye size={16} />
-                      </button>
-                      <button
-                        onClick={() => openEditModal(job)}
-                        className="p-2 rounded-xl text-slate-400 hover:bg-cyan-50 hover:text-cyan-600 transition-all"
-                        title={zh ? '编辑配置' : 'Edit'}
-                      >
-                        <Pencil size={16} />
-                      </button>
-                      <button
-                        onClick={() => toggleJobEnabled(job)}
-                        className={`p-2 rounded-xl transition-all ${isEnabled ? 'text-slate-400 hover:bg-amber-50 hover:text-amber-600' : 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
-                        title={isEnabled ? (zh ? '暂停执行' : 'Disable') : (zh ? '恢复启动' : 'Enable')}
-                      >
-                        {isEnabled ? <PowerOff size={16} /> : <Power size={16} />}
-                      </button>
-                      {deleteConfirmId === job.id ? (
-                        <div className="flex items-center gap-1.5 ml-1">
-                          <button
-                            onClick={() => {
-                              setDeleteConfirmId(null);
-                              setDeleteTarget(job);
-                              setDeleteReason(`${zh ? '申请删除作业' : 'Delete job'}: ${job.name}`);
-                              setDeleteApprover('');
-                              setDeleteToken('');
-                              setDeleteCode('');
-                              setDeleteStatus('idle');
-                              setDeleteCountdown(0);
-                              setDeleteError('');
-                              fetchApprovers();
-                              setDeleteApprovalOpen(true);
-                            }}
-                            className="px-2.5 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-all shadow-sm"
-                          >
-                            {zh ? '确认删除' : 'Yes'}
-                          </button>
-                          <button
-                            onClick={() => setDeleteConfirmId(null)}
-                            className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-all"
-                          >
-                            {zh ? '取消' : 'No'}
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setDeleteConfirmId(job.id)}
-                          className="p-2 rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all"
-                          title={zh ? '删除作业' : 'Delete'}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Bottom meta */}
-                  <div className="px-5 py-2.5 bg-slate-50/80 border-t border-slate-100 flex items-center gap-4 text-[11px] text-slate-500">
-                    <span className="font-mono text-slate-600 font-semibold">{job.cron_expr}</span>
-                    <span className="text-slate-300">|</span>
-                    <span>{zh ? '审批授权人' : 'Approver'}: <span className="font-bold text-slate-700">{job.approved_by || '\u2014'}</span></span>
-                    <span className="text-slate-300">|</span>
-                    <span>{zh ? '创建者' : 'Creator'}: <span className="font-medium text-slate-700">{job.created_by}</span> · <span className="font-mono">{new Date(job.created_at).toLocaleDateString(zh ? 'zh-CN' : 'en-US')}</span></span>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        </div>
-      ) : (
-        <div className="rounded-3xl border-2 border-dashed border-slate-200/80 p-16 text-center bg-white/50">
-          <div className="w-16 h-16 rounded-2xl bg-cyan-50 text-cyan-600 flex items-center justify-center mx-auto mb-4 border border-cyan-100 shadow-sm">
-            <CalendarClock size={32} />
-          </div>
-          <p className="text-base text-slate-800 font-bold">{zh ? '未找到符合条件的定时作业' : 'No matching scheduled jobs'}</p>
-          <p className="text-xs text-slate-500 mt-1 mb-6 max-w-md mx-auto leading-relaxed">
-            {zh
-              ? '当前分类或搜索条件下暂无匹配的周期性自动化作业。您可以点击上方重置筛选，或立即创建每日备份与智能巡检任务。'
-              : 'No scheduled jobs found matching current filters. Create a new recurring job anytime.'}
-          </p>
-          <button
-            onClick={openCreateModal}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 text-white text-xs font-bold hover:from-cyan-400 hover:to-cyan-500 transition-all shadow shadow-cyan-500/20 active:scale-[0.98]"
-          >
-            <Plus size={16} />
-            {zh ? '新建定时作业' : 'New Scheduled Job'}
-          </button>
-        </div>
-      )}
-
-      {total > 0 && (
-        <div className="mt-auto pt-4 border-t border-black/5 bg-white">
-          <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={setPageSize} language={language} />
-        </div>
-      )}
-
-      {/* --- Detail Modal --- */}
-      <AnimatePresence>
-        {detailJob && (
+      <AnimatePresence mode="wait">
+        {showAddJob ? (
           <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+            key="add-form"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="rounded-2xl border border-cyan-200/60 bg-white p-6 space-y-6 shadow-xl relative overflow-hidden"
           >
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-md" onClick={() => setDetailJob(null)} />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-2xl max-h-[85vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-black/5"
-            >
-              {/* Header */}
-              <div className="px-6 py-5 border-b border-black/[0.03] flex items-center justify-between bg-gradient-to-r from-slate-50/50 to-white">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 flex items-center justify-center">
-                    <Info className="w-5 h-5 text-cyan-600" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-[#164e63]">{detailJob.name}</h3>
-                    <div className="flex items-center gap-2 text-[10px] text-black/40 mt-0.5">
-                      <span className="bg-slate-100 px-1.5 py-0.5 rounded font-mono">{detailJob.id}</span>
-                      <span>·</span>
-                      <span>{zh ? '定时作业详情' : 'Scheduled Job Detail'}</span>
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setDetailJob(null)}
-                  className="p-2 rounded-xl text-black/20 hover:bg-black/5 hover:text-black/40 transition-all"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* Content */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-                {/* 1. Schedule & Scope Grid */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-4 rounded-2xl bg-slate-50/50 border border-black/[0.02]">
-                    <div className="flex items-center gap-2 text-[11px] font-bold text-black/40 mb-2 uppercase tracking-wider">
-                      <CalendarClock size={12} />
-                      {zh ? '执行周期' : 'Schedule'}
-                    </div>
-                    <p className="text-sm font-semibold text-[#0e7490]">
-                      {describeCron(detailJob.cron_expr, zh)}
-                    </p>
-                    <p className="text-[10px] font-mono text-black/30 mt-1">{detailJob.cron_expr}</p>
-                  </div>
-                  <div className="p-4 rounded-2xl bg-slate-50/50 border border-black/[0.02]">
-                    <div className="flex items-center gap-2 text-[11px] font-bold text-black/40 mb-2 uppercase tracking-wider">
-                      <Target size={12} />
-                      {zh ? '执行范围' : 'Target Scope'}
-                    </div>
-                    <p className="text-sm font-semibold text-slate-700">
-                      {detailJob.device_scope === 'all' ? (zh ? '全部在线设备' : 'All Online Devices') :
-                       detailJob.device_scope === 'ip' ? (zh ? '按 IP 指定' : 'By IP Address') :
-                       detailJob.device_scope === 'tag' ? (zh ? '按标签筛选' : 'By Tags') : (zh ? '自定义范围' : 'Custom')}
-                    </p>
-                    <p className="text-[10px] text-black/40 mt-1 truncate">
-                      {detailJob.device_filter || (zh ? '无额外过滤条件' : 'No filter')}
-                    </p>
-                  </div>
-                </div>
-
-                {/* 2. Device List (IP List) */}
-                {(detailJob.device_scope === 'ip' || detailJob.device_scope === 'all') && (
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-[11px] font-bold text-black/50 uppercase tracking-wider">{zh ? '执行 IP 列表' : 'Target IPs'}</h4>
-                      <span className="text-[10px] text-black/30">
-                        {detailJob.device_scope === 'all' ? (zh ? '动态获取' : 'Dynamic') : `${(detailJob.device_filter || '').split(',').length} 个目标`}
-                      </span>
-                    </div>
-                    <div className="p-3 rounded-2xl border border-black/[0.04] bg-slate-50/30">
-                      <div className="flex flex-wrap gap-1.5">
-                        {detailJob.device_scope === 'all' ? (
-                          <div className="text-[11px] text-black/40 italic px-2 py-1">{zh ? '作业运行时将自动扫描所有在线设备' : 'Automatically targets all online devices at runtime'}</div>
-                        ) : (
-                          (detailJob.device_filter || '').split(',').map((ip, idx) => (
-                            <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded-md bg-white border border-black/[0.06] text-[11px] font-mono text-slate-600 shadow-sm">
-                              {ip.trim()}
-                            </span>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* 3. Execution Content (Script/Commands) */}
-                <div>
-                  <h4 className="text-[11px] font-bold text-black/50 uppercase tracking-wider mb-2">{zh ? '执行脚本/内容' : 'Execution Content'}</h4>
-                  <div className="rounded-2xl border border-black/[0.06] overflow-hidden bg-[#1e293b]">
-                    <div className="px-4 py-2 bg-white/5 border-b border-white/[0.05] flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FileText size={12} className="text-cyan-400" />
-                        <span className="text-[11px] font-bold text-white/70">
-                          {detailJob.action_type === 'backup' ? (zh ? '采集与巡检：核心配置备份' : 'Collection & Inspection: Config Backup') :
-                           (availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id || (zh ? '操作内容' : 'Operation Content'))}
-                        </span>
-                        {detailJob.script_id && (
-                          <button 
-                            onClick={() => fetchAndShowScriptDetail(detailJob.script_id!)}
-                            className="text-[9px] bg-cyan-500/10 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-500/20 hover:bg-cyan-500/20 transition-all ml-1"
-                          >
-                            {zh ? '查看脚本详情' : 'View Script'}
-                          </button>
-                        )}
-                      </div>
-                      <div className="text-[9px] font-bold text-cyan-400/60 uppercase tracking-widest">
-                        {detailJob.action_type === 'backup' ? (zh ? '采集' : 'BACKUP') : 
-                         detailJob.major_type === 'collection' ? (zh ? '巡检' : 'INSPECTION') : (zh ? '变更' : 'CHANGE')}
-                      </div>
-                    </div>
-                    <div className="p-4 overflow-x-auto">
-                      <pre className="font-mono text-[11px] leading-relaxed text-cyan-50/90 whitespace-pre-wrap">
-                        {detailJob.action_type === 'backup'
-                          ? (zh ? '# 该作业为内置配置备份任务\n# 将自动采集设备 running-config 并进行版本比对' : '# This is a built-in config backup job.\n# It will collect running-config and track drifts.')
-                          : detailJob.action_type === 'inspection'
-                            ? (zh ? '# 该作业为内置综合巡检\n# 将采集 interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf' : '# Built-in comprehensive inspection job.\n# Collects interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf')
-                            : detailJob.script_id && viewingScript?.id === detailJob.script_id && viewingScript?.content
-                              ? viewingScript.content
-                              : detailJob.commands
-                                ? detailJob.commands
-                                : detailJob.script_id
-                                  ? (zh ? `# 此作业绑定脚本: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}\n# 点击上方"查看脚本详情"查看完整内容` : `# Bound script: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}\n# Click "View Script" above to see full content`)
-                                  : (zh ? '-- 未设置具体执行内容 --' : '-- No commands defined --')}
-                      </pre>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 4. Meta Info */}
-                <div className="pt-4 border-t border-black/[0.03] grid grid-cols-2 gap-y-4 text-[10px]">
-                  <div>
-                    <p className="text-black/30 mb-1">{zh ? '状态' : 'Status'}</p>
-                    <span className={`px-2 py-0.5 rounded-full font-bold ${detailJob.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
-                      {detailJob.enabled ? (zh ? '已启用' : 'Active') : (zh ? '已停用' : 'Disabled')}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="text-black/30 mb-1">{zh ? '配置原因' : 'Reason'}</p>
-                    <p className="text-slate-600 font-medium italic truncate">{detailJob.config_reason || '\u2014'}</p>
-                  </div>
-                  <div>
-                    <p className="text-black/30 mb-1">{zh ? '审批人' : 'Approver'}</p>
-                    <p className="text-slate-600 font-bold">{detailJob.approved_by || (zh ? '系统自核' : 'Auto')}</p>
-                  </div>
-                  <div>
-                    <p className="text-black/30 mb-1">{zh ? '创建者' : 'Creator'}</p>
-                    <p className="text-slate-600 font-bold">{detailJob.created_by} · {new Date(detailJob.created_at).toLocaleDateString()}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Footer */}
-              <div className="px-6 py-4 bg-slate-50/80 border-t border-black/[0.03] flex items-center justify-end gap-3">
-                <button
-                  onClick={() => setDetailJob(null)}
-                  className="px-6 py-2 rounded-xl border border-black/10 text-xs font-bold text-black/50 hover:bg-black/5 transition-all"
-                >
-                  {zh ? '关闭' : 'Close'}
-                </button>
-                <button
-                  onClick={() => {
-                    const job = detailJob;
-                    setDetailJob(null);
-                    openEditModal(job);
-                  }}
-                  className="px-6 py-2 rounded-xl bg-[#164e63] text-white text-xs font-bold shadow-lg shadow-cyan-900/10 hover:bg-[#0891b2] transition-all"
-                >
-                  {zh ? '编辑该作业' : 'Edit Job'}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* --- Delete Approval Modal --- */}
-      <AnimatePresence>
-        {deleteApprovalOpen && deleteTarget && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          >
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteApprovalOpen(false)} />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="relative w-full max-w-md rounded-2xl bg-white border border-slate-100 shadow-2xl overflow-hidden z-10"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="bg-rose-50 border-b border-rose-100 px-6 py-4 flex items-center justify-between">
-                <div className="flex items-center gap-2.5 text-rose-700">
-                  <Shield className="w-5 h-5 text-rose-600" />
-                  <h3 className="font-bold text-sm">{zh ? '删除安全校验与工单授权' : 'Delete Security Verification'}</h3>
-                </div>
-                <button onClick={() => setDeleteApprovalOpen(false)} className="text-rose-400 hover:text-rose-600 p-1">
-                  <X size={16} />
-                </button>
-              </div>
-
-              <div className="p-6 space-y-4 text-xs text-slate-600">
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
-                  <span className="text-[10px] text-slate-400 font-semibold">{zh ? '即将永久删除作业' : 'Target Job to Delete'}</span>
-                  <div className="font-bold text-slate-800 text-sm truncate">{deleteTarget.name}</div>
-                  <div className="font-mono text-[10px] text-slate-500">{deleteTarget.cron_expr} · {deleteTarget.action_type}</div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="font-bold text-slate-700 block">{zh ? '删除原因说明' : 'Deletion Reason'}</label>
-                  <input
-                    type="text" value={deleteReason} onChange={e => setDeleteReason(e.target.value)}
-                    placeholder={zh ? '输入删除原因...' : 'Enter reason...'}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="font-bold text-slate-700 block">{zh ? '选择授权审批人' : 'Select Approver'}</label>
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={deleteApprover} onChange={e => setDeleteApprover(e.target.value)}
-                      disabled={deleteStatus === 'sending' || deleteStatus === 'sent'}
-                      className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all"
-                    >
-                      <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
-                      {approvers.map(u => (
-                        <option key={u.id} value={u.username}>{u.username} ({u.role})</option>
-                      ))}
-                    </select>
-                    <button
-                      type="button" onClick={requestDeleteApproval}
-                      disabled={!deleteApprover || !deleteReason.trim() || deleteStatus === 'sending' || (deleteStatus === 'sent' && deleteCountdown > 0)}
-                      className={`px-3 py-2 rounded-xl font-bold whitespace-nowrap transition-all flex items-center gap-1 ${
-                        deleteApprover && deleteReason.trim() && !(deleteStatus === 'sent' && deleteCountdown > 0)
-                          ? 'bg-rose-600 text-white hover:bg-rose-700 shadow-sm'
-                          : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                      }`}
-                    >
-                      {deleteStatus === 'sending' ? <RotateCcw className="w-3 h-3 animate-spin" />
-                        : deleteStatus === 'sent' && deleteCountdown > 0 ? `${Math.floor(deleteCountdown / 60)}:${String(deleteCountdown % 60).padStart(2, '0')}`
-                        : (zh ? '发验证码' : 'Send Code')}
-                    </button>
-                  </div>
-                </div>
-
-                {deleteStatus === 'sent' && (
-                  <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                    <label className="text-[11px] text-slate-500 block">{zh ? '输入 6 位工单验证码' : 'Enter 6-digit verification code'}</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={deleteCode} onChange={e => { setDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setDeleteError(''); }}
-                        placeholder="000000" maxLength={6}
-                        className="w-32 tracking-[0.3em] text-center font-mono rounded-xl border border-slate-200 py-2 text-sm outline-none focus:border-rose-500 transition-all"
-                      />
-                      <button
-                        type="button" onClick={verifyDeleteApproval} disabled={deleteCode.length !== 6}
-                        className={`px-4 py-2 rounded-xl font-bold transition-all ${deleteCode.length === 6 ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
-                      >
-                        {zh ? '验证' : 'Verify'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {deleteError && (
-                  <div className="flex items-center gap-1.5 text-rose-600 text-xs pt-1">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{deleteError}</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="px-6 py-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end gap-2">
-                <button
-                  type="button" onClick={() => setDeleteApprovalOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-slate-600 hover:bg-slate-100 transition-all"
-                >
-                  {zh ? '取消' : 'Cancel'}
-                </button>
-                <button
-                  type="button" onClick={executeDeleteJob} disabled={deleteStatus !== 'verified'}
-                  className="px-4 py-2 rounded-xl bg-rose-600 text-white font-bold hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-md shadow-rose-600/10"
-                >
-                  {zh ? '确认安全删除' : 'Secure Delete'}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* --- Candidate IP / Device Selection Modal --- */}
-      <AnimatePresence>
-        {candidateModalOpen && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[70] flex items-center justify-center p-4"
-          >
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setCandidateModalOpen(false)} />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col z-10 max-h-[80vh]"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="px-6 py-4 bg-gradient-to-r from-slate-900 to-[#0f172a] text-white flex items-center justify-between border-b border-white/10">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-cyan-500/20 flex items-center justify-center border border-cyan-400/20 text-cyan-400">
-                    <Target size={16} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold">{zh ? '选择匹配的目标设备' : 'Select Matched Target Devices'}</h3>
-                    <p className="text-[10px] text-slate-400">{zh ? `共检索到 ${candidateList.length} 台候选目标` : `Found ${candidateList.length} candidate device(s)`}</p>
-                  </div>
-                </div>
-                <button type="button" onClick={() => setCandidateModalOpen(false)} className="text-slate-400 hover:text-white transition-colors p-1">
-                  <X size={16} />
-                </button>
-              </div>
-
-              <div className="px-6 py-3 bg-slate-50 border-b border-slate-200/80 flex items-center justify-between text-xs text-slate-600">
-                <label className="flex items-center gap-2 font-bold cursor-pointer hover:text-slate-900 select-none">
-                  <input
-                    type="checkbox"
-                    checked={candidateList.length > 0 && candidateList.every(c => c.selected)}
-                    onChange={toggleAllCandidates}
-                    className="w-4 h-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
-                  />
-                  <span>{zh ? '全选 / 全不选' : 'Select All'}</span>
-                </label>
-                <span className="font-mono text-[11px] bg-white px-2 py-0.5 rounded border border-slate-200 font-bold text-slate-700 shadow-2xs">
-                  {zh ? `已勾选 ${candidateList.filter(c => c.selected).length} / ${candidateList.length} 台` : `${candidateList.filter(c => c.selected).length} / ${candidateList.length} selected`}
-                </span>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-6 space-y-2 custom-scrollbar max-h-[50vh]">
-                {candidateList.map((cand, idx) => (
-                  <div
-                    key={cand.ip}
-                    onClick={() => toggleCandidateSelected(idx)}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all cursor-pointer ${
-                      cand.selected
-                        ? 'border-cyan-400 bg-cyan-50/60 shadow-2xs text-slate-900 font-bold'
-                        : 'border-slate-200/80 bg-white text-slate-500 hover:border-slate-300 opacity-70'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={cand.selected}
-                      onChange={() => {}} // parent div onClick handles toggle
-                      className="w-4 h-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500 pointer-events-none shrink-0"
-                    />
-                    <span className="font-mono text-xs text-[#0f172a] shrink-0 w-32">{cand.ip}</span>
-                    {cand.hostname ? (
-                      <span className="text-xs text-slate-600 truncate flex-1">{cand.hostname}</span>
-                    ) : (
-                      <span className="text-xs text-amber-600/80 italic flex-1 font-normal">{zh ? '手动输入目标 (非资产表)' : 'Manual Target'}</span>
-                    )}
-                    {cand.tags.length > 0 && (
-                      <div className="flex items-center gap-1 shrink-0 max-w-[150px] overflow-hidden">
-                        {cand.tags.slice(0, 2).map(t => (
-                          <span key={t.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-white border border-black/5">
-                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: t.color || '#94a3b8' }} />
-                            <span className="truncate">{zh ? (t.label_zh || t.label) : t.label}</span>
-                          </span>
-                        ))}
-                        {cand.tags.length > 2 && <span className="text-[9px] text-slate-400">+{cand.tags.length - 2}</span>}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              <div className="px-6 py-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setCandidateModalOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-xs text-slate-600 hover:bg-slate-100 transition-all"
-                >
-                  {zh ? '取消' : 'Cancel'}
-                </button>
-                <button
-                  type="button"
-                  onClick={confirmAddCandidates}
-                  disabled={candidateList.filter(c => c.selected).length === 0}
-                  className="px-5 py-2 rounded-xl bg-[#164e63] text-white font-bold text-xs hover:bg-[#0891b2] transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-cyan-950/10"
-                >
-                  {zh ? `确认添加 (${candidateList.filter(c => c.selected).length}台)` : `Add Selected (${candidateList.filter(c => c.selected).length})`}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {modalOpen && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-start justify-center pt-[6vh] px-4 overflow-y-auto"
-          >
-            {/* Backdrop */}
-            <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={closeModal} />
-
-            {/* Panel */}
-            <motion.div
-              initial={{ opacity: 0, y: 24, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 16, scale: 0.98 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 350 }}
-              className={`relative w-full rounded-2xl border border-black/8 bg-white shadow-2xl mb-8 ${form.device_scope === 'ip' || form.device_scope === 'tag' ? 'max-w-5xl' : 'max-w-3xl'}`}
-              onClick={e => e.stopPropagation()}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.06]">
-                <h3 className="text-base font-bold text-[#164e63] flex items-center gap-2">
-                  {isEditMode ? <Pencil size={16} className="text-cyan-500" /> : <Plus size={16} className="text-cyan-500" />}
-                  {enablingJobId === editingJob?.id ? (zh ? '安全启用授权验证' : 'Enable Scheduled Job (Auth Required)') : isEditMode ? (zh ? '编辑定时作业' : 'Edit Scheduled Job') : (zh ? '新建定时作业' : 'New Scheduled Job')}
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-400 to-blue-500" />
+              <div className="flex items-center justify-between border-b border-black/5 pb-4">
+                <h3 className="text-lg font-bold text-[#164e63] flex items-center gap-2">
+                  <CalendarClock className="text-cyan-500" size={20} />
+                  {enablingJobId === editingJob?.id ? (zh ? '安全启用授权验证' : 'Enable Scheduled Job (Auth Required)') : isEditMode ? (zh ? '编辑定时作业' : 'Edit Scheduled Job') : (zh ? '配置新的定时作业' : 'Configure New Scheduled Job')}
                 </h3>
-                <button onClick={closeModal} className="p-1.5 rounded-lg text-black/30 hover:bg-black/5 transition-all">
-                  <X size={16} />
-                </button>
+                
               </div>
-
-              {/* Body */}
-              <div className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                   {/* Left column */}
                   <div className="space-y-4">
@@ -2302,22 +1444,881 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                 </div>
 
                 {/* End grid */}
-              </div>
-
-              {/* Footer */}
-              <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-black/[0.06]">
+              <div className="lg:col-span-2 pt-4 border-t border-black/5 flex items-center justify-end gap-3">
                 <button
-                  type="button" onClick={closeModal}
-                  className="px-5 py-2 rounded-xl border border-black/[0.08] text-xs font-semibold text-black/50 hover:bg-black/[0.02] transition-all"
+                  type="button"
+                  onClick={closeModal}
+                  className="px-6 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all"
                 >
                   {zh ? '取消' : 'Cancel'}
                 </button>
                 <button
-                  type="button" onClick={submitForm}
+                  type="button"
+                  onClick={submitForm}
                   disabled={!form.name.trim() || (!isEditMode && approvalStatus !== 'verified')}
-                  className="px-5 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
+                  className="px-8 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-sm font-bold shadow-md hover:from-cyan-400 hover:to-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isEditMode ? (zh ? '保存修改' : 'Save Changes') : (zh ? '创建定时作业' : 'Create Scheduled Job')}
+                  {isEditMode ? (zh ? '保存修改' : 'Save Changes') : (zh ? '确认创建' : 'Confirm Create')}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+          ) : (
+            <motion.div
+              key="list-view"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-4"
+            >
+{/* ═══ 顶层多维分类导航与搜索栏 ═══ */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80 shadow-inner">
+        <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar py-0.5">
+          <button
+            onClick={() => setActiveCategory('all')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+              activeCategory === 'all'
+                ? 'bg-white text-cyan-700 shadow-sm border border-cyan-100'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <span>{zh ? '全部作业' : 'All Jobs'}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'all' ? 'bg-cyan-100 text-cyan-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+              {jobs.length + systemJobs.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveCategory('system')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+              activeCategory === 'system'
+                ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Lock size={14} className={activeCategory === 'system' ? 'text-slate-800' : 'text-slate-400'} />
+            <span>{zh ? '系统内置' : 'System Managed'}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'system' ? 'bg-slate-200 text-slate-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+              {systemJobs.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveCategory('backup')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+              activeCategory === 'backup'
+                ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Database size={14} className={activeCategory === 'backup' ? 'text-indigo-600' : 'text-slate-400'} />
+            <span>{zh ? '配置自动备份' : 'Config Backup'}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'backup' ? 'bg-indigo-100 text-indigo-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+              {stats.backupCnt}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveCategory('inspection')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+              activeCategory === 'inspection'
+                ? 'bg-white text-emerald-700 shadow-sm border border-emerald-100'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Activity size={14} className={activeCategory === 'inspection' ? 'text-emerald-600' : 'text-slate-400'} />
+            <span>{zh ? '智能巡检' : 'Smart Inspection'}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'inspection' ? 'bg-emerald-100 text-emerald-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+              {stats.inspCnt}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveCategory('script_run')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+              activeCategory === 'script_run'
+                ? 'bg-white text-amber-700 shadow-sm border border-amber-100'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Zap size={14} className={activeCategory === 'script_run' ? 'text-amber-600' : 'text-slate-400'} />
+            <span>{zh ? '自动化脚本' : 'Automated Script'}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'script_run' ? 'bg-amber-100 text-amber-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+              {stats.scriptCnt}
+            </span>
+          </button>
+        </div>
+
+        <div className="relative min-w-[260px] shrink-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder={zh ? '检索作业名称、命令或 IP 范围...' : 'Search jobs, commands, IP scope...'}
+            className="w-full h-9 pl-9 pr-8 bg-white/90 border border-slate-200/80 rounded-xl text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-cyan-500 focus:bg-white shadow-sm transition-all"
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ═══ 系统内置作业守护进程 (表格形式，与系统明亮底色完美统一) ═══ */}
+      {(activeCategory === 'all' || activeCategory === 'system') && filteredSystemJobs.length > 0 && (
+        <div className="rounded-2xl border border-slate-200/80 bg-white shadow-sm overflow-hidden mb-6 transition-all">
+          <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-cyan-100 text-cyan-700 flex items-center justify-center font-bold">
+                <Lock size={14} />
+              </div>
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                {zh ? '平台内置常驻系统守护进程' : 'Platform Managed System Daemons'}
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-50 text-cyan-700 border border-cyan-100 font-normal tracking-normal">
+                  {zh ? '内核自动调度，无需人工审批' : 'Kernel Managed'}
+                </span>
+              </h3>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-mono font-bold text-slate-600 bg-white px-2.5 py-1 rounded-lg border border-slate-200/80 shadow-2xs">
+                {filteredSystemJobs.length} {zh ? '个常驻任务' : 'Daemons'}
+              </span>
+              {activeCategory === 'all' && (
+                <button
+                  onClick={() => setSystemCollapsed(c => !c)}
+                  className="p-1 rounded-lg bg-slate-200/60 text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition-all flex items-center gap-1 text-xs px-2.5 py-1"
+                >
+                  <span>{systemCollapsed ? (zh ? '展开列表' : 'Expand') : (zh ? '收起面板' : 'Collapse')}</span>
+                  {systemCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {(!systemCollapsed || activeCategory === 'system') && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 bg-slate-50/40 uppercase tracking-wider">
+                    <th className="py-2.5 px-4">{zh ? '任务名称 / 标识' : 'Job Name / ID'}</th>
+                    <th className="py-2.5 px-4">{zh ? '任务说明' : 'Description'}</th>
+                    <th className="py-2.5 px-4">{zh ? '触发发条 (CRON)' : 'Trigger'}</th>
+                    <th className="py-2.5 px-4">{zh ? '预计下次执行' : 'Next Run'}</th>
+                    <th className="py-2.5 px-4 text-right">{zh ? '规则配置管理' : 'Management'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {filteredSystemJobs.map(sj => {
+                    const isInsp = sj.action_type === 'inspection';
+                    const isBackup = sj.action_type === 'backup';
+                    const isSec = sj.action_type === 'password_rotation';
+                    const icon = isBackup ? Database : isInsp ? Activity : isSec ? Shield : CalendarClock;
+                    const Icon = icon;
+                    const nextAt = sj.next_run_at
+                      ? new Date(sj.next_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', {
+                          hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                        })
+                      : '-';
+
+                    return (
+                      <tr
+                        key={sj.id}
+                        className="hover:bg-slate-50/80 transition-colors group/row"
+                      >
+                        <td className="py-3 px-4 font-bold text-slate-800 min-w-[180px]">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${
+                              isInsp ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
+                              isBackup ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' :
+                              isSec ? 'bg-amber-50 text-amber-600 border border-amber-100' :
+                              'bg-cyan-50 text-cyan-600 border border-cyan-100'
+                            }`}>
+                              <Icon size={13} />
+                            </div>
+                            <div>
+                              <div className="font-bold text-xs text-slate-800">{zh ? sj.name_zh : sj.name_en}</div>
+                              <code className="text-[10px] text-slate-400 font-mono">{sj.id}</code>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 max-w-[280px] truncate" title={zh ? sj.description_zh : sj.description_en}>
+                          {zh ? sj.description_zh : sj.description_en}
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-cyan-700 font-medium">
+                          <span className="bg-cyan-50 px-2 py-0.5 rounded border border-cyan-100">{sj.trigger || 'CRON Daemon'}</span>
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
+                          {nextAt !== '-' && (
+                            <span className="inline-flex items-center gap-1.5 font-mono">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                              {nextAt}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {sj.deep_link ? (
+                            <button
+                              onClick={() => navigate(sj.deep_link!)}
+                              className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
+                                isInsp ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' :
+                                isBackup ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' :
+                                'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100'
+                              }`}
+                            >
+                              <span>{zh ? '配置规则' : 'Configure'}</span>
+                              <ArrowUpRight size={12} />
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 italic">{zh ? '内核保护' : 'Kernel Protected'}</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ 用户自定义作业分栏标题 ═══ */}
+      {activeCategory !== 'system' && (
+        <div className="flex items-center gap-3 px-1 pt-2">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+            <span>
+              {activeCategory === 'all' && (zh ? '用户自定义作业' : 'User-defined Jobs')}
+              {activeCategory === 'backup' && (zh ? '配置自动备份作业' : 'Config Backup Jobs')}
+              {activeCategory === 'inspection' && (zh ? '智能巡检作业' : 'Smart Inspection Jobs')}
+              {activeCategory === 'script_run' && (zh ? '自动化脚本作业' : 'Automated Script Jobs')}
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-slate-200/70 text-slate-700 text-[10px] font-mono">
+              {filteredJobs.length} {zh ? '项' : 'items'}
+            </span>
+          </h3>
+          <div className="flex-1 h-px bg-slate-200" />
+          {searchQuery && (
+            <span className="text-xs text-cyan-600 font-semibold bg-cyan-50 px-2.5 py-0.5 rounded-full border border-cyan-100">
+              {zh ? `过滤出 ${filteredJobs.length} 项` : `Filtered ${filteredJobs.length}`}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ═══ 作业列表呈现 ═══ */}
+      {activeCategory === 'system' ? null : loading ? (
+        <div className="flex items-center justify-center py-16 text-slate-400">
+          <RotateCcw size={16} className="animate-spin mr-2 text-cyan-600" />
+          <span className="text-xs">{zh ? '数据加载中...' : 'Loading jobs...'}</span>
+        </div>
+      ) : filteredJobs.length > 0 ? (
+        <div className="flex-1 overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar">
+          <div className="space-y-2.5">
+            {filteredJobs.map(job => {
+              const atInfo = ACTION_TYPES.find(a => a.value === job.action_type);
+              const AtIcon = atInfo?.icon || Database;
+              const isEnabled = !!job.enabled;
+              const scopeDesc = describeScope(job.device_scope, job.device_filter, zh);
+              const isInsp = job.action_type === 'inspection';
+              const isBackup = job.action_type === 'backup';
+              const isScript = job.action_type === 'script_run';
+              return (
+                <motion.div
+                  key={job.id}
+                  layout
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  onClick={() => setDetailJob(job)}
+                  className={`rounded-2xl border transition-all hover:shadow-md cursor-pointer group overflow-hidden ${
+                    isEnabled ? 'bg-white border-slate-200/90 shadow-sm' : 'bg-slate-50 border-slate-200/50 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center gap-4 px-5 py-4">
+                    {/* 分类定制色彩底座 Icon */}
+                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
+                      isEnabled
+                        ? isInsp ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                          : isBackup ? 'bg-indigo-50 text-indigo-600 border-indigo-100'
+                          : isScript ? 'bg-amber-50 text-amber-600 border-amber-100'
+                          : 'bg-cyan-50 text-cyan-600 border-cyan-100'
+                        : 'bg-slate-100 text-slate-400 border-slate-200'
+                    }`}>
+                      <AtIcon size={20} />
+                    </div>
+
+                    {/* Main info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2.5">
+                        <p className="text-sm font-bold text-[#0f172a] truncate group-hover:text-cyan-700 transition-colors">
+                          {job.name}
+                        </p>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                          isEnabled ? 'bg-emerald-100/80 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'
+                        }`}>
+                          {isEnabled ? (zh ? '运行中' : 'Active') : (zh ? '已停用' : 'Disabled')}
+                        </span>
+                        {job.last_run_status && (
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                            job.last_run_status === 'success'
+                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                              : 'bg-rose-50 text-rose-600 border border-rose-100'
+                          }`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${job.last_run_status === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                            {job.last_run_status === 'success' ? (zh ? '执行成功' : 'Success') : (zh ? '执行失败' : 'Failed')}
+                          </span>
+                        )}
+                        {job.use_admin_creds ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">
+                            <ShieldAlert size={12} className="text-amber-600" />
+                            {zh ? '特权执行 (Admin)' : 'Privileged'}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 shadow-sm">
+                            <User size={12} className="text-slate-500" />
+                            {zh ? '普通执行 (User)' : 'Normal'}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500 flex-wrap">
+                        <span className="flex items-center gap-1 font-mono font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                          <CalendarClock size={12} className="text-cyan-600" />
+                          {describeCron(job.cron_expr, zh)}
+                        </span>
+                        <span className="text-slate-300">·</span>
+                        <span className={`font-semibold ${isInsp ? 'text-emerald-700' : isBackup ? 'select-none text-indigo-700' : isScript ? 'text-amber-700' : 'text-slate-700'}`}>
+                          {zh ? (atInfo?.labelZh || job.action_type) : (atInfo?.labelEn || job.action_type)}
+                        </span>
+                        <span className="text-slate-300">·</span>
+                        <span className="flex items-center gap-1 text-slate-600 font-medium">
+                          <Target size={12} className="text-slate-400" />
+                          {scopeDesc}
+                        </span>
+
+                        {job.action_type === 'script_run' && job.script_id && (
+                          <>
+                            <span className="text-slate-300">·</span>
+                            <span className="flex items-center gap-1 text-[#00a9ce] font-bold bg-cyan-50 px-2 py-0.5 rounded border border-cyan-100">
+                              <FileCode size={12} />
+                              {(availableScripts || []).find(s => s.id === job.script_id)?.name || job.script_id}
+                            </span>
+                          </>
+                        )}
+                        {job.run_count > 0 && (
+                          <>
+                            <span className="text-slate-300">·</span>
+                            <span className="font-mono text-slate-600">{zh ? `累计触发 ${job.run_count} 次` : `${job.run_count} runs`}</span>
+                          </>
+                        )}
+                        {job.last_run_at && (
+                          <>
+                            <span className="text-slate-300">·</span>
+                            <span>{zh ? '最近运行' : 'Last run'}: <span className="font-mono">{new Date(job.last_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span></span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                      <button
+                        onClick={() => setDetailJob(job)}
+                        className="p-2 rounded-xl text-slate-400 hover:bg-cyan-50 hover:text-cyan-600 transition-all opacity-0 group-hover:opacity-100"
+                        title={zh ? '查看运行详情' : 'View Detail'}
+                      >
+                        <Eye size={16} />
+                      </button>
+                      <button
+                        onClick={() => openEditModal(job)}
+                        className="p-2 rounded-xl text-slate-400 hover:bg-cyan-50 hover:text-cyan-600 transition-all"
+                        title={zh ? '编辑配置' : 'Edit'}
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      <button
+                        onClick={() => toggleJobEnabled(job)}
+                        className={`p-2 rounded-xl transition-all ${isEnabled ? 'text-slate-400 hover:bg-amber-50 hover:text-amber-600' : 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
+                        title={isEnabled ? (zh ? '暂停执行' : 'Disable') : (zh ? '恢复启动' : 'Enable')}
+                      >
+                        {isEnabled ? <PowerOff size={16} /> : <Power size={16} />}
+                      </button>
+                      {deleteConfirmId === job.id ? (
+                        <div className="flex items-center gap-1.5 ml-1">
+                          <button
+                            onClick={() => {
+                              setDeleteConfirmId(null);
+                              setDeleteTarget(job);
+                              setDeleteReason(`${zh ? '申请删除作业' : 'Delete job'}: ${job.name}`);
+                              setDeleteApprover('');
+                              setDeleteToken('');
+                              setDeleteCode('');
+                              setDeleteStatus('idle');
+                              setDeleteCountdown(0);
+                              setDeleteError('');
+                              fetchApprovers();
+                              setDeleteApprovalOpen(true);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-all shadow-sm"
+                          >
+                            {zh ? '确认删除' : 'Yes'}
+                          </button>
+                          <button
+                            onClick={() => setDeleteConfirmId(null)}
+                            className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-all"
+                          >
+                            {zh ? '取消' : 'No'}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setDeleteConfirmId(job.id)}
+                          className="p-2 rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all"
+                          title={zh ? '删除作业' : 'Delete'}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Bottom meta */}
+                  <div className="px-5 py-2.5 bg-slate-50/80 border-t border-slate-100 flex items-center gap-4 text-[11px] text-slate-500">
+                    <span className="font-mono text-slate-600 font-semibold">{job.cron_expr}</span>
+                    <span className="text-slate-300">|</span>
+                    <span>{zh ? '审批授权人' : 'Approver'}: <span className="font-bold text-slate-700">{job.approved_by || '\u2014'}</span></span>
+                    <span className="text-slate-300">|</span>
+                    <span>{zh ? '创建者' : 'Creator'}: <span className="font-medium text-slate-700">{job.created_by}</span> · <span className="font-mono">{new Date(job.created_at).toLocaleDateString(zh ? 'zh-CN' : 'en-US')}</span></span>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-3xl border-2 border-dashed border-slate-200/80 p-16 text-center bg-white/50">
+          <div className="w-16 h-16 rounded-2xl bg-cyan-50 text-cyan-600 flex items-center justify-center mx-auto mb-4 border border-cyan-100 shadow-sm">
+            <CalendarClock size={32} />
+          </div>
+          <p className="text-base text-slate-800 font-bold">{zh ? '未找到符合条件的定时作业' : 'No matching scheduled jobs'}</p>
+          <p className="text-xs text-slate-500 mt-1 mb-6 max-w-md mx-auto leading-relaxed">
+            {zh
+              ? '当前分类或搜索条件下暂无匹配的周期性自动化作业。您可以点击上方重置筛选，或立即创建每日备份与智能巡检任务。'
+              : 'No scheduled jobs found matching current filters. Create a new recurring job anytime.'}
+          </p>
+          <button
+            onClick={toggleAddJob}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 text-white text-xs font-bold hover:from-cyan-400 hover:to-cyan-500 transition-all shadow shadow-cyan-500/20 active:scale-[0.98]"
+          >
+            <Plus size={16} />
+            {zh ? '新建定时作业' : 'New Scheduled Job'}
+          </button>
+        </div>
+      )}
+
+      {total > 0 && (
+        <div className="mt-auto pt-4 border-t border-black/5 bg-white">
+          <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={setPageSize} language={language} />
+        </div>
+      )}
+
+      {/* --- Detail Modal --- */}
+      <AnimatePresence>
+        {detailJob && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          >
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-md" onClick={() => setDetailJob(null)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl max-h-[85vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-black/5"
+            >
+              {/* Header */}
+              <div className="px-6 py-5 border-b border-black/[0.03] flex items-center justify-between bg-gradient-to-r from-slate-50/50 to-white">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 flex items-center justify-center">
+                    <Info className="w-5 h-5 text-cyan-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-[#164e63]">{detailJob.name}</h3>
+                    <div className="flex items-center gap-2 text-[10px] text-black/40 mt-0.5">
+                      <span className="bg-slate-100 px-1.5 py-0.5 rounded font-mono">{detailJob.id}</span>
+                      <span>·</span>
+                      <span>{zh ? '定时作业详情' : 'Scheduled Job Detail'}</span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setDetailJob(null)}
+                  className="p-2 rounded-xl text-black/20 hover:bg-black/5 hover:text-black/40 transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                {/* 1. Schedule & Scope Grid */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-4 rounded-2xl bg-slate-50/50 border border-black/[0.02]">
+                    <div className="flex items-center gap-2 text-[11px] font-bold text-black/40 mb-2 uppercase tracking-wider">
+                      <CalendarClock size={12} />
+                      {zh ? '执行周期' : 'Schedule'}
+                    </div>
+                    <p className="text-sm font-semibold text-[#0e7490]">
+                      {describeCron(detailJob.cron_expr, zh)}
+                    </p>
+                    <p className="text-[10px] font-mono text-black/30 mt-1">{detailJob.cron_expr}</p>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-slate-50/50 border border-black/[0.02]">
+                    <div className="flex items-center gap-2 text-[11px] font-bold text-black/40 mb-2 uppercase tracking-wider">
+                      <Target size={12} />
+                      {zh ? '执行范围' : 'Target Scope'}
+                    </div>
+                    <p className="text-sm font-semibold text-slate-700">
+                      {detailJob.device_scope === 'all' ? (zh ? '全部在线设备' : 'All Online Devices') :
+                       detailJob.device_scope === 'ip' ? (zh ? '按 IP 指定' : 'By IP Address') :
+                       detailJob.device_scope === 'tag' ? (zh ? '按标签筛选' : 'By Tags') : (zh ? '自定义范围' : 'Custom')}
+                    </p>
+                    <p className="text-[10px] text-black/40 mt-1 truncate">
+                      {detailJob.device_filter || (zh ? '无额外过滤条件' : 'No filter')}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 2. Device List (IP List) */}
+                {(detailJob.device_scope === 'ip' || detailJob.device_scope === 'all') && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-[11px] font-bold text-black/50 uppercase tracking-wider">{zh ? '执行 IP 列表' : 'Target IPs'}</h4>
+                      <span className="text-[10px] text-black/30">
+                        {detailJob.device_scope === 'all' ? (zh ? '动态获取' : 'Dynamic') : `${(detailJob.device_filter || '').split(',').length} 个目标`}
+                      </span>
+                    </div>
+                    <div className="p-3 rounded-2xl border border-black/[0.04] bg-slate-50/30">
+                      <div className="flex flex-wrap gap-1.5">
+                        {detailJob.device_scope === 'all' ? (
+                          <div className="text-[11px] text-black/40 italic px-2 py-1">{zh ? '作业运行时将自动扫描所有在线设备' : 'Automatically targets all online devices at runtime'}</div>
+                        ) : (
+                          (detailJob.device_filter || '').split(',').map((ip, idx) => (
+                            <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded-md bg-white border border-black/[0.06] text-[11px] font-mono text-slate-600 shadow-sm">
+                              {ip.trim()}
+                            </span>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Execution Content (Script/Commands) */}
+                <div>
+                  <h4 className="text-[11px] font-bold text-black/50 uppercase tracking-wider mb-2">{zh ? '执行脚本/内容' : 'Execution Content'}</h4>
+                  <div className="rounded-2xl border border-black/[0.06] overflow-hidden bg-[#1e293b]">
+                    <div className="px-4 py-2 bg-white/5 border-b border-white/[0.05] flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileText size={12} className="text-cyan-400" />
+                        <span className="text-[11px] font-bold text-white/70">
+                          {detailJob.action_type === 'backup' ? (zh ? '采集与巡检：核心配置备份' : 'Collection & Inspection: Config Backup') :
+                           (availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id || (zh ? '操作内容' : 'Operation Content'))}
+                        </span>
+                        {detailJob.script_id && (
+                          <button 
+                            onClick={() => fetchAndShowScriptDetail(detailJob.script_id!)}
+                            className="text-[9px] bg-cyan-500/10 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-500/20 hover:bg-cyan-500/20 transition-all ml-1"
+                          >
+                            {zh ? '查看脚本详情' : 'View Script'}
+                          </button>
+                        )}
+                      </div>
+                      <div className="text-[9px] font-bold text-cyan-400/60 uppercase tracking-widest">
+                        {detailJob.action_type === 'backup' ? (zh ? '采集' : 'BACKUP') : 
+                         detailJob.major_type === 'collection' ? (zh ? '巡检' : 'INSPECTION') : (zh ? '变更' : 'CHANGE')}
+                      </div>
+                    </div>
+                    <div className="p-4 overflow-x-auto">
+                      <pre className="font-mono text-[11px] leading-relaxed text-cyan-50/90 whitespace-pre-wrap">
+                        {detailJob.action_type === 'backup'
+                          ? (zh ? '# 该作业为内置配置备份任务\n# 将自动采集设备 running-config 并进行版本比对' : '# This is a built-in config backup job.\n# It will collect running-config and track drifts.')
+                          : detailJob.action_type === 'inspection'
+                            ? (zh ? '# 该作业为内置综合巡检\n# 将采集 interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf' : '# Built-in comprehensive inspection job.\n# Collects interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf')
+                            : detailJob.script_id && viewingScript?.id === detailJob.script_id && viewingScript?.content
+                              ? viewingScript.content
+                              : detailJob.commands
+                                ? detailJob.commands
+                                : detailJob.script_id
+                                  ? (zh ? `# 此作业绑定脚本: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}\n# 点击上方"查看脚本详情"查看完整内容` : `# Bound script: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}\n# Click "View Script" above to see full content`)
+                                  : (zh ? '-- 未设置具体执行内容 --' : '-- No commands defined --')}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Meta Info */}
+                <div className="pt-4 border-t border-black/[0.03] grid grid-cols-2 gap-y-4 text-[10px]">
+                  <div>
+                    <p className="text-black/30 mb-1">{zh ? '状态' : 'Status'}</p>
+                    <span className={`px-2 py-0.5 rounded-full font-bold ${detailJob.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                      {detailJob.enabled ? (zh ? '已启用' : 'Active') : (zh ? '已停用' : 'Disabled')}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-black/30 mb-1">{zh ? '配置原因' : 'Reason'}</p>
+                    <p className="text-slate-600 font-medium italic truncate">{detailJob.config_reason || '\u2014'}</p>
+                  </div>
+                  <div>
+                    <p className="text-black/30 mb-1">{zh ? '审批人' : 'Approver'}</p>
+                    <p className="text-slate-600 font-bold">{detailJob.approved_by || (zh ? '系统自核' : 'Auto')}</p>
+                  </div>
+                  <div>
+                    <p className="text-black/30 mb-1">{zh ? '创建者' : 'Creator'}</p>
+                    <p className="text-slate-600 font-bold">{detailJob.created_by} · {new Date(detailJob.created_at).toLocaleDateString()}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 bg-slate-50/80 border-t border-black/[0.03] flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setDetailJob(null)}
+                  className="px-6 py-2 rounded-xl border border-black/10 text-xs font-bold text-black/50 hover:bg-black/5 transition-all"
+                >
+                  {zh ? '关闭' : 'Close'}
+                </button>
+                <button
+                  onClick={() => {
+                    const job = detailJob;
+                    setDetailJob(null);
+                    openEditModal(job);
+                  }}
+                  className="px-6 py-2 rounded-xl bg-[#164e63] text-white text-xs font-bold shadow-lg shadow-cyan-900/10 hover:bg-[#0891b2] transition-all"
+                >
+                  {zh ? '编辑该作业' : 'Edit Job'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- Delete Approval Modal --- */}
+      <AnimatePresence>
+        {deleteApprovalOpen && deleteTarget && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          >
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDeleteApprovalOpen(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative w-full max-w-md rounded-2xl bg-white border border-slate-100 shadow-2xl overflow-hidden z-10"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="bg-rose-50 border-b border-rose-100 px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5 text-rose-700">
+                  <Shield className="w-5 h-5 text-rose-600" />
+                  <h3 className="font-bold text-sm">{zh ? '删除安全校验与工单授权' : 'Delete Security Verification'}</h3>
+                </div>
+                <button onClick={() => setDeleteApprovalOpen(false)} className="text-rose-400 hover:text-rose-600 p-1">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4 text-xs text-slate-600">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
+                  <span className="text-[10px] text-slate-400 font-semibold">{zh ? '即将永久删除作业' : 'Target Job to Delete'}</span>
+                  <div className="font-bold text-slate-800 text-sm truncate">{deleteTarget.name}</div>
+                  <div className="font-mono text-[10px] text-slate-500">{deleteTarget.cron_expr} · {deleteTarget.action_type}</div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-700 block">{zh ? '删除原因说明' : 'Deletion Reason'}</label>
+                  <input
+                    type="text" value={deleteReason} onChange={e => setDeleteReason(e.target.value)}
+                    placeholder={zh ? '输入删除原因...' : 'Enter reason...'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-700 block">{zh ? '选择授权审批人' : 'Select Approver'}</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={deleteApprover} onChange={e => setDeleteApprover(e.target.value)}
+                      disabled={deleteStatus === 'sending' || deleteStatus === 'sent'}
+                      className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all"
+                    >
+                      <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
+                      {approvers.map(u => (
+                        <option key={u.id} value={u.username}>{u.username} ({u.role})</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button" onClick={requestDeleteApproval}
+                      disabled={!deleteApprover || !deleteReason.trim() || deleteStatus === 'sending' || (deleteStatus === 'sent' && deleteCountdown > 0)}
+                      className={`px-3 py-2 rounded-xl font-bold whitespace-nowrap transition-all flex items-center gap-1 ${
+                        deleteApprover && deleteReason.trim() && !(deleteStatus === 'sent' && deleteCountdown > 0)
+                          ? 'bg-rose-600 text-white hover:bg-rose-700 shadow-sm'
+                          : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      {deleteStatus === 'sending' ? <RotateCcw className="w-3 h-3 animate-spin" />
+                        : deleteStatus === 'sent' && deleteCountdown > 0 ? `${Math.floor(deleteCountdown / 60)}:${String(deleteCountdown % 60).padStart(2, '0')}`
+                        : (zh ? '发验证码' : 'Send Code')}
+                    </button>
+                  </div>
+                </div>
+
+                {deleteStatus === 'sent' && (
+                  <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                    <label className="text-[11px] text-slate-500 block">{zh ? '输入 6 位工单验证码' : 'Enter 6-digit verification code'}</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={deleteCode} onChange={e => { setDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setDeleteError(''); }}
+                        placeholder="000000" maxLength={6}
+                        className="w-32 tracking-[0.3em] text-center font-mono rounded-xl border border-slate-200 py-2 text-sm outline-none focus:border-rose-500 transition-all"
+                      />
+                      <button
+                        type="button" onClick={verifyDeleteApproval} disabled={deleteCode.length !== 6}
+                        className={`px-4 py-2 rounded-xl font-bold transition-all ${deleteCode.length === 6 ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                      >
+                        {zh ? '验证' : 'Verify'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {deleteError && (
+                  <div className="flex items-center gap-1.5 text-rose-600 text-xs pt-1">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{deleteError}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="px-6 py-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button" onClick={() => setDeleteApprovalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-slate-600 hover:bg-slate-100 transition-all"
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  type="button" onClick={executeDeleteJob} disabled={deleteStatus !== 'verified'}
+                  className="px-4 py-2 rounded-xl bg-rose-600 text-white font-bold hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-md shadow-rose-600/10"
+                >
+                  {zh ? '确认安全删除' : 'Secure Delete'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- Candidate IP / Device Selection Modal --- */}
+      <AnimatePresence>
+        {candidateModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+          >
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setCandidateModalOpen(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col z-10 max-h-[80vh]"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900 to-[#0f172a] text-white flex items-center justify-between border-b border-white/10">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-cyan-500/20 flex items-center justify-center border border-cyan-400/20 text-cyan-400">
+                    <Target size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold">{zh ? '选择匹配的目标设备' : 'Select Matched Target Devices'}</h3>
+                    <p className="text-[10px] text-slate-400">{zh ? `共检索到 ${candidateList.length} 台候选目标` : `Found ${candidateList.length} candidate device(s)`}</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setCandidateModalOpen(false)} className="text-slate-400 hover:text-white transition-colors p-1">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="px-6 py-3 bg-slate-50 border-b border-slate-200/80 flex items-center justify-between text-xs text-slate-600">
+                <label className="flex items-center gap-2 font-bold cursor-pointer hover:text-slate-900 select-none">
+                  <input
+                    type="checkbox"
+                    checked={candidateList.length > 0 && candidateList.every(c => c.selected)}
+                    onChange={toggleAllCandidates}
+                    className="w-4 h-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                  />
+                  <span>{zh ? '全选 / 全不选' : 'Select All'}</span>
+                </label>
+                <span className="font-mono text-[11px] bg-white px-2 py-0.5 rounded border border-slate-200 font-bold text-slate-700 shadow-2xs">
+                  {zh ? `已勾选 ${candidateList.filter(c => c.selected).length} / ${candidateList.length} 台` : `${candidateList.filter(c => c.selected).length} / ${candidateList.length} selected`}
+                </span>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-2 custom-scrollbar max-h-[50vh]">
+                {candidateList.map((cand, idx) => (
+                  <div
+                    key={cand.ip}
+                    onClick={() => toggleCandidateSelected(idx)}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all cursor-pointer ${
+                      cand.selected
+                        ? 'border-cyan-400 bg-cyan-50/60 shadow-2xs text-slate-900 font-bold'
+                        : 'border-slate-200/80 bg-white text-slate-500 hover:border-slate-300 opacity-70'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={cand.selected}
+                      onChange={() => {}} // parent div onClick handles toggle
+                      className="w-4 h-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500 pointer-events-none shrink-0"
+                    />
+                    <span className="font-mono text-xs text-[#0f172a] shrink-0 w-32">{cand.ip}</span>
+                    {cand.hostname ? (
+                      <span className="text-xs text-slate-600 truncate flex-1">{cand.hostname}</span>
+                    ) : (
+                      <span className="text-xs text-amber-600/80 italic flex-1 font-normal">{zh ? '手动输入目标 (非资产表)' : 'Manual Target'}</span>
+                    )}
+                    {cand.tags.length > 0 && (
+                      <div className="flex items-center gap-1 shrink-0 max-w-[150px] overflow-hidden">
+                        {cand.tags.slice(0, 2).map(t => (
+                          <span key={t.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-white border border-black/5">
+                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: t.color || '#94a3b8' }} />
+                            <span className="truncate">{zh ? (t.label_zh || t.label) : t.label}</span>
+                          </span>
+                        ))}
+                        {cand.tags.length > 2 && <span className="text-[9px] text-slate-400">+{cand.tags.length - 2}</span>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="px-6 py-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setCandidateModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-xs text-slate-600 hover:bg-slate-100 transition-all"
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmAddCandidates}
+                  disabled={candidateList.filter(c => c.selected).length === 0}
+                  className="px-5 py-2 rounded-xl bg-[#164e63] text-white font-bold text-xs hover:bg-[#0891b2] transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-cyan-950/10"
+                >
+                  {zh ? `确认添加 (${candidateList.filter(c => c.selected).length}台)` : `Add Selected (${candidateList.filter(c => c.selected).length})`}
                 </button>
               </div>
             </motion.div>
@@ -2378,6 +2379,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                 </button>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>

@@ -4,13 +4,15 @@ import {
   CalendarClock, Clock, Plus, X, Trash2, Activity, RotateCcw,
   Play, Shield, CheckCircle2, CalendarRange, AlertTriangle,
   Eye, Download, Search, FileText, ChevronRight,
-  FileSpreadsheet, FileJson, Loader2, Table2, Copy, Check
+  FileSpreadsheet, FileJson, Loader2, Table2, Copy, Check,
+  Database, Zap, Target, FileCode, ShieldAlert, User, Pencil, Info
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer } from 'recharts';
 import Pagination from '../components/Pagination';
 import OutputActions from '../components/OutputActions';
 import DateTimePicker from '../components/DateTimePicker';
+import TagConditionPicker, { type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter, parseTagFilter } from '../components/TagConditionPicker';
 import PageHero from '../components/PageHero';
 import type { Device } from '../types';
 
@@ -18,10 +20,51 @@ import type { Device } from '../types';
 /*  Types                                                  */
 /* ═══════════════════════════════════════════════════════ */
 
-interface InspectionSchedule {
-  id: string; name: string; cron_expr: string; scope_type: string; scope_filter: string;
-  enabled: number; last_run_at?: string; created_by: string; created_at: string;
-  scheduled_at?: string; expires_at?: string; description?: string; check_items?: string[];
+const ACTION_TYPES = [
+  { value: 'backup', labelZh: '核心配置备份', labelEn: 'Config Backup', icon: Database, category: 'collection' },
+  { value: 'inspection', labelZh: '智能巡检', labelEn: 'Smart Inspection', icon: Activity, category: 'collection' },
+  { value: 'script_run', labelZh: '自动化脚本', labelEn: 'Automated Script', icon: Zap, category: 'change' },
+];
+
+const MAJOR_CATEGORIES = [
+  { value: 'collection', labelZh: '采集与巡检', labelEn: 'Collection & Inspection', icon: Database },
+  { value: 'change', labelZh: '自动化变更', labelEn: 'Automation Change', icon: Zap },
+];
+
+const SCOPE_OPTIONS = [
+  { value: 'all', labelZh: '全部在线设备', labelEn: 'All online devices' },
+  { value: 'ip', labelZh: '按 IP 地址', labelEn: 'By IP address' },
+  { value: 'tag', labelZh: '按标签', labelEn: 'By tag' },
+  { value: 'site', labelZh: '按站点', labelEn: 'By site' },
+  { value: 'role', labelZh: '按角色', labelEn: 'By role' },
+];
+
+interface ScheduledJob {
+  id: string;
+  name: string;
+  job_type: string;
+  action_type: string;
+  cron_expr: string;
+  scheduled_at: string;
+  device_scope: string;
+  device_filter: string;
+  commands: string;
+  script_id: string;
+  is_config: number;
+  config_reason: string;
+  enabled: number;
+  status: string;
+  approved_by: string;
+  approved_at: string;
+  last_run_at: string;
+  last_run_status: string;
+  run_count: number;
+  use_admin_creds?: number;
+  created_by: string;
+  created_at: string;
+  major_type?: string;
+  check_items?: string[];
+  description?: string;
 }
 interface InspectionRun {
   id: string; schedule_id?: string; trigger_type: string; scope_type: string; scope_filter: string;
@@ -40,6 +83,50 @@ interface ExecutionScheduleTabProps {
   onRerun?: (log: any) => void;
 }
 
+interface FormState {
+  name: string;
+  action_type: string;
+  scheduled_at: string;
+  device_scope: string;
+  device_filter: string;
+  commands: string;
+  script_id: string;
+  is_config: boolean;
+  config_reason: string;
+  use_admin_creds: boolean;
+  major_type: string;
+  check_items: string[];
+  description: string;
+}
+
+interface ValidatedDevice {
+  ip: string;
+  hostname: string;
+  tags: { id: string; label: string; label_zh: string; color: string }[];
+}
+
+interface EligibleApprover {
+  id: string;
+  username: string;
+  role: string;
+}
+
+const INITIAL_FORM: FormState = {
+  name: '',
+  action_type: 'backup',
+  scheduled_at: '',
+  device_scope: 'all',
+  device_filter: '',
+  commands: '',
+  script_id: '',
+  is_config: false,
+  config_reason: '',
+  use_admin_creds: false,
+  major_type: 'collection',
+  check_items: [],
+  description: '',
+};
+
 /* ═══════════════════════════════════════════════════════ */
 /*  Helpers                                                */
 /* ═══════════════════════════════════════════════════════ */
@@ -52,13 +139,37 @@ const fmtDateTime = (iso: string | undefined, zh: boolean): string => {
   });
 };
 
-const getScheduleStatus = (sch: InspectionSchedule, zh: boolean) => {
+const getScheduleStatus = (sch: ScheduledJob, zh: boolean) => {
   if (!sch.enabled) return { label: zh ? '已停用' : 'Disabled', cls: 'bg-slate-100 text-slate-500', icon: 'disabled' as const };
   if (sch.last_run_at) return { label: zh ? '已执行' : 'Executed', cls: 'bg-emerald-50 text-emerald-600', icon: 'done' as const };
   const now = new Date();
-  if (sch.expires_at && new Date(sch.expires_at) < now) return { label: zh ? '已过期' : 'Expired', cls: 'bg-slate-50 text-slate-400', icon: 'expired' as const };
   if (sch.scheduled_at && new Date(sch.scheduled_at) > now) return { label: zh ? '等待中' : 'Pending', cls: 'bg-cyan-50 text-cyan-600', icon: 'pending' as const };
   return { label: zh ? '就绪' : 'Ready', cls: 'bg-amber-50 text-amber-600', icon: 'ready' as const };
+};
+
+const describeScope = (scope: string, filter: string, zh: boolean): string => {
+  if (scope === 'all') return zh ? '全部设备' : 'All devices';
+  if (scope === 'ip') {
+    const ips = filter.split(/[,\n;]+/).map(s => s.trim()).filter(Boolean);
+    if (ips.length === 0) return zh ? 'IP 地址' : 'IP addresses';
+    if (ips.length <= 2) return ips.join(', ');
+    return `${ips[0]}, ${ips[1]} +${ips.length - 2}`;
+  }
+  if (scope === 'tag' || scope === 'tags') {
+    try {
+      const cfg = JSON.parse(filter);
+      // New format: groups[]
+      if (Array.isArray(cfg.groups)) {
+        const n = cfg.groups.reduce((s: number, g: { tag_ids?: string[] }) => s + (g.tag_ids?.length || 0), 0) + (cfg.exclude_tag_ids?.length || 0);
+        return zh ? `${n} 个标签条件` : `${n} tag conditions`;
+      }
+      // Old format compat
+      const n = (cfg.tag_ids?.length || 0) + (cfg.exclude_tag_ids?.length || 0);
+      return zh ? `${n} 个标签条件` : `${n} tag conditions`;
+    } catch { /* ignore */ }
+    return filter || (zh ? '标签' : 'Tags');
+  }
+  return filter || scope;
 };
 
 /* ═══════════════════════════════════════════════════════ */
@@ -69,21 +180,35 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
   const zh = language === 'zh';
 
   /* ═══ STATE ═══ */
-  const [inspSchedules, setInspSchedules] = useState<InspectionSchedule[]>([]);
+  const [inspSchedules, setInspSchedules] = useState<ScheduledJob[]>([]);
   const [inspSchedulesLoading, setInspSchedulesLoading] = useState(false);
   const [inspSchedulePage, setInspSchedulePage] = useState(1);
   const [inspSchedulePageSize, setInspSchedulePageSize] = useState(10);
   const [inspScheduleTotal, setInspScheduleTotal] = useState(0);
   const [showAddInspSchedule, setShowAddInspSchedule] = useState(false);
-  const [inspForm, setInspForm] = useState({
-    name: '', scheduled_at: '', expires_at: '', scope_type: 'all', scope_filter: '', description: '',
-    check_items: [] as string[]
-  });
+  const [form, setForm] = useState<FormState>({ ...INITIAL_FORM });
+
+  // IP validation state
+  const [ipDevices, setIpDevices] = useState<ValidatedDevice[]>([]);
+  const [ipInput, setIpInput] = useState('');
+  const [ipValidating, setIpValidating] = useState(false);
+  const [ipError, setIpError] = useState('');
+  const [tagFilter, setTagFilter] = useState<TagFilterConfig>({ ...EMPTY_TAG_FILTER });
+
+  // Candidate IP / Device Selection modal
+  const [candidateModalOpen, setCandidateModalOpen] = useState(false);
+  const [candidateList, setCandidateList] = useState<Array<{ ip: string; hostname: string; tags: any[]; selected: boolean }>>([]);
+  const [candidateSearching, setCandidateSearching] = useState(false);
+
+  // Script selection
+  const [availableScripts, setAvailableScripts] = useState<{ id: string; name: string; status: string; category: string }[]>([]);
+  const [scriptSearch, setScriptSearch] = useState('');
+  const [showScriptDropdown, setShowScriptDropdown] = useState(false);
 
   const [inspectionItems, setInspectionItems] = useState<any[]>([]);
   const [inspectionItemsLoading, setInspectionItemsLoading] = useState(false);
 
-  const [selectedSchedule, setSelectedSchedule] = useState<InspectionSchedule | null>(null);
+  const [selectedSchedule, setSelectedSchedule] = useState<ScheduledJob | null>(null);
   const [showScheduleDetail, setShowScheduleDetail] = useState(false);
 
   const [inspRuns, setInspRuns] = useState<InspectionRun[]>([]);
@@ -159,32 +284,154 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
         const j = await r.json();
         setInspectionItems(j.items || []);
         // Set default check items if form is empty
-        if (inspForm.check_items.length === 0 && j.items?.length > 0) {
-          setInspForm(f => ({ ...f, check_items: j.items.map((i: any) => i.name) }));
+        if (form.check_items.length === 0 && j.items?.length > 0) {
+          setForm(f => ({ ...f, check_items: j.items.map((i: any) => i.name) }));
         }
       }
     } catch { /* ignore */ }
     finally { setInspectionItemsLoading(false); }
-  }, [authHeaders, inspForm.check_items.length]);
+  }, [authHeaders, form.check_items.length]);
 
   const fetchInspSchedules = useCallback(async () => {
     setInspSchedulesLoading(true);
     try {
       const offset = (inspSchedulePage - 1) * inspSchedulePageSize;
-      const r = await fetch(`/api/inspections/schedules?limit=${inspSchedulePageSize}&offset=${offset}`, { headers: authHeaders });
+      const r = await fetch(`/api/scheduled-jobs?job_type=once&limit=${inspSchedulePageSize}&offset=${offset}`, { headers: authHeaders });
       if (r.ok) {
         const j = await r.json();
-        const d = j.data;
-        if (d && typeof d === 'object' && !Array.isArray(d)) {
-          setInspSchedules(d.items || []);
-          setInspScheduleTotal(d.total || 0);
-        } else {
-          setInspSchedules(j.data || []);
-          setInspScheduleTotal(j.data?.length || 0);
+        const d = j.data || {};
+        setInspSchedules(d.items || []);
+        setInspScheduleTotal(d.total || 0);
+      }
+    } catch { /* ignore */ }
+    finally { setInspSchedulesLoading(false); }
+  }, [authHeaders, inspSchedulePage, inspSchedulePageSize]);
+
+  const fetchScripts = useCallback(async () => {
+    if (!authHeaders) return;
+    try {
+      const r = await fetch('/api/scripts', { headers: authHeaders });
+      if (r.ok) {
+        const data = await r.json();
+        const arr = Array.isArray(data) ? data : (data.items || data.data || []);
+        setAvailableScripts(arr.map((s: any) => ({
+          id: s.id, name: s.name, status: s.status, category: s.category || 'automation'
+        })));
+      }
+    } catch { /* ignore */ }
+  }, [authHeaders]);
+
+  const validateAndAddIps = async (raw: string) => {
+    const queries = raw.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+    if (queries.length === 0) return;
+    setIpError('');
+    setIpValidating(true);
+    setCandidateSearching(true);
+
+    const candidatesMap: Record<string, { ip: string; hostname: string; tags: any[]; selected: boolean }> = {};
+
+    try {
+      for (const query of queries) {
+        let found = false;
+        // 1) Search devices table
+        const r = await fetch(`/api/devices?search=${encodeURIComponent(query)}&mode=light&page_size=50`, { headers: authHeaders });
+        if (r.ok) {
+          const j = await r.json();
+          const items = Array.isArray(j) ? j : (j.items || j.data?.items || j.data || []);
+          if (items.length > 0) {
+            found = true;
+            for (const dev of items) {
+              const ip = dev.ip_address;
+              if (ip && !ipDevices.some(existing => existing.ip === ip)) {
+                candidatesMap[ip] = {
+                  ip,
+                  hostname: dev.hostname || '',
+                  tags: (dev.tags || []).map((t: any) => ({
+                    id: t.id, label: t.label, label_zh: t.label_zh, color: t.color || '#94a3b8',
+                  })),
+                  selected: true,
+                };
+              }
+            }
+          }
+        }
+
+        // 2) Fallback: search physical_assets table
+        if (!found) {
+          try {
+            const ar = await fetch(`/api/assets?q=${encodeURIComponent(query)}&page_size=50`, { headers: authHeaders });
+            if (ar.ok) {
+              const aj = await ar.json();
+              const assets = Array.isArray(aj) ? aj : (aj.items || aj.data?.items || aj.data || []);
+              if (assets.length > 0) {
+                found = true;
+                for (const a of assets) {
+                  const ip = a.management_ip || a.business_ip || query;
+                  if (ip && !ipDevices.some(existing => existing.ip === ip)) {
+                    candidatesMap[ip] = candidatesMap[ip] || { ip, hostname: a.hostname || '', tags: [], selected: true };
+                  }
+                }
+              }
+            }
+          } catch { /* ignore */ }
+        }
+
+        // 3) If neither found
+        if (!found && !ipDevices.some(existing => existing.ip === query)) {
+          candidatesMap[query] = candidatesMap[query] || { ip: query, hostname: '', tags: [], selected: true };
         }
       }
-    } finally { setInspSchedulesLoading(false); }
-  }, [authHeaders, inspSchedulePage, inspSchedulePageSize]);
+
+      const candidateArray = Object.values(candidatesMap);
+      if (candidateArray.length > 0) {
+        setCandidateList(candidateArray);
+        setCandidateModalOpen(true);
+      } else {
+        setIpError(zh ? '输入的 IP 或查询目标已全部添加或无匹配结果' : 'All queried IPs are already added or no results');
+      }
+    } catch {
+      setIpError(zh ? '查询设备失败' : 'Device lookup failed');
+    } finally {
+      setIpValidating(false);
+      setCandidateSearching(false);
+    }
+  };
+
+  const confirmAddCandidates = () => {
+    const selectedCandidates = candidateList.filter(c => c.selected);
+    if (selectedCandidates.length === 0) return;
+    setIpDevices(prev => {
+      const next = [...prev];
+      for (const c of selectedCandidates) {
+        if (!next.some(existing => existing.ip === c.ip)) {
+          next.push({ ip: c.ip, hostname: c.hostname, tags: c.tags });
+        }
+      }
+      return next;
+    });
+    setIpInput('');
+    setCandidateModalOpen(false);
+    setCandidateList([]);
+  };
+
+  const toggleCandidateSelected = (idx: number) => {
+    setCandidateList(prev => prev.map((c, i) => i === idx ? { ...c, selected: !c.selected } : c));
+  };
+
+  const toggleAllCandidates = () => {
+    const allSel = candidateList.length > 0 && candidateList.every(c => c.selected);
+    setCandidateList(prev => prev.map(c => ({ ...c, selected: !allSel })));
+  };
+
+  const removeIpDevice = (ip: string) => {
+    setIpDevices(prev => prev.filter(d => d.ip !== ip));
+  };
+
+  const resolveFilter = (): string => {
+    if (form.device_scope === 'tag') return serializeTagFilter(tagFilter);
+    if (form.device_scope === 'ip') return ipDevices.map(d => d.ip).join(',');
+    return form.device_filter;
+  };
 
   const fetchInspRuns = useCallback(async () => {
     console.log('[ExecutionScheduleTab] fetchInspRuns called');
@@ -797,13 +1044,13 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
         headers: authHeaders,
         body: JSON.stringify({
           approver_username: approverUsername,
-          config_reason: `${zh ? '创建执行计划' : 'Create execution schedule'}: ${inspForm.name}`,
-          device_hostname: inspForm.scope_type === 'all' ? (zh ? '全部设备' : 'All devices') : inspForm.scope_filter,
-          command_preview: '',
+          config_reason: form.config_reason || `${zh ? '创建执行计划' : 'Create execution schedule'}: ${form.name}`,
+          device_hostname: resolveFilter() || (zh ? '全部设备' : 'All devices'),
+          command_preview: form.commands || '',
           approval_type: 'execution_plan',
           extra_fields: {
-            action_type: zh ? '设备巡检' : 'Device Inspection',
-            schedule_desc: `${fmtDateTime(inspForm.scheduled_at, zh)}${inspForm.expires_at ? ` → ${fmtDateTime(inspForm.expires_at, zh)}` : ''}`,
+            action_type: form.action_type,
+            schedule_desc: form.scheduled_at ? fmtDateTime(form.scheduled_at, zh) : (zh ? '未设定' : 'Not set'),
           },
         }),
       });
@@ -844,63 +1091,71 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
 
   /* ═══ ACTIONS ═══ */
   const addInspSchedule = async () => {
-    if (!inspForm.name.trim() || !inspForm.scheduled_at || !inspForm.expires_at) {
-      showToast(zh ? '请填写计划名称、开始时间和结束时间' : 'Name, start and end times are required', 'error');
+    if (!form.name.trim() || !form.scheduled_at) {
+      showToast(zh ? '请填写计划名称和执行时间' : 'Name and execution time are required', 'error');
       return;
     }
-    if (inspForm.expires_at <= inspForm.scheduled_at) {
-      showToast(zh ? '结束时间必须晚于开始时间' : 'End time must be after start time', 'error');
+    if (form.action_type === 'script_run' && !form.script_id) {
+      showToast(zh ? '请选择一个要执行的脚本' : 'Please select a script to execute', 'error');
       return;
     }
     if (approvalStatus !== 'verified') {
-      showToast(zh ? '请先完成审批验证' : 'Please complete approval verification first', 'error');
+      showToast(zh ? '请先发送验证码并完成审批验证' : 'Please complete approval verification first', 'error');
       return;
     }
     try {
-      const r = await fetch('/api/inspections/schedules', {
+      const payload = {
+        name: form.name,
+        action_type: form.action_type,
+        job_type: 'once',
+        scheduled_at: form.scheduled_at,
+        cron_expr: '',
+        device_scope: form.device_scope,
+        device_filter: resolveFilter(),
+        script_id: form.script_id,
+        commands: form.commands,
+        config_reason: form.config_reason,
+        use_admin_creds: form.use_admin_creds ? 1 : 0,
+        approval_token: approvalToken,
+        approval_code: approvalCode,
+        description: form.description,
+        check_items: form.check_items,
+      };
+
+      const r = await fetch('/api/scheduled-jobs', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({
-          name: inspForm.name,
-          scheduled_at: inspForm.scheduled_at,
-          expires_at: inspForm.expires_at,
-          cron_expr: '',
-          scope_type: inspForm.scope_type,
-          scope_filter: inspForm.scope_filter,
-          description: inspForm.description,
-          check_items: inspForm.check_items,
-          approval_token: approvalToken,
-          approval_code: approvalCode,
-        }),
+        body: JSON.stringify(payload),
       });
       if (r.ok) {
         setShowAddInspSchedule(false);
-        setInspForm({
-          name: '', scheduled_at: '', expires_at: '', scope_type: 'all', scope_filter: '', description: '',
-          check_items: inspectionItems.map(i => i.name)
-        });
+        setForm({ ...INITIAL_FORM });
+        setIpDevices([]);
+        setTagFilter({ ...EMPTY_TAG_FILTER });
         resetApproval();
-        setInspSchedulePage(1); // Back to first page to see the new one
+        setInspSchedulePage(1);
         fetchInspSchedules();
         showToast(zh ? '执行计划已创建' : 'Execution schedule created', 'success');
       } else {
         const j = await r.json();
         showToast(j.detail || j.message || 'Failed', 'error');
       }
-    } catch { /* ignore */ }
+    } catch {
+      showToast(zh ? '创建失败' : 'Create failed', 'error');
+    }
   };
 
   const deleteInspSchedule = async (id: string) => {
     try {
-      await fetch(`/api/inspections/schedules/${id}`, { method: 'DELETE', headers: authHeaders });
+      await fetch(`/api/scheduled-jobs/${id}`, { method: 'DELETE', headers: authHeaders });
       fetchInspSchedules();
       showToast(zh ? '计划已删除' : 'Schedule deleted', 'success');
     } catch { /* ignore */ }
   };
 
-  const toggleInspScheduleEnabled = async (sch: InspectionSchedule) => {
+  const toggleInspScheduleEnabled = async (sch: ScheduledJob) => {
     try {
-      await fetch(`/api/inspections/schedules/${sch.id}`, {
+      await fetch(`/api/scheduled-jobs/${sch.id}/toggle`, {
         method: 'PUT', headers: authHeaders,
         body: JSON.stringify({ enabled: !sch.enabled }),
       });
@@ -973,246 +1228,448 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  {/* Left Column: Basic Info */}
+                  {/* Left Column: Basic Info & Scope */}
                   <div className="space-y-5">
-                    <div className="space-y-4">
-                      <div>
-                        <label className="text-xs font-bold text-[#164e63] uppercase tracking-wider block mb-2">
-                          {zh ? '1. 计划基本信息' : '1. Basic Information'}
-                        </label>
-                        <div className="space-y-4 rounded-xl bg-slate-50/50 p-4 border border-black/5">
-                          <div>
-                            <label className="text-[11px] font-semibold text-black/40 block mb-1.5 uppercase tracking-wide">
-                              {zh ? '计划名称' : 'Plan Name'} <span className="text-red-500 ml-0.5">*</span>
-                            </label>
-                            <input
-                              type="text" value={inspForm.name}
-                              onChange={e => setInspForm(f => ({ ...f, name: e.target.value }))}
-                              className="w-full px-4 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all shadow-sm"
-                              placeholder={zh ? '例：核心交换机月度巡检' : 'e.g. Core Switch Monthly Check'}
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[11px] font-semibold text-black/40 block mb-1.5 uppercase tracking-wide">
-                              {zh ? '计划描述 (可选)' : 'Description (Optional)'}
-                            </label>
-                            <textarea
-                              rows={2}
-                              value={inspForm.description}
-                              onChange={e => setInspForm(f => ({ ...f, description: e.target.value }))}
-                              className="w-full px-4 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all shadow-sm resize-none"
-                              placeholder={zh ? '简要说明此计划的执行目的...' : 'Briefly describe the purpose...'}
-                            />
-                          </div>
-                        </div>
-                      </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '计划名称' : 'Name'}</label>
+                      <input
+                        type="text" value={form.name}
+                        onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all"
+                        placeholder={zh ? '例：核心交换机月度变更' : 'e.g. Core Switch Monthly Check'}
+                      />
+                    </div>
 
-                      <div>
-                        <label className="text-xs font-bold text-[#164e63] uppercase tracking-wider block mb-2">
-                          {zh ? '2. 执行时间窗口' : '2. Execution Window'}
-                        </label>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl bg-slate-50/50 p-4 border border-black/5">
-                          <div>
-                            <label className="text-[11px] font-semibold text-black/40 block mb-1.5 uppercase tracking-wide">
-                              {zh ? '开始时间' : 'Start Time'} <span className="text-red-500 ml-0.5">*</span>
-                            </label>
-                            <DateTimePicker
-                              value={inspForm.scheduled_at}
-                              onChange={v => setInspForm(f => ({ ...f, scheduled_at: v }))}
-                              language={language}
-                              className="w-full"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[11px] font-semibold text-black/40 block mb-1.5 uppercase tracking-wide">
-                              {zh ? '结束时间' : 'End Time'} <span className="text-red-500 ml-0.5">*</span>
-                            </label>
-                            <DateTimePicker
-                              value={inspForm.expires_at}
-                              onChange={v => setInspForm(f => ({ ...f, expires_at: v }))}
-                              language={language}
-                              className="w-full"
-                            />
-                          </div>
-                        </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '作业类型' : 'Action Type'}</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {MAJOR_CATEGORIES.map(mc => (
+                          <button
+                            key={mc.value} type="button"
+                            onClick={() => {
+                               setForm(f => ({ ...f, major_type: mc.value as any }));
+                               if (mc.value === 'change') {
+                                 setForm(f => ({ ...f, action_type: 'script_run' }));
+                               } else if (mc.value === 'collection' && form.action_type !== 'script_run') {
+                                 setForm(f => ({ ...f, action_type: 'backup' }));
+                               }
+                               fetchScripts();
+                            }}
+                            className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                              form.major_type === mc.value
+                                ? 'border-cyan-400 bg-cyan-50 text-[#0891b2]'
+                                : 'border-black/[0.06] bg-white text-black/50 hover:border-black/15'
+                            }`}
+                          >
+                            <mc.icon className="w-3.5 h-3.5" />
+                            {zh ? mc.labelZh : mc.labelEn}
+                          </button>
+                        ))}
                       </div>
                     </div>
+
+                    {form.major_type === 'collection' && (
+                      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="p-1 bg-slate-50 rounded-xl border border-black/5 flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, action_type: 'backup', script_id: '' }))}
+                          className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${form.action_type === 'backup' ? 'bg-white shadow-sm text-cyan-600' : 'text-black/40 hover:text-black/60'}`}
+                        >
+                          {zh ? '核心配置采集' : 'Config Backup'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, action_type: 'inspection' }))}
+                          className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${form.action_type === 'inspection' ? 'bg-white shadow-sm text-cyan-600' : 'text-black/40 hover:text-black/60'}`}
+                        >
+                          {zh ? '智能巡检' : 'Inspection'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, action_type: 'script_run' }))}
+                          className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${form.action_type === 'script_run' ? 'bg-white shadow-sm text-cyan-600' : 'text-black/40 hover:text-black/60'}`}
+                        >
+                          {zh ? '脚本运行' : 'Script'}
+                        </button>
+                      </motion.div>
+                    )}
+
+                    {form.action_type === 'script_run' && (
+                       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="relative">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-[#00a9ce] block mb-1.5">{zh ? '关联已发布脚本' : 'ASSOCIATED SCRIPT'}</label>
+                          <div className="relative">
+                             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                             <input 
+                               type="text" 
+                               placeholder={zh ? "输入名称搜索所有脚本..." : "Type to search all scripts..."}
+                               value={scriptSearch}
+                               onFocus={() => {
+                                 setShowScriptDropdown(true);
+                                 if (!scriptSearch) {
+                                   const current = (availableScripts || []).find(s => s.id === form.script_id);
+                                   if (current) setScriptSearch(current.name);
+                                 }
+                               }}
+                               onChange={(e) => { setScriptSearch(e.target.value); setShowScriptDropdown(true); }}
+                               className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all placeholder:text-black/20"
+                             />
+                          </div>
+                          
+                          <AnimatePresence>
+                             {showScriptDropdown && (
+                                <motion.div 
+                                  initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
+                                  className="absolute z-[60] left-0 right-0 mt-2 bg-[#0f172a]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar"
+                                >
+                                   {(() => {
+                                      const filtered = (availableScripts || []).filter(s => {
+                                         const searchVal = scriptSearch.toLowerCase();
+                                         return s.name.toLowerCase().includes(searchVal);
+                                      });
+                                      if (filtered.length === 0) return <div className="p-8 text-center text-slate-400 text-[11px] italic">{zh ? '未找到匹配的脚本' : 'No matching scripts found'}</div>;
+                                      return filtered.map(s => {
+                                         const isSelected = form.script_id === s.id;
+                                         const expectedCategory = form.major_type === 'collection' ? 'inspection' : 'change';
+                                         const isWrongCategory = s.category && s.category !== expectedCategory;
+                                         return (
+                                            <div 
+                                              key={s.id} 
+                                              onClick={() => { 
+                                                setForm(f => ({ ...f, script_id: s.id })); 
+                                                setScriptSearch(s.name); 
+                                                setShowScriptDropdown(false); 
+                                              }}
+                                              className={`px-5 py-3 text-[12px] cursor-pointer hover:bg-white/5 transition-all flex items-center justify-between border-b border-white/5 last:border-0 ${isSelected ? 'bg-cyan-500/20 text-[#00a9ce] font-bold' : 'text-slate-300'}`}
+                                            >
+                                               <div className="flex flex-col gap-0.5">
+                                                  <span className="flex items-center gap-2">
+                                                     <FileCode size={12} className={isWrongCategory ? 'text-amber-500' : 'text-cyan-500'} /> 
+                                                     {s.name}
+                                                  </span>
+                                                  <div className="flex items-center gap-2 mt-1">
+                                                     <span className={`text-[8px] px-1.5 py-0.5 rounded uppercase tracking-wider ${s.category === 'inspection' ? 'bg-emerald-500/10 text-emerald-500' : s.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-slate-500/10 text-slate-500'}`}>
+                                                        {s.category === 'inspection' ? (zh ? '巡检/采集' : 'INSPECTION') : 
+                                                         s.category === 'change' ? (zh ? '自动化变更' : 'CHANGE') : (zh ? '未分类' : 'UNCATEGORIZED')}
+                                                     </span>
+                                                     {isWrongCategory && <span className="text-[8px] text-amber-500/60 italic font-normal">{zh ? '(非当前分类)' : '(Not current category)'}</span>}
+                                                  </div>
+                                               </div>
+                                               {isSelected && <CheckCircle2 size={14} className="text-cyan-400" />}
+                                            </div>
+                                         );
+                                      });
+                                   })()}
+                                </motion.div>
+                             )}
+                          </AnimatePresence>
+                       </motion.div>
+                    )}
+
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '设备范围' : 'Device Scope'}</label>
+                      <select
+                        value={form.device_scope}
+                        onChange={e => { setForm(f => ({ ...f, device_scope: e.target.value, device_filter: '' })); setIpDevices([]); setIpInput(''); }}
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all"
+                      >
+                        {SCOPE_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{zh ? o.labelZh : o.labelEn}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {form.device_scope === 'ip' && (
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                          {zh ? 'IP 地址' : 'IP Addresses'}
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={ipInput}
+                            onChange={e => { setIpInput(e.target.value); setIpError(''); }}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); validateAndAddIps(ipInput); } }}
+                            disabled={ipValidating}
+                            className="w-full pl-3.5 pr-12 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all font-mono"
+                            placeholder={zh ? '输入 IP/关键词 后回车查询，弹窗勾选添加' : 'Enter IP/query and press Enter to select'}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => validateAndAddIps(ipInput)}
+                            disabled={!ipInput.trim() || ipValidating}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-cyan-600 hover:bg-cyan-50 transition-all disabled:opacity-30"
+                          >
+                            {ipValidating ? <RotateCcw size={14} className="animate-spin" /> : <Search size={14} />}
+                          </button>
+                        </div>
+                        {ipError && <p className={`text-[10px] mt-1 ${ipError.includes('已添加') || ipError.includes('added') ? 'text-amber-500' : 'text-red-500'}`}>{ipError}</p>}
+                        {ipDevices.length > 0 && (
+                          <div className="mt-2 space-y-1 max-h-40 overflow-y-auto pr-1">
+                            {ipDevices.map(dev => (
+                              <div
+                                key={dev.ip}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border group hover:border-cyan-200/60 transition-all ${
+                                  dev.hostname ? 'border-black/[0.06] bg-[#f8fafc]' : 'border-amber-200/60 bg-amber-50/30'
+                                }`}
+                              >
+                                <span className="text-xs font-mono font-bold text-[#164e63] shrink-0">{dev.ip}</span>
+                                {dev.hostname ? (
+                                  <>
+                                    <span className="text-black/15 text-[10px]">·</span>
+                                    <span className="text-[11px] text-black/40 truncate">{dev.hostname}</span>
+                                  </>
+                                ) : (
+                                  <span className="text-[10px] text-amber-500 italic">{zh ? '手动IP' : 'manual'}</span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => removeIpDevice(dev.ip)}
+                                  className="p-1 rounded-lg text-black/25 hover:text-red-500 hover:bg-red-50 transition-all shrink-0 ml-auto"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="text-[10px] text-black/25 mt-1.5">
+                          {ipDevices.length > 0
+                            ? (zh ? `已添加 ${ipDevices.length} 个设备` : `${ipDevices.length} device(s) added`)
+                            : (zh ? '输入 IP 后回车,系统自动验证并显示设备标签' : 'Enter IP and press Enter to validate')}
+                        </p>
+                      </div>
+                    )}
+
+                    {form.device_scope === 'tag' && (
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '标签条件' : 'Tag Conditions'}</label>
+                        <TagConditionPicker value={tagFilter} onChange={setTagFilter} language={language} />
+                      </div>
+                    )}
+
+                    {(form.device_scope === 'site' || form.device_scope === 'role') && (
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '过滤条件' : 'Filter'}</label>
+                        <input
+                          type="text" value={form.device_filter}
+                          onChange={e => setForm(f => ({ ...f, device_filter: e.target.value }))}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all"
+                          placeholder={zh ? (form.device_scope === 'site' ? '站点名称' : '角色名称') : (form.device_scope === 'site' ? 'Site name' : 'Role name')}
+                        />
+                      </div>
+                    )}
                   </div>
 
-                  {/* Right Column: Scope & Metrics */}
+                  {/* Right Column: Time, Commands, Security */}
                   <div className="space-y-5">
                     <div>
-                      <label className="text-xs font-bold text-[#164e63] uppercase tracking-wider block mb-2">
-                        {zh ? '3. 执行范围设定' : '3. Execution Scope'}
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                        {zh ? '执行时间' : 'Execution Time'}
                       </label>
-                      <div className="space-y-4 rounded-xl bg-slate-50/50 p-4 border border-black/5">
-                        <div>
-                          <label className="text-[11px] font-semibold text-black/40 block mb-1.5 uppercase tracking-wide">
-                            {zh ? '范围类型' : 'Scope Type'}
-                          </label>
-                          <select
-                            value={inspForm.scope_type}
-                            onChange={e => setInspForm(f => ({ ...f, scope_type: e.target.value }))}
-                            className="w-full px-4 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all shadow-sm cursor-pointer"
-                          >
-                            <option value="all">{zh ? '全部设备 (All Devices)' : 'All Devices'}</option>
-                            <option value="site">{zh ? '按站点 (By Site)' : 'By Site'}</option>
-                            <option value="role">{zh ? '按角色 (By Role)' : 'By Role'}</option>
-                            <option value="ip">{zh ? '按 IP 列表 (By IP List)' : 'By IP List'}</option>
-                            <option value="tags">{zh ? '按标签 (By Tags)' : 'By Tags'}</option>
-                          </select>
-                        </div>
-                        {inspForm.scope_type !== 'all' && (
-                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
-                            <label className="text-[11px] font-semibold text-black/40 block mb-1.5 uppercase tracking-wide">
-                              {zh ? '过滤值 / 逗号分隔' : 'Filter Values / Comma Separated'}
-                            </label>
-                            <input
-                              type="text" value={inspForm.scope_filter}
-                              onChange={e => setInspForm(f => ({ ...f, scope_filter: e.target.value }))}
-                              className="w-full px-4 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all shadow-sm"
-                              placeholder={
-                                inspForm.scope_type === 'ip' ? '192.168.1.1, 10.0.0.1' :
-                                inspForm.scope_type === 'tags' ? 'core, prod' :
-                                (zh ? '站点名或角色名' : 'Site or role name')
-                              }
-                            />
-                          </motion.div>
+                      <DateTimePicker
+                        value={form.scheduled_at}
+                        onChange={v => setForm(f => ({ ...f, scheduled_at: v }))}
+                        language={language}
+                        className="w-full"
+                      />
+                    </div>
+
+                    {form.action_type !== 'backup' && (
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block">
+                          {form.action_type === 'inspection' ? (zh ? '巡检指标项' : 'Inspection Items') : (zh ? '执行命令 (可选)' : 'Commands (Optional)')}
+                        </label>
+                        {form.action_type === 'inspection' ? (
+                          <div className="rounded-xl border border-black/[0.08] p-3 max-h-48 overflow-y-auto custom-scrollbar bg-[#f8fafc]">
+                            {inspectionItemsLoading ? (
+                              <div className="py-4 text-center text-black/20 text-[11px] italic">{zh ? '加载中...' : 'Loading...'}</div>
+                            ) : inspectionItems.length > 0 ? (
+                              <div className="grid grid-cols-2 gap-2">
+                                {inspectionItems.map(item => {
+                                  const isChecked = form.check_items.includes(item.name);
+                                  return (
+                                    <label key={item.id} className="flex items-center gap-2 cursor-pointer group">
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => {
+                                          setForm(f => ({
+                                            ...f,
+                                            check_items: isChecked ? f.check_items.filter(x => x !== item.name) : [...f.check_items, item.name]
+                                          }));
+                                        }}
+                                        className="w-3.5 h-3.5 rounded border-black/20 text-cyan-500 focus:ring-cyan-500/20"
+                                      />
+                                      <span className="text-[11px] text-black/60 font-medium group-hover:text-cyan-600 truncate">{item.name}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="py-4 text-center text-black/20 text-[11px] italic">{zh ? '暂无可用指标项' : 'No items available'}</div>
+                            )}
+                          </div>
+                        ) : (
+                          <textarea
+                            value={form.commands}
+                            onChange={e => setForm(f => ({ ...f, commands: e.target.value }))}
+                            rows={3}
+                            className="w-full px-3 py-2 rounded-xl border border-black/[0.08] text-xs font-mono bg-[#f8fafc] focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all resize-none"
+                            placeholder={zh ? '输入设备命令，每行一个' : 'Enter commands, one per line'}
+                          />
                         )}
+                      </div>
+                    )}
+
+                    <div className="space-y-2 pt-1">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                        {zh ? '执行凭证与特权借用等级' : 'Execution Credentials & Privilege Level'}
+                      </label>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, use_admin_creds: false }))}
+                          className={`flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all ${
+                            !form.use_admin_creds
+                              ? 'border-cyan-500 bg-cyan-50/50 text-[#164e63] shadow-sm font-semibold'
+                              : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center border mt-0.5 shrink-0 ${!form.use_admin_creds ? 'border-cyan-600 bg-cyan-600 text-white' : 'border-slate-300'}`}>
+                            {!form.use_admin_creds && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-bold flex items-center gap-1.5">
+                              <User className="w-3.5 h-3.5 text-cyan-600 shrink-0" />
+                              <span className="truncate">{zh ? '普通运维操作员' : 'Normal Operator'}</span>
+                            </div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, use_admin_creds: true }))}
+                          className={`flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all ${
+                            form.use_admin_creds
+                              ? 'border-amber-500 bg-amber-50/50 text-amber-900 shadow-sm font-semibold'
+                              : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center border mt-0.5 shrink-0 ${form.use_admin_creds ? 'border-amber-600 bg-amber-600 text-white' : 'border-slate-300'}`}>
+                            {form.use_admin_creds && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-bold flex items-center gap-1.5 text-amber-800">
+                              <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              <span className="truncate">{zh ? '特权借用 (Enable)' : 'Privileged Borrowing'}</span>
+                            </div>
+                          </div>
+                        </button>
                       </div>
                     </div>
 
-                    <div>
-                      <label className="text-xs font-bold text-[#164e63] uppercase tracking-wider block mb-2">
-                        {zh ? '4. 关联巡检指标' : '4. Inspection Metrics'}
-                      </label>
-                      <div className="rounded-xl bg-slate-50/50 p-4 border border-black/5 max-h-[220px] overflow-y-auto custom-scrollbar">
-                        {inspectionItemsLoading ? (
-                          <div className="py-8 text-center text-black/20 text-xs italic">{zh ? '获取指标中...' : 'Loading items...'}</div>
-                        ) : inspectionItems.length > 0 ? (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
-                            {inspectionItems.map(item => {
-                              const isChecked = inspForm.check_items.includes(item.name);
-                              return (
-                                <label key={item.id} className="flex items-center gap-3 py-1.5 cursor-pointer group hover:bg-black/5 rounded-lg px-2 transition-colors">
-                                  <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${isChecked ? 'bg-cyan-500 border-cyan-500' : 'bg-white border-black/10 group-hover:border-black/20'}`}>
-                                    {isChecked && <CheckCircle2 size={12} className="text-white" />}
-                                    <input
-                                      type="checkbox" className="hidden"
-                                      checked={isChecked}
-                                      onChange={() => {
-                                        setInspForm(f => ({
-                                          ...f,
-                                          check_items: isChecked
-                                            ? f.check_items.filter(x => x !== item.name)
-                                            : [...f.check_items, item.name]
-                                        }));
-                                      }}
-                                    />
-                                  </div>
-                                  <div className="min-w-0">
-                                    <p className={`text-xs font-bold truncate transition-colors ${isChecked ? 'text-cyan-700' : 'text-black/60 group-hover:text-black/80'}`}>{item.name}</p>
-                                    <p className="text-[10px] text-black/30 truncate">{item.category}</p>
-                                  </div>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="py-8 text-center text-black/20 text-xs italic">{zh ? '暂无可用指标项' : 'No metrics available'}</div>
-                        )}
+                    <div className="rounded-xl border border-black/8 overflow-hidden">
+                      <div className={`px-4 py-2.5 flex items-center gap-2.5 ${
+                        approvalStatus === 'verified'
+                          ? 'bg-gradient-to-r from-emerald-500 to-emerald-600'
+                          : 'bg-gradient-to-r from-[#005b75] to-[#00465a]'
+                      }`}>
+                        <Shield className="w-3.5 h-3.5 text-white/90" />
+                        <span className="text-[12px] font-semibold text-white/95">
+                          {approvalStatus === 'verified' ? (zh ? '审批已通过' : 'Approval Granted') : (zh ? '审批验证' : 'Approval Required')}
+                        </span>
                       </div>
-                      <p className="mt-2 text-[10px] text-black/30 italic px-1">
-                        {zh ? '提示：指标项支持在「自动化 > 巡检指标」中单独管理。' : 'Tip: Manage metrics in "Automation > Metrics".'}
-                      </p>
+
+                      {approvalStatus !== 'verified' && (
+                        <div className="px-4 py-3.5 bg-[#f7fbfc] space-y-3">
+                          <div className="space-y-3">
+                            <div>
+                              <label className="text-[11px] font-semibold text-black/50 mb-1 block">{zh ? '变更原因' : 'Reason'}</label>
+                              <input
+                                value={form.config_reason}
+                                onChange={e => setForm(f => ({ ...f, config_reason: e.target.value }))}
+                                placeholder={zh ? '创建执行计划' : 'Create execution plan'}
+                                className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20 placeholder:text-black/25 transition-all"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-semibold text-black/50 mb-1 block">{zh ? '审批人' : 'Approver'}</label>
+                              <div className="flex items-center gap-2">
+                                <select
+                                  value={approverUsername}
+                                  onChange={e => setApproverUsername(e.target.value)}
+                                  className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-xs outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20 transition-all"
+                                  disabled={approvalStatus === 'sent' || approvalStatus === 'sending'}
+                                >
+                                  <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
+                                  {approvers.map(u => (
+                                    <option key={u.id} value={u.username}>{u.username} ({u.role})</option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={requestApproval}
+                                  disabled={!approverUsername || !form.config_reason.trim() || approvalStatus === 'sending' || approvalStatus === 'sent'}
+                                  className={`px-3 py-2 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1.5 ${
+                                    approverUsername && form.config_reason.trim() && approvalStatus !== 'sent'
+                                      ? 'bg-[#005b75] text-white hover:bg-[#00465a] shadow-sm'
+                                      : 'bg-black/8 text-black/30 cursor-not-allowed'
+                                  }`}
+                                >
+                                  {approvalStatus === 'sending' ? <RotateCcw className="w-3 h-3 animate-spin" /> : (zh ? '发验证码' : 'Send Code')}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {approvalStatus === 'sent' && (
+                            <div className="space-y-1.5 pt-2 border-t border-black/5">
+                              <label className="text-[11px] text-black/50 block">{zh ? '输入 6 位工单验证码' : 'Enter 6-digit verification code'}</label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  value={approvalCode} onChange={e => { setApprovalCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setApprovalError(''); }}
+                                  placeholder="000000" maxLength={6}
+                                  className="w-32 tracking-[0.3em] text-center font-mono rounded-xl border border-black/10 py-2 text-sm outline-none focus:border-emerald-500 transition-all"
+                                />
+                                <button
+                                  type="button" onClick={verifyApproval} disabled={approvalCode.length !== 6}
+                                  className={`px-4 py-2 rounded-xl font-bold transition-all ${approvalCode.length === 6 ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-black/8 text-black/30 cursor-not-allowed'}`}
+                                >
+                                  {zh ? '验证' : 'Verify'}
+                                </button>
+                                <button onClick={resetApproval} className="p-2 text-black/30 hover:text-black/50 ml-1" title={zh ? '重置审批状态' : 'Reset'}>
+                                  <RotateCcw size={14} />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {approvalError && (
+                            <div className="flex items-center gap-1.5 text-rose-600 text-[11px] pt-1">
+                              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                              <span>{approvalError}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                {/* Bottom: Approval & Submit */}
-                <div className="border-t border-black/5 pt-6 flex flex-col sm:flex-row items-center justify-between gap-6">
-                  {/* Approval Module */}
-                  <div className="w-full sm:max-w-md bg-amber-50/50 rounded-2xl border border-amber-200/50 p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Shield size={16} className="text-amber-600" />
-                      <span className="text-[11px] font-bold text-amber-900 uppercase tracking-widest">{zh ? '安全审计与授权' : 'Approval & Security'}</span>
-                    </div>
-                    
-                    {approvalStatus === 'idle' && (
-                      <div className="flex items-center gap-2">
-                        <select
-                          value={approverUsername}
-                          onChange={(e) => setApproverUsername(e.target.value)}
-                          className="flex-1 px-3 py-2 rounded-xl border border-amber-200/50 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/10"
-                        >
-                          <option value="">{zh ? '选择审批人...' : 'Approver...'}</option>
-                          {approvers.map(a => (
-                            <option key={a.id} value={a.username}>{a.username} ({a.role})</option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={requestApproval}
-                          disabled={!approverUsername}
-                          className="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider hover:bg-amber-600 disabled:opacity-30 transition-all shrink-0 shadow-sm active:scale-95"
-                        >
-                          {zh ? '发送码' : 'Send'}
-                        </button>
-                      </div>
-                    )}
-
-                    {(approvalStatus === 'sending' || approvalStatus === 'sent') && (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={approvalCode}
-                          onChange={(e) => { setApprovalCode(e.target.value.trim()); setApprovalError(''); }}
-                          placeholder={zh ? '6 位验证码' : 'Code'}
-                          className="flex-1 px-3 py-2 rounded-xl border border-amber-200/50 text-xs bg-white text-center font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/10"
-                          maxLength={6}
-                        />
-                        <button
-                          onClick={verifyApproval}
-                          disabled={approvalCode.length !== 6}
-                          className="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider hover:bg-amber-600 disabled:opacity-30 transition-all shrink-0 shadow-sm active:scale-95"
-                        >
-                          {zh ? '验证' : 'Verify'}
-                        </button>
-                        <button onClick={resetApproval} className="p-2 text-amber-900/30 hover:text-amber-900/50 transition-colors">
-                          <RotateCcw size={14} />
-                        </button>
-                      </div>
-                    )}
-
-                    {approvalStatus === 'verified' && (
-                      <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 shadow-sm">
-                        <div className="flex items-center gap-2 text-emerald-700">
-                          <CheckCircle2 size={16} />
-                          <span className="text-xs font-bold">{zh ? '审批已通过' : 'Approved'}</span>
-                        </div>
-                        <button onClick={resetApproval} className="text-[10px] font-bold text-emerald-900/40 hover:text-emerald-900/60 uppercase">
-                          {zh ? '重置' : 'Reset'}
-                        </button>
-                      </div>
-                    )}
-                    {approvalError && <p className="mt-2 text-[10px] text-red-500 font-medium px-1">{approvalError}</p>}
-                  </div>
-
-                  {/* Submit Actions */}
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => { setShowAddInspSchedule(false); resetApproval(); }}
-                      className="px-6 py-3 rounded-xl border border-black/10 text-sm font-bold text-black/40 hover:bg-black/5 hover:text-black/60 transition-all"
-                    >
-                      {zh ? '取消' : 'Cancel'}
-                    </button>
-                    <button
-                      onClick={addInspSchedule}
-                      disabled={!inspForm.name.trim() || !inspForm.scheduled_at || !inspForm.expires_at || approvalStatus !== 'verified'}
-                      className="px-8 py-3 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-sm font-bold shadow-lg shadow-cyan-600/20 hover:scale-[1.02] disabled:opacity-40 disabled:scale-100 transition-all"
-                    >
-                      {zh ? '发布执行计划' : 'Publish Schedule'}
-                    </button>
-                  </div>
+                {/* Bottom Submit */}
+                <div className="border-t border-black/5 pt-5 flex items-center justify-end gap-3">
+                  <button
+                    onClick={() => { setShowAddInspSchedule(false); resetApproval(); }}
+                    className="px-6 py-2.5 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
+                  >
+                    {zh ? '取消' : 'Cancel'}
+                  </button>
+                  <button
+                    onClick={addInspSchedule}
+                    disabled={!form.name.trim() || !form.scheduled_at || approvalStatus !== 'verified'}
+                    className="px-8 py-2.5 rounded-xl bg-[#164e63] text-white text-sm font-bold shadow-lg shadow-cyan-900/10 hover:bg-[#0891b2] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {zh ? '发布执行计划' : 'Publish Schedule'}
+                  </button>
                 </div>
               </motion.div>
             ) : (
@@ -1238,7 +1695,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                     </div>
                   </div>
 
-                  {/* Table Body */}
+                  {/* List Body */}
                   <div className="flex-1 overflow-y-auto max-h-[calc(100vh-420px)] custom-scrollbar">
                     {inspSchedulesLoading ? (
                       <div className="h-full flex flex-col items-center justify-center py-24 text-black/20 gap-3">
@@ -1246,93 +1703,145 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                         <span className="text-sm font-medium">{zh ? '正在加载数据...' : 'Loading schedules...'}</span>
                       </div>
                     ) : inspSchedules.length > 0 ? (
-                      <table className="w-full text-left border-collapse min-w-[900px]">
-                        <thead className="sticky top-0 bg-slate-50 border-b border-black/5 z-10">
-                          <tr className="bg-black/[0.01]">
-                            <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '计划名称' : 'Plan Name'}</th>
-                            <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '执行窗口' : 'Execution window'}</th>
-                            <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '范围 / 指标' : 'Scope / Metrics'}</th>
-                            <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '状态' : 'Status'}</th>
-                            <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider text-right">{zh ? '操作' : 'Actions'}</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-black/[0.03]">
-                          {inspSchedules.map(sch => {
-                            const st = getScheduleStatus(sch, zh);
-                            const checkList = Array.isArray(sch.check_items) ? sch.check_items : [];
-                            return (
-                              <tr key={sch.id} className="group hover:bg-cyan-50/30 transition-colors">
-                                <td className="px-6 py-4">
-                                  <div className="flex flex-col min-w-0">
-                                    <span className="text-sm font-bold text-[#164e63] truncate group-hover:text-cyan-700 transition-colors">{sch.name}</span>
-                                    {sch.description && <span className="text-[10px] text-black/30 truncate mt-0.5 italic">{sch.description}</span>}
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <div className="flex flex-col gap-1">
-                                    <div className="flex items-center gap-1.5 text-[11px] font-mono text-black/60">
-                                      <Play size={10} className="text-emerald-500" />
-                                      <span>{fmtDateTime(sch.scheduled_at, zh)}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 text-[11px] font-mono text-black/40">
-                                      <X size={10} className="text-slate-400" />
-                                      <span>{fmtDateTime(sch.expires_at, zh)}</span>
-                                    </div>
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <div className="flex flex-col gap-2">
-                                    <span className="text-[11px] font-bold text-black/50 bg-black/5 self-start px-2 py-0.5 rounded-full">
-                                      {sch.scope_type === 'all' ? (zh ? '全量' : 'All') : `${sch.scope_type}:${sch.scope_filter || '*'}`}
+                      <div className="space-y-2.5 p-4">
+                        {inspSchedules.map(sch => {
+                          const atInfo = ACTION_TYPES.find(a => a.value === sch.action_type);
+                          const AtIcon = atInfo?.icon || Database;
+                          const isEnabled = !!sch.enabled;
+                          const scopeDesc = describeScope(sch.device_scope, sch.device_filter, zh);
+                          const isInsp = sch.action_type === 'inspection';
+                          const isBackup = sch.action_type === 'backup';
+                          const isScript = sch.action_type === 'script_run';
+                          const st = getScheduleStatus(sch, zh);
+                          
+                          return (
+                            <motion.div
+                              key={sch.id}
+                              layout
+                              initial={{ opacity: 0, y: 8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              onClick={() => { setSelectedSchedule(sch); setShowScheduleDetail(true); }}
+                              className={`rounded-2xl border transition-all hover:shadow-md cursor-pointer group overflow-hidden ${
+                                isEnabled ? 'bg-white border-slate-200/90 shadow-sm' : 'bg-slate-50 border-slate-200/50 opacity-60'
+                              }`}
+                            >
+                              <div className="flex items-center gap-4 px-5 py-4">
+                                {/* Category Icon */}
+                                <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
+                                  isEnabled
+                                    ? isInsp ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                      : isBackup ? 'bg-indigo-50 text-indigo-600 border-indigo-100'
+                                      : isScript ? 'bg-amber-50 text-amber-600 border-amber-100'
+                                      : 'bg-cyan-50 text-cyan-600 border-cyan-100'
+                                    : 'bg-slate-100 text-slate-400 border-slate-200'
+                                }`}>
+                                  <AtIcon size={20} />
+                                </div>
+
+                                {/* Main info */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2.5">
+                                    <p className="text-sm font-bold text-[#0f172a] truncate group-hover:text-cyan-700 transition-colors">
+                                      {sch.name}
+                                    </p>
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                      st.icon === 'ready' || st.icon === 'pending' ? 'bg-cyan-100/80 text-cyan-700 border border-cyan-200' :
+                                      st.icon === 'done' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
+                                      'bg-slate-100 text-slate-500 border border-slate-200'
+                                    }`}>
+                                      {st.label}
                                     </span>
-                                    <div className="flex flex-wrap gap-1">
-                                      {checkList.slice(0, 3).map(item => (
-                                        <span key={item} className="px-1.5 py-0.5 rounded-md bg-cyan-50 border border-cyan-100 text-[9px] font-bold text-cyan-600 uppercase tracking-tighter">
-                                          {item}
+                                    {sch.last_run_status && (
+                                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                        sch.last_run_status === 'success'
+                                          ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                                          : 'bg-rose-50 text-rose-600 border border-rose-100'
+                                      }`}>
+                                        <div className={`w-1.5 h-1.5 rounded-full ${sch.last_run_status === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                        {sch.last_run_status === 'success' ? (zh ? '执行成功' : 'Success') : (zh ? '执行失败' : 'Failed')}
+                                      </span>
+                                    )}
+                                    {sch.use_admin_creds ? (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">
+                                        <ShieldAlert size={12} className="text-amber-600" />
+                                        {zh ? '特权执行 (Admin)' : 'Privileged'}
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 shadow-sm">
+                                        <User size={12} className="text-slate-500" />
+                                        {zh ? '普通执行 (User)' : 'Normal'}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500 flex-wrap">
+                                    <span className="flex items-center gap-1 font-mono font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                                      <CalendarClock size={12} className="text-cyan-600" />
+                                      {fmtDateTime(sch.scheduled_at, zh)}
+                                    </span>
+                                    <span className="text-slate-300">·</span>
+                                    <span className={`font-semibold ${isInsp ? 'text-emerald-700' : isBackup ? 'select-none text-indigo-700' : isScript ? 'text-amber-700' : 'text-slate-700'}`}>
+                                      {zh ? (atInfo?.labelZh || sch.action_type) : (atInfo?.labelEn || sch.action_type)}
+                                    </span>
+                                    <span className="text-slate-300">·</span>
+                                    <span className="flex items-center gap-1 text-slate-600 font-medium">
+                                      <Target size={12} className="text-slate-400" />
+                                      {scopeDesc}
+                                    </span>
+
+                                    {sch.action_type === 'script_run' && sch.script_id && (
+                                      <>
+                                        <span className="text-slate-300">·</span>
+                                        <span className="flex items-center gap-1 text-[#00a9ce] font-bold bg-cyan-50 px-2 py-0.5 rounded border border-cyan-100">
+                                          <FileCode size={12} />
+                                          {(availableScripts || []).find(s => s.id === sch.script_id)?.name || sch.script_id}
                                         </span>
-                                      ))}
-                                      {checkList.length > 3 && (
-                                        <span className="px-1.5 py-0.5 rounded-md bg-black/5 text-[9px] font-bold text-black/30">+{checkList.length - 3}</span>
-                                      )}
-                                    </div>
+                                      </>
+                                    )}
+                                    {sch.last_run_at && (
+                                      <>
+                                        <span className="text-slate-300">·</span>
+                                        <span>{zh ? '最近运行' : 'Last run'}: <span className="font-mono">{new Date(sch.last_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span></span>
+                                      </>
+                                    )}
                                   </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold ${st.cls}`}>
-                                    <div className={`w-1.5 h-1.5 rounded-full ${sch.enabled ? 'animate-pulse bg-current' : 'bg-current opacity-40'}`} />
-                                    {st.label}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                  <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button
-                                      onClick={() => { setSelectedSchedule(sch); setShowScheduleDetail(true); }}
-                                      className="p-2 rounded-xl text-black/40 hover:bg-black/5 hover:text-black/60 transition-all"
-                                      title={zh ? '详情' : 'Detail'}
-                                    >
-                                      <Play size={14} />
-                                    </button>
-                                    <button
-                                      onClick={() => toggleInspScheduleEnabled(sch)}
-                                      className={`p-2 rounded-xl transition-all ${sch.enabled ? 'text-amber-600 hover:bg-amber-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
-                                      title={sch.enabled ? (zh ? '停用' : 'Disable') : (zh ? '启用' : 'Enable')}
-                                    >
-                                      <Activity size={14} />
-                                    </button>
-                                    <button
-                                      onClick={() => deleteInspSchedule(sch.id)}
-                                      className="p-2 rounded-xl text-black/40 hover:bg-red-50 hover:text-red-500 transition-all"
-                                      title={zh ? '删除' : 'Delete'}
-                                    >
-                                      <Trash2 size={14} />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                                </div>
+
+                                {/* Actions */}
+                                <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                                  <button
+                                    onClick={() => toggleInspScheduleEnabled(sch)}
+                                    className={`p-2 rounded-xl transition-all ${isEnabled ? 'text-slate-400 hover:bg-amber-50 hover:text-amber-600' : 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
+                                    title={isEnabled ? (zh ? '停用' : 'Disable') : (zh ? '启用' : 'Enable')}
+                                  >
+                                    <Activity size={16} />
+                                  </button>
+                                  <button
+                                    onClick={() => deleteInspSchedule(sch.id)}
+                                    className="p-2 rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all"
+                                    title={zh ? '删除' : 'Delete'}
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Bottom meta */}
+                              <div className="px-5 py-2.5 bg-slate-50/80 border-t border-slate-100 flex items-center gap-4 text-[11px] text-slate-500">
+                                {sch.description && (
+                                  <>
+                                    <span className="text-slate-600 italic truncate max-w-[200px]">{sch.description}</span>
+                                    <span className="text-slate-300">|</span>
+                                  </>
+                                )}
+                                <span>{zh ? '审批授权人' : 'Approver'}: <span className="font-bold text-slate-700">{sch.approved_by || '\u2014'}</span></span>
+                                <span className="text-slate-300">|</span>
+                                <span>{zh ? '创建者' : 'Creator'}: <span className="font-medium text-slate-700">{sch.created_by}</span> · <span className="font-mono">{new Date(sch.created_at).toLocaleDateString(zh ? 'zh-CN' : 'en-US')}</span></span>
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
                     ) : (
                       <div className="h-full flex flex-col items-center justify-center py-32 text-black/20 gap-3">
                         <CalendarClock size={48} strokeWidth={1} className="opacity-10" />
@@ -2455,23 +2964,19 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                       <div className="rounded-3xl bg-slate-50 border border-black/5 p-6 space-y-5 shadow-inner">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-black/40">{zh ? '范围类型' : 'Scope Type'}</span>
-                          <span className="text-xs font-black text-[#164e63] uppercase tracking-wide bg-white px-3 py-1 rounded-full shadow-sm">{selectedSchedule.scope_type}</span>
+                          <span className="text-xs font-black text-[#164e63] uppercase tracking-wide bg-white px-3 py-1 rounded-full shadow-sm">{selectedSchedule.device_scope}</span>
                         </div>
-                        {selectedSchedule.scope_filter && (
+                        {selectedSchedule.device_filter && (
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-bold text-black/40">{zh ? '过滤条件' : 'Filter'}</span>
-                            <span className="text-xs font-black text-[#164e63] max-w-[150px] truncate">{selectedSchedule.scope_filter}</span>
+                            <span className="text-xs font-black text-[#164e63] max-w-[150px] truncate">{selectedSchedule.device_filter}</span>
                           </div>
                         )}
                         <div className="pt-2 border-t border-black/5">
-                          <span className="text-[11px] font-bold text-black/30 block mb-2">{zh ? '时间窗口' : 'Time Window'}</span>
+                          <span className="text-[11px] font-bold text-black/30 block mb-2">{zh ? '执行时间' : 'Execution Time'}</span>
                           <div className="flex items-center gap-3">
-                            <div className="flex-1 text-[11px] font-mono text-emerald-600 bg-emerald-50 px-3 py-2 rounded-xl border border-emerald-100 text-center">
+                            <div className="flex-1 text-[11px] font-mono text-cyan-600 bg-cyan-50 px-3 py-2 rounded-xl border border-cyan-100 text-center">
                               {fmtDateTime(selectedSchedule.scheduled_at, zh)}
-                            </div>
-                            <div className="text-black/10">→</div>
-                            <div className="flex-1 text-[11px] font-mono text-amber-600 bg-amber-50 px-3 py-2 rounded-xl border border-amber-100 text-center">
-                              {fmtDateTime(selectedSchedule.expires_at, zh)}
                             </div>
                           </div>
                         </div>
@@ -2513,7 +3018,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
                             </div>
                           </div>
                           <button
-                            onClick={() => { toggleInspScheduleEnabled(selectedSchedule); setSelectedSchedule({ ...selectedSchedule, enabled: selectedSchedule.enabled ? 0 : 1 } as InspectionSchedule); }}
+                            onClick={() => { toggleInspScheduleEnabled(selectedSchedule); setSelectedSchedule({ ...selectedSchedule, enabled: selectedSchedule.enabled ? 0 : 1 } as ScheduledJob); }}
                             className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase transition-all shadow-sm ${selectedSchedule.enabled ? 'bg-white text-emerald-600 hover:bg-emerald-50 border border-emerald-100' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
                           >
                             {selectedSchedule.enabled ? (zh ? '停用' : 'Disable') : (zh ? '启动' : 'Enable')}
@@ -2561,6 +3066,110 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
         )}
       </AnimatePresence>
       </div>
+      {/* --- Candidate IP / Device Selection Modal --- */}
+      <AnimatePresence>
+        {candidateModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+          >
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setCandidateModalOpen(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col z-10 max-h-[80vh]"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900 to-[#0f172a] text-white flex items-center justify-between border-b border-white/10">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-cyan-500/20 flex items-center justify-center border border-cyan-400/20 text-cyan-400">
+                    <Target size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold">{zh ? '选择匹配的目标设备' : 'Select Matched Target Devices'}</h3>
+                    <p className="text-[10px] text-slate-400">{zh ? `共检索到 ${candidateList.length} 台候选目标` : `Found ${candidateList.length} candidate device(s)`}</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setCandidateModalOpen(false)} className="text-slate-400 hover:text-white transition-colors p-1">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="px-6 py-3 bg-slate-50 border-b border-slate-200/80 flex items-center justify-between text-xs text-slate-600">
+                <label className="flex items-center gap-2 font-bold cursor-pointer hover:text-slate-900 select-none">
+                  <input
+                    type="checkbox"
+                    checked={candidateList.length > 0 && candidateList.every(c => c.selected)}
+                    onChange={toggleAllCandidates}
+                    className="w-4 h-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                  />
+                  <span>{zh ? '全选 / 全不选' : 'Select All'}</span>
+                </label>
+                <span className="font-mono text-[11px] bg-white px-2 py-0.5 rounded border border-slate-200 font-bold text-slate-700 shadow-2xs">
+                  {zh ? `已勾选 ${candidateList.filter(c => c.selected).length} / ${candidateList.length} 台` : `${candidateList.filter(c => c.selected).length} / ${candidateList.length} selected`}
+                </span>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-2 custom-scrollbar max-h-[50vh]">
+                {candidateList.map((cand, idx) => (
+                  <div
+                    key={cand.ip}
+                    onClick={() => toggleCandidateSelected(idx)}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all cursor-pointer ${
+                      cand.selected
+                        ? 'border-cyan-400 bg-cyan-50/60 shadow-2xs text-slate-900 font-bold'
+                        : 'border-slate-200/80 bg-white text-slate-500 hover:border-slate-300 opacity-70'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={cand.selected}
+                      onChange={() => {}} // parent div onClick handles toggle
+                      className="w-4 h-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500 pointer-events-none shrink-0"
+                    />
+                    <span className="font-mono text-xs text-[#0f172a] shrink-0 w-32">{cand.ip}</span>
+                    {cand.hostname ? (
+                      <span className="text-xs text-slate-600 truncate flex-1">{cand.hostname}</span>
+                    ) : (
+                      <span className="text-xs text-amber-600/80 italic flex-1 font-normal">{zh ? '手动输入目标 (非资产表)' : 'Manual Target'}</span>
+                    )}
+                    {cand.tags.length > 0 && (
+                      <div className="flex items-center gap-1 shrink-0 max-w-[150px] overflow-hidden">
+                        {cand.tags.slice(0, 2).map(t => (
+                          <span key={t.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-white border border-black/5">
+                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: t.color || '#94a3b8' }} />
+                            <span className="truncate">{zh ? (t.label_zh || t.label) : t.label}</span>
+                          </span>
+                        ))}
+                        {cand.tags.length > 2 && <span className="text-[9px] text-slate-400">+{cand.tags.length - 2}</span>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="px-6 py-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setCandidateModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-xs text-slate-600 hover:bg-slate-100 transition-all"
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmAddCandidates}
+                  disabled={candidateList.filter(c => c.selected).length === 0}
+                  className="px-5 py-2 rounded-xl bg-[#164e63] text-white font-bold text-xs hover:bg-[#0891b2] transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-cyan-950/10"
+                >
+                  {zh ? `确认添加 (${candidateList.filter(c => c.selected).length}台)` : `Add Selected (${candidateList.filter(c => c.selected).length})`}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

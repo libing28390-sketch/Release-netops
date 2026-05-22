@@ -53,3 +53,4 @@ test_dragon.mp3
 
 # Cython intermediate files
 backend/license_auth/*.c
+tools/license_issuer/issued/registry.json
