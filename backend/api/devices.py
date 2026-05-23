@@ -851,7 +851,7 @@ def device_onboard(device_id: str, payload: dict = Body(...)):
         raise
     except Exception as e:
         _logger.exception("Onboard action failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="服务内部异常，请联系管理员查看后端日志")
     finally:
         conn.close()
 def update_device_config(device_id: str, payload: dict = Body(...)):
@@ -1130,9 +1130,13 @@ def test_device_connection(payload: dict = Body(...)):
         logger.error(f"Connection error for {hostname or ip_address}: {str(e)}", exc_info=True)
         raw_error = str(e)
         error_code = get_ssh_error_code(raw_error)
+        # 对于能识别的 SSH 错误，返回结构化用户友好响应
         if error_code:
             return _build_ssh_failure_response(hostname, ip_address, raw_error, probe_output, probe_stages, status_code=500)
-        raise HTTPException(status_code=500, detail=f"Connection error: {raw_error}")
+        # 对于不能识别的错误（如 AttributeError、ImportError 等内部代码错误），
+        # 不要将原始 Python 异常暴露给前端，返回通用的内部错误提示
+        user_message = "服务内部异常，请联系管理员查看后端日志"
+        return _build_ssh_failure_response(hostname, ip_address, user_message, probe_output, probe_stages, status_code=500)
 
 @router.post("/devices/import")
 def import_devices(payload: dict = Body(...)):

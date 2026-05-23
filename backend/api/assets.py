@@ -1024,9 +1024,8 @@ async def verify_asset_connectivity(asset_id: str):
                 elif 'ScrapliConnectionNotOpened' in err_str:
                     results["ssh_error"] = "连接未建立：请检查 IP 和端口"
                 else:
-                    # Clean up technical debris from the error string
-                    clean_err = err_str.split('\n')[0]
-                    results["ssh_error"] = f"SSH 失败: {clean_err}"
+                    # 不将原始 Python 异常暴露给前端
+                    results["ssh_error"] = "服务内部异常，请联系管理员查看后端日志"
         else:
             results["ssh_error"] = "No credentials provided for login test"
 

@@ -177,7 +177,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global unhandled exception on {request.url.path}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal Server Error: {str(exc)}", "type": type(exc).__name__},
+        content={"detail": "服务内部异常，请联系管理员查看后端日志"},
     )
 
 @app.exception_handler(RequestValidationError)
