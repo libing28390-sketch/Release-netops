@@ -82,6 +82,29 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   const [terminalApp, setTerminalApp] = React.useState(() => localStorage.getItem('terminal_app') || 'xshell');
   const [showFixedPin, setShowFixedPin] = React.useState(false);
   const [filePickerError, setFilePickerError] = React.useState('');
+  const [showPathSuggestions, setShowPathSuggestions] = React.useState(false);
+
+  // 各终端工具的常见安装路径（Windows）
+  const PATH_PRESETS: Record<string, string[]> = {
+    xshell: [
+      'C:\\Program Files (x86)\\NetSarang\\Xshell 8\\Xshell.exe',
+      'C:\\Program Files (x86)\\NetSarang\\Xshell 7\\Xshell.exe',
+      'C:\\Program Files\\NetSarang\\Xshell 8\\Xshell.exe',
+    ],
+    putty: [
+      'C:\\Program Files\\PuTTY\\putty.exe',
+      'C:\\Program Files (x86)\\PuTTY\\putty.exe',
+      'C:\\Windows\\System32\\putty.exe',
+    ],
+    securecrt: [
+      'C:\\Program Files\\VanDyke Software\\SecureCRT\\SecureCRT.exe',
+      'C:\\Program Files (x86)\\VanDyke Software\\SecureCRT\\SecureCRT.exe',
+    ],
+    mobaxterm: [
+      'C:\\Program Files (x86)\\Mobatek\\MobaXterm\\MobaXterm.exe',
+      'C:\\Program Files\\Mobatek\\MobaXterm\\MobaXterm.exe',
+    ],
+  };
   
   if (!open) return null;
 
@@ -485,40 +508,50 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                         />
                       </div>
                       {terminalApp !== 'standard' && (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            setFilePickerError('');
-                            try {
-                              const res = await fetch('/api/system/file-picker');
-                              const data = await res.json();
-                              if (data.path) {
-                                setLocalTerminalPath(data.path);
-                                localStorage.setItem('local_terminal_path', data.path);
-                              } else if (data.error) {
-                                setFilePickerError(data.error);
-                              }
-                            } catch (err) {
-                              setFilePickerError(language === 'zh' ? '无法调用文件浏览器，请手动输入路径。' : 'File picker unavailable, please type the path manually.');
-                              console.error(err);
-                            }
-                          }}
-                          className={`px-3 py-2 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 shadow-sm`}
-                        >
-                          <MonitorSpeaker size={14} />
-                          {language === 'zh' ? '浏览' : 'Browse'}
-                        </button>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowPathSuggestions(v => !v)}
+                            className={`px-3 py-2 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 shadow-sm`}
+                          >
+                            <MonitorSpeaker size={14} />
+                            {language === 'zh' ? '常用路径' : 'Presets'}
+                          </button>
+                          {showPathSuggestions && (
+                            <div className={`absolute right-0 top-full mt-1 z-50 w-96 rounded-xl border shadow-xl overflow-hidden ${isDark ? 'bg-[#0d1a2a] border-white/15' : 'bg-white border-black/10'}`}>
+                              <div className={`px-3 py-2 border-b text-[10px] font-bold uppercase tracking-widest ${isDark ? 'border-white/10 text-white/40' : 'border-black/8 text-black/40'}`}>
+                                {language === 'zh' ? '点击填入路径，再手动确认是否正确' : 'Click to fill — verify the path is correct'}
+                              </div>
+                              {(PATH_PRESETS[terminalApp] || []).map((p) => (
+                                <button
+                                  key={p}
+                                  type="button"
+                                  onClick={() => {
+                                    setLocalTerminalPath(p);
+                                    localStorage.setItem('local_terminal_path', p);
+                                    setShowPathSuggestions(false);
+                                    setFilePickerError('');
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-[11px] font-mono transition-colors ${isDark ? 'text-white/70 hover:bg-white/8' : 'text-black/70 hover:bg-black/5'}`}
+                                >
+                                  {p}
+                                </button>
+                              ))}
+                              <div className={`px-3 py-2 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
+                                <p className={`text-[10px] ${isDark ? 'text-white/30' : 'text-black/35'}`}>
+                                  {language === 'zh'
+                                    ? '也可直接在输入框中粘贴完整路径'
+                                    : 'Or paste the full path directly into the input box'}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
                 </div>
                 
-                {filePickerError && (
-                  <p className={`text-[10px] leading-relaxed flex items-start gap-1.5 ${isDark ? 'text-amber-400/80' : 'text-amber-700'}`}>
-                    <Info size={12} className="mt-0.5 shrink-0 text-amber-500" />
-                    {filePickerError}
-                  </p>
-                )}
                 
                 <p className={`text-[10px] leading-relaxed flex items-center gap-1.5 ${isDark ? 'text-white/30' : 'text-black/40'}`}>
                   <Info size={12} className="text-cyan-500" />

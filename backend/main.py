@@ -41,7 +41,7 @@ from api.config_drift import router as config_drift_router
 from api.capacity import router as capacity_router
 from api.ipam import router as ipam_router
 from api.assets import router as assets_router
-from api.pam import router as pam_router
+from api.pam import router as pam_router, ws_router as pam_ws_router
 from api.change_orders import router as change_orders_router
 from api.setup import router as setup_router
 from api.ip_locator import router as ip_locator_router
@@ -248,6 +248,8 @@ app.include_router(textfsm_templates_router, prefix="/api", dependencies=[Depend
 app.include_router(change_orders_router,  prefix="/api", dependencies=[Depends(require_feature("change_orders"))])
 app.include_router(pam_router,            prefix="/api", dependencies=[Depends(require_feature("access_center"))])
 app.include_router(audit_router,          prefix="/api", dependencies=[Depends(require_feature("rbac"))])
+# PAM WebSocket 单独注册，不带 feature 依赖（token 本身即凭证）
+app.include_router(pam_ws_router,         prefix="/api")
 
 # ── License Middleware (after CORS) ──────────────
 # bootstrap_license_protection() 在编译后的 .so 内部强制注册中间件并建立完整性基线。

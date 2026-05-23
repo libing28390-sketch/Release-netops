@@ -33,6 +33,10 @@ from services.vault_service import resolve_device_credentials
 from services.audit_service import log_audit_event
 
 router = APIRouter()
+# WebSocket 路由单独放在无依赖的 router，避免 FastAPI 在 WS 握手阶段
+# 因 Depends(require_feature) 无法注入 Request 而返回 404。
+# WS 自身已通过 session_token 做一次性令牌验证，无需额外 License 依赖。
+ws_router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Track active WebSocket sessions for admin kill.
@@ -513,7 +517,7 @@ def _consume_token(session_id: str):
         conn.close()
 
 
-@router.websocket('/pam/ws/{session_token}')
+@ws_router.websocket('/pam/ws/{session_token}')
 async def pam_terminal_ws(websocket: WebSocket, session_token: str):
     """
     Controlled terminal WebSocket.
