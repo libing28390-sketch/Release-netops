@@ -81,7 +81,6 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   const [localTerminalPath, setLocalTerminalPath] = React.useState(() => localStorage.getItem('local_terminal_path') || '');
   const [terminalApp, setTerminalApp] = React.useState(() => localStorage.getItem('terminal_app') || 'xshell');
   const [showFixedPin, setShowFixedPin] = React.useState(false);
-  const [filePickerError, setFilePickerError] = React.useState('');
   const [showPathSuggestions, setShowPathSuggestions] = React.useState(false);
 
   // 各终端工具的常见安装路径（Windows）
@@ -503,7 +502,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                             setLocalTerminalPath(val);
                             localStorage.setItem('local_terminal_path', val);
                           }}
-                          placeholder={terminalApp === 'standard' ? (language === 'zh' ? '标准模式无需路径' : 'No path needed') : (language === 'zh' ? '请选择程序路径...' : 'Select path...')}
+                          placeholder={terminalApp === 'standard' ? (language === 'zh' ? '标准模式无需路径' : 'No path needed') : (language === 'zh' ? '直接粘贴路径，或点击右侧「常用路径」' : 'Paste path here, or click Presets →')}
                           className={`w-full pl-9 pr-3 py-2 rounded-lg text-xs outline-none border transition-all ${terminalApp === 'standard' ? 'opacity-40 cursor-not-allowed bg-black/5' : (isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/30 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40')}`}
                         />
                       </div>
@@ -530,7 +529,6 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                                     setLocalTerminalPath(p);
                                     localStorage.setItem('local_terminal_path', p);
                                     setShowPathSuggestions(false);
-                                    setFilePickerError('');
                                   }}
                                   className={`w-full text-left px-3 py-2 text-[11px] font-mono transition-colors ${isDark ? 'text-white/70 hover:bg-white/8' : 'text-black/70 hover:bg-black/5'}`}
                                 >
