@@ -184,32 +184,93 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     fixedPw?: string,
     mfaNonce?: string,
   ) => {
+    const host = dev.ip_address;
+    const user = level === 'admin' ? (dev.admin_username || 'admin') : (dev.normal_username || 'user');
+
+    // MFA verification for privileged access — still goes through backend
+    if (level === 'admin') {
+      if (!mfaCode || !fixedPw) {
+        openMFAModal({ device: dev, appType: 'xshell', identity: 'privileged' });
+        return;
+      }
+      try {
+        const res = await fetch('/api/system/launch-terminal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            app_type: terminalType,
+            path: '__mfa_verify_only__',   // 仅做 MFA 校验，不实际启动
+            host, user,
+            requester_username: currentUsername || 'unknown',
+            access_level: 'admin',
+            mfa_code: mfaCode,
+            fixed_pin: fixedPw,
+            mfa_nonce: mfaNonce,
+          })
+        });
+        const result = await res.json();
+        if (result.requires_mfa) { openMFAModal({ device: dev, appType: 'xshell', identity: 'privileged' }); return; }
+        if (!result.success && result.error && !result.error.includes('path not found') && !result.error.includes('Executable')) {
+          showToast(result.error, 'error'); return;
+        }
+        // MFA passed — fall through to local launch below
+      } catch {
+        showToast(isZh ? 'MFA 验证请求失败' : 'MFA verification failed', 'error');
+        return;
+      }
+    }
+
+    // ── 纯前端本地启动：通过 URI scheme 调起 Windows 客户端 ──
+    // 后端在 Linux 容器里无法执行 Windows 程序，必须由浏览器直接触发。
     try {
-      const res = await fetch('/api/system/launch-terminal', {
+      let uri = '';
+      switch (terminalType) {
+        case 'xshell':
+          // Xshell 支持标准 ssh:// URI，会自动弹出连接对话框
+          uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
+          break;
+        case 'putty':
+          uri = `putty://${encodeURIComponent(user)}@${host}`;
+          break;
+        case 'securecrt':
+          uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
+          break;
+        case 'mobaxterm':
+          uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
+          break;
+        default:
+          uri = `ssh://${encodeURIComponent(user)}@${host}`;
+      }
+
+      // 用隐藏 iframe 触发 URI scheme，避免浏览器跳转或报错
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = uri;
+      document.body.appendChild(iframe);
+      setTimeout(() => document.body.removeChild(iframe), 2000);
+
+      showToast(
+        isZh
+          ? `正在调起 ${terminalType === 'standard' ? '系统默认' : terminalType} 连接 ${host}...`
+          : `Launching ${terminalType} → ${host}...`,
+        'success'
+      );
+
+      // 异步写审计日志（fire-and-forget，不阻塞 UI）
+      fetch('/api/system/launch-terminal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           app_type: terminalType,
-          path: terminalPath,
-          host: dev.ip_address,
-          user: level === 'admin' ? (dev.admin_username || 'root') : (dev.normal_username || 'user'),
+          path: '__client_side_launch__',
+          host, user,
           requester_username: currentUsername || 'unknown',
           access_level: level,
-          mfa_code: mfaCode,
-          fixed_pin: fixedPw,
-          mfa_nonce: mfaNonce,
         })
-      });
-      const result = await res.json();
-      if (result.success) {
-        showToast(isZh ? '正在拉起本地客户端...' : 'Launching native client...', 'success');
-      } else if (result.requires_mfa) {
-        openMFAModal({ device: dev, appType: 'xshell', identity: 'privileged' });
-      } else {
-        showToast(result.error || 'Launch failed', 'error');
-      }
+      }).catch(() => {/* audit log failure is non-fatal */});
+
     } catch (err) {
-      showToast('Native launch request failed', 'error');
+      showToast(isZh ? '调起本地客户端失败，请检查浏览器是否允许打开外部程序' : 'Failed to launch local client — check browser permissions', 'error');
     }
   };
 

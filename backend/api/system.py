@@ -213,6 +213,9 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
         conn.close()
 
     if not path or not os.path.exists(path):
+        # 前端客户端侧启动模式：path 为特殊标记，跳过文件检查，只写审计日志
+        if path in ('__client_side_launch__', '__mfa_verify_only__'):
+            return {"success": True, "session_id": session_id, "client_side": True}
         return {"success": False, "error": f"Executable path not found: {path}"}
 
     plain_password = decrypt_credential(password)
