@@ -66,13 +66,23 @@ async def check_for_updates() -> Dict[str, Any]:
 
 @router.get("/file-picker")
 async def open_file_picker() -> Dict[str, Any]:
-    import tkinter as tk
-    from tkinter import filedialog
     import asyncio
     import concurrent.futures
 
+    # 检测是否在 Docker/无 GUI 环境下运行
+    is_docker = os.path.exists('/.dockerenv') or os.path.isfile('/proc/1/cgroup')
+    is_headless = sys.platform != 'win32' and not os.environ.get('DISPLAY')
+
+    if is_docker or is_headless:
+        return {
+            "path": "",
+            "error": "文件浏览器仅支持本地（Windows）部署模式。Docker 容器中请直接手动输入程序路径。"
+        }
+
     def run_picker():
         try:
+            import tkinter as tk
+            from tkinter import filedialog
             root = tk.Tk()
             root.withdraw()
             root.attributes("-topmost", True)
@@ -82,8 +92,8 @@ async def open_file_picker() -> Dict[str, Any]:
             )
             root.destroy()
             return {"path": file_path.replace('/', '\\')} if file_path else {"path": ""}
-        except Exception as e:
-            return {"path": "", "error": str(e)}
+        except Exception:
+            return {"path": "", "error": "文件浏览器不可用，请手动输入程序路径。"}
 
     with concurrent.futures.ThreadPoolExecutor() as pool:
         return await asyncio.get_event_loop().run_in_executor(pool, run_picker)
@@ -224,4 +234,4 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"success": True, "session_id": session_id}
     except Exception as e:
         logger.error(f"[System] Launch failed: {str(e)}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": "终端启动失败，请检查程序路径是否正确。此功能仅支持本地部署。"}
