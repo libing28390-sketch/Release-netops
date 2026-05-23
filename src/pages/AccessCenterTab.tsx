@@ -222,21 +222,11 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
     // ── 纯前端本地启动：通过 URI scheme 调起 Windows 客户端 ──
     // 后端在 Linux 容器里无法执行 Windows 程序，必须由浏览器直接触发。
-    // 注意：浏览器要求 Windows 已注册 ssh:// 协议处理器（Xshell 选项里勾选
-    // "注册 SSH/SFTP/Telnet/Rlogin 协议" 后即可）。
+    // 关键：所有终端工具都用 ssh:// 协议（Windows 全局只能注册一个 ssh:// 处理器，
+    // 由用户在系统里指定关联到哪个客户端）。这样 putty/xshell/securecrt 都走同一个
+    // 协议，避免 putty:// 这种未注册协议导致的静默失败。
     try {
-      let uri = '';
-      switch (terminalType) {
-        case 'putty':
-          uri = `putty://${encodeURIComponent(user)}@${host}`;
-          break;
-        case 'xshell':
-        case 'securecrt':
-        case 'mobaxterm':
-        case 'standard':
-        default:
-          uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
-      }
+      const uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
 
       // 写审计日志（同步等待返回，便于排障）
       try {
@@ -268,8 +258,8 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
       showToast(
         isZh
-          ? `正在调起 ${terminalType === 'standard' ? '系统默认 SSH' : terminalType} 连接 ${host}。若未弹出客户端，请在 Xshell 选项中勾选「注册 SSH/Telnet 协议」后重试。`
-          : `Launching ${terminalType} → ${host}. If client doesn't open, register the ssh:// protocol in Xshell options.`,
+          ? `正在通过 ssh:// 协议调起 ${host}。若浏览器顶部弹出"是否允许打开此网站?"，请点击允许。若仍未弹出客户端，说明 Windows 上 ssh:// 协议未关联到任何 SSH 工具。`
+          : `Launching ssh://${user}@${host}. Allow the browser prompt. If nothing opens, register the ssh:// scheme on Windows.`,
         'success'
       );
 
