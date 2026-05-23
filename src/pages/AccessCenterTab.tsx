@@ -222,11 +222,15 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
     // ── 纯前端本地启动：通过 URI scheme 调起 Windows 客户端 ──
     // 后端在 Linux 容器里无法执行 Windows 程序，必须由浏览器直接触发。
-    // 关键：所有终端工具都用 ssh:// 协议（Windows 全局只能注册一个 ssh:// 处理器，
-    // 由用户在系统里指定关联到哪个客户端）。这样 putty/xshell/securecrt 都走同一个
-    // 协议，避免 putty:// 这种未注册协议导致的静默失败。
+    // 如果用户在个人设置里选择了特定的本地终端工具（Xshell, PuTTY 等），则通过 nexora:// 协议调起，
+    // 否则直接使用系统默认的 ssh:// 协议。
     try {
-      const uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
+      let uri = '';
+      if (terminalType !== 'standard') {
+        uri = `nexora://${host}?user=${encodeURIComponent(user)}&client=${terminalType}&path=${encodeURIComponent(terminalPath || '')}`;
+      } else {
+        uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
+      }
 
       // 写审计日志（同步等待返回，便于排障）
       try {
@@ -256,10 +260,16 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         try { document.body.removeChild(linker); } catch {}
       }, 1000);
 
+      const appName = terminalType === 'standard' ? 'SSH' : terminalType === 'xshell' ? 'Xshell' : terminalType === 'putty' ? 'PuTTY' : terminalType === 'securecrt' ? 'SecureCRT' : terminalType === 'mobaxterm' ? 'MobaXterm' : 'Terminal';
+
       showToast(
         isZh
-          ? `正在通过 ssh:// 协议调起 ${host}。若浏览器顶部弹出"是否允许打开此网站?"，请点击允许。若仍未弹出客户端，说明 Windows 上 ssh:// 协议未关联到任何 SSH 工具。`
-          : `Launching ssh://${user}@${host}. Allow the browser prompt. If nothing opens, register the ssh:// scheme on Windows.`,
+          ? (terminalType !== 'standard'
+              ? `正在调起本地 ${appName}。若无反应，请确认您的 Windows 系统已双击导入了 scripts/register_nexora.reg 注册表脚本。`
+              : `正在通过 ssh:// 协议调起 ${host}。若浏览器顶部弹出"是否允许打开此网站?"，请点击允许。若仍未弹出客户端，说明 Windows 上 ssh:// 协议未关联到任何 SSH 工具。`)
+          : (terminalType !== 'standard'
+              ? `Launching local ${appName} via nexora:// protocol. If nothing opens, double-click scripts/register_nexora.reg to register it on Windows.`
+              : `Launching ssh://${user}@${host}. Allow the browser prompt. If nothing opens, register the ssh:// scheme on Windows.`),
         'success'
       );
 

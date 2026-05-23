@@ -9,4 +9,4 @@ Windows Registry Editor Version 5.00
 [HKEY_CLASSES_ROOT\nexora\shell\open]
 
 [HKEY_CLASSES_ROOT\nexora\shell\open\command]
-@="python \"D:\\tools\\netops\\scripts\\nexora_handler.py\" \"%1\""
+@="pythonw \"D:\\tools\\netops\\scripts\\nexora_handler.py\" \"%1\""

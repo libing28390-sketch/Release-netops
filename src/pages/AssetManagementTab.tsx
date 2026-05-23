@@ -1268,20 +1268,39 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                 <div className="flex items-center gap-2">
                   <button 
                     onClick={() => {
+                      const terminalType = localStorage.getItem('terminal_app') || 'xshell';
+                      const terminalPath = localStorage.getItem('local_terminal_path') || '';
+                      let url = '';
+
                       if (terminalTarget) {
                         const user = terminalAccessLevel === 'admin' ? (terminalTarget.admin_username || 'admin') : (terminalTarget.normal_username || 'user');
-                        const url = `nexora://${terminalTarget.management_ip}?user=${encodeURIComponent(user)}&role=${terminalAccessLevel}&client=xshell`;
-                        window.location.href = url;
+                        if (terminalType !== 'standard') {
+                          url = `nexora://${terminalTarget.management_ip}?user=${encodeURIComponent(user)}&role=${terminalAccessLevel}&client=${terminalType}&path=${encodeURIComponent(terminalPath)}`;
+                        } else {
+                          url = `ssh://${encodeURIComponent(user)}@${terminalTarget.management_ip}:22`;
+                        }
                       } else if (terminalSession.title.includes('@')) {
                         const [u, h] = terminalSession.title.split('@');
                         const ip = h.split(':')[0];
-                        window.location.href = `nexora://${ip}?user=${u}&client=xshell`;
+                        if (terminalType !== 'standard') {
+                          url = `nexora://${ip}?user=${u}&client=${terminalType}&path=${encodeURIComponent(terminalPath)}`;
+                        } else {
+                          url = `ssh://${encodeURIComponent(u)}@${ip}:22`;
+                        }
+                      }
+
+                      if (url) {
+                        window.location.href = url;
                       }
                     }}
                     className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded hover:bg-emerald-500/30 transition-all flex items-center gap-1"
                   >
                     <MonitorSpeaker size={10} />
-                    {zh ? 'Xshell 调起' : 'Launch Xshell'}
+                    {(() => {
+                      const app = localStorage.getItem('terminal_app') || 'xshell';
+                      const appName = app === 'standard' ? 'SSH' : app === 'xshell' ? 'Xshell' : app === 'putty' ? 'PuTTY' : app === 'securecrt' ? 'SecureCRT' : app === 'mobaxterm' ? 'MobaXterm' : 'Terminal';
+                      return zh ? `${appName} 调起` : `Launch ${appName}`;
+                    })()}
                   </button>
                   <button onClick={() => setTerminalSession(null)} className="text-white/50 hover:text-white ml-2"><X size={14} /></button>
                 </div>
