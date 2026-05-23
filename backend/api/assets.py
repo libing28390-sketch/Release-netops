@@ -748,7 +748,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
                                 bg_conn = get_db_connection()
                                 try:
                                     bg_conn.execute(
-                                        "UPDATE devices SET rotation_status = 'completed', is_managed = 1, takeover_error = '' WHERE id = ?",
+                                        "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
                                         (dev_id,)
                                     )
                                     bg_conn.execute(

@@ -29,17 +29,19 @@ class NetmikoDriver(BaseDriver):
         return mapping.get(platform, 'cisco_ios')
 
     def connect(self):
-        pool = ConnectionPool()
-        existing = pool.get_connection(self.device_info)
-        
-        if existing and hasattr(existing, 'is_alive'):
-            try:
-                if existing.is_alive():
-                    self.conn = existing
-                    return
-            except Exception:
-                # Connection is dead (e.g. OSError: Socket is closed)
-                pass
+        use_pool = self.device_info.get('use_pool', True)
+        if use_pool:
+            pool = ConnectionPool()
+            existing = pool.get_connection(self.device_info)
+            
+            if existing and hasattr(existing, 'is_alive'):
+                try:
+                    if existing.is_alive():
+                        self.conn = existing
+                        return
+                except Exception:
+                    # Connection is dead (e.g. OSError: Socket is closed)
+                    pass
 
         # Resolve enable secret: explicit field → admin password → login password
         # For accounts with privilege 15, enable() is a no-op but Netmiko still
@@ -52,6 +54,7 @@ class NetmikoDriver(BaseDriver):
             self.password  # last resort: use login password
         )
 
+        from drivers.ssh_compat import build_netmiko_compatibility_kwargs
         device_params = {
             'device_type': self.device_type,
             'host': self.ip,
@@ -63,6 +66,7 @@ class NetmikoDriver(BaseDriver):
             'global_delay_factor': 1.5,
             'blocking_timeout': 30,
         }
+        device_params.update(build_netmiko_compatibility_kwargs())
         self.conn = ConnectHandler(**device_params)
         # Always call enable() for Cisco devices so Netmiko's internal state
         # is set to privilege exec ('#'). For privilege-15 accounts this is a
@@ -75,7 +79,8 @@ class NetmikoDriver(BaseDriver):
             except Exception:
                 pass
         
-        pool.set_connection(self.device_info, self.conn)
+        if use_pool:
+            pool.set_connection(self.device_info, self.conn)
 
     def disconnect(self):
         pass

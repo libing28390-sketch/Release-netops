@@ -41,9 +41,12 @@ class AutomationService:
             "ip": ip_address,
             "username": username,
             "password": password,
-            "platform": platform
+            "platform": platform,
+            "use_pool": False
         }
-        res = self.orchestrator.execute_single(device, "command", "exit")
+        is_server = any(t in platform.lower() for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'))
+        dummy_cmd = "echo 1" if is_server else "show clock"
+        res = self.orchestrator.execute_single(device, "command", dummy_cmd)
         return res.get("success", False)
 
     def check_connectivity(self, device_info: Dict[str, Any]) -> tuple[bool, str]:
@@ -56,9 +59,13 @@ class AutomationService:
             "password": device_info.get("password"),
             "platform": device_info.get("platform", "cisco_ios"),
             "port": device_info.get("port", 22),
-            "driver_type": self.driver_type
+            "driver_type": self.driver_type,
+            "use_pool": False
         }
-        res = self.orchestrator.execute_single(device, "command", "exit")
+        platform = str(device_info.get("platform") or "").lower()
+        is_server = any(t in platform for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'))
+        dummy_cmd = "echo 1" if is_server else "show clock"
+        res = self.orchestrator.execute_single(device, "command", dummy_cmd)
         success = res.get("success", False)
         if success:
             return True, "Connected successfully"

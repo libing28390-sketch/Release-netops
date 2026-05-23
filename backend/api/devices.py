@@ -986,6 +986,8 @@ def test_device_connection(payload: dict = Body(...)):
     platform = resolved.get('platform', 'cisco_ios')
     check_mode = resolved.get('check_mode', 'quick')
     
+    logger.info(f"DEBUG CONNECT TARGET: hostname={hostname}, user={username}, pwd_len={len(password or '')}, pwd_val={password!r}")
+    
     if not ip_address:
         raise HTTPException(status_code=400, detail="IP address is required")
     

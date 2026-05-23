@@ -122,7 +122,10 @@ def _execute_shell_script(ip: str, script_content: str, device: dict) -> str:
         
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(ip, port=port, username=username, password=password, timeout=10)
+        ssh.connect(
+            ip, port=port, username=username, password=password, timeout=10,
+            allow_agent=False, look_for_keys=False, disabled_algorithms={}
+        )
         stdin, stdout, stderr = ssh.exec_command(script_content)
         output = stdout.read().decode('utf-8', errors='ignore').strip()
         err_output = stderr.read().decode('utf-8', errors='ignore').strip()

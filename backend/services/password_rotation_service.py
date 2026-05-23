@@ -274,25 +274,22 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
 
         save_cmd = _SAVE_COMMANDS.get(platform, 'write memory')
 
-        new_normal_pwd = _generate_password(20)
-        new_admin_pwd = _generate_password(20)
+        new_password = _generate_password(20)
 
         normal_user = creds.get('normal_username') or device.get('normal_username') or 'user'
         admin_user = current_admin_user or 'admin'
 
         if role == 'enable':
             if 'cisco' in platform:
-                commands = [f'enable secret 0 {new_admin_pwd}']
+                commands = [f'enable secret 0 {new_password}']
             elif 'huawei' in platform or 'h3c' in platform:
-                commands = [f'super password role privilege 3 cipher {new_admin_pwd}']
+                commands = [f'super password role privilege 3 cipher {new_password}']
             else:
                 return {'success': False, 'message': 'Enable password rotation not supported for this platform'}
-            new_normal_pwd = None
-        else:
-            commands = (
-                handler(normal_user, new_normal_pwd) +
-                handler(admin_user, new_admin_pwd)
-            )
+        elif role == 'normal':
+            commands = handler(normal_user, new_password)
+        else: # admin
+            commands = handler(admin_user, new_password)
 
         now_str = datetime.now(timezone.utc).isoformat()
         expires_str = (datetime.now(timezone.utc) + timedelta(days=settings.PASSWORD_ROTATION_INTERVAL_DAYS)).isoformat()
@@ -306,30 +303,31 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
 
         conn_pre = get_db_connection()
         try:
-            if role != 'enable':
-                enc_normal_pending = encrypt_credential(new_normal_pwd)
-                enc_admin_pending = encrypt_credential(new_admin_pwd)
+            enc_pending = encrypt_credential(new_password)
+            if role == 'normal':
                 conn_pre.execute(
                     "UPDATE devices SET "
-                    "normal_password=?, admin_password=?, "
-                    "username=?, password=?, "
+                    "normal_password=?, "
                     "rotation_status=?, takeover_error=? "
                     "WHERE id=?",
-                    (enc_normal_pending, enc_admin_pending,
-                     admin_user, enc_admin_pending,
-                     'rotating', 'new credentials staged, SSH change in progress',
-                     device_id)
+                    (enc_pending, 'rotating', 'normal password staged, SSH change in progress', device_id)
                 )
-            else:
-                enc_enable_pending = encrypt_credential(new_admin_pwd)
+            elif role == 'admin':
+                conn_pre.execute(
+                    "UPDATE devices SET "
+                    "admin_password=?, username=?, password=?, "
+                    "rotation_status=?, takeover_error=? "
+                    "WHERE id=?",
+                    (enc_pending, admin_user, enc_pending, 'rotating', 'admin password staged, SSH change in progress', device_id)
+                )
+            elif role == 'enable':
                 conn_pre.execute(
                     "UPDATE devices SET enable_password=?, rotation_status=?, takeover_error=? WHERE id=?",
-                    (enc_enable_pending, 'rotating',
-                     'enable secret staged, SSH change in progress', device_id)
+                    (enc_pending, 'rotating', 'enable secret staged, SSH change in progress', device_id)
                 )
             conn_pre.commit()
             logger.info(
-                f"[Rotation] Staged new credentials in DB for {device.get('hostname')} "
+                f"[Rotation] Staged new {role} credentials in DB for {device.get('hostname')} "
                 f"(pending SSH apply)"
             )
         finally:
@@ -354,7 +352,7 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
             from drivers.factory import DriverFactory
             logger.info(
                 f"[Rotation] SSH to {device.get('hostname')} as {login_user} "
-                f"(dual-role rotation via single session)"
+                f"({role} role rotation)"
             )
             with DriverFactory.get_driver('netmiko', device_info) as driver:
                 res = driver.send_config(commands)
@@ -376,78 +374,100 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
         try:
             if ssh_error is None:
                 # Success: mark as active, sync to physical_assets
-                if role != 'enable':
+                enc_new = encrypt_credential(new_password)
+                if role == 'normal':
                     conn_post.execute(
                         "UPDATE devices SET "
-                        "normal_password_last_rotated=?, normal_password_expires_at=?, "
-                        "admin_password_last_rotated=?,  admin_password_expires_at=?, "
+                        "normal_password=?, normal_password_last_rotated=?, normal_password_expires_at=?, "
                         "rotation_status=?, takeover_error=?, is_managed=? "
                         "WHERE id=?",
-                        (now_str, expires_str,
-                         now_str, expires_str,
-                         'completed', '', 1,
-                         device_id)
+                        (enc_new, now_str, expires_str, 'completed', '', 1, device_id)
                     )
                     if asset_id:
                         conn_post.execute(
                             "UPDATE physical_assets SET "
                             "normal_username=?, normal_password=?, "
+                            "is_managed=?, takeover_error=? "
+                            "WHERE id=?",
+                            (normal_user, enc_new, 1, '', asset_id)
+                        )
+                elif role == 'admin':
+                    conn_post.execute(
+                        "UPDATE devices SET "
+                        "admin_password=?, admin_password_last_rotated=?, admin_password_expires_at=?, "
+                        "username=?, password=?, "
+                        "rotation_status=?, takeover_error=?, is_managed=? "
+                        "WHERE id=?",
+                        (enc_new, now_str, expires_str, admin_user, enc_new, 'completed', '', 1, device_id)
+                    )
+                    if asset_id:
+                        conn_post.execute(
+                            "UPDATE physical_assets SET "
                             "admin_username=?,  admin_password=?, "
                             "username=?, password=?, "
                             "is_managed=?, takeover_error=? "
                             "WHERE id=?",
-                            (normal_user, encrypt_credential(new_normal_pwd),
-                             admin_user, encrypt_credential(new_admin_pwd),
-                             admin_user, encrypt_credential(new_admin_pwd),
-                             1, '',
-                             asset_id)
+                            (admin_user, enc_new, admin_user, enc_new, 1, '', asset_id)
                         )
-                else:
+                elif role == 'enable':
                     conn_post.execute(
                         "UPDATE devices SET "
-                        "enable_password_last_rotated=?, enable_password_expires_at=?, "
+                        "enable_password=?, enable_password_last_rotated=?, enable_password_expires_at=?, "
                         "rotation_status=?, takeover_error=? "
                         "WHERE id=?",
-                        (now_str, expires_str, 'completed', '', device_id)
+                        (enc_new, now_str, expires_str, 'completed', '', device_id)
                     )
                     if asset_id:
                         conn_post.execute(
                             "UPDATE physical_assets SET enable_password=? WHERE id=?",
-                            (encrypt_credential(new_admin_pwd), asset_id)
+                            (enc_new, asset_id)
                         )
                 conn_post.commit()
                 logger.info(
                     f"[Rotation] Completed for {device.get('hostname')} "
-                    f"(normal + admin written to DB and device)"
+                    f"({role} written to DB and device)"
                 )
                 return {
                     'success': True,
-                    'message': f"Passwords rotated for {device.get('hostname', device_id)} (normal + admin)",
+                    'message': f"Password rotated for {device.get('hostname', device_id)} ({role})",
                     'rotated_at': now_str,
                     'expires_at': expires_str,
                 }
             else:
                 # SSH failed: roll back DB to the old passwords so the DB stays
                 # consistent with what's actually on the device.
-                conn_post.execute(
-                    "UPDATE devices SET "
-                    "normal_password=?, admin_password=?, password=?, "
-                    "rotation_status=?, takeover_error=? "
-                    "WHERE id=?",
-                    (old_enc_normal, old_enc_admin, old_enc_admin,
-                     'failed',
-                     f'SSH apply failed: {ssh_error[:400]}. '
-                     f'DB has been rolled back to previous credentials. '
-                     f'Device password was NOT changed.',
-                     device_id)
-                ) if role != 'enable' else conn_post.execute(
-                    "UPDATE devices SET enable_password=?, rotation_status=?, takeover_error=? WHERE id=?",
-                    (old_enc_enable,
-                     'failed',
-                     f'SSH apply failed: {ssh_error[:400]}. '
-                     f'DB has been rolled back to previous enable password.',
-                     device_id)
-                )
+                if role == 'normal':
+                    conn_post.execute(
+                        "UPDATE devices SET "
+                        "normal_password=?, "
+                        "rotation_status=?, takeover_error=? "
+                        "WHERE id=?",
+                        (old_enc_normal, 'failed',
+                         f'SSH apply failed: {ssh_error[:400]}. '
+                         f'DB has been rolled back to previous normal credentials. '
+                         f'Device password was NOT changed.',
+                         device_id)
+                    )
+                elif role == 'admin':
+                    conn_post.execute(
+                        "UPDATE devices SET "
+                        "admin_password=?, password=?, "
+                        "rotation_status=?, takeover_error=? "
+                        "WHERE id=?",
+                        (old_enc_admin, old_enc_admin, 'failed',
+                         f'SSH apply failed: {ssh_error[:400]}. '
+                         f'DB has been rolled back to previous admin credentials. '
+                         f'Device password was NOT changed.',
+                         device_id)
+                    )
+                elif role == 'enable':
+                    conn_post.execute(
+                        "UPDATE devices SET enable_password=?, rotation_status=?, takeover_error=? WHERE id=?",
+                        (old_enc_enable, 'failed',
+                         f'SSH apply failed: {ssh_error[:400]}. '
+                         f'DB has been rolled back to previous enable password.',
+                         device_id)
+                    )
                 conn_post.commit()
                 return {'success': False, 'message': f"Rotation failed: {ssh_error}"}
         finally:

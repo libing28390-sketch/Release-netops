@@ -169,6 +169,7 @@ def _build_device_info(dev: dict) -> dict:
         'hostname': dev.get('hostname') or dev.get('ip_address'),
         'ip_address': dev['ip_address'],
         'device_type': dev.get('device_type', 'cisco_ios'),
+        'platform': dev.get('platform') or dev.get('device_type') or 'cisco_ios',
         'username': dev.get('username', ''),
         'password': dev.get('password', ''),
         'enable_password': dev.get('enable_password', ''),
@@ -178,8 +179,6 @@ def _build_device_info(dev: dict) -> dict:
 
 def _device_ping(device_info: dict, target: str, count: int = 4, source: str = '') -> dict[str, Any]:
     """通过 SSH 到设备执行 ping 命令，解析结果。"""
-    from drivers.factory import get_driver
-
     dtype = (device_info.get('device_type') or '').lower()
     ip = device_info.get('ip_address', '')
 
@@ -199,10 +198,16 @@ def _device_ping(device_info: dict, target: str, count: int = 4, source: str = '
             cmd = f'ping {target} repeat {count} source {source}'
 
     try:
-        driver = get_driver(device_info)
-        driver.connect()
-        output = driver.execute_command(cmd, timeout=count * 5 + 10)
-        driver.disconnect()
+        from services.automation_service import AutomationService
+        svc = AutomationService()
+        # Avoid using connection pool for transient connectivity tests
+        device_info_run = {**device_info, 'use_pool': False}
+        results = svc.execute_commands(device_info_run, [cmd])
+        if results and results[0].get('success'):
+            output = results[0].get('output') or results[0].get('stdout') or ''
+        else:
+            err = (results[0].get('error') or results[0].get('stderr') or 'Connection failed') if results else 'Connection failed'
+            raise Exception(err)
 
         # 解析丢包率
         loss_match = re.search(r'(\d+)\s*(%|percent)\s*(loss|packet loss|丢失)', output, re.I)
@@ -243,8 +248,6 @@ def _device_ping(device_info: dict, target: str, count: int = 4, source: str = '
 
 def _device_traceroute(device_info: dict, target: str, source: str = '') -> dict[str, Any]:
     """通过 SSH 到设备执行 traceroute 命令。"""
-    from drivers.factory import get_driver
-
     dtype = (device_info.get('device_type') or '').lower()
     ip = device_info.get('ip_address', '')
 
@@ -260,10 +263,16 @@ def _device_traceroute(device_info: dict, target: str, source: str = '') -> dict
             cmd = f'traceroute {target} source {source}'
 
     try:
-        driver = get_driver(device_info)
-        driver.connect()
-        output = driver.execute_command(cmd, timeout=60)
-        driver.disconnect()
+        from services.automation_service import AutomationService
+        svc = AutomationService()
+        # Avoid using connection pool for transient connectivity tests
+        device_info_run = {**device_info, 'use_pool': False}
+        results = svc.execute_commands(device_info_run, [cmd])
+        if results and results[0].get('success'):
+            output = results[0].get('output') or results[0].get('stdout') or ''
+        else:
+            err = (results[0].get('error') or results[0].get('stderr') or 'Connection failed') if results else 'Connection failed'
+            raise Exception(err)
 
         hops = []
         for line in output.splitlines():

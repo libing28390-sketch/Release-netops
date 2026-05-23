@@ -21,12 +21,14 @@ class LinuxDriver(BaseDriver):
         }
 
     def connect(self):
-        pool = ConnectionPool()
-        existing = pool.get_connection(self.device_info)
-        
-        if existing and existing.get_transport() and existing.get_transport().is_active():
-            self.ssh = existing
-            return
+        use_pool = self.device_info.get('use_pool', True)
+        if use_pool:
+            pool = ConnectionPool()
+            existing = pool.get_connection(self.device_info)
+            
+            if existing and existing.get_transport() and existing.get_transport().is_active():
+                self.ssh = existing
+                return
 
         self.ssh = paramiko.SSHClient()
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -34,7 +36,8 @@ class LinuxDriver(BaseDriver):
             hostname=self.ip, port=self.port, username=self.username,
             password=self.password, timeout=10, allow_agent=False, look_for_keys=False
         )
-        pool.set_connection(self.device_info, self.ssh)
+        if use_pool:
+            pool.set_connection(self.device_info, self.ssh)
 
     def disconnect(self):
         pass

@@ -598,6 +598,7 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
             ip, port=port, username=username, password=password,
             known_hosts=None, client_factory=custom_client_factory,
             login_timeout=15,
+            agent_path=None, client_keys=[],
             # Support legacy devices that only use CBC ciphers
             encryption_algs=[
                 'chacha20-poly1305@openssh.com',
