@@ -253,14 +253,18 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         });
       } catch {/* audit log failure is non-fatal */}
 
-      // 用隐藏 iframe 触发 URI scheme（比 window.open 更稳，不会留下空白标签页）
-      const iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      iframe.src = uri;
-      document.body.appendChild(iframe);
+      // 用户主动点击触发的 <a> 元素 click，浏览器会识别为用户行为，不会拦截
+      // （iframe.src 触发外部协议在 Chrome/Edge 中会被静默拦截）
+      const linker = document.createElement('a');
+      linker.href = uri;
+      linker.style.display = 'none';
+      // target=_self 避免新开空白页；rel 防止任何 referrer 泄漏
+      linker.rel = 'noopener noreferrer';
+      document.body.appendChild(linker);
+      linker.click();
       setTimeout(() => {
-        try { document.body.removeChild(iframe); } catch {}
-      }, 3000);
+        try { document.body.removeChild(linker); } catch {}
+      }, 1000);
 
       showToast(
         isZh
