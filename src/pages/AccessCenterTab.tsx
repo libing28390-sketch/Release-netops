@@ -222,52 +222,52 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
     // ── 纯前端本地启动：通过 URI scheme 调起 Windows 客户端 ──
     // 后端在 Linux 容器里无法执行 Windows 程序，必须由浏览器直接触发。
+    // 注意：浏览器要求 Windows 已注册 ssh:// 协议处理器（Xshell 选项里勾选
+    // "注册 SSH/SFTP/Telnet/Rlogin 协议" 后即可）。
     try {
       let uri = '';
       switch (terminalType) {
-        case 'xshell':
-          // Xshell 支持标准 ssh:// URI，会自动弹出连接对话框
-          uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
-          break;
         case 'putty':
           uri = `putty://${encodeURIComponent(user)}@${host}`;
           break;
+        case 'xshell':
         case 'securecrt':
-          uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
-          break;
         case 'mobaxterm':
-          uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
-          break;
+        case 'standard':
         default:
-          uri = `ssh://${encodeURIComponent(user)}@${host}`;
+          uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
       }
 
-      // 用隐藏 iframe 触发 URI scheme，避免浏览器跳转或报错
+      // 写审计日志（同步等待返回，便于排障）
+      try {
+        await fetch('/api/system/launch-terminal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            app_type: terminalType,
+            path: '__client_side_launch__',
+            host, user,
+            requester_username: currentUsername || 'unknown',
+            access_level: level,
+          })
+        });
+      } catch {/* audit log failure is non-fatal */}
+
+      // 用隐藏 iframe 触发 URI scheme（比 window.open 更稳，不会留下空白标签页）
       const iframe = document.createElement('iframe');
       iframe.style.display = 'none';
       iframe.src = uri;
       document.body.appendChild(iframe);
-      setTimeout(() => document.body.removeChild(iframe), 2000);
+      setTimeout(() => {
+        try { document.body.removeChild(iframe); } catch {}
+      }, 3000);
 
       showToast(
         isZh
-          ? `正在调起 ${terminalType === 'standard' ? '系统默认' : terminalType} 连接 ${host}...`
-          : `Launching ${terminalType} → ${host}...`,
+          ? `正在调起 ${terminalType === 'standard' ? '系统默认 SSH' : terminalType} 连接 ${host}。若未弹出客户端，请在 Xshell 选项中勾选「注册 SSH/Telnet 协议」后重试。`
+          : `Launching ${terminalType} → ${host}. If client doesn't open, register the ssh:// protocol in Xshell options.`,
         'success'
       );
-
-      // 异步写审计日志（fire-and-forget，不阻塞 UI）
-      fetch('/api/system/launch-terminal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          app_type: terminalType,
-          path: '__client_side_launch__',
-          host, user,
-          requester_username: currentUsername || 'unknown',
-          access_level: level,
-        })
-      }).catch(() => {/* audit log failure is non-fatal */});
 
     } catch (err) {
       showToast(isZh ? '调起本地客户端失败，请检查浏览器是否允许打开外部程序' : 'Failed to launch local client — check browser permissions', 'error');
