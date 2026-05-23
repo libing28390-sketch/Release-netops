@@ -54,3 +54,14 @@ test_dragon.mp3
 # Cython intermediate files
 backend/license_auth/*.c
 tools/license_issuer/issued/registry.json
+
+# Agent / IDE Artifacts
+task.md
+implementation_plan.md
+walkthrough.md
+refactor.cjs
+refactor2.cjs
+test_dragon.mp3
+
+# Keys
+*.pem
