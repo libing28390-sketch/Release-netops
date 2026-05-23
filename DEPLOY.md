@@ -272,6 +272,18 @@ docker compose up -d
 *Cause:* The default login is `admin` / `admin`. If you changed it or the DB failed to initialize, you can't log in.
 *Fix:* Use the same fix as above to completely reset the database and restore the default `admin` account.
 
+**3. Website shows "502 Bad Gateway"**
+*Cause:* The `netops` backend container failed to start or is still initializing.
+*Fix:* Check the backend logs with `docker compose logs -f netops`. Look for missing `.env` variables or Python errors.
+
+**4. Docker pull fails with `context deadline exceeded`**
+*Cause:* Docker Hub is unreachable or timing out from your server's network.
+*Fix:* Configure a Docker registry mirror in `/etc/docker/daemon.json` (see the top of this document for examples) and restart the Docker daemon.
+
+**5. License Invalid / System Locked**
+*Cause:* The `license.json` is missing from `data/`, or the `MACHINE_ID_OVERRIDE` in your `.env` doesn't match the license.
+*Fix:* Verify your machine ID via `http://<server-ip>/api/license/machine-id` and ensure a matching `license.json` is placed in the `data/` folder.
+
 #### Custom domain
 
 Edit `nginx/nginx.conf`, change `server_name _` to your domain:
@@ -559,6 +571,18 @@ docker compose up -d
 **2. Web 界面登录提示密码错误 (忘记 admin 密码)**
 *原因*：系统默认管理员为 `admin` / `admin`。如果你改过密码然后忘记了，或者由于某些原因数据库未正常初始化。
 *解决办法*：如果你是刚部署且没有重要数据，可以使用上面的命令彻底删除数据库数据卷，重新启动后会再次用 `admin` 账号进行初始化。
+
+**3. 访问页面提示 502 Bad Gateway**
+*原因*：后端的 `netops` 容器没有成功启动，或者还在启动加载中。
+*解决办法*：使用 `docker compose logs -f netops` 查看后端报错日志。通常是因为缺少必要的 `.env` 配置，或者容器仍在重启，修复后重新启动即可。
+
+**4. Docker 拉取镜像报 `context deadline exceeded`**
+*原因*：国内网络拉取 Docker Hub 官方镜像超时或受限。
+*解决办法*：请在 `/etc/docker/daemon.json` 中配置国内镜像加速器（详细步骤见本文档顶部的“网络优化”章节）。
+
+**5. 提示授权无效 (License Invalid) / 系统被锁定**
+*原因*：`data/license.json` 文件不存在，或者 `.env` 中的 `MACHINE_ID_OVERRIDE` 与当前机器不匹配。
+*解决办法*：访问 `http://<服务器IP>/api/license/machine-id` 获取机器码，联系厂商生成匹配的 License 并在系统中上传。
 
 #### 自定义域名
 
