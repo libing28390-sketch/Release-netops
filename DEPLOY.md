@@ -257,6 +257,21 @@ docker compose logs -f nginx     # Nginx logs
 docker compose restart netops    # Restart backend only
 ```
 
+#### Troubleshooting / FAQ
+
+**1. Database Connection Error (Postgres Password Authentication Failed)**
+*Cause:* You modified `POSTGRES_PASSWORD` in `.env` *after* starting the containers for the first time. The Postgres data volume is already initialized with the old password.
+*Fix (Warning: this will delete all database data):*
+```bash
+docker compose down
+docker volume rm netops-automation_netops-pgdata
+docker compose up -d
+```
+
+**2. Web UI Login Incorrect (Forgot default admin password)**
+*Cause:* The default login is `admin` / `admin`. If you changed it or the DB failed to initialize, you can't log in.
+*Fix:* Use the same fix as above to completely reset the database and restore the default `admin` account.
+
 #### Custom domain
 
 Edit `nginx/nginx.conf`, change `server_name _` to your domain:
@@ -528,6 +543,22 @@ docker compose logs -f netops    # 查看后端日志
 docker compose logs -f nginx     # 查看 Nginx 日志
 docker compose restart netops    # 仅重启后端
 ```
+
+#### 常见问题 (FAQ)
+
+**1. 后端连不上数据库 (Postgres Password Authentication Failed)**
+*原因*：你在**首次启动容器之后**，才修改了 `.env` 中的 `POSTGRES_PASSWORD`。由于 PostgreSQL 容器在首次启动时已经用当时的密码初始化了数据卷（Volume），后续修改不会自动同步。
+*解决办法（注意：这会清空所有数据库数据！）：*
+```bash
+docker compose down
+# 如果你 clone 的文件夹叫 netops-automation，前缀就是它
+docker volume rm netops-automation_netops-pgdata
+docker compose up -d
+```
+
+**2. Web 界面登录提示密码错误 (忘记 admin 密码)**
+*原因*：系统默认管理员为 `admin` / `admin`。如果你改过密码然后忘记了，或者由于某些原因数据库未正常初始化。
+*解决办法*：如果你是刚部署且没有重要数据，可以使用上面的命令彻底删除数据库数据卷，重新启动后会再次用 `admin` 账号进行初始化。
 
 #### 自定义域名
 
