@@ -63,5 +63,6 @@ refactor.cjs
 refactor2.cjs
 test_dragon.mp3
 
-# Keys
+# Keys — private key must never be committed; public key IS required for deployment
 *.pem
+!backend/license_auth/keys/public.pem
