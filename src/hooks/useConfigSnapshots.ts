@@ -336,7 +336,9 @@ export const useConfigSnapshots = ({
             }
             if (progress.finished) {
               window.clearInterval(pollInterval);
-              setActiveBackupRunId(null);
+              setTimeout(() => {
+                setActiveBackupRunId(null);
+              }, 3000);
               const { success, failed } = progress;
               showToast(
                 language === 'zh'

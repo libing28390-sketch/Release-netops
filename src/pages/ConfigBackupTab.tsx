@@ -59,6 +59,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   useEffect(() => {
     if (!activeRunId) {
       if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; }
+      setProgress(null);
       return;
     }
     const token = localStorage.getItem('netops_token');
