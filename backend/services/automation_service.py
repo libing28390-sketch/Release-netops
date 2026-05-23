@@ -45,3 +45,23 @@ class AutomationService:
         }
         res = self.orchestrator.execute_single(device, "command", "exit")
         return res.get("success", False)
+
+    def check_connectivity(self, device_info: Dict[str, Any]) -> tuple[bool, str]:
+        """
+        Used by the quick connect test to return both status and error message.
+        """
+        device = {
+            "ip": device_info.get("ip_address") or device_info.get("ip"),
+            "username": device_info.get("username"),
+            "password": device_info.get("password"),
+            "platform": device_info.get("platform", "cisco_ios"),
+            "port": device_info.get("port", 22),
+            "driver_type": self.driver_type
+        }
+        res = self.orchestrator.execute_single(device, "command", "exit")
+        success = res.get("success", False)
+        if success:
+            return True, "Connected successfully"
+        else:
+            error_msg = res.get("stderr") or res.get("error") or "Connection failed"
+            return False, error_msg
