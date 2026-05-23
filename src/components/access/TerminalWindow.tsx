@@ -10,7 +10,9 @@ interface TerminalWindowProps {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
-const WS_BASE = API_BASE.replace('http', 'ws');
+const WS_BASE = API_BASE
+  ? API_BASE.replace('http', 'ws')
+  : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 
 // Translate server-side error messages and WebSocket close reasons into
 // human-friendly guidance. Returns { title, detail, hint? } for rendering.

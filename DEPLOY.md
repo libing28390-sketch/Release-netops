@@ -294,9 +294,20 @@ server_name netops.example.com;
 
 #### HTTPS / SSL
 
-1. Place certificates in `nginx/ssl/`
-2. Uncomment the SSL volume in `docker-compose.yml`
-3. Add SSL server block to `nginx/nginx.conf`
+HTTPS is enabled by default in the Docker configuration. By default, the stack expects a certificate and key at `nginx/ssl/netops.crt` and `nginx/ssl/netops.key`.
+
+To generate a secure self-signed certificate for testing or internal network access, run:
+```bash
+.venv/bin/python scripts/generate_ssl_cert.py  # or python scripts/generate_ssl_cert.py
+```
+
+To use your own custom/valid CA certificates:
+1. Place your certificate file (`netops.crt`) and private key file (`netops.key`) in the `nginx/ssl/` directory.
+2. Recreate the containers:
+   ```bash
+   docker compose down
+   docker compose up -d
+   ```
 
 ---
 
@@ -594,9 +605,20 @@ server_name netops.example.com;
 
 #### 启用 HTTPS
 
-1. 将证书文件放入 `nginx/ssl/` 目录
-2. 取消 `docker-compose.yml` 中 SSL volume 的注释
-3. 在 `nginx/nginx.conf` 中添加 SSL 配置块
+Docker 部署配置中已默认启用 HTTPS。默认情况下，系统要求在 `nginx/ssl/` 目录下放置 `netops.crt`（证书）和 `netops.key`（私钥）文件。
+
+如需快速生成自签名证书以供测试或内网访问，请执行：
+```bash
+.venv/bin/python scripts/generate_ssl_cert.py  # 或 python scripts/generate_ssl_cert.py
+```
+
+若要配置您自己申请的受信任 CA 证书：
+1. 将您的证书和私钥文件分别重命名为 `netops.crt` 和 `netops.key`，并放入项目目录下的 `nginx/ssl/` 目录中。
+2. 重建并重启容器以应用配置：
+   ```bash
+   docker compose down
+   docker compose up -d
+   ```
 
 ---
 

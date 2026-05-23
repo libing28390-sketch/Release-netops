@@ -53,8 +53,8 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - netops-dist:/usr/share/nginx/html:ro
-      # 如需 SSL，取消下面注释并放入证书文件
-      # - ./nginx/ssl:/etc/nginx/ssl:ro
+      # SSL volume mounted to /etc/nginx/ssl
+      - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       netops:
         condition: service_healthy
