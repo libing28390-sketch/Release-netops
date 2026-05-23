@@ -32,9 +32,14 @@ class NetmikoDriver(BaseDriver):
         pool = ConnectionPool()
         existing = pool.get_connection(self.device_info)
         
-        if existing and hasattr(existing, 'is_alive') and existing.is_alive():
-            self.conn = existing
-            return
+        if existing and hasattr(existing, 'is_alive'):
+            try:
+                if existing.is_alive():
+                    self.conn = existing
+                    return
+            except Exception:
+                # Connection is dead (e.g. OSError: Socket is closed)
+                pass
 
         # Resolve enable secret: explicit field → admin password → login password
         # For accounts with privilege 15, enable() is a no-op but Netmiko still
