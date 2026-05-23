@@ -81,6 +81,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   const [localTerminalPath, setLocalTerminalPath] = React.useState(() => localStorage.getItem('local_terminal_path') || '');
   const [terminalApp, setTerminalApp] = React.useState(() => localStorage.getItem('terminal_app') || 'xshell');
   const [showFixedPin, setShowFixedPin] = React.useState(false);
+  const [filePickerError, setFilePickerError] = React.useState('');
   
   if (!open) return null;
 
@@ -487,14 +488,20 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                         <button
                           type="button"
                           onClick={async () => {
+                            setFilePickerError('');
                             try {
                               const res = await fetch('/api/system/file-picker');
                               const data = await res.json();
                               if (data.path) {
                                 setLocalTerminalPath(data.path);
                                 localStorage.setItem('local_terminal_path', data.path);
+                              } else if (data.error) {
+                                setFilePickerError(data.error);
                               }
-                            } catch (err) { console.error(err); }
+                            } catch (err) {
+                              setFilePickerError(language === 'zh' ? '无法调用文件浏览器，请手动输入路径。' : 'File picker unavailable, please type the path manually.');
+                              console.error(err);
+                            }
                           }}
                           className={`px-3 py-2 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 shadow-sm`}
                         >
@@ -505,6 +512,13 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     </div>
                   </div>
                 </div>
+                
+                {filePickerError && (
+                  <p className={`text-[10px] leading-relaxed flex items-start gap-1.5 ${isDark ? 'text-amber-400/80' : 'text-amber-700'}`}>
+                    <Info size={12} className="mt-0.5 shrink-0 text-amber-500" />
+                    {filePickerError}
+                  </p>
+                )}
                 
                 <p className={`text-[10px] leading-relaxed flex items-center gap-1.5 ${isDark ? 'text-white/30' : 'text-black/40'}`}>
                   <Info size={12} className="text-cyan-500" />
