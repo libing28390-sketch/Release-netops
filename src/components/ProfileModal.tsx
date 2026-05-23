@@ -550,6 +550,21 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   </div>
                 </div>
                 
+                {terminalApp !== 'standard' && (
+                  <div className={`flex justify-between items-center rounded-xl p-3 border ${isDark ? 'bg-cyan-500/5 border-cyan-500/15' : 'bg-cyan-50/50 border-cyan-500/10'}`}>
+                    <span className={`text-[11px] ${isDark ? 'text-white/55' : 'text-black/60'}`}>
+                      {language === 'zh' ? '需要 Windows 助手？下载自注册单文件版：' : 'Need Windows assistant? Download self-registering executable:'}
+                    </span>
+                    <a
+                      href="/api/system/download-assistant"
+                      download="nexora.exe"
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 shadow-sm`}
+                    >
+                      <Download size={12} />
+                      {language === 'zh' ? '下载 Nexora 助手' : 'Download Assistant'}
+                    </a>
+                  </div>
+                )}
                 
                 <p className={`text-[10px] leading-relaxed flex items-center gap-1.5 ${isDark ? 'text-white/30' : 'text-black/40'}`}>
                   <Info size={12} className="text-cyan-500" />

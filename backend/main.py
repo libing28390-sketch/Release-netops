@@ -284,6 +284,11 @@ def _daily_db_maintenance():
     logger.info("[Maintenance] Daily DB maintenance completed")
 
 
+# Serve static files from backend/static for downloads
+static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+os.makedirs(static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static_bin")
+
 # Serve static files from dist directory if it exists
 if os.path.exists("dist"):
     logger.info("Serving static files from dist directory")

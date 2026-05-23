@@ -186,6 +186,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   ) => {
     const host = dev.ip_address;
     const user = level === 'admin' ? (dev.admin_username || 'admin') : (dev.normal_username || 'user');
+    let sessionToken = '';
 
     // MFA verification for privileged access — still goes through backend
     if (level === 'admin') {
@@ -213,28 +214,18 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         if (!result.success && result.error && !result.error.includes('path not found') && !result.error.includes('Executable')) {
           showToast(result.error, 'error'); return;
         }
+        if (result.success && result.session_token) {
+          sessionToken = result.session_token;
+        }
         // MFA passed — fall through to local launch below
       } catch {
         showToast(isZh ? 'MFA 验证请求失败' : 'MFA verification failed', 'error');
         return;
       }
-    }
-
-    // ── 纯前端本地启动：通过 URI scheme 调起 Windows 客户端 ──
-    // 后端在 Linux 容器里无法执行 Windows 程序，必须由浏览器直接触发。
-    // 如果用户在个人设置里选择了特定的本地终端工具（Xshell, PuTTY 等），则通过 nexora:// 协议调起，
-    // 否则直接使用系统默认的 ssh:// 协议。
-    try {
-      let uri = '';
-      if (terminalType !== 'standard') {
-        uri = `nexora://${host}?user=${encodeURIComponent(user)}&client=${terminalType}&path=${encodeURIComponent(terminalPath || '')}`;
-      } else {
-        uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
-      }
-
-      // 写审计日志（同步等待返回，便于排障）
+    } else {
+      // Normal level: Fetch password from backend first (which also writes the audit log)
       try {
-        await fetch('/api/system/launch-terminal', {
+        const res = await fetch('/api/system/launch-terminal', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -245,7 +236,27 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
             access_level: level,
           })
         });
-      } catch {/* audit log failure is non-fatal */}
+        const result = await res.json();
+        if (result.success && result.session_token) {
+          sessionToken = result.session_token;
+        }
+      } catch (err) {
+        console.error('Failed to fetch password for normal user launch', err);
+      }
+    }
+
+    // ── 纯前端本地启动：通过 URI scheme 调起 Windows 客户端 ──
+    // 后端在 Linux 容器里无法执行 Windows 程序，必须由浏览器直接触发。
+    // 如果用户在个人设置里选择了特定的本地终端工具（Xshell, PuTTY 等），则通过 nexora:// 协议调起，
+    // 否则直接使用系统默认的 ssh:// 协议。
+    try {
+      let uri = '';
+      if (terminalType !== 'standard') {
+        const isSsl = window.location.protocol === 'https:' ? '1' : '0';
+        uri = `nexora://${window.location.host}?token=${sessionToken}&client=${terminalType}&path=${encodeURIComponent(terminalPath || '')}&ssl=${isSsl}`;
+      } else {
+        uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
+      }
 
       // 用户主动点击触发的 <a> 元素 click，浏览器会识别为用户行为，不会拦截
       // （iframe.src 触发外部协议在 Chrome/Edge 中会被静默拦截）
@@ -263,13 +274,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       const appName = terminalType === 'standard' ? 'SSH' : terminalType === 'xshell' ? 'Xshell' : terminalType === 'putty' ? 'PuTTY' : terminalType === 'securecrt' ? 'SecureCRT' : terminalType === 'mobaxterm' ? 'MobaXterm' : 'Terminal';
 
       showToast(
-        isZh
-          ? (terminalType !== 'standard'
-              ? `正在调起本地 ${appName}。若无反应，请确认您的 Windows 系统已双击导入了 scripts/register_nexora.reg 注册表脚本。`
-              : `正在通过 ssh:// 协议调起 ${host}。若浏览器顶部弹出"是否允许打开此网站?"，请点击允许。若仍未弹出客户端，说明 Windows 上 ssh:// 协议未关联到任何 SSH 工具。`)
-          : (terminalType !== 'standard'
-              ? `Launching local ${appName} via nexora:// protocol. If nothing opens, double-click scripts/register_nexora.reg to register it on Windows.`
-              : `Launching ssh://${user}@${host}. Allow the browser prompt. If nothing opens, register the ssh:// scheme on Windows.`),
+        isZh ? `正在拉起 ${appName}` : `Launching ${appName}`,
         'success'
       );
 

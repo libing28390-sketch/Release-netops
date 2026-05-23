@@ -71,16 +71,93 @@ def resolve_executable(client_type, custom_path=None):
             
     return None
 
+def register_protocol():
+    try:
+        import winreg
+    except ImportError:
+        show_error("winreg module not found. Registration is only supported on Windows.")
+        return
+    try:
+        # Get path of current executable
+        exe_path = os.path.abspath(sys.executable)
+        if exe_path.lower().endswith(("python.exe", "pythonw.exe")):
+            script_path = os.path.abspath(__file__)
+            cmd_val = f'"{exe_path}" "{script_path}" "%1"'
+        else:
+            cmd_val = f'"{exe_path}" "%1"'
+        
+        # Open/create HKEY_CURRENT_USER\Software\Classes\nexora
+        key_path = r"Software\Classes\nexora"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "URL:Nexora Protocol")
+            winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
+            
+        # Create HKEY_CURRENT_USER\Software\Classes\nexora\shell\open\command
+        cmd_path = r"Software\Classes\nexora\shell\open\command"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cmd_path) as cmd_key:
+            winreg.SetValueEx(cmd_key, "", 0, winreg.REG_SZ, cmd_val)
+            
+
+        # Pop up success message box
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"Nexora Terminal Assistant registered successfully!\n\nCommand: {cmd_val}",
+            "Nexora Assistant",
+            0x40  # MB_ICONINFORMATION
+        )
+    except Exception as e:
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"Failed to register Nexora protocol:\n{str(e)}",
+            "Nexora Assistant Error",
+            0x10  # MB_ICONERROR
+        )
+
 def handle_url(url):
     try:
         parsed = urlparse(url)
-        # nexora://<ip_address>?user=xxx&role=xxx&client=xxx&path=xxx
-        ip = parsed.netloc
         params = parse_qs(parsed.query)
         
-        user = params.get('user', ['admin'])[0]
         client_type = params.get('client', ['xshell'])[0].lower()
         custom_path = params.get('path', [''])[0]
+        
+        token = params.get('token', [''])[0]
+        if token:
+            # Token flow: request actual connection details from the backend
+            web_host = parsed.netloc
+            ssl_param = params.get('ssl', ['0'])[0]
+            scheme = "https" if ssl_param == "1" else "http"
+            
+            import urllib.request
+            import json
+            import ssl
+            
+            exchange_url = f"{scheme}://{web_host}/api/system/exchange-token?token={token}"
+            
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            
+            try:
+                req = urllib.request.Request(exchange_url, headers={'User-Agent': 'NexoraAssistant/1.0'})
+                with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
+                    resp_data = json.loads(response.read().decode('utf-8'))
+            except Exception as http_err:
+                show_error(f"Failed to connect to backend at {exchange_url}:\n{str(http_err)}")
+                return
+                
+            if not resp_data.get('success'):
+                show_error(f"Token exchange failed:\n{resp_data.get('error', 'Unknown error')}")
+                return
+                
+            ip = resp_data.get('ip')
+            user = resp_data.get('user')
+            password = resp_data.get('password')
+        else:
+            # Fallback to direct credentials in URI parameters
+            ip = parsed.netloc
+            user = params.get('user', ['admin'])[0]
+            password = params.get('password', [''])[0]
         
         client_path = resolve_executable(client_type, custom_path)
         
@@ -95,23 +172,47 @@ def handle_url(url):
 
         print(f"Connecting to {ip} as {user} using {client_type} at {client_path}...")
         
+        # Construct arguments based on client type
+        args = None
         if client_type == 'xshell':
-            # Xshell command: xshell.exe -url ssh://user@host
-            cmd = [client_path, f"ssh://{user}@{ip}"]
-            subprocess.Popen(cmd)
-            
+            # Xshell command: xshell.exe -url ssh://user:password@host
+            if password:
+                args = f"-url ssh://{user}:{password}@{ip}"
+            else:
+                args = f"-url ssh://{user}@{ip}"
         elif client_type == 'putty':
-            cmd = [client_path, "-ssh", f"{user}@{ip}"]
-            subprocess.Popen(cmd)
-            
+            if password:
+                args = f"-ssh {user}@{ip} -pw \"{password}\""
+            else:
+                args = f"-ssh {user}@{ip}"
         elif client_type == 'securecrt':
-            cmd = [client_path, "/SSH2", "/L", user, ip]
-            subprocess.Popen(cmd)
-            
+            if password:
+                args = f"/SSH2 /L {user} /PASSWORD \"{password}\" {ip}"
+            else:
+                args = f"/SSH2 /L {user} {ip}"
         elif client_type == 'mobaxterm':
-            cmd = [client_path, f"ssh://{user}@{ip}"]
-            subprocess.Popen(cmd)
-            
+            if password:
+                args = f"ssh://{user}:{password}@{ip}"
+            else:
+                args = f"ssh://{user}@{ip}"
+
+        if args is not None:
+            try:
+                # Use ShellExecuteW for native Windows launch with proper window activation and focus,
+                # which also correctly communicates with any existing open instances (e.g. to open a new tab).
+                ctypes.windll.shell32.ShellExecuteW(None, "open", client_path, args, None, 1)
+            except Exception as shell_err:
+                # Fallback to subprocess if ShellExecuteW fails
+                cmd = [client_path]
+                if client_type == 'xshell':
+                    cmd += ["-url", f"ssh://{user}@{ip}"]
+                elif client_type == 'putty':
+                    cmd += ["-ssh", f"{user}@{ip}"]
+                elif client_type == 'securecrt':
+                    cmd += ["/SSH2", "/L", user, ip]
+                elif client_type == 'mobaxterm':
+                    cmd += [f"ssh://{user}@{ip}"]
+                subprocess.Popen(cmd)
         else:
             # Default fallback to standard ssh handler URL
             webbrowser.open(f"ssh://{user}@{ip}")
@@ -120,8 +221,18 @@ def handle_url(url):
         show_error(f"Error handling {url}:\n{str(e)}")
 
 if __name__ == "__main__":
+    # Log arguments for debugging
+    try:
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nexora_debug.log")
+        with open(log_path, "a", encoding="utf-8") as f:
+            import datetime
+            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"[{now}] Invoked with args: {sys.argv}\n")
+    except Exception as log_err:
+        show_error(f"Debug logger failed: {str(log_err)}")
+
     if len(sys.argv) > 1:
         handle_url(sys.argv[1])
     else:
-        print("Nexora Protocol Handler Active. Usage: nexora://<ip>?user=<user>&client=<xshell|putty|securecrt>&path=<path>")
+        register_protocol()
 

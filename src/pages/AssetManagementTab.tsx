@@ -1267,25 +1267,49 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
                 <div className="font-semibold">{terminalSession.title}</div>
                 <div className="flex items-center gap-2">
                   <button 
-                    onClick={() => {
+                    onClick={async () => {
                       const terminalType = localStorage.getItem('terminal_app') || 'xshell';
                       const terminalPath = localStorage.getItem('local_terminal_path') || '';
                       let url = '';
+                      let user = '';
+                      let host = '';
 
                       if (terminalTarget) {
-                        const user = terminalAccessLevel === 'admin' ? (terminalTarget.admin_username || 'admin') : (terminalTarget.normal_username || 'user');
-                        if (terminalType !== 'standard') {
-                          url = `nexora://${terminalTarget.management_ip}?user=${encodeURIComponent(user)}&role=${terminalAccessLevel}&client=${terminalType}&path=${encodeURIComponent(terminalPath)}`;
-                        } else {
-                          url = `ssh://${encodeURIComponent(user)}@${terminalTarget.management_ip}:22`;
-                        }
+                        user = terminalAccessLevel === 'admin' ? (terminalTarget.admin_username || 'admin') : (terminalTarget.normal_username || 'user');
+                        host = terminalTarget.management_ip;
                       } else if (terminalSession.title.includes('@')) {
                         const [u, h] = terminalSession.title.split('@');
-                        const ip = h.split(':')[0];
+                        user = u;
+                        host = h.split(':')[0];
+                      }
+
+                      if (host && user) {
+                        let sessionToken = '';
+                        try {
+                          const res = await fetch('/api/system/launch-terminal', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              app_type: terminalType,
+                              path: '__client_side_launch__',
+                              host, user,
+                              requester_username: 'unknown',
+                              access_level: terminalTarget ? terminalAccessLevel : 'normal',
+                            })
+                          });
+                          const result = await res.json();
+                          if (result.success && result.session_token) {
+                            sessionToken = result.session_token;
+                          }
+                        } catch (err) {
+                          console.error('Failed to fetch session token', err);
+                        }
+
                         if (terminalType !== 'standard') {
-                          url = `nexora://${ip}?user=${u}&client=${terminalType}&path=${encodeURIComponent(terminalPath)}`;
+                          const isSsl = window.location.protocol === 'https:' ? '1' : '0';
+                          url = `nexora://${window.location.host}?token=${sessionToken}&client=${terminalType}&path=${encodeURIComponent(terminalPath)}&ssl=${isSsl}`;
                         } else {
-                          url = `ssh://${encodeURIComponent(u)}@${ip}:22`;
+                          url = `ssh://${encodeURIComponent(user)}@${host}:22`;
                         }
                       }
 

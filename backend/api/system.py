@@ -98,12 +98,102 @@ async def open_file_picker() -> Dict[str, Any]:
     with concurrent.futures.ThreadPoolExecutor() as pool:
         return await asyncio.get_event_loop().run_in_executor(pool, run_picker)
 
+@router.get("/download-assistant")
+async def download_assistant():
+    from fastapi.responses import FileResponse
+    # Get path to nexora.exe
+    bin_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "nexora.exe")
+    if not os.path.exists(bin_path):
+        return {"success": False, "error": f"Assistant binary not found on server at: {bin_path}"}
+    return FileResponse(bin_path, media_type="application/octet-stream", filename="nexora.exe")
+
+
+@router.get("/exchange-token")
+async def exchange_token(token: str) -> Dict[str, Any]:
+    import logging
+    from datetime import datetime, timezone
+    from core.crypto import decrypt_credential
+
+    logger = logging.getLogger(__name__)
+
+    conn = get_db_connection()
+    try:
+        res = conn.execute(
+            "SELECT * FROM pam_sessions WHERE session_token = ? LIMIT 1", (token,)
+        ).fetchone()
+
+        if not res:
+            return {"success": False, "error": "Invalid session token"}
+
+        session_data = dict(res)
+
+        if session_data.get("token_consumed"):
+            return {"success": False, "error": "Token already consumed"}
+
+        expires_at_str = session_data.get("token_expires_at")
+        try:
+            expires_at = datetime.strptime(expires_at_str, '%Y-%m-%dT%H:%M:%S+00:00').replace(tzinfo=timezone.utc)
+        except Exception:
+            try:
+                expires_at = datetime.fromisoformat(expires_at_str)
+            except Exception:
+                return {"success": False, "error": "Invalid expiry time format in session"}
+
+        if datetime.now(timezone.utc) > expires_at:
+            return {"success": False, "error": "Token expired"}
+
+        host = session_data.get("target_ip")
+        user = session_data.get("login_username")
+
+        # Fetch device password
+        dev_res = conn.execute("SELECT * FROM devices WHERE ip_address = ? LIMIT 1", (host,)).fetchone()
+        if not dev_res:
+            dev_res = conn.execute("SELECT * FROM physical_assets WHERE management_ip = ? LIMIT 1", (host,)).fetchone()
+
+        if not dev_res:
+            return {"success": False, "error": f"Device/Asset with IP {host} not found in database"}
+
+        device_data = dict(dev_res)
+        password = ""
+        if user == device_data.get("username") or user == device_data.get("admin_username"):
+            password = device_data.get("password") or device_data.get("admin_password")
+        elif user == device_data.get("normal_username"):
+            password = device_data.get("normal_password")
+
+        if not password:
+            return {"success": False, "error": f"Password for user {user} on {host} not found"}
+
+        # Decrypt password
+        plain_password = decrypt_credential(password)
+        if not plain_password:
+            plain_password = password
+
+        # Consume token
+        conn.execute(
+            "UPDATE pam_sessions SET token_consumed = 1, updated_at = ? WHERE session_token = ?",
+            (datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00'), token)
+        )
+        conn.commit()
+
+        return {
+            "success": True,
+            "ip": host,
+            "user": user,
+            "password": plain_password
+        }
+    except Exception as e:
+        logger.error(f"[System] Token exchange failed: {str(e)}")
+        return {"success": False, "error": f"Internal error during exchange: {str(e)}"}
+    finally:
+        conn.close()
+
+
 @router.post("/launch-terminal")
 async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
     import subprocess
     import logging
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, timedelta
     from services.audit_service import log_audit_event
 
     logger = logging.getLogger(__name__)
@@ -134,6 +224,7 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     # 1. Fetch the password from DB
     conn = get_db_connection()
+    plain_password = ""
     try:
         res = conn.execute("SELECT * FROM devices WHERE ip_address = ? LIMIT 1", (host,)).fetchone()
         if not res:
@@ -152,6 +243,11 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not password:
             return {"success": False, "error": f"Password for user {user} on {host} not found"}
 
+        # Decrypt password so it can be returned
+        plain_password = decrypt_credential(password)
+        if not plain_password:
+            plain_password = password
+
         # ── PAM audit record for local terminal ──────────────────────
         # We cannot intercept or record local terminal traffic, but we
         # can at least create an audit trail so the session appears in
@@ -161,7 +257,9 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
         hostname = device_data.get("hostname") or host
 
         session_id = f"session-{uuid.uuid4().hex[:12]}"
-        now_str = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+        now = datetime.now(timezone.utc)
+        now_str = now.strftime('%Y-%m-%dT%H:%M:%S+00:00')
+        expires_at = (now + timedelta(seconds=60)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
         session_token = f"local-{uuid.uuid4().hex[:16]}"
         try:
@@ -181,7 +279,7 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
                 # when the user actually disconnects from their local client.
                 'closed', now_str, now_str, 'local_client_launched',
                 0, '',  # no recording for local sessions
-                session_token, now_str, 1,
+                session_token, expires_at, 0,
                 now_str, now_str,
             ))
             conn.commit()
@@ -215,12 +313,8 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not path or not os.path.exists(path):
         # 前端客户端侧启动模式：path 为特殊标记，跳过文件检查，只写审计日志
         if path in ('__client_side_launch__', '__mfa_verify_only__'):
-            return {"success": True, "session_id": session_id, "client_side": True}
+            return {"success": True, "session_id": session_id, "client_side": True, "session_token": session_token}
         return {"success": False, "error": f"Executable path not found: {path}"}
-
-    plain_password = decrypt_credential(password)
-    if not plain_password:
-        plain_password = password
 
     try:
         if app_type == "xshell":
