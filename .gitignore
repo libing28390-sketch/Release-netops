@@ -66,3 +66,17 @@ test_dragon.mp3
 # Keys — private key must never be committed; public key IS required for deployment
 *.pem
 !backend/license_auth/keys/public.pem
+docs/cleanup_docker.md
+docs/cleanup_script.md
+docs/tts_scripts/录音.md
+docs/tts_scripts/device_onboarding_and_rotation_20260524.srt
+docs/tts_scripts/device_onboarding_and_rotation.md
+.gitignore
+.gitignore
+docs/tts_scripts/device_onboarding_and_rotation.wav
+docs/tts_scripts/device_onboarding_and_rotation.mp3
+docs/tts_scripts/device_onboarding_and_rotation_20260524.wav
+docs/tts_scripts/device_onboarding_and_rotation_20260524.mp3
+docs/tts_scripts/device_onboarding_and_rotation.srt
+docs/tts_scripts/test_concat.mp3
+scripts/generate_device_onboarding_audio.py

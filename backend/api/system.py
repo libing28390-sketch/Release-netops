@@ -27,7 +27,7 @@ async def get_system_info() -> Dict[str, Any]:
         conn = get_db_connection()
         try:
             row = conn.execute(
-                "SELECT value FROM global_vars WHERE key = 'platform_settings'"
+                "SELECT value FROM system_settings WHERE key = 'platform_settings'"
             ).fetchone()
             if row:
                 import json as _json
