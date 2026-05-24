@@ -211,7 +211,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               <Activity size={18} />
             </div>
             <div className="min-w-0">
-              <h1 className="font-semibold text-[1.05rem] tracking-[0.01em] text-white whitespace-nowrap">Nexora</h1>
+              <h1 className="font-semibold text-[1.05rem] tracking-[0.01em] text-white whitespace-nowrap">{systemInfo?.system_name || 'Nexora'}</h1>
               <p className="mt-0.5 text-[9.5px] font-medium tracking-[0.16em] text-cyan-100/48 whitespace-nowrap">{shellToneLabel}</p>
             </div>
           </div>

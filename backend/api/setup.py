@@ -181,13 +181,31 @@ def test_notification(
     user=require_role("Administrator"),
 ):
     """Send a test alert message to the given webhook."""
+    sys_name = "Nexora"
+    try:
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT value FROM system_settings WHERE key = 'platform_settings'"
+            ).fetchone()
+            if row:
+                import json as _json
+                val = row[0] if isinstance(row, (list, tuple)) else row['value']
+                ps = _json.loads(val)
+                if ps.get('system_name'):
+                    sys_name = ps['system_name']
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
     test_alert = {
-        "title": "Nexora 测试通知",
+        "title": f"{sys_name} 测试通知",
         "object_name": "Setup Wizard",
         "ip_address": "127.0.0.1",
         "status": "active",
         "severity": "info",
-        "message": "This is a test notification from Nexora setup wizard. 这是来自 Nexora 初始化向导的测试通知。",
+        "message": f"This is a test notification from {sys_name} setup wizard. 这是来自 {sys_name} 初始化向导的测试通知。",
         "first_occurrence": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "last_occurrence": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "lang": "zh",

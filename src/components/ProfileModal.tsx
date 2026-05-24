@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock, Info } from 'lucide-react';
 import type { ThemeMode } from '../types';
+import { useSystem } from '../hooks/useSystem';
 
 interface AvatarPreset {
   id: string;
@@ -78,6 +79,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   onNotificationSecretChange,
   onTestNotificationChannel,
 }) => {
+  const { systemInfo } = useSystem();
   const [localTerminalPath, setLocalTerminalPath] = React.useState(() => localStorage.getItem('local_terminal_path') || '');
   const [terminalApp, setTerminalApp] = React.useState(() => localStorage.getItem('terminal_app') || 'xshell');
   const [showFixedPin, setShowFixedPin] = React.useState(false);
@@ -132,7 +134,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
       hasSecret: true,
       docsUrl: 'https://open.dingtalk.com/document/robots/custom-robot-access',
       docsLabel: '配置教程 →',
-      tip: '在钉钉群 ➜ 群设置 ➜ 智能群助手 ➜ 添加机器人 ➜ 自定义。安全设置选「加签」时把密钥填入下方 Secret 栏；选「自定义关键词」时关键词填 Nexora 即可。',
+      tip: `在钉钉群 ➜ 群设置 ➜ 智能群助手 ➜ 添加机器人 ➜ 自定义。安全设置选「加签」时把密钥填入下方 Secret 栏；选「自定义关键词」时关键词填 ${systemInfo?.system_name || 'Nexora'} 即可。`,
     },
     {
       key: 'wechat',
@@ -557,11 +559,11 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     </span>
                     <a
                       href="/api/system/download-assistant"
-                      download="nexora.exe"
+                      download={systemInfo?.system_name ? `${systemInfo.system_name.toLowerCase()}_assistant.exe` : "nexora.exe"}
                       className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 shadow-sm`}
                     >
                       <Download size={12} />
-                      {language === 'zh' ? '下载 Nexora 助手' : 'Download Assistant'}
+                      {language === 'zh' ? `下载 ${systemInfo?.system_name || 'Nexora'} 助手` : `Download ${systemInfo?.system_name || 'Nexora'} Assistant`}
                     </a>
                   </div>
                 )}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, X, ArrowUpCircle, Info } from 'lucide-react';
+import { useSystem } from '../hooks/useSystem';
 
 interface UpdateInfo {
   update_available: boolean;
@@ -11,6 +12,7 @@ interface UpdateInfo {
 }
 
 const VersionUpdateNotifier: React.FC<{ language: string }> = ({ language }) => {
+  const { systemInfo } = useSystem();
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const zh = language === 'zh';
@@ -71,7 +73,7 @@ const VersionUpdateNotifier: React.FC<{ language: string }> = ({ language }) => 
               </div>
               <div>
                 <p className="text-sm font-bold text-slate-800 dark:text-white/90">
-                  Nexora v{updateInfo.latest_version}
+                  {systemInfo?.system_name || 'Nexora'} v{updateInfo.latest_version}
                 </p>
                 <p className="text-[11px] text-slate-400 mt-0.5">
                   {zh ? '发布日期' : 'Released'}: {updateInfo.release_date}

@@ -178,13 +178,13 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, onLangu
         '默认管理员密码 admin 不安全，请立即修改。',
         '配置平台名称、时区和默认语言。',
         '配置飞书、钉钉或企业微信 Webhook（可选，可稍后再配置）。',
-        '一切就绪，开始使用 Nexora！',
+        `一切就绪，开始使用 ${sysName || 'Nexora'}！`,
       ]
     : [
         'The default admin password is insecure. Please change it now.',
         'Configure platform name, timezone, and default language.',
         'Set up Feishu, DingTalk, or WeChat webhooks (optional, can configure later).',
-        'Everything is ready. Start using Nexora!',
+        `Everything is ready. Start using ${sysName || 'Nexora'}!`,
       ];
 
   const canProceedStep0 = pwdDone;
@@ -528,7 +528,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, onLangu
                     onClick={() => void handleFinish()}
                     className="mt-2 inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-[#06b6d4] to-[#0891b2] px-8 py-3.5 text-sm font-bold text-white shadow-xl shadow-[#06b6d4]/25 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-[#06b6d4]/35"
                   >
-                    {zh ? '进入 Nexora' : 'Enter Nexora'}
+                    {zh ? `进入 ${sysName || 'Nexora'}` : `Enter ${sysName || 'Nexora'}`}
                     <ArrowRight size={16} />
                   </button>
                 </div>

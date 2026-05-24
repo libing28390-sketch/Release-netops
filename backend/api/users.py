@@ -846,6 +846,28 @@ def check_session(request: Request):
         conn.close()
 
 
+def _get_system_name() -> str:
+    system_name = "Nexora"
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT value FROM system_settings WHERE key = 'platform_settings'"
+            ).fetchone()
+            if row:
+                import json as _json
+                val = row[0] if isinstance(row, (list, tuple)) else row['value']
+                ps = _json.loads(val)
+                if ps.get('system_name'):
+                    system_name = ps['system_name']
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return system_name
+
+
 @router.post("/users/{user_id}/notify-test")
 def test_notification_channel(user_id: str, request: Request, payload: dict = Body(...)):
     """
@@ -892,8 +914,9 @@ def test_notification_channel(user_id: str, request: Request, payload: dict = Bo
             conn.close()
 
     test_ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    sys_name = _get_system_name()
     test_alert = {
-        'title':            'Nexora 连通性测试',
+        'title':            f'{sys_name} 连通性测试',
         'object_name':      f'{platform.capitalize()} 机器人',
         'ip_address':       'webhook',
         'status':           'active',

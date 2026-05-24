@@ -10,6 +10,7 @@ import {
 import * as XLSX from 'xlsx';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer } from 'recharts';
 import Pagination from '../components/Pagination';
+import { useSystem } from '../hooks/useSystem';
 import OutputActions from '../components/OutputActions';
 import DateTimePicker from '../components/DateTimePicker';
 import TagConditionPicker, { type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter, parseTagFilter } from '../components/TagConditionPicker';
@@ -177,6 +178,7 @@ const describeScope = (scope: string, filter: string, zh: boolean): string => {
 /* ═══════════════════════════════════════════════════════ */
 
 const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, showToast, initialTab, devices, onRerun }) => {
+  const { systemInfo } = useSystem();
   const zh = language === 'zh';
 
   /* ═══ STATE ═══ */
@@ -932,7 +934,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
         const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
         const prefix = source === 'playbook' ? 'Playbook' : 'Inspection';
         const ext = format === 'xlsx' ? 'xlsx' : format === 'html' ? 'html' : format === 'pdf' ? 'pdf' : 'json';
-        a.download = `Nexora_${prefix}_Report_${logId}_${today}.${ext}`;
+        a.download = `${systemInfo?.system_name || 'Nexora'}_${prefix}_Report_${logId}_${today}.${ext}`;
         a.click();
         URL.revokeObjectURL(url);
       } else {
@@ -942,7 +944,7 @@ const ExecutionScheduleTab: React.FC<ExecutionScheduleTabProps> = ({ language, s
       console.error(`Export ${format} failed:`, err);
       showToast(zh ? `${format.toUpperCase()} 导出异常` : `${format.toUpperCase()} export error`, 'error');
     }
-  }, [authHeaders, zh, showToast]);
+  }, [authHeaders, zh, showToast, systemInfo?.system_name]);
 
   /** Copy text to clipboard with brief feedback */
   const copyInspText = useCallback((text: string, key: string) => {

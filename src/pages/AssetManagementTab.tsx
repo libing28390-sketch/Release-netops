@@ -19,6 +19,7 @@ import Pagination from '../components/Pagination';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { AssetReadonlyDetailInner, CATEGORY_MAP } from '../components/AssetReadonlyDetail';
 import PageHero from '../components/PageHero';
+import { useSystem } from '../hooks/useSystem';
 
 /* ═══════════════════════════════════════════════════════════════════
    Types
@@ -165,6 +166,7 @@ const severityOf = (a: Asset): 'critical' | 'major' | 'warning' | 'healthy' => {
    ═══════════════════════════════════════════════════════════════════ */
 
 const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
+  const { systemInfo } = useSystem();
   const zh = language === 'zh';
   const goTo = (tab: string) => setActiveTab?.(tab);
 
@@ -1440,7 +1442,7 @@ const AssetManagementTab: React.FC<Props> = ({ language, setActiveTab }) => {
               <div className="px-6 py-5 bg-white/[0.02] border-t border-white/[0.06] flex items-center justify-between">
                 <div className="text-[10px] text-white/20 flex items-center gap-1.5 font-medium italic">
                   <Lock size={10} />
-                  {zh ? '受 Nexora PAM 审计保护' : 'Audited by Nexora PAM'}
+                  {zh ? `受 ${systemInfo?.system_name || 'Nexora'} PAM 审计保护` : `Audited by ${systemInfo?.system_name || 'Nexora'} PAM`}
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => setTerminalTarget(null)} className="px-4 py-2 text-xs font-bold text-white/40 hover:text-white/60 transition-colors">{zh ? '取消' : 'Cancel'}</button>

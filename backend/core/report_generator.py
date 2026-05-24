@@ -650,7 +650,8 @@ def _generate_playbook_excel_body(workbook: Any, run_info: Dict[str, Any], resul
     ws1.set_column('C:C', 18)
     ws1.set_column('D:D', 30)
 
-    ws1.write('A1', 'Nexora NetOps 自动化执行报告', title_fmt)
+    sys_name = _get_system_name()
+    ws1.write('A1', f'{sys_name} NetOps 自动化执行报告', title_fmt)
     ws1.write('A3', '作业流名称', label_fmt)
     ws1.write('B3', run_info.get('name') or 'Playbook 自动化执行', border_fmt)
     ws1.write('C3', '执行开始时间', label_fmt)
@@ -789,7 +790,8 @@ def _generate_inspection_excel_body(
     summary_ws.set_column('C:C', 15)
     summary_ws.set_column('D:D', 30)
     
-    summary_ws.write('A1', 'Nexora NetOps 智能巡检报告', title_fmt)
+    sys_name = _get_system_name()
+    summary_ws.write('A1', f'{sys_name} NetOps 智能巡检报告', title_fmt)
     
     summary_ws.write('A3', '任务名称', label_fmt)
     summary_ws.write('B3', run_info.get('name') or '例行巡检')
@@ -1208,6 +1210,27 @@ def generate_inspection_pdf(
         logger.error(f"[Report] PDF generation failed: {e}")
         raise
 
+def _get_system_name() -> str:
+    system_name = "Nexora"
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT value FROM system_settings WHERE key = 'platform_settings'"
+            ).fetchone()
+            if row:
+                import json as _json
+                val = row[0] if isinstance(row, (list, tuple)) else row['value']
+                ps = _json.loads(val)
+                if ps.get('system_name'):
+                    system_name = ps['system_name']
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return system_name
+
 
 def _prepare_report_context(run_info, results, customer_name, engineer_name):
     """提取通用的报表上下文准备逻辑。"""
@@ -1290,4 +1313,5 @@ def _prepare_report_context(run_info, results, customer_name, engineer_name):
         'suggestions': suggestions,
         'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'font_face_src': _build_font_face_src(),
+        'system_name': _get_system_name(),
     }

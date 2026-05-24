@@ -51,6 +51,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { navConfig } from './AppSidebar/navConfig';
+import { useSystem } from '../hooks/useSystem';
 
 interface ModuleSubNavProps {
   language: string;
@@ -76,6 +77,7 @@ const iconMap: Record<string, React.ElementType> = {
 const ACCENT = '#06b6d4';
 
 const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, currentUser }) => {
+  const { systemInfo } = useSystem();
   const location = useLocation();
   const navigate = useNavigate();
   const zh = language === 'zh';
@@ -332,7 +334,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
               {zh ? '版本' : 'VER'}
             </span>
             <span className="text-[10px] font-mono font-bold" style={{ color: ACCENT }}>
-              v0.1.0
+              v{systemInfo?.version || '0.1.0'}
             </span>
           </div>
           <div className="flex items-center justify-between">
@@ -340,7 +342,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
               {zh ? '授权' : 'ED'}
             </span>
             <span className="text-[10px] font-bold" style={{ color: 'var(--muted-text)' }}>
-              Standard
+              {systemInfo?.edition || 'Standard'}
             </span>
           </div>
         </div>

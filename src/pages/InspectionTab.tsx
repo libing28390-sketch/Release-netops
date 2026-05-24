@@ -3,6 +3,7 @@ import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, Clipbo
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '../types';
 import { useChartTheme } from '../hooks/useChartTheme';
+import { useSystem } from '../hooks/useSystem';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import {
@@ -135,6 +136,7 @@ const isNetworkDevice = (role: string, platform: string): boolean => {
 /* ────────────────────────────────────────── */
 
 const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overview, onShowDetails, initialView }) => {
+  const { systemInfo } = useSystem();
   const ct = useChartTheme();
   const isZh = language === 'zh';
 
@@ -333,7 +335,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
       const a = document.createElement('a');
       a.href = url;
       const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      a.download = `Nexora_Inspection_${runId}_${today}.${format}`;
+      a.download = `${systemInfo?.system_name || 'Nexora'}_Inspection_${runId}_${today}.${format}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

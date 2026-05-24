@@ -80,9 +80,9 @@
 </head>
 <body>
     {% if report_type == 'playbook' %}
-        <h1>Nexora NetOps 自动化执行报告</h1>
+        <h1>{{ system_name }} NetOps 自动化执行报告</h1>
     {% else %}
-        <h1>Nexora NetOps 巡检报告</h1>
+        <h1>{{ system_name }} NetOps 巡检报告</h1>
     {% endif %}
 
     <div class="summary-box">
@@ -271,7 +271,7 @@
     {% endif %}
 
     <div class="footer">
-        Nexora NetOps Automation System. 智能网络运维系统自动生成报告。
+        {{ system_name }} NetOps Automation System. 智能网络运维系统自动生成报告。
     </div>
 </body>
 </html>

@@ -28,6 +28,28 @@ CODE_EXPIRY_SECONDS = 300   # 5 分钟
 MAX_VERIFY_ATTEMPTS = 3
 
 
+def _get_system_name() -> str:
+    system_name = "Nexora"
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT value FROM system_settings WHERE key = 'platform_settings'"
+            ).fetchone()
+            if row:
+                import json as _json
+                val = row[0] if isinstance(row, (list, tuple)) else row['value']
+                ps = _json.loads(val)
+                if ps.get('system_name'):
+                    system_name = ps['system_name']
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return system_name
+
+
 def _generate_code() -> str:
     """生成 6 位数字验证码（安全随机）。"""
     return ''.join([str(secrets.randbelow(10)) for _ in range(CODE_LENGTH)])
@@ -114,10 +136,11 @@ def request_approval(
     extra = extra_fields or {}
 
     # 根据审批类型选择标题和模板颜色
+    sys_name = _get_system_name()
     type_config = {
-        'config': {'title': '🔐 Nexora 配置变更审批', 'template': 'orange'},
-        'scheduled_job': {'title': '⏰ Nexora 定时作业审批', 'template': 'blue'},
-        'execution_plan': {'title': '📋 Nexora 执行计划审批', 'template': 'turquoise'},
+        'config': {'title': f'🔐 {sys_name} 配置变更审批', 'template': 'orange'},
+        'scheduled_job': {'title': f'⏰ {sys_name} 定时作业审批', 'template': 'blue'},
+        'execution_plan': {'title': f'📋 {sys_name} 执行计划审批', 'template': 'turquoise'},
     }
     tc = type_config.get(approval_type, type_config['config'])
 
@@ -172,7 +195,7 @@ def request_approval(
                 {
                     "tag": "note",
                     "elements": [
-                        {"tag": "plain_text", "content": f"发送时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · Nexora Config Approval"},
+                        {"tag": "plain_text", "content": f"发送时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · {sys_name} Config Approval"},
                     ],
                 },
             ],

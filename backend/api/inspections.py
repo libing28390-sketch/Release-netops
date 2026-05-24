@@ -345,6 +345,28 @@ def delete_correlation_rule(rule_id: str, _user=require_role('Operator')):
         conn.close()
 
 
+def _get_system_name() -> str:
+    system_name = "Nexora"
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT value FROM system_settings WHERE key = 'platform_settings'"
+            ).fetchone()
+            if row:
+                import json as _json
+                val = row[0] if isinstance(row, (list, tuple)) else row['value']
+                ps = _json.loads(val)
+                if ps.get('system_name'):
+                    system_name = ps['system_name']
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return system_name
+
+
 # ⚠️ {run_id} 路径参数路由放最后，避免遮蔽上方字面路由
 
 @router.get('/inspections/{run_id}/export')
@@ -488,9 +510,10 @@ def export_inspection_report(
         elif format == 'pdf':
             generate_inspection_pdf(detail, results, tmp_path, customer_name, engineer_name)
             
+        sys_name = _get_system_name()
         return FileResponse(
             tmp_path,
-            filename=f"Nexora_Inspection_{run_id}_{today}.{ext}",
+            filename=f"{sys_name}_Inspection_{run_id}_{today}.{ext}",
             media_type=media_type,
         )
     except Exception as e:

@@ -16,12 +16,7 @@ from database import get_db_connection
 router = APIRouter(prefix="/system", tags=["System"])
 
 
-@router.get("/info")
-async def get_system_info() -> Dict[str, Any]:
-    verifier = get_license_verifier()
-    license_status = verifier.validate()
-
-    # 读取用户在 setup 向导里保存的 system_name
+def _get_system_name() -> str:
     system_name = settings.PROJECT_NAME
     try:
         conn = get_db_connection()
@@ -31,13 +26,22 @@ async def get_system_info() -> Dict[str, Any]:
             ).fetchone()
             if row:
                 import json as _json
-                ps = _json.loads(row[0] if isinstance(row, (list, tuple)) else row['value'])
+                val = row[0] if isinstance(row, (list, tuple)) else row['value']
+                ps = _json.loads(val)
                 if ps.get('system_name'):
                     system_name = ps['system_name']
         finally:
             conn.close()
     except Exception:
         pass
+    return system_name
+
+
+@router.get("/info")
+async def get_system_info() -> Dict[str, Any]:
+    verifier = get_license_verifier()
+    license_status = verifier.validate()
+    system_name = _get_system_name()
 
     return {
         "version": VERSION,
@@ -105,7 +109,9 @@ async def download_assistant():
     bin_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "nexora.exe")
     if not os.path.exists(bin_path):
         return {"success": False, "error": f"Assistant binary not found on server at: {bin_path}"}
-    return FileResponse(bin_path, media_type="application/octet-stream", filename="nexora.exe")
+    sys_name = _get_system_name()
+    fn = f"{sys_name.lower()}_assistant.exe" if sys_name else "nexora.exe"
+    return FileResponse(bin_path, media_type="application/octet-stream", filename=fn)
 
 
 @router.get("/exchange-token")

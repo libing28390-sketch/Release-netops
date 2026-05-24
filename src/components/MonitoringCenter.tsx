@@ -14,6 +14,7 @@ import PageHero from './PageHero';
 import { useChartTheme } from '../hooks/useChartTheme';
 import { useMonitoringStore } from '../store/monitoringStore';
 import { useMonitoring } from '../hooks/useMonitoring';
+import { useSystem } from '../hooks/useSystem';
 
 type MonitorDevice = {
   id?: string;
@@ -190,6 +191,7 @@ const MonitoringPagination: React.FC<{
 };
 
 const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: allDevices, showToast, isAuthenticated = true }) => {
+  const { systemInfo } = useSystem();
   const ct = useChartTheme();
   const navigate = useNavigate();
   const [refreshing, setRefreshing] = useState(false);
@@ -854,7 +856,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
           {hostResources && (
             <div className="flex items-center justify-between rounded-xl border border-[var(--card-border)] bg-black/[0.015] px-5 py-3">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-text)]">{language === 'zh' ? 'Nexora 宿主机' : 'Nexora Host'}</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-text)]">{language === 'zh' ? `${systemInfo?.system_name || 'Nexora'} 宿主机` : `${systemInfo?.system_name || 'Nexora'} Host`}</p>
                 <div className="flex items-center gap-2 mt-0.5">
                   <p className="text-xs text-[var(--app-text)] font-medium">{hostResources.hostname || '--'}</p>
                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${hostResources.status === 'critical' ? 'bg-red-100 text-red-700' : hostResources.status === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>

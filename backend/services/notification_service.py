@@ -89,6 +89,28 @@ def _fmt_duration(seconds: int, is_en: bool) -> str:
     return f"{secs}s" if is_en else f"{secs} 秒"
 
 
+def _get_system_name() -> str:
+    system_name = "Nexora"
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT value FROM system_settings WHERE key = 'platform_settings'"
+            ).fetchone()
+            if row:
+                import json as _json
+                val = row[0] if isinstance(row, (list, tuple)) else row['value']
+                ps = _json.loads(val)
+                if ps.get('system_name'):
+                    system_name = ps['system_name']
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return system_name
+
+
 def _post_json(url: str, payload: dict, timeout: int = 5) -> tuple[bool, str]:
     """发送 JSON POST，返回 (success, response_body)。"""
     data = json.dumps(payload).encode('utf-8')
@@ -183,12 +205,13 @@ def _feishu_card(alert: dict) -> dict:
     except Exception:
         platform_url = os.environ.get('PLATFORM_URL', '').strip()
 
+    sys_name = _get_system_name()
     if platform_url:
         elements.append({
             "tag": "action",
             "actions": [{
                 "tag": "button",
-                "text": {"tag": "plain_text", "content": "Open Nexora Platform" if is_en else "前往 Nexora 平台处理"},
+                "text": {"tag": "plain_text", "content": f"Open {sys_name} Platform" if is_en else f"前往 {sys_name} 平台处理"},
                 "type": "primary",
                 "url": platform_url,
             }],
@@ -196,7 +219,7 @@ def _feishu_card(alert: dict) -> dict:
     else:
         elements.append({
             "tag": "note",
-            "elements": [{"tag": "plain_text", "content": "Nexora NOC Auto Alert" if is_en else "Nexora NOC 自动告警"}],
+            "elements": [{"tag": "plain_text", "content": f"{sys_name} NOC Auto Alert" if is_en else f"{sys_name} NOC 自动告警"}],
         })
 
     return {
@@ -341,6 +364,7 @@ def _dingtalk_markdown(alert: dict) -> dict:
             extra_rows += f"| Duration | {dur_str} |\n"
         if alert_cnt is not None:
             extra_rows += f"| Alert Count | {alert_cnt} |\n"
+        sys_name = _get_system_name()
         md_text = (
             f"## {emoji} [{sev_label}] {title}\n\n"
             f"| Field | Value |\n"
@@ -354,7 +378,7 @@ def _dingtalk_markdown(alert: dict) -> dict:
             f"| First Occurrence | {first_ts} |\n"
             f"| Last Occurrence | {last_ts} |\n"
             f"{extra_rows}"
-            f"\n---\n*Nexora NOC Auto Alert*"
+            f"\n---\n*{sys_name} NOC Auto Alert*"
         )
     else:
         extra_rows = ""
@@ -364,6 +388,7 @@ def _dingtalk_markdown(alert: dict) -> dict:
             extra_rows += f"| 持续时长 | {dur_str} |\n"
         if alert_cnt is not None:
             extra_rows += f"| 告警次数 | {alert_cnt} |\n"
+        sys_name = _get_system_name()
         md_text = (
             f"## {emoji} [{sev_label}] {title}\n\n"
             f"| 字段 | 内容 |\n"
@@ -377,7 +402,7 @@ def _dingtalk_markdown(alert: dict) -> dict:
             f"| 首次发生 | {first_ts} |\n"
             f"| 最后发生 | {last_ts} |\n"
             f"{extra_rows}"
-            f"\n---\n*Nexora NOC 自动告警*"
+            f"\n---\n*{sys_name} NOC 自动告警*"
         )
     return {
         "msgtype": "markdown",
@@ -443,6 +468,7 @@ def _wechat_markdown(alert: dict) -> dict:
             extra_lines += f"> **Duration**: {dur_str}\n"
         if alert_cnt is not None:
             extra_lines += f"> **Alert Count**: {alert_cnt}\n"
+        sys_name = _get_system_name()
         content = (
             f"# {emoji} <font color=\"{color}\">[{sev_label}]</font> {title}\n"
             f"> **Alert Name**: {title}\n"
@@ -454,7 +480,7 @@ def _wechat_markdown(alert: dict) -> dict:
             f"> **First Occurrence**: {first_ts}\n"
             f"> **Last Occurrence**: {last_ts}\n"
             f"{extra_lines}"
-            f"> Source: Nexora NOC"
+            f"> Source: {sys_name} NOC"
         )
     else:
         extra_lines = ""
@@ -464,6 +490,7 @@ def _wechat_markdown(alert: dict) -> dict:
             extra_lines += f"> **持续时长**：{dur_str}\n"
         if alert_cnt is not None:
             extra_lines += f"> **告警次数**：{alert_cnt}\n"
+        sys_name = _get_system_name()
         content = (
             f"# {emoji} <font color=\"{color}\">[{sev_label}]</font> {title}\n"
             f"> **告警名称**：{title}\n"
@@ -475,7 +502,7 @@ def _wechat_markdown(alert: dict) -> dict:
             f"> **首次发生**：{first_ts}\n"
             f"> **最后发生**：{last_ts}\n"
             f"{extra_lines}"
-            f"> 来源：Nexora NOC"
+            f"> 来源：{sys_name} NOC"
         )
     return {"msgtype": "markdown", "markdown": {"content": content}}
 

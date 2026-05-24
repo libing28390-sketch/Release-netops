@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{% if report_type == 'playbook' %}Nexora 自动化执行报告{% else %}Nexora 网络巡检报告{% endif %} - {{ run_info.get('started_at', '')[:10] }}</title>
+<title>{% if report_type == 'playbook' %}{{ system_name }} 自动化执行报告{% else %}{{ system_name }} 网络巡检报告{% endif %} - {{ run_info.get('started_at', '')[:10] }}</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -42,9 +42,9 @@ tr:hover { background: #1e293b; }
   <!-- 1. 报告头部 -->
   <div class="header">
     {% if report_type == 'playbook' %}
-        <h1>Nexora 自动化执行报告</h1>
+        <h1>{{ system_name }} 自动化执行报告</h1>
     {% else %}
-        <h1>Nexora 网络巡检报告</h1>
+        <h1>{{ system_name }} 网络巡检报告</h1>
     {% endif %}
     <div class="meta">
       {% if customer_name %}客户: {{ customer_name }} | {% endif %}
@@ -188,7 +188,7 @@ tr:hover { background: #1e293b; }
   {% endif %}
 
   <div class="footer">
-    <p>Nexora NetOps 智能网络运维系统 | 报告自动生成于: {{ generated_at }}</p>
+    <p>{{ system_name }} NetOps 智能网络运维系统 | 报告自动生成于: {{ generated_at }}</p>
   </div>
 </div>
 
