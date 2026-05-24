@@ -104,6 +104,11 @@ async def lifespan(app: FastAPI):
     
     # Initialize Database once
     init_db()
+    try:
+        seed_data()
+        logger.info("Database seeding successfully checked/completed.")
+    except Exception as e:
+        logger.error(f"Database seeding failed: {e}", exc_info=True)
     
     # ── One-time PAM stale-session recovery ──
     # After a server restart, sessions that were 'active' or 'connecting'
