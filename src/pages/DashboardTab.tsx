@@ -5,6 +5,7 @@ import type { Device, Job, ScheduledTask, HostResourceSnapshot, NotificationItem
 import { sectionHeaderRowClass, primaryActionBtnClass, secondaryActionBtnClass } from '../components/shared';
 import { useChartTheme } from '../hooks/useChartTheme';
 import PageHero from '../components/PageHero';
+import { useSystem } from '../hooks/useSystem';
 
 interface DashboardTabProps {
   devices: Device[];
@@ -40,6 +41,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
   hostResources, unreadNotificationCount, notifications, language, t, setActiveTab, navigate,
   assetsTotal,
 }) => {
+  const { systemInfo } = useSystem();
   const [isManualRefreshing, setIsManualRefreshing] = React.useState(false);
   const handleManualRefresh = async () => {
     setIsManualRefreshing(true);
@@ -118,7 +120,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
     <div className="flex flex-col h-full overflow-hidden">
       <PageHero
         icon={LayoutDashboard}
-        eyebrow={language === 'zh' ? 'Nexora 运营中心' : 'Nexora Command Center'}
+        eyebrow={language === 'zh' ? `${systemInfo?.system_name || 'Nexora'} 运营中心` : `${systemInfo?.system_name || 'Nexora'} Command Center`}
         title={t('networkOverview')}
         subtitle={t('dashboardSubtitle')}
         actions={

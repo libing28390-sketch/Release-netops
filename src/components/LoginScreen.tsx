@@ -54,6 +54,24 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   const [platformStats, setPlatformStats] = useState<{ devices: string; status: string; online: string }>({
     devices: '—', status: '—', online: '—',
   });
+  const [sysName, setSysName] = useState('Nexora');
+  const [sysVersion, setSysVersion] = useState('v2.0');
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('/api/system/info');
+        if (resp.ok) {
+          const d = await resp.json();
+          if (cancelled) return;
+          if (d.system_name) setSysName(d.system_name);
+          if (d.version) setSysVersion('v' + d.version);
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -137,7 +155,11 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
               <Activity size={34} className="text-white" />
             </div>
             <h1 className="mt-7 text-[48px] font-extrabold tracking-tight leading-none text-white">
-              Nex<span className="text-[#06b6d4]">ora</span>
+              {sysName === 'Nexora' ? (
+                <>Nex<span className="text-[#06b6d4]">ora</span></>
+              ) : (
+                sysName
+              )}
             </h1>
             <p className="text-[#06b6d4]/50 text-[10px] font-bold uppercase tracking-[0.32em] mt-2">
               Network Automation Platform
@@ -202,7 +224,13 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
             <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#164e63] to-[#06b6d4] shadow-[0_0_40px_rgba(6,182,212,0.25)]">
               <Activity size={32} className="text-white" />
             </div>
-            <h1 className="text-3xl font-extrabold tracking-tight text-white">Nex<span className="text-[#06b6d4]">ora</span></h1>
+            <h1 className="text-3xl font-extrabold tracking-tight text-white">
+              {sysName === 'Nexora' ? (
+                <>Nex<span className="text-[#06b6d4]">ora</span></>
+              ) : (
+                sysName
+              )}
+            </h1>
             <p className="text-[#06b6d4]/50 text-[10px] font-bold uppercase tracking-[0.26em] mt-1.5">Network Automation Platform</p>
           </div>
 
@@ -398,9 +426,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-white/20">{t('systemOnline')}</span>
                   </div>
                   <span className="text-[10px] text-white/8">·</span>
-                  <span className="text-[10px] font-mono text-white/12">Nexora v2.0</span>
+                  <span className="text-[10px] font-mono text-white/12">{sysName} {sysVersion}</span>
                   <span className="text-[10px] text-white/8">·</span>
-                  <span className="text-[10px] text-white/12">© {new Date().getFullYear()} Nexora</span>
+                  <span className="text-[10px] text-white/12">© {new Date().getFullYear()} {sysName}</span>
                 </div>
               </motion.div>
             </div>

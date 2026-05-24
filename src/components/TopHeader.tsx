@@ -212,7 +212,7 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
                     {pageTitle}
                   </h2>
                   <p className={`text-[11px] hidden sm:block text-left ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/40'}`}>
-                    {new Date().toLocaleDateString()} · Nexora Control Plane
+                    {new Date().toLocaleDateString()} · {systemInfo?.system_name || 'Nexora'} Control Plane
                   </p>
                 </div>
                 <ChevronDown size={14} className={`flex-shrink-0 ml-1 transition-transform ${appSwitcherOpen ? 'rotate-180' : ''} ${resolvedTheme === 'dark' ? 'text-white/45' : 'text-black/35'}`} />

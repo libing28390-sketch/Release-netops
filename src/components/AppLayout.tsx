@@ -7,6 +7,7 @@ import VersionBanner from './VersionBanner';
 import VersionUpdateNotifier from './VersionUpdateNotifier';
 import ToastNotification, { type ToastState } from './ToastNotification';
 import type { NotificationItem, ThemeMode, User as UserType } from '../types';
+import { useSystem } from '../hooks/useSystem';
 
 interface CommandItem {
   path: string;
@@ -106,6 +107,12 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   children,
 }) => {
   const location = useLocation();
+  const { systemInfo } = useSystem();
+
+  React.useEffect(() => {
+    const baseTitle = systemInfo?.system_name || 'Nexora';
+    document.title = pageTitle ? `${pageTitle} | ${baseTitle}` : baseTitle;
+  }, [systemInfo?.system_name, pageTitle]);
 
   return (
     <div className="app-shell flex h-screen text-[#141414] font-sans overflow-hidden">
@@ -154,8 +161,8 @@ const AppLayout: React.FC<AppLayoutProps> = ({
         </div>
 
         <footer className={`h-10 px-8 border-t flex items-center justify-between text-[11px] ${resolvedTheme === 'dark' ? 'border-white/10 text-white/45 bg-[#0b1320]' : 'border-black/8 text-black/45 bg-white/70'}`}>
-          <span>Copyright (c) {new Date().getFullYear()} Nexora. All rights reserved.</span>
-          <span className="font-mono">v0.1.0</span>
+          <span>Copyright (c) {new Date().getFullYear()} {systemInfo?.system_name || 'Nexora'}. All rights reserved.</span>
+          <span className="font-mono">{systemInfo?.version || 'v0.1.0'}</span>
         </footer>
       </div>
 
