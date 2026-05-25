@@ -514,9 +514,114 @@ const buildWorkflowPresentation = (order: ChangeOrder, lang: string) => {
   return { steps, exception };
 };
 
-/* ═══════════════════════════════════════════════════════════════════
-   Component
-   ═══════════════════════════════════════════════════════════════════ */
+// ── 根据变量名自动推断元数据（type/options/required） ──
+// 让模板里 {{ address_family }} 这样的变量自动渲染成下拉框，避免用户手输错。
+const OPTIONAL_VAR_KEYWORDS = ['group_name', 'family', 'description'];
+const ADDRESS_FAMILY_OPTIONS = [
+  'ipv4 unicast',
+  'ipv4 multicast',
+  'ipv6 unicast',
+  'ipv6 multicast',
+  'vpnv4 unicast',
+  'vpnv6 unicast',
+  'l2vpn evpn',
+  'ipv4-family unicast',
+  'ipv4-family vpnv4',
+  'ipv6-family unicast',
+  'inet unicast',
+  'inet6 unicast',
+];
+
+const inferVariableMeta = (key: string): Pick<ScenarioVariable, 'type' | 'required' | 'options'> => {
+  const k = key.toLowerCase();
+  const required = !OPTIONAL_VAR_KEYWORDS.some(x => k.includes(x));
+  // address_family / bgp_family / family → 下拉
+  if (k === 'family' || k.includes('address_family') || k.includes('bgp_family') || k.includes('addr_family')) {
+    return { type: 'select', required, options: ADDRESS_FAMILY_OPTIONS };
+  }
+  return { type: 'text', required };
+};
+
+const getVariableHelpText = (key: string, platform: string, zh: boolean) => {
+  const k = key.toLowerCase();
+  const plat = (platform || '').toLowerCase();
+  
+  const isAclNum = k.includes('acl') && !k.includes('name');
+  if (isAclNum) {
+    if (plat.includes('cisco')) {
+      return zh 
+        ? '提示：思科标准 ACL (1-99, 1300-1999)；扩展 ACL (100-199, 2000-2699)' 
+        : 'Tip: Cisco Standard ACL (1-99, 1300-1999); Extended ACL (100-199, 2000-2699)';
+    }
+    if (plat.includes('huawei') || plat.includes('h3c')) {
+      return zh 
+        ? '提示：华为/H3C 基本 ACL (2000-2999)；高级 ACL (3000-3999)；其它 (4000-6999)' 
+        : 'Tip: Huawei/H3C Basic ACL (2000-2999); Advanced ACL (3000-3999); Others (4000-6999)';
+    }
+    if (plat.includes('arista')) {
+      return zh 
+        ? '提示：Arista ACL 范围 (1-199)' 
+        : 'Tip: Arista ACL range (1-199)';
+    }
+    return zh ? '提示：请输入正整数 ACL 编号' : 'Tip: Please enter a positive integer ACL number';
+  }
+
+  const isIp = ['ip', 'host', 'server', 'neighbor', 'gateway', 'network', 'src', 'dst', 'router'].some(ind => k.includes(ind)) && !k.includes('mask') && !k.includes('wildcard');
+  if (isIp) {
+    if (k.includes('router_id')) {
+      return zh 
+        ? '提示：请输入合法的 Router ID (IPv4格式，如 10.0.0.1)' 
+        : 'Tip: Enter a valid Router ID in IPv4 format (e.g. 10.0.0.1)';
+    }
+    const isTraditional = ['cisco', 'huawei', 'h3c'].some(p => plat.includes(p));
+    if (isTraditional) {
+      return zh 
+        ? '提示：请输入纯 IPv4 地址（如 192.168.1.1），请勿包含 /24 等掩码位数' 
+        : 'Tip: Enter a pure IPv4 address (e.g. 192.168.1.1), do not include /24 suffix';
+    }
+    return zh 
+      ? '提示：支持纯 IPv4 地址或 CIDR 网段（如 192.168.1.0/24 或 192.168.1.1）' 
+      : 'Tip: Supports pure IPv4 address or CIDR format (e.g., 192.168.1.0/24 or 192.168.1.1)';
+  }
+
+  if (k.includes('wildcard') || k.includes('inverse_mask')) {
+    return zh 
+      ? '提示：请输入反掩码点分十进制格式（如 0.0.0.255）' 
+      : 'Tip: Please enter a wildcard mask (e.g., 0.0.0.255)';
+  }
+
+  if (k.includes('mask')) {
+    if (plat.includes('cisco')) {
+      return zh 
+        ? '提示：思科不支持 CIDR 掩码位数（如 32），必须是点分十进制格式的子网掩码（如 255.255.255.255 或 255.255.255.0）' 
+        : 'Tip: Cisco does not support CIDR mask digits (e.g. 32). It must be a dotted-decimal subnet mask (e.g. 255.255.255.255 or 255.255.255.0)';
+    }
+    return zh 
+      ? '提示：请输入子网掩码（如 255.255.255.0）或 CIDR 位数（0-32）' 
+      : 'Tip: Enter a subnet mask (e.g. 255.255.255.0) or CIDR (0-32)';
+  }
+
+  if (k.includes('process')) {
+    return zh
+      ? '提示：OSPF 进程 ID 必须在 1 到 65535 之间'
+      : 'Tip: OSPF Process ID must be between 1 and 65535';
+  }
+
+  if (k.includes('area')) {
+    return zh
+      ? '提示：请输入 OSPF 区域 ID（正整数，或点分十进制如 0.0.0.0）'
+      : 'Tip: Enter OSPF Area ID (positive integer, or dotted decimal like 0.0.0.0)';
+  }
+
+  const words = k.split(/[^a-z0-9]/);
+  if (words.includes('as')) {
+    return zh
+      ? '提示：AS 号必须在 1 到 4294967295 之间'
+      : 'Tip: AS number must be between 1 and 4294967295';
+  }
+
+  return '';
+};
 
 const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, configTemplates, platforms, currentUser, initialView, findMatchingPlatform }) => {
   const zh = language === 'zh';
@@ -596,6 +701,19 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     value: string;
     required: boolean;
     onConfirm: (val: string) => void;
+  } | null>(null);
+
+  // ── Execute-commands modal state (Step 9 closure) ──
+  // Lets the requester push the rendered template commands to target devices
+  // directly from the change-order detail panel while the order is in
+  // `implementing` status. After execution, they can keep results, rerun, or
+  // mark the order as completed/failed.
+  const [executeModal, setExecuteModal] = useState<{
+    order: ChangeOrder;
+    phase: 'confirm' | 'running' | 'done';
+    output: string;
+    error: string;
+    success: boolean;
   } | null>(null);
 
   const [finalApproverPrompt, setFinalApproverPrompt] = useState<{
@@ -769,38 +887,235 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     }
   }, [isCreateView, isDirty, navigate, resetEditorState, zh]);
 
-  const getDefaultPrePostCheck = (platformKey: string): { pre_check: string[]; post_check: string[] } => {
-    const prePostMap: Record<string, { pre_check: string[]; post_check: string[] }> = {
-      'cisco_ios': { 
+  const getDefaultPrePostCheck = (platformKey: string, category?: string, name?: string): { pre_check: string[]; post_check: string[] } => {
+    const plat = (platformKey || '').toLowerCase();
+    const cat = (category || '').toLowerCase();
+    const nm = (name || '').toLowerCase();
+
+    // Cisco (IOS, NX-OS, IOS-XR)
+    if (plat.includes('cisco')) {
+      if (cat === 'routing' || nm.includes('bgp') || nm.includes('ospf') || nm.includes('route')) {
+        if (nm.includes('bgp')) {
+          return {
+            pre_check: ['show ip bgp summary', 'show ip route'],
+            post_check: ['show ip bgp summary', 'show ip route']
+          };
+        } else if (nm.includes('ospf')) {
+          return {
+            pre_check: ['show ip ospf neighbor', 'show ip route'],
+            post_check: ['show ip ospf neighbor', 'show ip route']
+          };
+        } else { // static route
+          return {
+            pre_check: ['show ip route'],
+            post_check: ['show ip route']
+          };
+        }
+      } else if (cat === 'security' || nm.includes('acl') || nm.includes('ssh') || nm.includes('aaa') || nm.includes('tacacs')) {
+        if (nm.includes('acl')) {
+          return {
+            pre_check: ['show ip access-lists'],
+            post_check: ['show ip access-lists']
+          };
+        } else if (nm.includes('ssh') || nm.includes('aaa') || nm.includes('tacacs')) {
+          return {
+            pre_check: ['show run | include ssh', 'show run | include aaa'],
+            post_check: ['show ssh', 'show run | include ssh']
+          };
+        } else {
+          return {
+            pre_check: ['show running-config'],
+            post_check: ['show running-config']
+          };
+        }
+      } else if (cat === 'switching' || nm.includes('vlan')) {
+        return {
+          pre_check: ['show vlan brief', 'show interfaces status'],
+          post_check: ['show vlan brief', 'show interfaces status']
+        };
+      } else if (cat === 'management' || nm.includes('snmp') || nm.includes('ntp')) {
+        if (nm.includes('snmp')) {
+          return {
+            pre_check: ['show snmp'],
+            post_check: ['show snmp']
+          };
+        } else { // ntp
+          return {
+            pre_check: ['show ntp status'],
+            post_check: ['show ntp status']
+          };
+        }
+      }
+      return { 
         pre_check: ['show version', 'show running-config | include interface'], 
         post_check: ['show running-config | include interface', 'show interfaces status'] 
-      },
-      'cisco_nxos': { 
-        pre_check: ['show version', 'show running-config | include interface'], 
-        post_check: ['show running-config | include interface', 'show interface status'] 
-      },
-      'cisco_iosxr': { 
-        pre_check: ['show version', 'show running-config | include interface'], 
-        post_check: ['show running-config | include interface', 'show interfaces'] 
-      },
-      'huawei_vrp': { 
+      };
+    }
+
+    // Huawei / H3C
+    if (plat.includes('huawei') || plat.includes('h3c')) {
+      if (cat === 'routing' || nm.includes('bgp') || nm.includes('ospf') || nm.includes('route')) {
+        if (nm.includes('bgp')) {
+          return {
+            pre_check: ['display bgp peer', 'display ip routing-table'],
+            post_check: ['display bgp peer', 'display ip routing-table']
+          };
+        } else if (nm.includes('ospf')) {
+          return {
+            pre_check: ['display ospf peer brief', 'display ip routing-table'],
+            post_check: ['display ospf peer brief', 'display ip routing-table']
+          };
+        } else { // static route
+          return {
+            pre_check: ['display ip routing-table'],
+            post_check: ['display ip routing-table']
+          };
+        }
+      } else if (cat === 'security' || nm.includes('acl') || nm.includes('ssh') || nm.includes('aaa') || nm.includes('tacacs')) {
+        if (nm.includes('acl')) {
+          return {
+            pre_check: ['display acl all'],
+            post_check: ['display acl all']
+          };
+        } else if (nm.includes('ssh') || nm.includes('aaa') || nm.includes('tacacs')) {
+          return {
+            pre_check: ['display local-user'],
+            post_check: ['display local-user']
+          };
+        } else {
+          return {
+            pre_check: ['display current-configuration'],
+            post_check: ['display current-configuration']
+          };
+        }
+      } else if (cat === 'switching' || nm.includes('vlan')) {
+        return {
+          pre_check: ['display vlan'],
+          post_check: ['display vlan']
+        };
+      } else if (cat === 'management' || nm.includes('snmp') || nm.includes('ntp')) {
+        if (nm.includes('snmp')) {
+          return {
+            pre_check: ['display snmp-agent sys-info'],
+            post_check: ['display snmp-agent sys-info']
+          };
+        } else { // ntp
+          return {
+            pre_check: ['display ntp-service status'],
+            post_check: ['display ntp-service status']
+          };
+        }
+      }
+      return { 
         pre_check: ['display version', 'display current-configuration | include interface'], 
         post_check: ['display current-configuration | include interface', 'display interface'] 
-      },
-      'h3c_comware': { 
-        pre_check: ['display version', 'display current-configuration | include interface'], 
-        post_check: ['display current-configuration | include interface', 'display interface'] 
-      },
-      'arista_eos': { 
-        pre_check: ['show version', 'show running-config | include interface'], 
-        post_check: ['show running-config | include interface', 'show interfaces status'] 
-      },
-      'juniper_junos': { 
+      };
+    }
+
+    // Juniper
+    if (plat.includes('juniper')) {
+      if (cat === 'routing' || nm.includes('bgp') || nm.includes('ospf') || nm.includes('route')) {
+        if (nm.includes('bgp')) {
+          return {
+            pre_check: ['show bgp summary', 'show route'],
+            post_check: ['show bgp summary', 'show route']
+          };
+        } else if (nm.includes('ospf')) {
+          return {
+            pre_check: ['show ospf neighbor', 'show route'],
+            post_check: ['show ospf neighbor', 'show route']
+          };
+        } else { // static route
+          return {
+            pre_check: ['show route'],
+            post_check: ['show route']
+          };
+        }
+      } else if (cat === 'security' || nm.includes('acl') || nm.includes('ssh') || nm.includes('aaa')) {
+        if (nm.includes('acl') || nm.includes('filter')) {
+          return {
+            pre_check: ['show firewall'],
+            post_check: ['show firewall']
+          };
+        } else {
+          return {
+            pre_check: ['show system services'],
+            post_check: ['show system services']
+          };
+        }
+      } else if (cat === 'switching' || nm.includes('vlan')) {
+        return {
+          pre_check: ['show vlans'],
+          post_check: ['show vlans']
+        };
+      } else if (cat === 'management' || nm.includes('snmp') || nm.includes('ntp')) {
+        if (nm.includes('snmp')) {
+          return {
+            pre_check: ['show snmp mib'],
+            post_check: ['show snmp mib']
+          };
+        } else { // ntp
+          return {
+            pre_check: ['show ntp status'],
+            post_check: ['show ntp status']
+          };
+        }
+      }
+      return { 
         pre_check: ['show version', 'show configuration | display set | grep interface'], 
         post_check: ['show configuration | display set | grep interface', 'show interfaces'] 
-      },
-    };
-    return prePostMap[platformKey] || { pre_check: [], post_check: [] };
+      };
+    }
+
+    // Arista
+    if (plat.includes('arista')) {
+      if (cat === 'routing' || nm.includes('bgp') || nm.includes('ospf') || nm.includes('route')) {
+        if (nm.includes('bgp')) {
+          return {
+            pre_check: ['show ip bgp summary', 'show ip route'],
+            post_check: ['show ip bgp summary', 'show ip route']
+          };
+        } else if (nm.includes('ospf')) {
+          return {
+            pre_check: ['show ip ospf neighbor', 'show ip route'],
+            post_check: ['show ip ospf neighbor', 'show ip route']
+          };
+        } else { // static route
+          return {
+            pre_check: ['show ip route'],
+            post_check: ['show ip route']
+          };
+        }
+      } else if (cat === 'security' || nm.includes('acl') || nm.includes('ssh')) {
+        return {
+          pre_check: ['show ip access-lists'],
+          post_check: ['show ip access-lists']
+        };
+      } else if (cat === 'switching' || nm.includes('vlan')) {
+        return {
+          pre_check: ['show vlan'],
+          post_check: ['show vlan']
+        };
+      } else if (cat === 'management' || nm.includes('snmp') || nm.includes('ntp')) {
+        if (nm.includes('snmp')) {
+          return {
+            pre_check: ['show snmp'],
+            post_check: ['show snmp']
+          };
+        } else { // ntp
+          return {
+            pre_check: ['show ntp status'],
+            post_check: ['show ntp status']
+          };
+        }
+      }
+      return { 
+        pre_check: ['show version', 'show running-config | include interface'], 
+        post_check: ['show running-config | include interface', 'show interfaces status'] 
+      };
+    }
+
+    return { pre_check: [], post_check: [] };
   };
 
   const scenarioOptions = useMemo(() => {
@@ -833,7 +1148,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           if (!allPlatforms.includes(platformKey)) {
             allPlatforms.push(platformKey);
           }
-          const { pre_check, post_check } = getDefaultPrePostCheck(platformKey);
+          const { pre_check, post_check } = getDefaultPrePostCheck(platformKey, template.category, template.name);
           phases[platformKey] = {
             pre_check,
             execute: template.content ? [template.content] : [],
@@ -846,12 +1161,12 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         const uniqueVars = [...new Set(varMatches.map(m => m[1]))];
         uniqueVars.forEach(key => {
           if (!variablesMap.has(key)) {
+            const meta = inferVariableMeta(key);
             variablesMap.set(key, {
               key,
               label: key,
               label_zh: key,
-              type: 'text',
-              required: true,
+              ...meta,
             });
           }
         });
@@ -918,19 +1233,59 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
   const filteredScenarioOptions = useMemo(() => {
     const query = scenarioSearch.trim().toLowerCase();
-    if (!query) return scenarioOptions;
-    return scenarioOptions.filter(
+    
+    // First, filter by target devices' platforms (intersection)
+    const devicePlatforms = [...new Set((form.target_devices || []).map(d => d.platform).filter(Boolean))] as string[];
+    let filtered = scenarioOptions;
+    if (devicePlatforms.length > 0) {
+      filtered = filtered.filter(item => {
+        const supported = item.supported_platforms || [];
+        return devicePlatforms.every(dp => !!findMatchingPlatform(dp, supported));
+      });
+    }
+
+    if (!query) return filtered;
+    return filtered.filter(
       (item) =>
         item.name.toLowerCase().includes(query) ||
         (item.name_zh && item.name_zh.toLowerCase().includes(query)) ||
         (item.category && item.category.toLowerCase().includes(query))
     );
-  }, [scenarioOptions, scenarioSearch]);
+  }, [scenarioOptions, scenarioSearch, form.target_devices, findMatchingPlatform]);
 
-  const selectedScenarioVariables = useMemo(
-    () => (selectedScenario?.variables || []).filter((item) => item?.key),
-    [selectedScenario],
-  );
+  const selectedScenarioVariables = useMemo(() => {
+    if (!selectedScenario) return [];
+    
+    // If it's a built-in automation scenario, use its pre-defined variables
+    if (selectedScenario.source_kind !== 'config_template') {
+      return (selectedScenario.variables || []).filter((item) => item?.key);
+    }
+    
+    // For configuration templates, only display variables that are used in the specific template content
+    // for the selected platform's vendor
+    const targetVendor = platforms[selectedScenarioPlatform]?.vendor;
+    const matchedTemplate = (selectedScenario.templates || []).find(tpl => tpl.vendor === targetVendor) || 
+                            (selectedScenario.templates || []).find(tpl => tpl.vendor?.toLowerCase() === targetVendor?.toLowerCase()) ||
+                            (selectedScenario.templates || [])[0];
+                            
+    if (!matchedTemplate) return [];
+    
+    const content = matchedTemplate.content || '';
+    const varMatches = [...content.matchAll(/\{\{\s*([\w.-]+)(?:\s*\|\s*[^}]+)?\s*\}\}/g)];
+    const uniqueKeys = [...new Set(varMatches.map(m => m[1]))];
+    
+    return uniqueKeys.map(key => {
+      const existing = (selectedScenario.variables || []).find(v => v.key === key);
+      if (existing) return existing;
+      const meta = inferVariableMeta(key);
+      return {
+        key,
+        label: key,
+        label_zh: key,
+        ...meta,
+      };
+    });
+  }, [selectedScenario, selectedScenarioPlatform, platforms]);
 
   const selectedScenarioPlatforms = useMemo(() => {
     if (!selectedScenario) return [] as string[];
@@ -1196,6 +1551,13 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     };
   };
 
+  const effectivePreview = useMemo(() => {
+    if (templatePreviewError) return null;
+    if (templatePreview) return templatePreview;
+    const platformToUse = selectedScenarioPlatform || selectedScenarioPlatforms[0] || '';
+    return getLocalTemplatePreview(platformToUse);
+  }, [templatePreview, templatePreviewError, selectedScenarioPlatform, selectedScenarioPlatforms, selectedScenario, templateVariables]);
+
   useEffect(() => {
     if (commandMode !== 'template' || !selectedScenario || selectedScenarioPlatform) return;
     
@@ -1443,8 +1805,6 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
   const saveOrder = async (closeAfterSave = true, asDraft = false, explicitInitialReviewerId?: string) => {
     const effectiveScenarioPlatform = selectedScenarioPlatform || selectedScenarioPlatforms[0] || '';
-    const localPreview = selectedScenarioId && effectiveScenarioPlatform ? getLocalTemplatePreview(effectiveScenarioPlatform) : null;
-    const effectivePreview = templatePreview || localPreview;
     const reviewerIdToUse = explicitInitialReviewerId || form.assigned_initial_reviewer_id;
     
     if (!form.title.trim()) {
@@ -1673,6 +2033,80 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         showToast(data.detail || data.message || 'Error', 'error');
       }
     } catch { showToast(zh ? '操作失败' : 'Failed', 'error'); }
+  };
+
+  // ── Execute order commands directly via automation engine ──
+  // Pushes selectedOrder.commands to selectedOrder.target_devices in a single
+  // batch via /api/automation/execute. The change_ticket parameter ties the
+  // execution to this order so the backend's "config command must have an
+  // approved/implementing change order" check passes without a separate token.
+  const runOrderCommands = async () => {
+    if (!executeModal) return;
+    const order = executeModal.order;
+    const commands = (order.commands || []).join('\n').trim();
+    const deviceIds = (order.target_devices || []).map((d: any) => d.id).filter(Boolean);
+
+    if (!commands) {
+      setExecuteModal({ ...executeModal, phase: 'done', success: false, error: zh ? '工单中没有可下发的命令' : 'No commands to execute' });
+      return;
+    }
+    if (deviceIds.length === 0) {
+      setExecuteModal({ ...executeModal, phase: 'done', success: false, error: zh ? '工单未关联目标设备' : 'No target devices linked to this order' });
+      return;
+    }
+
+    setExecuteModal({ ...executeModal, phase: 'running', output: '', error: '', success: false });
+
+    try {
+      const resp = await fetch('/api/automation/execute', {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          device_ids: deviceIds,
+          command: commands,
+          isConfig: true,
+          change_ticket: order.order_number,
+          task_name: `ChangeOrder ${order.order_number}: ${order.title}`,
+          auth_role: 'admin',
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        setExecuteModal((prev) => prev && ({
+          ...prev,
+          phase: 'done',
+          success: false,
+          error: data.detail || data.message || (zh ? '执行失败' : 'Execution failed'),
+        }));
+        return;
+      }
+      // Aggregate output across devices
+      let combined = '';
+      if (data.results) {
+        Object.entries(data.results as Record<string, any>).forEach(([devId, res]: [string, any]) => {
+          const dev = (order.target_devices || []).find((d: any) => d.id === devId);
+          const label = dev ? `${dev.hostname || devId} (${dev.ip_address || ''})` : devId;
+          combined += `\n────── ${label} ──────\n${res.output || ''}\n`;
+        });
+      } else if (data.output) {
+        combined = String(data.output);
+      }
+      const hasError = /Error:/i.test(combined);
+      setExecuteModal((prev) => prev && ({
+        ...prev,
+        phase: 'done',
+        success: !hasError,
+        output: combined.trim(),
+        error: hasError ? (zh ? '部分命令执行返回错误，请检查输出' : 'Some commands returned errors, please review the output') : '',
+      }));
+    } catch (err: any) {
+      setExecuteModal((prev) => prev && ({
+        ...prev,
+        phase: 'done',
+        success: false,
+        error: err?.message || (zh ? '请求失败' : 'Request failed'),
+      }));
+    }
   };
 
   // ── Delete ──
@@ -2087,6 +2521,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       case 'executing':
         // Completing can only be done by the requester.
         if (isRequester) {
+          actions.push({ label: zh ? '下发命令' : 'Push Commands', status: 'execute_commands', variant: 'primary', icon: Zap });
           actions.push({ label: zh ? '标记完成' : 'Complete', status: 'completed', variant: 'success', icon: CheckCircle2 });
           actions.push({ label: zh ? '标记失败' : 'Failed', status: 'failed', variant: 'danger', icon: XCircle });
           actions.push({ label: zh ? '触发回溯' : 'Start Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
@@ -2705,7 +3140,15 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
               <button
                 key={action.status}
                 onClick={() => {
-                  if (['rejected', 'initial_review'].includes(action.status)) {
+                  if (action.status === 'execute_commands') {
+                    setExecuteModal({
+                      order: selectedOrder,
+                      phase: 'confirm',
+                      output: '',
+                      error: '',
+                      success: false,
+                    });
+                  } else if (['rejected', 'initial_review'].includes(action.status)) {
                     setActionPrompt({
                       title: action.status === 'initial_review' ? (zh ? '请输入退回原因' : 'Return reason') : (zh ? '请输入驳回原因' : 'Rejection reason'),
                       placeholder: zh ? '必填项，说明具体的意见和原因...' : 'Required. Specific reason/comments',
@@ -3959,6 +4402,17 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                                         className={commonClass}
                                       />
                                     )}
+                                    {(() => {
+                                      const helpText = getVariableHelpText(variable.key, selectedScenarioPlatform, zh);
+                                      if (helpText) {
+                                        return (
+                                          <p className="mt-1 text-[11px] text-black/40 font-medium leading-normal">
+                                            {helpText}
+                                          </p>
+                                        );
+                                      }
+                                      return null;
+                                    })()}
                                   </div>
                                 );
                               })}
@@ -4031,7 +4485,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                           { key: 'post_check', title: zh ? '实施后检查' : 'Post-check', tone: 'text-amber-300' },
                           { key: 'rollback', title: zh ? '回退命令' : 'Rollback', tone: 'text-rose-300' },
                         ] as Array<{ key: keyof ScenarioPhasePreview; title: string; tone: string }>).map((section) => {
-                          const commands = templatePreview?.[section.key] || [];
+                          const commands = effectivePreview?.[section.key] || [];
                           return (
                             <div key={section.key} className="rounded-2xl border border-black/8 bg-white p-3">
                               <div className="flex items-center justify-between gap-2 mb-2">
@@ -4317,6 +4771,173 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                   {saving ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
                   {editingOrder ? (zh ? '提交' : 'Submit') : (zh ? '创建工单' : 'Create Order')}
                 </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Push-Commands Execute Modal — Step 9 closure */}
+      <AnimatePresence>
+        {executeModal && (
+          <motion.div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onMouseDown={(e) => {
+              // Block backdrop click while running
+              if (e.target === e.currentTarget && executeModal.phase !== 'running') {
+                setExecuteModal(null);
+              }
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-xl w-full max-w-3xl flex flex-col overflow-hidden"
+            >
+              <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] flex items-center gap-3">
+                <Zap size={18} className="text-[#00bceb]" />
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-bold text-[#164e63]">
+                    {zh ? '下发命令到目标设备' : 'Push commands to target devices'}
+                  </h3>
+                  <p className="text-xs text-black/45 mt-0.5">
+                    {zh
+                      ? `工单 ${executeModal.order.order_number} · ${(executeModal.order.target_devices || []).length} 台设备`
+                      : `Order ${executeModal.order.order_number} · ${(executeModal.order.target_devices || []).length} device(s)`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
+                {/* Devices */}
+                <div>
+                  <p className="text-xs font-semibold text-black/50 mb-2">{zh ? '目标设备' : 'Target Devices'}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(executeModal.order.target_devices || []).map((dev: any, i: number) => (
+                      <span key={i} className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-50/80 px-3 py-1.5 text-xs font-medium text-cyan-800 ring-1 ring-cyan-200/70">
+                        {dev.hostname || (zh ? '未命名' : 'Unnamed')}
+                        <span className="text-cyan-600/70">({dev.ip_address || ''})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Commands */}
+                <div>
+                  <p className="text-xs font-semibold text-black/50 mb-2">
+                    {zh ? '即将下发的配置命令' : 'Commands to be pushed'}
+                    <span className="ml-2 text-black/30 font-normal">
+                      ({(executeModal.order.commands || []).length} {zh ? '条' : 'lines'})
+                    </span>
+                  </p>
+                  <div className="bg-slate-900 rounded-xl p-3 font-mono text-xs text-emerald-400 leading-relaxed whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+                    {(executeModal.order.commands || []).map((cmd: string, i: number) => (
+                      <div key={i} className="flex">
+                        <span className="text-slate-500 select-none mr-2 w-6 text-right">{i + 1}</span>
+                        <span className="flex-1">{cmd}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Output / Error */}
+                {executeModal.phase !== 'confirm' && (
+                  <div>
+                    <p className="text-xs font-semibold text-black/50 mb-2 flex items-center gap-2">
+                      {zh ? '执行结果' : 'Execution Output'}
+                      {executeModal.phase === 'running' && (
+                        <RefreshCw size={12} className="animate-spin text-[#00bceb]" />
+                      )}
+                      {executeModal.phase === 'done' && (
+                        executeModal.success
+                          ? <CheckCircle2 size={12} className="text-emerald-500" />
+                          : <XCircle size={12} className="text-rose-500" />
+                      )}
+                    </p>
+                    {executeModal.error && (
+                      <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200 mb-2 whitespace-pre-line">
+                        {executeModal.error}
+                      </div>
+                    )}
+                    {executeModal.output && (
+                      <div className="bg-slate-900 rounded-xl p-3 font-mono text-xs text-slate-200 leading-relaxed whitespace-pre-wrap break-all max-h-72 overflow-y-auto">
+                        {executeModal.output}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {executeModal.phase === 'confirm' && (
+                  <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 ring-1 ring-amber-200 leading-relaxed">
+                    {zh
+                      ? '⚠ 命令将通过自动化引擎以管理员权限直接下发到上述设备。请确认命令清单和目标设备无误后再执行。'
+                      : '⚠ Commands will be pushed to the listed devices with admin credentials via the automation engine. Confirm before proceeding.'}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
+                {executeModal.phase === 'confirm' && (
+                  <>
+                    <button
+                      onClick={() => setExecuteModal(null)}
+                      className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
+                    >
+                      {zh ? '取消' : 'Cancel'}
+                    </button>
+                    <button
+                      onClick={runOrderCommands}
+                      className="px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-bold shadow-sm hover:bg-[#0096bd] transition-all flex items-center gap-2"
+                    >
+                      <Zap size={14} />
+                      {zh ? '确认下发' : 'Confirm & Push'}
+                    </button>
+                  </>
+                )}
+                {executeModal.phase === 'running' && (
+                  <button disabled className="px-4 py-2 rounded-xl bg-black/10 text-black/40 text-sm font-bold cursor-not-allowed flex items-center gap-2">
+                    <RefreshCw size={14} className="animate-spin" />
+                    {zh ? '执行中...' : 'Running...'}
+                  </button>
+                )}
+                {executeModal.phase === 'done' && (
+                  <>
+                    <button
+                      onClick={() => setExecuteModal(null)}
+                      className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
+                    >
+                      {zh ? '关闭' : 'Close'}
+                    </button>
+                    {!executeModal.success && (
+                      <button
+                        onClick={runOrderCommands}
+                        className="px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-bold shadow-sm hover:bg-amber-600 transition-all flex items-center gap-2"
+                      >
+                        <RefreshCw size={14} />
+                        {zh ? '重试' : 'Retry'}
+                      </button>
+                    )}
+                    {executeModal.success && (
+                      <button
+                        onClick={() => {
+                          const orderId = executeModal.order.id;
+                          const summary = executeModal.output.slice(0, 4000);
+                          setExecuteModal(null);
+                          handleTransition(orderId, 'completed', { result_summary: summary });
+                        }}
+                        className="px-4 py-2 rounded-xl bg-emerald-500 text-white text-sm font-bold shadow-sm hover:bg-emerald-600 transition-all flex items-center gap-2"
+                      >
+                        <CheckCircle2 size={14} />
+                        {zh ? '标记完成并保存输出' : 'Mark Completed & Save Output'}
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
             </motion.div>
           </motion.div>

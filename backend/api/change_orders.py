@@ -280,15 +280,43 @@ def _load_actor_change_groups(conn, user_id: str) -> set[str]:
     return _parse_change_groups(row['change_groups_json'])
 
 
-def validate_variable_value(key: str, val: str, var_type: str = "text") -> Optional[str]:
+def validate_variable_value(
+    key: str,
+    val: str,
+    var_type: str = "text",
+    platform: str = "",
+    variables: dict = None
+) -> Optional[str]:
     import re
     import ipaddress
     val_str = str(val).strip()
     if not val_str:
         return None
 
-    # 1. Number checks
-    if var_type == "number" or any(k in key.lower() for k in ["vlan", "port", "as", "key_size", "modulus"]):
+    # 1. Number checks (including ACL numbers, VLAN, Port, AS, OSPF process ID etc.)
+    is_acl_number = ("acl" in key.lower()) and ("name" not in key.lower())
+    is_as_number = any(w == "as" for w in re.split(r'[^a-zA-Z0-9]', key.lower()))
+
+    # Handle AS number checking first (supporting both ASplain and ASdot formats)
+    if is_as_number:
+        if '.' in val_str:
+            parts = val_str.split('.')
+            if len(parts) == 2 and all(p.isdigit() for p in parts):
+                high, low = int(parts[0]), int(parts[1])
+                if not (0 <= high <= 65535 and 0 <= low <= 65535 and not (high == 0 and low == 0)):
+                    return f"AS 号 '{key}' ASdot 格式非法 (高低 16 位均需在 0-65535 之间且不能同时为 0)"
+            else:
+                return f"AS 号 '{key}' ASdot 格式非法 (应为 X.Y 格式)"
+        else:
+            if not re.match(r'^\d+$', val_str):
+                return f"AS 号 '{key}' 必须是正整数或 ASdot 点分十进制格式"
+            num = int(val_str)
+            if num < 1 or num > 4294967295:
+                return f"AS 号 '{key}' 必须在 1 到 4294967295 之间"
+    
+    # Other numbers
+    number_indicators = ["vlan", "port", "key_size", "modulus", "process"]
+    if (var_type == "number" or is_acl_number or any(k in key.lower() for k in number_indicators)) and not is_as_number:
         if not re.match(r'^\d+$', val_str):
             return f"变量 '{key}' 的值必须是正整数"
         num = int(val_str)
@@ -296,24 +324,364 @@ def validate_variable_value(key: str, val: str, var_type: str = "text") -> Optio
             return f"VLAN ID '{key}' 必须在 1 到 4094 之间"
         if "port" in key.lower() and (num < 1 or num > 65535):
             return f"端口号 '{key}' 必须在 1 到 65535 之间"
-        if "as" in key.lower() and (num < 1 or num > 4294967295):
-            return f"AS 号 '{key}' 必须在 1 到 4294967295 之间"
+        if "process" in key.lower() and (num < 1 or num > 65535):
+            return f"OSPF 进程 ID '{key}' 必须在 1 到 65535 之间"
 
-    # 2. IP address checks
-    ip_indicators = ["ip", "host", "server", "neighbor", "gateway", "network"]
-    if any(ind in key.lower() for ind in ip_indicators):
-        if not re.match(r'^[\w\.\-\/]+$', val_str):
-            return f"IP地址/主机名 '{key}' 的格式不正确"
-        if re.match(r'^[\d\./]+$', val_str):
+        # Platform-specific ACL range validation
+        if is_acl_number:
+            platform_lower = platform.lower() if platform else ""
+            if "cisco" in platform_lower:
+                if not ((1 <= num <= 199) or (1300 <= num <= 1999) or (2000 <= num <= 2699)):
+                    return f"思科 ACL 编号 '{key}' 必须在 1-199 或 1300-1999 或 2000-2699 之间"
+            elif "huawei" in platform_lower or "h3c" in platform_lower:
+                if not (2000 <= num <= 6999):
+                    return f"华为/H3C ACL 编号 '{key}' 必须在 2000-6999 之间"
+            elif "arista" in platform_lower:
+                if not (1 <= num <= 199):
+                    return f"Arista ACL 编号 '{key}' 必须在 1-199 之间"
+
+    # 2. Wildcard mask and Netmask check
+    if any(k in key.lower() for k in ["wildcard", "inverse_mask"]):
+        octets = val_str.split('.')
+        if len(octets) != 4 or not all(o.isdigit() and 0 <= int(o) <= 255 for o in octets):
+            return f"反掩码 '{key}' 必须是合法的点分十进制格式 (如 0.0.0.255)"
+    
+    if ("mask" in key.lower()) and ("wildcard" not in key.lower()):
+        try:
+            if val_str.isdigit():
+                platform_lower = platform.lower() if platform else ""
+                if "cisco" in platform_lower:
+                    return f"思科子网掩码 '{key}' 必须是点分十进制格式 (如 255.255.255.0)，不支持输入数字位数 '{val_str}'"
+                num = int(val_str)
+                if num < 0 or num > 32:
+                    return f"子网掩码 '{key}' 必须在 0 到 32 之间"
+            else:
+                octets = val_str.split('.')
+                if len(octets) != 4 or not all(o.isdigit() and 0 <= int(o) <= 255 for o in octets):
+                    return f"子网掩码 '{key}' 必须是合法的点分十进制格式 (如 255.255.255.0)"
+                ipaddress.IPv4Network(f"0.0.0.0/{val_str}")
+        except ValueError:
+            return f"子网掩码 '{key}' 格式非法"
+
+    # 3. OSPF Area ID check
+    if "area" in key.lower():
+        platform_lower = platform.lower() if platform else ""
+        if "juniper" in platform_lower:
+            # Juniper strictly requires dotted-decimal format (must not be pure integer)
+            if not re.match(r'^\d+\.\d+\.\d+\.\d+$', val_str):
+                return f"Juniper OSPF 区域 ID '{key}' 必须为点分十进制 IP 格式 (如 0.0.0.0)"
             try:
-                if '/' in val_str:
-                    ipaddress.ip_network(val_str, strict=False)
-                else:
-                    ipaddress.ip_address(val_str)
+                ipaddress.ip_address(val_str)
             except ValueError:
+                return f"OSPF 区域 ID '{key}' 格式非法"
+        else:
+            if val_str.isdigit():
+                num = int(val_str)
+                if num < 0 or num > 4294967295:
+                    return f"OSPF 区域 ID '{key}' 必须在 0 到 4294967295 之间"
+            else:
+                try:
+                    ipaddress.ip_address(val_str)
+                except ValueError:
+                    return f"OSPF 区域 ID '{key}' 必须是正整数或点分十进制 IP 格式 (如 0.0.0.0)"
+
+    # 4. Address Family check
+    if any(k in key.lower() for k in ["address_family", "bgp_family", "addr_family"]) or (key.lower() == "family"):
+        valid_keywords = ["ipv4", "ipv6", "inet", "inet6", "vpnv4", "vpnv6", "vpn-ipv4", "vpn-ipv6", "l2vpn", "evpn", "unicast", "multicast"]
+        words = re.split(r'[^a-zA-Z0-9-]', val_str.lower())
+        if not all(any(vk in w for vk in valid_keywords) for w in words if w):
+            return f"地址簇 '{key}' 格式非法 (支持如 ipv4 unicast, ipv4-family, inet unicast 等)"
+
+    # 5. Interface name checks
+    if any(k in key.lower() for k in ["interface", "intf"]) and not any(k in key.lower() for k in ["type", "description"]):
+        platform_lower = platform.lower() if platform else ""
+        if "cisco" in platform_lower:
+            # GigabitEthernet0/1, GigabitEthernet0/1.10, Vlan10, Loopback0, Port-channel1 etc.
+            if not re.match(r'^(gi|gigabitethernet|fa|fastethernet|te|tengigabitethernet|tw|twentyfivegige|fo|fortygige|hu|hundredgige|vl|vlan|lo|loopback|se|serial|pos|port-channel)\s*\d+([\/\d\.]+)*$', val_str, re.IGNORECASE):
+                return f"思科接口名称 '{key}' 格式不正确 (如 GigabitEthernet0/1, Vlan10, GigabitEthernet0/1.10)"
+        elif "huawei" in platform_lower or "h3c" in platform_lower:
+            # GigabitEthernet0/0/1, GigabitEthernet0/0/1.10, Vlanif10, Loopback0, Eth-Trunk1, Eth-Trunk1.10 etc.
+            if re.match(r'^(ge|gigabitethernet|xge|xgigabitethernet)', val_str, re.IGNORECASE):
+                if not re.match(r'^(ge|gigabitethernet|xge|xgigabitethernet)\s*\d+/\d+/\d+(\.\d+)?$', val_str, re.IGNORECASE):
+                    return f"华为/H3C物理接口名称 '{key}' 必须是三级槽位格式 (如 GigabitEthernet0/0/1 或 GE0/0/1)"
+            else:
+                if not re.match(r'^(eth-trunk|vlanif|loopback|lo|null)\s*\d+(\.\d+)?$', val_str, re.IGNORECASE):
+                    return f"华为/H3C逻辑接口名称 '{key}' 格式不正确 (如 Vlanif10, Eth-Trunk1)"
+        elif "juniper" in platform_lower:
+            # ge-0/0/0, ge-0/0/0.10, ae1, ae1.10, lo0.0, vlan.10, irb.10 etc.
+            if not (re.match(r'^(ge|xe|et|ae|fe|lo|vlan|irb)\-\d+\/\d+\/\d+(\.\d+)?$', val_str, re.IGNORECASE) or 
+                    re.match(r'^lo0\.\d+$', val_str, re.IGNORECASE) or 
+                    re.match(r'^ae\d+(\.\d+)?$', val_str, re.IGNORECASE) or 
+                    re.match(r'^vlan\.\d+$', val_str, re.IGNORECASE) or 
+                    re.match(r'^irb\.\d+$', val_str, re.IGNORECASE)):
+                return f"Juniper接口名称 '{key}' 格式不正确 (如 ge-0/0/0, ge-0/0/0.10, ae1.10, lo0.0)"
+        elif "arista" in platform_lower:
+            # Ethernet1, Ethernet1.10, Vlan10, Loopback0 etc.
+            if not re.match(r'^(eth|ethernet|vlan|loopback|port-channel|lo)\s*\d+([\/\d\.]+)*$', val_str, re.IGNORECASE):
+                return f"Arista接口名称 '{key}' 格式不正确 (如 Ethernet1, Vlan10, Ethernet1.10)"
+
+    # 6. IP address checks
+    ip_indicators = ["ip", "host", "server", "neighbor", "gateway", "network", "src", "dst", "router"]
+    is_ip_field = any(ind in key.lower() for ind in ip_indicators) and not any(k in key.lower() for k in ["mask", "wildcard"])
+    
+    if is_ip_field:
+        # We enforce strict IP/network format (reject hostnames) if key contains "ip", "network", "src", "dst", "addr", or "router_id"
+        # and doesn't contain "name" or "domain" (like domain_name, server_name)
+        strict_ip = any(ind in key.lower() for ind in ["ip", "network", "src", "dst", "addr", "router_id"]) and not any(k in key.lower() for k in ["name", "domain"])
+        
+        if strict_ip:
+            if not re.match(r'^[\d\./]+$', val_str):
                 return f"IP地址/网段 '{key}' 格式非法"
+        else:
+            if not re.match(r'^[\w\.\-\/]+$', val_str):
+                return f"IP地址/主机名 '{key}' 的格式不正确"
+        
+        if re.match(r'^[\d\./]+$', val_str):
+            platform_lower = platform.lower() if platform else ""
+            has_independent_mask = False
+            if variables:
+                has_independent_mask = any("mask" in k.lower() or "wildcard" in k.lower() for k in variables.keys())
+            
+            is_traditional_platform = any(p in platform_lower for p in ["cisco", "huawei", "h3c"])
+            
+            # Router IDs, peer IPs, server IPs, gateway IPs must always be pure host IPs (no '/' mask)
+            is_host_ip_only = any(k in key.lower() for k in ["router_id", "peer_ip", "neighbor_ip", "server_ip", "gateway"])
+            
+            if is_host_ip_only or (is_traditional_platform and has_independent_mask):
+                if '/' in val_str:
+                    return f"变量 '{key}' 必须是纯 IP 地址，不能带 '/' 掩码位数"
+                try:
+                    ipaddress.ip_address(val_str)
+                except ValueError:
+                    return f"IP地址 '{key}' 格式非法"
+            else:
+                try:
+                    if '/' in val_str:
+                        ipaddress.ip_network(val_str, strict=False)
+                    else:
+                        ipaddress.ip_address(val_str)
+                except ValueError:
+                    return f"IP地址/网段 '{key}' 格式非法"
 
     return None
+
+
+
+def get_pre_post_checks(platform: str, category: str, name: str) -> tuple[list[str], list[str]]:
+    plat = platform.lower()
+    cat = (category or "").lower()
+    nm = (name or "").lower()
+
+    # Cisco (IOS, NX-OS, IOS-XR)
+    if "cisco" in plat:
+        if cat == "routing" or "bgp" in nm or "ospf" in nm or "route" in nm:
+            if "bgp" in nm:
+                return (
+                    ["show ip bgp summary", "show ip route"],
+                    ["show ip bgp summary", "show ip route"]
+                )
+            elif "ospf" in nm:
+                return (
+                    ["show ip ospf neighbor", "show ip route"],
+                    ["show ip ospf neighbor", "show ip route"]
+                )
+            else:  # static route
+                return (
+                    ["show ip route"],
+                    ["show ip route"]
+                )
+        elif cat == "security" or "acl" in nm or "ssh" in nm or "aaa" in nm or "tacacs" in nm:
+            if "acl" in nm:
+                return (
+                    ["show ip access-lists"],
+                    ["show ip access-lists"]
+                )
+            elif "ssh" in nm or "aaa" in nm or "tacacs" in nm:
+                return (
+                    ["show run | include ssh", "show run | include aaa"],
+                    ["show ssh", "show run | include ssh"]
+                )
+            else:
+                return (
+                    ["show running-config"],
+                    ["show running-config"]
+                )
+        elif cat == "switching" or "vlan" in nm:
+            return (
+                ["show vlan brief", "show interfaces status"],
+                ["show vlan brief", "show interfaces status"]
+            )
+        elif cat == "management" or "snmp" in nm or "ntp" in nm:
+            if "snmp" in nm:
+                return (
+                    ["show snmp"],
+                    ["show snmp"]
+                )
+            else: # ntp
+                return (
+                    ["show ntp status"],
+                    ["show ntp status"]
+                )
+        # Default Cisco
+        return (
+            ["show version", "show running-config | include interface"],
+            ["show running-config | include interface", "show interfaces status"]
+        )
+
+    # Huawei / H3C
+    elif "huawei" in plat or "h3c" in plat:
+        if cat == "routing" or "bgp" in nm or "ospf" in nm or "route" in nm:
+            if "bgp" in nm:
+                return (
+                    ["display bgp peer", "display ip routing-table"],
+                    ["display bgp peer", "display ip routing-table"]
+                )
+            elif "ospf" in nm:
+                return (
+                    ["display ospf peer brief", "display ip routing-table"],
+                    ["display ospf peer brief", "display ip routing-table"]
+                )
+            else: # static route
+                return (
+                    ["display ip routing-table"],
+                    ["display ip routing-table"]
+                )
+        elif cat == "security" or "acl" in nm or "ssh" in nm or "aaa" in nm or "tacacs" in nm:
+            if "acl" in nm:
+                return (
+                    ["display acl all"],
+                    ["display acl all"]
+                )
+            elif "ssh" in nm or "aaa" in nm or "tacacs" in nm:
+                return (
+                    ["display local-user"],
+                    ["display local-user"]
+                )
+            else:
+                return (
+                    ["display current-configuration"],
+                    ["display current-configuration"]
+                )
+        elif cat == "switching" or "vlan" in nm:
+            return (
+                ["display vlan"],
+                ["display vlan"]
+            )
+        elif cat == "management" or "snmp" in nm or "ntp" in nm:
+            if "snmp" in nm:
+                return (
+                    ["display snmp-agent sys-info"],
+                    ["display snmp-agent sys-info"]
+                )
+            else: # ntp
+                return (
+                    ["display ntp-service status"],
+                    ["display ntp-service status"]
+                )
+        # Default Huawei/H3C
+        return (
+            ["display version", "display current-configuration | include interface"],
+            ["display current-configuration | include interface", "display interface"]
+        )
+
+    # Juniper Junos
+    elif "juniper" in plat:
+        if cat == "routing" or "bgp" in nm or "ospf" in nm or "route" in nm:
+            if "bgp" in nm:
+                return (
+                    ["show bgp summary", "show route"],
+                    ["show bgp summary", "show route"]
+                )
+            elif "ospf" in nm:
+                return (
+                    ["show ospf neighbor", "show route"],
+                    ["show ospf neighbor", "show route"]
+                )
+            else: # static route
+                return (
+                    ["show route"],
+                    ["show route"]
+                )
+        elif cat == "security" or "acl" in nm or "ssh" in nm or "aaa" in nm:
+            if "acl" in nm or "filter" in nm:
+                return (
+                    ["show firewall"],
+                    ["show firewall"]
+                )
+            else:
+                return (
+                    ["show system services"],
+                    ["show system services"]
+                )
+        elif cat == "switching" or "vlan" in nm:
+            return (
+                ["show vlans"],
+                ["show vlans"]
+            )
+        elif cat == "management" or "snmp" in nm or "ntp" in nm:
+            if "snmp" in nm:
+                return (
+                    ["show snmp mib"],
+                    ["show snmp mib"]
+                )
+            else: # ntp
+                return (
+                    ["show ntp status"],
+                    ["show ntp status"]
+                )
+        # Default Juniper
+        return (
+            ["show version", "show configuration | display set | grep interface"],
+            ["show configuration | display set | grep interface", "show interfaces"]
+        )
+
+    # Arista EOS
+    elif "arista" in plat:
+        if cat == "routing" or "bgp" in nm or "ospf" in nm or "route" in nm:
+            if "bgp" in nm:
+                return (
+                    ["show ip bgp summary", "show ip route"],
+                    ["show ip bgp summary", "show ip route"]
+                )
+            elif "ospf" in nm:
+                return (
+                    ["show ip ospf neighbor", "show ip route"],
+                    ["show ip ospf neighbor", "show ip route"]
+                )
+            else: # static route
+                return (
+                    ["show ip route"],
+                    ["show ip route"]
+                )
+        elif cat == "security" or "acl" in nm or "ssh" in nm:
+            return (
+                ["show ip access-lists"],
+                ["show ip access-lists"]
+            )
+        elif cat == "switching" or "vlan" in nm:
+            return (
+                ["show vlan"],
+                ["show vlan"]
+            )
+        elif cat == "management" or "snmp" in nm or "ntp" in nm:
+            if "snmp" in nm:
+                return (
+                    ["show snmp"],
+                    ["show snmp"]
+                )
+            else: # ntp
+                return (
+                    ["show ntp status"],
+                    ["show ntp status"]
+                )
+        # Default Arista
+        return (
+            ["show version", "show running-config | include interface"],
+            ["show running-config | include interface", "show interfaces status"]
+        )
+
+    # Default fallback
+    return ([], [])
 
 
 def validate_template_parameters(
@@ -334,7 +702,7 @@ def validate_template_parameters(
         conn = get_db_connection()
         try:
             row = conn.execute(
-                'SELECT id, name, vendor, content, rollback FROM templates WHERE id = ?',
+                'SELECT id, name, category, vendor, content, rollback FROM templates WHERE id = ?',
                 (scenario_id,),
             ).fetchone()
             if not row:
@@ -347,42 +715,28 @@ def validate_template_parameters(
         rollback = template.get('rollback') or ''
 
         # Extract variables using regex
-        var_matches = re.findall(r'\{\{\s*([\w.-]+)\s*\}\}', content)
+        var_matches = re.findall(r'\{\{\s*([\w.-]+)(?:\s*\|\s*[^}]+)?\s*\}\}', content)
         unique_vars = sorted(list(set(var_matches)))
 
-        variable_defs = [{'key': k, 'label': k, 'type': 'text', 'required': True} for k in unique_vars]
+        variable_defs = []
+        for k in unique_vars:
+            k_lower = k.lower()
+            is_req = not any(x in k_lower for x in ["group_name", "family", "description"])
+            # 地址簇变量自动渲染为下拉
+            if k_lower == 'family' or 'address_family' in k_lower or 'bgp_family' in k_lower or 'addr_family' in k_lower:
+                variable_defs.append({
+                    'key': k, 'label': k, 'type': 'select', 'required': is_req,
+                    'options': [
+                        'ipv4 unicast', 'ipv4 multicast', 'ipv6 unicast', 'ipv6 multicast',
+                        'vpnv4 unicast', 'vpnv6 unicast', 'l2vpn evpn',
+                        'ipv4-family unicast', 'ipv4-family vpnv4', 'ipv6-family unicast',
+                        'inet unicast', 'inet6 unicast',
+                    ],
+                })
+            else:
+                variable_defs.append({'key': k, 'label': k, 'type': 'text', 'required': is_req})
 
-        pre_post_map = {
-            'cisco_ios': (
-                ['show version', 'show running-config | include interface'],
-                ['show running-config | include interface', 'show interfaces status'],
-            ),
-            'cisco_nxos': (
-                ['show version', 'show running-config | include interface'],
-                ['show running-config | include interface', 'show interface status'],
-            ),
-            'cisco_iosxr': (
-                ['show version', 'show running-config | include interface'],
-                ['show running-config | include interface', 'show interfaces'],
-            ),
-            'huawei_vrp': (
-                ['display version', 'display current-configuration | include interface'],
-                ['display current-configuration | include interface', 'display interface'],
-            ),
-            'h3c_comware': (
-                ['display version', 'display current-configuration | include interface'],
-                ['display current-configuration | include interface', 'display interface'],
-            ),
-            'arista_eos': (
-                ['show version', 'show running-config | include interface'],
-                ['show running-config | include interface', 'show interfaces status'],
-            ),
-            'juniper_junos': (
-                ['show version', 'show configuration | display set | grep interface'],
-                ['show configuration | display set | grep interface', 'show interfaces'],
-            ),
-        }
-        pre_check, post_check = pre_post_map.get(platform, ([], []))
+        pre_check, post_check = get_pre_post_checks(platform, template.get('category') or '', template.get('name') or '')
         phases = {
             'pre_check': pre_check,
             'execute': [content] if content.strip() else [],
@@ -412,7 +766,7 @@ def validate_template_parameters(
     for key, val in variables.items():
         var_def = next((v for v in variable_defs if v.get('key') == key), None)
         var_type = var_def.get('type', 'text') if var_def else 'text'
-        err = validate_variable_value(key, val, var_type)
+        err = validate_variable_value(key, val, var_type, platform, variables)
         if err:
             errors.append(err)
 
@@ -462,45 +816,12 @@ def _build_command_template_snapshot(template_payload: dict, target_devices: lis
 
     from api.playbooks import _all_scenarios, _render_phase_commands
 
-    def _default_checks_for_platform(platform_key: str) -> tuple[list[str], list[str]]:
-        pre_post_map: dict[str, tuple[list[str], list[str]]] = {
-            'cisco_ios': (
-                ['show version', 'show running-config | include interface'],
-                ['show running-config | include interface', 'show interfaces status'],
-            ),
-            'cisco_nxos': (
-                ['show version', 'show running-config | include interface'],
-                ['show running-config | include interface', 'show interface status'],
-            ),
-            'cisco_iosxr': (
-                ['show version', 'show running-config | include interface'],
-                ['show running-config | include interface', 'show interfaces'],
-            ),
-            'huawei_vrp': (
-                ['display version', 'display current-configuration | include interface'],
-                ['display current-configuration | include interface', 'display interface'],
-            ),
-            'h3c_comware': (
-                ['display version', 'display current-configuration | include interface'],
-                ['display current-configuration | include interface', 'display interface'],
-            ),
-            'arista_eos': (
-                ['show version', 'show running-config | include interface'],
-                ['show running-config | include interface', 'show interfaces status'],
-            ),
-            'juniper_junos': (
-                ['show version', 'show configuration | display set | grep interface'],
-                ['show configuration | display set | grep interface', 'show interfaces'],
-            ),
-        }
-        return pre_post_map.get(platform_key, ([], []))
-
     scenario = None
     if source_kind == 'config_template':
         conn = get_db_connection()
         try:
             row = conn.execute(
-                'SELECT id, name, vendor, content FROM templates WHERE id = ?',
+                'SELECT id, name, category, vendor, content, rollback FROM templates WHERE id = ?',
                 (scenario_id,),
             ).fetchone()
         finally:
@@ -511,7 +832,7 @@ def _build_command_template_snapshot(template_payload: dict, target_devices: lis
         platform = str(template_payload.get('platform') or '').strip()
         if not platform:
             raise HTTPException(status_code=400, detail='command_template.platform is required for config template mode')
-        pre_check, post_check = _default_checks_for_platform(platform)
+        pre_check, post_check = get_pre_post_checks(platform, template.get('category') or '', template.get('name') or '')
         scenario = {
             'id': template['id'],
             'name': template.get('name') or '',
@@ -522,7 +843,7 @@ def _build_command_template_snapshot(template_payload: dict, target_devices: lis
                     'pre_check': pre_check,
                     'execute': [str(template.get('content') or '')] if str(template.get('content') or '').strip() else [],
                     'post_check': post_check,
-                    'rollback': [],
+                    'rollback': [str(template.get('rollback') or '')] if str(template.get('rollback') or '').strip() else [],
                 }
             },
             'default_platform': platform,
