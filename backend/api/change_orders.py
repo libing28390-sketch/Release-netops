@@ -280,7 +280,178 @@ def _load_actor_change_groups(conn, user_id: str) -> set[str]:
     return _parse_change_groups(row['change_groups_json'])
 
 
-def _build_command_template_snapshot(template_payload: dict) -> dict:
+def validate_variable_value(key: str, val: str, var_type: str = "text") -> Optional[str]:
+    import re
+    import ipaddress
+    val_str = str(val).strip()
+    if not val_str:
+        return None
+
+    # 1. Number checks
+    if var_type == "number" or any(k in key.lower() for k in ["vlan", "port", "as", "key_size", "modulus"]):
+        if not re.match(r'^\d+$', val_str):
+            return f"变量 '{key}' 的值必须是正整数"
+        num = int(val_str)
+        if "vlan" in key.lower() and (num < 1 or num > 4094):
+            return f"VLAN ID '{key}' 必须在 1 到 4094 之间"
+        if "port" in key.lower() and (num < 1 or num > 65535):
+            return f"端口号 '{key}' 必须在 1 到 65535 之间"
+        if "as" in key.lower() and (num < 1 or num > 4294967295):
+            return f"AS 号 '{key}' 必须在 1 到 4294967295 之间"
+
+    # 2. IP address checks
+    ip_indicators = ["ip", "host", "server", "neighbor", "gateway", "network"]
+    if any(ind in key.lower() for ind in ip_indicators):
+        if not re.match(r'^[\w\.\-\/]+$', val_str):
+            return f"IP地址/主机名 '{key}' 的格式不正确"
+        if re.match(r'^[\d\./]+$', val_str):
+            try:
+                if '/' in val_str:
+                    ipaddress.ip_network(val_str, strict=False)
+                else:
+                    ipaddress.ip_address(val_str)
+            except ValueError:
+                return f"IP地址/网段 '{key}' 格式非法"
+
+    return None
+
+
+def validate_template_parameters(
+    scenario_id: str,
+    source_kind: str,
+    platform: str,
+    variables: dict,
+    target_devices: list = []
+) -> list[str]:
+    import re
+    errors = []
+
+    # 1. Look up scenario or template
+    from api.playbooks import _all_scenarios
+
+    scenario = None
+    if source_kind == 'config_template':
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                'SELECT id, name, vendor, content, rollback FROM templates WHERE id = ?',
+                (scenario_id,),
+            ).fetchone()
+            if not row:
+                return [f"配置模板 '{scenario_id}' 不存在"]
+            template = dict(row)
+        finally:
+            conn.close()
+
+        content = template.get('content') or ''
+        rollback = template.get('rollback') or ''
+
+        # Extract variables using regex
+        var_matches = re.findall(r'\{\{\s*([\w.-]+)\s*\}\}', content)
+        unique_vars = sorted(list(set(var_matches)))
+
+        variable_defs = [{'key': k, 'label': k, 'type': 'text', 'required': True} for k in unique_vars]
+
+        pre_post_map = {
+            'cisco_ios': (
+                ['show version', 'show running-config | include interface'],
+                ['show running-config | include interface', 'show interfaces status'],
+            ),
+            'cisco_nxos': (
+                ['show version', 'show running-config | include interface'],
+                ['show running-config | include interface', 'show interface status'],
+            ),
+            'cisco_iosxr': (
+                ['show version', 'show running-config | include interface'],
+                ['show running-config | include interface', 'show interfaces'],
+            ),
+            'huawei_vrp': (
+                ['display version', 'display current-configuration | include interface'],
+                ['display current-configuration | include interface', 'display interface'],
+            ),
+            'h3c_comware': (
+                ['display version', 'display current-configuration | include interface'],
+                ['display current-configuration | include interface', 'display interface'],
+            ),
+            'arista_eos': (
+                ['show version', 'show running-config | include interface'],
+                ['show running-config | include interface', 'show interfaces status'],
+            ),
+            'juniper_junos': (
+                ['show version', 'show configuration | display set | grep interface'],
+                ['show configuration | display set | grep interface', 'show interfaces'],
+            ),
+        }
+        pre_check, post_check = pre_post_map.get(platform, ([], []))
+        phases = {
+            'pre_check': pre_check,
+            'execute': [content] if content.strip() else [],
+            'post_check': post_check,
+            'rollback': [rollback] if rollback.strip() else [],
+        }
+    else:
+        scenario = next((item for item in _all_scenarios() if item.get('id') == scenario_id), None)
+        if not scenario:
+            return [f"变更场景 '{scenario_id}' 不存在"]
+
+        variable_defs = scenario.get('variables') or []
+        phases = (scenario.get('platform_phases') or {}).get(platform)
+        if not phases:
+            return [f"所选场景不支持平台 '{platform}'"]
+
+    # 2. Check required variables
+    for variable in variable_defs:
+        key = str(variable.get('key') or '').strip()
+        if not key:
+            continue
+        val = str(variables.get(key, '')).strip()
+        if variable.get('required') and not val:
+            errors.append(f"必填变量 '{variable.get('label') or key}' 不能为空")
+
+    # 3. Check format validation for each variable value
+    for key, val in variables.items():
+        var_def = next((v for v in variable_defs if v.get('key') == key), None)
+        var_type = var_def.get('type', 'text') if var_def else 'text'
+        err = validate_variable_value(key, val, var_type)
+        if err:
+            errors.append(err)
+
+    # 4. Check Jinja2 syntax compile and strict render
+    from jinja2 import StrictUndefined, TemplateSyntaxError, UndefinedError
+    from jinja2.sandbox import SandboxedEnvironment
+    env = SandboxedEnvironment(undefined=StrictUndefined)
+
+    strict_vars = {k: str(v) for k, v in variables.items()}
+
+    try:
+        for phase_name, templates_list in phases.items():
+            for tmpl_str in templates_list:
+                tmpl = env.from_string(tmpl_str)
+                tmpl.render(**strict_vars)
+    except TemplateSyntaxError as e:
+        errors.append(f"模板语法错误: {e.message} (行 {e.lineno})")
+    except UndefinedError as e:
+        errors.append(f"缺失或未定义变量: {e.message}")
+    except Exception as e:
+        errors.append(f"模板渲染出错: {str(e)}")
+
+    # 5. Check platform compatibility
+    if target_devices:
+        for device in target_devices:
+            dev_hostname = device.get('hostname', 'Unknown')
+            dev_platform = device.get('platform', '')
+            if dev_platform and platform:
+                dev_vendor = dev_platform.split('_')[0] if '_' in dev_platform else dev_platform
+                tmpl_vendor = platform.split('_')[0] if '_' in platform else platform
+                if dev_vendor.lower() != tmpl_vendor.lower():
+                    errors.append(f"设备 '{dev_hostname}' 的平台是 '{dev_platform}'，与模板的适配平台 '{platform}' 不兼容")
+
+    return errors
+
+
+def _build_command_template_snapshot(template_payload: dict, target_devices: list = None, status: str = 'draft') -> dict:
+    if target_devices is None:
+        target_devices = []
     if not isinstance(template_payload, dict):
         raise HTTPException(status_code=400, detail='command_template must be an object')
 
@@ -374,6 +545,12 @@ def _build_command_template_snapshot(template_payload: dict) -> dict:
         raise HTTPException(status_code=400, detail='command_template.variables must be an object')
     variables = {str(key): '' if value is None else str(value) for key, value in raw_variables.items()}
 
+    # Strict Validation for Active (Non-Draft) Stages
+    if status != 'draft':
+        errors = validate_template_parameters(scenario_id, source_kind, platform, variables, target_devices)
+        if errors:
+            raise HTTPException(status_code=400, detail="、".join(errors))
+
     variable_defs = scenario.get('variables') or []
     missing_labels = []
     for variable in variable_defs:
@@ -422,16 +599,13 @@ def _normalize_command_template_payload(payload: dict) -> dict:
     order_type = normalized.get('order_type', 'config_change')
 
     if not template_payload:
-        # When FEATURE_TEMPLATE_REQUIRED is ON, reject empty templates for
-        # non-draft config-change orders at normalization time (before the
-        # dedicated _validate_template_completeness call).  When the flag is
-        # OFF we silently accept the empty dict for backward compatibility.
         if FEATURE_TEMPLATE_REQUIRED and status in _TEMPLATE_REQUIRED_STATUSES and order_type == 'config_change':
             raise HTTPException(status_code=400, detail='非草稿状态的配置变更工单必须携带有效的场景化模板')
         normalized['command_template'] = {}
         return normalized
 
-    snapshot = _build_command_template_snapshot(template_payload)
+    target_devices = normalized.get('target_devices') or []
+    snapshot = _build_command_template_snapshot(template_payload, target_devices, status)
     normalized['command_template'] = snapshot
     normalized['commands'] = snapshot['preview']['execute']
     normalized['rollback_plan'] = '\n'.join(snapshot['preview']['rollback']) if snapshot['preview']['rollback'] else str(normalized.get('rollback_plan') or '')
@@ -439,6 +613,14 @@ def _normalize_command_template_payload(payload: dict) -> dict:
 
 
 # ── Pydantic Models ──────────────────────────────────────────────────
+
+class TemplateValidateRequest(BaseModel):
+    scenario_id: str
+    source_kind: str = 'scenario'
+    platform: str
+    variables: dict = {}
+    target_devices: list = []
+
 
 class ChangeOrderCreate(BaseModel):
     title: str
@@ -677,6 +859,41 @@ def api_get_change_order_timeline(order_id: str, user=require_role("Viewer")):
 
 
 # ── Create ───────────────────────────────────────────────────────────
+
+@router.post('/change-orders/validate')
+def api_validate_template(body: TemplateValidateRequest, user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        errors = validate_template_parameters(
+            scenario_id=body.scenario_id,
+            source_kind=body.source_kind,
+            platform=body.platform,
+            variables=body.variables,
+            target_devices=body.target_devices
+        )
+
+        preview = {}
+        if not errors:
+            try:
+                snapshot = _build_command_template_snapshot({
+                    'scenario_id': body.scenario_id,
+                    'source_kind': body.source_kind,
+                    'platform': body.platform,
+                    'variables': body.variables
+                }, body.target_devices, 'draft')
+                preview = snapshot.get('preview') or {}
+            except Exception as e:
+                errors.append(f"生成预览失败: {str(e)}")
+
+        return {
+            'success': True,
+            'valid': len(errors) == 0,
+            'errors': errors,
+            'preview': preview
+        }
+    finally:
+        conn.close()
+
 
 @router.post('/change-orders')
 def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator")):

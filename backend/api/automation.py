@@ -195,8 +195,8 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
                 if change_ticket:
                     row = conn.execute("SELECT status FROM change_orders WHERE order_number = ?", (change_ticket,)).fetchone()
                     if row and row['status'] in {'approved', 'implementing'}: ticket_valid = True
-                if not ticket_valid and is_config_req:
-                    if not consume_approval(approval_token): raise HTTPException(status_code=403, detail="授权无效")
+                if not ticket_valid:
+                    if not consume_approval(approval_token): raise HTTPException(status_code=403, detail="配置变更类命令必须关联有效的变更工单或提供授权码")
             else:
                 is_config = False
 

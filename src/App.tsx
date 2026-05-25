@@ -828,20 +828,22 @@ const App: React.FC = () => {
       return;
     }
 
-    const targetDeviceIds = configScopedDevices.map((device) => device.id);
-    const primaryTargetId = configScopedDevices.find((device) => device.status === 'online')?.id || configScopedDevices[0]?.id;
+    const targetDevices = configScopedDevices.map((device) => ({
+      id: device.id,
+      hostname: device.hostname,
+      ip_address: device.ip_address,
+      platform: device.platform,
+    }));
 
-    navigate('/automation/execute', {
+    const scenarioId = selectedTemplateId ? `cfgtpl:${selectedTemplateId}` : '';
+    const platform = configScopePlatform !== 'all' ? configScopePlatform : '';
+
+    navigate('/change-orders/new', {
       state: {
-        configAutomationBridge: {
-          source: 'configuration',
-          mode: 'config',
-          command: editorContent,
-          templateName: selectedConfigTemplate?.name,
-          targetDeviceIds,
-          primaryTargetId,
-          variableValues: configVariableMap,
-        },
+        scenarioId,
+        platform,
+        variables: configVariableMap,
+        targetDevices,
       },
     });
   };

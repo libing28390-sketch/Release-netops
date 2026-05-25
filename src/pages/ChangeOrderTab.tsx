@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ClipboardList, Plus, Search, X, RefreshCw, ChevronRight,
@@ -134,6 +134,7 @@ interface ScenarioTemplate {
   default_platform?: string;
   variables?: ScenarioVariable[];
   platform_phases?: Record<string, Partial<ScenarioPhasePreview>>;
+  templates?: ConfigTemplate[];
 }
 
 interface PlatformMeta {
@@ -558,12 +559,24 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     }
   }, [initialView]);
  
-  // Handle scenarioId from location state (for redirection from scenarios tab)
+  // Handle scenarioId from location state (for redirection from scenarios tab or configuration page)
   useEffect(() => {
     if (location.state && (location.state as any).scenarioId) {
-      const scenarioId = (location.state as any).scenarioId;
-      setSelectedScenarioId(scenarioId);
+      const stateObj = location.state as any;
+      setSelectedScenarioId(stateObj.scenarioId);
       setCommandMode('template');
+      if (stateObj.platform) {
+        setSelectedScenarioPlatform(stateObj.platform);
+      }
+      if (stateObj.variables) {
+        setTemplateVariables(stateObj.variables);
+      }
+      if (stateObj.targetDevices) {
+        setForm((f) => ({
+          ...f,
+          target_devices: stateObj.targetDevices,
+        }));
+      }
       setShowCreateModal(true);
       // Optional: Clear state to avoid re-triggering
       window.history.replaceState({}, document.title);
@@ -623,11 +636,30 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const [deviceLoading, setDeviceLoading] = useState(false);
   const [commandMode, setCommandMode] = useState<'manual' | 'template'>('manual');
   const [selectedScenarioId, setSelectedScenarioId] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [scenarioSearch, setScenarioSearch] = useState('');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
   const [selectedScenarioPlatform, setSelectedScenarioPlatform] = useState('');
   const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({});
   const [templatePreview, setTemplatePreview] = useState<ScenarioPhasePreview | null>(null);
   const [templatePreviewLoading, setTemplatePreviewLoading] = useState(false);
   const [templatePreviewError, setTemplatePreviewError] = useState('');
+  const [precheckErrors, setPrecheckErrors] = useState<string[]>([]);
+  const [precheckSuccess, setPrecheckSuccess] = useState(false);
+  const [precheckLoading, setPrecheckLoading] = useState(false);
   const [showDevicePicker, setShowDevicePicker] = useState(false);
   const [selectedInventoryDevice, setSelectedInventoryDevice] = useState<DeviceOption | null>(null);
   const [selectedInventoryDevices, setSelectedInventoryDevices] = useState<DeviceOption[]>([]);
@@ -772,13 +804,23 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   };
 
   const scenarioOptions = useMemo(() => {
-    const scenarioItems = scenarios
-      .filter((item) => item && item.id && item.platform_phases && Object.keys(item.platform_phases).length > 0)
-      .map((item) => ({ ...item, source_kind: 'scenario' as const }));
+    const groups: Record<string, ConfigTemplate[]> = {};
+    (configTemplates || []).forEach((template) => {
+      if (template && template.id && template.name) {
+        const nameKey = template.name.trim();
+        if (!groups[nameKey]) {
+          groups[nameKey] = [];
+        }
+        groups[nameKey].push(template);
+      }
+    });
 
-    const configTemplateItems = (configTemplates || [])
-      .filter((item) => item && item.id && item.name)
-      .map((template) => {
+    const configTemplateItems = Object.entries(groups).map(([name, templates]) => {
+      const allPlatforms: string[] = [];
+      const phases: Record<string, Partial<ScenarioPhasePreview>> = {};
+      const variablesMap = new Map<string, ScenarioVariable>();
+
+      templates.forEach((template) => {
         const matchedPlatforms = Object.entries(platforms)
           .filter(([, meta]) => !template.vendor || (meta as PlatformMeta)?.vendor === template.vendor)
           .map(([key]) => key);
@@ -786,8 +828,11 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         const supportedPlatforms = matchedPlatforms.length > 0 
           ? matchedPlatforms 
           : (Object.keys(platforms).length > 0 ? Object.keys(platforms) : fallbackPlatforms);
-        const phases: Record<string, Partial<ScenarioPhasePreview>> = {};
+
         supportedPlatforms.forEach((platformKey) => {
+          if (!allPlatforms.includes(platformKey)) {
+            allPlatforms.push(platformKey);
+          }
           const { pre_check, post_check } = getDefaultPrePostCheck(platformKey);
           phases[platformKey] = {
             pre_check,
@@ -796,60 +841,91 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
             rollback: template.rollback ? [template.rollback] : [],
           };
         });
-        const varMatches = [...(template.content || '').matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)];
-        const uniqueVars = [...new Set(varMatches.map(m => m[1]))];
-        const templateVariables: ScenarioVariable[] = uniqueVars.map(key => ({
-          key,
-          label: key,
-          label_zh: key,
-          type: 'text',
-          required: true,
-        }));
 
-        return {
-          id: toConfigTemplateScenarioId(template.id),
-          source_kind: 'config_template' as const,
-          source_template_id: template.id,
-          name: template.name,
-          name_zh: template.name,
-          description: template.category || '',
-          description_zh: template.category || '',
-          category: template.category,
-          icon: '📄',
-          risk: 'medium',
-          supported_platforms: supportedPlatforms,
-          default_platform: supportedPlatforms[0] || '',
-          variables: templateVariables,
-          platform_phases: phases,
-        } as ScenarioTemplate;
+        const varMatches = [...(template.content || '').matchAll(/\{\{\s*([\w.-]+)(?:\s*\|\s*[^}]+)?\s*\}\}/g)];
+        const uniqueVars = [...new Set(varMatches.map(m => m[1]))];
+        uniqueVars.forEach(key => {
+          if (!variablesMap.has(key)) {
+            variablesMap.set(key, {
+              key,
+              label: key,
+              label_zh: key,
+              type: 'text',
+              required: true,
+            });
+          }
+        });
       });
 
-    const allItems = [...scenarioItems, ...configTemplateItems];
-    // De-duplicate by name to prevent confusing the user with multiple versions of the same template
-    const uniqueByName = new Map<string, ScenarioTemplate>();
-    allItems.forEach(item => {
-      // Use localized name for grouping
-      const nameKey = zh ? (item.name_zh || item.name) : item.name;
-      // Also include category to distinguish between different types with same name
-      const groupingKey = `${item.category || ''}:${nameKey}`;
-      
-      const existing = uniqueByName.get(groupingKey);
-      // Priority: Built-in Scenario > Config Template
-      if (!existing || (existing.source_kind === 'config_template' && item.source_kind === 'scenario')) {
-        uniqueByName.set(groupingKey, item);
-      }
+      const firstTemplate = templates[0];
+      return {
+        id: toConfigTemplateScenarioId(firstTemplate.id),
+        source_kind: 'config_template' as const,
+        source_template_id: firstTemplate.id,
+        name: name,
+        name_zh: name,
+        description: firstTemplate.category || '',
+        description_zh: firstTemplate.category || '',
+        category: firstTemplate.category,
+        icon: '📄',
+        risk: 'medium',
+        supported_platforms: allPlatforms,
+        default_platform: allPlatforms[0] || '',
+        variables: Array.from(variablesMap.values()),
+        platform_phases: phases,
+        templates: templates,
+      } as ScenarioTemplate;
     });
-    return Array.from(uniqueByName.values()).sort((a, b) => {
+
+    return configTemplateItems.sort((a, b) => {
       const nameA = zh ? (a.name_zh || a.name) : a.name;
       const nameB = zh ? (b.name_zh || b.name) : b.name;
       return nameA.localeCompare(nameB);
     });
-  }, [configTemplates, platforms, scenarios, zh]);
+  }, [configTemplates, platforms, zh]);
 
   const selectedScenario = useMemo(
     () => scenarioOptions.find((item) => item.id === selectedScenarioId) || null,
     [scenarioOptions, selectedScenarioId],
   );
+
+  const resolvedTemplateId = useMemo(() => {
+    if (!selectedScenarioId) return '';
+    if (!isConfigTemplateScenarioId(selectedScenarioId)) {
+      return selectedScenarioId;
+    }
+    const baseId = fromConfigTemplateScenarioId(selectedScenarioId);
+    if (!selectedScenario || !selectedScenario.templates || selectedScenario.templates.length === 0) {
+      return baseId;
+    }
+    // Match vendor
+    const targetVendor = platforms[selectedScenarioPlatform]?.vendor;
+    if (targetVendor) {
+      const matched = selectedScenario.templates.find(tpl => tpl.vendor === targetVendor);
+      if (matched) {
+        return matched.id;
+      }
+    }
+    // If no exact vendor match, check case-insensitive or default to first
+    const matchedCaseInsensitive = selectedScenario.templates.find(tpl => 
+      tpl.vendor?.toLowerCase() === targetVendor?.toLowerCase()
+    );
+    if (matchedCaseInsensitive) {
+      return matchedCaseInsensitive.id;
+    }
+    return selectedScenario.templates[0].id;
+  }, [selectedScenarioId, selectedScenario, selectedScenarioPlatform, platforms]);
+
+  const filteredScenarioOptions = useMemo(() => {
+    const query = scenarioSearch.trim().toLowerCase();
+    if (!query) return scenarioOptions;
+    return scenarioOptions.filter(
+      (item) =>
+        item.name.toLowerCase().includes(query) ||
+        (item.name_zh && item.name_zh.toLowerCase().includes(query)) ||
+        (item.category && item.category.toLowerCase().includes(query))
+    );
+  }, [scenarioOptions, scenarioSearch]);
 
   const selectedScenarioVariables = useMemo(
     () => (selectedScenario?.variables || []).filter((item) => item?.key),
@@ -1143,7 +1219,6 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
   const fetchTemplatePreview = useCallback(async (platformArg?: string, scenarioArg?: ScenarioTemplate | null) => {
     const scenario = scenarioArg !== undefined ? scenarioArg : selectedScenario;
     const scenarioId = scenario?.id || selectedScenarioId;
-    // Compute the effective platform: prefer explicit arg, then state, then first from scenario
     const scenarioPlatforms = scenario
       ? (scenario.supported_platforms?.length ? scenario.supported_platforms : Object.keys(scenario.platform_phases || {}))
       : selectedScenarioPlatforms;
@@ -1152,110 +1227,139 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       setTemplatePreview(null);
       return;
     }
-    // Local configuration templates do not exist in /api/playbooks/scenarios.
-    // Render preview from local phase mapping directly.
-    if (isConfigTemplateScenarioId(scenarioId)) {
-      const phases = scenario?.platform_phases?.[effectiveScenarioPlatform] || {};
-      const localPreview = {
-        pre_check: renderPhaseCommands(phases.pre_check || [], templateVariables),
-        execute: renderPhaseCommands(phases.execute || [], templateVariables),
-        post_check: renderPhaseCommands(phases.post_check || [], templateVariables),
-        rollback: renderPhaseCommands(phases.rollback || [], templateVariables),
-      };
-      setTemplatePreview(localPreview.execute.length > 0 ? localPreview : EMPTY_TEMPLATE_PREVIEW);
-      setTemplatePreviewError('');
-      setTemplatePreviewLoading(false);
-      return;
-    }
     setTemplatePreviewLoading(true);
     setTemplatePreviewError('');
     try {
-      const resp = await fetch('/api/playbooks/preview', {
+      const targetVendor = platforms[effectiveScenarioPlatform]?.vendor;
+      let resolvedScenarioId = scenarioId;
+      if (isConfigTemplateScenarioId(scenarioId)) {
+        const baseId = fromConfigTemplateScenarioId(scenarioId);
+        if (scenario && scenario.templates && scenario.templates.length > 0) {
+          const targetTpl = scenario.templates.find(tpl => tpl.vendor === targetVendor) || 
+                            scenario.templates.find(tpl => tpl.vendor?.toLowerCase() === targetVendor?.toLowerCase()) || 
+                            scenario.templates[0];
+          resolvedScenarioId = targetTpl.id;
+        } else {
+          resolvedScenarioId = baseId;
+        }
+      }
+
+      const resp = await fetch('/api/change-orders/validate', {
         method: 'POST',
         headers: authHeaders(true),
         body: JSON.stringify({
-          scenario_id: scenarioId,
+          scenario_id: resolvedScenarioId,
+          source_kind: scenario?.source_kind || 'scenario',
           platform: effectiveScenarioPlatform,
           variables: templateVariables,
+          target_devices: form.target_devices,
         }),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         throw new Error(String(data.detail || resp.statusText || 'Preview failed'));
       }
-      const preview = {
-        pre_check: Array.isArray(data.pre_check) ? data.pre_check : [],
-        execute: Array.isArray(data.execute) ? data.execute : [],
-        post_check: Array.isArray(data.post_check) ? data.post_check : [],
-        rollback: Array.isArray(data.rollback) ? data.rollback : [],
-      };
-      if (preview.execute.length === 0 && scenario?.platform_phases) {
-        const phases = scenario.platform_phases[effectiveScenarioPlatform] || {};
-        const localFallback = {
-          pre_check: renderPhaseCommands(phases.pre_check || [], templateVariables),
-          execute: renderPhaseCommands(phases.execute || [], templateVariables),
-          post_check: renderPhaseCommands(phases.post_check || [], templateVariables),
-          rollback: renderPhaseCommands(phases.rollback || [], templateVariables),
-        };
-        if (localFallback.execute.length > 0) {
-          setTemplatePreview(localFallback);
-          return;
-        }
-      }
-      setTemplatePreview(preview);
-    } catch (error) {
-      // On error, try to render locally from platform_phases
-      if (scenario?.platform_phases?.[effectiveScenarioPlatform]) {
-        const phases = scenario.platform_phases[effectiveScenarioPlatform];
-        const localFallback = {
-          pre_check: renderPhaseCommands(phases.pre_check || [], templateVariables),
-          execute: renderPhaseCommands(phases.execute || [], templateVariables),
-          post_check: renderPhaseCommands(phases.post_check || [], templateVariables),
-          rollback: renderPhaseCommands(phases.rollback || [], templateVariables),
-        };
-        if (localFallback.execute.length > 0 || localFallback.pre_check.length > 0) {
-          setTemplatePreview(localFallback);
+      if (data.success) {
+        if (data.valid) {
+          const preview = {
+            pre_check: Array.isArray(data.preview?.pre_check) ? data.preview.pre_check : [],
+            execute: Array.isArray(data.preview?.execute) ? data.preview.execute : [],
+            post_check: Array.isArray(data.preview?.post_check) ? data.preview.post_check : [],
+            rollback: Array.isArray(data.preview?.rollback) ? data.preview.rollback : [],
+          };
+          setTemplatePreview(preview);
           setTemplatePreviewError('');
-          return;
+        } else {
+          setTemplatePreview(null);
+          setTemplatePreviewError(data.errors?.join(' \n ') || (zh ? '模板参数校验未通过' : 'Template validation failed'));
         }
+      } else {
+        throw new Error(data.detail || data.message || 'Preview failed');
       }
+    } catch (error) {
       setTemplatePreview(null);
       setTemplatePreviewError(error instanceof Error ? error.message : (zh ? '模板预览失败' : 'Template preview failed'));
     } finally {
       setTemplatePreviewLoading(false);
     }
-  }, [authHeaders, commandMode, selectedScenarioId, selectedScenarioPlatform, selectedScenarioPlatforms, selectedScenario, templateVariables, renderPhaseCommands, zh]);
+  }, [authHeaders, commandMode, selectedScenarioId, selectedScenarioPlatform, selectedScenarioPlatforms, selectedScenario, templateVariables, form.target_devices, platforms, zh]);
+
+  const runPrecheck = async () => {
+    const effectiveScenarioPlatform = selectedScenarioPlatform || selectedScenarioPlatforms[0] || '';
+    if (!selectedScenarioId) {
+      showToast(zh ? '请先选择配置模板' : 'Please select a config template', 'error');
+      return;
+    }
+    if (!effectiveScenarioPlatform) {
+      showToast(zh ? '无法确定目标平台' : 'Cannot determine target platform', 'error');
+      return;
+    }
+    setPrecheckLoading(true);
+    setPrecheckErrors([]);
+    setPrecheckSuccess(false);
+    try {
+      const payload = {
+        scenario_id: resolvedTemplateId,
+        source_kind: selectedScenario?.source_kind || 'scenario',
+        platform: effectiveScenarioPlatform,
+        variables: templateVariables,
+        target_devices: form.target_devices,
+      };
+      const resp = await fetch('/api/change-orders/validate', {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(String(data.detail || resp.statusText || 'Validation request failed'));
+      }
+      if (data.success) {
+        if (data.valid) {
+          setPrecheckSuccess(true);
+          if (data.preview) {
+            setTemplatePreview(data.preview);
+          }
+          showToast(zh ? '预检查通过，参数格式正确' : 'Precheck passed, parameters are valid');
+        } else {
+          setPrecheckErrors(data.errors || []);
+          showToast(zh ? '预检查失败，请核对参数' : 'Precheck failed, please verify parameters', 'error');
+        }
+      } else {
+        setPrecheckErrors([data.detail || data.message || 'Validation failed']);
+        showToast(zh ? '预检查失败' : 'Precheck failed', 'error');
+      }
+    } catch (e: any) {
+      setPrecheckErrors([e.message || 'Validation request failed']);
+      showToast(zh ? '请求预检查失败' : 'Precheck request failed', 'error');
+    } finally {
+      setPrecheckLoading(false);
+    }
+  };
 
 
   const hideDraftListWhenEditing = showCreateModal && viewTab === 'my_drafts' && editingOrder !== null;
 
-  // ── Local template preview computation (no API calls) ──
-  // All scenario data including platform_phases is already loaded in memory.
-  // We compute the preview locally to avoid unnecessary network calls.
+  // ── Debounced backend template preview & validation ──
   useEffect(() => {
     if (!editorVisible || commandMode !== 'template' || !selectedScenarioId) {
-      return;
-    }
-    const scenarioPlatformsList = selectedScenario
-      ? (selectedScenario.supported_platforms?.length ? selectedScenario.supported_platforms : Object.keys(selectedScenario.platform_phases || {}))
-      : [];
-    const resolvedPlatform = selectedScenarioPlatform || scenarioPlatformsList[0] || '';
-    if (!selectedScenario || !resolvedPlatform) {
       setTemplatePreview(null);
+      setTemplatePreviewError('');
       return;
     }
-    const phases = selectedScenario.platform_phases?.[resolvedPlatform] || {};
-    const localPreview = {
-      pre_check: renderPhaseCommands(phases.pre_check || [], templateVariables),
-      execute: renderPhaseCommands(phases.execute || [], templateVariables),
-      post_check: renderPhaseCommands(phases.post_check || [], templateVariables),
-      rollback: renderPhaseCommands(phases.rollback || [], templateVariables),
-    };
-    setTemplatePreview(localPreview);
-    setTemplatePreviewError('');
-    setTemplatePreviewLoading(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorVisible, commandMode, selectedScenarioId, selectedScenarioPlatform, templateVariables]);
+
+    const timer = setTimeout(() => {
+      fetchTemplatePreview();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [editorVisible, commandMode, selectedScenarioId, selectedScenarioPlatform, templateVariables, fetchTemplatePreview]);
+
+  // Reset pre-check status on inputs change
+  useEffect(() => {
+    setPrecheckErrors([]);
+    setPrecheckSuccess(false);
+  }, [selectedScenarioId, selectedScenarioPlatform, templateVariables]);
 
   // ── Fetch ──
   const fetchOrders = useCallback(async () => {
@@ -1396,8 +1500,39 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           showToast(zh ? `请先填写必填变量：${templateMissingRequired.join('、')}` : `Fill required variables: ${templateMissingRequired.join(', ')}`, 'error');
           return;
         }
-        if (!effectivePreview || effectivePreview.execute.length === 0) {
-          showToast(zh ? '模板尚未生成可执行命令，请检查变量或模板配置' : 'No executable commands were generated, check variables or template config', 'error');
+
+        // Run validation precheck
+        setSaving(true);
+        try {
+          const checkPayload = {
+            scenario_id: resolvedTemplateId,
+            source_kind: selectedScenario?.source_kind || 'scenario',
+            platform: effectiveScenarioPlatform,
+            variables: templateVariables,
+            target_devices: form.target_devices,
+          };
+          const checkResp = await fetch('/api/change-orders/validate', {
+            method: 'POST',
+            headers: authHeaders(true),
+            body: JSON.stringify(checkPayload),
+          });
+          const checkData = await checkResp.json();
+          if (!checkData.success || !checkData.valid) {
+            const errs = checkData.errors || [checkData.detail || checkData.message || 'Validation failed'];
+            setPrecheckErrors(errs);
+            setPrecheckSuccess(false);
+            showToast(zh ? '参数校验失败，请检查并核对参数输入' : 'Validation failed, please check your parameters', 'error');
+            setSaving(false);
+            return;
+          }
+          setPrecheckErrors([]);
+          setPrecheckSuccess(true);
+          if (checkData.preview) {
+            setTemplatePreview(checkData.preview);
+          }
+        } catch (e: any) {
+          showToast(zh ? '预检查失败' : 'Precheck failed', 'error');
+          setSaving(false);
           return;
         }
       }
@@ -1455,7 +1590,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
           setSelectedScenarioPlatform(effectiveScenarioPlatform);
         }
         payload.command_template = {
-          scenario_id: isConfigTemplateScenarioId(selectedScenarioId) ? fromConfigTemplateScenarioId(selectedScenarioId) : selectedScenarioId,
+          scenario_id: resolvedTemplateId,
           source_kind: selectedScenario?.source_kind || 'scenario',
           platform: effectiveScenarioPlatform,
           variables: templateVariables,
@@ -1781,11 +1916,14 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       const snapshotScenarioId = String(templateSnapshot.scenario_id || '');
       const asConfigTemplateScenarioId = toConfigTemplateScenarioId(snapshotScenarioId);
       const existsAsScenario = scenarioOptions.some((item) => item.id === snapshotScenarioId);
-      const existsAsConfigTemplate = scenarioOptions.some((item) => item.id === asConfigTemplateScenarioId);
+      const existsAsConfigTemplate = scenarioOptions.some((item) => 
+        item.id === asConfigTemplateScenarioId || 
+        item.templates?.some(tpl => toConfigTemplateScenarioId(tpl.id) === asConfigTemplateScenarioId)
+      );
       const preferredId = existsAsScenario
         ? snapshotScenarioId
         : existsAsConfigTemplate
-          ? asConfigTemplateScenarioId
+          ? (scenarioOptions.find((item) => item.id === asConfigTemplateScenarioId || item.templates?.some(tpl => toConfigTemplateScenarioId(tpl.id) === asConfigTemplateScenarioId))?.id || '')
           : scenarioOptions.find((item) => (templateSnapshot.scenario_name && item.name === templateSnapshot.scenario_name) || (templateSnapshot.scenario_name_zh && item.name_zh === templateSnapshot.scenario_name_zh))?.id || '';
       setSelectedScenarioId(preferredId);
       setSelectedScenarioPlatform(String(templateSnapshot.platform || ''));
@@ -3655,19 +3793,93 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                       <div className="grid grid-cols-1 gap-4">
                         <div>
                           <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '变更模板场景' : 'Scenario Template'}</label>
-                          <select
-                            title={zh ? '变更模板场景' : 'Scenario template'}
-                            value={selectedScenarioId}
-                            onChange={(e) => setSelectedScenarioId(e.target.value)}
-                            className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
-                          >
-                            <option value="">{zh ? '请选择一个配置模板' : 'Select a config template'}</option>
-                            {scenarioOptions.map((scenario) => (
-                              <option key={scenario.id} value={scenario.id}>
-                                {scenario.icon ? `${scenario.icon} ` : ''}{zh ? (scenario.name_zh || scenario.name) : scenario.name}
-                              </option>
-                            ))}
-                          </select>
+                          <div ref={dropdownRef} className="relative w-full">
+                            <div
+                              className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white flex items-center justify-between cursor-pointer select-none"
+                              onClick={() => {
+                                setIsDropdownOpen(!isDropdownOpen);
+                                if (!isDropdownOpen) {
+                                  setScenarioSearch('');
+                                }
+                              }}
+                            >
+                              <span className="text-black/85 truncate">
+                                {selectedScenario
+                                  ? `${selectedScenario.icon ? `${selectedScenario.icon} ` : ''}${zh ? (selectedScenario.name_zh || selectedScenario.name) : selectedScenario.name}`
+                                  : (zh ? '请选择一个配置模板' : 'Select a config template')}
+                              </span>
+                              <ChevronDown className="w-4 h-4 text-black/45 shrink-0 transition-transform duration-200" style={{ transform: isDropdownOpen ? 'rotate(180deg)' : 'none' }} />
+                            </div>
+
+                            {isDropdownOpen && (
+                              <div className="absolute z-50 w-full mt-1 bg-white border border-black/10 rounded-xl shadow-lg max-h-60 overflow-hidden flex flex-col">
+                                {/* Search Input */}
+                                <div className="p-2 border-b border-black/5 flex items-center gap-2 bg-black/[0.01]">
+                                  <Search className="w-3.5 h-3.5 text-black/40 shrink-0" />
+                                  <input
+                                    type="text"
+                                    value={scenarioSearch}
+                                    onChange={(e) => setScenarioSearch(e.target.value)}
+                                    placeholder={zh ? '搜索模板场景...' : 'Search templates...'}
+                                    className="w-full text-xs outline-none bg-transparent py-1 border-none focus:ring-0 text-black/80"
+                                    onClick={(e) => e.stopPropagation()}
+                                    autoFocus
+                                  />
+                                  {scenarioSearch && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setScenarioSearch('');
+                                      }}
+                                      className="text-black/40 hover:text-black/60"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* Options List */}
+                                <div className="overflow-y-auto flex-1 max-h-48 py-1">
+                                  {filteredScenarioOptions.length > 0 ? (
+                                    filteredScenarioOptions.map((scenario) => {
+                                      const isSelected = scenario.id === selectedScenarioId;
+                                      return (
+                                        <div
+                                          key={scenario.id}
+                                          onClick={() => {
+                                            setSelectedScenarioId(scenario.id);
+                                            setIsDropdownOpen(false);
+                                            setScenarioSearch('');
+                                          }}
+                                          className={`px-3 py-2 text-xs flex items-center justify-between cursor-pointer select-none transition-colors ${
+                                            isSelected
+                                              ? 'bg-[#00bceb]/10 text-[#00bceb] font-semibold'
+                                              : 'text-black/80 hover:bg-black/[0.03]'
+                                          }`}
+                                        >
+                                          <div className="truncate flex items-center gap-1.5">
+                                            <span className="shrink-0">{scenario.icon || '📄'}</span>
+                                            <div className="truncate">
+                                              <span className="block truncate">{zh ? (scenario.name_zh || scenario.name) : scenario.name}</span>
+                                              {scenario.category && (
+                                                <span className="block text-[10px] text-black/40 font-normal truncate mt-0.5">{scenario.category}</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                          {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-[#00bceb] shrink-0" />}
+                                        </div>
+                                      );
+                                    })
+                                  ) : (
+                                    <div className="px-3 py-4 text-xs text-black/40 text-center select-none">
+                                      {zh ? '无匹配的模板场景' : 'No templates match'}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
                         
                         {selectedScenario && selectedScenarioPlatforms.length > 1 && (
@@ -3774,8 +3986,41 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
                       )}
 
                       {templatePreviewError && (
-                        <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200">
+                        <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200 whitespace-pre-line">
                           {templatePreviewError}
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={runPrecheck}
+                          disabled={precheckLoading || !selectedScenarioId}
+                          className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-xl text-xs font-semibold hover:from-blue-600 hover:to-cyan-600 transition-all shadow-md shadow-blue-500/10 flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          {precheckLoading ? <RefreshCw size={12} className="animate-spin animate-infinite" /> : <Shield size={12} />}
+                          {zh ? '执行预检查' : 'Run Pre-check'}
+                        </button>
+                      </div>
+
+                      {precheckErrors.length > 0 && (
+                        <div className="rounded-xl bg-rose-50 p-3 text-xs text-rose-700 ring-1 ring-rose-200 space-y-1">
+                          <p className="font-semibold flex items-center gap-1.5">
+                            <XCircle size={14} className="text-rose-500" />
+                            {zh ? '参数校验或模板错误：' : 'Parameter validation or template errors:'}
+                          </p>
+                          <ul className="list-disc pl-4 space-y-0.5">
+                            {precheckErrors.map((err, i) => (
+                              <li key={i}>{err}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {precheckSuccess && (
+                        <div className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700 ring-1 ring-emerald-200 flex items-center gap-1.5">
+                          <CheckCircle2 size={14} className="text-emerald-500" />
+                          <span>{zh ? '预检查成功！参数校验通过，且已生成可执行命令。' : 'Precheck successful! Parameter validation passed and commands generated.'}</span>
                         </div>
                       )}
 

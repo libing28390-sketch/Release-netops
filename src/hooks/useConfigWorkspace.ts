@@ -75,7 +75,7 @@ export const useConfigWorkspace = ({
   );
 
   const configRenderedPreview = useMemo(
-    () => editorContent.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, key: string) => configVariableMap[key] ?? `{{ ${key} }}`),
+    () => editorContent.replace(/\{\{\s*([\w.-]+)(?:\s*\|\s*[^}]+)?\s*\}\}/g, (match, key: string) => configVariableMap[key] ?? match),
     [editorContent, configVariableMap],
   );
 

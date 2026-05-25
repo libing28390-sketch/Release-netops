@@ -1371,6 +1371,15 @@ def collect_device_parsed_command(device_id: str, payload: dict = Body(default={
     device_info['enable_password'] = decrypt_credential(device_info.get('enable_password')) or ''
 
     command = payload.get('command') if isinstance(payload, dict) else None
+    if not command:
+        raise HTTPException(status_code=400, detail="Command is required")
+
+    commands = [line.strip() for line in str(command).splitlines() if line.strip()]
+    _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ')
+    is_query_only = all(any(c.lower().startswith(p) for p in _show_prefixes) for c in commands)
+    if not is_query_only:
+        raise HTTPException(status_code=403, detail="查询模式下只允许执行只读查询命令（如 show, display, ping 等）。如需修改配置，请走工单流程或通过配置模板下发！")
+
     auth_role = payload.get('auth_role', 'normal') if isinstance(payload, dict) else 'normal'
     query_name = payload.get('name') or "Custom Command Query"
 

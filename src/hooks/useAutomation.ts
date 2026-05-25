@@ -154,7 +154,7 @@ export const useAutomation = ({
 
   const extractVars = useCallback((text: string): string[] => {
     if (!text) return [];
-    const matches = [...text.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)];
+    const matches = [...text.matchAll(/\{\{\s*([\w.-]+)(?:\s*\|\s*[^}]+)?\s*\}\}/g)];
     return [...new Set(matches.map((m) => m[1]))];
   }, []);
 
@@ -163,7 +163,7 @@ export const useAutomation = ({
   }, []);
 
   const applyScriptVars = useCallback((text: string) => {
-    return text.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_, key) => scriptVars[key] ?? `{{${key}}}`);
+    return text.replace(/\{\{\s*([\w.-]+)(?:\s*\|\s*[^}]+)?\s*\}\}/g, (match, key) => scriptVars[key] ?? match);
   }, [scriptVars]);
 
   const formatQuickQueryRawOutput = useCallback((payload: any) => {
