@@ -289,7 +289,12 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
             )
             params.extend([my_todo, my_todo, my_todo, my_todo])
         elif my_todo_kind == 'implement':
-            conditions.append("(requester_username = ? AND status = 'approved')")
+            # Requester's implementation queue: approved (ready to start),
+            # implementing (in progress, needs push/complete/rollback),
+            # failed (needs rollback), rollback_in_progress (needs to mark rolled_back/failed)
+            conditions.append(
+                "(requester_username = ? AND status IN ('approved', 'implementing', 'executing', 'failed', 'rollback_in_progress'))"
+            )
             params.append(my_todo)
         elif my_todo_kind == 'modify':
             conditions.append("(requester_username = ? AND status IN ('draft', 'rejected'))")
@@ -297,7 +302,7 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
         else:
             conditions.append(
                 "("
-                "(requester_username = ? AND status IN ('draft', 'rejected', 'approved'))"
+                "(requester_username = ? AND status IN ('draft', 'rejected', 'approved', 'implementing', 'executing', 'failed', 'rollback_in_progress'))"
                 " OR (assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?)"
                 " OR (assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)"
                 ")"
@@ -379,10 +384,12 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
         d['control_sheet_attachments'] = attachments_map.get(d['id'], [])
         
         # Add todo_kind label (Task 16.2 — Property 6 bucket labels)
-        # Mapping per design.md §Fix Implementation 1.5 → 2:
-        #   review   — assigned initial/final reviewer + matching status + requester != U
-        #   implement — requester == U AND status == 'approved'
-        #   modify   — requester == U AND status IN ('draft', 'rejected')
+        # Mapping per design.md §Fix Implementation 1.5 → 2 (extended in Step 9.7):
+        #   review    — assigned initial/final reviewer + matching status + requester != U
+        #   implement — requester == U AND status IN
+        #               ('approved','implementing','executing','failed','rollback_in_progress')
+        #               (the requester drives the entire post-approval lifecycle)
+        #   modify    — requester == U AND status IN ('draft', 'rejected')
         # The review bucket excludes rows where requester_username == U (dual-role guard).
         if my_todo:
             req = d.get('requester_username', '')
@@ -392,7 +399,7 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
             if (rev_initial == my_todo and st == 'initial_review' and req != my_todo) or \
                (rev_final == my_todo and st == 'final_review' and req != my_todo):
                 d['todo_kind'] = 'review'
-            elif req == my_todo and st == 'approved':
+            elif req == my_todo and st in ('approved', 'implementing', 'executing', 'failed', 'rollback_in_progress'):
                 d['todo_kind'] = 'implement'
             elif req == my_todo and st in ('draft', 'rejected'):
                 d['todo_kind'] = 'modify'
@@ -427,7 +434,7 @@ def get_summary(conn, user_id: str = '', username: str = '') -> dict:
             """
             SELECT COUNT(*) FROM change_orders 
             WHERE (
-                (requester_username = ? AND status IN ('draft', 'rejected', 'approved')) OR 
+                (requester_username = ? AND status IN ('draft', 'rejected', 'approved', 'implementing', 'executing', 'failed', 'rollback_in_progress')) OR 
                 (assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?) OR 
                 (assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)
             )
