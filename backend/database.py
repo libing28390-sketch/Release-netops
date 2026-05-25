@@ -623,7 +623,10 @@ def _init_db_logic(conn):
         sys_location TEXT,
         sys_contact TEXT,
         credential_source TEXT DEFAULT 'local',
-        vault_path TEXT DEFAULT ''
+        vault_path TEXT DEFAULT '',
+        ports_count INTEGER DEFAULT 0,
+        ports_bandwidth_gbps REAL DEFAULT 0.0,
+        switching_capacity_gbps REAL DEFAULT 0.0
     )
     ''')
         
@@ -680,7 +683,10 @@ def _init_db_logic(conn):
         ('is_managed', "INTEGER DEFAULT 0"),
         ('takeover_error', "TEXT DEFAULT ''"),
         ('credential_source', "TEXT DEFAULT 'local'"),
-        ('vault_path', "TEXT DEFAULT ''")
+        ('vault_path', "TEXT DEFAULT ''"),
+        ('ports_count', 'INTEGER DEFAULT 0'),
+        ('ports_bandwidth_gbps', 'REAL DEFAULT 0.0'),
+        ('switching_capacity_gbps', 'REAL DEFAULT 0.0')
     ]:
         ensure_column('devices', col, dtype)
 

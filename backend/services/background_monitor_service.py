@@ -13,7 +13,12 @@ from core.config import settings
 from services import notification_service
 from services import alert_maintenance_service
 from services import alert_rule_service
+import re as _re
+import time as _time
+from services.snmp_service import collect_device_metrics, collect_device_info, collect_interface_data
+from services.operational_data_service import collect_operational_data
 from api.topology import discover_lldp_neighbors
+from core.crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
 
@@ -165,8 +170,32 @@ intf_flap_history = {}
 prev_intf_octets = {}
 webhook_last_sent = {}
 current_alert_rules = []
+role_poll_profiles = {
+    'core': {
+        'interface': 1,
+        'info': 10,
+        'protocol': 2,
+    },
+    'distribution': {
+        'interface': 1,
+        'info': 10,
+        'protocol': 5,
+    },
+    'access': {
+        'interface': 1,
+        'info': 10,
+        'protocol': 10,
+    },
+    'default': {
+        'interface': 1,
+        'info': 10,
+        'protocol': 5,
+    }
+}
 FLAP_WINDOW_SECS = 600
 FLAP_THRESHOLD = 4
+protocol_aggregate_threshold = 3
+protocol_aggregate_sample_size = 3
 COUNTER32_MAX = 2**32
 COUNTER64_MAX = 2**64
 monitor_concurrency = 20 if sys.platform != "win32" else 2

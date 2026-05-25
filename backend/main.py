@@ -493,6 +493,22 @@ def seed_data():
                     demo_devices
                 )
 
+        # Update/Seed hardware parameters for specific devices
+        conn.execute('''
+            UPDATE devices 
+            SET ports_count = 48, ports_bandwidth_gbps = 88.0, switching_capacity_gbps = 176.0 
+            WHERE hostname = 'cisco-sw1' OR ip_address = '192.168.18.201'
+        ''')
+        conn.execute('''
+            UPDATE devices 
+            SET ports_count = 24, ports_bandwidth_gbps = 44.0, switching_capacity_gbps = 88.0 
+            WHERE hostname = 'cisco-sw2' OR ip_address = '192.168.18.202'
+        ''')
+        conn.execute('''
+            UPDATE devices 
+            SET ports_count = 2, ports_bandwidth_gbps = 20.0, switching_capacity_gbps = 40.0 
+            WHERE hostname = 'ubuntu-server-jp2' OR ip_address = '3.112.222.158'
+        ''')
         conn.commit()
     finally:
         conn.close()

@@ -849,11 +849,14 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
     except Exception as e:
         logger.warning(f"SNMP interface collection failed for {ip}: {e}")
 
-    # Filter: skip loopback/null/voip-null/unrouted unless they have real traffic
+    # Filter: skip virtual interfaces (loopback, vlan, tunnel, null, etc.) to only keep physical interfaces
     result = []
     for data in interfaces.values():
         name = data.get('name', '').lower()
-        if any(skip in name for skip in ('null', 'nu0', 'unrouted', 'stack', 'cpu', 'async', 'voip', 'vo0')):
+        if (name.startswith('lo') or name.startswith('loopback') or
+            name.startswith('vl') or name.startswith('vlan') or
+            name.startswith('tu') or name.startswith('tunnel') or
+            any(skip in name for skip in ('null', 'nu0', 'unrouted', 'stack', 'cpu', 'async', 'voip', 'vo0'))):
             continue
         result.append({
             'name': data.get('name', 'Unknown'),

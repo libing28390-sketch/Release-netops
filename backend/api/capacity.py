@@ -4,9 +4,13 @@ Provides link utilization trending and capacity forecasting.
 """
 
 import logging
+import math
+import datetime as dt
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Query
 from database import get_db_connection
+from services.forecast_engine import ForecastEngine, calculate_capacity_score
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +19,21 @@ router = APIRouter()
 
 def _utc_now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _calculate_percentile(lst: list[float], pct: float) -> float:
+    if not lst:
+        return 0.0
+    sorted_lst = sorted(lst)
+    k = (len(sorted_lst) - 1) * pct
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return sorted_lst[int(k)]
+    d0 = sorted_lst[int(f)] * (c - k)
+    d1 = sorted_lst[int(c)] * (k - f)
+    return d0 + d1
+
 
 
 def _get_table_columns(conn, table: str) -> set[str]:
@@ -103,119 +122,299 @@ def capacity_overview():
             'high_cpu_devices': high_cpu[:10],
             'high_memory_devices': high_mem[:10],
             'hot_interfaces': hot_intf_list,
+            'all_devices': [dict(d) for d in devices],
         }
     finally:
         conn.close()
 
 
 @router.get('/capacity/device/{device_id}/trend')
-def device_capacity_trend(device_id: str, days: int = Query(default=30, ge=1, le=365)):
-    """Get daily CPU/memory/interface utilization trend for a device."""
+def device_capacity_trend(
+    device_id: str,
+    days: int = Query(default=30, ge=1, le=365),
+    top_n: int = Query(default=5, ge=1, le=20)
+):
+    """Get daily P95 telemetry trend and forecasting for Top N busy interfaces plus chassis-level metrics."""
     conn = get_db_connection()
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        # 1. Retrieve current device status info
+        dev = conn.execute(
+            '''SELECT hostname, cpu_usage, memory_usage, interface_data,
+                      COALESCE(ports_count, 0) as ports_count, 
+                      COALESCE(ports_bandwidth_gbps, 0.0) as ports_bandwidth_gbps, 
+                      COALESCE(switching_capacity_gbps, 0.0) as switching_capacity_gbps 
+               FROM devices WHERE id = ?''',
+            (device_id,)
+        ).fetchone()
+        if not dev:
+            return {'error': 'Device not found'}
+        hostname = dev['hostname'] or ''
+        cpu_curr = float(dev['cpu_usage'] or 0)
+        mem_curr = float(dev['memory_usage'] or 0)
+        
+        # Dynamically calculate specs based on real interface list if available
+        ports_count = int(dev['ports_count'] or 0)
+        ports_bandwidth_gbps = float(dev['ports_bandwidth_gbps'] or 0.0)
+        switching_capacity_gbps = float(dev['switching_capacity_gbps'] or 0.0)
+        
+        import json
+        if dev['interface_data']:
+            try:
+                intf_list = json.loads(dev['interface_data'])
+                # Filter out loopbacks, VLANs, tunnels, etc.
+                phys_intfs = []
+                for i in intf_list:
+                    name = i.get('name', '').lower()
+                    if not (name.startswith('lo') or name.startswith('loopback') or
+                            name.startswith('vl') or name.startswith('vlan') or
+                            name.startswith('tu') or name.startswith('tunnel')):
+                        phys_intfs.append(i)
+                
+                if phys_intfs:
+                    ports_count = len(phys_intfs)
+                    total_speed_mbps = sum(float(i.get('speed_mbps') or 0.0) for i in phys_intfs)
+                    ports_bandwidth_gbps = total_speed_mbps / 1000.0
+                    # Switching capacity: for virtual switches, assume non-blocking full-duplex (2x ports speed)
+                    switching_capacity_gbps = ports_bandwidth_gbps * 2.0
+            except Exception as e:
+                logger.warning(f"Failed to parse interface_data for dynamic specs: {e}")
 
-        # From device_health_samples
-        health_rows = conn.execute('''
-            SELECT DATE(ts) as day, AVG(health_score) as avg_health,
-                   COUNT(*) as samples
-            FROM device_health_samples
-            WHERE device_id = ? AND ts >= ?
-            GROUP BY DATE(ts)
-            ORDER BY day
-        ''', (device_id, cutoff)).fetchall()
+        # Compute oversubscription / convergence specs
+        c_ports = ports_bandwidth_gbps
+        c_switching = switching_capacity_gbps
+        if c_ports > 0 and c_switching > 0:
+            max_forwarding_capacity_gbps = min(c_ports, c_switching / 2.0)
+            oversubscription_ratio = (2.0 * c_ports) / c_switching
+            is_blocking = oversubscription_ratio > 1.0
+            bottleneck_type = "Backplane Capacity" if (c_switching / 2.0) < c_ports else "Ports Speed"
+        else:
+            max_forwarding_capacity_gbps = c_ports if c_ports > 0 else 0.0
+            oversubscription_ratio = 1.0
+            is_blocking = False
+            bottleneck_type = "Ports Speed"
 
-        # From interface telemetry (1m rollup, schema-compatible)
+        # 2. Query 36 days of rollup minute telemetry data
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days + 6)).isoformat()
         rollup_cols = _get_table_columns(conn, 'interface_telemetry_1m')
-        avg_in_col = 'avg_bw_in_pct' if 'avg_bw_in_pct' in rollup_cols else 'avg_in_util'
-        avg_out_col = 'avg_bw_out_pct' if 'avg_bw_out_pct' in rollup_cols else 'avg_out_util'
-        peak_in_col = 'max_bw_in_pct' if 'max_bw_in_pct' in rollup_cols else 'peak_in_util'
-        peak_out_col = 'max_bw_out_pct' if 'max_bw_out_pct' in rollup_cols else 'peak_out_util'
-        intf_rows = conn.execute('''
-            SELECT DATE(ts_minute) as day, interface_name,
-                   AVG(COALESCE({avg_in_col}, 0)) as avg_in, AVG(COALESCE({avg_out_col}, 0)) as avg_out,
-                   MAX(COALESCE({peak_in_col}, 0)) as peak_in, MAX(COALESCE({peak_out_col}, 0)) as peak_out
+        
+        in_col = 'max_bw_in_pct' if 'max_bw_in_pct' in rollup_cols else ('avg_bw_in_pct' if 'avg_bw_in_pct' in rollup_cols else 'avg_in_util')
+        out_col = 'max_bw_out_pct' if 'max_bw_out_pct' in rollup_cols else ('avg_bw_out_pct' if 'avg_bw_out_pct' in rollup_cols else 'avg_out_util')
+
+        query = f'''
+            SELECT ts_minute, substr(ts_minute, 1, 10) as day, interface_name,
+                   COALESCE({in_col}, 0) as bw_in, COALESCE({out_col}, 0) as bw_out,
+                   COALESCE(avg_in_bps, 0) as avg_in, COALESCE(avg_out_bps, 0) as avg_out,
+                   COALESCE(err_delta_sum, 0) as errs, COALESCE(discard_delta_sum, 0) as discards,
+                   COALESCE(in_pkts_sum, 0) + COALESCE(out_pkts_sum, 0) as pkts
             FROM interface_telemetry_1m
             WHERE device_id = ? AND ts_minute >= ?
-            GROUP BY DATE(ts_minute), interface_name
-            ORDER BY day
-        '''.format(
-            avg_in_col=avg_in_col,
-            avg_out_col=avg_out_col,
-            peak_in_col=peak_in_col,
-            peak_out_col=peak_out_col,
-        ), (device_id, cutoff)).fetchall()
+        '''
+        rows = conn.execute(query, (device_id, cutoff)).fetchall()
 
-        # Aggregate interface data per day (pick the busiest interface)
-        day_intf = {}
-        for row in intf_rows:
-            d = row['day']
-            if d not in day_intf or max(row['avg_in'] or 0, row['avg_out'] or 0) > max(day_intf[d].get('avg_in', 0), day_intf[d].get('avg_out', 0)):
-                day_intf[d] = {
-                    'interface_name': row['interface_name'],
-                    'avg_in': round(row['avg_in'] or 0, 1),
-                    'avg_out': round(row['avg_out'] or 0, 1),
-                    'peak_in': round(row['peak_in'] or 0, 1),
-                    'peak_out': round(row['peak_out'] or 0, 1),
-                }
+        # 3. Group by interface and day / minute
+        intf_day_data = defaultdict(lambda: defaultdict(lambda: ([], [])))
+        intf_stats = defaultdict(lambda: {"errs": 0, "discards": 0, "pkts": 0})
+        minute_totals = defaultdict(float)  # ts_minute -> total dynamic load in bps
+        
+        for r in rows:
+            intf = r["interface_name"]
+            day = r["day"]
+            ts_min = r["ts_minute"]
+            intf_day_data[intf][day][0].append(float(r["bw_in"]))
+            intf_day_data[intf][day][1].append(float(r["bw_out"]))
+            
+            stats = intf_stats[intf]
+            stats["errs"] += int(r["errs"] or 0)
+            stats["discards"] += int(r["discards"] or 0)
+            stats["pkts"] += int(r["pkts"] or 0)
+            
+            # Aggregate chassis traffic: sum(max(in_bps, out_bps)) per minute
+            in_bps = float(r["avg_in"] or 0.0)
+            out_bps = float(r["avg_out"] or 0.0)
+            minute_totals[ts_min] += max(in_bps, out_bps)
 
-        # Get current device info
-        dev = conn.execute('SELECT hostname, cpu_usage, memory_usage FROM devices WHERE id = ?', (device_id,)).fetchone()
-        hostname = dev['hostname'] if dev else ''
+        # Build consecutive 36-day date index
+        today_date = dt.datetime.now(dt.timezone.utc).date()
+        date_list = [(today_date - dt.timedelta(days=i)).isoformat() for i in range(days + 6 - 1, -1, -1)]
 
-        trends = []
-        for row in health_rows:
-            day = row['day']
-            intf = day_intf.get(day, {})
-            trends.append({
-                'date': day,
-                'health_score': round(row['avg_health'] or 0, 1),
-                'avg_in_util': intf.get('avg_in', 0),
-                'avg_out_util': intf.get('avg_out', 0),
-                'peak_in_util': intf.get('peak_in', 0),
-                'peak_out_util': intf.get('peak_out', 0),
-                'busiest_interface': intf.get('interface_name', ''),
-            })
+        # Compute P95 values per interface per day
+        intf_p95_series = {}
+        for intf, days_map in intf_day_data.items():
+            series = []
+            for d in date_list:
+                if d in days_map:
+                    in_list, out_list = days_map[d]
+                    p95_in = _calculate_percentile(in_list, 0.95)
+                    p95_out = _calculate_percentile(out_list, 0.95)
+                    series.append(max(p95_in, p95_out))
+                else:
+                    # Pad missing values
+                    series.append(series[-1] if series else 0.0)
+            intf_p95_series[intf] = series
 
-        # Simple linear forecast (next 30 days) for the busiest metric
-        forecast = []
-        if len(trends) >= 7:
-            # Use peak utilization for forecasting
-            peak_values = [max(t['peak_in_util'], t['peak_out_util']) for t in trends]
-            n = len(peak_values)
-            x_mean = (n - 1) / 2
-            y_mean = sum(peak_values) / n
-            numerator = sum((i - x_mean) * (peak_values[i] - y_mean) for i in range(n))
-            denominator = sum((i - x_mean) ** 2 for i in range(n))
-            slope = numerator / denominator if denominator != 0 else 0
-            intercept = y_mean - slope * x_mean
-
-            for i in range(1, 31):
-                predicted = slope * (n + i - 1) + intercept
-                predicted = max(0, min(100, round(predicted, 1)))
-                future_date = (datetime.now(timezone.utc) + timedelta(days=i)).strftime('%Y-%m-%d')
-                forecast.append({'date': future_date, 'predicted_util': predicted})
-
-            # Days until 80% and 95%
-            days_to_80 = None
-            days_to_95 = None
-            current_val = peak_values[-1] if peak_values else 0
-            if slope > 0:
-                if current_val < 80:
-                    days_to_80 = max(1, round((80 - intercept) / slope - n + 1))
-                if current_val < 95:
-                    days_to_95 = max(1, round((95 - intercept) / slope - n + 1))
+        # Compute Chassis Utilization Series
+        chassis_p95_series = []
+        if max_forwarding_capacity_gbps > 0:
+            cap_g = max_forwarding_capacity_gbps
+            day_chassis_utils = defaultdict(list)
+            for ts_min, total_load_bps in minute_totals.items():
+                load_gbps = total_load_bps * 1e-9
+                util_pct = (load_gbps / cap_g) * 100.0
+                day = ts_min[:10]
+                day_chassis_utils[day].append(min(100.0, max(0.0, util_pct)))
+            
+            for d in date_list:
+                if d in day_chassis_utils:
+                    p95_val = _calculate_percentile(day_chassis_utils[d], 0.95)
+                    chassis_p95_series.append(p95_val)
+                else:
+                    chassis_p95_series.append(chassis_p95_series[-1] if chassis_p95_series else 0.0)
         else:
-            days_to_80 = None
-            days_to_95 = None
+            chassis_p95_series = [0.0] * len(date_list)
+
+        # Sort interfaces by mean P95 utilization to find Top N busiest
+        intf_rank = []
+        for intf, series in intf_p95_series.items():
+            avg_p95 = sum(series) / len(series) if series else 0.0
+            intf_rank.append((avg_p95, intf))
+        intf_rank.sort(reverse=True)
+        top_interfaces = [item[1] for item in intf_rank[:top_n]]
+
+        # Use ForecastEngine for each top interface
+        engine = ForecastEngine()
+        interfaces_results = []
+
+        # A. Append Chassis-Level virtual interface
+        chassis_errs = sum(s["errs"] for s in intf_stats.values())
+        chassis_discards = sum(s["discards"] for s in intf_stats.values())
+        chassis_pkts = sum(s["pkts"] for s in intf_stats.values())
+        chassis_loss_rate = chassis_discards / chassis_pkts if chassis_pkts > 0 else 0.0
+        
+        chassis_pred = engine.predict_interface_capacity(chassis_p95_series, forecast_days=30)
+        current_chassis_p95 = chassis_p95_series[-1] if chassis_p95_series else 0.0
+        
+        chassis_score, chassis_risk = calculate_capacity_score(
+            cpu_util=cpu_curr,
+            mem_util=mem_curr,
+            intf_p95=current_chassis_p95,
+            err_count=chassis_errs,
+            discard_count=chassis_discards,
+            packet_loss_rate=chassis_loss_rate
+        )
+        
+        forecast_dates = []
+        for i in range(1, 31):
+            f_date = (datetime.now(timezone.utc) + timedelta(days=i)).strftime('%Y-%m-%d')
+            forecast_dates.append(f_date)
+            
+        chassis_forecast_30d = []
+        for d_str, val in zip(forecast_dates, chassis_pred["predictions"]):
+            chassis_forecast_30d.append({"date": d_str, "predicted_util": val})
+            
+        chassis_trends = []
+        chassis_hist_raw = chassis_pred["history_raw"]
+        chassis_hist_smooth = chassis_pred["history_smoothed"]
+        trends_dates = date_list[-30:]
+        for idx, d_str in enumerate(trends_dates):
+            raw_val = chassis_hist_raw[idx] if idx < len(chassis_hist_raw) else 0.0
+            smooth_val = chassis_hist_smooth[idx] if idx < len(chassis_hist_smooth) else 0.0
+            chassis_trends.append({
+                "date": d_str,
+                "avg_in_util": raw_val,
+                "avg_out_util": smooth_val,
+                "peak_in_util": raw_val,
+                "peak_out_util": smooth_val
+            })
+            
+        interfaces_results.append({
+            "interface_name": "Chassis-Level Capacity (整机接口容量)",
+            "current_p95_util": round(current_chassis_p95, 2),
+            "trends": chassis_trends,
+            "forecast_30d": chassis_forecast_30d,
+            "slope": chassis_pred["slope"],
+            "r2": chassis_pred["r2"],
+            "trend_confidence": chassis_pred["trend_confidence"],
+            "days_to_80": chassis_pred["days_to_80"],
+            "days_to_95": chassis_pred["days_to_95"],
+            "risk_level": chassis_risk,
+            "capacity_score": chassis_score,
+            "packet_loss_rate": round(chassis_loss_rate * 100, 4),
+            "error_count": chassis_errs,
+            "discard_count": chassis_discards
+        })
+
+        # B. Append standard Top N busy interfaces
+        for intf in top_interfaces:
+            series = intf_p95_series[intf]
+            pred_res = engine.predict_interface_capacity(series, forecast_days=30)
+            
+            stats = intf_stats[intf]
+            err_count = stats["errs"]
+            discard_count = stats["discards"]
+            pkts = stats["pkts"]
+            loss_rate = discard_count / pkts if pkts > 0 else 0.0
+            
+            current_p95 = series[-1] if series else 0.0
+            
+            score, risk = calculate_capacity_score(
+                cpu_util=cpu_curr,
+                mem_util=mem_curr,
+                intf_p95=current_p95,
+                err_count=err_count,
+                discard_count=discard_count,
+                packet_loss_rate=loss_rate
+            )
+            
+            forecast_30d = []
+            for d_str, val in zip(forecast_dates, pred_res["predictions"]):
+                forecast_30d.append({"date": d_str, "predicted_util": val})
+                
+            trends = []
+            hist_raw = pred_res["history_raw"]
+            hist_smooth = pred_res["history_smoothed"]
+            for idx, d_str in enumerate(trends_dates):
+                raw_val = hist_raw[idx] if idx < len(hist_raw) else 0.0
+                smooth_val = hist_smooth[idx] if idx < len(hist_smooth) else 0.0
+                trends.append({
+                    "date": d_str,
+                    "avg_in_util": raw_val,       # Raw actual value
+                    "avg_out_util": smooth_val,   # Smoothed trend value
+                    "peak_in_util": raw_val,
+                    "peak_out_util": smooth_val
+                })
+
+            interfaces_results.append({
+                "interface_name": intf,
+                "current_p95_util": round(current_p95, 2),
+                "trends": trends,
+                "forecast_30d": forecast_30d,
+                "slope": pred_res["slope"],
+                "r2": pred_res["r2"],
+                "trend_confidence": pred_res["trend_confidence"],
+                "days_to_80": pred_res["days_to_80"],
+                "days_to_95": pred_res["days_to_95"],
+                "risk_level": risk,
+                "capacity_score": score,
+                "packet_loss_rate": round(loss_rate * 100, 4),
+                "error_count": err_count,
+                'discard_count': discard_count
+            })
 
         return {
             'device_id': device_id,
             'hostname': hostname,
-            'trends': trends,
-            'forecast': forecast,
-            'days_to_80_pct': days_to_80,
-            'days_to_95_pct': days_to_95,
+            'cpu_usage': cpu_curr,
+            'memory_usage': mem_curr,
+            'chassis_spec': {
+                "ports_count": ports_count,
+                "ports_bandwidth_gbps": round(ports_bandwidth_gbps, 3),
+                "switching_capacity_gbps": round(switching_capacity_gbps, 3),
+                "oversubscription_ratio": round(oversubscription_ratio, 2),
+                "max_forwarding_capacity_gbps": round(max_forwarding_capacity_gbps, 3),
+                "is_blocking": is_blocking,
+                "bottleneck_type": bottleneck_type
+            },
+            'interfaces': interfaces_results
         }
     finally:
         conn.close()
@@ -223,75 +422,149 @@ def device_capacity_trend(device_id: str, days: int = Query(default=30, ge=1, le
 
 @router.get('/capacity/forecast')
 def capacity_forecast_all():
-    """Get capacity forecast summary for all devices — which ones will hit thresholds soonest."""
+    """Get capacity forecast summary for all devices based on P95, CPU, MEM, errors, and discards."""
     conn = get_db_connection()
     try:
+        # 1. Get all online devices
         devices = conn.execute('''
             SELECT id, hostname, ip_address, platform, cpu_usage, memory_usage
             FROM devices WHERE status = 'online'
         ''').fetchall()
+        if not devices:
+            return {
+                'total_warnings': 0,
+                'critical_count': 0,
+                'warning_count': 0,
+                'items': []
+            }
 
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-
+        # 2. Get current P95 from telemetry (last 24 hours)
+        cutoff_1d = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         rollup_cols = _get_table_columns(conn, 'interface_telemetry_1m')
-        avg_in_col = 'avg_bw_in_pct' if 'avg_bw_in_pct' in rollup_cols else 'avg_in_util'
-        peak_in_col = 'max_bw_in_pct' if 'max_bw_in_pct' in rollup_cols else 'peak_in_util'
+        
+        in_col = 'max_bw_in_pct' if 'max_bw_in_pct' in rollup_cols else ('avg_bw_in_pct' if 'avg_bw_in_pct' in rollup_cols else 'avg_in_util')
+        out_col = 'max_bw_out_pct' if 'max_bw_out_pct' in rollup_cols else ('avg_bw_out_pct' if 'avg_bw_out_pct' in rollup_cols else 'avg_out_util')
 
+        query_p95 = f'''
+            SELECT device_id, interface_name,
+                   COALESCE({in_col}, 0) as bw_in, COALESCE({out_col}, 0) as bw_out
+            FROM interface_telemetry_1m
+            WHERE ts_minute >= ?
+        '''
+        rows_p95 = conn.execute(query_p95, (cutoff_1d,)).fetchall()
+
+        # Group raw values in Python
+        dev_intf_data = defaultdict(lambda: defaultdict(lambda: ([], [])))
+        for r in rows_p95:
+            d_id = r["device_id"]
+            intf = r["interface_name"]
+            dev_intf_data[d_id][intf][0].append(float(r["bw_in"]))
+            dev_intf_data[d_id][intf][1].append(float(r["bw_out"]))
+
+        # 3. Get error & discard statistics from telemetry (last 7 days)
+        cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        query_stats = '''
+            SELECT device_id, interface_name,
+                   SUM(COALESCE(err_delta_sum, 0)) as errs,
+                   SUM(COALESCE(discard_delta_sum, 0)) as discards,
+                   SUM(COALESCE(in_pkts_sum, 0) + COALESCE(out_pkts_sum, 0)) as pkts
+            FROM interface_telemetry_1m
+            WHERE ts_minute >= ?
+            GROUP BY device_id, interface_name
+        '''
+        rows_stats = conn.execute(query_stats, (cutoff_7d,)).fetchall()
+        
+        dev_intf_stats = defaultdict(dict)
+        for r in rows_stats:
+            d_id = r["device_id"]
+            intf = r["interface_name"]
+            dev_intf_stats[d_id][intf] = {
+                "errs": int(r["errs"] or 0),
+                "discards": int(r["discards"] or 0),
+                "pkts": int(r["pkts"] or 0)
+            }
+
+        # 4. Evaluate risk for each device
         warnings = []
         for dev in devices:
-            # Get recent peak interface utilization
-            intf_data = conn.execute('''
-                SELECT AVG(COALESCE({avg_in_col}, 0)) as avg_util,
-                       MAX(COALESCE({peak_in_col}, 0)) as peak_util
-                FROM interface_telemetry_1m
-                WHERE device_id = ? AND ts_minute >= ?
-            '''.format(avg_in_col=avg_in_col, peak_in_col=peak_in_col), (dev['id'], cutoff)).fetchone()
+            d_id = dev['id']
+            cpu = float(dev['cpu_usage'] or 0)
+            mem = float(dev['memory_usage'] or 0)
 
-            cpu = dev['cpu_usage'] or 0
-            mem = dev['memory_usage'] or 0
-            peak_util = round(intf_data['peak_util'] or 0, 1) if intf_data else 0
-            avg_util = round(intf_data['avg_util'] or 0, 1) if intf_data else 0
+            # Get interfaces for this device
+            interfaces = dev_intf_data.get(d_id, {})
+            
+            device_min_score = 100
+            device_worst_risk = "healthy"
+            worst_intf_name = "N/A"
+            worst_intf_p95 = 0.0
+            worst_intf_avg = 0.0
+            device_reasons = []
 
-            risk_level = 'normal'
-            reasons = []
-            if cpu >= 90:
-                risk_level = 'critical'
-                reasons.append(f'CPU {cpu}%')
-            elif cpu >= 80:
-                risk_level = 'warning' if risk_level == 'normal' else risk_level
-                reasons.append(f'CPU {cpu}%')
-            if mem >= 90:
-                risk_level = 'critical'
-                reasons.append(f'Memory {mem}%')
-            elif mem >= 80:
-                risk_level = 'warning' if risk_level == 'normal' else risk_level
-                reasons.append(f'Memory {mem}%')
-            if peak_util >= 90:
-                risk_level = 'critical'
-                reasons.append(f'Link peak {peak_util}%')
-            elif peak_util >= 75:
-                risk_level = 'warning' if risk_level == 'normal' else risk_level
-                reasons.append(f'Link peak {peak_util}%')
+            if cpu >= 80.0:
+                device_reasons.append(f"CPU usage is {cpu}%")
+            if mem >= 80.0:
+                device_reasons.append(f"Memory usage is {mem}%")
 
-            if risk_level != 'normal':
+            # Evaluate each interface
+            for intf, (in_list, out_list) in interfaces.items():
+                p95_in = _calculate_percentile(in_list, 0.95)
+                p95_out = _calculate_percentile(out_list, 0.95)
+                current_p95 = max(p95_in, p95_out)
+                
+                stats = dev_intf_stats.get(d_id, {}).get(intf, {"errs": 0, "discards": 0, "pkts": 0})
+                err_count = stats["errs"]
+                discard_count = stats["discards"]
+                pkts = stats["pkts"]
+                loss_rate = discard_count / pkts if pkts > 0 else 0.0
+                
+                score, risk = calculate_capacity_score(
+                    cpu_util=cpu,
+                    mem_util=mem,
+                    intf_p95=current_p95,
+                    err_count=err_count,
+                    discard_count=discard_count,
+                    packet_loss_rate=loss_rate
+                )
+
+                if score < device_min_score:
+                    device_min_score = score
+                    device_worst_risk = risk
+                    worst_intf_name = intf
+                    worst_intf_p95 = current_p95
+                    
+                    worst_intf_avg = sum(in_list + out_list) / len(in_list + out_list) if (in_list or out_list) else 0.0
+
+            if worst_intf_p95 >= 75.0:
+                device_reasons.append(f"Interface {worst_intf_name} P95 is {round(worst_intf_p95, 1)}%")
+
+            # Only report warnings/risky devices (score < 90)
+            if device_min_score < 90:
                 warnings.append({
-                    'device_id': dev['id'],
+                    'device_id': d_id,
                     'hostname': dev['hostname'],
                     'ip_address': dev['ip_address'],
                     'platform': dev['platform'],
                     'cpu': cpu,
                     'memory': mem,
-                    'peak_link_util': peak_util,
-                    'avg_link_util': avg_util,
-                    'risk_level': risk_level,
-                    'reasons': reasons,
+                    'peak_link_util': round(worst_intf_p95, 1),
+                    'avg_link_util': round(worst_intf_avg, 1),
+                    'risk_level': device_worst_risk,
+                    'capacity_score': device_min_score,
+                    'reasons': device_reasons if device_reasons else [f"Capacity score is {device_min_score}"],
+                    'worst_interface': worst_intf_name
                 })
 
-        warnings.sort(key=lambda w: (0 if w['risk_level'] == 'critical' else 1, -max(w['cpu'], w['memory'], w['peak_link_util'])))
+        # Sort: critical first, then high, then warning; within same risk level, sort by lowest capacity_score
+        warnings.sort(key=lambda w: (
+            {"critical": 0, "high": 1, "warning": 2}.get(w['risk_level'], 3),
+            w['capacity_score']
+        ))
+
         return {
             'total_warnings': len(warnings),
             'critical_count': sum(1 for w in warnings if w['risk_level'] == 'critical'),
-            'warning_count': sum(1 for w in warnings if w['risk_level'] == 'warning'),
+            'warning_count': sum(1 for w in warnings if w['risk_level'] == 'warning' or w['risk_level'] == 'high'),
             'items': warnings,
         }
     finally:
