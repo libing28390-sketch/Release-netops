@@ -57,11 +57,19 @@ tools/license_issuer/issued/registry.json
 
 # Agent / IDE Artifacts
 task.md
+task_progress.md
+task-progress-*.md
+docs/task-progress-*.md
 implementation_plan.md
 walkthrough.md
 refactor.cjs
 refactor2.cjs
 test_dragon.mp3
+patch-vmware.sh
+patch-*.sh
+hotfix-*.sh
+_check_*.py
+_regen_*.py
 
 # Keys — private key must never be committed; public key IS required for deployment
 *.pem
@@ -71,8 +79,6 @@ docs/cleanup_script.md
 docs/tts_scripts/录音.md
 docs/tts_scripts/device_onboarding_and_rotation_20260524.srt
 docs/tts_scripts/device_onboarding_and_rotation.md
-.gitignore
-.gitignore
 docs/tts_scripts/device_onboarding_and_rotation.wav
 docs/tts_scripts/device_onboarding_and_rotation.mp3
 docs/tts_scripts/device_onboarding_and_rotation_20260524.wav

@@ -88,12 +88,26 @@ jobs:
           rm -rf scratch/
           rm -rf backend/scratch/
           rm -rf backend/tests/
+          rm -f pytest.ini
           rm -f backend/_check_audit.py
           rm -f backend/check_executions.py
           rm -f backend/check_results.py
           rm -f backend/debug_device.py
           rm -f backend/find_target.py
           rm -f _purge_bogus_backups.py
+          # 任何在仓库根目录残留的 _xxx.py 临时排障脚本一律剔除
+          find . -maxdepth 2 -type f -name '_*.py' -not -path './.git/*' -delete || true
+
+          # ── 临时部署补丁 / 排障脚本（开发期使用，正式发布不需要） ──
+          rm -f patch-vmware.sh
+          rm -f patch-*.sh
+          rm -f hotfix-*.sh
+
+          # ── 历史任务进度 / 开发期 todo（绝对不能发给客户） ──
+          rm -f task.md task_progress.md
+          rm -f task-*.md task_*.md
+          rm -f implementation_plan.md walkthrough.md
+          rm -f refactor.cjs refactor2.cjs
 
           # ── 本地数据库文件（客户应使用自己的 PostgreSQL）──
           rm -f netops.db backend/netops.db backend/netsops.db
