@@ -26,6 +26,15 @@ interface AlertSummary {
   avg_mtta_minutes: number;
 }
 
+interface ReportDashboardData {
+  sla_availability: number;
+  avg_mttr_minutes: number;
+  avg_mtta_minutes: number;
+  incident_trend: { date: string; incidents: number; mttr: number }[];
+  top_alerting: { name: string; ip: string; alerts: number; owner: string; spark: number[] }[];
+  top_consumers: { name: string; ip: string; metric: string; value: number; unit: string }[];
+}
+
 interface ReportsTabProps {
   devices: Device[];
   jobs: Job[];
@@ -158,32 +167,43 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
   const zh = language === 'zh';
   const [alertSummary, setAlertSummary] = useState<AlertSummary | null>(null);
   const [reportRange, setReportRange] = useState<'7d' | '30d'>('7d');
+  const [reportData, setReportData] = useState<ReportDashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const [hoveredAlertRow, setHoveredAlertRow] = useState<number>(-1);
   const [hoveredConsumerRow, setHoveredConsumerRow] = useState<number>(-1);
 
-  const fetchAlertSummary = useCallback(async () => {
+  const fetchReportData = useCallback(async () => {
     const token = localStorage.getItem('sessionToken') || '';
     try {
-      const r = await fetch('/api/alerts/summary', { headers: { 'Authorization': `Bearer ${token}` } });
-      if (r.ok) {
-        const data = await r.json();
+      const rSummary = await fetch('/api/alerts/summary', { headers: { 'Authorization': `Bearer ${token}` } });
+      if (rSummary.ok) {
+        const data = await rSummary.json();
         setAlertSummary(data);
       }
     } catch { /* ignore */ }
+
+    try {
+      const rDashboard = await fetch(`/api/reports/dashboard?range=${reportRange}`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (rDashboard.ok) {
+        const data = await rDashboard.json();
+        setReportData(data);
+      }
+    } catch { /* ignore */ }
     setLastRefresh(new Date());
-  }, []);
+    setLoading(false);
+  }, [reportRange]);
 
   useEffect(() => {
-    fetchAlertSummary();
-    const timer = setInterval(fetchAlertSummary, REFRESH_INTERVAL);
+    fetchReportData();
+    const timer = setInterval(fetchReportData, REFRESH_INTERVAL);
     return () => clearInterval(timer);
-  }, [fetchAlertSummary]);
+  }, [fetchReportData]);
 
   const handleManualRefresh = async () => {
     setRefreshing(true);
-    await fetchAlertSummary();
+    await fetchReportData();
     setRefreshing(false);
   };
 
@@ -220,17 +240,44 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
     return Math.round((avail * 35 + taskOk * 25 + comp * 25 + alertPenalty * 15));
   }, [devices.length, onlineCount, totalJobsInRange, successJobsInRange, compScore, alertSummary]);
 
-  const mttrValue = alertSummary ? Math.round(alertSummary.avg_mttr_minutes) : 42;
-  const mttaValue = alertSummary ? Math.round(alertSummary.avg_mtta_minutes) : 8;
+  const displaySla = reportData ? reportData.sla_availability.toFixed(3) : onlinePct;
+  const mttrValue = reportData ? Math.round(reportData.avg_mttr_minutes) : (alertSummary ? Math.round(alertSummary.avg_mttr_minutes) : 42);
+  const mttaValue = reportData ? Math.round(reportData.avg_mtta_minutes) : (alertSummary ? Math.round(alertSummary.avg_mtta_minutes) : 8);
 
-  const comboData = useMemo(() => buildComboData(language), [language]);
+  const comboData = useMemo(() => {
+    if (!reportData || !reportData.incident_trend) {
+      return buildComboData(language);
+    }
+    return reportData.incident_trend.map(item => {
+      try {
+        const parts = item.date.split('-');
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+        const day = parseInt(parts[2], 10);
+        const label = language === 'zh'
+          ? `${month}/${day}`
+          : new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+        return {
+          name: label,
+          incidents: item.incidents,
+          mttr: item.mttr
+        };
+      } catch (e) {
+        return {
+          name: item.date,
+          incidents: item.incidents,
+          mttr: item.mttr
+        };
+      }
+    });
+  }, [reportData, language]);
 
   // ── Export ──
   const handleExportReport = () => {
     const wb = XLSX.utils.book_new();
     const kpiSheet = XLSX.utils.json_to_sheet([
       { Metric: zh ? '网络健康度' : 'Health Score', Value: healthScore },
-      { Metric: 'SLA Availability', Value: `${onlinePct}%` },
+      { Metric: 'SLA Availability', Value: `${displaySla}%` },
       { Metric: 'MTTR', Value: `${mttrValue}m` },
       { Metric: 'MTTA', Value: `${mttaValue}m` },
     ]);
@@ -358,7 +405,7 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
               </p>
             </div>
             <p className="text-[32px] font-black tracking-tight text-[#00172D] leading-none monitoring-data">
-              {onlinePct}<span className="text-lg text-black/25 ml-0.5">%</span>
+              {displaySla}<span className="text-lg text-black/25 ml-0.5">%</span>
             </p>
             <p className="text-[11px] text-black/35 mt-1.5">
               {onlineCount}/{devices.length} {zh ? '设备在线' : 'devices online'}
@@ -506,42 +553,54 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
             </div>
 
             <div className="space-y-0">
-              {MOCK_TOP_ALERTING.map((item, i) => (
-                <motion.div
-                  key={item.name}
-                  initial={{ opacity: 0, x: -12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.06, duration: 0.4 }}
-                  onMouseEnter={() => setHoveredAlertRow(i)}
-                  onMouseLeave={() => setHoveredAlertRow(-1)}
-                  className={`flex items-center gap-4 px-4 py-3.5 rounded-xl transition-colors cursor-default ${
-                    hoveredAlertRow === i ? 'bg-black/[0.025]' : ''
-                  }`}
-                >
-                  <span className={`text-xs font-black w-5 text-center monitoring-data ${
-                    i === 0 ? 'text-rose-500' : i === 1 ? 'text-orange-400' : 'text-black/20'
-                  }`}>
-                    {i + 1}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-semibold text-[#00172D] truncate">{item.name}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-black/30 monitoring-data">{item.ip}</span>
-                      <span className="text-[10px] text-black/20">·</span>
-                      <span className="text-[10px] text-black/30">{item.owner}</span>
-                    </div>
-                  </div>
-                  <Sparkline data={item.spark} color="#ef4444" />
-                  <div className="text-right flex-shrink-0 w-12">
-                    <span className={`text-base font-black monitoring-data ${
-                      item.alerts >= 10 ? 'text-rose-500' : 'text-orange-400'
+              {loading ? (
+                <div className="text-center py-10 text-xs text-black/25 animate-pulse">
+                  {zh ? '加载中...' : 'Loading...'}
+                </div>
+              ) : (reportData?.top_alerting || []).length === 0 ? (
+                <div className="text-center py-10 text-xs text-black/25">
+                  {zh ? '暂无频发告警设备' : 'No chronic alerting devices'}
+                </div>
+              ) : (
+                (reportData?.top_alerting || []).map((item, i) => (
+                  <motion.div
+                    key={item.name}
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.06, duration: 0.4 }}
+                    onMouseEnter={() => setHoveredAlertRow(i)}
+                    onMouseLeave={() => setHoveredAlertRow(-1)}
+                    className={`flex items-center gap-4 px-4 py-3.5 rounded-xl transition-colors cursor-default ${
+                      hoveredAlertRow === i ? 'bg-black/[0.025]' : ''
+                    }`}
+                  >
+                    <span className={`text-xs font-black w-5 text-center monitoring-data ${
+                      i === 0 ? 'text-rose-500' : i === 1 ? 'text-orange-400' : 'text-black/20'
                     }`}>
-                      {item.alerts}
+                      {i + 1}
                     </span>
-                    <p className="text-[9px] text-black/25 -mt-0.5">{zh ? '次告警' : 'alerts'}</p>
-                  </div>
-                </motion.div>
-              ))}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-semibold text-[#00172D] truncate">{item.name}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-black/30 monitoring-data">{item.ip}</span>
+                        <span className="text-[10px] text-black/20">·</span>
+                        <span className="text-[10px] text-black/30">{item.owner}</span>
+                      </div>
+                    </div>
+                    {item.spark && item.spark.length > 0 && (
+                      <Sparkline data={item.spark} color="#ef4444" />
+                    )}
+                    <div className="text-right flex-shrink-0 w-12">
+                      <span className={`text-base font-black monitoring-data ${
+                        item.alerts >= 10 ? 'text-rose-500' : 'text-orange-400'
+                      }`}>
+                        {item.alerts}
+                      </span>
+                      <p className="text-[9px] text-black/25 -mt-0.5">{zh ? '次告警' : 'alerts'}</p>
+                    </div>
+                  </motion.div>
+                ))
+              )}
             </div>
           </div>
 
@@ -557,61 +616,71 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
             </div>
 
             <div className="space-y-0">
-              {MOCK_TOP_CONSUMERS.map((item, i) => (
-                <motion.div
-                  key={item.name}
-                  initial={{ opacity: 0, x: 12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.06, duration: 0.4 }}
-                  onMouseEnter={() => setHoveredConsumerRow(i)}
-                  onMouseLeave={() => setHoveredConsumerRow(-1)}
-                  className={`flex items-center gap-4 px-4 py-3.5 rounded-xl transition-colors cursor-default ${
-                    hoveredConsumerRow === i ? 'bg-black/[0.025]' : ''
-                  }`}
-                >
-                  <span className={`text-xs font-black w-5 text-center monitoring-data ${
-                    i === 0 ? 'text-rose-500' : i === 1 ? 'text-orange-400' : 'text-black/20'
-                  }`}>
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0 w-40 flex-shrink-0">
-                    <p className="text-[13px] font-semibold text-[#00172D] truncate">{item.name}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-black/30 monitoring-data">{item.ip}</span>
-                      <span className="text-[10px] text-black/20">·</span>
-                      <span className={`text-[10px] font-semibold ${
-                        item.metric === 'CPU' ? 'text-rose-400' : item.metric === 'MEM' ? 'text-amber-500' : 'text-sky-400'
-                      }`}>
-                        {(METRIC_LABELS[item.metric] || { zh: item.metric, en: item.metric })[zh ? 'zh' : 'en']}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex-1">
-                    <div className="h-[6px] bg-black/[0.04] rounded-full overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${item.value}%` }}
-                        transition={{ duration: 0.8, delay: i * 0.1 }}
-                        className={`h-full rounded-full ${
-                          item.value >= 90
-                            ? 'bg-gradient-to-r from-rose-400 to-rose-500'
-                            : item.value >= 80
-                              ? 'bg-gradient-to-r from-amber-400 to-amber-500'
-                              : 'bg-gradient-to-r from-sky-300 to-sky-400'
-                        }`}
-                      />
-                    </div>
-                  </div>
-                  <div className="text-right flex-shrink-0 w-14">
-                    <span className={`text-base font-black monitoring-data ${
-                      item.value >= 90 ? 'text-rose-500' : item.value >= 80 ? 'text-amber-500' : 'text-sky-500'
+              {loading ? (
+                <div className="text-center py-10 text-xs text-black/25 animate-pulse">
+                  {zh ? '加载中...' : 'Loading...'}
+                </div>
+              ) : (reportData?.top_consumers || []).length === 0 ? (
+                <div className="text-center py-10 text-xs text-black/25">
+                  {zh ? '暂无高负载资源' : 'No resource usage reported'}
+                </div>
+              ) : (
+                (reportData?.top_consumers || []).map((item, i) => (
+                  <motion.div
+                    key={`${item.name}-${item.metric}`}
+                    initial={{ opacity: 0, x: 12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.06, duration: 0.4 }}
+                    onMouseEnter={() => setHoveredConsumerRow(i)}
+                    onMouseLeave={() => setHoveredConsumerRow(-1)}
+                    className={`flex items-center gap-4 px-4 py-3.5 rounded-xl transition-colors cursor-default ${
+                      hoveredConsumerRow === i ? 'bg-black/[0.025]' : ''
+                    }`}
+                  >
+                    <span className={`text-xs font-black w-5 text-center monitoring-data ${
+                      i === 0 ? 'text-rose-500' : i === 1 ? 'text-orange-400' : 'text-black/20'
                     }`}>
-                      {item.value}
+                      {i + 1}
                     </span>
-                    <span className="text-[10px] text-black/25">{item.unit}</span>
-                  </div>
-                </motion.div>
-              ))}
+                    <div className="min-w-0 w-40 flex-shrink-0">
+                      <p className="text-[13px] font-semibold text-[#00172D] truncate">{item.name}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-black/30 monitoring-data">{item.ip}</span>
+                        <span className="text-[10px] text-black/20">·</span>
+                        <span className={`text-[10px] font-semibold ${
+                          item.metric === 'CPU' ? 'text-rose-400' : item.metric === 'MEM' ? 'text-amber-500' : 'text-sky-400'
+                        }`}>
+                          {(METRIC_LABELS[item.metric] || { zh: item.metric, en: item.metric })[zh ? 'zh' : 'en']}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <div className="h-[6px] bg-black/[0.04] rounded-full overflow-hidden">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${item.value}%` }}
+                          transition={{ duration: 0.8, delay: i * 0.1 }}
+                          className={`h-full rounded-full ${
+                            item.value >= 90
+                              ? 'bg-gradient-to-r from-rose-400 to-rose-500'
+                              : item.value >= 80
+                                ? 'bg-gradient-to-r from-amber-400 to-amber-500'
+                                : 'bg-gradient-to-r from-sky-300 to-sky-400'
+                          }`}
+                        />
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0 w-14">
+                      <span className={`text-base font-black monitoring-data ${
+                        item.value >= 90 ? 'text-rose-500' : item.value >= 80 ? 'text-amber-500' : 'text-sky-500'
+                      }`}>
+                        {item.value}
+                      </span>
+                      <span className="text-[10px] text-black/25">{item.unit}</span>
+                    </div>
+                  </motion.div>
+                ))
+              )}
             </div>
           </div>
         </div>

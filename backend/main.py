@@ -39,6 +39,7 @@ from api.audit import router as audit_router
 from api.compliance import router as compliance_router
 from api.config_drift import router as config_drift_router
 from api.capacity import router as capacity_router
+from api.reports import router as reports_router
 from api.ipam import router as ipam_router
 from api.assets import router as assets_router
 from api.pam import router as pam_router, ws_router as pam_ws_router
@@ -247,6 +248,7 @@ app.include_router(alerts_router,         prefix="/api", dependencies=[Depends(r
 app.include_router(topology_router,       prefix="/api", dependencies=[Depends(require_feature("topology"))])
 app.include_router(ipam_router,           prefix="/api", dependencies=[Depends(require_feature("ipam"))])
 app.include_router(capacity_router,       prefix="/api", dependencies=[Depends(require_feature("capacity"))])
+app.include_router(reports_router,        prefix="/api", dependencies=[Depends(require_feature("reports"))])
 app.include_router(compliance_router,     prefix="/api", dependencies=[Depends(require_feature("compliance"))])
 app.include_router(inspections_router,    prefix="/api", dependencies=[Depends(require_feature("inspections"))])
 app.include_router(textfsm_templates_router, prefix="/api", dependencies=[Depends(require_feature("inspections"))])
