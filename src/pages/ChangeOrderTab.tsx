@@ -2044,13 +2044,13 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     if (!executeModal) return;
     const order = executeModal.order;
     const commands = (order.commands || []).join('\n').trim();
-    const deviceIds = (order.target_devices || []).map((d: any) => d.id).filter(Boolean);
+    const targetDevices = order.target_devices || [];
 
     if (!commands) {
       setExecuteModal({ ...executeModal, phase: 'done', success: false, error: zh ? '工单中没有可下发的命令' : 'No commands to execute' });
       return;
     }
-    if (deviceIds.length === 0) {
+    if (targetDevices.length === 0) {
       setExecuteModal({ ...executeModal, phase: 'done', success: false, error: zh ? '工单未关联目标设备' : 'No target devices linked to this order' });
       return;
     }
@@ -2058,11 +2058,52 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
     setExecuteModal({ ...executeModal, phase: 'running', output: '', error: '', success: false });
 
     try {
+      // ── Resolve device IDs from order.target_devices (which only stores
+      //    hostname/ip_address) by querying the inventory once. ──
+      const invResp = await fetch('/api/devices?mode=light', { headers: authHeaders() });
+      if (!invResp.ok) {
+        setExecuteModal((prev) => prev && ({
+          ...prev,
+          phase: 'done',
+          success: false,
+          error: zh ? '无法获取设备清单以解析目标设备' : 'Failed to load device inventory to resolve target devices',
+        }));
+        return;
+      }
+      const invData = await invResp.json();
+      const inventory: Array<{ id: string; hostname?: string; ip_address?: string }> =
+        Array.isArray(invData) ? invData : (invData?.data || []);
+      const resolved: Array<{ id: string; hostname: string; ip_address: string }> = [];
+      const unresolved: string[] = [];
+      targetDevices.forEach((td: any) => {
+        const match = inventory.find(d =>
+          (td.ip_address && d.ip_address === td.ip_address) ||
+          (td.hostname && d.hostname === td.hostname)
+        );
+        if (match && match.id) {
+          resolved.push({ id: match.id, hostname: td.hostname || match.hostname || '', ip_address: td.ip_address || match.ip_address || '' });
+        } else {
+          unresolved.push(td.hostname || td.ip_address || 'unknown');
+        }
+      });
+
+      if (resolved.length === 0) {
+        setExecuteModal((prev) => prev && ({
+          ...prev,
+          phase: 'done',
+          success: false,
+          error: zh
+            ? `工单中的目标设备未在资产库中找到匹配项：${unresolved.join(', ')}。请确认这些设备已添加到设备清单。`
+            : `Target devices not found in inventory: ${unresolved.join(', ')}. Please add them first.`,
+        }));
+        return;
+      }
+
       const resp = await fetch('/api/automation/execute', {
         method: 'POST',
         headers: authHeaders(true),
         body: JSON.stringify({
-          device_ids: deviceIds,
+          device_ids: resolved.map(r => r.id),
           command: commands,
           isConfig: true,
           change_ticket: order.order_number,
@@ -2084,12 +2125,15 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
       let combined = '';
       if (data.results) {
         Object.entries(data.results as Record<string, any>).forEach(([devId, res]: [string, any]) => {
-          const dev = (order.target_devices || []).find((d: any) => d.id === devId);
+          const dev = resolved.find(r => r.id === devId);
           const label = dev ? `${dev.hostname || devId} (${dev.ip_address || ''})` : devId;
           combined += `\n────── ${label} ──────\n${res.output || ''}\n`;
         });
       } else if (data.output) {
         combined = String(data.output);
+      }
+      if (unresolved.length) {
+        combined += `\n\n[${zh ? '已跳过资产库中不存在的设备' : 'Skipped devices not found in inventory'}]: ${unresolved.join(', ')}`;
       }
       const hasError = /Error:/i.test(combined);
       setExecuteModal((prev) => prev && ({
