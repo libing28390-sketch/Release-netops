@@ -218,6 +218,30 @@ async def issue_license(req: IssueRequest, request: Request):
     if not PRIVATE_KEY_PATH.exists():
         raise HTTPException(500, "Private key not found. Run key generation first.")
 
+    # Verify that the keys match before signing
+    if PUBLIC_KEY_PATH.exists():
+        from cryptography.hazmat.primitives import serialization
+        try:
+            private_pem = load_private_key_from_file(str(PRIVATE_KEY_PATH))
+            public_pem = load_public_key_from_file(str(PUBLIC_KEY_PATH))
+            private_key = serialization.load_pem_private_key(private_pem, password=None)
+            derived_public_pem = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            if derived_public_pem.strip() != public_pem.strip():
+                raise HTTPException(
+                    500,
+                    "Key mismatch: The local private.pem does not match the public.pem. "
+                    "Licenses signed with this private key will fail validation. "
+                    "Please copy the correct matching private.pem from your other dev machine, "
+                    "or run key initialization to update both."
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"Failed to verify key matching: {e}")
+
     # All license types (including trial) must be bound to a machine_id
     if not req.machine_id or not req.machine_id.strip():
         raise HTTPException(
@@ -342,6 +366,38 @@ if __name__ == "__main__":
     print(f"  Public key:  {PUBLIC_KEY_PATH}")
     print(f"  Archive dir: {ISSUED_DIR}")
     print(f"  UI:          http://localhost:18888")
+    
+    # Check if keys match
+    if PRIVATE_KEY_PATH.exists() and PUBLIC_KEY_PATH.exists():
+        from cryptography.hazmat.primitives import serialization
+        try:
+            private_pem = load_private_key_from_file(str(PRIVATE_KEY_PATH))
+            public_pem = load_public_key_from_file(str(PUBLIC_KEY_PATH))
+            private_key = serialization.load_pem_private_key(private_pem, password=None)
+            derived_public_pem = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            if derived_public_pem.strip() == public_pem.strip():
+                print("  Key Pair:    ✅ MATCHED (Private key matches the public key)")
+            else:
+                print("  Key Pair:    ❌ MISMATCHED!")
+                print("  " + "!" * 52)
+                print("  WARNING: The private key does not match the public key.")
+                print("  Licenses generated now will NOT be verified by the app!")
+                print("  To resolve this:")
+                print("    - Copy the correct matching private.pem to this machine.")
+                print("    - Or run: python -m license_auth.generator --init-keys --force")
+                print("      (Note: this will overwrite public.pem, requiring container rebuild)")
+                print("  " + "!" * 52)
+        except Exception as e:
+            print(f"  Key Pair:    ⚠️  Validation Error: {e}")
+    else:
+        if not PRIVATE_KEY_PATH.exists():
+            print("  Key Pair:    ❌ Private key missing. Run key generation first.")
+        if not PUBLIC_KEY_PATH.exists():
+            print("  Key Pair:    ❌ Public key missing.")
+
     print("=" * 56 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=18888, log_level="info")

@@ -37,14 +37,14 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _SCRIPT_DIR.parent
 sys.path.insert(0, str(_BACKEND_DIR))
 
-from license.crypto import (
+from license_auth.crypto import (
     generate_key_pair,
     load_private_key_from_file,
     load_public_key_from_file,
     sign_payload,
     verify_signature,
 )
-from license.models import LicenseFile, LicensePayload, LicenseType
+from license_auth.models import LicenseFile, LicensePayload, LicenseType
 
 # Default key paths (relative to this script's directory)
 _KEYS_DIR = _SCRIPT_DIR / "keys"
@@ -93,6 +93,26 @@ def generate_license(
         print(f"❌ Private key not found: {pk_path}")
         print("   Run: python -m license.generator --init-keys")
         sys.exit(1)
+
+    # Verify public key matches private key before generation
+    pub_path = Path(_PUBLIC_KEY_PATH)
+    if pub_path.exists():
+        try:
+            from cryptography.hazmat.primitives import serialization
+            private_key_pem = load_private_key_from_file(str(pk_path))
+            public_key_pem = load_public_key_from_file(str(pub_path))
+            private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+            derived_public_pem = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            if derived_public_pem.strip() != public_key_pem.strip():
+                print("❌ Key mismatch: The private key does not match the public key in this repository.")
+                print("   Licenses generated with this private key will NOT pass verification.")
+                print("   Please copy the correct matching private.pem, or run --init-keys --force to regenerate both.")
+                sys.exit(1)
+        except Exception as e:
+            print(f"⚠️  Failed to verify key matching: {e}")
 
     private_key_pem = load_private_key_from_file(str(pk_path))
 
