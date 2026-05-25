@@ -2037,7 +2037,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
 
   // ── Execute order commands directly via automation engine ──
   // Pushes selectedOrder.commands to selectedOrder.target_devices in a single
-  // batch via /api/automation/execute. The change_ticket parameter ties the
+  // batch via /api/execute. The change_ticket parameter ties the
   // execution to this order so the backend's "config command must have an
   // approved/implementing change order" check passes without a separate token.
   const runOrderCommands = async () => {
@@ -2099,7 +2099,7 @@ const ChangeOrderTab: React.FC<Props> = ({ language, t, users, scenarios, config
         return;
       }
 
-      const resp = await fetch('/api/automation/execute', {
+      const resp = await fetch('/api/execute', {
         method: 'POST',
         headers: authHeaders(true),
         body: JSON.stringify({
