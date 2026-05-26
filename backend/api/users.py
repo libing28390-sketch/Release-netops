@@ -778,7 +778,8 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         phone = str(user.get('phone', existing['phone'] if 'phone' in existing.keys() else '') or '').strip()
         email = str(user.get('email', existing['email'] if 'email' in existing.keys() else '') or '').strip()
         
-        hashed_pin = existing.get('fixed_pin', '')
+        existing_dict = dict(existing)
+        hashed_pin = existing_dict.get('fixed_pin', '')
         if fixed_pin:
             hashed_pin = await _hash_password(str(fixed_pin))
             

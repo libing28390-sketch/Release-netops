@@ -229,6 +229,10 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
                 def _parse_res(r):
                     if r.get('success'): return r.get('output', r.get('stdout', ''))
                     err = r.get('error') or r.get('stderr') or r.get('exception') or 'Unknown'
+                    from drivers.ssh_compat import build_ssh_error_guidance
+                    guidance = build_ssh_error_guidance(err)
+                    if guidance != err:
+                        return f"Error:\n{guidance}\n\n[原始技术报错 (Original Technical Error)]:\n{err}"
                     return f"Error: {err}"
                 
                 result = await asyncio.get_event_loop().run_in_executor(None, lambda: "\n".join([_parse_res(r) for r in service.execute_commands(d, commands, is_config=is_config)]))
