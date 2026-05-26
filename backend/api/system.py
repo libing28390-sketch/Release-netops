@@ -43,9 +43,21 @@ async def get_system_info() -> Dict[str, Any]:
     license_status = verifier.validate()
     system_name = _get_system_name()
 
+    edition = EDITION
+    if license_status.valid and license_status.license_type:
+        ltype = license_status.license_type.lower()
+        if ltype == 'enterprise':
+            edition = 'Enterprise'
+        elif ltype == 'professional':
+            edition = 'Professional'
+        elif ltype == 'standard':
+            edition = 'Standard'
+        elif ltype == 'trial':
+            edition = 'Trial'
+
     return {
         "version": VERSION,
-        "edition": EDITION,
+        "edition": edition,
         "build_date": BUILD_DATE,
         "project_name": settings.PROJECT_NAME,
         "system_name": system_name,

@@ -2,7 +2,7 @@ import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, X, Zap, ChevronDown, Info, Search, FileCode, CheckCircle2,
-  Trash2, RotateCcw, User, ShieldAlert, Shield, AlertTriangle
+  Trash2, RotateCcw, User, ShieldAlert, Shield, AlertTriangle, Database, Activity
 } from 'lucide-react';
 import TagConditionPicker, { type TagFilterConfig } from '../../../components/TagConditionPicker';
 import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice } from '../types';
@@ -150,59 +150,53 @@ export const JobModal: React.FC<JobModalProps> = ({
               </div>
 
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '作业类型' : 'Action Type'}</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {MAJOR_CATEGORIES.map(mc => (
-                    <button
-                      key={mc.value}
-                      type="button"
-                      onClick={() => {
-                        setForm(f => ({ ...f, major_type: mc.value }));
-                        if (mc.value === 'change') {
-                          setForm(f => ({ ...f, action_type: 'script_run' }));
-                        } else if (mc.value === 'collection' && form.action_type !== 'script_run') {
-                          setForm(f => ({ ...f, action_type: 'backup' }));
-                        }
-                        fetchScripts();
-                      }}
-                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
-                        form.major_type === mc.value
-                          ? 'border-cyan-400 bg-cyan-50 text-[#0891b2]'
-                          : 'border-black/[0.06] bg-white text-black/50 hover:border-black/15'
-                      }`}
-                    >
-                      <mc.icon className="w-3.5 h-3.5" />
-                      {zh ? mc.labelZh : mc.labelEn}
-                    </button>
-                  ))}
+                <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '作业类型' : 'Job Type'}</label>
+                <div className="p-1 bg-slate-100 rounded-xl border border-black/[0.06] flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(f => ({ ...f, action_type: 'backup', major_type: 'collection', script_id: '' }));
+                    }}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      form.action_type === 'backup'
+                        ? 'bg-white shadow-sm text-cyan-700 border border-cyan-100/30'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Database className="w-3.5 h-3.5 text-cyan-600" />
+                    {zh ? '核心配置备份' : 'Config Backup'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(f => ({ ...f, action_type: 'inspection', major_type: 'collection' }));
+                    }}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      form.action_type === 'inspection'
+                        ? 'bg-white shadow-sm text-cyan-700 border border-cyan-100/30'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Activity className="w-3.5 h-3.5 text-cyan-600" />
+                    {zh ? '智能巡检' : 'Smart Inspection'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(f => ({ ...f, action_type: 'script_run', major_type: 'collection' }));
+                      fetchScripts();
+                    }}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      form.action_type === 'script_run'
+                        ? 'bg-white shadow-sm text-cyan-700 border border-cyan-100/30'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <FileCode className="w-3.5 h-3.5 text-cyan-600" />
+                    {zh ? '脚本巡检' : 'Script Inspection'}
+                  </button>
                 </div>
               </div>
-
-              {form.major_type === 'collection' && (
-                <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="p-1 bg-slate-50 rounded-xl border border-black/5 flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, action_type: 'backup', script_id: '' }))}
-                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${form.action_type === 'backup' ? 'bg-white shadow-sm text-cyan-600' : 'text-black/40 hover:text-black/60'}`}
-                  >
-                    {zh ? '核心配置采集' : 'Config Backup'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, action_type: 'inspection' }))}
-                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${form.action_type === 'inspection' ? 'bg-white shadow-sm text-cyan-600' : 'text-black/40 hover:text-black/60'}`}
-                  >
-                    {zh ? '智能巡检' : 'Inspection'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, action_type: 'script_run' }))}
-                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${form.action_type === 'script_run' ? 'bg-white shadow-sm text-cyan-600' : 'text-black/40 hover:text-black/60'}`}
-                  >
-                    {zh ? '脚本运行' : 'Script'}
-                  </button>
-                </motion.div>
-              )}
 
               {form.action_type === 'script_run' && (
                 <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="relative">
@@ -231,7 +225,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                         initial={{ opacity: 0, y: -5 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -5 }}
-                        className="absolute z-[60] left-0 right-0 mt-2 bg-[#0f172a]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar"
+                        className="absolute z-[60] left-0 right-0 mt-2 bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl shadow-xl max-h-48 overflow-y-auto custom-scrollbar"
                       >
                         {(() => {
                           const filtered = (availableScripts || []).filter(s => {
@@ -245,8 +239,10 @@ export const JobModal: React.FC<JobModalProps> = ({
 
                           return filtered.map(s => {
                             const isSelected = form.script_id === s.id;
-                            const expectedCategory = form.major_type === 'collection' ? 'inspection' : 'change';
-                            const isWrongCategory = s.category && s.category !== expectedCategory;
+                            const isTestScript = s.name.toLowerCase().includes('test');
+                            const displayName = isTestScript 
+                              ? `${zh ? '【测试示例】' : '[Test Example] '}${s.name.replace('test-script-', '')}`
+                              : s.name;
 
                             return (
                               <div
@@ -256,26 +252,26 @@ export const JobModal: React.FC<JobModalProps> = ({
                                   setScriptSearch(s.name);
                                   setShowScriptDropdown(false);
                                 }}
-                                className={`px-5 py-3 text-[12px] cursor-pointer hover:bg-white/5 transition-all flex items-center justify-between border-b border-white/5 last:border-0 ${isSelected ? 'bg-cyan-500/20 text-[#00a9ce] font-bold' : 'text-slate-300'}`}
+                                className={`px-5 py-3 text-[12px] cursor-pointer hover:bg-slate-50 transition-all flex items-center justify-between border-b border-slate-100 last:border-0 ${isSelected ? 'bg-cyan-50 text-cyan-700 font-bold' : 'text-slate-600'}`}
                               >
                                 <div className="flex flex-col gap-0.5">
                                   <span className="flex items-center gap-2">
-                                    <FileCode size={12} className={isWrongCategory ? 'text-amber-500' : 'text-cyan-500'} />
-                                    {s.name}
+                                    <FileCode size={12} className={isTestScript ? 'text-amber-500' : 'text-cyan-500'} />
+                                    {displayName}
                                   </span>
                                   <div className="flex items-center gap-2 mt-1">
                                     <span className={`text-[8px] px-1.5 py-0.5 rounded uppercase tracking-wider ${s.category === 'inspection' ? 'bg-emerald-500/10 text-emerald-500' : s.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-slate-500/10 text-slate-500'}`}>
                                       {s.category === 'inspection' ? (zh ? '巡检/采集' : 'INSPECTION') :
                                        s.category === 'change' ? (zh ? '自动化变更' : 'CHANGE') : (zh ? '未分类' : 'UNCATEGORIZED')}
                                     </span>
-                                    {isWrongCategory && (
-                                      <span className="text-[8px] text-amber-500/60 italic font-normal">
-                                        {zh ? '(非当前分类)' : '(Not current category)'}
+                                    {isTestScript && (
+                                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-bold tracking-wider">
+                                        {zh ? '测试脚本' : 'TEST'}
                                       </span>
                                     )}
                                   </div>
                                 </div>
-                                {isSelected && <CheckCircle2 size={14} className="text-cyan-400" />}
+                                {isSelected && <CheckCircle2 size={14} className="text-cyan-600" />}
                               </div>
                             );
                           });
@@ -551,11 +547,11 @@ export const JobModal: React.FC<JobModalProps> = ({
               </div>
 
               {/* Approval (create & edit) */}
-              <div className="rounded-xl border border-black/8 overflow-hidden">
+              <div className="rounded-xl border border-black/8 overflow-hidden shadow-sm">
                 <div className={`px-4 py-2.5 flex items-center gap-2.5 ${
                   approvalStatus === 'verified'
-                    ? 'bg-gradient-to-r from-emerald-500 to-emerald-600'
-                    : 'bg-gradient-to-r from-[#005b75] to-[#00465a]'
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white'
+                    : 'bg-gradient-to-r from-[#0d9488] to-[#0f766e] text-white'
                 }`}>
                   <Shield className="w-3.5 h-3.5 text-white/90" />
                   <span className="text-[12px] font-semibold text-white/95">

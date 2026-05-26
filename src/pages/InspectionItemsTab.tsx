@@ -2,7 +2,8 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity, Plus, X, Trash2, Edit3, Save, RotateCcw,
-  Shield, CheckCircle2, Search, Filter, Info, ListFilter, Copy, Check, Download, Database, FileCode
+  Shield, CheckCircle2, Search, Filter, Info, ListFilter, Copy, Check, Download, Database, FileCode,
+  Terminal, Cpu, LayoutGrid, List
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
@@ -63,6 +64,22 @@ const CATEGORIES = [
   { id: 'Compliance', en: 'Compliance', zh: '合规性检查' }
 ];
 
+const getFriendlyVendor = (vendor?: string | null): string => {
+  if (!vendor) return 'Generic';
+  const lower = vendor.toLowerCase();
+  if (lower.startsWith('cisco')) return 'Cisco';
+  if (lower.startsWith('huawei')) return 'Huawei';
+  if (lower.startsWith('h3c')) return 'H3C';
+  if (lower.startsWith('juniper')) return 'Juniper';
+  if (lower.startsWith('arista')) return 'Arista';
+  if (lower.startsWith('paloalto') || lower.startsWith('panos')) return 'PaloAlto';
+  if (lower.startsWith('fortinet')) return 'Fortinet';
+  if (lower.startsWith('checkpoint') || lower.startsWith('gaia')) return 'Checkpoint';
+  if (lower.startsWith('hillstone') || lower.startsWith('stoneos')) return 'Hillstone';
+  if (lower.startsWith('ruijie')) return 'Ruijie';
+  return vendor.charAt(0).toUpperCase() + vendor.slice(1);
+};
+
 interface InspectionItemsTabProps {
   t: (key: string) => string;
   language: string;
@@ -92,6 +109,21 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const [vendorFilter, setVendorFilter] = useState<string>('All');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [scripts, setScripts] = useState<any[]>([]);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+    try {
+      return (localStorage.getItem('inspection_view_mode') as 'grid' | 'list') || 'list';
+    } catch {
+      return 'list';
+    }
+  });
+
+  const toggleViewMode = () => {
+    const next = viewMode === 'grid' ? 'list' : 'grid';
+    setViewMode(next);
+    try {
+      localStorage.setItem('inspection_view_mode', next);
+    } catch {}
+  };
 
   const copyToClipboard = (text: string, id: string) => {
     try {
@@ -277,7 +309,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
 
     // Vendor Filter
     if (vendorFilter !== 'All') {
-      result = result.filter(i => (i.vendor || '') === vendorFilter);
+      result = result.filter(i => getFriendlyVendor(i.vendor) === vendorFilter);
     }
 
     // Search Query — 支持名称 / check_key / OID / 命令 / 描述 全文模糊匹配
@@ -301,7 +333,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const availableVendors = useMemo(() => {
     const pool = categoryFilter === 'All' ? items : items.filter(i => i.category === categoryFilter);
     const set = new Set<string>();
-    pool.forEach(i => { if (i.vendor) set.add(i.vendor); });
+    pool.forEach(i => { if (i.vendor) set.add(getFriendlyVendor(i.vendor)); });
     return Array.from(set).sort();
   }, [items, categoryFilter]);
 
@@ -312,6 +344,66 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     pool.forEach(i => { if (i.method) set.add(i.method.toUpperCase()); });
     return Array.from(set).sort();
   }, [items, categoryFilter]);
+
+  // Counts for each category tab (dynamic based on method, vendor, and search query)
+  const categoryCounts = useMemo(() => {
+    let base = items;
+    if (methodFilter !== 'All') {
+      base = base.filter(i => (i.method || '').toUpperCase() === methodFilter);
+    }
+    if (vendorFilter !== 'All') {
+      base = base.filter(i => getFriendlyVendor(i.vendor) === vendorFilter);
+    }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      base = base.filter(i =>
+        (i.name || '').toLowerCase().includes(q) ||
+        (i.name_zh || '').toLowerCase().includes(q) ||
+        (i.category || '').toLowerCase().includes(q) ||
+        (i.check_key || '').toLowerCase().includes(q) ||
+        (i.oid || '').toLowerCase().includes(q) ||
+        (i.command || '').toLowerCase().includes(q) ||
+        (i.description || '').toLowerCase().includes(q) ||
+        (i.vendor || '').toLowerCase().includes(q)
+      );
+    }
+
+    const counts: Record<string, number> = { All: base.length };
+    CATEGORIES.forEach(cat => {
+      counts[cat.id] = base.filter(i => i.category === cat.id).length;
+    });
+    return counts;
+  }, [items, methodFilter, vendorFilter, searchQuery]);
+
+  // Counts for each method button (dynamic based on category, vendor, and search query)
+  const methodCounts = useMemo(() => {
+    let base = items;
+    if (categoryFilter !== 'All') {
+      base = base.filter(i => i.category === categoryFilter);
+    }
+    if (vendorFilter !== 'All') {
+      base = base.filter(i => getFriendlyVendor(i.vendor) === vendorFilter);
+    }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      base = base.filter(i =>
+        (i.name || '').toLowerCase().includes(q) ||
+        (i.name_zh || '').toLowerCase().includes(q) ||
+        (i.category || '').toLowerCase().includes(q) ||
+        (i.check_key || '').toLowerCase().includes(q) ||
+        (i.oid || '').toLowerCase().includes(q) ||
+        (i.command || '').toLowerCase().includes(q) ||
+        (i.description || '').toLowerCase().includes(q) ||
+        (i.vendor || '').toLowerCase().includes(q)
+      );
+    }
+
+    const counts: Record<string, number> = {};
+    availableMethods.forEach(m => {
+      counts[m] = base.filter(i => (i.method || '').toUpperCase() === m).length;
+    });
+    return counts;
+  }, [items, categoryFilter, vendorFilter, searchQuery, availableMethods]);
 
   // 切换 category 时重置 method/vendor，避免遗留无效过滤值
   useEffect(() => {
@@ -332,7 +424,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     const groups: Record<string, Record<string, InspectionItem[]>> = {};
     paginatedItems.forEach(item => {
       const cat = item.category || 'Other';
-      const ven = item.vendor || (zh ? '未分类' : 'Uncategorized');
+      const ven = getFriendlyVendor(item.vendor);
       if (!groups[cat]) groups[cat] = {};
       if (!groups[cat][ven]) groups[cat][ven] = [];
       groups[cat][ven].push(item);
@@ -359,6 +451,13 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
               />
             </div>
             <button
+              onClick={toggleViewMode}
+              title={zh ? '切换视图模式' : 'Toggle view mode'}
+              className="p-2 rounded-xl bg-white border border-black/10 text-black/60 hover:text-[#164e63] hover:bg-black/5 shadow-sm transition-all"
+            >
+              {viewMode === 'grid' ? <List size={15} /> : <LayoutGrid size={15} />}
+            </button>
+            <button
               onClick={handleExport}
               title={zh ? '导出所有指标' : 'Export all items'}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-black/10 text-black/60 text-sm font-bold shadow-sm hover:bg-black/5 transition-all active:scale-[0.97]"
@@ -378,6 +477,45 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
       />
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 space-y-4 min-h-0">
+        {/* Stats Dashboard Grid */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 flex-shrink-0">
+          <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-blue-50 text-blue-600 border border-blue-100/50">
+              <Activity size={20} />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{zh ? '总指标数量' : 'TOTAL METRICS'}</p>
+              <p className="text-xl font-black text-slate-800 mt-0.5">{items.length}</p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100/50">
+              <Database size={20} />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{zh ? 'SNMP 指标' : 'SNMP METRICS'}</p>
+              <p className="text-xl font-black text-slate-800 mt-0.5">{items.filter(i => i.method?.toUpperCase() === 'SNMP').length}</p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-cyan-50 text-cyan-600 border border-cyan-100/50">
+              <Terminal size={20} />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{zh ? 'CLI / SSH 指标' : 'CLI/SSH METRICS'}</p>
+              <p className="text-xl font-black text-slate-800 mt-0.5">{items.filter(i => ['CLI', 'SSH'].includes(i.method?.toUpperCase())).length}</p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-violet-50 text-violet-600 border border-violet-100/50">
+              <FileCode size={20} />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{zh ? '高级脚本指标' : 'SCRIPT METRICS'}</p>
+              <p className="text-xl font-black text-slate-800 mt-0.5">{items.filter(i => !!i.script_id || i.method?.toUpperCase() === 'SHELL').length}</p>
+            </div>
+          </div>
+        </div>
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         {/* Category filter tabs */}
         <div className="px-5 py-4 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
@@ -392,11 +530,10 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             >
               {zh ? '全部指标' : 'All Metrics'}
               <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'All' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                {items.length}
+                {categoryCounts['All']}
               </span>
             </button>
             {CATEGORIES.map(cat => {
-              const count = items.filter(i => i.category === cat.id).length;
               const isActive = categoryFilter === cat.id;
               return (
                 <button
@@ -410,7 +547,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                 >
                   {zh ? cat.zh : cat.en}
                   <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                    {count}
+                    {categoryCounts[cat.id] || 0}
                   </span>
                 </button>
               );
@@ -443,8 +580,6 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                         : m === 'ICMP' ? 'bg-amber-500 text-white border-amber-500'
                         : m === 'TCP' ? 'bg-orange-500 text-white border-orange-500'
                         : 'bg-slate-500 text-white border-slate-500';
-              const count = (categoryFilter === 'All' ? items : items.filter(i => i.category === categoryFilter))
-                .filter(i => (i.method || '').toUpperCase() === m).length;
               return (
                 <button
                   key={m}
@@ -456,7 +591,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                   }`}
                 >
                   {m}
-                  <span className={`ml-1.5 px-1 py-0 rounded text-[8px] ${methodFilter === m ? 'bg-white/25' : 'bg-black/[0.05]'}`}>{count}</span>
+                  <span className={`ml-1.5 px-1 py-0 rounded text-[8px] ${methodFilter === m ? 'bg-white/25' : 'bg-black/[0.05]'}`}>{methodCounts[m] || 0}</span>
                 </button>
               );
             })}
@@ -606,362 +741,698 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
           )}
         </AnimatePresence>
 
-        {/* Table Container */}
+        {/* View Content (Grid vs List) */}
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <table className="min-w-full border-collapse text-left">
-            <thead className="sticky top-0 z-10">
-              <tr className="border-y border-black/5 bg-[#f8fafc] text-[10px] font-bold uppercase tracking-widest text-black/40">
-                <th className="px-6 py-4">{zh ? '名称' : 'Name'}</th>
-                <th className="px-6 py-4">{zh ? '分类 / 厂商' : 'Category / Vendor'}</th>
-                <th className="px-6 py-4">{zh ? '检查 Key' : 'Check Key'}</th>
-                <th className="px-6 py-4">{zh ? '采集详情' : 'Acquisition'}</th>
-                <th className="px-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-black/20 italic">
-                    <div className="flex flex-col items-center gap-2">
-                      <RotateCcw className="w-5 h-5 animate-spin" />
-                      <span>{zh ? '获取中...' : 'Loading...'}</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : Object.keys(groupedItems).length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-black/20 italic">
-                    {zh ? '暂无匹配的指标项' : 'No items found'}
-                  </td>
-                </tr>
-              ) : (
-                Object.entries(groupedItems).map(([category, vendors]) => {
-                  return (
-                    <React.Fragment key={category}>
-                      <tr className="bg-[#164e63]/[0.02]">
-                        <td colSpan={5} className="px-6 py-2 border-y border-black/[0.05]">
-                          <div className="flex items-center gap-2">
-                            <Activity className="w-3.5 h-3.5 text-cyan-500" />
-                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#164e63]">
-                              {zh ? (CATEGORIES.find(c => c.id === category)?.zh || category) : category}
-                            </span>
+          {viewMode === 'grid' ? (
+            loading ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-12 text-black/20 italic h-64">
+                <div className="flex flex-col items-center gap-2">
+                  <RotateCcw className="w-5 h-5 animate-spin" />
+                  <span>{zh ? '获取中...' : 'Loading...'}</span>
+                </div>
+              </div>
+            ) : filteredItems.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-12 text-black/20 italic h-64">
+                {zh ? '暂无匹配的指标项' : 'No items found'}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-6">
+                {paginatedItems.map((item) => {
+                  const isEditing = editingId === item.id;
+                  const isExpanded = expandedId === item.id;
+
+                  if (isEditing) {
+                    return (
+                      <div key={item.id} className="p-5 rounded-2xl bg-cyan-50/50 border border-cyan-200 shadow-md flex flex-col justify-between gap-3 min-h-[320px] hover:shadow-lg transition-all duration-300">
+                        <div className="flex justify-between items-center pb-2 border-b border-cyan-100">
+                          <span className="text-xs font-black text-[#164e63] flex items-center gap-1.5">
+                            <Edit3 size={14} className="text-cyan-500 animate-pulse" />
+                            {zh ? '编辑指标项' : 'Edit Metric'}
+                          </span>
+                          <div className="flex gap-1.5">
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleUpdate(item.id, form); }} 
+                              className="p-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white transition-all shadow-sm active:scale-[0.95]"
+                              title={zh ? '保存' : 'Save'}
+                            >
+                              <Save size={14} />
+                            </button>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setEditingId(null); }} 
+                              className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-400 transition-all shadow-sm active:scale-[0.95]"
+                              title={zh ? '取消' : 'Cancel'}
+                            >
+                              <X size={14} />
+                            </button>
                           </div>
-                        </td>
-                      </tr>
-                      {Object.entries(vendors).map(([vendor, vendorItems]) => {
-                        return (
-                          <React.Fragment key={`${category}-${vendor}`}>
-                            <tr className="bg-white">
-                              <td colSpan={5} className="px-10 py-2">
-                                <div className="flex items-center gap-2 opacity-50">
-                                  <Shield className="w-3 h-3 text-cyan-400" />
-                                  <span className="text-[9px] font-bold text-black/40 uppercase tracking-[0.15em]">
-                                    {vendor}
-                                  </span>
-                                </div>
-                              </td>
-                            </tr>
-                            {vendorItems.map((item) => {
-                              const isEditing = editingId === item.id;
-                              const isExpanded = expandedId === item.id;
+                        </div>
+                        
+                        <div className="flex-1 space-y-2.5 text-xs overflow-y-auto no-scrollbar pr-1">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? '中文名称' : 'Name ZH'}</label>
+                              <input
+                                type="text" value={form.name_zh || ''} onChange={e => setForm({ ...form, name_zh: e.target.value })}
+                                className="w-full px-2 py-1.5 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? '英文名称' : 'Name EN'}</label>
+                              <input
+                                type="text" value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })}
+                                className="w-full px-2 py-1.5 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white text-xs"
+                              />
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? '分类' : 'Category'}</label>
+                              <select
+                                value={form.category || ''} onChange={e => setForm({ ...form, category: e.target.value })}
+                                className="w-full px-2 py-1 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white text-xs"
+                              >
+                                <option value="Network">Network</option>
+                                <option value="Server">Server</option>
+                                <option value="Connectivity">Connectivity</option>
+                                <option value="Interface">Interface</option>
+                                <option value="Health">Health</option>
+                                <option value="Compliance">Compliance</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? '厂商' : 'Vendor'}</label>
+                              <select
+                                value={form.vendor || ''} onChange={e => setForm({ ...form, vendor: e.target.value })}
+                                className="w-full px-2 py-1 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white text-xs"
+                              >
+                                <option value="">Vendor</option>
+                                {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? '检查 Key' : 'Check Key'}</label>
+                              <input
+                                type="text" value={form.check_key || ''} onChange={e => setForm({ ...form, check_key: e.target.value })}
+                                className="w-full px-2 py-1.5 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? '采集方式' : 'Method'}</label>
+                              <select
+                                value={form.method || ''} onChange={e => setForm({ ...form, method: e.target.value })}
+                                className="w-full px-2 py-1 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white text-xs"
+                              >
+                                <option value="SNMP">SNMP</option>
+                                <option value="SSH">SSH</option>
+                                <option value="Shell">Shell</option>
+                                <option value="ICMP">ICMP</option>
+                                <option value="TCP">TCP</option>
+                                <option value="Agent">Agent</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {form.method === 'SNMP' && (
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? 'OID' : 'OID'}</label>
+                              <input
+                                type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })}
+                                className="w-full px-2 py-1.5 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white text-xs"
+                              />
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? '告警阈值 (%)' : 'Warn %'}</label>
+                              <input
+                                type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                                className="w-full px-2 py-1.5 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? '严重阈值 (%)' : 'Crit %'}</label>
+                              <input
+                                type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                                className="w-full px-2 py-1.5 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white text-xs"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? '描述' : 'Description'}</label>
+                            <input
+                              type="text" value={form.description || ''} onChange={e => setForm({ ...form, description: e.target.value })}
+                              className="w-full px-2 py-1.5 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white text-xs"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{zh ? '采集指令' : 'Command'}</label>
+                            <textarea
+                              value={form.command || ''} onChange={e => setForm({ ...form, command: e.target.value })}
+                              className="w-full px-2 py-1 rounded-lg border border-slate-200 focus:border-cyan-500 focus:outline-none bg-white font-mono text-[10px]"
+                              rows={2}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div 
+                      key={item.id} 
+                      onClick={() => setExpandedId(isExpanded ? null : item.id)}
+                      className={`group relative flex flex-col justify-between p-5 bg-gradient-to-br from-white/95 to-slate-50/90 backdrop-blur-md border rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer select-none hover:-translate-y-1 transform ${
+                        isExpanded ? 'border-cyan-500/40 bg-cyan-50/10 shadow-cyan-500/5 ring-1 ring-cyan-500/10' : 'border-slate-200/60'
+                      }`}
+                    >
+                      <div>
+                        {/* Header Row */}
+                        <div className="flex justify-between items-start gap-4 mb-3">
+                          <div className="flex flex-wrap gap-1.5 max-w-[70%]">
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-cyan-50 text-cyan-600 border border-cyan-100/50 truncate">
+                              {zh ? (CATEGORIES.find(c => c.id === item.category)?.zh || item.category) : item.category}
+                            </span>
+                            {item.vendor && (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200/30 font-mono truncate">
+                                {item.vendor}
+                              </span>
+                            )}
+                          </div>
+                          
+                          {/* Quick Actions */}
+                          <div className="flex gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }} 
+                              className="p-1.5 rounded-lg bg-white hover:bg-cyan-50 text-slate-400 hover:text-cyan-600 border border-slate-200/50 transition-all shadow-sm"
+                              title={zh ? '编辑指标' : 'Edit Metric'}
+                            >
+                              <Edit3 size={12} />
+                            </button>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }} 
+                              className="p-1.5 rounded-lg bg-white hover:bg-red-50 text-slate-400 hover:text-red-500 border border-slate-200/50 transition-all shadow-sm"
+                              title={zh ? '删除指标' : 'Delete Metric'}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Titles */}
+                        <div className="space-y-1">
+                          <h4 className="font-extrabold text-slate-800 text-sm tracking-tight leading-snug group-hover:text-cyan-700 transition-colors">
+                            {zh ? item.name_zh : item.name}
+                          </h4>
+                          <div className="text-[10px] text-slate-400 font-mono tracking-tight break-all">{item.name}</div>
+                        </div>
+
+                        {/* Check Key */}
+                        <div className="mt-2.5 flex items-center gap-1 text-[10px] font-mono text-slate-500 bg-slate-100/60 px-2 py-1 rounded-lg w-fit border border-slate-200/30">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mr-1">KEY:</span>
+                          {item.check_key}
+                        </div>
+
+                        {/* Description */}
+                        <p className="text-[11px] text-slate-400 font-medium leading-relaxed mt-2.5 line-clamp-2 h-8" title={item.description}>
+                          {item.description || (zh ? "暂无指标业务描述" : "No description")}
+                        </p>
+
+                        {/* Method and Threshold Section */}
+                        <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col gap-3">
+                          <div className="flex items-center justify-between gap-2">
+                            {(() => {
+                              const method = item.method?.toUpperCase();
+                              const isScript = !!item.script_id;
+                              const scriptName = isScript ? (scripts.find(s => s.id === item.script_id)?.name || item.script_id).replace(/（精细化）|\(精细化\)/g, '').trim() : null;
+                              
+                              const cfg = method === 'SNMP' ? { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100', icon: Database }
+                                        : method === 'SSH' ? { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100', icon: Shield }
+                                        : method === 'ICMP' ? { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100', icon: Activity }
+                                        : isScript ? { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-100', icon: FileCode }
+                                        : { bg: 'bg-slate-50', text: 'text-slate-500', border: 'border-slate-100', icon: Info };
+                              const Icon = cfg.icon;
                               return (
-                                <React.Fragment key={item.id}>
-                                  <tr 
-                                    className={`hover:bg-black/[0.01] transition-colors group cursor-pointer ${isExpanded ? 'bg-cyan-50/30' : ''}`}
-                                    onClick={() => !isEditing && setExpandedId(isExpanded ? null : item.id)}
-                                  >
-                                    <td className="px-6 py-4 pl-12">
-                                      {isEditing ? (
-                                        <div className="space-y-2">
-                                          <input
-                                            type="text" value={form.name_zh} onChange={e => setForm({ ...form, name_zh: e.target.value })}
-                                            className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
-                                            placeholder="Name (ZH)"
-                                          />
-                                          <input
-                                            type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                                            className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] text-black/40 focus:outline-none"
-                                            placeholder="Name (EN)"
-                                          />
-                                        </div>
-                                      ) : (
-                                        <div className="flex items-center gap-3">
-                                          <div className={`w-1.5 h-1.5 rounded-full ${isExpanded ? 'bg-cyan-500 scale-150 shadow-lg' : 'bg-black/10'}`} />
-                                          <div className="flex flex-col">
-                                            <span className="font-bold text-[#164e63]">{zh ? item.name_zh : item.name}</span>
-                                            <span className="text-[10px] text-black/30 font-mono">{item.name}</span>
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border ${cfg.bg} ${cfg.text} ${cfg.border} text-[9px] font-bold uppercase tracking-wider shadow-sm max-w-[60%] truncate`}>
+                                  <Icon size={10} className="flex-shrink-0" />
+                                  <span className="truncate">{isScript ? `${zh ? '脚本: ' : 'Script: '}${scriptName}` : method}</span>
+                                </span>
+                              );
+                            })()}
+                            
+                            <div className="flex gap-1.5 flex-shrink-0">
+                              {item.warning_threshold !== null && item.warning_threshold !== undefined && (
+                                <span className="px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-100 text-[9px] font-extrabold font-mono">
+                                  W: {item.warning_threshold}%
+                                </span>
+                              )}
+                              {item.critical_threshold !== null && item.critical_threshold !== undefined && (
+                                <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-100 text-[9px] font-extrabold font-mono">
+                                  C: {item.critical_threshold}%
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Threshold Visualizer */}
+                          {((item.warning_threshold !== null && item.warning_threshold !== undefined) || (item.critical_threshold !== null && item.critical_threshold !== undefined)) && (
+                            <div className="space-y-1">
+                              <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden flex">
+                                <div className="h-full bg-emerald-400 transition-all duration-300" style={{ width: `${item.warning_threshold ?? 80}%` }} />
+                                {item.warning_threshold !== null && item.warning_threshold !== undefined && (
+                                  <div className="h-full bg-amber-400 transition-all duration-300" style={{ width: `${(item.critical_threshold ?? 95) - item.warning_threshold}%` }} />
+                                )}
+                                {item.critical_threshold !== null && item.critical_threshold !== undefined && (
+                                  <div className="h-full bg-rose-400 transition-all duration-300" style={{ width: `${100 - (item.critical_threshold ?? 95)}%` }} />
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Acquisition & Console Box */}
+                      <div className="mt-4 pt-3 border-t border-slate-100/60">
+                        <div className="bg-[#00172d] p-3 rounded-xl border border-white/5 relative overflow-hidden shadow-inner text-[10px] text-cyan-300 font-mono">
+                          <span className="block text-slate-500 text-[8px] uppercase tracking-wider mb-1 font-sans font-bold">
+                            {item.method?.toUpperCase() === 'SNMP' ? 'SNMP OID' : 'COMMAND / SCRIPT'}
+                          </span>
+                          {(() => {
+                            const codeText = item.script_id
+                              ? (scripts.find(s => s.id === item.script_id)?.content || '# Script content loading...')
+                              : (item.command || (item.method?.toUpperCase() === 'SNMP' ? item.oid || '# SNMP-only metric' : '# No command defined'));
+                            const copyKey = `${item.id}-card-copy`;
+                            const isCopied = copiedId === copyKey;
+                            return (
+                              <div className="relative min-h-[2.5rem] flex flex-col justify-between">
+                                <div className="line-clamp-2 break-all pr-12 text-[10px] leading-relaxed">
+                                  {codeText}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); copyToClipboard(codeText, copyKey); }}
+                                  className={`absolute top-0 right-0 z-20 p-1 rounded-md text-[9px] font-bold border transition-all active:scale-95 flex items-center gap-0.5 ${
+                                    isCopied
+                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                      : 'bg-white/5 text-cyan-200/80 border-white/10 hover:bg-white/10 hover:text-cyan-100'
+                                  }`}
+                                  title={zh ? '复制' : 'Copy'}
+                                >
+                                  {isCopied ? <Check size={10} /> : <Copy size={10} />}
+                                </button>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      {/* Card Expanded Detail View */}
+                      {isExpanded && (
+                        <div className="mt-4 pt-3 border-t border-slate-200/80 space-y-3 animate-fadeIn text-[11px] text-slate-600">
+                          <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/30 space-y-2">
+                            <div>
+                              <span className="block text-[8px] font-black tracking-wider uppercase text-slate-400">{zh ? '更新时间' : 'UPDATED AT'}</span>
+                              <span className="font-mono text-slate-500 text-[10px]">{item.updated_at}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[8px] font-black tracking-wider uppercase text-slate-400">{zh ? '指标 ID' : 'METRIC ID'}</span>
+                              <span className="font-mono text-slate-500 text-[10px] select-all uppercase">{item.id}</span>
+                            </div>
+                            {item.description && (
+                              <div>
+                                <span className="block text-[8px] font-black tracking-wider uppercase text-slate-400">{zh ? '详细描述' : 'DETAILED DESCRIPTION'}</span>
+                                <span className="text-slate-600 font-medium leading-normal">{item.description}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          ) : (
+            <table className="min-w-full border-collapse text-left">
+              <thead className="sticky top-0 z-10">
+                <tr className="border-y border-black/5 bg-[#f8fafc] text-[10px] font-bold uppercase tracking-widest text-black/40">
+                  <th className="px-6 py-4">{zh ? '名称' : 'Name'}</th>
+                  <th className="px-6 py-4">{zh ? '分类 / 厂商' : 'Category / Vendor'}</th>
+                  <th className="px-6 py-4">{zh ? '检查 Key' : 'Check Key'}</th>
+                  <th className="px-6 py-4">{zh ? '采集详情' : 'Acquisition'}</th>
+                  <th className="px-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-12 text-center text-black/20 italic">
+                      <div className="flex flex-col items-center gap-2">
+                        <RotateCcw className="w-5 h-5 animate-spin" />
+                        <span>{zh ? '获取中...' : 'Loading...'}</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : Object.keys(groupedItems).length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-12 text-center text-black/20 italic">
+                      {zh ? '暂无匹配的指标项' : 'No items found'}
+                    </td>
+                  </tr>
+                ) : (
+                  Object.entries(groupedItems).map(([category, vendors]) => {
+                    return (
+                      <React.Fragment key={category}>
+                        <tr className="bg-slate-900 border-b border-slate-800">
+                          <td colSpan={5} className="px-6 py-3">
+                            <div className="flex items-center gap-2">
+                              <Activity className="w-4 h-4 text-cyan-400" />
+                              <span className="text-xs font-black uppercase tracking-[0.25em] text-white">
+                                {zh ? (CATEGORIES.find(c => c.id === category)?.zh || category) : category}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                        {Object.entries(vendors).map(([vendor, vendorItems]) => {
+                          return (
+                            <React.Fragment key={`${category}-${vendor}`}>
+                              <tr className="bg-slate-50 border-b border-slate-200/60">
+                                <td colSpan={5} className="px-8 py-2.5">
+                                  <div className="flex items-center gap-2 text-slate-700">
+                                    <Shield className="w-3.5 h-3.5 text-cyan-600" />
+                                    <span className="text-[10px] font-extrabold uppercase tracking-[0.15em]">
+                                      {vendor}
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                              {vendorItems.map((item) => {
+                                const isEditing = editingId === item.id;
+                                const isExpanded = expandedId === item.id;
+                                return (
+                                  <React.Fragment key={item.id}>
+                                    <tr 
+                                      className={`hover:bg-black/[0.01] transition-colors group cursor-pointer ${isExpanded ? 'bg-cyan-50/30' : ''}`}
+                                      onClick={() => !isEditing && setExpandedId(isExpanded ? null : item.id)}
+                                    >
+                                      <td className="px-6 py-4 pl-12">
+                                        {isEditing ? (
+                                          <div className="space-y-2">
+                                            <input
+                                              type="text" value={form.name_zh} onChange={e => setForm({ ...form, name_zh: e.target.value })}
+                                              className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
+                                              placeholder="Name (ZH)"
+                                            />
+                                            <input
+                                              type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+                                              className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] text-black/40 focus:outline-none"
+                                              placeholder="Name (EN)"
+                                            />
                                           </div>
-                                        </div>
-                                      )}
-                                    </td>
-                                    <td className="px-6 py-4">
-                                      {isEditing ? (
-                                        <div className="space-y-2">
-                                          <select
-                                            value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-                                            className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none bg-white"
-                                          >
-                                            <option value="Network">Network</option>
-                                            <option value="Server">Server</option>
-                                            <option value="Connectivity">Connectivity</option>
-                                            <option value="Interface">Interface</option>
-                                            <option value="Health">Health</option>
-                                            <option value="Compliance">Compliance</option>
-                                          </select>
-                                          <select
-                                            value={form.vendor} onChange={e => setForm({ ...form, vendor: e.target.value })}
-                                            className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] focus:outline-none bg-white"
-                                          >
-                                            <option value="">{zh ? '选择厂商' : 'Vendor'}</option>
-                                            {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
-                                          </select>
-                                        </div>
-                                      ) : (
-                                        <div className="flex flex-col gap-1">
-                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-cyan-50 text-cyan-600 w-fit">
-                                            {zh ? (CATEGORIES.find(c => c.id === item.category)?.zh || item.category) : item.category}
-                                          </span>
-                                          {item.vendor && (
-                                            <span className="text-[9px] text-black/30 font-bold px-2 tracking-widest">{item.vendor}</span>
+                                        ) : (
+                                          <div className="flex items-center gap-3">
+                                            <div className={`w-1.5 h-1.5 rounded-full ${isExpanded ? 'bg-cyan-500 scale-150 shadow-lg' : 'bg-black/10'}`} />
+                                            <div className="flex flex-col">
+                                              <span className="font-bold text-[#164e63]">{zh ? item.name_zh : item.name}</span>
+                                              <span className="text-[10px] text-black/30 font-mono">{item.name}</span>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="px-6 py-4">
+                                        {isEditing ? (
+                                          <div className="space-y-2">
+                                            <select
+                                              value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
+                                              className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none bg-white"
+                                            >
+                                              <option value="Network">Network</option>
+                                              <option value="Server">Server</option>
+                                              <option value="Connectivity">Connectivity</option>
+                                              <option value="Interface">Interface</option>
+                                              <option value="Health">Health</option>
+                                              <option value="Compliance">Compliance</option>
+                                            </select>
+                                            <select
+                                              value={form.vendor} onChange={e => setForm({ ...form, vendor: e.target.value })}
+                                              className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] focus:outline-none bg-white"
+                                            >
+                                              <option value="">{zh ? '选择厂商' : 'Vendor'}</option>
+                                              {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
+                                            </select>
+                                          </div>
+                                        ) : (
+                                          <div className="flex flex-col gap-1">
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-cyan-50 text-cyan-600 w-fit">
+                                              {zh ? (CATEGORIES.find(c => c.id === item.category)?.zh || item.category) : item.category}
+                                            </span>
+                                            {item.vendor && (
+                                              <span className="text-[9px] text-black/30 font-bold px-2 tracking-widest">{item.vendor}</span>
+                                            )}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="px-6 py-4 font-mono text-[11px] text-black/50 tracking-tight">
+                                        {isEditing ? (
+                                          <input
+                                            type="text" value={form.check_key} onChange={e => setForm({ ...form, check_key: e.target.value })}
+                                            className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
+                                          />
+                                        ) : item.check_key}
+                                      </td>
+                                      <td className="px-6 py-4 text-xs text-black/60 italic">
+                                        {isEditing ? (
+                                          <div className="space-y-2">
+                                            <textarea
+                                              value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
+                                              className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                              rows={1}
+                                              placeholder={zh ? "指标描述" : "Description"}
+                                            />
+                                            <div className="flex gap-2">
+                                              <select
+                                                value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}
+                                                className="flex-1 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none bg-white"
+                                              >
+                                                <option value="SNMP">SNMP</option>
+                                                <option value="SSH">SSH</option>
+                                                <option value="Shell">Shell</option>
+                                                <option value="ICMP">ICMP</option>
+                                                <option value="TCP">TCP</option>
+                                                <option value="Agent">Agent</option>
+                                              </select>
+                                              {form.method === 'SNMP' && (
+                                                <input
+                                                  type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })}
+                                                  className="flex-1 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                                  placeholder="OID"
+                                                />
+                                              )}
+                                              <input
+                                                type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                                                className="w-16 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                                placeholder="W%"
+                                              />
+                                              <input
+                                                type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                                                className="w-16 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                                placeholder="C%"
+                                              />
+                                            </div>
+                                            <textarea
+                                              value={form.command} onChange={e => setForm({ ...form, command: e.target.value })}
+                                              className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none font-mono"
+                                              rows={2}
+                                              placeholder={zh ? "采集指令" : "Command"}
+                                            />
+                                          </div>
+                                        ) : (
+                                          <div className="space-y-2">
+                                            <div className="line-clamp-1 max-w-[240px] break-all text-slate-400 text-[10px] font-medium leading-relaxed" title={item.description}>
+                                              {item.description || (zh ? "暂无指标业务描述" : "No description")}
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                              {(() => {
+                                                const method = item.method?.toUpperCase();
+                                                const isScript = !!item.script_id;
+                                                const scriptName = isScript ? (scripts.find(s => s.id === item.script_id)?.name || item.script_id).replace(/（精细化）|\(精细化\)/g, '').trim() : null;
+                                                
+                                                const cfg = method === 'SNMP' ? { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100', icon: Database }
+                                                          : method === 'SSH' ? { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100', icon: Shield }
+                                                          : method === 'ICMP' ? { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100', icon: Activity }
+                                                          : isScript ? { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-100', icon: FileCode }
+                                                          : { bg: 'bg-slate-50', text: 'text-slate-500', border: 'border-slate-100', icon: Info };
+                                                const Icon = cfg.icon;
+                                                return (
+                                                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${cfg.bg} ${cfg.text} ${cfg.border} text-[10px] font-black uppercase tracking-wider shadow-sm`}>
+                                                    <Icon size={12} />
+                                                    {isScript ? `${zh ? '脚本: ' : 'Script: '}${scriptName}` : method}
+                                                  </span>
+                                                );
+                                              })()}
+                                              {item.warning_threshold !== undefined && item.warning_threshold !== null && (
+                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-orange-50 text-orange-600 border border-orange-100 text-[9px] font-bold">
+                                                  W: {item.warning_threshold}%
+                                                </span>
+                                              )}
+                                              {item.critical_threshold !== undefined && item.critical_threshold !== null && (
+                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-red-50 text-red-600 border border-red-100 text-[9px] font-bold">
+                                                  C: {item.critical_threshold}%
+                                                </span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="px-6 py-4 text-right">
+                                        <div className="flex justify-end gap-2">
+                                          {isEditing ? (
+                                            <>
+                                              <button onClick={(e) => { e.stopPropagation(); handleUpdate(item.id, form); }} className="p-1.5 rounded-lg hover:bg-cyan-50 text-cyan-600 transition-colors shadow-sm border border-cyan-100"><Save className="w-4 h-4" /></button>
+                                              <button onClick={(e) => { e.stopPropagation(); setEditingId(null); }} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 transition-colors shadow-sm border border-red-100"><X className="w-4 h-4" /></button>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <button 
+                                                onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }} 
+                                                className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 border border-slate-100 transition-all shadow-sm"
+                                                title={zh ? '编辑指标' : 'Edit Metric'}
+                                              >
+                                                <Edit3 size={14} />
+                                              </button>
+                                              <button 
+                                                onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }} 
+                                                className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 border border-slate-100 transition-all shadow-sm"
+                                                title={zh ? '删除指标' : 'Delete Metric'}
+                                              >
+                                                <Trash2 size={14} />
+                                              </button>
+                                            </>
                                           )}
                                         </div>
-                                      )}
-                                    </td>
-                                    <td className="px-6 py-4 font-mono text-[11px] text-black/50 tracking-tight">
-                                      {isEditing ? (
-                                        <input
-                                          type="text" value={form.check_key} onChange={e => setForm({ ...form, check_key: e.target.value })}
-                                          className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
-                                        />
-                                      ) : item.check_key}
-                                    </td>
-                                    <td className="px-6 py-4 text-xs text-black/60 italic">
-                                      {isEditing ? (
-                                        <div className="space-y-2">
-                                          <textarea
-                                            value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
-                                            className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                            rows={1}
-                                            placeholder={zh ? "指标描述" : "Description"}
-                                          />
-                                          <div className="flex gap-2">
-                                            <select
-                                              value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}
-                                              className="flex-1 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none bg-white"
-                                            >
-                                              <option value="SNMP">SNMP</option>
-                                              <option value="SSH">SSH</option>
-                                              <option value="Shell">Shell</option>
-                                              <option value="ICMP">ICMP</option>
-                                              <option value="TCP">TCP</option>
-                                              <option value="Agent">Agent</option>
-                                            </select>
-                                            {form.method === 'SNMP' && (
-                                              <input
-                                                type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })}
-                                                className="flex-1 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                                placeholder="OID"
-                                              />
-                                            )}
-                                            <input
-                                              type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
-                                              className="w-16 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                              placeholder="W%"
-                                            />
-                                            <input
-                                              type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
-                                              className="w-16 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                              placeholder="C%"
-                                            />
-                                          </div>
-                                          <textarea
-                                            value={form.command} onChange={e => setForm({ ...form, command: e.target.value })}
-                                            className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none font-mono"
-                                            rows={2}
-                                            placeholder={zh ? "采集指令" : "Command"}
-                                          />
-                                        </div>
-                                      ) : (
-                                        <div className="space-y-2">
-                                          <div className="line-clamp-1 max-w-[240px] break-all text-slate-400 text-[10px] font-medium leading-relaxed" title={item.description}>
-                                            {item.description || (zh ? "暂无指标业务描述" : "No description")}
-                                          </div>
-                                          <div className="flex items-center gap-2">
-                                            {(() => {
-                                              const method = item.method?.toUpperCase();
-                                              const isScript = !!item.script_id;
-                                              const scriptName = isScript ? (scripts.find(s => s.id === item.script_id)?.name || item.script_id).replace(/（精细化）|\(精细化\)/g, '').trim() : null;
-                                              
-                                              const cfg = method === 'SNMP' ? { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100', icon: Database }
-                                                        : method === 'SSH' ? { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100', icon: Shield }
-                                                        : method === 'ICMP' ? { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100', icon: Activity }
-                                                        : isScript ? { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-100', icon: FileCode }
-                                                        : { bg: 'bg-slate-50', text: 'text-slate-500', border: 'border-slate-100', icon: Info };
-                                              const Icon = cfg.icon;
-                                              return (
-                                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${cfg.bg} ${cfg.text} ${cfg.border} text-[10px] font-black uppercase tracking-wider shadow-sm`}>
-                                                  <Icon size={12} />
-                                                  {isScript ? `${zh ? '脚本: ' : 'Script: '}${scriptName}` : method}
-                                                </span>
-                                              );
-                                            })()}
-                                            {item.warning_threshold !== undefined && item.warning_threshold !== null && (
-                                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-orange-50 text-orange-600 border border-orange-100 text-[9px] font-bold">
-                                                W: {item.warning_threshold}%
-                                              </span>
-                                            )}
-                                            {item.critical_threshold !== undefined && item.critical_threshold !== null && (
-                                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-red-50 text-red-600 border border-red-100 text-[9px] font-bold">
-                                                C: {item.critical_threshold}%
-                                              </span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )}
-                                    </td>
-                                    <td className="px-6 py-4 text-right">
-                                      <div className="flex justify-end gap-2">
-                                        {isEditing ? (
-                                          <>
-                                            <button onClick={(e) => { e.stopPropagation(); handleUpdate(item.id, form); }} className="p-1.5 rounded-lg hover:bg-cyan-50 text-cyan-600 transition-colors shadow-sm border border-cyan-100"><Save className="w-4 h-4" /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); setEditingId(null); }} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 transition-colors shadow-sm border border-red-100"><X className="w-4 h-4" /></button>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <button 
-                                              onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }} 
-                                              className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 border border-slate-100 transition-all shadow-sm"
-                                              title={zh ? '编辑指标' : 'Edit Metric'}
-                                            >
-                                              <Edit3 size={14} />
-                                            </button>
-                                            <button 
-                                              onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }} 
-                                              className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 border border-slate-100 transition-all shadow-sm"
-                                              title={zh ? '删除指标' : 'Delete Metric'}
-                                            >
-                                              <Trash2 size={14} />
-                                            </button>
-                                          </>
-                                        )}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                  <AnimatePresence>
-                                    {isExpanded && !isEditing && (
-                                      <tr>
-                                        <td colSpan={5} className="px-6 py-0 border-none">
-                                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                                            <div className="py-4 px-8 bg-black/[0.01] rounded-xl mb-4 mt-1 border border-black/[0.03] grid grid-cols-1 md:grid-cols-2 gap-8 relative">
-                                              <div className="absolute top-4 left-4 w-1 h-12 bg-cyan-500/20 rounded-full" />
-                                              <div className="space-y-4">
-                                                <div>
-                                                  <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-2">{zh ? '详细描述' : 'DETAILED DESCRIPTION'}</h4>
-                                                  <p className="text-xs text-black/70 leading-relaxed font-medium break-all">{item.description || '-'}</p>
-                                                </div>
-                                                <div className="flex gap-8">
+                                      </td>
+                                    </tr>
+                                    <AnimatePresence>
+                                      {isExpanded && !isEditing && (
+                                        <tr>
+                                          <td colSpan={5} className="px-6 py-0 border-none">
+                                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                                              <div className="py-4 px-8 bg-black/[0.01] rounded-xl mb-4 mt-1 border border-black/[0.03] grid grid-cols-1 md:grid-cols-2 gap-8 relative">
+                                                <div className="absolute top-4 left-4 w-1 h-12 bg-cyan-500/20 rounded-full" />
+                                                <div className="space-y-4">
                                                   <div>
-                                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '更新时间' : 'UPDATED AT'}</h4>
-                                                    <p className="text-[10px] font-mono text-black/40">{item.updated_at}</p>
+                                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-2">{zh ? '详细描述' : 'DETAILED DESCRIPTION'}</h4>
+                                                    <p className="text-xs text-black/70 leading-relaxed font-medium break-all">{item.description || '-'}</p>
                                                   </div>
-                                                  <div>
-                                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '指标 ID' : 'METRIC ID'}</h4>
-                                                    <p className="text-[10px] font-mono text-black/40 uppercase">{item.id}</p>
-                                                  </div>
-                                                </div>
-                                              </div>
-                                              <div className="bg-white/40 backdrop-blur-sm p-5 rounded-2xl border border-black/[0.03] space-y-4 shadow-sm">
-                                                <div className="flex items-center justify-between">
-                                                  <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/30">
-                                                    {item.script_id ? (zh ? '自动化采集脚本源代码' : 'AUTOMATED SCRIPT SOURCE') : (zh ? '数据采集与指令' : 'ACQUISITION & COMMAND')}
-                                                  </h4>
-                                                  <div className="flex gap-2">
-                                                    {item.oid && (
-                                                      <button
-                                                        type="button"
-                                                        onClick={(e) => { e.stopPropagation(); copyToClipboard(item.oid, `${item.id}-oid`); }}
-                                                        title={zh ? '点击复制 OID' : 'Click to copy OID'}
-                                                        className={`group/oid inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black shadow-lg transition-all active:scale-95 ${
-                                                          copiedId === `${item.id}-oid`
-                                                            ? 'bg-emerald-500 text-white shadow-emerald-500/20'
-                                                            : 'bg-indigo-500 text-white shadow-indigo-500/20 hover:bg-indigo-600'
-                                                        }`}
-                                                      >
-                                                        {copiedId === `${item.id}-oid` ? (
-                                                          <>
-                                                            <Check className="w-3 h-3" />
-                                                            <span>{zh ? '已复制' : 'Copied'}</span>
-                                                          </>
-                                                        ) : (
-                                                          <>
-                                                            <span className="font-mono tracking-tight">OID: {item.oid}</span>
-                                                            <Copy className="w-3 h-3 opacity-60 group-hover/oid:opacity-100 transition-opacity" />
-                                                          </>
-                                                        )}
-                                                      </button>
-                                                    )}
-                                                    <span className="px-2.5 py-1 rounded-lg bg-cyan-500 text-white text-[10px] font-black shadow-lg shadow-cyan-500/20">{item.method}</span>
+                                                  <div className="flex gap-8">
+                                                    <div>
+                                                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '更新时间' : 'UPDATED AT'}</h4>
+                                                      <p className="text-[10px] font-mono text-black/40">{item.updated_at}</p>
+                                                    </div>
+                                                    <div>
+                                                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '指标 ID' : 'METRIC ID'}</h4>
+                                                      <p className="text-[10px] font-mono text-black/40 uppercase">{item.id}</p>
+                                                    </div>
                                                   </div>
                                                 </div>
-                                                <div className="bg-[#00172d] p-4 rounded-xl border border-white/5 relative overflow-hidden shadow-inner">
-                                                  <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
-                                                  {(() => {
-                                                    const codeText = item.script_id
-                                                      ? (scripts.find(s => s.id === item.script_id)?.content || '# Script content loading...')
-                                                      : (item.command || (item.method?.toUpperCase() === 'SNMP' ? '# SNMP-only metric — no CLI command' : '# No command defined'));
-                                                    const copyKey = `${item.id}-cmd`;
-                                                    const isCopied = copiedId === copyKey;
-                                                    return (
-                                                      <div className="relative">
-                                                        <code className="text-[11px] text-cyan-300 font-mono whitespace-pre-wrap break-all relative z-10 block pr-24 leading-relaxed">
-                                                          {codeText}
-                                                        </code>
-                                                        {/* GitHub-style always-visible copy button */}
+                                                <div className="bg-white/40 backdrop-blur-sm p-5 rounded-2xl border border-black/[0.03] space-y-4 shadow-sm">
+                                                  <div className="flex items-center justify-between">
+                                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/30">
+                                                      {item.script_id ? (zh ? '自动化采集脚本源代码' : 'AUTOMATED SCRIPT SOURCE') : (zh ? '数据采集与指令' : 'ACQUISITION & COMMAND')}
+                                                    </h4>
+                                                    <div className="flex gap-2">
+                                                      {item.oid && (
                                                         <button
                                                           type="button"
-                                                          onClick={(e) => { e.stopPropagation(); copyToClipboard(codeText, copyKey); }}
-                                                          title={zh ? '复制代码' : 'Copy code'}
-                                                          className={`absolute top-0 right-0 z-20 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border transition-all active:scale-95 ${
-                                                            isCopied
-                                                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                                                              : 'bg-white/5 text-cyan-200/80 border-white/10 hover:bg-white/10 hover:text-cyan-100'
+                                                          onClick={(e) => { e.stopPropagation(); copyToClipboard(item.oid, `${item.id}-oid`); }}
+                                                          title={zh ? '点击复制 OID' : 'Click to copy OID'}
+                                                          className={`group/oid inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black shadow-lg transition-all active:scale-95 ${
+                                                            copiedId === `${item.id}-oid`
+                                                              ? 'bg-emerald-500 text-white shadow-emerald-500/20'
+                                                              : 'bg-indigo-500 text-white shadow-indigo-500/20 hover:bg-indigo-600'
                                                           }`}
                                                         >
-                                                          {isCopied ? (
+                                                          {copiedId === `${item.id}-oid` ? (
                                                             <>
                                                               <Check className="w-3 h-3" />
                                                               <span>{zh ? '已复制' : 'Copied'}</span>
                                                             </>
                                                           ) : (
                                                             <>
-                                                              <Copy className="w-3 h-3" />
-                                                              <span>{zh ? '复制' : 'Copy'}</span>
+                                                              <span className="font-mono tracking-tight">OID: {item.oid}</span>
+                                                              <Copy className="w-3 h-3 opacity-60 group-hover/oid:opacity-100 transition-opacity" />
                                                             </>
                                                           )}
                                                         </button>
-                                                      </div>
-                                                    );
-                                                  })()}
+                                                      )}
+                                                      <span className="px-2.5 py-1 rounded-lg bg-cyan-500 text-white text-[10px] font-black shadow-lg shadow-cyan-500/20">{item.method}</span>
+                                                    </div>
+                                                  </div>
+                                                  <div className="bg-[#00172d] p-4 rounded-xl border border-white/5 relative overflow-hidden shadow-inner">
+                                                    <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
+                                                    {(() => {
+                                                      const codeText = item.script_id
+                                                        ? (scripts.find(s => s.id === item.script_id)?.content || '# Script content loading...')
+                                                        : (item.command || (item.method?.toUpperCase() === 'SNMP' ? '# SNMP-only metric — no CLI command' : '# No command defined'));
+                                                      const copyKey = `${item.id}-cmd`;
+                                                      const isCopied = copiedId === copyKey;
+                                                      return (
+                                                        <div className="relative">
+                                                          <code className="text-[11px] text-cyan-300 font-mono whitespace-pre-wrap break-all relative z-10 block pr-24 leading-relaxed">
+                                                            {codeText}
+                                                          </code>
+                                                          <button
+                                                            type="button"
+                                                            onClick={(e) => { e.stopPropagation(); copyToClipboard(codeText, copyKey); }}
+                                                            title={zh ? '复制代码' : 'Copy code'}
+                                                            className={`absolute top-0 right-0 z-20 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border transition-all active:scale-95 ${
+                                                              isCopied
+                                                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                                                : 'bg-white/5 text-cyan-200/80 border-white/10 hover:bg-white/10 hover:text-cyan-100'
+                                                            }`}
+                                                          >
+                                                            {isCopied ? (
+                                                              <>
+                                                                <Check className="w-3 h-3" />
+                                                                <span>{zh ? '已复制' : 'Copied'}</span>
+                                                              </>
+                                                            ) : (
+                                                              <>
+                                                                <Copy className="w-3 h-3" />
+                                                                <span>{zh ? '复制' : 'Copy'}</span>
+                                                              </>
+                                                            )}
+                                                          </button>
+                                                        </div>
+                                                      );
+                                                    })()}
+                                                  </div>
                                                 </div>
                                               </div>
-                                            </div>
-                                          </motion.div>
-                                        </td>
-                                      </tr>
-                                    )}
-                                  </AnimatePresence>
-                                </React.Fragment>
-                              );
-                            })}
-                          </React.Fragment>
-                        );
-                      })}
-                    </React.Fragment>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+                                            </motion.div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </AnimatePresence>
+                                  </React.Fragment>
+                                );
+                              })}
+                            </React.Fragment>
+                          );
+                        })}
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Pagination */}

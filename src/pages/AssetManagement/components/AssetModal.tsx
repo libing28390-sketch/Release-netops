@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Eye, EyeOff, X } from 'lucide-react';
 import DateTimePicker from '../../../components/DateTimePicker';
 import { Asset } from '../types';
-import { VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS } from '../constants';
+import { VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, STATUSES, LIFECYCLE_STATUSES } from '../constants';
 
 interface AssetModalProps {
   isOpen: boolean;
@@ -132,6 +132,36 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 )}
               </div>
               <Field label={zh ? '型号' : 'Model'} value={form.model} onChange={v => setForm(f => ({ ...f, model: v }))} placeholder="e.g. PowerEdge R750" />
+              <div>
+                <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '状态' : 'Status'}</label>
+                <select
+                  value={form.status}
+                  onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
+                  title="Status"
+                  className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
+                >
+                  {STATUSES.map(s => (
+                    <option key={s.value} value={s.value}>
+                      {s.label[zh ? 'zh' : 'en']}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '投产状态' : 'Lifecycle'}</label>
+                <select
+                  value={form.lifecycle_status}
+                  onChange={e => setForm(f => ({ ...f, lifecycle_status: e.target.value }))}
+                  title="Lifecycle"
+                  className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
+                >
+                  {LIFECYCLE_STATUSES.map(s => (
+                    <option key={s.value} value={s.value}>
+                      {s.label[zh ? 'zh' : 'en']}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <Field label={zh ? '管理IP' : 'Mgmt IP'} value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" />
               <Field label={zh ? '端口 (SSH/Mgmt)' : 'Mgmt Port'} value={form.management_port} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder="22" />
               

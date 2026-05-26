@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 export interface SystemInfo {
   version: string;
-  edition: 'Standard' | 'Professional' | 'Enterprise';
+  edition: 'Standard' | 'Professional' | 'Enterprise' | 'Trial';
   build_date: string;
   project_name: string;
   system_name: string;

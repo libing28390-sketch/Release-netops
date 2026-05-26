@@ -590,6 +590,7 @@ def update_asset(asset_id: str, body: AssetUpdate):
                 (asset_id,)
             ).fetchone()
             if device_row:
+                device_row = dict(device_row)
                 ob_status = device_row['onboarding_status'] or 'pending_credentials'
                 if ob_status not in ('verified', 'active'):
                     status_labels = {

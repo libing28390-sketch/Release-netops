@@ -1131,15 +1131,54 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                 )}
 
                 {templateMissingRequired.length > 0 && (
-                  <div className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-amber-200">
-                    {zh ? `仍有必填变量未填写：${templateMissingRequired.join('、')}` : `Required variables are missing: ${templateMissingRequired.join(', ')}`}
-                  </div>
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="rounded-xl bg-gradient-to-r from-amber-500/5 to-orange-500/5 border border-amber-500/20 shadow-sm shadow-amber-500/5 p-3.5 text-xs text-amber-800 flex items-start gap-3 backdrop-blur-sm"
+                  >
+                    <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-600 shrink-0 mt-0.5">
+                      <AlertTriangle size={14} className="animate-pulse" />
+                    </div>
+                    <div className="flex-1 space-y-1.5">
+                      <p className="font-semibold text-amber-900 leading-none">
+                        {zh ? '待补充必填变量' : 'Missing Required Variables'}
+                      </p>
+                      <p className="text-amber-700/80 leading-relaxed text-[11px]">
+                        {zh ? '请在上方表单中填写以下必填变量的值，否则无法进行下一步操作：' : 'Please fill in values for the following required variables above to proceed:'}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {templateMissingRequired.map((varName, idx) => (
+                          <span 
+                            key={idx} 
+                            className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-800 border border-amber-500/20 font-medium font-mono text-[10px]"
+                          >
+                            {varName}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </motion.div>
                 )}
 
                 {templatePreviewError && (
-                  <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200 whitespace-pre-line">
-                    {templatePreviewError}
-                  </div>
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="rounded-xl bg-gradient-to-r from-rose-500/5 to-pink-500/5 border border-rose-500/20 shadow-sm shadow-rose-500/5 p-3.5 text-xs text-rose-800 flex items-start gap-3 backdrop-blur-sm"
+                  >
+                    <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-600 shrink-0 mt-0.5">
+                      <XCircle size={14} />
+                    </div>
+                    <div className="flex-1 space-y-1.5">
+                      <p className="font-semibold text-rose-900 leading-none">
+                        {zh ? '模板渲染失败' : 'Template Rendering Failed'}
+                      </p>
+                      <pre className="p-2.5 rounded-lg bg-rose-500/5 border border-rose-500/10 text-rose-700 font-mono text-[10px] whitespace-pre-wrap break-all leading-normal mt-1">
+                        {templatePreviewError}
+                      </pre>
+                    </div>
+                  </motion.div>
                 )}
 
                 <div className="flex items-center gap-3">
@@ -1155,24 +1194,53 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                 </div>
 
                 {precheckErrors.length > 0 && (
-                  <div className="rounded-xl bg-rose-50 p-3 text-xs text-rose-700 ring-1 ring-rose-200 space-y-1">
-                    <p className="font-semibold flex items-center gap-1.5">
-                      <XCircle size={14} className="text-rose-500" />
-                      {zh ? '参数校验或模板错误：' : 'Parameter validation or template errors:'}
-                    </p>
-                    <ul className="list-disc pl-4 space-y-0.5">
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="rounded-xl bg-gradient-to-r from-rose-500/5 to-pink-500/5 border border-rose-500/20 shadow-sm shadow-rose-500/5 p-3.5 text-xs text-rose-800 space-y-2.5 backdrop-blur-sm"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-600 shrink-0">
+                        <XCircle size={14} />
+                      </div>
+                      <div className="flex-1 pt-0.5">
+                        <p className="font-semibold text-rose-900 leading-none">
+                          {zh ? '参数校验或模板错误' : 'Parameter Validation or Template Errors'}
+                        </p>
+                        <p className="text-rose-700/80 text-[11px] mt-1">
+                          {zh ? '预检查未通过，请检查并修正以下问题：' : 'Pre-check failed. Please check and correct the following issues:'}
+                        </p>
+                      </div>
+                    </div>
+                    <ul className="space-y-1.5 pl-9">
                       {precheckErrors.map((err, i) => (
-                        <li key={i}>{err}</li>
+                        <li key={i} className="flex items-start gap-2 text-rose-700 leading-relaxed font-mono text-[11px]">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500/40 shrink-0 mt-1.5" />
+                          <span className="break-all">{err}</span>
+                        </li>
                       ))}
                     </ul>
-                  </div>
+                  </motion.div>
                 )}
 
                 {precheckSuccess && (
-                  <div className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700 ring-1 ring-emerald-200 flex items-center gap-1.5">
-                    <CheckCircle2 size={14} className="text-emerald-500" />
-                    <span>{zh ? '预检查成功！参数校验通过，且已生成可执行命令。' : 'Precheck successful! Parameter validation passed and commands generated.'}</span>
-                  </div>
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="rounded-xl bg-gradient-to-r from-emerald-500/5 to-teal-500/5 border border-emerald-500/20 shadow-sm shadow-emerald-500/5 p-3.5 text-xs text-emerald-800 flex items-start gap-3 backdrop-blur-sm"
+                  >
+                    <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 shrink-0 mt-0.5">
+                      <CheckCircle2 size={14} />
+                    </div>
+                    <div className="flex-1 space-y-1">
+                      <p className="font-semibold text-emerald-900 leading-none">
+                        {zh ? '预检查成功' : 'Pre-check Successful'}
+                      </p>
+                      <p className="text-emerald-700/90 leading-relaxed text-[11px] mt-1">
+                        {zh ? '所有参数校验均已通过，且已成功生成对应的可执行命令。' : 'All parameters have passed validation, and execution commands were generated successfully.'}
+                      </p>
+                    </div>
+                  </motion.div>
                 )}
 
                 <div className="grid grid-cols-2 gap-3">
