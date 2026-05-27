@@ -141,6 +141,8 @@ def request_approval(
         'config': {'title': f'🔐 {sys_name} 配置变更审批', 'template': 'orange'},
         'scheduled_job': {'title': f'⏰ {sys_name} 定时作业审批', 'template': 'blue'},
         'execution_plan': {'title': f'📋 {sys_name} 执行计划审批', 'template': 'turquoise'},
+        'alert_rule': {'title': f'🛡️ {sys_name} 告警规则变更审批', 'template': 'red'},
+        'alert_rule_delete': {'title': f'⚠️ {sys_name} 告警规则删除审批', 'template': 'rose'},
     }
     tc = type_config.get(approval_type, type_config['config'])
 

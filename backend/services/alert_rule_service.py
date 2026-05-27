@@ -13,8 +13,16 @@ METRIC_TYPES = {
     'interface_error_rate_high', 'interface_flap',
     'bgp_neighbor_down', 'ospf_neighbor_down', 'bfd_session_down',
     'host_cpu', 'host_memory', 'host_disk',
+    'srv_cpu_load', 'srv_cpu_util', 'srv_iowait', 'srv_mem_avail', 'srv_swap',
+    'srv_disk_util', 'srv_disk_inode', 'srv_io_latency', 'srv_tcp_retrans',
+    'srv_tcp_conns', 'srv_process_health',
 }
-THRESHOLD_METRICS = {'cpu', 'memory', 'interface_util', 'temperature_high', 'interface_error_rate_high', 'host_cpu', 'host_memory', 'host_disk'}
+THRESHOLD_METRICS = {
+    'cpu', 'memory', 'interface_util', 'temperature_high', 'interface_error_rate_high',
+    'host_cpu', 'host_memory', 'host_disk',
+    'srv_cpu_load', 'srv_cpu_util', 'srv_iowait', 'srv_mem_avail', 'srv_swap',
+    'srv_disk_util', 'srv_disk_inode', 'srv_io_latency', 'srv_tcp_retrans', 'srv_tcp_conns',
+}
 SCOPE_TYPES = {'global', 'site', 'device', 'interface'}
 SCOPE_MATCH_MODES = {'exact', 'contains', 'prefix', 'glob'}
 SCOPE_PRIORITY = {'global': 0, 'site': 1, 'device': 2, 'interface': 3}
@@ -22,10 +30,17 @@ ALLOWED_SEVERITIES = {'critical', 'major', 'warning'}
 
 
 def _default_severity_for_metric(metric_type: str) -> str:
-    if metric_type in {'interconnect_down', 'snmp_unreachable', 'lldp_neighbor_lost', 'temperature_high', 'interface_error_rate_high', 'interface_flap', 'interface_down',
-                        'host_cpu', 'host_memory', 'host_disk'}:
+    if metric_type in {
+        'interconnect_down', 'snmp_unreachable', 'lldp_neighbor_lost', 'temperature_high', 'interface_error_rate_high', 'interface_flap', 'interface_down',
+        'host_cpu', 'host_memory', 'host_disk',
+        'srv_cpu_load', 'srv_cpu_util', 'srv_iowait', 'srv_mem_avail', 'srv_swap',
+        'srv_disk_util', 'srv_disk_inode', 'srv_io_latency', 'srv_tcp_retrans', 'srv_tcp_conns'
+    }:
         return 'major'
-    if metric_type in {'fan_failure', 'power_supply_failure', 'bgp_neighbor_down', 'ospf_neighbor_down', 'bfd_session_down', 'ping_unreachable'}:
+    if metric_type in {
+        'fan_failure', 'power_supply_failure', 'bgp_neighbor_down', 'ospf_neighbor_down', 'bfd_session_down', 'ping_unreachable',
+        'srv_process_health'
+    }:
         return 'critical'
     return 'major'
 
@@ -181,25 +196,32 @@ def list_rules() -> list[dict[str, Any]]:
         conn.close()
 
 
+def _get_metric_category(metric_type: str) -> str:
+    if metric_type in {'host_cpu', 'host_memory', 'host_disk'}:
+        return 'host'
+    if metric_type.startswith('srv_'):
+        return 'server'
+    return 'network'
+
+
 def list_rules_paginated(
     search: str = '',
     enabled: str = 'all',
     metric_type: str = 'all',
+    category: str = 'all',
     page: int = 1,
     page_size: int = 20,
 ) -> dict[str, Any]:
     all_items = list_rules()
     enabled_filter = str(enabled or 'all').strip().lower()
     metric_filter = str(metric_type or 'all').strip().lower()
+    cat_filter = str(category or 'all').strip().lower()
     filtered_items = all_items
 
     if enabled_filter == 'enabled':
         filtered_items = [item for item in filtered_items if item.get('enabled')]
     elif enabled_filter == 'disabled':
         filtered_items = [item for item in filtered_items if not item.get('enabled')]
-
-    if metric_filter != 'all' and metric_filter:
-        filtered_items = [item for item in filtered_items if item.get('metric_type') == metric_filter]
 
     query = str(search or '').strip().lower()
     if query:
@@ -217,6 +239,22 @@ def list_rules_paginated(
                 next_items.append(item)
         filtered_items = next_items
 
+    # Compute category counts after search and enabled filter are applied
+    category_counts = {
+        'all': len(filtered_items),
+        'network': sum(1 for item in filtered_items if _get_metric_category(item.get('metric_type')) == 'network'),
+        'host': sum(1 for item in filtered_items if _get_metric_category(item.get('metric_type')) == 'host'),
+        'server': sum(1 for item in filtered_items if _get_metric_category(item.get('metric_type')) == 'server'),
+    }
+
+    # Filter by category
+    if cat_filter != 'all':
+        filtered_items = [item for item in filtered_items if _get_metric_category(item.get('metric_type')) == cat_filter]
+
+    # Filter by metric type
+    if metric_filter != 'all' and metric_filter:
+        filtered_items = [item for item in filtered_items if item.get('metric_type') == metric_filter]
+
     total = len(filtered_items)
     current_page = max(1, int(page or 1))
     current_page_size = max(1, int(page_size or 20))
@@ -227,6 +265,7 @@ def list_rules_paginated(
         'total': total,
         'page': current_page,
         'page_size': current_page_size,
+        'category_counts': category_counts,
     }
 
 

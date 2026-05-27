@@ -61,7 +61,8 @@ async def get_system_info() -> Dict[str, Any]:
         "build_date": BUILD_DATE,
         "project_name": settings.PROJECT_NAME,
         "system_name": system_name,
-        "license": license_status.model_dump()
+        "license": license_status.model_dump(),
+        "environment": settings.ENVIRONMENT,
     }
 
 @router.get("/check-update")

@@ -6,6 +6,7 @@ export interface SystemInfo {
   build_date: string;
   project_name: string;
   system_name: string;
+  environment?: string;
   license: {
     valid: boolean;
     customer_id: string;

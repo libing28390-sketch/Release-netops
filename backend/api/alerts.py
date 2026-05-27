@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Body, HTTPException, Query
-
+from fastapi import APIRouter, Body, HTTPException, Query, Depends
+from core.rbac import require_role
+from core.config import settings
+from services.config_approval_service import verify_code, consume_approval
 from database import get_db_connection
 from services import alert_maintenance_service
 from services import alert_rule_service
@@ -12,6 +14,30 @@ router = APIRouter()
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _verify_alert_rule_approval(payload: dict, approval_type: str = 'alert_rule'):
+    is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
+    skip_approval_verification = payload.get("skip_approval_verification", False) if is_test_env else False
+    
+    if skip_approval_verification:
+        return
+        
+    approval_token = (payload.get("approval_token") or "").strip()
+    approval_code = (payload.get("approval_code") or "").strip()
+    
+    if not approval_token or not approval_code:
+        raise HTTPException(
+            status_code=400,
+            detail="安全校验失败：执行此修改必须提供有效工单审批码。请先获取验证码验证。" if not is_test_env else "安全校验失败：必须提供有效工单审批码（或在测试环境使用 skip_approval_verification=true 绕过）"
+        )
+        
+    ok, err = verify_code(approval_token, approval_code)
+    if not ok:
+        raise HTTPException(status_code=403, detail=err)
+        
+    # Consume it
+    consume_approval(approval_token)
 
 
 def _normalize_workflow_status(row: dict) -> str:
@@ -362,21 +388,25 @@ def read_alert_rules(
     search: str = Query(default=''),
     enabled: str = Query(default='all'),
     metric_type: str = Query(default='all'),
+    category: str = Query(default='all'),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    user=require_role("Viewer"),
 ):
     return alert_rule_service.list_rules_paginated(
         search=search,
         enabled=enabled,
         metric_type=metric_type,
+        category=category,
         page=page,
         page_size=page_size,
     )
 
 
 @router.post('/alerts/rules')
-def create_alert_rule(payload: dict = Body(...)):
-    actor_username = (payload.get('created_by') or payload.get('updated_by') or 'system').strip() or 'system'
+def create_alert_rule(payload: dict = Body(...), user=require_role("Operator")):
+    actor_username = user.get("username", "unknown")
+    _verify_alert_rule_approval(payload, approval_type='alert_rule')
     try:
         rule = alert_rule_service.create_rule(payload)
     except ValueError as exc:
@@ -388,7 +418,7 @@ def create_alert_rule(payload: dict = Body(...)):
         status='success',
         summary=f"Created alert rule {rule['name']}",
         actor_username=actor_username,
-        actor_role='Operator',
+        actor_role=user.get("role", "Operator"),
         target_type='alert_rule',
         target_id=rule['id'],
         target_name=rule['name'],
@@ -398,18 +428,19 @@ def create_alert_rule(payload: dict = Body(...)):
 
 
 @router.get('/alerts/rules/preview')
-def read_alert_rules_preview():
+def read_alert_rules_preview(user=require_role("Viewer")):
     return alert_rule_service.get_rules_preview()
 
 
 @router.get('/alerts/rules/history')
-def read_alert_rules_history(limit: int = Query(default=20, ge=1, le=100), rule_id: str | None = Query(default=None)):
+def read_alert_rules_history(limit: int = Query(default=20, ge=1, le=100), rule_id: str | None = Query(default=None), user=require_role("Viewer")):
     return {'items': alert_rule_service.list_rule_history(limit=limit, rule_id=rule_id)}
 
 
 @router.put('/alerts/rules/{rule_id}')
-def update_alert_rules(rule_id: str, payload: dict = Body(...)):
-    actor_username = (payload.get('updated_by') or 'system').strip() or 'system'
+def update_alert_rules(rule_id: str, payload: dict = Body(...), user=require_role("Operator")):
+    actor_username = user.get("username", "unknown")
+    _verify_alert_rule_approval(payload, approval_type='alert_rule')
     try:
         rule = alert_rule_service.update_rule(rule_id, payload)
     except ValueError as exc:
@@ -422,7 +453,7 @@ def update_alert_rules(rule_id: str, payload: dict = Body(...)):
         status='success',
         summary=f"Updated alert rule {rule['name']}",
         actor_username=actor_username,
-        actor_role='Operator',
+        actor_role=user.get("role", "Operator"),
         target_type='alert_rule',
         target_id=rule['id'],
         target_name=rule['name'],
@@ -432,7 +463,20 @@ def update_alert_rules(rule_id: str, payload: dict = Body(...)):
 
 
 @router.delete('/alerts/rules/{rule_id}')
-def delete_alert_rule(rule_id: str, actor_username: str = Query(default='system')):
+def delete_alert_rule(
+    rule_id: str,
+    approval_token: str | None = Query(default=None),
+    approval_code: str | None = Query(default=None),
+    skip_approval: bool = Query(default=False),
+    user=require_role("Administrator"),
+):
+    actor_username = user.get("username", "unknown")
+    payload = {
+        "approval_token": approval_token,
+        "approval_code": approval_code,
+        "skip_approval_verification": skip_approval
+    }
+    _verify_alert_rule_approval(payload, approval_type='alert_rule_delete')
     try:
         existing = alert_rule_service.get_rule(rule_id)
         alert_rule_service.delete_rule(rule_id)
@@ -444,8 +488,8 @@ def delete_alert_rule(rule_id: str, actor_username: str = Query(default='system'
         severity='medium',
         status='success',
         summary=f"Deleted alert rule {existing['name'] if existing else rule_id}",
-        actor_username=(actor_username or 'system').strip() or 'system',
-        actor_role='Operator',
+        actor_username=actor_username,
+        actor_role=user.get("role", "Administrator"),
         target_type='alert_rule',
         target_id=rule_id,
         target_name=existing['name'] if existing else rule_id,
@@ -454,16 +498,18 @@ def delete_alert_rule(rule_id: str, actor_username: str = Query(default='system'
 
 
 @router.post('/alerts/rules/batch-toggle')
-def batch_toggle_alert_rules(payload: dict = Body(...)):
+def batch_toggle_alert_rules(payload: dict = Body(...), user=require_role("Operator")):
     rule_ids = payload.get('rule_ids') or []
     enabled = payload.get('enabled')
-    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+    actor_username = user.get("username", "unknown")
     if enabled is None:
         raise HTTPException(status_code=400, detail='enabled is required')
     if not rule_ids or not isinstance(rule_ids, list):
         raise HTTPException(status_code=400, detail='rule_ids is required')
     if len(rule_ids) > 200:
         raise HTTPException(status_code=400, detail='Too many rule IDs (max 200)')
+
+    _verify_alert_rule_approval(payload, approval_type='alert_rule')
 
     conn = get_db_connection()
     try:
@@ -488,7 +534,7 @@ def batch_toggle_alert_rules(payload: dict = Body(...)):
                 status='success',
                 summary=f"{'Enabled' if enabled else 'Disabled'} alert rule {row['name']}",
                 actor_username=actor_username,
-                actor_role='Operator',
+                actor_role=user.get("role", "Operator"),
                 target_type='alert_rule',
                 target_id=rid,
                 target_name=row['name'],
@@ -502,13 +548,15 @@ def batch_toggle_alert_rules(payload: dict = Body(...)):
 
 
 @router.post('/alerts/rules/batch-delete')
-def batch_delete_alert_rules(payload: dict = Body(...)):
+def batch_delete_alert_rules(payload: dict = Body(...), user=require_role("Administrator")):
     rule_ids = payload.get('rule_ids') or []
-    actor_username = (payload.get('actor_username') or 'system').strip() or 'system'
+    actor_username = user.get("username", "unknown")
     if not rule_ids or not isinstance(rule_ids, list):
         raise HTTPException(status_code=400, detail='rule_ids is required')
     if len(rule_ids) > 200:
         raise HTTPException(status_code=400, detail='Too many rule IDs (max 200)')
+
+    _verify_alert_rule_approval(payload, approval_type='alert_rule_delete')
 
     conn = get_db_connection()
     try:
@@ -529,7 +577,7 @@ def batch_delete_alert_rules(payload: dict = Body(...)):
                 status='success',
                 summary=f"Batch deleted alert rule {row['name']}",
                 actor_username=actor_username,
-                actor_role='Operator',
+                actor_role=user.get("role", "Administrator"),
                 target_type='alert_rule',
                 target_id=rid,
                 target_name=row['name'],

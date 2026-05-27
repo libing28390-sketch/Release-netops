@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Copy, Edit3, Plus, Power, PowerOff, RefreshC
 import type { AlertRuleHistoryItem, AlertRuleListResponse, AlertRulePreview, AlertRuleSettings } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
+import { useSystem } from '../hooks/useSystem';
 import { severityBadgeClass } from '../components/shared';
 import {
   ALERT_SEVERITY_OPTIONS,
@@ -24,7 +25,49 @@ import {
   useAlertOverlayDismiss,
 } from './alertManagementShared';
 
+const METRIC_OPTIONS_LIST = [
+  { value: 'cpu', labelZh: 'CPU 利用率', labelEn: 'CPU Usage', category: 'network' },
+  { value: 'memory', labelZh: '内存利用率', labelEn: 'Memory Usage', category: 'network' },
+  { value: 'interface_util', labelZh: '接口利用率', labelEn: 'Interface Utilization', category: 'network' },
+  { value: 'interface_down', labelZh: '接口 DOWN', labelEn: 'Interface Down', category: 'network' },
+  { value: 'interconnect_down', labelZh: '互联口 DOWN', labelEn: 'Interconnect Down', category: 'network' },
+  { value: 'snmp_unreachable', labelZh: 'SNMP 不可达', labelEn: 'SNMP Unreachable', category: 'network' },
+  { value: 'lldp_neighbor_lost', labelZh: 'LLDP 邻居丢失', labelEn: 'LLDP Neighbor Lost', category: 'network' },
+  { value: 'temperature_high', labelZh: '设备温度过高', labelEn: 'Temperature High', category: 'network' },
+  { value: 'fan_failure', labelZh: '风扇故障', labelEn: 'Fan Failure', category: 'network' },
+  { value: 'power_supply_failure', labelZh: '电源故障', labelEn: 'Power Supply Failure', category: 'network' },
+  { value: 'interface_error_rate_high', labelZh: '接口错误率过高', labelEn: 'Interface Error Rate High', category: 'network' },
+  { value: 'interface_flap', labelZh: '接口震荡', labelEn: 'Interface Flapping', category: 'network' },
+  { value: 'bgp_neighbor_down', labelZh: 'BGP 邻居 DOWN', labelEn: 'BGP Neighbor Down', category: 'network' },
+  { value: 'ospf_neighbor_down', labelZh: 'OSPF 邻居异常', labelEn: 'OSPF Neighbor Down', category: 'network' },
+  { value: 'bfd_session_down', labelZh: 'BFD 会话 DOWN', labelEn: 'BFD Session Down', category: 'network' },
+  { value: 'ping_unreachable', labelZh: 'Ping 不可达', labelEn: 'Ping Unreachable', category: 'network' },
+  { value: 'host_cpu', labelZh: '宿主机 CPU', labelEn: 'Host CPU', category: 'host' },
+  { value: 'host_memory', labelZh: '宿主机内存', labelEn: 'Host Memory', category: 'host' },
+  { value: 'host_disk', labelZh: '宿主机磁盘', labelEn: 'Host Disk', category: 'host' },
+  { value: 'srv_cpu_load', labelZh: '服务器负载', labelEn: 'Server CPU Load', category: 'server' },
+  { value: 'srv_cpu_util', labelZh: '服务器 CPU', labelEn: 'Server CPU Util', category: 'server' },
+  { value: 'srv_iowait', labelZh: 'IO 等待', labelEn: 'IO Wait', category: 'server' },
+  { value: 'srv_mem_avail', labelZh: '可用内存', labelEn: 'Mem Available', category: 'server' },
+  { value: 'srv_swap', labelZh: '交换分区', labelEn: 'Swap Usage', category: 'server' },
+  { value: 'srv_disk_util', labelZh: '磁盘利用率', labelEn: 'Disk Utilization', category: 'server' },
+  { value: 'srv_disk_inode', labelZh: 'Inode 利用率', labelEn: 'Inode Utilization', category: 'server' },
+  { value: 'srv_io_latency', labelZh: '磁盘延迟', labelEn: 'Disk IO Latency', category: 'server' },
+  { value: 'srv_tcp_retrans', labelZh: 'TCP 重传', labelEn: 'TCP Retransmission', category: 'server' },
+  { value: 'srv_tcp_conns', labelZh: '并发连接', labelEn: 'TCP Connections', category: 'server' },
+  { value: 'srv_process_health', labelZh: '进程状态', labelEn: 'Process Health', category: 'server' }
+] as const;
+
 const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUsername, showToast }) => {
+  const getHeaders = (json = false) => {
+    const token = localStorage.getItem('netops_token');
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    if (json) {
+      headers['Content-Type'] = 'application/json';
+    }
+    return headers;
+  };
+
   const thresholdMetrics = new Set<AlertRuleSettings['metric_type']>([
     'cpu', 'memory', 'interface_util', 'temperature_high', 'interface_error_rate_high',
     'host_cpu', 'host_memory', 'host_disk',
@@ -128,6 +171,8 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const [search, setSearch] = useState('');
   const [enabledFilter, setEnabledFilter] = useState('all');
   const [metricFilter, setMetricFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'network' | 'host' | 'server'>('all');
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({ all: 0, network: 0, host: 0, server: 0 });
   const [ruleDraft, setRuleDraft] = useState<AlertRuleSettings | null>(null);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -138,6 +183,222 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const [ruleHistory, setRuleHistory] = useState<AlertRuleHistoryItem[]>([]);
   const [historyExpanded, setHistoryExpanded] = useState(false);
 
+  // Approval verification states
+  const [approvers, setApprovers] = useState<{ id: string; username: string; role: string }[]>([]);
+  const [approverUsername, setApproverUsername] = useState('');
+  const [configReason, setConfigReason] = useState('');
+  const [approvalToken, setApprovalToken] = useState('');
+  const [approvalCode, setApprovalCode] = useState('');
+  const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
+  const [approvalCountdown, setApprovalCountdown] = useState(0);
+  const [approvalError, setApprovalError] = useState('');
+  const { systemInfo } = useSystem();
+  const isProduction = systemInfo?.environment?.toLowerCase() === 'production';
+  const [skipApproval, setSkipApproval] = useState(true);
+
+  useEffect(() => {
+    if (systemInfo?.environment) {
+      setSkipApproval(systemInfo.environment.toLowerCase() !== 'production');
+    }
+  }, [systemInfo]);
+
+  // Deletion approval states
+  const [deleteApprovalOpen, setDeleteApprovalOpen] = useState(false);
+  const [deleteTargetIds, setDeleteTargetIds] = useState<string[]>([]);
+  const [deleteTargetNames, setDeleteTargetNames] = useState('');
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deleteApprover, setDeleteApprover] = useState('');
+  const [deleteStatus, setDeleteStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
+  const [deleteCountdown, setDeleteCountdown] = useState(0);
+  const [deleteCode, setDeleteCode] = useState('');
+  const [deleteToken, setDeleteToken] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+
+  // Countdown timers
+  useEffect(() => {
+    if (approvalCountdown <= 0) return;
+    const t = setTimeout(() => setApprovalCountdown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [approvalCountdown]);
+
+  useEffect(() => {
+    if (deleteCountdown <= 0) return;
+    const t = setTimeout(() => setDeleteCountdown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [deleteCountdown]);
+
+  // Request approval for rule creation / updates
+  const requestApproval = async () => {
+    if (!approverUsername) return;
+    setApprovalStatus('sending');
+    setApprovalError('');
+    try {
+      const r = await fetch('/api/config-approval/request', {
+        method: 'POST',
+        headers: getHeaders(true),
+        body: JSON.stringify({
+          approver_username: approverUsername,
+          config_reason: configReason || (language === 'zh' ? `修改告警规则: ${ruleDraft?.name}` : `Update alert rule: ${ruleDraft?.name}`),
+          device_hostname: ruleDraft?.scope_value || (language === 'zh' ? '全局范围' : 'Global'),
+          command_preview: '',
+          approval_type: 'alert_rule',
+          extra_fields: {
+            action_type: language === 'zh' ? '告警规则变更' : 'Alert Rule Change',
+            schedule_desc: language === 'zh' 
+              ? `${ruleDraft?.metric_type} (${ruleDraft?.severity}) 阈值: ${ruleDraft?.threshold ?? '状态型'}` 
+              : `${ruleDraft?.metric_type} (${ruleDraft?.severity}) threshold: ${ruleDraft?.threshold ?? 'state'}`,
+            operation: editingRuleId ? 'UPDATE' : 'CREATE',
+          },
+        }),
+      });
+      const j = await r.json();
+      if (r.ok && j.success) {
+        setApprovalToken(j.approval_token);
+        setApprovalStatus('sent');
+        setApprovalCountdown(300);
+        showToast(language === 'zh' ? '验证码已发送至审批人' : 'Code sent to approver', 'success');
+      } else {
+        setApprovalStatus('idle');
+        setApprovalError(j.detail || j.message || 'Failed');
+      }
+    } catch {
+      setApprovalStatus('idle');
+      setApprovalError(language === 'zh' ? '发送验证码失败' : 'Failed to send code');
+    }
+  };
+
+  // Verify approval code for rule creation / updates
+  const verifyApproval = async () => {
+    if (!approvalToken || !approvalCode) return;
+    try {
+      const r = await fetch('/api/config-approval/verify', {
+        method: 'POST',
+        headers: getHeaders(true),
+        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode }),
+      });
+      const j = await r.json();
+      if (r.ok && j.success) {
+        setApprovalStatus('verified');
+        showToast(language === 'zh' ? '审批验证通过' : 'Approval verified', 'success');
+      } else {
+        setApprovalError(j.detail || j.message || 'Invalid code');
+      }
+    } catch {
+      setApprovalError(language === 'zh' ? '验证失败' : 'Verification failed');
+    }
+  };
+
+  // Request deletion approval
+  const requestDeleteApproval = async () => {
+    if (!deleteApprover || !deleteTargetIds.length) return;
+    setDeleteStatus('sending');
+    setDeleteError('');
+    try {
+      const r = await fetch('/api/config-approval/request', {
+        method: 'POST',
+        headers: getHeaders(true),
+        body: JSON.stringify({
+          approver_username: deleteApprover,
+          config_reason: deleteReason || (language === 'zh' ? `删除告警规则: ${deleteTargetNames}` : `Delete alert rules: ${deleteTargetNames}`),
+          device_hostname: '',
+          command_preview: '',
+          approval_type: 'alert_rule_delete',
+          extra_fields: {
+            action_type: language === 'zh' ? '告警规则删除' : 'Alert Rule Deletion',
+            operation: 'DELETE',
+          },
+        }),
+      });
+      const j = await r.json();
+      if (r.ok && j.success) {
+        setDeleteToken(j.approval_token);
+        setDeleteStatus('sent');
+        setDeleteCountdown(300);
+        showToast(language === 'zh' ? '删除验证码已发至审批人' : 'Delete code sent to approver', 'success');
+      } else {
+        setDeleteStatus('idle');
+        setDeleteError(j.detail || j.message || 'Failed');
+      }
+    } catch {
+      setDeleteStatus('idle');
+      setDeleteError(language === 'zh' ? '发送验证码失败' : 'Failed to send code');
+    }
+  };
+
+  // Verify deletion approval code
+  const verifyDeleteApproval = async () => {
+    if (!deleteToken || !deleteCode) return;
+    try {
+      const r = await fetch('/api/config-approval/verify', {
+        method: 'POST',
+        headers: getHeaders(true),
+        body: JSON.stringify({ approval_token: deleteToken, code: deleteCode }),
+      });
+      const j = await r.json();
+      if (r.ok && j.success) {
+        setDeleteStatus('verified');
+        showToast(language === 'zh' ? '删除审批验证通过' : 'Delete approval verified', 'success');
+      } else {
+        setDeleteError(j.detail || j.message || 'Invalid code');
+      }
+    } catch {
+      setDeleteError(language === 'zh' ? '验证失败' : 'Verification failed');
+    }
+  };
+
+  // Confirm and execute rule deletion(s)
+  const executeDelete = async () => {
+    if (!deleteTargetIds.length) return;
+    if (deleteStatus !== 'verified' && !skipApproval) {
+      showToast(language === 'zh' ? '请先完成删除验证' : 'Please complete deletion verification', 'error');
+      return;
+    }
+    
+    setSaving(true);
+    try {
+      const isBatch = deleteTargetIds.length > 1;
+      let resp;
+      if (isBatch) {
+        resp = await fetch('/api/alerts/rules/batch-delete', {
+          method: 'POST',
+          headers: getHeaders(true),
+          body: JSON.stringify({
+            rule_ids: deleteTargetIds,
+            actor_username: currentUsername,
+            approval_token: skipApproval ? '' : deleteToken,
+            approval_code: skipApproval ? '' : deleteCode,
+            skip_approval_verification: skipApproval,
+          }),
+        });
+      } else {
+        const id = deleteTargetIds[0];
+        const params = new URLSearchParams({
+          actor_username: currentUsername,
+          approval_token: skipApproval ? '' : deleteToken,
+          approval_code: skipApproval ? '' : deleteCode,
+          skip_approval: String(skipApproval),
+        });
+        resp = await fetch(`/api/alerts/rules/${id}?${params.toString()}`, {
+          method: 'DELETE',
+          headers: getHeaders(false),
+        });
+      }
+      
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || 'Failed to delete');
+      
+      showToast(language === 'zh' ? '告警规则已成功删除' : 'Alert rule(s) deleted successfully', 'success');
+      setDeleteApprovalOpen(false);
+      closeEditor();
+      setSelectedIds(new Set());
+      await loadAlertRules();
+    } catch (error: any) {
+      showToast(error?.message || (language === 'zh' ? '删除告警规则失败' : 'Failed to delete alert rule(s)'), 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const loadAlertRules = async () => {
     setLoading(true);
     try {
@@ -146,16 +407,22 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
         page_size: String(pageSize),
         search,
         enabled: enabledFilter,
+        category: categoryFilter,
       });
       if (metricFilter !== 'all') {
         params.set('metric_type', metricFilter);
       }
-      const resp = await fetch(`/api/alerts/rules?${params.toString()}`);
+      const resp = await fetch(`/api/alerts/rules?${params.toString()}`, {
+        headers: getHeaders(false),
+      });
       if (!resp.ok) throw new Error('Failed to load alert rules');
-      const data: AlertRuleListResponse = await resp.json();
+      const data: AlertRuleListResponse & { category_counts?: Record<string, number> } = await resp.json();
       const items = data.items || [];
       setAlertRules(items);
       setTotal(data.total && data.total > 0 ? data.total : items.length);
+      if (data.category_counts) {
+        setCategoryCounts(data.category_counts);
+      }
       setSelectedIds(new Set());
       if (editingRuleId && !items.some((item) => item.id === editingRuleId)) {
         setEditingRuleId(null);
@@ -171,7 +438,34 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
   useEffect(() => {
     void loadAlertRules();
-  }, [page, pageSize, search, enabledFilter, metricFilter]);
+  }, [page, pageSize, search, enabledFilter, metricFilter, categoryFilter]);
+
+  // Fetch approvers once on component load
+  useEffect(() => {
+    const fetchApprovers = async () => {
+      try {
+        const resp = await fetch('/api/users', {
+          headers: getHeaders(false),
+        });
+        if (resp.ok) {
+          const j = await resp.json();
+          const users = j.data?.items || j.data || j;
+          if (Array.isArray(users)) {
+            setApprovers(users.filter((u: any) => u.role === 'Administrator' || u.role === 'Operator'));
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    void fetchApprovers();
+  }, []);
+
+  // Reset page and metric selection when category changes
+  useEffect(() => {
+    setPage(1);
+    setMetricFilter('all');
+  }, [categoryFilter]);
 
   const openCreate = () => {
     setEditingRuleId(null);
@@ -192,13 +486,24 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
     setPreviewData(null);
     setRuleHistory([]);
     setHistoryExpanded(false);
+
+    // Reset approval state
+    setApproverUsername('');
+    setApprovalCode('');
+    setApprovalToken('');
+    setApprovalStatus('idle');
+    setApprovalCountdown(0);
+    setApprovalError('');
+    setConfigReason('');
   };
 
   /* ---------- Preview: alert stats overview ---------- */
   const fetchPreview = useCallback(async () => {
     setPreviewLoading(true);
     try {
-      const resp = await fetch('/api/alerts/rules/preview');
+      const resp = await fetch('/api/alerts/rules/preview', {
+        headers: getHeaders(false),
+      });
       if (resp.ok) {
         setPreviewData(await resp.json());
       }
@@ -210,7 +515,9 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   /* ---------- History: change log for an existing rule ---------- */
   const fetchHistory = useCallback(async (ruleId: string) => {
     try {
-      const resp = await fetch(`/api/alerts/rules/history?rule_id=${encodeURIComponent(ruleId)}`);
+      const resp = await fetch(`/api/alerts/rules/history?rule_id=${encodeURIComponent(ruleId)}`, {
+        headers: getHeaders(false),
+      });
       if (resp.ok) {
         const data = await resp.json();
         setRuleHistory(Array.isArray(data) ? data : data.items || []);
@@ -264,16 +571,23 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
   const handleSave = async () => {
     if (!ruleDraft) return;
+    if (!skipApproval && approvalStatus !== 'verified') {
+      showToast(language === 'zh' ? '请先完成审批验证' : 'Please complete approval verification first', 'error');
+      return;
+    }
     setSaving(true);
     try {
       const isCreate = !editingRuleId;
       const resp = await fetch(isCreate ? '/api/alerts/rules' : `/api/alerts/rules/${editingRuleId}`, {
         method: isCreate ? 'POST' : 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(true),
         body: JSON.stringify({
           ...ruleDraft,
           created_by: ruleDraft.created_by || currentUsername,
           updated_by: currentUsername,
+          approval_token: skipApproval ? '' : approvalToken,
+          approval_code: skipApproval ? '' : approvalCode,
+          skip_approval_verification: skipApproval,
         }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -289,23 +603,18 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
     }
   };
 
-  const handleDelete = async () => {
-    if (!editingRuleId) return;
-    setSaving(true);
-    try {
-      const resp = await fetch(`/api/alerts/rules/${editingRuleId}?actor_username=${encodeURIComponent(currentUsername)}`, {
-        method: 'DELETE',
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(data.detail || 'Failed to delete alert rule');
-      showToast(language === 'zh' ? '告警规则已删除' : 'Alert rule deleted', 'success');
-      closeEditor();
-      await loadAlertRules();
-    } catch (error: any) {
-      showToast(error?.message || (language === 'zh' ? '删除告警规则失败' : 'Failed to delete alert rule'), 'error');
-    } finally {
-      setSaving(false);
-    }
+  const handleDelete = () => {
+    if (!ruleDraft || !editingRuleId) return;
+    setDeleteTargetIds([editingRuleId]);
+    setDeleteTargetNames(ruleDraft.name);
+    setDeleteReason('');
+    setDeleteApprover('');
+    setDeleteStatus('idle');
+    setDeleteCountdown(0);
+    setDeleteCode('');
+    setDeleteToken('');
+    setDeleteError('');
+    setDeleteApprovalOpen(true);
   };
 
   const handleReset = () => {
@@ -322,19 +631,37 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const handleToggleEnabled = async (rule: AlertRuleSettings) => {
     const ruleId = rule.id;
     if (!ruleId) return;
-    setTogglingIds((prev) => new Set(prev).add(ruleId));
-    try {
-      const resp = await fetch('/api/alerts/rules/batch-toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rule_ids: [ruleId], enabled: !rule.enabled, actor_username: currentUsername }),
-      });
-      if (!resp.ok) throw new Error('Failed to toggle rule');
-      setAlertRules((prev) => prev.map((r) => r.id === ruleId ? { ...r, enabled: !r.enabled } : r));
-    } catch {
-      showToast(language === 'zh' ? '切换规则状态失败' : 'Failed to toggle rule', 'error');
-    } finally {
-      setTogglingIds((prev) => { const next = new Set(prev); next.delete(ruleId); return next; });
+
+    if (skipApproval) {
+      setTogglingIds((prev) => new Set(prev).add(ruleId));
+      try {
+        const resp = await fetch('/api/alerts/rules/batch-toggle', {
+          method: 'POST',
+          headers: getHeaders(true),
+          body: JSON.stringify({
+            rule_ids: [ruleId],
+            enabled: !rule.enabled,
+            actor_username: currentUsername,
+            skip_approval_verification: true,
+          }),
+        });
+        if (!resp.ok) throw new Error('Failed to toggle rule');
+        setAlertRules((prev) => prev.map((r) => r.id === ruleId ? { ...r, enabled: !r.enabled } : r));
+        showToast(language === 'zh' ? '规则状态已更新' : 'Rule state updated', 'success');
+      } catch {
+        showToast(language === 'zh' ? '切换规则状态失败' : 'Failed to toggle rule', 'error');
+      } finally {
+        setTogglingIds((prev) => { const next = new Set(prev); next.delete(ruleId); return next; });
+      }
+    } else {
+      showToast(
+        language === 'zh'
+          ? '生产环境修改规则状态需要工单审批，已为您打开规则编辑器。'
+          : 'Modifying rule state in production requires approval. Editor opened.',
+        'info'
+      );
+      const updatedRule = { ...rule, enabled: !rule.enabled };
+      openEdit(updatedRule);
     }
   };
 
@@ -352,56 +679,65 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
     setRuleDraft(cloned);
   };
 
-  const handleInlineDelete = async (rule: AlertRuleSettings) => {
+  const handleInlineDelete = (rule: AlertRuleSettings) => {
     if (!rule.id) return;
-    const msg = language === 'zh' ? `确定删除规则「${rule.name}」？` : `Delete rule "${rule.name}"?`;
-    if (!window.confirm(msg)) return;
-    try {
-      const resp = await fetch(`/api/alerts/rules/${rule.id}?actor_username=${encodeURIComponent(currentUsername)}`, { method: 'DELETE' });
-      if (!resp.ok) throw new Error('Failed to delete');
-      showToast(language === 'zh' ? '告警规则已删除' : 'Alert rule deleted', 'success');
-      await loadAlertRules();
-    } catch {
-      showToast(language === 'zh' ? '删除告警规则失败' : 'Failed to delete alert rule', 'error');
-    }
+    setDeleteTargetIds([rule.id]);
+    setDeleteTargetNames(rule.name);
+    setDeleteReason('');
+    setDeleteApprover('');
+    setDeleteStatus('idle');
+    setDeleteCountdown(0);
+    setDeleteCode('');
+    setDeleteToken('');
+    setDeleteError('');
+    setDeleteApprovalOpen(true);
   };
 
   const handleBatchToggle = async (enabled: boolean) => {
     if (selectedIds.size === 0) return;
-    try {
-      const resp = await fetch('/api/alerts/rules/batch-toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rule_ids: Array.from(selectedIds), enabled, actor_username: currentUsername }),
-      });
-      if (!resp.ok) throw new Error('Failed to batch toggle');
-      const data = await resp.json();
-      showToast(language === 'zh' ? `已${enabled ? '启用' : '停用'} ${data.updated_count} 条规则` : `${enabled ? 'Enabled' : 'Disabled'} ${data.updated_count} rules`, 'success');
-      setSelectedIds(new Set());
-      await loadAlertRules();
-    } catch {
-      showToast(language === 'zh' ? '批量操作失败' : 'Batch operation failed', 'error');
+
+    if (skipApproval) {
+      try {
+        const resp = await fetch('/api/alerts/rules/batch-toggle', {
+          method: 'POST',
+          headers: getHeaders(true),
+          body: JSON.stringify({
+            rule_ids: Array.from(selectedIds),
+            enabled,
+            actor_username: currentUsername,
+            skip_approval_verification: true,
+          }),
+        });
+        if (!resp.ok) throw new Error('Failed to batch toggle');
+        setAlertRules((prev) => prev.map((r) => r.id && selectedIds.has(r.id) ? { ...r, enabled } : r));
+        setSelectedIds(new Set());
+        showToast(language === 'zh' ? '批量更新成功' : 'Batch update successful', 'success');
+      } catch {
+        showToast(language === 'zh' ? '批量更新失败' : 'Batch update failed', 'error');
+      }
+    } else {
+      showToast(
+        language === 'zh'
+          ? '生产环境批量启停需要单条获取工单审批修改。'
+          : 'Batch toggling requires individual approval in production.',
+        'info'
+      );
     }
   };
 
-  const handleBatchDelete = async () => {
+  const handleBatchDelete = () => {
     if (selectedIds.size === 0) return;
-    const msg = language === 'zh' ? `确定删除选中的 ${selectedIds.size} 条规则？` : `Delete ${selectedIds.size} selected rules?`;
-    if (!window.confirm(msg)) return;
-    try {
-      const resp = await fetch('/api/alerts/rules/batch-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rule_ids: Array.from(selectedIds), actor_username: currentUsername }),
-      });
-      if (!resp.ok) throw new Error('Failed to batch delete');
-      const data = await resp.json();
-      showToast(language === 'zh' ? `已删除 ${data.deleted_count} 条规则` : `Deleted ${data.deleted_count} rules`, 'success');
-      setSelectedIds(new Set());
-      await loadAlertRules();
-    } catch {
-      showToast(language === 'zh' ? '批量删除失败' : 'Batch delete failed', 'error');
-    }
+    const targets = alertRules.filter((r) => r.id && selectedIds.has(r.id));
+    setDeleteTargetIds(targets.map((r) => r.id!));
+    setDeleteTargetNames(targets.map((r) => r.name).join(', '));
+    setDeleteReason('');
+    setDeleteApprover('');
+    setDeleteStatus('idle');
+    setDeleteCountdown(0);
+    setDeleteCode('');
+    setDeleteToken('');
+    setDeleteError('');
+    setDeleteApprovalOpen(true);
   };
 
   const allSelected = alertRules.length > 0 && alertRules.every((r) => r.id && selectedIds.has(r.id));
@@ -416,7 +752,14 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
         title={language === 'zh' ? '告警规则管理' : 'Alert Rules Management'}
         subtitle={language === 'zh' ? '灵活配置监控指标阈值与告警策略' : 'Configure metric thresholds and alerting policies'}
         actions={
-          <>
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40 text-xs font-semibold shadow-sm">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              {language === 'zh' ? '遥测采集守护中 (15s/60s)' : 'Telemetry Daemon Active (15s/60s)'}
+            </div>
             <button onClick={() => void loadAlertRules()} className={alertSecondaryButtonClass}>
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
               {language === 'zh' ? '刷新' : 'Refresh'}
@@ -425,12 +768,70 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
               <Plus size={14} />
               {language === 'zh' ? '新增规则' : 'New Rule'}
             </button>
-          </>
+          </div>
         }
       />
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
+        {/* Category filter tabs */}
+        <div className="px-5 py-4 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+            <button
+              onClick={() => setCategoryFilter('all')}
+              className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
+                categoryFilter === 'all'
+                ? 'bg-gradient-to-br from-[#164e63] to-[#0e3f52] text-white border-[#164e63] shadow-lg shadow-cyan-900/20 scale-[1.02]'
+                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
+              }`}
+            >
+              {language === 'zh' ? '全部规则' : 'All Rules'}
+              <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'all' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                {categoryCounts.all || 0}
+              </span>
+            </button>
+            <button
+              onClick={() => setCategoryFilter('network')}
+              className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
+                categoryFilter === 'network'
+                ? 'bg-gradient-to-br from-cyan-600 to-cyan-700 text-white border-cyan-500 shadow-lg shadow-cyan-600/20 scale-[1.02]'
+                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
+              }`}
+            >
+              {language === 'zh' ? '网络设备' : 'Network Device'}
+              <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'network' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                {categoryCounts.network || 0}
+              </span>
+            </button>
+            <button
+              onClick={() => setCategoryFilter('host')}
+              className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
+                categoryFilter === 'host'
+                ? 'bg-gradient-to-br from-cyan-600 to-cyan-700 text-white border-cyan-500 shadow-lg shadow-cyan-600/20 scale-[1.02]'
+                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
+              }`}
+            >
+              {language === 'zh' ? '宿主机' : 'Host'}
+              <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'host' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                {categoryCounts.host || 0}
+              </span>
+            </button>
+            <button
+              onClick={() => setCategoryFilter('server')}
+              className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
+                categoryFilter === 'server'
+                ? 'bg-gradient-to-br from-cyan-600 to-cyan-700 text-white border-cyan-500 shadow-lg shadow-cyan-600/20 scale-[1.02]'
+                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
+              }`}
+            >
+              {language === 'zh' ? '服务器' : 'Server'}
+              <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'server' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                {categoryCounts.server || 0}
+              </span>
+            </button>
+          </div>
+        </div>
+
         <div className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center">
           <label className="relative min-w-[240px] flex-1">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
@@ -451,38 +852,27 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
           >
             <option value="all">{language === 'zh' ? '全部类型' : 'All Metrics'}</option>
-            <option value="cpu">{metricTypeLabel('cpu', language)}</option>
-            <option value="memory">{metricTypeLabel('memory', language)}</option>
-            <option value="interface_util">{metricTypeLabel('interface_util', language)}</option>
-            <option value="interface_down">{metricTypeLabel('interface_down', language)}</option>
-            <option value="interconnect_down">{metricTypeLabel('interconnect_down', language)}</option>
-            <option value="snmp_unreachable">{metricTypeLabel('snmp_unreachable', language)}</option>
-            <option value="lldp_neighbor_lost">{metricTypeLabel('lldp_neighbor_lost', language)}</option>
-            <option value="temperature_high">{metricTypeLabel('temperature_high', language)}</option>
-            <option value="fan_failure">{metricTypeLabel('fan_failure', language)}</option>
-            <option value="power_supply_failure">{metricTypeLabel('power_supply_failure', language)}</option>
-            <option value="interface_error_rate_high">{metricTypeLabel('interface_error_rate_high', language)}</option>
-            <option value="interface_flap">{metricTypeLabel('interface_flap', language)}</option>
-            <option value="bgp_neighbor_down">{metricTypeLabel('bgp_neighbor_down', language)}</option>
-            <option value="ospf_neighbor_down">{metricTypeLabel('ospf_neighbor_down', language)}</option>
-            <option value="bfd_session_down">{metricTypeLabel('bfd_session_down', language)}</option>
-            <option value="ping_unreachable">{metricTypeLabel('ping_unreachable', language)}</option>
-            <option disabled>─── {language === 'zh' ? '宿主机' : 'Host'} ───</option>
-            <option value="host_cpu">{metricTypeLabel('host_cpu', language)}</option>
-            <option value="host_memory">{metricTypeLabel('host_memory', language)}</option>
-            <option value="host_disk">{metricTypeLabel('host_disk', language)}</option>
-            <option disabled>─── {language === 'zh' ? '服务器' : 'Server'} ───</option>
-            <option value="srv_cpu_load">{metricTypeLabel('srv_cpu_load', language)}</option>
-            <option value="srv_cpu_util">{metricTypeLabel('srv_cpu_util', language)}</option>
-            <option value="srv_iowait">{metricTypeLabel('srv_iowait', language)}</option>
-            <option value="srv_mem_avail">{metricTypeLabel('srv_mem_avail', language)}</option>
-            <option value="srv_swap">{metricTypeLabel('srv_swap', language)}</option>
-            <option value="srv_disk_util">{metricTypeLabel('srv_disk_util', language)}</option>
-            <option value="srv_disk_inode">{metricTypeLabel('srv_disk_inode', language)}</option>
-            <option value="srv_io_latency">{metricTypeLabel('srv_io_latency', language)}</option>
-            <option value="srv_tcp_retrans">{metricTypeLabel('srv_tcp_retrans', language)}</option>
-            <option value="srv_tcp_conns">{metricTypeLabel('srv_tcp_conns', language)}</option>
-            <option value="srv_process_health">{metricTypeLabel('srv_process_health', language)}</option>
+            {(categoryFilter === 'all' || categoryFilter === 'network') && (
+              <optgroup label={language === 'zh' ? '网络设备' : 'Network Device'}>
+                {METRIC_OPTIONS_LIST.filter(m => m.category === 'network').map(m => (
+                  <option key={m.value} value={m.value}>{language === 'zh' ? m.labelZh : m.labelEn}</option>
+                ))}
+              </optgroup>
+            )}
+            {(categoryFilter === 'all' || categoryFilter === 'host') && (
+              <optgroup label={language === 'zh' ? '宿主机' : 'Host'}>
+                {METRIC_OPTIONS_LIST.filter(m => m.category === 'host').map(m => (
+                  <option key={m.value} value={m.value}>{language === 'zh' ? m.labelZh : m.labelEn}</option>
+                ))}
+              </optgroup>
+            )}
+            {(categoryFilter === 'all' || categoryFilter === 'server') && (
+              <optgroup label={language === 'zh' ? '服务器' : 'Server'}>
+                {METRIC_OPTIONS_LIST.filter(m => m.category === 'server').map(m => (
+                  <option key={m.value} value={m.value}>{language === 'zh' ? m.labelZh : m.labelEn}</option>
+                ))}
+              </optgroup>
+            )}
           </select>
           <select
             title={language === 'zh' ? '按启用状态筛选规则' : 'Filter rules by enabled state'}
@@ -740,40 +1130,35 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                   </label>
                   <label className="text-sm text-black/65">
                     <span>{language === 'zh' ? '监控类型' : 'Metric Type'}</span>
-                    <select value={ruleDraft.metric_type} onChange={(e) => updateRuleField('metric_type', e.target.value as AlertRuleSettings['metric_type'])} className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-[#164e63] outline-none">
-                      <option value="cpu">{metricTypeLabel('cpu', language)}</option>
-                      <option value="memory">{metricTypeLabel('memory', language)}</option>
-                      <option value="interface_util">{metricTypeLabel('interface_util', language)}</option>
-                      <option value="interface_down">{metricTypeLabel('interface_down', language)}</option>
-                      <option value="interconnect_down">{metricTypeLabel('interconnect_down', language)}</option>
-                      <option value="snmp_unreachable">{metricTypeLabel('snmp_unreachable', language)}</option>
-                      <option value="lldp_neighbor_lost">{metricTypeLabel('lldp_neighbor_lost', language)}</option>
-                      <option value="temperature_high">{metricTypeLabel('temperature_high', language)}</option>
-                      <option value="fan_failure">{metricTypeLabel('fan_failure', language)}</option>
-                      <option value="power_supply_failure">{metricTypeLabel('power_supply_failure', language)}</option>
-                      <option value="interface_error_rate_high">{metricTypeLabel('interface_error_rate_high', language)}</option>
-                      <option value="interface_flap">{metricTypeLabel('interface_flap', language)}</option>
-                      <option value="bgp_neighbor_down">{metricTypeLabel('bgp_neighbor_down', language)}</option>
-                      <option value="ospf_neighbor_down">{metricTypeLabel('ospf_neighbor_down', language)}</option>
-                      <option value="bfd_session_down">{metricTypeLabel('bfd_session_down', language)}</option>
-                      <option value="ping_unreachable">{metricTypeLabel('ping_unreachable', language)}</option>
-                      <option disabled>─── {language === 'zh' ? '宿主机' : 'Host'} ───</option>
-                      <option value="host_cpu">{metricTypeLabel('host_cpu', language)}</option>
-                      <option value="host_memory">{metricTypeLabel('host_memory', language)}</option>
-                      <option value="host_disk">{metricTypeLabel('host_disk', language)}</option>
-                      <option disabled>─── {language === 'zh' ? '服务器' : 'Server'} ───</option>
-                      <option value="srv_cpu_load">{metricTypeLabel('srv_cpu_load', language)}</option>
-                      <option value="srv_cpu_util">{metricTypeLabel('srv_cpu_util', language)}</option>
-                      <option value="srv_iowait">{metricTypeLabel('srv_iowait', language)}</option>
-                      <option value="srv_mem_avail">{metricTypeLabel('srv_mem_avail', language)}</option>
-                      <option value="srv_swap">{metricTypeLabel('srv_swap', language)}</option>
-                      <option value="srv_disk_util">{metricTypeLabel('srv_disk_util', language)}</option>
-                      <option value="srv_disk_inode">{metricTypeLabel('srv_disk_inode', language)}</option>
-                      <option value="srv_io_latency">{metricTypeLabel('srv_io_latency', language)}</option>
-                      <option value="srv_tcp_retrans">{metricTypeLabel('srv_tcp_retrans', language)}</option>
-                      <option value="srv_tcp_conns">{metricTypeLabel('srv_tcp_conns', language)}</option>
-                      <option value="srv_process_health">{metricTypeLabel('srv_process_health', language)}</option>
+                    <select
+                      value={ruleDraft.metric_type}
+                      onChange={(e) => updateRuleField('metric_type', e.target.value as AlertRuleSettings['metric_type'])}
+                      disabled={Boolean(editingRuleId)}
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-[#164e63] outline-none disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-all"
+                    >
+                      <optgroup label={language === 'zh' ? '网络设备' : 'Network Device'}>
+                        {METRIC_OPTIONS_LIST.filter(m => m.category === 'network').map(m => (
+                          <option key={m.value} value={m.value}>{language === 'zh' ? m.labelZh : m.labelEn}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label={language === 'zh' ? '宿主机' : 'Host'}>
+                        {METRIC_OPTIONS_LIST.filter(m => m.category === 'host').map(m => (
+                          <option key={m.value} value={m.value}>{language === 'zh' ? m.labelZh : m.labelEn}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label={language === 'zh' ? '服务器' : 'Server'}>
+                        {METRIC_OPTIONS_LIST.filter(m => m.category === 'server').map(m => (
+                          <option key={m.value} value={m.value}>{language === 'zh' ? m.labelZh : m.labelEn}</option>
+                        ))}
+                      </optgroup>
                     </select>
+                    {editingRuleId && (
+                      <p className="mt-1 text-[11px] text-amber-600 font-medium">
+                        {language === 'zh'
+                          ? '提示：监控类型在编辑时不可更改。若需更换，请先取消并使用“复制规则”功能克隆。'
+                          : 'Note: Metric type cannot be changed on edit. To change it, clone this rule instead.'}
+                      </p>
+                    )}
                   </label>
                 </div>
 
@@ -829,6 +1214,141 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                   <input type="checkbox" checked={ruleDraft.enabled} onChange={(e) => updateRuleField('enabled', e.target.checked)} />
                   <span>{language === 'zh' ? '启用此规则' : 'Enable this rule'}</span>
                 </label>
+
+                {/* ---------- Config Approval Section ---------- */}
+                <div className="rounded-2xl border border-black/5 overflow-hidden">
+                  <div className="bg-slate-50 px-4 py-3 border-b border-black/5 flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#164e63] flex items-center gap-1.5">
+                      <Shield size={14} className="text-cyan-600" />
+                      {language === 'zh' ? '变更审批授权' : 'Approval Authorization'}
+                    </span>
+                    {isProduction ? (
+                      <span className="text-xs text-rose-500 font-bold bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-100 shadow-sm">
+                        {language === 'zh' ? '生产环境 强制校验' : 'Production Enforced Check'}
+                      </span>
+                    ) : (
+                      <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={skipApproval}
+                          onChange={(e) => {
+                            setSkipApproval(e.target.checked);
+                            setApprovalStatus('idle');
+                            setApprovalCode('');
+                            setApprovalError('');
+                          }}
+                          className="rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                        />
+                        <span>{language === 'zh' ? '仅测试/开发环境可用 - 跳过审批' : 'Dev/Test only - Skip approval'}</span>
+                      </label>
+                    )}
+                  </div>
+                  
+                  {!skipApproval && approvalStatus !== 'verified' && (
+                    <div className="px-5 py-4 bg-white space-y-4 text-xs">
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <label className="block text-slate-600">
+                          <span className="font-bold text-slate-700 block mb-1">{language === 'zh' ? '变更原因说明' : 'Reason for Change'}</span>
+                          <input
+                            value={configReason}
+                            onChange={(e) => setConfigReason(e.target.value)}
+                            placeholder={language === 'zh' ? '输入为什么启用/停用/修改此规则...' : 'Enter reason for this change...'}
+                            className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20 transition-all"
+                          />
+                        </label>
+                        
+                        <label className="block text-slate-600">
+                          <span className="font-bold text-slate-700 block mb-1">{language === 'zh' ? '选择授权审批人' : 'Select Approver'}</span>
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={approverUsername}
+                              onChange={(e) => setApproverUsername(e.target.value)}
+                              disabled={approvalStatus === 'sent' || approvalStatus === 'sending'}
+                              className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20 transition-all disabled:bg-slate-50"
+                            >
+                              <option value="">{language === 'zh' ? '选择审批人...' : 'Select approver...'}</option>
+                              {approvers.map((u) => (
+                                <option key={u.id} value={u.username}>
+                                  {u.username} ({u.role})
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={requestApproval}
+                              disabled={!approverUsername || !configReason.trim() || approvalStatus === 'sending' || (approvalStatus === 'sent' && approvalCountdown > 0)}
+                              className={`px-4 py-2 rounded-xl font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                                approverUsername && configReason.trim() && !(approvalStatus === 'sent' && approvalCountdown > 0)
+                                  ? 'bg-[#164e63] text-white hover:bg-cyan-800 shadow-sm'
+                                  : 'bg-black/5 text-black/35 cursor-not-allowed'
+                              }`}
+                            >
+                              {approvalStatus === 'sending' ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              ) : approvalStatus === 'sent' && approvalCountdown > 0 ? (
+                                `${Math.floor(approvalCountdown / 60)}:${String(approvalCountdown % 60).padStart(2, '0')}`
+                              ) : (
+                                language === 'zh' ? '发送验证码' : 'Send Code'
+                              )}
+                            </button>
+                          </div>
+                        </label>
+                      </div>
+
+                      {approvalStatus === 'sent' && (
+                        <div className="space-y-1.5 pt-3 border-t border-slate-100">
+                          <label className="text-[11px] text-slate-500 block">
+                            {language === 'zh' ? '输入审批人收到的 6 位工单验证码' : 'Enter 6-digit code sent to approver'}
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={approvalCode}
+                              onChange={(e) => {
+                                setApprovalCode(e.target.value.replace(/\D/g, '').slice(0, 6));
+                                setApprovalError('');
+                              }}
+                              placeholder="000000"
+                              maxLength={6}
+                              className="w-32 tracking-[0.3em] text-center font-mono rounded-xl border border-black/10 py-2 text-sm outline-none focus:border-cyan-500 transition-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={verifyApproval}
+                              disabled={approvalCode.length !== 6}
+                              className={`px-4 py-2 rounded-xl font-bold transition-all ${
+                                approvalCode.length === 6
+                                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                  : 'bg-black/5 text-black/35 cursor-not-allowed'
+                              }`}
+                            >
+                              {language === 'zh' ? '验证' : 'Verify'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {approvalError && (
+                        <p className="text-rose-600 text-xs mt-1 flex items-center gap-1">
+                          <span>⚠️</span>
+                          {approvalError}
+                        </p>
+                      )}
+                      
+                      <p className="text-[10px] text-slate-400">
+                        {language === 'zh'
+                          ? '验证码将发送至审批人的飞书工作台，5 分钟内有效。'
+                          : 'A verification code will be sent to the approver via Feishu. Valid for 5 mins.'}
+                      </p>
+                    </div>
+                  )}
+
+                  {!skipApproval && approvalStatus === 'verified' && (
+                    <div className="px-5 py-4 bg-emerald-50 border-t border-emerald-100 flex items-center gap-2 text-emerald-800 text-xs font-semibold">
+                      <Check size={16} className="text-emerald-600" />
+                      {language === 'zh' ? '审批验证已通过，随时可保存生效' : 'Approval verified. You can save changes now.'}
+                    </div>
+                  )}
+                </div>
 
                 {/* ---------- Preview: 24h alert stats ---------- */}
                 {previewData && (
@@ -892,12 +1412,16 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     {language === 'zh' ? '重置' : 'Reset'}
                   </button>
                   {editingRuleId ? (
-                    <button onClick={() => void handleDelete()} className={alertDangerButtonClass}>
+                    <button onClick={handleDelete} className={alertDangerButtonClass}>
                       <Trash2 size={14} />
                       {language === 'zh' ? '删除' : 'Delete'}
                     </button>
                   ) : null}
-                  <button disabled={saving || !isDirty} onClick={() => void handleSave()} className={alertPrimaryButtonClass}>
+                  <button
+                    disabled={saving || !isDirty || (!skipApproval && approvalStatus !== 'verified')}
+                    onClick={() => void handleSave()}
+                    className={alertPrimaryButtonClass}
+                  >
                     <Save size={14} />
                     {saving ? (language === 'zh' ? '保存中...' : 'Saving...') : (language === 'zh' ? '保存' : 'Save')}
                   </button>
@@ -906,6 +1430,173 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             </motion.div>
           </motion.div>
         ) : null}
+      </AnimatePresence>
+
+      {/* ---------- Delete Approval Modal ---------- */}
+      <AnimatePresence>
+        {deleteApprovalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35"
+          >
+            <div className="fixed inset-0 bg-black/20 backdrop-blur-sm" onClick={() => setDeleteApprovalOpen(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative w-full max-w-md rounded-2xl bg-white border border-slate-100 shadow-2xl overflow-hidden z-10"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="bg-rose-50 border-b border-rose-100 px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5 text-rose-700">
+                  <Shield className="w-5 h-5 text-rose-600" />
+                  <h3 className="font-bold text-sm">{language === 'zh' ? '删除安全校验与工单授权' : 'Delete Security Verification'}</h3>
+                </div>
+                <button onClick={() => setDeleteApprovalOpen(false)} className="text-rose-400 hover:text-rose-600 p-1">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4 text-xs text-slate-600">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
+                  <span className="text-[10px] text-slate-400 font-semibold">{language === 'zh' ? '即将永久删除规则' : 'Target Rule(s) to Delete'}</span>
+                  <div className="font-bold text-slate-800 text-sm truncate">{deleteTargetNames}</div>
+                </div>
+
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <span className="font-bold text-slate-700">{language === 'zh' ? '跳过审批流程' : 'Skip Approval'}</span>
+                  {isProduction ? (
+                    <span className="text-xs text-rose-500 font-bold bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-100 shadow-sm">
+                      {language === 'zh' ? '生产环境 强制校验' : 'Production Enforced Check'}
+                    </span>
+                  ) : (
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={skipApproval}
+                        onChange={(e) => {
+                          setSkipApproval(e.target.checked);
+                          setDeleteStatus('idle');
+                          setDeleteCode('');
+                          setDeleteError('');
+                        }}
+                        className="rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                      />
+                      <span className="ml-2 text-slate-500">{language === 'zh' ? '仅测试/开发环境' : 'Dev/Test only'}</span>
+                    </label>
+                  )}
+                </div>
+
+                {!skipApproval && deleteStatus !== 'verified' && (
+                  <>
+                    <div className="space-y-1.5">
+                      <label className="font-bold text-slate-700 block">{language === 'zh' ? '删除原因说明' : 'Deletion Reason'}</label>
+                      <input
+                        type="text"
+                        value={deleteReason}
+                        onChange={e => setDeleteReason(e.target.value)}
+                        placeholder={language === 'zh' ? '输入删除原因...' : 'Enter reason...'}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="font-bold text-slate-700 block">{language === 'zh' ? '选择授权审批人' : 'Select Approver'}</label>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={deleteApprover}
+                          onChange={e => setDeleteApprover(e.target.value)}
+                          disabled={deleteStatus === 'sending' || deleteStatus === 'sent'}
+                          className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-white outline-none focus:border-rose-500 transition-all"
+                        >
+                          <option value="">{language === 'zh' ? '选择审批人...' : 'Select approver...'}</option>
+                          {approvers.map(u => (
+                            <option key={u.id} value={u.username}>{u.username} ({u.role})</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={requestDeleteApproval}
+                          disabled={!deleteApprover || !deleteReason.trim() || deleteStatus === 'sending' || (deleteStatus === 'sent' && deleteCountdown > 0)}
+                          className={`px-3 py-2 rounded-xl font-bold whitespace-nowrap transition-all flex items-center gap-1 ${
+                            deleteApprover && deleteReason.trim() && !(deleteStatus === 'sent' && deleteCountdown > 0)
+                              ? 'bg-rose-600 text-white hover:bg-rose-700 shadow-sm'
+                              : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                          }`}
+                        >
+                          {deleteStatus === 'sending' ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : deleteStatus === 'sent' && deleteCountdown > 0 ? (
+                            `${Math.floor(deleteCountdown / 60)}:${String(deleteCountdown % 60).padStart(2, '0')}`
+                          ) : (
+                            language === 'zh' ? '发验证码' : 'Send Code'
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {deleteStatus === 'sent' && (
+                      <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                        <label className="text-[11px] text-slate-500 block">{language === 'zh' ? '输入 6 位工单验证码' : 'Enter 6-digit verification code'}</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={deleteCode}
+                            onChange={e => { setDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setDeleteError(''); }}
+                            placeholder="000000"
+                            maxLength={6}
+                            className="w-32 tracking-[0.3em] text-center font-mono rounded-xl border border-slate-200 py-2 text-sm outline-none focus:border-rose-500 transition-all"
+                          />
+                          <button
+                            type="button"
+                            onClick={verifyDeleteApproval}
+                            disabled={deleteCode.length !== 6}
+                            className={`px-4 py-2 rounded-xl font-bold transition-all ${deleteCode.length === 6 ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                          >
+                            {language === 'zh' ? '验证' : 'Verify'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {deleteError && (
+                      <div className="flex items-center gap-1.5 text-rose-600 text-xs pt-1">
+                        <span>⚠️</span>
+                        <span>{deleteError}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {(skipApproval || deleteStatus === 'verified') && (
+                  <div className="px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-800 text-xs font-semibold flex items-center gap-2">
+                    <Check size={14} className="text-emerald-600" />
+                    {language === 'zh' ? '删除已获得安全授权，可执行永久删除。' : 'Deletion authorized. Safe to execute deletion.'}
+                  </div>
+                )}
+              </div>
+
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteApprovalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-slate-600 hover:bg-slate-100 transition-all"
+                >
+                  {language === 'zh' ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={executeDelete}
+                  disabled={!skipApproval && deleteStatus !== 'verified'}
+                  className="px-4 py-2 rounded-xl bg-rose-600 text-white font-bold hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-md shadow-rose-600/10"
+                >
+                  {language === 'zh' ? '确认安全删除' : 'Secure Delete'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </>
   );
