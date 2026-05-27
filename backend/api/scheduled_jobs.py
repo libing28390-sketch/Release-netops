@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Body, Request, Depends
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import logging
 import os
@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 # Import refresh logic from scheduler_manager
 from core.scheduler_manager import refresh_dynamic_scheduler
+
+
+def _format_job_row(row) -> dict:
+    d = dict(row)
+    if d.get('action_type') == 'inspection' and d.get('commands'):
+        import re
+        d['check_items'] = [c.strip() for c in re.split(r'[,\n]', d['commands']) if c.strip()]
+    else:
+        d['check_items'] = []
+    return d
 
 
 # ── List ──
@@ -52,7 +62,7 @@ def list_scheduled_jobs(
         return {
             "success": True,
             "data": {
-                "items": [dict(r) for r in rows],
+                "items": [_format_job_row(r) for r in rows],
                 "total": total,
                 "page": page,
                 "page_size": page_size,
@@ -204,6 +214,105 @@ def list_system_scheduled_jobs(_user=require_role("Viewer")):
     return {'success': True, 'data': {'items': items, 'total': len(items)}}
 
 
+@router.get("/scheduled-jobs/future")
+def list_future_execution_plans(
+    time_range: str = '1d',
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    query: Optional[str] = None,
+    user=require_role("Viewer"),
+):
+    """
+    计算未来一段时间内所有已启用作业（包括一次性和周期性 Cron 作业）的执行排班。
+    """
+    now = datetime.now()
+    if start_time:
+        try:
+            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            if start_dt.tzinfo:
+                start_dt = start_dt.astimezone().replace(tzinfo=None)
+        except Exception:
+            start_dt = now
+    else:
+        start_dt = now
+
+    if time_range == '1h':
+        end_dt = start_dt + timedelta(hours=1)
+    elif time_range == '4h':
+        end_dt = start_dt + timedelta(hours=4)
+    elif time_range == '12h':
+        end_dt = start_dt + timedelta(hours=12)
+    elif time_range == '1d':
+        end_dt = start_dt + timedelta(days=1)
+    elif time_range == '3d':
+        end_dt = start_dt + timedelta(days=3)
+    elif time_range == 'custom' and end_time:
+        try:
+            end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            if end_dt.tzinfo:
+                end_dt = end_dt.astimezone().replace(tzinfo=None)
+        except Exception:
+            end_dt = start_dt + timedelta(days=1)
+    else:
+        end_dt = start_dt + timedelta(days=1)
+
+    conn = get_db_connection()
+    try:
+        sql = "SELECT * FROM scheduled_jobs WHERE enabled = 1"
+        params = []
+        if query:
+            sql += " AND name LIKE ?"
+            params.append(f"%{query}%")
+        
+        jobs = conn.execute(sql, tuple(params)).fetchall()
+        
+        future_runs = []
+        for job in jobs:
+            job_dict = _format_job_row(job)
+            if job['job_type'] == 'once':
+                if job['scheduled_at']:
+                    try:
+                        run_dt = datetime.fromisoformat(job['scheduled_at'])
+                        if start_dt <= run_dt <= end_dt:
+                            run_item = dict(job_dict)
+                            run_item['job_id'] = job['id']
+                            run_item['run_at'] = run_dt.isoformat()
+                            future_runs.append(run_item)
+                    except Exception:
+                        pass
+            elif job['job_type'] == 'cron':
+                if job['cron_expr']:
+                    try:
+                        from croniter import croniter
+                        expr = job['cron_expr'].strip()
+                        parts = expr.split()
+                        if len(parts) > 5:
+                            expr = " ".join(parts[:5])
+                        
+                        iter = croniter(expr, start_dt)
+                        count = 0
+                        while count < 100:
+                            next_run = iter.get_next(datetime)
+                            if next_run > end_dt:
+                                break
+                            run_item = dict(job_dict)
+                            run_item['job_id'] = job['id']
+                            run_item['run_at'] = next_run.isoformat()
+                            future_runs.append(run_item)
+                            count += 1
+                    except Exception as e:
+                        logger.error(f"Error parsing cron expression '{job['cron_expr']}' for job '{job['name']}': {e}")
+                        pass
+        
+        future_runs.sort(key=lambda x: x['run_at'])
+        return {
+            'success': True,
+            'data': future_runs
+        }
+    finally:
+        conn.close()
+
+
 # ── Create ──
 
 @router.post("/scheduled-jobs")
@@ -254,6 +363,8 @@ def create_scheduled_job(
     device_scope = payload.get("device_scope", "all")
     device_filter = (payload.get("device_filter") or "").strip()
     commands = (payload.get("commands") or "").strip()
+    if action_type == "inspection" and payload.get("check_items"):
+        commands = ",".join(payload.get("check_items"))
     script_id = (payload.get("script_id") or "").strip()
     is_config = 1 if payload.get("is_config") else 0
     config_reason = (payload.get("config_reason") or "").strip()
@@ -457,7 +568,7 @@ def get_scheduled_job(
         row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="作业不存在")
-        return {"success": True, "data": dict(row)}
+        return {"success": True, "data": _format_job_row(row)}
     finally:
         conn.close()
 
@@ -492,6 +603,8 @@ def update_scheduled_job(
         config_reason = (payload.get("config_reason") or "").strip()
         new_script_id = (payload.get("script_id") or "").strip() if "script_id" in payload else None
         new_commands = (payload.get("commands") or "").strip() if "commands" in payload else None
+        if action_type == "inspection" and "check_items" in payload:
+            new_commands = ",".join(payload.get("check_items") or [])
         new_use_admin_creds = (1 if payload.get("use_admin_creds") else 0) if "use_admin_creds" in payload else None
 
         if not name:

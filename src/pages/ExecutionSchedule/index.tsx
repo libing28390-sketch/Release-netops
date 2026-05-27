@@ -64,6 +64,19 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [inspRunTotal, setInspRunTotal] = useState(0);
   const [inspSubTab, setInspSubTab] = useState<InspSubTab>(initialTab || 'schedules');
 
+  // Future projections filter states
+  const [timeRange, setTimeRange] = useState<'1h' | '4h' | '12h' | '1d' | '3d' | 'custom'>('1d');
+  const [nameFilterInput, setNameFilterInput] = useState('');
+  const [searchName, setSearchName] = useState('');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [allFutureSchedules, setAllFutureSchedules] = useState<ScheduledJob[]>([]);
+
+  const paginatedSchedules = useMemo(() => {
+    const start = (inspSchedulePage - 1) * inspSchedulePageSize;
+    return allFutureSchedules.slice(start, start + inspSchedulePageSize);
+  }, [allFutureSchedules, inspSchedulePage, inspSchedulePageSize]);
+
   // Unified execution history states
   const [unifiedLogs, setUnifiedLogs] = useState<UnifiedExecutionLog[]>([]);
   const [executionTypeFilter, setExecutionTypeFilter] = useState<'all' | 'manual' | 'plan' | 'job'>('all');
@@ -122,17 +135,29 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const fetchInspSchedules = useCallback(async () => {
     setInspSchedulesLoading(true);
     try {
-      const offset = (inspSchedulePage - 1) * inspSchedulePageSize;
-      const r = await fetch(`/api/scheduled-jobs?job_type=once&limit=${inspSchedulePageSize}&offset=${offset}`, { headers: authHeaders });
+      const params = new URLSearchParams();
+      params.append('time_range', timeRange);
+      if (searchName.trim()) {
+        params.append('query', searchName.trim());
+      }
+      if (timeRange === 'custom') {
+        if (customStart) {
+          params.append('start_time', new Date(customStart).toISOString());
+        }
+        if (customEnd) {
+          params.append('end_time', new Date(customEnd).toISOString());
+        }
+      }
+      const r = await fetch(`/api/scheduled-jobs/future?${params.toString()}`, { headers: authHeaders });
       if (r.ok) {
         const j = await r.json();
-        const d = j.data || {};
-        setInspSchedules(d.items || []);
-        setInspScheduleTotal(d.total || 0);
+        const items = j.data || [];
+        setAllFutureSchedules(items);
+        setInspScheduleTotal(items.length);
       }
     } catch { /* ignore */ }
     finally { setInspSchedulesLoading(false); }
-  }, [authHeaders, inspSchedulePage, inspSchedulePageSize]);
+  }, [authHeaders, timeRange, searchName, customStart, customEnd]);
 
   const fetchScripts = useCallback(async () => {
     if (!authHeaders) return;
@@ -495,12 +520,27 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   }, [initialTab]);
 
   useEffect(() => {
-    fetchInspSchedules();
-    if (inspSubTab === 'history') {
+    if (inspSubTab === 'schedules') {
+      fetchInspSchedules();
+    } else if (inspSubTab === 'history') {
       fetchInspRuns();
     }
+  }, [inspSubTab, fetchInspSchedules, fetchInspRuns]);
+
+  useEffect(() => {
     fetchInspectionItems();
-  }, [inspSubTab, fetchInspSchedules, fetchInspRuns, fetchInspectionItems]);
+  }, [fetchInspectionItems]);
+
+  useEffect(() => {
+    setInspSchedulePage(1);
+  }, [timeRange, searchName, customStart, customEnd]);
+
+  useEffect(() => {
+    const totalPages = Math.ceil(allFutureSchedules.length / inspSchedulePageSize);
+    if (inspSchedulePage > totalPages && totalPages > 0) {
+      setInspSchedulePage(1);
+    }
+  }, [allFutureSchedules.length, inspSchedulePageSize, inspSchedulePage]);
 
   const fetchApprovers = useCallback(async () => {
     try {
@@ -733,26 +773,6 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
-        {/* Sub-tab navigation */}
-        <div className="flex border-b border-slate-200">
-          <button
-            onClick={() => setInspSubTab('schedules')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              inspSubTab === 'schedules' ? 'border-cyan-500 text-cyan-600' : 'border-transparent text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {zh ? '执行计划' : 'Schedules'}
-          </button>
-          <button
-            onClick={() => setInspSubTab('history')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              inspSubTab === 'history' ? 'border-cyan-500 text-cyan-600' : 'border-transparent text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {zh ? '执行历史' : 'History'}
-          </button>
-        </div>
-
         {/* Schedules sub-tab */}
         {inspSubTab === 'schedules' && (
           <div className="space-y-4">
@@ -795,24 +815,130 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
                 onCancel={() => setShowAddInspSchedule(false)}
               />
             ) : (
-              <ScheduleList
-                zh={zh}
-                language={language}
-                schedules={inspSchedules}
-                loading={inspSchedulesLoading}
-                total={inspScheduleTotal}
-                page={inspSchedulePage}
-                pageSize={inspSchedulePageSize}
-                onPageChange={setInspSchedulePage}
-                onPageSizeChange={setInspSchedulePageSize}
-                onSelect={(sch) => {
-                  setSelectedSchedule(sch);
-                  setShowScheduleDetail(true);
-                }}
-                onToggleEnabled={toggleInspScheduleEnabled}
-                onDelete={deleteInspSchedule}
-                availableScripts={availableScripts}
-              />
+              <>
+                {/* Future Run projections filter bar */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-2xl border border-black/5 bg-white shadow-sm">
+                  <div className="flex flex-wrap items-center gap-3">
+                    {/* Name search */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder={zh ? '搜索计划名称...' : 'Search by name...'}
+                        value={nameFilterInput}
+                        onChange={(e) => setNameFilterInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            setSearchName(nameFilterInput);
+                          }
+                        }}
+                        className="px-3 py-1.5 w-44 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-cyan-500 transition-all font-medium placeholder-slate-400 text-[#1e293b]"
+                      />
+                    </div>
+
+                    {/* Time range buttons */}
+                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                      {(['1h', '4h', '12h', '1d', '3d', 'custom'] as const).map((r) => (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => {
+                            setTimeRange(r);
+                            if (r !== 'custom') {
+                              setCustomStart('');
+                              setCustomEnd('');
+                            }
+                          }}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                            timeRange === r
+                              ? 'bg-white text-cyan-600 shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          {r === '1h' ? (zh ? '1小时' : '1 Hour') :
+                           r === '4h' ? (zh ? '4小时' : '4 Hours') :
+                           r === '12h' ? (zh ? '12小时' : '12 Hours') :
+                           r === '1d' ? (zh ? '1天' : '1 Day') :
+                           r === '3d' ? (zh ? '3天' : '3 Days') :
+                           (zh ? '自定义' : 'Custom')}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Custom time picker */}
+                    {timeRange === 'custom' && (
+                      <div className="flex items-center gap-2 animate-fadeIn">
+                        <input
+                          type="datetime-local"
+                          value={customStart}
+                          onChange={(e) => setCustomStart(e.target.value)}
+                          className="px-2 py-1 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-[#1e293b]"
+                        />
+                        <span className="text-slate-400 text-xs">—</span>
+                        <input
+                          type="datetime-local"
+                          value={customEnd}
+                          onChange={(e) => setCustomEnd(e.target.value)}
+                          className="px-2 py-1 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-[#1e293b]"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setSearchName(nameFilterInput)}
+                      className="px-4 py-1.5 rounded-xl text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 transition-all active:scale-[0.97]"
+                    >
+                      {zh ? '查询' : 'Query'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setNameFilterInput('');
+                        setSearchName('');
+                        setTimeRange('1d');
+                        setCustomStart('');
+                        setCustomEnd('');
+                      }}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-200 text-slate-500 hover:bg-slate-50 transition-all active:scale-[0.97]"
+                    >
+                      {zh ? '重置' : 'Reset'}
+                    </button>
+                  </div>
+                </div>
+
+                <ScheduleList
+                  zh={zh}
+                  language={language}
+                  schedules={paginatedSchedules}
+                  loading={inspSchedulesLoading}
+                  total={inspScheduleTotal}
+                  page={inspSchedulePage}
+                  pageSize={inspSchedulePageSize}
+                  onPageChange={setInspSchedulePage}
+                  onPageSizeChange={(size) => {
+                    setInspSchedulePageSize(size);
+                    setInspSchedulePage(1);
+                  }}
+                  onSelect={async (sch) => {
+                    try {
+                      const idToFetch = sch.job_id || sch.id;
+                      const r = await fetch(`/api/scheduled-jobs/${idToFetch}`, { headers: authHeaders });
+                      if (r.ok) {
+                        const json = await r.json();
+                        if (json.success) {
+                          setSelectedSchedule(json.data);
+                          setShowScheduleDetail(true);
+                        }
+                      }
+                    } catch (e) {
+                      console.error(e);
+                    }
+                  }}
+                  onToggleEnabled={toggleInspScheduleEnabled}
+                  onDelete={deleteInspSchedule}
+                  availableScripts={availableScripts}
+                />
+              </>
             )}
           </div>
         )}

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Plus, X, Trash2, Edit3, Shield, Search, User, FileCode, Terminal, Layout, Maximize2, XCircle, Wand2, ChevronDown, CheckCircle2, MessageSquare, AlertCircle, SearchCode
+  Plus, X, Trash2, Edit3, Shield, Search, User, FileCode, Terminal, Layout, Maximize2, XCircle, Wand2, ChevronDown, CheckCircle2, MessageSquare, AlertCircle, SearchCode, Copy
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
@@ -237,6 +237,25 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                           </span>
                        </div>
                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                          <button
+                            onClick={() => {
+                              setModalMode('create');
+                              setEditForm({
+                                ...script,
+                                id: `${script.id}_copy`,
+                                name: zh ? `${script.name} - 副本` : `${script.name} (Copy)`,
+                                status: 'draft',
+                                submitter_name: currentUser,
+                                approver_username: '',
+                                rejected_reason: '',
+                              });
+                              setIsModalOpen(true);
+                            }}
+                            className="p-2 text-slate-400 hover:text-[#00a9ce]"
+                            title={zh ? '克隆/复制为自定义脚本' : 'Clone/Copy as custom script'}
+                          >
+                            <Copy size={15} />
+                          </button>
                           <button onClick={() => { setModalMode('edit'); setEditForm(script); setIsModalOpen(true); }} className="p-2 text-slate-400 hover:text-[#00a9ce]"><Edit3 size={15} /></button>
                           <button onClick={() => { if(window.confirm(zh?'删除？':'Delete?')) fetch(`/api/scripts/${script.id}`, {method:'DELETE', headers:getHeaders()}).then(fetchScripts) }} className="p-2 text-slate-400 hover:text-red-500"><Trash2 size={15} /></button>
                        </div>

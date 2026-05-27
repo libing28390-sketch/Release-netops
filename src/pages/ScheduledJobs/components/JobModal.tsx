@@ -37,7 +37,7 @@ interface JobModalProps {
   setScriptSearch: (val: string) => void;
   showScriptDropdown: boolean;
   setShowScriptDropdown: (val: boolean) => void;
-  availableScripts: Array<{ id: string; name: string; status: string; category: string }>;
+  availableScripts: Array<{ id: string; name: string; status: string; category: string; platform?: string }>;
   fetchScripts: () => void;
   approverUsername: string;
   setApproverUsername: (val: string) => void;
@@ -95,6 +95,22 @@ export const JobModal: React.FC<JobModalProps> = ({
   language,
 }) => {
   const zh = language === 'zh';
+
+  const [inspSource, setInspSource] = React.useState<'default' | 'script' | 'custom'>('default');
+
+  React.useEffect(() => {
+    if (isOpen && form.action_type === 'inspection') {
+      if (form.script_id) {
+        setInspSource('script');
+        const current = (availableScripts || []).find(s => s.id === form.script_id);
+        if (current) setScriptSearch(current.name);
+      } else if (form.commands) {
+        setInspSource('custom');
+      } else {
+        setInspSource('default');
+      }
+    }
+  }, [isOpen, form.action_type, form.script_id, form.commands, availableScripts, setScriptSearch]);
 
   if (!isOpen) return null;
 
@@ -198,88 +214,238 @@ export const JobModal: React.FC<JobModalProps> = ({
                 </div>
               </div>
 
-              {form.action_type === 'script_run' && (
-                <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="relative">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#00a9ce] block mb-1.5">{zh ? '关联已发布脚本' : 'ASSOCIATED SCRIPT'}</label>
-                  <div className="relative">
-                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                    <input
-                      type="text"
-                      placeholder={zh ? "输入名称搜索所有脚本..." : "Type to search all scripts..."}
-                      value={scriptSearch}
-                      onFocus={() => {
-                        setShowScriptDropdown(true);
-                        if (!scriptSearch) {
-                          const current = (availableScripts || []).find(s => s.id === form.script_id);
-                          if (current) setScriptSearch(current.name);
-                        }
-                      }}
-                      onChange={(e) => { setScriptSearch(e.target.value); setShowScriptDropdown(true); }}
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all placeholder:text-black/20"
-                    />
+              {form.action_type === 'inspection' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '智能巡检配置来源' : 'Inspection Source'}</label>
+                    <div className="p-1 bg-slate-100 rounded-xl border border-black/[0.06] flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInspSource('default');
+                          setForm(f => ({ ...f, script_id: '', commands: '' }));
+                        }}
+                        className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                          inspSource === 'default'
+                            ? 'bg-white shadow-sm text-cyan-700 border border-cyan-100/30'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        {zh ? '全量默认指标' : 'Built-in Defaults'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInspSource('script');
+                          setForm(f => ({ ...f, commands: '' }));
+                        }}
+                        className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                          inspSource === 'script'
+                            ? 'bg-white shadow-sm text-cyan-700 border border-cyan-100/30'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        {zh ? '关联巡检脚本' : 'Bound Script'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInspSource('custom');
+                          setForm(f => ({ ...f, script_id: '' }));
+                        }}
+                        className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                          inspSource === 'custom'
+                            ? 'bg-white shadow-sm text-cyan-700 border border-cyan-100/30'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        {zh ? '手动指标列表' : 'Metric List'}
+                      </button>
+                    </div>
                   </div>
 
-                  <AnimatePresence>
-                    {showScriptDropdown && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -5 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -5 }}
-                        className="absolute z-[60] left-0 right-0 mt-2 bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl shadow-xl max-h-48 overflow-y-auto custom-scrollbar"
-                      >
-                        {(() => {
-                          const filtered = (availableScripts || []).filter(s => {
-                            const searchVal = scriptSearch.toLowerCase();
-                            return s.name.toLowerCase().includes(searchVal);
-                          });
+                  {inspSource === 'default' && (
+                    <div className="text-[11px] text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed">
+                      {zh ? '系统将自动启用全量内置的 CPU、内存、环境温度、电源风扇及接口状态等指标，自动进行多厂商设备的综合巡检打分。' : 'System will automatically execute all default CPU, memory, environment, PSU/Fan, and interface metrics for multi-vendor devices.'}
+                    </div>
+                  )}
 
-                          if (filtered.length === 0) {
-                            return <div className="p-8 text-center text-slate-400 text-[11px] italic">{zh ? '未找到匹配的脚本' : 'No matching scripts found'}</div>;
-                          }
+                  {inspSource === 'script' && (
+                    <div className="relative">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#00a9ce] block mb-1.5">{zh ? '关联巡检脚本' : 'ASSOCIATED INSPECTION SCRIPT'}</label>
+                      <div className="relative">
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                        <input
+                          type="text"
+                          placeholder={zh ? "输入名称搜索巡检脚本..." : "Type to search inspection scripts..."}
+                          value={scriptSearch}
+                          onFocus={() => {
+                            setShowScriptDropdown(true);
+                            if (!scriptSearch) {
+                              const current = (availableScripts || []).find(s => s.id === form.script_id);
+                              if (current) setScriptSearch(current.name);
+                            }
+                          }}
+                          onChange={(e) => { setScriptSearch(e.target.value); setShowScriptDropdown(true); }}
+                          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all placeholder:text-black/20"
+                        />
+                      </div>
 
-                          return filtered.map(s => {
-                            const isSelected = form.script_id === s.id;
-                            const isTestScript = s.name.toLowerCase().includes('test');
-                            const displayName = isTestScript 
-                              ? `${zh ? '【测试示例】' : '[Test Example] '}${s.name.replace('test-script-', '')}`
-                              : s.name;
+                      <AnimatePresence>
+                        {showScriptDropdown && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -5 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -5 }}
+                            className="absolute z-[60] left-0 right-0 mt-2 bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl shadow-xl max-h-48 overflow-y-auto custom-scrollbar"
+                          >
+                            {(() => {
+                              const filtered = (availableScripts || []).filter(s => {
+                                const searchVal = scriptSearch.toLowerCase();
+                                return s.name.toLowerCase().includes(searchVal) && s.category === 'inspection';
+                              });
 
-                            return (
-                              <div
-                                key={s.id}
-                                onClick={() => {
-                                  setForm(f => ({ ...f, script_id: s.id }));
-                                  setScriptSearch(s.name);
-                                  setShowScriptDropdown(false);
-                                }}
-                                className={`px-5 py-3 text-[12px] cursor-pointer hover:bg-slate-50 transition-all flex items-center justify-between border-b border-slate-100 last:border-0 ${isSelected ? 'bg-cyan-50 text-cyan-700 font-bold' : 'text-slate-600'}`}
-                              >
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="flex items-center gap-2">
-                                    <FileCode size={12} className={isTestScript ? 'text-amber-500' : 'text-cyan-500'} />
-                                    {displayName}
-                                  </span>
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <span className={`text-[8px] px-1.5 py-0.5 rounded uppercase tracking-wider ${s.category === 'inspection' ? 'bg-emerald-500/10 text-emerald-500' : s.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-slate-500/10 text-slate-500'}`}>
-                                      {s.category === 'inspection' ? (zh ? '巡检/采集' : 'INSPECTION') :
-                                       s.category === 'change' ? (zh ? '自动化变更' : 'CHANGE') : (zh ? '未分类' : 'UNCATEGORIZED')}
+                              if (filtered.length === 0) {
+                                return <div className="p-8 text-center text-slate-400 text-[11px] italic">{zh ? '未找到匹配的巡检脚本' : 'No matching inspection scripts found'}</div>;
+                              }
+
+                              return filtered.map(s => {
+                                const isSelected = form.script_id === s.id;
+                                return (
+                                  <div
+                                    key={s.id}
+                                    onClick={() => {
+                                      setForm(f => ({ ...f, script_id: s.id }));
+                                      setScriptSearch(s.name);
+                                      setShowScriptDropdown(false);
+                                    }}
+                                    className={`px-5 py-3 text-[12px] cursor-pointer hover:bg-slate-50 transition-all flex items-center justify-between border-b border-slate-100 last:border-0 ${isSelected ? 'bg-cyan-50 text-cyan-700 font-bold' : 'text-slate-600'}`}
+                                  >
+                                    <span className="flex items-center gap-2">
+                                      <FileCode size={12} className="text-emerald-500" />
+                                      {s.name}
                                     </span>
-                                    {isTestScript && (
-                                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-bold tracking-wider">
-                                        {zh ? '测试脚本' : 'TEST'}
-                                      </span>
-                                    )}
+                                    <span className="text-[9px] text-slate-400 font-mono">{s.platform}</span>
                                   </div>
+                                );
+                              });
+                            })()}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
+
+                  {inspSource === 'custom' && (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block">{zh ? '巡检指标列表 (每行一个)' : 'Inspection Metric Keys (one per line)'}</label>
+                      <textarea
+                        value={form.commands}
+                        onChange={e => setForm(f => ({ ...f, commands: e.target.value }))}
+                        rows={3}
+                        className="w-full px-3 py-2 rounded-xl border border-black/[0.08] text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all resize-none"
+                        placeholder={zh ? '输入指标名称，每行一个\nnet_cisco_cpu\nnet_cisco_mem' : 'Enter metric names, one per line\nnet_cisco_cpu\nnet_cisco_mem'}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {form.action_type === 'script_run' && (
+                <div className="space-y-3">
+                  <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="relative">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#00a9ce] block mb-1.5">{zh ? '关联已发布脚本' : 'ASSOCIATED SCRIPT'}</label>
+                    <div className="relative">
+                      <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                      <input
+                        type="text"
+                        placeholder={zh ? "输入名称搜索所有脚本..." : "Type to search all scripts..."}
+                        value={scriptSearch}
+                        onFocus={() => {
+                          setShowScriptDropdown(true);
+                          if (!scriptSearch) {
+                            const current = (availableScripts || []).find(s => s.id === form.script_id);
+                            if (current) setScriptSearch(current.name);
+                          }
+                        }}
+                        onChange={(e) => { setScriptSearch(e.target.value); setShowScriptDropdown(true); }}
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all placeholder:text-black/20"
+                      />
+                    </div>
+
+                    <AnimatePresence>
+                      {showScriptDropdown && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -5 }}
+                          className="absolute z-[60] left-0 right-0 mt-2 bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl shadow-xl max-h-48 overflow-y-auto custom-scrollbar"
+                        >
+                          {(() => {
+                            const filtered = (availableScripts || []).filter(s => {
+                              const searchVal = scriptSearch.toLowerCase();
+                              return s.name.toLowerCase().includes(searchVal) && s.category !== 'inspection';
+                            });
+
+                            if (filtered.length === 0) {
+                              return <div className="p-8 text-center text-slate-400 text-[11px] italic">{zh ? '未找到匹配的脚本' : 'No matching scripts found'}</div>;
+                            }
+
+                            return filtered.map(s => {
+                              const isSelected = form.script_id === s.id;
+                              const isTestScript = s.name.toLowerCase().includes('test');
+                              const displayName = isTestScript 
+                                ? `${zh ? '【测试示例】' : '[Test Example] '}${s.name.replace('test-script-', '')}`
+                                : s.name;
+
+                              return (
+                                <div
+                                  key={s.id}
+                                  onClick={() => {
+                                    setForm(f => ({ ...f, script_id: s.id }));
+                                    setScriptSearch(s.name);
+                                    setShowScriptDropdown(false);
+                                  }}
+                                  className={`px-5 py-3 text-[12px] cursor-pointer hover:bg-slate-50 transition-all flex items-center justify-between border-b border-slate-100 last:border-0 ${isSelected ? 'bg-cyan-50 text-cyan-700 font-bold' : 'text-slate-600'}`}
+                                >
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="flex items-center gap-2">
+                                      <FileCode size={12} className={isTestScript ? 'text-amber-500' : 'text-cyan-500'} />
+                                      {displayName}
+                                    </span>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      <span className={`text-[8px] px-1.5 py-0.5 rounded uppercase tracking-wider ${s.category === 'inspection' ? 'bg-emerald-500/10 text-emerald-500' : s.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-slate-500/10 text-slate-500'}`}>
+                                        {s.category === 'inspection' ? (zh ? '巡检/采集' : 'INSPECTION') :
+                                         s.category === 'change' ? (zh ? '自动化变更' : 'CHANGE') : (zh ? '未分类' : 'UNCATEGORIZED')}
+                                      </span>
+                                      {isTestScript && (
+                                        <span className="text-[8px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-bold tracking-wider">
+                                          {zh ? '测试脚本' : 'TEST'}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {isSelected && <CheckCircle2 size={14} className="text-cyan-600" />}
                                 </div>
-                                {isSelected && <CheckCircle2 size={14} className="text-cyan-600" />}
-                              </div>
-                            );
-                          });
-                        })()}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
+                              );
+                            });
+                          })()}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block">{zh ? '执行命令 (可选)' : 'Commands (Optional)'}</label>
+                    <textarea
+                      value={form.commands}
+                      onChange={e => setForm(f => ({ ...f, commands: e.target.value }))}
+                      rows={3}
+                      className="w-full px-3 py-2 rounded-xl border border-black/[0.08] text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all resize-none"
+                      placeholder={zh ? '输入设备命令，每行一个' : 'Enter commands, one per line'}
+                    />
+                  </div>
+                </div>
               )}
 
               <div>
@@ -479,23 +645,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                 </div>
               </div>
 
-              {form.action_type !== 'backup' && (
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block">
-                    {form.action_type === 'inspection' ? (zh ? '巡检指标项' : 'Inspection Items') : (zh ? '执行命令 (可选)' : 'Commands (Optional)')}
-                  </label>
-                  <textarea
-                    value={form.commands}
-                    onChange={e => setForm(f => ({ ...f, commands: e.target.value }))}
-                    rows={3}
-                    className="w-full px-3 py-2 rounded-xl border border-black/[0.08] text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all resize-none"
-                    placeholder={form.action_type === 'inspection'
-                      ? (zh ? '输入指标名称，每行一个\nnet_cisco_cpu\nnet_cisco_mem' : 'Enter metric names, one per line\nnet_cisco_cpu\nnet_cisco_mem')
-                      : (zh ? '输入设备命令，每行一个' : 'Enter commands, one per line')
-                    }
-                  />
-                </div>
-              )}
+              {/* Removed command textarea here as it is moved above Device Scope inside script_run / inspection specific conditional panels */}
 
               {/* Execution User / Role Level */}
               <div className="space-y-2 pt-1">

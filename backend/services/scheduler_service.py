@@ -27,9 +27,10 @@ async def run_scheduled_automation_job(job_id: str):
     """
     conn = get_db_connection()
     try:
-        job = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
-        if not job or not job['enabled']:
+        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
+        if not row or not row['enabled']:
             return
+        job = dict(row)
 
         # 1. 确定设备范围
         device_ids = []
@@ -61,9 +62,13 @@ async def run_scheduled_automation_job(job_id: str):
         if job['action_type'] == 'inspection':
             logger.info(f"Diverting scheduled job {job_id} ({job['name']}) to inspection engine.")
             
-            # Parse check items from commands field (comma-separated or newline-separated)
+            # Parse check items from commands field (comma-separated or newline-separated) or script
             custom_check_items = None
-            if job['commands']:
+            if job.get('script_id'):
+                script_row = conn.execute("SELECT content FROM scripts WHERE id = ?", (job['script_id'],)).fetchone()
+                if script_row and script_row['content']:
+                    custom_check_items = [c.strip() for c in script_row['content'].split('\n') if c.strip()]
+            elif job['commands']:
                 custom_check_items = [c.strip() for c in re.split(r'[,\n]', job['commands']) if c.strip()]
             
             # NOTE: schedule_id must be None here.
@@ -446,8 +451,20 @@ def sync_scheduler_jobs(scheduler):
                 except Exception as e:
                     logger.error(f"Failed to schedule job {job['name']}: {e}")
             elif job['job_type'] == 'once' and job['scheduled_at']:
-                # 单次任务处理逻辑 (可选实现)
-                pass
+                try:
+                    run_dt = datetime.fromisoformat(job['scheduled_at'])
+                    if run_dt > datetime.now():
+                        scheduler.add_job(
+                            run_scheduled_automation_job_sync_wrapper,
+                            'date',
+                            run_date=run_dt,
+                            id=f"dyn_{job_id}",
+                            args=[job_id],
+                            replace_existing=True
+                        )
+                        logger.info(f"Scheduled one-time job: {job['name']} at {job['scheduled_at']}")
+                except Exception as e:
+                    logger.error(f"Failed to schedule one-time job {job['name']}: {e}")
     finally:
         conn.close()
 

@@ -1605,6 +1605,8 @@ def _init_db_logic(conn):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_status ON scheduled_jobs(status)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_enabled ON scheduled_jobs(enabled)')
 
+    ensure_column('scheduled_jobs', 'use_admin_creds', 'INTEGER DEFAULT 0')
+
     # Tag System
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS tag_definitions (

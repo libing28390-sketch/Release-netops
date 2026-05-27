@@ -80,7 +80,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [enablingJobId, setEnablingJobId] = useState<string | null>(null);
 
   // Script selection
-  const [availableScripts, setAvailableScripts] = useState<{ id: string; name: string; status: string; category: string }[]>([]);
+  const [availableScripts, setAvailableScripts] = useState<{ id: string; name: string; status: string; category: string; platform?: string }[]>([]);
   const [scriptSearch, setScriptSearch] = useState('');
   const [showScriptDropdown, setShowScriptDropdown] = useState(false);
 
@@ -179,12 +179,12 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   useEffect(() => { fetchSystemJobs(); }, [fetchSystemJobs]);
   useEffect(() => {
     if (showAddJob) fetchApprovers();
-    if ((showAddJob || detailJob) && (form.action_type === 'script_run' || detailJob?.action_type === 'script_run')) fetchScripts();
+    if ((showAddJob || detailJob) && (form.action_type === 'script_run' || form.action_type === 'inspection' || detailJob?.action_type === 'script_run' || detailJob?.action_type === 'inspection')) fetchScripts();
   }, [showAddJob, detailJob, isEditMode, fetchApprovers, fetchScripts, form.action_type]);
 
-  // Auto-load script content when detail modal opens for a script_run job
+  // Auto-load script content when detail modal opens for a script_run or inspection job
   useEffect(() => {
-    if (detailJob && detailJob.action_type === 'script_run' && detailJob.script_id) {
+    if (detailJob && (detailJob.action_type === 'script_run' || detailJob.action_type === 'inspection') && detailJob.script_id) {
       void fetchAndShowScriptDetail(detailJob.script_id);
     } else if (!detailJob) {
       setViewingScript(null);
@@ -245,7 +245,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       is_config: !!job.is_config,
       config_reason: job.config_reason || '',
       use_admin_creds: !!job.use_admin_creds,
-      major_type: job.action_type === 'backup' ? 'collection' : 'change',
+      major_type: (job.action_type === 'backup' || job.action_type === 'inspection') ? 'collection' : 'change',
     });
     if (job.device_scope === 'tag') {
       setTagFilter(parseTagFilter(job.device_filter));
@@ -1072,7 +1072,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                   {scopeDesc}
                                 </span>
 
-                                {job.action_type === 'script_run' && job.script_id && (
+                                {(job.action_type === 'script_run' || job.action_type === 'inspection') && job.script_id && (
                                   <>
                                     <span className="text-slate-300">·</span>
                                     <span className="flex items-center gap-1 text-[#00a9ce] font-bold bg-cyan-50 px-2 py-0.5 rounded border border-cyan-100">

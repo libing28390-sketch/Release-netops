@@ -607,7 +607,7 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
     return snmp_metrics, snmp_interfaces
 
 
-def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: list[dict], use_admin_creds: bool = False) -> dict[str, Any]:
+def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: list[dict], use_admin_creds: bool = False, check_items: list[str] | None = None) -> dict[str, Any]:
     """
     网络设备巡检：支持 SNMP 性能指标采集 + SSH/CLI 协议/合规指标采集。
     """
@@ -686,9 +686,9 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             result['interface_up'] = sum(1 for i in snmp_interfaces if str(i.get('status', '')).lower() in ('up', '1'))
             result['interface_down'] = result['interface_total'] - result['interface_up']
 
-    # 2b. SSH/CLI 采集（仅在有 CLI 指标时执行）
+    # 2b. SSH/CLI 采集（仅在有 CLI 指标或自定义 check_items 时执行）
     raw_outputs: dict[str, str] = {}
-    if cli_items:
+    if cli_items or check_items:
         mgmt_port = int(device.get('management_port') or 22)
         ssh_check = _check_ssh(ip, port=mgmt_port, timeout=3)
         if not ssh_check.get('success'):
@@ -710,7 +710,15 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             cli_items = []  # 清空 CLI 指标，不再尝试 SSH 采集
         else:
             # 3. 收集所有需要的命令（去重）
-            commands_needed = sorted({item.get('command') or '' for item in cli_items if item.get('command')})
+            commands_set = {item.get('command') or '' for item in cli_items if item.get('command')}
+            if check_items:
+                matched_cmds_and_keys = {item.get('command') for item in inspection_items} | {item.get('check_key') for item in inspection_items}
+                for ci in check_items:
+                    ci_clean = ci.strip()
+                    if ci_clean and ci_clean not in matched_cmds_and_keys:
+                        commands_set.add(ci_clean)
+
+            commands_needed = sorted(list(commands_set))
             if commands_needed:
                 # 如果有任何单个指标要求特权，则开启特权
                 if any(item.get('use_admin_creds', 0) == 1 for item in cli_items):
@@ -1006,6 +1014,15 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
     finally:
         conn.close()
 
+    # Filter matched_items if check_items is specified
+    if check_items:
+        norm_checks = {c.strip().lower() for c in check_items if c.strip()}
+        matched_items = [
+            it for it in matched_items
+            if (it.get('check_key') or '').strip().lower() in norm_checks
+            or (it.get('command') or '').strip().lower() in norm_checks
+        ]
+
     if any(it.get('use_admin_creds', 0) == 1 for it in matched_items):
         use_admin_creds = True
 
@@ -1020,10 +1037,10 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
         cli_items = [it for it in matched_items if (it.get('method') or '').upper() == 'CLI']
         snmp_items = [it for it in matched_items if (it.get('method') or '').upper() == 'SNMP']
         all_items = cli_items + snmp_items
-        return _inspect_network_device(device, alert_stats, all_items, use_admin_creds)
+        return _inspect_network_device(device, alert_stats, all_items, use_admin_creds, check_items)
 
     if is_server:
-        # 只选 Shell 方式的指标（原有逻辑）
+        # 只选 Shell 方式 of 指标（原有逻辑）
         shell_items = [it for it in matched_items if (it.get('method') or '') == 'Shell']
         return _inspect_server_device(device, alert_stats, shell_items)
 
@@ -1410,6 +1427,30 @@ def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, An
 # 查询 API
 # ──────────────────────────────────────────────
 
+def _enrich_run_name(conn, run_dict: dict[str, Any]) -> dict[str, Any]:
+    schedule_id = run_dict.get('schedule_id')
+    created_by = run_dict.get('created_by') or ''
+    name = None
+
+    try:
+        if schedule_id:
+            row = conn.execute('SELECT name FROM inspection_schedules WHERE id = ?', (schedule_id,)).fetchone()
+            if row:
+                name = row['name']
+        elif created_by.startswith('scheduler:'):
+            job_id = created_by.split(':', 1)[1]
+            row = conn.execute('SELECT name FROM scheduled_jobs WHERE id = ?', (job_id,)).fetchone()
+            if row:
+                name = row['name']
+    except Exception as e:
+        logger.warning(f"Error enriching run name for run {run_dict.get('id')}: {e}")
+
+    if name:
+        run_dict['schedule_name'] = name
+        run_dict['name'] = name
+    return run_dict
+
+
 def get_inspection_runs(limit: int = 20, offset: int = 0) -> dict[str, Any]:
     conn = get_db_connection()
     try:
@@ -1418,9 +1459,16 @@ def get_inspection_runs(limit: int = 20, offset: int = 0) -> dict[str, Any]:
             'SELECT * FROM inspection_runs ORDER BY started_at DESC LIMIT ? OFFSET ?',
             (limit, offset),
         ).fetchall()
+        
+        items = []
+        for r in rows:
+            rd = dict(r)
+            _enrich_run_name(conn, rd)
+            items.append(rd)
+
         return {
             'total': total,
-            'items': [dict(r) for r in rows],
+            'items': items,
         }
     finally:
         conn.close()
@@ -1437,6 +1485,7 @@ def get_inspection_run_detail(run_id: str) -> dict[str, Any] | None:
             (run_id,),
         ).fetchall()
         run_dict = dict(run)
+        _enrich_run_name(conn, run_dict)
         run_dict['results'] = [dict(r) for r in results]
         return run_dict
     finally:

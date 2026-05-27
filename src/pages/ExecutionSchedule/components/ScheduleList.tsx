@@ -66,7 +66,7 @@ const ScheduleList: React.FC<ScheduleListProps> = ({
               
               return (
                 <motion.div
-                  key={sch.id}
+                  key={`${sch.job_id || sch.id}-${sch.run_at || sch.scheduled_at}`}
                   layout
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -127,7 +127,7 @@ const ScheduleList: React.FC<ScheduleListProps> = ({
                       <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500 flex-wrap">
                         <span className="flex items-center gap-1 font-mono font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                           <CalendarClock size={12} className="text-cyan-600" />
-                          {fmtDateTime(sch.scheduled_at, zh)}
+                          {fmtDateTime(sch.run_at || sch.scheduled_at, zh)}
                         </span>
                         <span className="text-slate-300">·</span>
                         <span className={`font-semibold ${isInsp ? 'text-emerald-700' : isBackup ? 'select-none text-indigo-700' : isScript ? 'text-amber-700' : 'text-slate-700'}`}>
@@ -167,7 +167,7 @@ const ScheduleList: React.FC<ScheduleListProps> = ({
                         <Activity size={16} />
                       </button>
                       <button
-                        onClick={() => onDelete(sch.id)}
+                        onClick={() => onDelete(sch.job_id || sch.id)}
                         className="p-2 rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all"
                         title={zh ? '删除' : 'Delete'}
                       >

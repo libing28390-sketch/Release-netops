@@ -10,7 +10,7 @@ interface JobDetailModalProps {
   detailJob: ScheduledJob | null;
   viewingScript: any;
   fetchAndShowScriptDetail: (scriptId: string) => Promise<void>;
-  availableScripts: Array<{ id: string; name: string; status: string; category: string }>;
+  availableScripts: Array<{ id: string; name: string; status: string; category: string; platform?: string }>;
   openEditModal: (job: ScheduledJob) => void;
   language: string;
 }
@@ -131,6 +131,7 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                     <FileText size={12} className="text-cyan-400" />
                     <span className="text-[11px] font-bold text-white/70">
                       {detailJob.action_type === 'backup' ? (zh ? '采集与巡检：核心配置备份' : 'Collection & Inspection: Config Backup') :
+                       detailJob.action_type === 'inspection' && !detailJob.script_id ? (zh ? '智能巡检（全部内置指标）' : 'Smart Inspection (All Built-in)') :
                        (availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id || (zh ? '操作内容' : 'Operation Content'))}
                     </span>
                     {detailJob.script_id && (
@@ -143,8 +144,9 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                     )}
                   </div>
                   <div className="text-[9px] font-bold text-cyan-400/60 uppercase tracking-widest">
-                    {detailJob.action_type === 'backup' ? (zh ? '采集' : 'BACKUP') : 
-                     detailJob.major_type === 'collection' ? (zh ? '巡检' : 'INSPECTION') : (zh ? '变更' : 'CHANGE')}
+                    {(detailJob.action_type === 'backup' || detailJob.action_type === 'inspection') ? (zh ? '采集' : 'COLLECTION') : 
+                     (detailJob.action_type === 'script_run' && availableScripts.find(s => s.id === detailJob.script_id)?.category === 'inspection') ? (zh ? '采集' : 'COLLECTION') :
+                     (zh ? '变更' : 'CHANGE')}
                   </div>
                 </div>
                 <div className="p-4 overflow-x-auto">
@@ -152,7 +154,11 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                     {detailJob.action_type === 'backup'
                       ? (zh ? '# 该作业为内置配置备份任务\n# 将自动采集设备 running-config 并进行版本比对' : '# This is a built-in config backup job.\n# It will collect running-config and track drifts.')
                       : detailJob.action_type === 'inspection'
-                        ? (zh ? '# 该作业为内置综合巡检\n# 将采集 interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf' : '# Built-in comprehensive inspection job.\n# Collects interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf')
+                        ? (detailJob.script_id && viewingScript?.id === detailJob.script_id && viewingScript?.content
+                           ? viewingScript.content
+                           : detailJob.script_id
+                             ? (zh ? `# 该作业为智能巡检（绑定脚本: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}）\n# 点击上方"查看脚本详情"查看完整内容` : `# Smart Inspection job bound to script: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}\n# Click "View Script" above to see full content`)
+                             : (zh ? '# 该作业为内置综合巡检\n# 将采集 interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf' : '# Built-in comprehensive inspection job.\n# Collects interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf'))
                         : detailJob.script_id && viewingScript?.id === detailJob.script_id && viewingScript?.content
                           ? viewingScript.content
                           : detailJob.commands

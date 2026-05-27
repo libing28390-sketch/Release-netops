@@ -26,6 +26,8 @@ export interface ScheduledJob {
   major_type?: string;
   check_items?: string[];
   description?: string;
+  job_id?: string;
+  run_at?: string;
 }
 
 export interface InspectionRun {
