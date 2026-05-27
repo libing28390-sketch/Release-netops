@@ -149,6 +149,27 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
     'Juniper': ['juniper_junos', 'juniper', 'Juniper'],
     'Arista': ['arista_eos', 'Arista'],
   };
+
+  // 平台选项：value 必须与后端/seed 中的 code 完全一致
+  const PLATFORM_OPTIONS: Array<{ value: string; zh: string; en: string }> = [
+    { value: 'Linux',          zh: 'Linux',              en: 'Linux' },
+    { value: 'cisco_ios',      zh: 'Cisco IOS / IOS-XE', en: 'Cisco IOS / IOS-XE' },
+    { value: 'cisco_nxos',     zh: 'Cisco NX-OS',        en: 'Cisco NX-OS' },
+    { value: 'cisco_xr',       zh: 'Cisco IOS-XR',       en: 'Cisco IOS-XR' },
+    { value: 'cisco_asa',      zh: 'Cisco ASA',          en: 'Cisco ASA' },
+    { value: 'huawei_vrp',     zh: '华为 VRPv5',         en: 'Huawei VRPv5' },
+    { value: 'huawei_vrpv8',   zh: '华为 VRPv8',         en: 'Huawei VRPv8' },
+    { value: 'h3c_comware',    zh: 'H3C Comware',        en: 'H3C Comware' },
+    { value: 'juniper_junos',  zh: 'Juniper JunOS',      en: 'Juniper JunOS' },
+    { value: 'arista_eos',     zh: 'Arista EOS',         en: 'Arista EOS' },
+  ];
+
+  // 脚本类型选项：cli = 网络设备命令行；shell/python = 主机执行脚本
+  const SCRIPT_TYPE_OPTIONS: Array<{ value: string; zh: string; en: string }> = [
+    { value: 'shell',  zh: 'Shell',          en: 'Shell' },
+    { value: 'python', zh: 'Python',         en: 'Python' },
+    { value: 'cli',    zh: 'CLI 网络命令行', en: 'CLI (Network)' },
+  ];
   const matchesPlatformGroup = (scriptPlatform: string, group: string): boolean => {
     if (group === 'All') return true;
     const codes = PLATFORM_GROUPS[group] || [group];
@@ -322,11 +343,26 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                       <div className="grid grid-cols-2 gap-3">
                          <div>
                             <label className={labelClass}>{zh ? '类型' : 'TYPE'}</label>
-                            <select disabled={isReadOnly} className={inputClass} value={editForm.script_type ?? 'shell'} onChange={e => setEditForm({...editForm, script_type: e.target.value})}><option value="shell">Shell</option><option value="python">Python</option></select>
+                            <select disabled={isReadOnly} className={inputClass} value={editForm.script_type ?? 'shell'} onChange={e => setEditForm({...editForm, script_type: e.target.value})}>
+                              {SCRIPT_TYPE_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}>{zh ? opt.zh : opt.en}</option>
+                              ))}
+                              {/* 兜底：如果当前值不在已知列表中，仍然渲染原值，避免被静默改写 */}
+                              {editForm.script_type && !SCRIPT_TYPE_OPTIONS.some(o => o.value === editForm.script_type) && (
+                                <option value={editForm.script_type}>{editForm.script_type}</option>
+                              )}
+                            </select>
                          </div>
                          <div>
                             <label className={labelClass}>{zh ? '平台' : 'OS'}</label>
-                            <select disabled={isReadOnly} className={inputClass} value={editForm.platform ?? 'Linux'} onChange={e => setEditForm({...editForm, platform: e.target.value})}>{['Linux', 'Cisco', 'Huawei'].map(p => <option key={p} value={p}>{p}</option>)}</select>
+                            <select disabled={isReadOnly} className={inputClass} value={editForm.platform ?? 'Linux'} onChange={e => setEditForm({...editForm, platform: e.target.value})}>
+                              {PLATFORM_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}>{zh ? opt.zh : opt.en}</option>
+                              ))}
+                              {editForm.platform && !PLATFORM_OPTIONS.some(o => o.value === editForm.platform) && (
+                                <option value={editForm.platform}>{editForm.platform}</option>
+                              )}
+                            </select>
                          </div>
                       </div>
                       <div>

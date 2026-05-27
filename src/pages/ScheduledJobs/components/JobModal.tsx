@@ -114,6 +114,26 @@ export const JobModal: React.FC<JobModalProps> = ({
 
   if (!isOpen) return null;
 
+  // 与 index.tsx 中 validateForm 保持一致的就绪判断,用于禁用确认按钮(轻量版,不弹 toast)
+  const isFormReady = (() => {
+    if (!form.name.trim()) return false;
+    if (!form.action_type) return false;
+    const cronParts = form.cron_expr.trim().split(/\s+/);
+    if (cronParts.length !== 5 || cronParts.some(p => !p)) return false;
+    if (!form.device_scope) return false;
+    if (form.device_scope === 'ip' && ipDevices.length === 0) return false;
+    if (form.device_scope === 'tag') {
+      const hasTag = (tagFilter.groups || []).some(g => (g.tag_ids || []).length > 0)
+        || (tagFilter.exclude_tag_ids || []).length > 0;
+      if (!hasTag) return false;
+    }
+    if ((form.device_scope === 'site' || form.device_scope === 'role') && !form.device_filter.trim()) return false;
+    if (form.action_type === 'script_run' && !form.script_id) return false;
+    if (form.action_type === 'inspection' && inspSource === 'script' && !form.script_id) return false;
+    if (form.action_type === 'inspection' && inspSource === 'custom' && !form.commands.trim()) return false;
+    return true;
+  })();
+
   const cronParts = form.cron_expr.split(/\s+/);
   const cronFields = [
     cronParts[0] ?? '0',
@@ -155,7 +175,9 @@ export const JobModal: React.FC<JobModalProps> = ({
             {/* Left column */}
             <div className="space-y-4">
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '作业名称' : 'Name'}</label>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                  {zh ? '作业名称' : 'Name'} <span className="text-red-500 normal-case">*</span>
+                </label>
                 <input
                   type="text"
                   value={form.name}
@@ -166,7 +188,9 @@ export const JobModal: React.FC<JobModalProps> = ({
               </div>
 
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '作业类型' : 'Job Type'}</label>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                  {zh ? '作业类型' : 'Job Type'} <span className="text-red-500 normal-case">*</span>
+                </label>
                 <div className="p-1 bg-slate-100 rounded-xl border border-black/[0.06] flex gap-1">
                   <button
                     type="button"
@@ -272,7 +296,9 @@ export const JobModal: React.FC<JobModalProps> = ({
 
                   {inspSource === 'script' && (
                     <div className="relative">
-                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#00a9ce] block mb-1.5">{zh ? '关联巡检脚本' : 'ASSOCIATED INSPECTION SCRIPT'}</label>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#00a9ce] block mb-1.5">
+                        {zh ? '关联巡检脚本' : 'ASSOCIATED INSPECTION SCRIPT'} <span className="text-red-500 normal-case">*</span>
+                      </label>
                       <div className="relative">
                         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                         <input
@@ -338,7 +364,9 @@ export const JobModal: React.FC<JobModalProps> = ({
 
                   {inspSource === 'custom' && (
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block">{zh ? '巡检指标列表 (每行一个)' : 'Inspection Metric Keys (one per line)'}</label>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block">
+                        {zh ? '巡检指标列表 (每行一个)' : 'Inspection Metric Keys (one per line)'} <span className="text-red-500 normal-case">*</span>
+                      </label>
                       <textarea
                         value={form.commands}
                         onChange={e => setForm(f => ({ ...f, commands: e.target.value }))}
@@ -354,7 +382,9 @@ export const JobModal: React.FC<JobModalProps> = ({
               {form.action_type === 'script_run' && (
                 <div className="space-y-3">
                   <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="relative">
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#00a9ce] block mb-1.5">{zh ? '关联已发布脚本' : 'ASSOCIATED SCRIPT'}</label>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#00a9ce] block mb-1.5">
+                      {zh ? '关联已发布脚本' : 'ASSOCIATED SCRIPT'} <span className="text-red-500 normal-case">*</span>
+                    </label>
                     <div className="relative">
                       <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                       <input
@@ -449,7 +479,9 @@ export const JobModal: React.FC<JobModalProps> = ({
               )}
 
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '设备范围' : 'Device Scope'}</label>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                  {zh ? '设备范围' : 'Device Scope'} <span className="text-red-500 normal-case">*</span>
+                </label>
                 <select
                   value={form.device_scope}
                   onChange={e => {
@@ -468,7 +500,7 @@ export const JobModal: React.FC<JobModalProps> = ({
               {form.device_scope === 'ip' && (
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
-                    {zh ? 'IP 地址' : 'IP Addresses'}
+                    {zh ? 'IP 地址' : 'IP Addresses'} <span className="text-red-500 normal-case">*</span>
                   </label>
                   <div className="relative">
                     <input
@@ -552,7 +584,9 @@ export const JobModal: React.FC<JobModalProps> = ({
               {/* Tag picker — inline, right below Device Scope */}
               {form.device_scope === 'tag' && (
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '标签条件' : 'Tag Conditions'}</label>
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                    {zh ? '标签条件' : 'Tag Conditions'} <span className="text-red-500 normal-case">*</span>
+                  </label>
                   <TagConditionPicker value={tagFilter} onChange={setTagFilter} language={language} />
                 </div>
               )}
@@ -560,7 +594,9 @@ export const JobModal: React.FC<JobModalProps> = ({
               {/* Site / Role filter */}
               {(form.device_scope === 'site' || form.device_scope === 'role') && (
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '过滤条件' : 'Filter'}</label>
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
+                    {zh ? '过滤条件' : 'Filter'} <span className="text-red-500 normal-case">*</span>
+                  </label>
                   <input
                     type="text"
                     value={form.device_filter}
@@ -824,7 +860,7 @@ export const JobModal: React.FC<JobModalProps> = ({
             <button
               type="button"
               onClick={submitForm}
-              disabled={!form.name.trim() || (!isEditMode && approvalStatus !== 'verified')}
+              disabled={!isFormReady || (!isEditMode && approvalStatus !== 'verified')}
               className="px-8 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-sm font-bold shadow-md hover:from-cyan-400 hover:to-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isEditMode ? (zh ? '保存修改' : 'Save Changes') : (zh ? '确认创建' : 'Confirm Create')}

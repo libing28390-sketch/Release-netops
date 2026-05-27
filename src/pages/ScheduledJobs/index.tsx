@@ -318,6 +318,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   /* === APPROVAL (create & update) === */
   const requestApproval = async () => {
     if (!approverUsername) return;
+    // 在发送验证码前先校验必填项,避免半填状态下的无效审批流
+    const err = validateForm();
+    if (err) { showToast(err, 'error'); return; }
     setApprovalStatus('sending');
     setApprovalError('');
     try {
@@ -573,8 +576,52 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     return form.device_filter;
   };
 
+  /**
+   * 统一的表单必填校验。命令(commands)在大部分场景下可选；其余字段都是必填。
+   * 仅当返回值为 null 时通过校验，否则返回的字符串就是要展示给用户的中/英文提示。
+   */
+  const validateForm = (): string | null => {
+    if (!form.name.trim()) return zh ? '请填写作业名称' : 'Please enter job name';
+    if (!form.action_type) return zh ? '请选择作业类型' : 'Please select a job type';
+    if (!form.cron_expr.trim()) return zh ? '请配置调度时间(Cron)' : 'Please configure schedule (Cron)';
+
+    // Cron 表达式必须是 5 段且每段非空
+    const parts = form.cron_expr.trim().split(/\s+/);
+    if (parts.length !== 5 || parts.some(p => !p)) {
+      return zh ? 'Cron 表达式格式不完整(需 5 段)' : 'Cron expression must have 5 fields';
+    }
+
+    // 设备范围必填
+    if (!form.device_scope) return zh ? '请选择设备范围' : 'Please select device scope';
+    if (form.device_scope === 'ip' && ipDevices.length === 0) {
+      return zh ? '请至少添加一个目标 IP / 设备' : 'Please add at least one target IP / device';
+    }
+    if (form.device_scope === 'tag') {
+      const hasTag = (tagFilter.groups || []).some(g => (g.tag_ids || []).length > 0)
+        || (tagFilter.exclude_tag_ids || []).length > 0;
+      if (!hasTag) return zh ? '请配置至少一个标签条件' : 'Please configure at least one tag condition';
+    }
+    if ((form.device_scope === 'site' || form.device_scope === 'role') && !form.device_filter.trim()) {
+      return zh ? '请填写过滤条件' : 'Please enter filter condition';
+    }
+
+    // 按作业类型继续校验
+    if (form.action_type === 'script_run' && !form.script_id) {
+      return zh ? '请选择一个要执行的脚本' : 'Please select a script to execute';
+    }
+    // 智能巡检三种来源:
+    //  - default: script_id 与 commands 都为空 → 通过 (后端启用全量默认指标)
+    //  - script:  script_id 必填
+    //  - custom:  commands  必填
+    // 因 inspSource 状态在 JobModal 内,这里仅做"任一分支可推导出有效配置"的校验,
+    // 不阻拦三种合法组合(空/有 script_id/有 commands)。
+
+    return null;
+  };
+
   const createJob = async () => {
-    if (!form.name.trim()) return;
+    const err = validateForm();
+    if (err) { showToast(err, 'error'); return; }
     if (approvalStatus !== 'verified') {
       showToast(zh ? '请先发送验证码并完成审批验证' : 'Please complete approval verification first', 'error');
       return;
@@ -606,7 +653,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const updateJob = async () => {
-    if (!editingJob || !form.name.trim()) return;
+    if (!editingJob) return;
+    const err = validateForm();
+    if (err) { showToast(err, 'error'); return; }
     if (approvalStatus !== 'verified') {
       showToast(zh ? '请先发送验证码并完成审批验证' : 'Please complete approval verification first', 'error');
       return;
@@ -665,10 +714,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const submitForm = () => {
-    if (form.action_type === 'script_run' && !form.script_id) {
-      showToast(zh ? '请选择一个要执行的脚本' : 'Please select a script to execute', 'error');
-      return;
-    }
+    const err = validateForm();
+    if (err) { showToast(err, 'error'); return; }
     if (isEditMode) updateJob();
     else createJob();
   };

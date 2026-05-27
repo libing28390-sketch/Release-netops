@@ -107,7 +107,8 @@ async def run_scheduled_automation_job(job_id: str):
             if script:
                 commands_str = script['content']
                 script_name = script['name']
-                if script.get('script_type') == 'shell':
+                # sqlite3.Row 不支持 .get(),需要直接索引;同时兼容旧记录中 script_type 为 NULL 的情况
+                if script['script_type'] == 'shell':
                     is_shell_script = True
         
         if not is_shell_script and commands_str.strip().startswith('#!'):
