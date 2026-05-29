@@ -38,3 +38,4 @@ test_dragon.mp3
 
 # Keys
 *.pem
+!backend/license_auth/keys/public.pem
