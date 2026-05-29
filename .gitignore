@@ -86,4 +86,3 @@ docs/tts_scripts/device_onboarding_and_rotation_20260524.mp3
 docs/tts_scripts/device_onboarding_and_rotation.srt
 docs/tts_scripts/test_concat.mp3
 scripts/generate_device_onboarding_audio.py
-backend/license_auth/keys/public.pem
