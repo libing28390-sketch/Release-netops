@@ -311,19 +311,7 @@ def seed_data():
     
     try:
         # Check if devices table is empty
-        count = conn.execute('SELECT COUNT(*) as count FROM devices').fetchone()['count']
-        if count == 0:
-            import uuid
-            conn.execute('INSERT INTO devices (id, hostname, ip_address, platform, status, compliance, username, password, cpu_usage, memory_usage, snmp_community, role, site) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                         (str(uuid.uuid4()), 'Core-SW-01', '192.168.1.1', 'cisco_ios', 'online', 'compliant', 'admin', 'admin', 12, 45, 'public', 'Core', 'HQ'))
-            conn.execute('INSERT INTO devices (id, hostname, ip_address, platform, status, compliance, username, password, cpu_usage, memory_usage, snmp_community, role, site) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                         (str(uuid.uuid4()), 'Edge-RTR-02', '10.0.0.5', 'juniper_junos', 'online', 'non-compliant', 'admin', 'admin', 28, 62, 'public', 'Edge', 'Branch-A'))
-            conn.execute('INSERT INTO devices (id, hostname, ip_address, platform, status, compliance, username, password, cpu_usage, memory_usage, snmp_community, role, site) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                         (str(uuid.uuid4()), 'Access-SW-01', '10.0.0.10', 'cisco_ios', 'online', 'compliant', 'admin', 'admin', 15, 30, 'public', 'Access', 'HQ'))
-            conn.execute('INSERT INTO devices (id, hostname, ip_address, platform, status, compliance, username, password, cpu_usage, memory_usage, snmp_community, role, site) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                         (str(uuid.uuid4()), 'Access-SW-02', '10.0.0.11', 'cisco_ios', 'online', 'compliant', 'admin', 'admin', 18, 35, 'public', 'Access', 'HQ'))
-            conn.execute('INSERT INTO devices (id, hostname, ip_address, platform, status, compliance, username, password, cpu_usage, memory_usage, snmp_community, role, site) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                         (str(uuid.uuid4()), 'Mock-Device-01', '127.0.0.1', 'cisco_ios', 'online', 'compliant', 'test', 'test', 5, 20, 'public', 'Test', 'Lab'))
+        # Mock device seeding removed per user request
         
         # Check if users table is empty - only insert default admin if no users exist
         count = conn.execute('SELECT COUNT(*) as count FROM users').fetchone()['count']
@@ -512,80 +500,8 @@ def seed_data():
                 device_types
             )
 
-        # Seed demo racks if empty
-        rack_count = conn.execute('SELECT COUNT(*) as count FROM racks').fetchone()['count']
-        if rack_count == 0:
-            import uuid
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-            demo_racks = [
-                (str(uuid.uuid4()), 'A-01', 'DC-Beijing', 'Server Room 1', 'A', 42, 'Core network rack', 'active', now, now),
-                (str(uuid.uuid4()), 'A-02', 'DC-Beijing', 'Server Room 1', 'A', 42, 'Server rack', 'active', now, now),
-                (str(uuid.uuid4()), 'B-01', 'DC-Shanghai', 'Server Room 2', 'B', 42, 'Distribution rack', 'active', now, now),
-            ]
-            conn.executemany(
-                'INSERT INTO racks (id, name, datacenter, room, row, total_u, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                demo_racks
-            )
-
-            # Seed demo devices into first rack
-            dt_rows = conn.execute("SELECT id, model, u_height FROM device_types").fetchall()
-            dt_map = {r['model'] if hasattr(r, '__getitem__') else r[1]: (r['id'] if hasattr(r, '__getitem__') else r[0], r['u_height'] if hasattr(r, '__getitem__') else r[2]) for r in dt_rows}
-            rack_a01_id = demo_racks[0][0]
-            rack_a02_id = demo_racks[1][0]
-
-            demo_devices = []
-            # Rack A-01: Network rack
-            if 'Patch Panel 24P' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'PP-A01-01', rack_a01_id, dt_map['Patch Panel 24P'][0], 1, 'front', 'active', '', '', now, now))
-            if 'Catalyst 9300' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'Core-SW-01', rack_a01_id, dt_map['Catalyst 9300'][0], 2, 'front', 'active', '', '', now, now))
-                demo_devices.append((str(uuid.uuid4()), 'Core-SW-02', rack_a01_id, dt_map['Catalyst 9300'][0], 3, 'front', 'active', '', '', now, now))
-            if 'Catalyst 9500' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'Dist-SW-01', rack_a01_id, dt_map['Catalyst 9500'][0], 5, 'front', 'active', '', '', now, now))
-            if 'ISR 4451' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'Edge-RTR-01', rack_a01_id, dt_map['ISR 4451'][0], 7, 'front', 'active', '', '', now, now))
-            if 'Firepower 2130' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'FW-01', rack_a01_id, dt_map['Firepower 2130'][0], 10, 'front', 'active', '', '', now, now))
-            if 'APC SUA3000RMI2U' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'UPS-A01', rack_a01_id, dt_map['APC SUA3000RMI2U'][0], 41, 'front', 'active', '', '', now, now))
-
-            # Rack A-02: Server rack
-            if 'Patch Panel 24P' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'PP-A02-01', rack_a02_id, dt_map['Patch Panel 24P'][0], 1, 'front', 'active', '', '', now, now))
-            if 'S5735-L48T4S' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'TOR-SW-01', rack_a02_id, dt_map['S5735-L48T4S'][0], 2, 'front', 'active', '', '', now, now))
-            if 'PowerEdge R650' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'SRV-Web-01', rack_a02_id, dt_map['PowerEdge R650'][0], 4, 'front', 'active', '', '', now, now))
-                demo_devices.append((str(uuid.uuid4()), 'SRV-Web-02', rack_a02_id, dt_map['PowerEdge R650'][0], 5, 'front', 'active', '', '', now, now))
-            if 'PowerEdge R750' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'SRV-DB-01', rack_a02_id, dt_map['PowerEdge R750'][0], 7, 'front', 'active', '', '', now, now))
-            if 'ProLiant DL380 G10' in dt_map:
-                demo_devices.append((str(uuid.uuid4()), 'SRV-App-01', rack_a02_id, dt_map['ProLiant DL380 G10'][0], 10, 'front', 'active', '', '', now, now))
-                demo_devices.append((str(uuid.uuid4()), 'SRV-App-02', rack_a02_id, dt_map['ProLiant DL380 G10'][0], 12, 'front', 'active', '', '', now, now))
-
-            if demo_devices:
-                conn.executemany(
-                    'INSERT INTO rack_devices (id, name, rack_id, device_type_id, start_u, position, status, serial_number, asset_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    demo_devices
-                )
-
-        # Update/Seed hardware parameters for specific devices
-        conn.execute('''
-            UPDATE devices 
-            SET ports_count = 48, ports_bandwidth_gbps = 88.0, switching_capacity_gbps = 176.0 
-            WHERE hostname = 'cisco-sw1' OR ip_address = '192.168.18.201'
-        ''')
-        conn.execute('''
-            UPDATE devices 
-            SET ports_count = 24, ports_bandwidth_gbps = 44.0, switching_capacity_gbps = 88.0 
-            WHERE hostname = 'cisco-sw2' OR ip_address = '192.168.18.202'
-        ''')
-        conn.execute('''
-            UPDATE devices 
-            SET ports_count = 2, ports_bandwidth_gbps = 20.0, switching_capacity_gbps = 40.0 
-            WHERE hostname = 'ubuntu-server-jp2' OR ip_address = '3.112.222.158'
-        ''')
+        # Seed demo racks if empty (mock seeding removed per user request)
+        pass
         conn.commit()
     finally:
         conn.close()
