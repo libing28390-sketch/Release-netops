@@ -46,9 +46,13 @@ def _get_current_user(request: Request) -> dict | None:
     from api.users import validate_session_token
     auth = request.headers.get('Authorization', '')
     token = auth.replace('Bearer ', '') if auth.startswith('Bearer ') else ''
+    logger.info(f"[RBAC Debug] Request path: {request.url.path}, auth header present: {bool(auth)}, token length: {len(token)}")
     if not token:
+        logger.warning(f"[RBAC Debug] No token extracted from Authorization header for path: {request.url.path}")
         return None
-    return validate_session_token(token)
+    user = validate_session_token(token)
+    logger.info(f"[RBAC Debug] User validation result for path {request.url.path}: {user.get('username') if user else 'None'}")
+    return user
 
 
 def require_role(minimum_role: str):

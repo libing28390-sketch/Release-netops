@@ -249,8 +249,18 @@ def _get_session(token: str) -> dict | None:
     try:
         row = conn.execute('SELECT * FROM sessions WHERE token = ?', (token,)).fetchone()
         if not row:
+            logger.warning(f"[Auth Session Debug] Token '{token[:10]}...' NOT found in sessions table")
             return None
-        if time.time() - row['created_at'] > _SESSION_TTL:
+        created_at = row['created_at']
+        try:
+            created_at_float = float(created_at)
+        except (ValueError, TypeError):
+            created_at_float = 0.0
+            logger.error(f"[Auth Session Debug] Failed to convert created_at '{created_at}' to float")
+        
+        elapsed = time.time() - created_at_float
+        if elapsed > _SESSION_TTL:
+            logger.warning(f"[Auth Session Debug] Token '{token[:10]}...' expired. created_at={created_at_float}, elapsed={elapsed}s, TTL={_SESSION_TTL}s")
             conn.execute('DELETE FROM sessions WHERE token = ?', (token,))
             conn.commit()
             return None
