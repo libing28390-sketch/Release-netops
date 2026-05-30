@@ -160,6 +160,20 @@ def _run_telemetry_maintenance():
     alert_cutoff = (now - timedelta(days=365)).replace(microsecond=0).isoformat()
     _db_quick('DELETE FROM alert_events WHERE resolved_at IS NOT NULL AND resolved_at < ?', (alert_cutoff,))
 
+    # Prune stale topology links not refreshed in the last 24 hours.
+    link_stale_cutoff = (now - timedelta(hours=24)).replace(microsecond=0).isoformat()
+    try:
+        deleted = _db_quick(
+            'SELECT COUNT(*) AS cnt FROM links WHERE last_seen IS NOT NULL AND last_seen < ?',
+            (link_stale_cutoff,), fetch=True,
+        )
+        stale_count = deleted['cnt'] if deleted else 0
+        if stale_count > 0:
+            _db_quick('DELETE FROM links WHERE last_seen IS NOT NULL AND last_seen < ?', (link_stale_cutoff,))
+            logger.info(f"[Maintenance] Pruned {stale_count} stale topology link(s) older than 24 hours")
+    except Exception as exc:
+        logger.warning(f"[Maintenance] Failed to prune stale links: {exc}")
+
 # --- GLOBAL TELEMETRY STATE ---
 open_alerts = {}
 protocol_peer_cache = {}

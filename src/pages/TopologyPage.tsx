@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Download, Globe, RotateCcw, Search, Network } from 'lucide-react';
+import { Download, Globe, RotateCcw, Search, Network, EyeOff } from 'lucide-react';
 import type { Device } from '../types';
 import { darkActionBtnClass, secondaryActionBtnClass } from '../components/shared';
 import TopologyGraph from '../components/TopologyGraph';
@@ -84,6 +84,10 @@ interface TopologyPageProps {
   onSelectTopologyLink: (linkKey: string | null) => void;
   onOpenDeviceDetail: (device: Device) => void;
   onOpenMonitoring: () => void;
+  hideStaleLinks: boolean;
+  onHideStaleLinksChange: (value: boolean) => void;
+  hideOrphanDevices: boolean;
+  onHideOrphanDevicesChange: (value: boolean) => void;
   formatTopologyPort: (value?: string) => string;
   formatTopologyInterfaceTelemetry: (snapshot: unknown) => string;
   formatTopologyLastSeen: (value?: string) => string;
@@ -124,6 +128,10 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   onSelectTopologyLink,
   onOpenDeviceDetail,
   onOpenMonitoring,
+  hideStaleLinks,
+  onHideStaleLinksChange,
+  hideOrphanDevices,
+  onHideOrphanDevicesChange,
   formatTopologyPort,
   formatTopologyInterfaceTelemetry,
   formatTopologyLastSeen,
@@ -228,6 +236,28 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             <option value="offline">{language === 'zh' ? '离线' : 'Offline'}</option>
             <option value="pending">{language === 'zh' ? '待确认' : 'Pending'}</option>
           </select>
+        </div>
+        <div className="flex items-center gap-3 mt-2">
+          <label className="flex items-center gap-2 cursor-pointer select-none rounded-lg border border-black/10 px-3 py-1.5 transition-colors hover:bg-slate-50" title={language === 'zh' ? '隐藏陈旧链路（最近30分钟未刷新的链路将被隐藏）' : 'Hide stale links (links not refreshed in the last 30 minutes)'}>
+            <input
+              type="checkbox"
+              checked={hideStaleLinks}
+              onChange={(e) => onHideStaleLinksChange(e.target.checked)}
+              className="h-3.5 w-3.5 rounded accent-sky-600"
+            />
+            <EyeOff size={13} className="text-black/35" />
+            <span className="text-xs font-medium text-black/55">{language === 'zh' ? '隐藏陈旧链路' : 'Hide Stale Links'}</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer select-none rounded-lg border border-black/10 px-3 py-1.5 transition-colors hover:bg-slate-50" title={language === 'zh' ? '隐藏孤立设备（没有任何链路连接的设备将被隐藏）' : 'Hide orphan devices (devices with no link connections)'}>
+            <input
+              type="checkbox"
+              checked={hideOrphanDevices}
+              onChange={(e) => onHideOrphanDevicesChange(e.target.checked)}
+              className="h-3.5 w-3.5 rounded accent-sky-600"
+            />
+            <EyeOff size={13} className="text-black/35" />
+            <span className="text-xs font-medium text-black/55">{language === 'zh' ? '隐藏孤立设备' : 'Hide Orphan Devices'}</span>
+          </label>
         </div>
       </div>
 

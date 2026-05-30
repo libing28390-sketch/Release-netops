@@ -67,6 +67,8 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
   const [selectedTopologyDeviceId, setSelectedTopologyDeviceId] = useState<string | null>(null);
   const [selectedTopologyLinkKey, setSelectedTopologyLinkKey] = useState<string | null>(null);
   const [topologyDiscoveryRunning, setTopologyDiscoveryRunning] = useState(false);
+  const [hideStaleLinks, setHideStaleLinks] = useState(false);
+  const [hideOrphanDevices, setHideOrphanDevices] = useState(false);
   const topologyRef = React.useRef<HTMLDivElement>(null);
 
   const evaluateTopologyInterfaceSnapshot = useCallback(
@@ -142,26 +144,11 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         operationalSummary = language === 'zh'
           ? '至少一端设备离线，链路视为中断。'
           : 'At least one endpoint device is offline, so the link is treated as down.';
-      } else if (isStale) {
-        operationalState = 'stale';
-        operationalSummary = language === 'zh'
-          ? '这条链路在最近 30 分钟内没有被新的邻居发现刷新，建议重新触发发现确认当前连通性。'
-          : 'This adjacency has not been refreshed by recent discovery within the last 30 minutes. Run discovery again to confirm current connectivity.';
       } else if (sourceInterfaceSnapshot?.operationalState === 'down' || targetInterfaceSnapshot?.operationalState === 'down') {
         operationalState = 'down';
         operationalSummary = language === 'zh'
           ? '本端或对端接口处于 down。'
           : 'One side of the adjacency reports the interface as down.';
-      } else if (
-        sourceDeviceStatus === 'pending'
-        || targetDeviceStatus === 'pending'
-        || sourceInterfaceSnapshot?.operationalState === 'degraded'
-        || targetInterfaceSnapshot?.operationalState === 'degraded'
-      ) {
-        operationalState = 'degraded';
-        operationalSummary = language === 'zh'
-          ? '链路可达，但接口存在高利用率、抖动或错误计数。'
-          : 'The link is reachable but shows utilization, flapping, or error signals.';
       } else if (
         sourceInterfaceSnapshot?.operationalState === 'up'
         && targetInterfaceSnapshot?.operationalState === 'up'
@@ -172,6 +159,21 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         operationalSummary = language === 'zh'
           ? '双端接口均为 up，且未发现明显退化信号。'
           : 'Both interfaces are up and no degradation signals were detected.';
+      } else if (isStale) {
+        operationalState = 'stale';
+        operationalSummary = language === 'zh'
+          ? '这条链路在最近 30 分钟内没有被新的邻居发现刷新，建议重新触发发现确认当前连通性。'
+          : 'This adjacency has not been refreshed by recent discovery within the last 30 minutes. Run discovery again to confirm current connectivity.';
+      } else if (
+        sourceDeviceStatus === 'pending'
+        || targetDeviceStatus === 'pending'
+        || sourceInterfaceSnapshot?.operationalState === 'degraded'
+        || targetInterfaceSnapshot?.operationalState === 'degraded'
+      ) {
+        operationalState = 'degraded';
+        operationalSummary = language === 'zh'
+          ? '链路可达，但接口存在高利用率、抖动或错误计数。'
+          : 'The link is reachable but shows utilization, flapping, or error signals.';
       }
 
       return {
@@ -216,7 +218,8 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     [topologyVisibleDevices],
   );
 
-  const topologyVisibleLinks = useMemo<TopologyDecoratedLink[]>(() => {
+  // -- All decorated links (unfiltered by toggle, used for stats) --
+  const topologyAllDecoratedLinks = useMemo<TopologyDecoratedLink[]>(() => {
     const deviceMap = new Map<string, Device>();
     topologyVisibleDevices.forEach((device) => {
       deviceMap.set(device.id, device);
@@ -241,6 +244,28 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     return [...managedDecoratedLinks, ...unmanagedDecoratedLinks];
   }, [describeTopologyLink, topologyLinks, topologyUnmanagedLinks, topologyVisibleDeviceIds, topologyVisibleDevices]);
 
+  // -- Apply hideStaleLinks toggle filter --
+  const topologyVisibleLinks = useMemo<TopologyDecoratedLink[]>(() => {
+    if (!hideStaleLinks) return topologyAllDecoratedLinks;
+    return topologyAllDecoratedLinks.filter((link) => link.operational_state !== 'stale');
+  }, [topologyAllDecoratedLinks, hideStaleLinks]);
+
+  // -- Connected device IDs (computed from visible links after stale filter) --
+  const topologyConnectedDeviceIds = useMemo(() => {
+    const connected = new Set<string>();
+    topologyVisibleLinks.forEach((link) => {
+      if (link.source_device_id) connected.add(link.source_device_id);
+      if (link.target_device_id) connected.add(link.target_device_id);
+    });
+    return connected;
+  }, [topologyVisibleLinks]);
+
+  // -- Apply hideOrphanDevices toggle filter on visible devices --
+  const topologyFilteredDevices = useMemo(() => {
+    if (!hideOrphanDevices) return topologyVisibleDevices;
+    return topologyVisibleDevices.filter((device) => topologyConnectedDeviceIds.has(device.id));
+  }, [topologyVisibleDevices, hideOrphanDevices, topologyConnectedDeviceIds]);
+
   const topologyDeviceLinks = useMemo(() => {
     if (!selectedTopologyDeviceId) return [] as TopologyDecoratedLink[];
     return topologyVisibleLinks
@@ -252,22 +277,14 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       });
   }, [selectedTopologyDeviceId, topologyVisibleLinks]);
 
-  const topologyConnectedDeviceIds = useMemo(() => {
-    const connected = new Set<string>();
-    topologyVisibleLinks.forEach((link) => {
-      if (link.source_device_id) connected.add(link.source_device_id);
-      if (link.target_device_id) connected.add(link.target_device_id);
-    });
-    return connected;
-  }, [topologyVisibleLinks]);
-
+  // -- Stats: use ALL decorated links (before toggle filtering) so the user sees the real totals --
   const topologyStats = useMemo(() => ({
-    nodeCount: topologyVisibleDevices.length,
+    nodeCount: topologyFilteredDevices.length,
     linkCount: topologyVisibleLinks.length,
-    siteCount: new Set(topologyVisibleDevices.map((device) => String(device.site || '').trim()).filter(Boolean)).size,
-    atRiskCount: topologyVisibleDevices.filter((device) => device.status !== 'online' || device.health_status === 'critical' || (device.open_alert_count || 0) > 0).length,
-    orphanCount: topologyVisibleDevices.filter((device) => !topologyConnectedDeviceIds.has(device.id)).length,
-  }), [topologyConnectedDeviceIds, topologyVisibleDevices, topologyVisibleLinks.length]);
+    siteCount: new Set(topologyFilteredDevices.map((device) => String(device.site || '').trim()).filter(Boolean)).size,
+    atRiskCount: topologyFilteredDevices.filter((device) => device.status !== 'online' || device.health_status === 'critical' || (device.open_alert_count || 0) > 0).length,
+    orphanCount: topologyFilteredDevices.filter((device) => !topologyConnectedDeviceIds.has(device.id)).length,
+  }), [topologyConnectedDeviceIds, topologyFilteredDevices, topologyVisibleLinks.length]);
 
   const topologyLinkStats = useMemo(() => ({
     up: topologyVisibleLinks.filter((link) => link.operational_state === 'up').length,
@@ -278,8 +295,8 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
   }), [topologyVisibleLinks]);
 
   const selectedTopologyDevice = useMemo(
-    () => topologyVisibleDevices.find((device) => device.id === selectedTopologyDeviceId) || null,
-    [selectedTopologyDeviceId, topologyVisibleDevices],
+    () => topologyFilteredDevices.find((device) => device.id === selectedTopologyDeviceId) || null,
+    [selectedTopologyDeviceId, topologyFilteredDevices],
   );
 
   const selectedTopologyLink = useMemo<TopologyDecoratedLink | null>(
@@ -298,28 +315,28 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
   }, [selectedTopologyDeviceId, topologyVisibleLinks]);
 
   const topologyNeighborDevices = useMemo(
-    () => topologyVisibleDevices
+    () => topologyFilteredDevices
       .filter((device) => topologyNeighborIds.has(device.id))
       .sort((left, right) => left.hostname.localeCompare(right.hostname)),
-    [topologyNeighborIds, topologyVisibleDevices],
+    [topologyNeighborIds, topologyFilteredDevices],
   );
 
   const topologyOrphanDevices = useMemo(
-    () => topologyVisibleDevices
+    () => topologyFilteredDevices
       .filter((device) => !topologyConnectedDeviceIds.has(device.id))
       .sort((left, right) => left.hostname.localeCompare(right.hostname)),
-    [topologyConnectedDeviceIds, topologyVisibleDevices],
+    [topologyConnectedDeviceIds, topologyFilteredDevices],
   );
 
   const topologyPriorityDevices = useMemo(
-    () => [...topologyVisibleDevices]
+    () => [...topologyFilteredDevices]
       .sort((left, right) => {
         const leftScore = (left.status !== 'online' ? 100 : 0) + (left.critical_open_alerts || 0) * 10 + (left.open_alert_count || 0);
         const rightScore = (right.status !== 'online' ? 100 : 0) + (right.critical_open_alerts || 0) * 10 + (right.open_alert_count || 0);
         return rightScore - leftScore;
       })
       .slice(0, 5),
-    [topologyVisibleDevices],
+    [topologyFilteredDevices],
   );
 
   useTopologySelectionSync({
@@ -414,10 +431,15 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     setSelectedTopologyLinkKey,
     topologyDiscoveryRunning,
     topologyRef,
+    // canvas toggles
+    hideStaleLinks,
+    setHideStaleLinks,
+    hideOrphanDevices,
+    setHideOrphanDevices,
     // derived
     topologySiteOptions,
     topologyRoleOptions,
-    topologyVisibleDevices,
+    topologyVisibleDevices: topologyFilteredDevices,
     topologyVisibleLinks,
     topologyDeviceLinks,
     topologyStats,

@@ -11,6 +11,7 @@ import { sectionHeaderRowClass } from './shared';
 
 const MonitoringCenter = lazy(() => import('./MonitoringCenter.tsx'));
 const ServerMonitoring = lazy(() => import('./ServerMonitoring.tsx'));
+const NetworkMonitoring = lazy(() => import('./NetworkMonitoring.tsx'));
 const DeviceHealthTab = lazy(() => import('../pages/DeviceHealthTab'));
 const DashboardTab = lazy(() => import('../pages/DashboardTab'));
 const HomePage = lazy(() => import('../pages/HomePage'));
@@ -72,7 +73,7 @@ const AppMainContent: React.FC = () => {
 
   const { isFeatureEnabled } = useSystem();
   const { assetsTotal } = useInventoryStore();
-  const { monitorOverview } = useMonitoringStore();
+  const { monitorOverview, setMonitorSelectedDevice } = useMonitoringStore();
   
   const {
     activeTab,
@@ -367,6 +368,10 @@ const AppMainContent: React.FC = () => {
     topologyPriorityDevices,
     topologyOrphanDevices,
     topologyRef,
+    hideStaleLinks,
+    setHideStaleLinks,
+    hideOrphanDevices,
+    setHideOrphanDevices,
     handleTriggerDiscovery,
     handleExportMap,
     setTopologySearch,
@@ -463,6 +468,17 @@ const AppMainContent: React.FC = () => {
       {activeTab === 'server-monitoring' && (
         <Suspense fallback={lazyPanelFallback}>
           <ServerMonitoring
+            devices={devices}
+            language={language}
+            showToast={showToast}
+            isAuthenticated={isAuthenticated}
+          />
+        </Suspense>
+      )}
+
+      {activeTab === 'network-monitoring' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <NetworkMonitoring
             devices={devices}
             language={language}
             showToast={showToast}
@@ -627,6 +643,10 @@ const AppMainContent: React.FC = () => {
             topologyPriorityDevices={topologyPriorityDevices}
             topologyOrphanDevices={topologyOrphanDevices}
             topologyCanvasRef={topologyRef}
+            hideStaleLinks={hideStaleLinks}
+            onHideStaleLinksChange={setHideStaleLinks}
+            hideOrphanDevices={hideOrphanDevices}
+            onHideOrphanDevicesChange={setHideOrphanDevices}
             onTriggerDiscovery={handleTriggerDiscovery}
             onExportMap={handleExportMap}
             onTopologySearchChange={setTopologySearch}
@@ -636,7 +656,24 @@ const AppMainContent: React.FC = () => {
             onSelectTopologyDevice={setSelectedTopologyDeviceId}
             onSelectTopologyLink={setSelectedTopologyLinkKey}
             onOpenDeviceDetail={handleShowDetails}
-            onOpenMonitoring={() => navTo('/monitoring')}
+             onOpenMonitoring={() => {
+              if (selectedTopologyDevice) {
+                setMonitorSelectedDevice(selectedTopologyDevice);
+                const p = (selectedTopologyDevice.platform || '').toLowerCase();
+                const serverKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'server'];
+                const isServer = serverKeywords.some((kw) => p.includes(kw)) ||
+                                 (selectedTopologyDevice.device_category || '').toLowerCase().includes('server') ||
+                                 (selectedTopologyDevice.role || '').toLowerCase().includes('server') ||
+                                 ((selectedTopologyDevice as any).asset_type || '').toLowerCase().includes('server');
+                if (isServer) {
+                  navTo('/monitor/servers');
+                } else {
+                  navTo('/monitor/networks');
+                }
+              } else {
+                navTo('/monitor/networks');
+              }
+            }}
             formatTopologyPort={formatTopologyPort}
             formatTopologyInterfaceTelemetry={formatTopologyInterfaceTelemetry}
             formatTopologyLastSeen={formatTopologyLastSeen}

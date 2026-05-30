@@ -36,6 +36,10 @@ interface TopologyContextValue {
   topologyPriorityDevices: Device[];
   topologyOrphanDevices: Device[];
   topologyRef: React.RefObject<HTMLDivElement>;
+  hideStaleLinks: boolean;
+  setHideStaleLinks: (value: boolean) => void;
+  hideOrphanDevices: boolean;
+  setHideOrphanDevices: (value: boolean) => void;
   handleTriggerDiscovery: () => Promise<void>;
   handleExportMap: () => Promise<void>;
   setTopologySearch: (search: string) => void;

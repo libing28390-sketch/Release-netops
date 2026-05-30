@@ -364,6 +364,9 @@ async def _snmp_bulk_walk(ip: str, community: str, oid: str, port: int = 161, ti
         logger.debug(f"SNMP BULK_WALK {ip} {oid} timeout after {timeout}s ({len(results)} rows collected)")
       except Exception as e:
         logger.debug(f"SNMP BULK_WALK {ip} {oid} failed: {e}")
+    if not results:
+        logger.debug(f"SNMP BULK_WALK returned no results for {ip} {oid}. Falling back to standard WALK.")
+        results = await _snmp_walk(ip, community, oid, port, timeout=timeout)
     return results
 
 # ═══════════════════════════════════════════════════════════════

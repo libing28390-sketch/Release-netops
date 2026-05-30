@@ -1376,8 +1376,31 @@ def collect_device_parsed_command(device_id: str, payload: dict = Body(default={
         raise HTTPException(status_code=400, detail="Command is required")
 
     commands = [line.strip() for line in str(command).splitlines() if line.strip()]
-    _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ')
-    is_query_only = all(any(c.lower().startswith(p) for p in _show_prefixes) for c in commands)
+    
+    platform = str(device_info.get('platform') or '').lower()
+    category = str(device_info.get('device_category') or '').lower()
+    is_server = any(t in platform for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server')) or category == 'server'
+
+    if is_server:
+        server_query_prefixes = (
+            'dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ',
+            'df ', 'free ', 'uptime', 'ip ', 'ss ', 'ps ', 'cat ', 'last ', 'env', 'tail ', 'grep ', 'uname ', 'sensors', 'dmesg', 'top '
+        )
+        def check_server_cmd(c):
+            c_lower = c.lower()
+            if any(c_lower.startswith(p) for p in server_query_prefixes):
+                return True
+            if c_lower in ('df', 'free', 'uptime', 'ip', 'ss', 'ps', 'last', 'env', 'uname', 'sensors', 'dmesg', 'top'):
+                return True
+            if c_lower.startswith('systemctl '):
+                allowed_sysctl = ('systemctl status', 'systemctl list-units', 'systemctl is-active', 'systemctl is-enabled')
+                return any(c_lower.startswith(p) for p in allowed_sysctl)
+            return False
+        is_query_only = all(check_server_cmd(c) for c in commands)
+    else:
+        _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ')
+        is_query_only = all(any(c.lower().startswith(p) for p in _show_prefixes) or c.lower() in ('pwd', 'dir') for c in commands)
+
     if not is_query_only:
         raise HTTPException(status_code=403, detail="查询模式下只允许执行只读查询命令（如 show, display, ping 等）。如需修改配置，请走工单流程或通过配置模板下发！")
 

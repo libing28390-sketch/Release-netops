@@ -92,8 +92,7 @@ class TelemetryOrchestrator:
 
     async def a_loop(self):
         """A-Loop: 高频任务 (15s) - Ping 探活及接口状态 (ifOperStatus) 检测"""
-        from services.background_monitor_service import process_device_fast
-        from database import _db_quick
+        from services.background_monitor_service import process_device_fast, _db_quick
         import asyncio
         import os
         from database import DB_PATH
@@ -118,8 +117,7 @@ class TelemetryOrchestrator:
 
     async def b_loop(self):
         """B-Loop: 中低频任务 (60s+) - CPU/内存/硬件环境/接口全量性能数据"""
-        from services.background_monitor_service import process_device_slow, _run_telemetry_maintenance, sync_lldp_neighbor_alerts
-        from database import _db_quick
+        from services.background_monitor_service import process_device_slow, _run_telemetry_maintenance, sync_lldp_neighbor_alerts, _db_quick
         import asyncio
         import os
         from database import DB_PATH

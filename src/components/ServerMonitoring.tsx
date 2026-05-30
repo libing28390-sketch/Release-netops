@@ -7,6 +7,7 @@ import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianG
 import type { Device } from '../types';
 import PageHero from './PageHero';
 import { useChartTheme } from '../hooks/useChartTheme';
+import { useMonitoringStore } from '../store/monitoringStore';
 
 interface ServerMonitoringProps {
   language: 'zh' | 'en';
@@ -172,7 +173,6 @@ const RadialGauge: React.FC<{
   );
 };
 
-
 const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, showToast, isAuthenticated = true }) => {
   const zh = language === 'zh';
   const ct = useChartTheme();
@@ -188,6 +188,10 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
   const [focusMetric, setFocusMetric] = useState<string>('cpu_util');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Filters for listing multiple servers
+  const [siteFilter, setSiteFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
+
   // Available time ranges (Zabbix-style), in hours
   const RANGE_OPTIONS: Array<{ h: number; label: string }> = [
     { h: 1, label: '1h' },
@@ -199,25 +203,52 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
 
   const serverDevices = useMemo(() => (devices || []).filter(isServerDevice), [devices]);
 
+  const uniqueSites = useMemo(() => {
+    const sites = new Set<string>();
+    serverDevices.forEach((d) => {
+      if (d.site) sites.add(d.site);
+    });
+    return Array.from(sites).sort();
+  }, [serverDevices]);
+
   const filteredServers = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return serverDevices;
-    return serverDevices.filter((d) =>
+    let list = serverDevices;
+    if (siteFilter !== 'all') {
+      list = list.filter((d) => d.site === siteFilter);
+    }
+    if (statusFilter === 'online') {
+      list = list.filter((d) => String(d.status || '').toLowerCase() === 'online');
+    } else if (statusFilter === 'offline') {
+      list = list.filter((d) => String(d.status || '').toLowerCase() !== 'online');
+    }
+    if (!q) return list;
+    return list.filter((d) =>
       (d.hostname || '').toLowerCase().includes(q) || (d.ip_address || '').toLowerCase().includes(q),
     );
-  }, [serverDevices, search]);
+  }, [serverDevices, search, siteFilter, statusFilter]);
 
   const selectedDevice = useMemo(
     () => serverDevices.find((d) => d.id === selectedId) || null,
     [serverDevices, selectedId],
   );
 
+  const { monitorSelectedDevice, setMonitorSelectedDevice } = useMonitoringStore();
+
+  // Sync selected device from topology redirects (Zustand store)
+  useEffect(() => {
+    if (monitorSelectedDevice && isServerDevice(monitorSelectedDevice)) {
+      setSelectedId(monitorSelectedDevice.id);
+      setMonitorSelectedDevice(null);
+    }
+  }, [monitorSelectedDevice, setMonitorSelectedDevice]);
+
   // Auto-select first server once data is available
   useEffect(() => {
-    if (!selectedId && serverDevices.length > 0) {
-      setSelectedId(serverDevices[0].id);
+    if (!selectedId && filteredServers.length > 0) {
+      setSelectedId(filteredServers[0].id);
     }
-  }, [serverDevices, selectedId]);
+  }, [filteredServers, selectedId]);
 
   // Load metric catalog (Linux Shell items) once
   useEffect(() => {
@@ -241,8 +272,6 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
   }, [isAuthenticated]);
 
   const fetchTrend = useCallback(async (deviceId: string, hours: number, signal?: AbortSignal) => {
-    // For <=24h use 1-minute raw samples; for longer ranges let the backend
-    // serve the hourly rollup (auto) so 7d/30d history loads efficiently.
     const resolution = hours <= 24 ? '1m' : 'auto';
     const resp = await fetch(`/api/monitoring/device/${deviceId}/trend?range_hours=${hours}&resolution=${resolution}`, {
       headers: authHeaders(), signal,
@@ -250,9 +279,6 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
     if (!resp.ok) throw new Error('trend fetch failed');
     const payload = await resp.json();
     const raw = Array.isArray(payload?.series) ? payload.series : [];
-    // The trend endpoint returns the time field as `ts_minute` (raw) or
-    // `ts_hour` aliased to `ts_minute` (rollup). Normalize to `ts` so the
-    // charts always have a valid X-axis key.
     return raw.map((p: any) => ({ ...p, ts: p.ts ?? p.ts_minute ?? p.ts_hour }));
   }, []);
 
@@ -371,7 +397,6 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
     if (!item) return 'ok';
     const w = item.warning_threshold;
     const c = item.critical_threshold;
-    // process_health: thresholds are inverted (critical=0 means down)
     if (key === 'process_health') {
       if (c != null && value <= c) return 'critical';
       if (w != null && value < w) return 'warning';
@@ -462,7 +487,8 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
       <div className="flex-1 overflow-hidden flex">
         {/* ── Left: server list ── */}
         <div className="w-[260px] shrink-0 border-r border-[var(--card-border)] flex flex-col overflow-hidden">
-          <div className="p-3 border-b border-[var(--card-border)]">
+          <div className="p-3 border-b border-[var(--card-border)] space-y-2">
+            {/* Search Input */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-text)]" size={14} />
               <input
@@ -473,10 +499,40 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                 className="w-full pl-9 pr-3 py-2 bg-black/[0.02] border border-[var(--card-border)] rounded-xl text-sm outline-none focus:border-sky-400 text-[var(--app-text)]"
               />
             </div>
-            <p className="mt-2 text-[10px] font-bold uppercase tracking-wider text-[var(--muted-text)]">
+
+            {/* Site Dropdown Selector */}
+            <select
+              value={siteFilter}
+              onChange={(e) => setSiteFilter(e.target.value)}
+              className="w-full bg-black/[0.02] border border-[var(--card-border)] rounded-xl px-2 py-1.5 text-xs outline-none text-[var(--app-text)] focus:border-sky-400 dark:bg-white/[0.02]"
+            >
+              <option value="all" className="bg-[var(--card-bg)]">{zh ? '全部区域' : 'All Sites'}</option>
+              {uniqueSites.map((site) => (
+                <option key={site} value={site} className="bg-[var(--card-bg)]">{site}</option>
+              ))}
+            </select>
+
+            {/* Status Filter Buttons */}
+            <div className="flex rounded-lg bg-black/[0.02] dark:bg-white/[0.02] border border-[var(--card-border)] p-0.5">
+              {(['all', 'online', 'offline'] as const).map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => setStatusFilter(status)}
+                  className={`flex-1 py-1 rounded-md text-[10px] font-bold transition-all ${statusFilter === status ? 'bg-[var(--app-text)] text-[var(--card-bg)] shadow-sm' : 'text-[var(--muted-text)] hover:text-[var(--app-text)]'}`}
+                >
+                  {status === 'all' && (zh ? '全部' : 'All')}
+                  {status === 'online' && (zh ? '在线' : 'Online')}
+                  {status === 'offline' && (zh ? '离线' : 'Offline')}
+                </button>
+              ))}
+            </div>
+
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-text)]">
               {filteredServers.length} {zh ? '台服务器' : 'servers'}
             </p>
           </div>
+
           <div className="flex-1 overflow-auto p-2 space-y-1">
             {filteredServers.map((srv) => {
               const online = String(srv.status || '').toLowerCase() === 'online';
@@ -762,12 +818,12 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                         </AreaChart>
                       </ResponsiveContainer>
                     </div>
-                    {(item?.warning_threshold != null || item?.critical_threshold != null) && (
+                    {item && (item.warning_threshold != null || item.critical_threshold != null) && (
                       <div className="mt-2 flex items-center gap-4 text-[10px] font-semibold text-[var(--muted-text)]">
-                        {item?.warning_threshold != null && (
+                        {item.warning_threshold != null && (
                           <span className="inline-flex items-center gap-1"><span className="h-2 w-3 rounded-sm bg-amber-500/70" />{zh ? '告警阈值' : 'Warning'} {item.warning_threshold}{meta.unit}</span>
                         )}
-                        {item?.critical_threshold != null && (
+                        {item.critical_threshold != null && (
                           <span className="inline-flex items-center gap-1"><span className="h-2 w-3 rounded-sm bg-red-500/70" />{zh ? '严重阈值' : 'Critical'} {item.critical_threshold}{meta.unit}</span>
                         )}
                       </div>

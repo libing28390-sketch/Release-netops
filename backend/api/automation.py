@@ -186,8 +186,36 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
             is_query_only = True # Treat as query to avoid approvals if not explicitly marked as config
         else:
             commands = [c.strip() for c in final_command.split('\n') if c.strip()]
-            _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ')
-            is_query_only = all(any(c.lower().startswith(p) for p in _show_prefixes) for c in commands)
+            is_server = False
+            if device_ids:
+                placeholders = ','.join(['?'] * len(device_ids))
+                rows = conn.execute(f'SELECT platform, device_category FROM devices WHERE id IN ({placeholders})', device_ids).fetchall()
+                if rows:
+                    is_server = all(
+                        any(t in str(r['platform'] or '').lower() for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'))
+                        or str(r['device_category'] or '').lower() == 'server'
+                        for r in rows
+                    )
+
+            if is_server:
+                server_query_prefixes = (
+                    'dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ',
+                    'df ', 'free ', 'uptime', 'ip ', 'ss ', 'ps ', 'cat ', 'last ', 'env', 'tail ', 'grep ', 'uname ', 'sensors', 'dmesg', 'top '
+                )
+                def check_server_cmd(c):
+                    c_lower = c.lower()
+                    if any(c_lower.startswith(p) for p in server_query_prefixes):
+                        return True
+                    if c_lower in ('df', 'free', 'uptime', 'ip', 'ss', 'ps', 'last', 'env', 'uname', 'sensors', 'dmesg', 'top'):
+                        return True
+                    if c_lower.startswith('systemctl '):
+                        allowed_sysctl = ('systemctl status', 'systemctl list-units', 'systemctl is-active', 'systemctl is-enabled')
+                        return any(c_lower.startswith(p) for p in allowed_sysctl)
+                    return False
+                is_query_only = all(check_server_cmd(c) for c in commands)
+            else:
+                _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ')
+                is_query_only = all(any(c.lower().startswith(p) for p in _show_prefixes) or c.lower() in ('pwd', 'dir') for c in commands)
 
             if not is_query_only:
                 is_config = True

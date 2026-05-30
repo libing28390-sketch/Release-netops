@@ -293,7 +293,8 @@ def monitoring_device_realtime(
     conn = get_db_connection()
     try:
         device = conn.execute(
-            "SELECT id, hostname, ip_address, platform, status, interface_data, device_category FROM devices WHERE id = ?",
+            "SELECT id, hostname, ip_address, platform, status, interface_data, device_category, "
+            "cpu_usage, memory_usage, temp, fan_status, psu_status FROM devices WHERE id = ?",
             (device_id,),
         ).fetchone()
         if not device:
@@ -327,6 +328,11 @@ def monitoring_device_realtime(
                     'ip_address': device['ip_address'],
                     'platform': device['platform'],
                     'status': device['status'],
+                    'cpu_usage': device['cpu_usage'],
+                    'memory_usage': device['memory_usage'],
+                    'temp': device['temp'],
+                    'fan_status': device['fan_status'],
+                    'psu_status': device['psu_status'],
                 },
                 'is_server': True,
                 'series': series,
@@ -401,6 +407,11 @@ def monitoring_device_realtime(
                 'ip_address': device['ip_address'],
                 'platform': device['platform'],
                 'status': device['status'],
+                'cpu_usage': device['cpu_usage'],
+                'memory_usage': device['memory_usage'],
+                'temp': device['temp'],
+                'fan_status': device['fan_status'],
+                'psu_status': device['psu_status'],
             },
             'latest_interfaces': latest_interfaces[:200],
             'summary': summary,
@@ -573,7 +584,7 @@ def monitoring_device_trend(
                 'series': series_rows,
             }
 
-        if target_resolution == '1m':
+        if target_resolution == '1m' and range_hours > 24:
             intf_where = 'AND interface_name = ?' if interface_name and interface_name.strip() else ''
             params = [device_id, start_iso, end_iso]
             if interface_name and interface_name.strip():
@@ -610,7 +621,7 @@ def monitoring_device_trend(
             }
 
         # Backward-compatible behavior for legacy callers.
-        use_raw = target_resolution == '5s' or (target_resolution == 'auto' and range_hours <= 24)
+        use_raw = target_resolution == '5s' or (target_resolution in ('auto', '1m') and range_hours <= 24)
 
         if interface_name and interface_name.strip() and use_raw:
             rows = conn.execute(

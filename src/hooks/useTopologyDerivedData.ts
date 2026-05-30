@@ -128,26 +128,11 @@ export const useTopologyDerivedData = ({
       operationalSummary = language === 'zh'
         ? '至少一端设备离线，链路视为中断'
         : 'At least one endpoint device is offline, so the link is treated as down.';
-    } else if (isStale) {
-      operationalState = 'stale';
-      operationalSummary = language === 'zh'
-        ? '该链路最近 30 分钟未刷新，建议重新发现确认连通性'
-        : 'This adjacency has not been refreshed by recent discovery within the last 30 minutes. Run discovery again to confirm current connectivity.';
     } else if (sourceInterfaceSnapshot?.operationalState === 'down' || targetInterfaceSnapshot?.operationalState === 'down') {
       operationalState = 'down';
       operationalSummary = language === 'zh'
         ? '链路一端接口 down'
         : 'One side of the adjacency reports the interface as down.';
-    } else if (
-      sourceDeviceStatus === 'pending'
-      || targetDeviceStatus === 'pending'
-      || sourceInterfaceSnapshot?.operationalState === 'degraded'
-      || targetInterfaceSnapshot?.operationalState === 'degraded'
-    ) {
-      operationalState = 'degraded';
-      operationalSummary = language === 'zh'
-        ? '链路可达，但存在利用率/抖动/错误等退化信号'
-        : 'The link is reachable but shows utilization, flapping, or error signals.';
     } else if (
       sourceInterfaceSnapshot?.operationalState === 'up'
       && targetInterfaceSnapshot?.operationalState === 'up'
@@ -158,6 +143,21 @@ export const useTopologyDerivedData = ({
       operationalSummary = language === 'zh'
         ? '链路双端接口均为 up'
         : 'Both interfaces are up and no degradation signals were detected.';
+    } else if (isStale) {
+      operationalState = 'stale';
+      operationalSummary = language === 'zh'
+        ? '该链路最近 30 分钟未刷新，建议重新发现确认连通性'
+        : 'This adjacency has not been refreshed by recent discovery within the last 30 minutes. Run discovery again to confirm current connectivity.';
+    } else if (
+      sourceDeviceStatus === 'pending'
+      || targetDeviceStatus === 'pending'
+      || sourceInterfaceSnapshot?.operationalState === 'degraded'
+      || targetInterfaceSnapshot?.operationalState === 'degraded'
+    ) {
+      operationalState = 'degraded';
+      operationalSummary = language === 'zh'
+        ? '链路可达，但存在利用率/抖动/错误等退化信号'
+        : 'The link is reachable but shows utilization, flapping, or error signals.';
     }
 
     return {
