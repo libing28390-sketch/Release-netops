@@ -1306,7 +1306,8 @@ async def process_device(device, cycle_tick: int):
                 logger.debug(f"[SNMP] {ip} interface collection failed: {intf_err}")
 
         is_server_asset = (str(device.get('asset_type') or '').strip().lower() == 'server') or \
-                          (str(device.get('platform') or '').strip().lower() in ('linux', 'ubuntu', 'debian', 'centos', 'rhel', 'server'))
+                          (str(device.get('platform') or '').strip().lower() in ('linux', 'ubuntu', 'debian', 'centos', 'rhel', 'server')) or \
+                          ('server' in str(device.get('device_category') or '').lower())
         if is_server_asset:
             snmp_available = True  # Linux 服务器采用 SSH 巡检，免除传统 SNMP 可达性告警监控
 

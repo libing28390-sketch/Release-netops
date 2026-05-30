@@ -116,23 +116,30 @@ def _check_ssh(ip: str, port: int = 22, timeout: int = 3) -> dict[str, Any]:
 def _execute_shell_script(ip: str, script_content: str, device: dict) -> str:
     """真实执行 Shell 脚本并返回输出"""
     import paramiko
+    import socket as _socket
     from core.crypto import resolve_device_credentials
     try:
         username, password, port = resolve_device_credentials(device)
-        
+
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(
             ip, port=port, username=username, password=password, timeout=10,
             allow_agent=False, look_for_keys=False, disabled_algorithms={}
         )
-        stdin, stdout, stderr = ssh.exec_command(script_content)
-        output = stdout.read().decode('utf-8', errors='ignore').strip()
-        err_output = stderr.read().decode('utf-8', errors='ignore').strip()
-        ssh.close()
+        try:
+            # timeout 限制 stdout/stderr 的阻塞读取，避免命令挂死导致采集线程
+            # 永不返回（进而拖垮 ThreadPoolExecutor.shutdown 与定时任务调度）。
+            stdin, stdout, stderr = ssh.exec_command(script_content, timeout=_SSH_COMMAND_TIMEOUT)
+            output = stdout.read().decode('utf-8', errors='ignore').strip()
+            err_output = stderr.read().decode('utf-8', errors='ignore').strip()
+        finally:
+            ssh.close()
         if not output and err_output:
             return f"ERROR: {err_output}"
         return output
+    except _socket.timeout:
+        return f"ERROR: 脚本执行超时（>{_SSH_COMMAND_TIMEOUT}s），目标主机响应缓慢或脚本阻塞"
     except Exception as e:
         return f"ERROR: {str(e)}"
 
@@ -998,18 +1005,32 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
     hostname = device.get('hostname') or ip
     platform_name = (device.get('platform') or 'Linux').lower()
 
+    # ── 先判定设备类型（决定按哪个 vendor 加载指标）──
+    # 网络设备：走 NetmikoDriver CLI 采集 + TextFSM 解析
+    # 服务器：走 Paramiko Shell 脚本采集
+    # 注意：设备可能被错误标记 platform（例如服务器误填成 cisco_ios），
+    # 因此只要 device_category 含 'server' 就按服务器处理，并用 'linux'
+    # 作为指标 vendor 匹配，避免加载不到任何 Linux Shell 指标。
+    category = str(device.get('device_category') or '').lower()
+    is_server = platform_name in {p.lower() for p in _SERVER_PLATFORMS} or 'server' in category
+    is_network_device = platform_name in _NETWORK_PLATFORMS and not is_server
+
+    # 服务器统一用 'linux' 作为指标 vendor；网络设备使用其平台名。
+    item_vendor = 'linux' if is_server else platform_name
+
     # ── 加载该平台适用的巡检指标（enabled=1，vendor 匹配或为 Generic/空）──
+    # vendor 比较使用 LOWER() 以兼容库中以 'Linux'/'Cisco' 等首字母大写存储的写法。
     conn = get_db_connection()
     try:
         rows = conn.execute(
             "SELECT * FROM inspection_items "
-            "WHERE (vendor = ? OR LOWER(vendor) = 'generic' OR vendor = '') "
+            "WHERE (LOWER(vendor) = LOWER(?) OR LOWER(vendor) = 'generic' OR vendor = '') "
             "AND COALESCE(enabled, 1) = 1",
-            (platform_name,)
+            (item_vendor,)
         ).fetchall()
         matched_items = [dict(r) for r in rows]
     except Exception as e:
-        logger.warning(f"Failed to load inspection items for {platform_name}: {e}")
+        logger.warning(f"Failed to load inspection items for {item_vendor}: {e}")
         matched_items = []
     finally:
         conn.close()
@@ -1025,12 +1046,6 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
 
     if any(it.get('use_admin_creds', 0) == 1 for it in matched_items):
         use_admin_creds = True
-
-    # ── 按平台类型路由 ──
-    # 网络设备：走 NetmikoDriver CLI 采集 + TextFSM 解析
-    # 服务器：走 Paramiko Shell 脚本采集（原有逻辑）
-    is_network_device = platform_name in _NETWORK_PLATFORMS
-    is_server = platform_name in {p.lower() for p in _SERVER_PLATFORMS}
 
     if is_network_device:
         # 选 CLI 和 SNMP 方式的指标
@@ -1087,18 +1102,17 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
 
     conn = get_db_connection()
     try:
-        for item in shell_items:
-            script_id = item.get('script_id') or ''
-            if not script_id:
-                continue
+        # 综合巡检脚本优先：只要存在 insp_linux_full 就用它一次性采集所有指标。
+        # 不再要求 platform 严格等于 'linux'（兼容被误标为 cisco_ios 的服务器）。
+        use_single_script = False
+        script_row = conn.execute("SELECT content FROM scripts WHERE id = ?", ("insp_linux_full",)).fetchone()
+        if script_row and script_row['content']:
+            use_single_script = True
+            script_content = script_row['content']
 
-            script_row = conn.execute("SELECT content FROM scripts WHERE id = ?", (script_id,)).fetchone()
-            if not script_row:
-                continue
-
-            raw_output = _execute_shell_script(ip, script_row['content'], device)
-            cmd_key = item.get('check_key') or f"script_{script_id}"
-            raw_outputs[cmd_key] = raw_output
+        if use_single_script:
+            raw_output = _execute_shell_script(ip, script_content, device)
+            raw_outputs['insp_linux_full'] = raw_output
 
             if "ERROR:" in raw_output:
                 result['ssh_ok'] = 0
@@ -1107,37 +1121,205 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                 result['health_score'] = 0
                 findings.append(make_finding(
                     'connectivity_error',
-                    f"SSH 连接或脚本执行失败 ({item.get('name_zh')}): {raw_output}",
+                    f"SSH 连接或综合巡检脚本执行失败: {raw_output}",
                     raw_error=raw_output,
                     severity='critical',
                 ))
-                metrics_results[item['check_key']] = {'value': None, 'error': raw_output}
-                continue
+                for item in shell_items:
+                    metrics_results[item['check_key']] = {'value': None, 'error': raw_output}
+            else:
+                # Parse metrics from --- METRICS ---
+                parsed_metrics = {}
+                metrics_block_started = False
+                for line in raw_output.splitlines():
+                    line = line.strip()
+                    if line == "--- METRICS ---":
+                        metrics_block_started = True
+                        continue
+                    if metrics_block_started:
+                        if line.startswith("==="):
+                            metrics_block_started = False
+                            continue
+                        if ":" in line:
+                            parts = line.split(":", 1)
+                            m_key = parts[0].strip()
+                            m_val_str = parts[1].strip()
+                            try:
+                                parsed_metrics[m_key] = float(m_val_str)
+                            except ValueError:
+                                parsed_metrics[m_key] = m_val_str
 
-            val = _extract_numeric_value(raw_output)
+                # Map parsed_metrics to metrics_results.
+                # 1) 先把综合脚本解析出的所有指标全部纳入结果（即使没有对应的
+                #    inspection_item 定义），保证 Dashboard / 报表能拿到数据。
+                #    这修复了「shell_items 为空时 metrics 全空」的问题。
+                for m_key, m_val in parsed_metrics.items():
+                    metrics_results[m_key] = m_val
+                # 2) 对于显式定义但综合脚本未采集到的指标，标注缺失原因。
+                for item in shell_items:
+                    ck = item['check_key']
+                    if ck not in parsed_metrics:
+                        metrics_results[ck] = {'value': None, 'error': '未在综合巡检中采集到此指标'}
 
-            if val is not None:
-                metrics_results[item['check_key']] = val
-                w = item.get('warning_threshold')
-                c = item.get('critical_threshold')
+                # Parse finding lines starting with [WARNING] or [ERROR]
+                total_errors = 0
+                total_warnings = 0
+                overall_status = "SUCCESS"
 
-                if c is not None and val >= c:
+                for line in raw_output.splitlines():
+                    line = line.strip()
+                    if "发现严重错误" in line and ":" in line:
+                        try:
+                            digits = re.findall(r'\d+', line.split(":", 1)[1])
+                            if digits:
+                                total_errors = int(digits[0])
+                        except Exception:
+                            pass
+                    elif "发现警告信息" in line and ":" in line:
+                        try:
+                            digits = re.findall(r'\d+', line.split(":", 1)[1])
+                            if digits:
+                                total_warnings = int(digits[0])
+                        except Exception:
+                            pass
+                    elif "综合健康评级" in line and ":" in line:
+                        try:
+                            overall_status = line.split(":", 1)[1].strip().replace("[", "").replace("]", "")
+                        except Exception:
+                            pass
+
+                # Add findings for all issues, skipping section headers
+                for line in raw_output.splitlines():
+                    line = line.strip()
+                    if line.startswith("[WARNING]"):
+                        msg = line.replace("[WARNING]", "").strip()
+                        if re.match(r'^\d+\.', msg):
+                            continue
+                        findings.append(make_finding(
+                            'data_error',
+                            msg,
+                            severity='warning',
+                        ))
+                    elif line.startswith("[ERROR]"):
+                        msg = line.replace("[ERROR]", "").strip()
+                        if re.match(r'^\d+\.', msg):
+                            continue
+                        findings.append(make_finding(
+                            'data_error',
+                            msg,
+                            severity='critical',
+                        ))
+
+                # Update health score and status
+                if total_errors > 0 or overall_status == 'ERROR':
+                    result['health_status'] = 'critical'
+                elif total_warnings > 0 or overall_status == 'WARNING':
+                    result['health_status'] = 'warning'
+                else:
+                    result['health_status'] = 'healthy'
+
+                result['health_score'] = max(0, 100 - total_errors * 25 - total_warnings * 10)
+
+                # Ensure "========== HEALTH CHECK ==========" is present for report_generator compatibility
+                if "========== HEALTH CHECK ==========" not in raw_output:
+                    cpu_util_val = parsed_metrics.get('cpu_util', 0.0)
+                    load_val = parsed_metrics.get('cpu_load', 0.0)
+                    mem_val = parsed_metrics.get('mem_avail', 0.0)
+                    swap_val = parsed_metrics.get('swap_util', 0.0)
+                    io_val = parsed_metrics.get('io_wait', 0.0)
+                    disk_val = parsed_metrics.get('disk_util', 0.0)
+                    inode_val = parsed_metrics.get('inode_util', 0.0)
+                    tcp_estab_val = parsed_metrics.get('tcp_conns', 0)
+
+                    def get_status_from_findings(keyword, default='OK'):
+                        has_crit = any(keyword in f['message'] and f['severity'] == 'critical' for f in findings)
+                        has_warn = any(keyword in f['message'] and f['severity'] == 'warning' for f in findings)
+                        if has_crit: return 'CRITICAL'
+                        if has_warn: return 'ERROR'
+                        return default
+
+                    cpu_status = get_status_from_findings('CPU', 'OK')
+                    load_status = get_status_from_findings('负载', 'OK')
+                    mem_status = get_status_from_findings('内存', 'OK')
+                    disk_status = get_status_from_findings('挂载点', 'OK')
+                    inode_status = get_status_from_findings('Inode', 'OK')
+                    io_status = get_status_from_findings('I/O', 'OK')
+                    tcp_status = get_status_from_findings('TCP', 'OK')
+
+                    rep_overall = "OK"
+                    if result['health_status'] == 'critical': rep_overall = "CRITICAL"
+                    elif result['health_status'] == 'warning': rep_overall = "ERROR"
+
+                    health_check_block = []
+                    health_check_block.append("========== HEALTH CHECK ==========")
+                    health_check_block.append(f"Host: {hostname}")
+                    health_check_block.append(f"Time: {now}")
+                    health_check_block.append(f"OVERALL: {rep_overall}")
+                    health_check_block.append(f"SUMMARY: 发现严重错误 {total_errors} 个，警告信息 {total_warnings} 个")
+                    health_check_block.append(f"CPU Usage(%) {cpu_util_val} {cpu_status}")
+                    health_check_block.append(f"Load/Core {load_val} {load_status}")
+                    health_check_block.append(f"Memory(%) {mem_val} {mem_status}")
+                    health_check_block.append(f"Disk Usage(%) {disk_val} {disk_status}")
+                    health_check_block.append(f"Inode Usage(%) {inode_val} {inode_status}")
+                    health_check_block.append(f"IOWait(%) {io_val} {io_status}")
+                    health_check_block.append(f"TCP ESTAB {tcp_estab_val} {tcp_status}")
+                    health_check_block.append("==================================")
+
+                    raw_outputs['insp_linux_full'] = raw_output + "\n\n" + "\n".join(health_check_block)
+
+        else:
+            # Fallback to original loop-based execution
+            for item in shell_items:
+                script_id = item.get('script_id') or ''
+                if not script_id:
+                    continue
+
+                script_row = conn.execute("SELECT content FROM scripts WHERE id = ?", (script_id,)).fetchone()
+                if not script_row:
+                    continue
+
+                raw_output = _execute_shell_script(ip, script_row['content'], device)
+                cmd_key = item.get('check_key') or f"script_{script_id}"
+                raw_outputs[cmd_key] = raw_output
+
+                if "ERROR:" in raw_output:
+                    result['ssh_ok'] = 0
+                    result['ssh_error'] = raw_output
+                    result['health_status'] = 'critical'
+                    result['health_score'] = 0
                     findings.append(make_finding(
-                        'data_error',
-                        f"{item['name_zh']} 严重超标: {val} (阈值 {c})",
+                        'connectivity_error',
+                        f"SSH 连接或脚本执行失败 ({item.get('name_zh')}): {raw_output}",
+                        raw_error=raw_output,
                         severity='critical',
                     ))
-                    result['health_status'] = 'critical'
-                elif w is not None and val >= w:
-                    findings.append(make_finding(
-                        'data_error',
-                        f"{item['name_zh']} 达到告警线: {val} (阈值 {w})",
-                        severity='warning',
-                    ))
-                    if result['health_status'] != 'critical':
-                        result['health_status'] = 'warning'
-            else:
-                metrics_results[item['check_key']] = {'value': None, 'error': '采集失败或无法提取数值'}
+                    metrics_results[item['check_key']] = {'value': None, 'error': raw_output}
+                    continue
+
+                val = _extract_numeric_value(raw_output)
+
+                if val is not None:
+                    metrics_results[item['check_key']] = val
+                    w = item.get('warning_threshold')
+                    c = item.get('critical_threshold')
+
+                    if c is not None and val >= c:
+                        findings.append(make_finding(
+                            'data_error',
+                            f"{item['name_zh']} 严重超标: {val} (阈值 {c})",
+                            severity='critical',
+                        ))
+                        result['health_status'] = 'critical'
+                    elif w is not None and val >= w:
+                        findings.append(make_finding(
+                            'data_error',
+                            f"{item['name_zh']} 达到告警线: {val} (阈值 {w})",
+                            severity='warning',
+                        ))
+                        if result['health_status'] != 'critical':
+                            result['health_status'] = 'warning'
+                else:
+                    metrics_results[item['check_key']] = {'value': None, 'error': '采集失败或无法提取数值'}
 
     except Exception as e:
         findings.append(make_finding(
@@ -1152,7 +1334,15 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
     result['metrics_json'] = json.dumps(metrics_results, ensure_ascii=False)
     result['findings_json'] = json.dumps(findings, ensure_ascii=False)
     result['raw_outputs_json'] = json.dumps(raw_outputs, ensure_ascii=False)
-    result['analysis_json'] = '[]'
+
+    # 指标智能分析（与网络设备一致）：基于阈值 + 历史对比生成结论/建议。
+    try:
+        last_metrics_raw = _get_last_metrics_dict(device_id)
+        analysis = analyze_device_inspection(device, metrics_results, shell_items, last_metrics_raw)
+        result['analysis_json'] = json.dumps(analysis, ensure_ascii=False)
+    except Exception as ae:
+        logger.warning(f"[Inspection] Server analysis failed for {hostname}: {ae}")
+        result['analysis_json'] = '[]'
     result['correlated_risks_json'] = '[]'
 
     # 映射常用字段以保证 Dashboard 兼容

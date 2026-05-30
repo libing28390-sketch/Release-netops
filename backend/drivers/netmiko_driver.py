@@ -83,6 +83,69 @@ def _normalize_ip_commands(commands: List[str], platform: str) -> List[str]:
     return normalized
 
 
+def _sanitize_command(cmd: str) -> str:
+    """脱敏命令中可能包含的明文密码，适用于日志记录和报错呈现。"""
+    if not isinstance(cmd, str):
+        return cmd
+    
+    # 1. Linux echo chpasswd 格式 (如 echo 'user:pwd' | chpasswd)
+    cmd = re.sub(
+        r"(echo\s+)(['\"]?)([^:'\"\s]+):([^'\"\s]+)\2(\s*\|\s*(?:sudo\s+-S\s+)?chpasswd)",
+        r"\1\2\3:********\2\5",
+        cmd
+    )
+    
+    # 2. Linux printf chpasswd 格式 (如 printf "%s\n%s:%s\n" 'login_pwd' 'username' 'new_pwd' | sudo -S chpasswd)
+    pattern = r"(printf\s+['\"].*?['\"]\s+)(['\"])(.*?)\2\s+(['\"])(.*?)\4\s+(['\"])(.*?)\6(\s*\|\s*(?:sudo\s+-S\s+)?chpasswd)"
+    cmd = re.sub(
+        pattern,
+        r"\1\2********\2 \4\5\4 \6********\6\8",
+        cmd
+    )
+
+    # 3. Cisco/Arista: username <user> secret [0] <password>
+    cmd = re.sub(
+        r"(username\s+\S+\s+secret\s+(?:0\s+)?)\S+",
+        r"\1********",
+        cmd,
+        flags=re.IGNORECASE
+    )
+
+    # 4. Cisco: enable secret [0] <password>
+    cmd = re.sub(
+        r"(enable\s+secret\s+(?:0\s+)?)\S+",
+        r"\1********",
+        cmd,
+        flags=re.IGNORECASE
+    )
+
+    # 5. Huawei: local-user <user> password cipher <password>
+    cmd = re.sub(
+        r"(local-user\s+\S+\s+password\s+cipher\s+)\S+",
+        r"\1********",
+        cmd,
+        flags=re.IGNORECASE
+    )
+
+    # 6. Huawei: super password ... cipher <password>
+    cmd = re.sub(
+        r"(super\s+password\s+(?:role\s+privilege\s+\d+\s+)?cipher\s+)\S+",
+        r"\1********",
+        cmd,
+        flags=re.IGNORECASE
+    )
+
+    # 7. H3C: password simple <password>
+    cmd = re.sub(
+        r"(password\s+simple\s+)\S+",
+        r"\1********",
+        cmd,
+        flags=re.IGNORECASE
+    )
+    
+    return cmd
+
+
 class NetmikoDriver(BaseDriver):
     """基于 Netmiko 的驱动实现"""
 
@@ -237,10 +300,11 @@ class NetmikoDriver(BaseDriver):
         import logging
         logger = logging.getLogger(__name__)
         start_time = time.time()
+        sanitized_cmd = _sanitize_command(command)
         try:
             if not self.conn:
                 raise Exception("Not connected")
-            logger.debug(f"[send_command] {self.host} | {command[:60]}")
+            logger.debug(f"[send_command] {self.host} | {sanitized_cmd[:60]}")
             
             # Default params
             params = {
@@ -264,36 +328,40 @@ class NetmikoDriver(BaseDriver):
             
             elapsed = time.time() - start_time
             err_line = self._check_cli_errors(output)
+            sanitized_output = _sanitize_command(output)
+            sanitized_err_line = _sanitize_command(err_line) if err_line else None
+            
             if err_line:
                 logger.warning(
                     f"[send_command] CLI error on {self.host}: "
-                    f"cmd={command!r} | {err_line}"
+                    f"cmd={sanitized_cmd!r} | {sanitized_err_line}"
                 )
                 return CommandResult(
                     success=False,
-                    output=output,
-                    error=f"CLI error: {err_line}",
+                    output=sanitized_output,
+                    error=f"CLI error: {sanitized_err_line}",
                     hostname=self.device_info.get('hostname', self.host),
-                    command=command,
+                    command=sanitized_cmd,
                     execution_time=elapsed,
                 )
-            logger.info(f"[send_command] {self.host} | {command[:50]} | {elapsed:.2f}s | {len(output)} chars")
+            logger.info(f"[send_command] {self.host} | {sanitized_cmd[:50]} | {elapsed:.2f}s | {len(output)} chars")
             return CommandResult(
                 success=True,
-                output=output,
+                output=sanitized_output,
                 hostname=self.device_info.get('hostname', self.host),
-                command=command,
+                command=sanitized_cmd,
                 execution_time=elapsed,
             )
         except Exception as e:
             elapsed = time.time() - start_time
-            logger.error(f"[send_command ERROR] {self.host} | {command[:50]} | {elapsed:.2f}s | {e}")
+            sanitized_e = _sanitize_command(str(e))
+            logger.error(f"[send_command ERROR] {self.host} | {sanitized_cmd[:50]} | {elapsed:.2f}s | {sanitized_e}")
             return CommandResult(
                 success=False,
                 output="",
-                error=str(e),
+                error=sanitized_e,
                 hostname=self.device_info.get('hostname', self.host),
-                command=command,
+                command=sanitized_cmd,
                 execution_time=elapsed,
             )
 
@@ -321,33 +389,40 @@ class NetmikoDriver(BaseDriver):
             )
             elapsed = time.time() - start_time
             err_line = self._check_cli_errors(output)
+            
+            sanitized_configs = [_sanitize_command(c) for c in configs]
+            sanitized_output = _sanitize_command(output)
+            sanitized_err_line = _sanitize_command(err_line) if err_line else None
+            
             if err_line:
-                logger.warning(f"[send_config] CLI error on {self.host}: {err_line}")
+                logger.warning(f"[send_config] CLI error on {self.host}: {sanitized_err_line}")
                 return CommandResult(
                     success=False,
-                    output=output,
-                    error=f"CLI error: {err_line}",
+                    output=sanitized_output,
+                    error=f"CLI error: {sanitized_err_line}",
                     hostname=self.device_info.get('hostname', self.host),
-                    command="\n".join(configs),
+                    command="\n".join(sanitized_configs),
                     execution_time=elapsed,
                 )
             logger.info(f"[send_config] {self.host} done in {elapsed:.2f}s")
             return CommandResult(
                 success=True,
-                output=output,
+                output=sanitized_output,
                 hostname=self.device_info.get('hostname', self.host),
-                command="\n".join(configs),
+                command="\n".join(sanitized_configs),
                 execution_time=elapsed,
             )
         except Exception as e:
             elapsed = time.time() - start_time
-            logger.warning(f"Config failed after {elapsed:.2f}s on {self.host}: {e}")
+            sanitized_configs = [_sanitize_command(c) for c in configs]
+            sanitized_e = _sanitize_command(str(e))
+            logger.warning(f"Config failed after {elapsed:.2f}s on {self.host}: {sanitized_e}")
             return CommandResult(
                 success=False,
                 output="",
-                error=str(e),
+                error=sanitized_e,
                 hostname=self.device_info.get('hostname', self.host),
-                command="\n".join(configs),
+                command="\n".join(sanitized_configs),
                 execution_time=elapsed,
             )
 
@@ -378,7 +453,7 @@ class NetmikoDriver(BaseDriver):
                 strip_prompt=False,
                 read_timeout=15,
             )
-            output_lines.append(f"[session enter]\n{out}")
+            output_lines.append(f"[session enter]\n{_sanitize_command(out)}")
 
             # 逐条下发配置命令
             for cmd in configs:
@@ -389,7 +464,7 @@ class NetmikoDriver(BaseDriver):
                     strip_prompt=False,
                     read_timeout=15,
                 )
-                output_lines.append(f"[cmd] {cmd}\n{out}")
+                output_lines.append(f"[cmd] {_sanitize_command(cmd)}\n{_sanitize_command(out)}")
 
             # 提交 session
             out = self.conn.send_command(
@@ -399,31 +474,34 @@ class NetmikoDriver(BaseDriver):
                 strip_prompt=False,
                 read_timeout=20,
             )
-            output_lines.append(f"[commit]\n{out}")
+            output_lines.append(f"[commit]\n{_sanitize_command(out)}")
 
             elapsed = time.time() - start_time
             logger.info(f"EOS session {session_name} committed on {self.host} in {elapsed:.2f}s")
+            sanitized_configs = [_sanitize_command(c) for c in configs]
             return CommandResult(
                 success=True,
                 output="\n".join(output_lines),
                 hostname=self.device_info.get('hostname', self.host),
-                command="\n".join(configs),
+                command="\n".join(sanitized_configs),
                 execution_time=elapsed
             )
         except Exception as e:
             elapsed = time.time() - start_time
-            logger.warning(f"EOS session {session_name} failed on {self.host}: {e}")
+            sanitized_e = _sanitize_command(str(e))
+            logger.warning(f"EOS session {session_name} failed on {self.host}: {sanitized_e}")
             # 尝试 abort 清理 session，避免配置残留
             try:
                 self.conn.send_command("abort", expect_string=r'[>#$]', cmd_verify=False, read_timeout=10)
                 output_lines.append("[abort] session aborted due to error")
             except Exception as abort_err:
                 logger.debug(f"Abort failed (non-critical): {abort_err}")
+            sanitized_configs = [_sanitize_command(c) for c in configs]
             return CommandResult(
                 success=False,
                 output="\n".join(output_lines),
-                error=str(e),
+                error=sanitized_e,
                 hostname=self.device_info.get('hostname', self.host),
-                command="\n".join(configs),
+                command="\n".join(sanitized_configs),
                 execution_time=elapsed
             )

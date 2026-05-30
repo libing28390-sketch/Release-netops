@@ -54,6 +54,7 @@ def analyze_device_inspection(
                     conclusion += f" (较上次{trend} {abs(change_pct):.1f}%)"
                     if status == "healthy" and abs(change_pct) > 50:
                         status = "warning"
+                        conclusion = f"指标波动剧烈: {val} (较上次{trend} {abs(change_pct):.1f}%)"
                         suggestion = "指标波动剧烈，建议排查是否存在潜在风险。"
 
         # 3. 结果合并

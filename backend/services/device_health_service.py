@@ -98,7 +98,8 @@ def _build_open_alert_stats(conn, device_ids: list[str]) -> dict[str, dict[str, 
 def evaluate_device_health(device: dict[str, Any], alert_stats: dict[str, int] | None = None) -> dict[str, Any]:
     alert_stats = alert_stats or {}
     platform = str(device.get('platform') or '').lower()
-    is_server = platform in _SERVER_PLATFORMS
+    category = str(device.get('device_category') or '').lower()
+    is_server = platform in _SERVER_PLATFORMS or 'server' in category
     status = str(device.get('status') or 'unknown').lower()
     compliance = str(device.get('compliance') or 'unknown').lower()
     cpu_usage = _as_float(device.get('cpu_usage'), 0.0)

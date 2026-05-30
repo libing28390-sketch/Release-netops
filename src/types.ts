@@ -26,6 +26,7 @@ export interface Device {
   connection_method: 'ssh' | 'netconf';
   current_config?: string;
   config_history: ConfigVersion[];
+  device_category?: string;
   username?: string;
   password?: string;
   enable_password?: string;

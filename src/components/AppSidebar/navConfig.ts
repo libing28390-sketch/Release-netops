@@ -16,9 +16,10 @@ export const navConfig: NavGroup[] = [
     icon: 'Activity',
     badge: 'monitoring',
     children: [
-      { id: 'dashboard',    label: '运营总览',   labelEn: 'Overview',          path: '/monitor/overview',    icon: 'LayoutDashboard' },
-      { id: 'monitoring',   label: '监控中心',  labelEn: 'Monitoring',        path: '/monitor/telemetry',   icon: 'Activity' },
-      { id: 'topology',     label: '网络拓扑',  labelEn: 'Topology',          path: '/monitor/topology',    icon: 'Network' },
+      { id: 'dashboard',         label: '运营总览',   labelEn: 'Overview',          path: '/monitor/overview',    icon: 'LayoutDashboard' },
+      { id: 'monitoring',        label: '监控中心',  labelEn: 'Monitoring',        path: '/monitor/telemetry',   icon: 'Activity' },
+      { id: 'server-monitoring', label: '服务器监控', labelEn: 'Server Monitoring', path: '/monitor/servers',     icon: 'Server' },
+      { id: 'topology',          label: '网络拓扑',  labelEn: 'Topology',          path: '/monitor/topology',    icon: 'Network' },
     ],
   },
   {

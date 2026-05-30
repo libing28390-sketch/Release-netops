@@ -44,7 +44,8 @@ class AutomationService:
             "platform": platform,
             "use_pool": False
         }
-        is_server = any(t in platform.lower() for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'))
+        category = str(d.get('device_category') or '').lower() if hasattr(d, 'get') else ''
+        is_server = any(t in platform.lower() for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server')) or 'server' in category
         dummy_cmd = "echo 1" if is_server else "show clock"
         res = self.orchestrator.execute_single(device, "command", dummy_cmd)
         return res.get("success", False)
@@ -63,7 +64,8 @@ class AutomationService:
             "use_pool": False
         }
         platform = str(device_info.get("platform") or "").lower()
-        is_server = any(t in platform for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'))
+        category = str(device_info.get('device_category') or '').lower()
+        is_server = any(t in platform for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server')) or 'server' in category
         dummy_cmd = "echo 1" if is_server else "show clock"
         res = self.orchestrator.execute_single(device, "command", dummy_cmd)
         success = res.get("success", False)

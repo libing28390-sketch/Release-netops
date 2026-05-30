@@ -191,7 +191,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       status: a.status, lifecycle_status: a.lifecycle_status || 'staging',
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
-      platform: (a as any).platform || 'cisco_ios',
+      platform: (a as any).platform || (a.asset_type === 'server' ? 'linux' : 'cisco_ios'),
       connection_method: (a as any).connection_method || 'ssh',
       username: (a as any).username || '',
       password: '',
@@ -253,8 +253,19 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         const n = parseInt(plannedRaw, 10);
         if (!Number.isNaN(n) && n >= 1 && n <= 60) planned_start_u = n;
       }
+      // Guard: a server must never carry a network-device platform (e.g. stale
+      // cisco_ios). If the stored value isn't a valid server platform, coerce
+      // it to a sane Linux default so we don't persist an inconsistent platform.
+      let normalizedPlatform = form.platform;
+      if (form.asset_type === 'server') {
+        const serverValues = SERVER_PLATFORMS.map(p => p.value);
+        if (!serverValues.includes(String(form.platform))) {
+          normalizedPlatform = 'linux';
+        }
+      }
       const payload = {
         ...form,
+        platform: normalizedPlatform,
         u_height: Math.max(1, Math.min(60, parseInt(String(form.u_height), 10) || 1)),
         planned_start_u,
         power_watts: parseInt(String(form.power_watts), 10) || 0,
@@ -311,7 +322,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       status: a.status, lifecycle_status: 'staging',
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
-      platform: a.platform || 'cisco_ios',
+      platform: a.platform || (a.asset_type === 'server' ? 'linux' : 'cisco_ios'),
       connection_method: a.connection_method || 'ssh',
       username: a.username || '',
       password: '',

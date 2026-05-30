@@ -206,7 +206,7 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
         else:
             platform = 'cisco_ios'
 
-    is_server = asset_type == 'server' or any(tag in platform for tag in ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'])
+    is_server = asset_type == 'server' or any(tag in platform for tag in ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server']) or 'server' in str(device.get('device_category') or '').lower()
     
     logger.info(f"[Rotation] Starting: host={device.get('ip_address')}, platform={platform}, is_server={is_server}")
     

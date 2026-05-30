@@ -31,7 +31,14 @@ class ExecutionOrchestrator:
         task_id = task_id or f"task-{uuid.uuid4().hex[:8]}"
         
         try:
-            asset_type = device.get("asset_type") or ("server" if device.get("platform") in ("ubuntu", "linux", "centos") else "network")
+            platform = str(device.get("platform") or "").lower()
+            category = str(device.get("device_category") or "").lower()
+            asset_type = device.get("asset_type")
+            if not asset_type:
+                if any(t in platform for t in ("ubuntu", "linux", "centos", "debian", "redhat", "server")) or "server" in category:
+                    asset_type = "server"
+                else:
+                    asset_type = "network"
             driver = DriverRegistry.get_driver(asset_type, device)
             
             # 执行

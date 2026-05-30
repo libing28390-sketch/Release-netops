@@ -10,6 +10,7 @@ import { useTopologyContext } from '../contexts/TopologyContext';
 import { sectionHeaderRowClass } from './shared';
 
 const MonitoringCenter = lazy(() => import('./MonitoringCenter.tsx'));
+const ServerMonitoring = lazy(() => import('./ServerMonitoring.tsx'));
 const DeviceHealthTab = lazy(() => import('../pages/DeviceHealthTab'));
 const DashboardTab = lazy(() => import('../pages/DashboardTab'));
 const HomePage = lazy(() => import('../pages/HomePage'));
@@ -451,6 +452,17 @@ const AppMainContent: React.FC = () => {
       {activeTab === 'monitoring' && (
         <Suspense fallback={lazyPanelFallback}>
           <MonitoringCenter
+            devices={devices}
+            language={language}
+            showToast={showToast}
+            isAuthenticated={isAuthenticated}
+          />
+        </Suspense>
+      )}
+
+      {activeTab === 'server-monitoring' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <ServerMonitoring
             devices={devices}
             language={language}
             showToast={showToast}

@@ -125,7 +125,8 @@ def _resolve_session_creds(device: dict, asset: dict, access_level: str) -> dict
 
     creds = resolve_device_credentials(device)
     platform = (device.get('platform') or '').lower()
-    is_server = any(p in platform for p in ['linux', 'windows', 'server'])
+    category = str(device.get('device_category') or '').lower()
+    is_server = any(p in platform for p in ['linux', 'windows', 'server']) or 'server' in category
 
     if access_level == 'admin':
         username = (

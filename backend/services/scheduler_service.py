@@ -62,13 +62,17 @@ async def run_scheduled_automation_job(job_id: str):
         if job['action_type'] == 'inspection':
             logger.info(f"Diverting scheduled job {job_id} ({job['name']}) to inspection engine.")
             
-            # Parse check items from commands field (comma-separated or newline-separated) or script
+            # Parse check items from commands field (comma-separated or newline-separated) or script.
+            #
+            # IMPORTANT: a shell *collector* script (e.g. the built-in 'insp_linux_full'
+            # comprehensive inspection) must NOT be split line-by-line into check_items —
+            # doing so produces hundreds of bogus "items" that filter out every real
+            # inspection metric, leaving the run with empty metrics. We only derive
+            # check_items from a plain comma/newline list in the `commands` field.
+            # When a script_id is set we leave check_items=None so the inspection engine
+            # runs its full metric set / comprehensive script for the device platform.
             custom_check_items = None
-            if job.get('script_id'):
-                script_row = conn.execute("SELECT content FROM scripts WHERE id = ?", (job['script_id'],)).fetchone()
-                if script_row and script_row['content']:
-                    custom_check_items = [c.strip() for c in script_row['content'].split('\n') if c.strip()]
-            elif job['commands']:
+            if not job.get('script_id') and job['commands']:
                 custom_check_items = [c.strip() for c in re.split(r'[,\n]', job['commands']) if c.strip()]
             
             # NOTE: schedule_id must be None here.
@@ -199,7 +203,8 @@ async def run_scheduled_automation_job(job_id: str):
 
                 # ── Per-device execution path ────────────────────────────────
                 platform = str(d.get('platform') or '').lower()
-                is_server = any(t in platform for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'))
+                category = str(d.get('device_category') or '').lower()
+                is_server = any(t in platform for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server')) or 'server' in category
 
                 if is_shell_script and is_server:
                     # Linux/server: use LinuxDriver via SCRIPT mode.
@@ -446,7 +451,12 @@ def sync_scheduler_jobs(scheduler):
                         CronTrigger.from_crontab(job['cron_expr']),
                         id=f"dyn_{job_id}",
                         args=[job_id],
-                        replace_existing=True
+                        replace_existing=True,
+                        # 允许至多 2 个实例并发，并合并被错过的触发，避免单次巡检
+                        # 偶尔超时导致后续触发被 "maximum instances reached" 跳过。
+                        max_instances=2,
+                        coalesce=True,
+                        misfire_grace_time=300,
                     )
                     logger.info(f"Scheduled cron job: {job['name']} ({job['cron_expr']})")
                 except Exception as e:

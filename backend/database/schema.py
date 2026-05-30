@@ -624,6 +624,97 @@ def _init_db_logic(conn):
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_interface_telemetry_1m_ts ON interface_telemetry_1m(ts_minute)')
 
+    # Server/Host telemetry raw samples (7-day retention)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS device_telemetry_samples (
+        ts TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        cpu_load REAL,
+        cpu_util REAL,
+        mem_avail REAL,
+        swap_util REAL,
+        io_wait REAL,
+        io_latency REAL,
+        disk_util REAL,
+        inode_util REAL,
+        tcp_conns INTEGER,
+        tcp_retrans REAL,
+        tcp_estab INTEGER,
+        tcp_time_wait INTEGER,
+        tcp_close_wait INTEGER,
+        tcp_syn_recv INTEGER,
+        tcp_listen INTEGER,
+        process_health INTEGER,
+        service_sshd INTEGER DEFAULT 0,
+        service_crond INTEGER DEFAULT 0,
+        service_docker INTEGER DEFAULT 0,
+        PRIMARY KEY (ts, device_id),
+        FOREIGN KEY (device_id) REFERENCES devices(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_telemetry_samples_ts ON device_telemetry_samples(ts)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_telemetry_samples_dev_ts ON device_telemetry_samples(device_id, ts)')
+
+    # Server/Host telemetry hourly rollup samples (90-day retention)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS device_telemetry_hourly (
+        ts_hour TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        samples INTEGER DEFAULT 0,
+        avg_cpu_load REAL,
+        max_cpu_load REAL,
+        avg_cpu_util REAL,
+        max_cpu_util REAL,
+        avg_mem_avail REAL,
+        max_mem_avail REAL,
+        avg_swap_util REAL,
+        max_swap_util REAL,
+        avg_io_wait REAL,
+        max_io_wait REAL,
+        avg_io_latency REAL,
+        max_io_latency REAL,
+        avg_disk_util REAL,
+        max_disk_util REAL,
+        avg_inode_util REAL,
+        max_inode_util REAL,
+        avg_tcp_conns REAL,
+        max_tcp_conns REAL,
+        avg_tcp_retrans REAL,
+        max_tcp_retrans REAL,
+        avg_tcp_estab REAL,
+        max_tcp_estab REAL,
+        avg_tcp_time_wait REAL,
+        max_tcp_time_wait REAL,
+        avg_tcp_close_wait REAL,
+        max_tcp_close_wait REAL,
+        avg_tcp_syn_recv REAL,
+        max_tcp_syn_recv REAL,
+        avg_tcp_listen REAL,
+        max_tcp_listen REAL,
+        avg_process_health REAL,
+        PRIMARY KEY (ts_hour, device_id),
+        FOREIGN KEY (device_id) REFERENCES devices(id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_telemetry_hourly_ts ON device_telemetry_hourly(ts_hour)')
+
+    # Migration: extend telemetry tables with IO latency + per-state TCP metrics.
+    # (Older DBs created before these columns existed need them backfilled.)
+    for _col, _type in (
+        ('io_latency', 'REAL'),
+        ('tcp_retrans', 'REAL'),
+        ('tcp_estab', 'INTEGER'),
+        ('tcp_time_wait', 'INTEGER'),
+        ('tcp_close_wait', 'INTEGER'),
+        ('tcp_syn_recv', 'INTEGER'),
+        ('tcp_listen', 'INTEGER'),
+    ):
+        ensure_column('device_telemetry_samples', _col, _type)
+    for _base in ('io_latency', 'tcp_retrans', 'tcp_estab', 'tcp_time_wait', 'tcp_close_wait', 'tcp_syn_recv', 'tcp_listen'):
+        ensure_column('device_telemetry_hourly', f'avg_{_base}', 'REAL')
+        ensure_column('device_telemetry_hourly', f'max_{_base}', 'REAL')
+
+
     # Alert lifecycle records (open/resolved)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS alert_events (
@@ -1835,15 +1926,17 @@ def _init_db_logic(conn):
         'insp_cisco_ios_full', 'insp_cisco_nxos_full',
         'insp_huawei_vrp_full', 'insp_huawei_vrpv8_full',
         'insp_h3c_comware_full', 'insp_juniper_junos_full', 'insp_arista_eos_full',
+        'insp_linux_full',
     ]
     for sid in insp_script_ids:
+        stype = 'shell' if sid == 'insp_linux_full' else 'cli'
         cursor.execute(
             "UPDATE scripts SET script_type=?, status=?, author=?, "
             "submitter_name=?, approver_username=?, "
             "created_at=COALESCE(NULLIF(created_at, ''), ?), "
             "updated_at=? "
             "WHERE id=?",
-            ('cli', 'released', 'system', 'system', 'system', now, now, sid)
+            (stype, 'released', 'system', 'system', 'system', now, now, sid)
         )
 
     default_items = get_default_items(now)

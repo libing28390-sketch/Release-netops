@@ -6,6 +6,7 @@ import {
   Zap, Bell, Clock, ArrowUpRight, Eye, Activity,
   Radio, Play, ChevronDown, ChevronUp, Server,
   Terminal, Download, Wrench, Map as MapIcon, Globe, Layers, BarChart3,
+  Network,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Brush } from 'recharts';
 import type { Device, HostResourceSnapshot, HostResourceHistoryPayload } from '../types';
@@ -144,6 +145,43 @@ const MiniGauge: React.FC<{ value: number | null; label: string; max?: number }>
   );
 };
 
+/* ─── classified device card (server | network) ─── */
+
+const DeviceClassCard: React.FC<{
+  device: any; kind: 'server' | 'network'; language: 'zh' | 'en'; selected: boolean; onClick: () => void;
+}> = ({ device, kind, language, selected, onClick }) => {
+  const isOnline = String(device.status || '').toLowerCase() === 'online';
+  const statusColor = isOnline ? '#10b981' : '#94a3b8';
+  const Icon = kind === 'server' ? Server : Network;
+  const selectedCls = kind === 'server'
+    ? 'border-sky-400 bg-sky-500/[0.06] shadow-sm'
+    : 'border-violet-400 bg-violet-500/[0.06] shadow-sm';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all ${selected ? selectedCls : 'border-[var(--card-border)] bg-[var(--card-bg)] hover:border-black/15 hover:bg-black/[0.02]'}`}
+    >
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${kind === 'server' ? 'bg-sky-500/10 text-sky-600' : 'bg-violet-500/10 text-violet-600'}`}>
+        <Icon size={16} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-semibold text-[var(--app-text)]">{device.hostname || device.ip_address}</p>
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: statusColor }} title={isOnline ? 'online' : 'offline'} />
+        </div>
+        <p className="mt-0.5 truncate text-[11px] font-mono text-[var(--muted-text)]">{device.ip_address || '-'}</p>
+      </div>
+      <span className="shrink-0 text-right">
+        <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--muted-text)]">{device.platform || (kind === 'server' ? 'Linux' : 'Network')}</span>
+        <span className={`text-[10px] font-bold uppercase tracking-wider ${isOnline ? 'text-emerald-600' : 'text-slate-400'}`}>
+          {isOnline ? (language === 'zh' ? '在线' : 'Online') : (language === 'zh' ? '离线' : 'Offline')}
+        </span>
+      </span>
+    </button>
+  );
+};
+
 /* ─── pagination helper ─── */
 
 const buildPaginationItems = (currentPage: number, totalPages: number) => {
@@ -194,6 +232,9 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const { systemInfo } = useSystem();
   const ct = useChartTheme();
   const navigate = useNavigate();
+
+
+
   const [refreshing, setRefreshing] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [hostResourceRange, setHostResourceRange] = useState<1 | 24 | 168>(24);
@@ -204,6 +245,9 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const [impactedShowAll, setImpactedShowAll] = useState(false);
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [hostResourceAlertView, setHostResourceAlertView] = useState<'active' | 'history'>('active');
+  const advancedSectionRef = useRef<HTMLDivElement | null>(null);
+  const explorerSectionRef = useRef<HTMLDivElement | null>(null);
+  const [deviceClassTab, setDeviceClassTab] = useState<'server' | 'network'>('server');
 
   // Read all monitoring state from store
   const {
@@ -254,6 +298,35 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     setMonitorDashboardAlertFilter,
     hostResources,
   } = useMonitoringStore();
+
+  const isServerDevice = (d: any) => {
+    if (!d) return false;
+    const serverKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'server'];
+    const p = (d.platform || '').toLowerCase();
+    if (serverKeywords.some((kw) => p.includes(kw))) return true;
+    // Fallback: some servers are mis-tagged with a network platform (e.g. cisco_ios)
+    // but carry a server-ish category / role / asset_type. Mirror the backend's
+    // `'server' in category` heuristic so detection stays consistent.
+    const category = (d.device_category || '').toLowerCase();
+    const role = (d.role || '').toLowerCase();
+    const assetType = (d.asset_type || '').toLowerCase();
+    return category.includes('server') || role.includes('server') || assetType.includes('server');
+  };
+  const isSelectedServer = isServerDevice(monitorSelectedDevice) || (monitorRealtime as any)?.is_server === true || (monitorTrend as any)?.is_server === true;
+
+  // Device inventory split by class — drives the always-visible classified
+  // explorer so Linux servers (LinuxDriver telemetry) and network devices
+  // (Netmiko/SNMP telemetry) are reachable without guessing.
+  const serverDevices = React.useMemo(
+    () => (allDevices || []).filter(isServerDevice),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allDevices],
+  );
+  const networkDevices = React.useMemo(
+    () => (allDevices || []).filter((d) => !isServerDevice(d)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allDevices],
+  );
 
   // Get fetch functions from the hook (they use store internally)
   const {
@@ -430,27 +503,71 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     return Number.isFinite(n) ? n : null;
   };
 
-  const trendData = (monitorTrend?.series || []).map((p: any) => ({
-    ts: p.ts_minute,
-    time: formatTs(p.ts_minute, false),
-    in_bps: toNumOrNull(p.total_in_bps),
-    out_bps: toNumOrNull(p.total_out_bps),
-    in_pkts: toNumOrNull(p.total_in_pkts),
-    out_pkts: toNumOrNull(p.total_out_pkts),
-    errors: toNumOrNull(p.total_errors),
-    drops: toNumOrNull(p.total_drops),
-  }));
+  const trendData = (monitorTrend?.series || []).map((p: any) => {
+    const base = {
+      ts: p.ts_minute,
+      time: formatTs(p.ts_minute, false),
+    };
+    if (isSelectedServer) {
+      return {
+        ...base,
+        cpu_load: toNumOrNull(p.cpu_load),
+        cpu_util: toNumOrNull(p.cpu_util),
+        mem_avail: toNumOrNull(p.mem_avail),
+        swap_util: toNumOrNull(p.swap_util),
+        io_wait: toNumOrNull(p.io_wait),
+        disk_util: toNumOrNull(p.disk_util),
+        inode_util: toNumOrNull(p.inode_util),
+        tcp_conns: toNumOrNull(p.tcp_conns),
+        process_health: toNumOrNull(p.process_health),
+        service_sshd: toNumOrNull(p.service_sshd),
+        service_crond: toNumOrNull(p.service_crond),
+        service_docker: toNumOrNull(p.service_docker),
+      };
+    }
+    return {
+      ...base,
+      in_bps: toNumOrNull(p.total_in_bps),
+      out_bps: toNumOrNull(p.total_out_bps),
+      in_pkts: toNumOrNull(p.total_in_pkts),
+      out_pkts: toNumOrNull(p.total_out_pkts),
+      errors: toNumOrNull(p.total_errors),
+      drops: toNumOrNull(p.total_drops),
+    };
+  });
 
-  const realtimeData = (monitorRealtime?.series || []).map((p: any) => ({
-    ts: p.ts,
-    time: formatTs(p.ts, true),
-    in_bps: toNumOrNull(p.in_bps),
-    out_bps: toNumOrNull(p.out_bps),
-    in_pkts: toNumOrNull(p.in_pkts),
-    out_pkts: toNumOrNull(p.out_pkts),
-    errors: toNumOrNull(p.errors),
-    drops: toNumOrNull(p.drops),
-  }));
+  const realtimeData = (monitorRealtime?.series || []).map((p: any) => {
+    const base = {
+      ts: p.ts,
+      time: formatTs(p.ts, true),
+    };
+    if (isSelectedServer) {
+      return {
+        ...base,
+        cpu_load: toNumOrNull(p.cpu_load),
+        cpu_util: toNumOrNull(p.cpu_util),
+        mem_avail: toNumOrNull(p.mem_avail),
+        swap_util: toNumOrNull(p.swap_util),
+        io_wait: toNumOrNull(p.io_wait),
+        disk_util: toNumOrNull(p.disk_util),
+        inode_util: toNumOrNull(p.inode_util),
+        tcp_conns: toNumOrNull(p.tcp_conns),
+        process_health: toNumOrNull(p.process_health),
+        service_sshd: toNumOrNull(p.service_sshd),
+        service_crond: toNumOrNull(p.service_crond),
+        service_docker: toNumOrNull(p.service_docker),
+      };
+    }
+    return {
+      ...base,
+      in_bps: toNumOrNull(p.in_bps),
+      out_bps: toNumOrNull(p.out_bps),
+      in_pkts: toNumOrNull(p.in_pkts),
+      out_pkts: toNumOrNull(p.out_pkts),
+      errors: toNumOrNull(p.errors),
+      drops: toNumOrNull(p.drops),
+    };
+  });
 
   const trendMetricDefs = [
     { key: 'in_bps', label: language === 'zh' ? '入流量' : 'IN Throughput', short: 'IN', color: '#2563eb', unit: 'throughput' },
@@ -590,6 +707,32 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     };
     setMonitorSearch(nextDevice.hostname === '-' ? nextDevice.ip_address : nextDevice.hostname);
     setMonitorSelectedDevice(nextDevice);
+  };
+
+  // Open a device's monitoring view from the classified explorer: select it,
+  // ensure the detail/search panel is expanded, and scroll there. Preserves the
+  // server-ish fields (device_category / asset_type) so isServerDevice stays
+  // correct even when the platform is mis-tagged as a network OS.
+  const openClassedDevice = (device: any) => {
+    if (!device?.id && !device?.device_id) return;
+    const nextDevice = {
+      id: device.id || device.device_id,
+      hostname: device.hostname || '-',
+      ip_address: device.ip_address || '-',
+      platform: device.platform || '-',
+      role: device.role || '',
+      site: device.site || '',
+      status: device.status || '',
+      device_category: device.device_category || '',
+      asset_type: device.asset_type || '',
+    };
+    setDeviceClassTab(isServerDevice(nextDevice) ? 'server' : 'network');
+    setMonitorSearch(nextDevice.hostname === '-' ? nextDevice.ip_address : nextDevice.hostname);
+    setMonitorSelectedDevice(nextDevice);
+    setShowAdvanced(true);
+    setTimeout(() => {
+      advancedSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
   };
 
   const toUtcIso = (localVal: string) => {
@@ -1054,6 +1197,77 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
         </div>
       </div>
 
+      {/* SECTION 3.4: DEVICE EXPLORER — classified by monitoring backend (server vs network) */}
+      <div ref={explorerSectionRef} className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-600">{language === 'zh' ? '设备监控' : 'Device Monitoring'}</p>
+            <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '分类设备浏览' : 'Device Explorer'}</h3>
+            <p className="text-xs text-[var(--muted-text)]">
+              {deviceClassTab === 'server'
+                ? (language === 'zh' ? '服务器走 SSH/Shell 采集，展示 CPU / 内存 / 磁盘 / 关键服务遥测。' : 'Servers use SSH/Shell collection — CPU / memory / disk / service telemetry.')
+                : (language === 'zh' ? '网络设备走 SNMP/CLI 采集，展示接口流量与丢包等指标。' : 'Network devices use SNMP/CLI collection — interface traffic & errors.')}
+            </p>
+          </div>
+          {/* Class tabs */}
+          <div className="inline-flex rounded-xl border border-[var(--card-border)] p-1 bg-black/[0.02] self-start">
+            <button
+              type="button"
+              onClick={() => setDeviceClassTab('server')}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all ${deviceClassTab === 'server' ? 'bg-sky-600 text-white shadow-sm' : 'text-[var(--muted-text)] hover:text-[var(--app-text)]'}`}
+            >
+              <Server size={13} />
+              {language === 'zh' ? '服务器' : 'Servers'}
+              <span className={`ml-0.5 rounded-full px-1.5 text-[10px] ${deviceClassTab === 'server' ? 'bg-white/20' : 'bg-black/10'}`}>{serverDevices.length}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeviceClassTab('network')}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all ${deviceClassTab === 'network' ? 'bg-violet-600 text-white shadow-sm' : 'text-[var(--muted-text)] hover:text-[var(--app-text)]'}`}
+            >
+              <Network size={13} />
+              {language === 'zh' ? '网络设备' : 'Network'}
+              <span className={`ml-0.5 rounded-full px-1.5 text-[10px] ${deviceClassTab === 'network' ? 'bg-white/20' : 'bg-black/10'}`}>{networkDevices.length}</span>
+            </button>
+          </div>
+        </div>
+
+        {(() => {
+          const list = deviceClassTab === 'server' ? serverDevices : networkDevices;
+          if (list.length === 0) {
+            return (
+              <div className="rounded-xl border border-dashed border-[var(--card-border)] p-8 text-center text-sm text-[var(--muted-text)]">
+                {deviceClassTab === 'server'
+                  ? (language === 'zh' ? '暂无服务器设备。请在资产管理中将平台设为 Linux 或设备分类设为服务器。' : 'No server devices. Set platform to Linux or category to server in Asset Management.')
+                  : (language === 'zh' ? '暂无网络设备。' : 'No network devices.')}
+              </div>
+            );
+          }
+          return (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {list.map((dev) => (
+                <DeviceClassCard
+                  key={dev.id}
+                  device={dev}
+                  kind={deviceClassTab}
+                  language={language}
+                  selected={monitorSelectedDevice?.id === dev.id}
+                  onClick={() => openClassedDevice(dev)}
+                />
+              ))}
+            </div>
+          );
+        })()}
+
+        {monitorSelectedDevice?.id && (
+          <p className={`text-[11px] ${isSelectedServer ? 'text-sky-600' : 'text-violet-600'}`}>
+            {language === 'zh'
+              ? `已选中 ${monitorSelectedDevice.hostname}（${isSelectedServer ? '服务器' : '网络设备'}），下方详情面板已展开实时遥测。`
+              : `Selected ${monitorSelectedDevice.hostname} (${isSelectedServer ? 'server' : 'network'}) — telemetry expanded in the panel below.`}
+          </p>
+        )}
+      </div>
+
       {/* SECTION 3.5: BUSINESS SERVICES — driven by real device roles */}
       {(() => {
         const roleLower = (d: Device) => (d.role || '').toLowerCase();
@@ -1132,7 +1346,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       })()}
 
       {/* SECTION 4: Advanced / Collapsible */}
-      <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] overflow-hidden">
+      <div ref={advancedSectionRef} className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] overflow-hidden">
         <button type="button" onClick={() => setShowAdvanced(!showAdvanced)} className="w-full flex items-center justify-between px-5 py-3 transition-all hover:bg-black/[0.02]">
           <div className="flex items-center gap-3">
             <Activity size={16} className="text-sky-600" />
@@ -1178,52 +1392,116 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
                     ) : monitorLoading && !monitorRealtime ? (
                       <div className="p-8 text-center text-sm text-[var(--muted-text)]">{language === 'zh' ? '\u52a0\u8f7d\u5b9e\u65f6\u6570\u636e\u4e2d...' : 'Loading realtime data...'}</div>
                     ) : (
-                      <>
-                        <div className="px-4 py-3 bg-black/[0.02] border-b border-[var(--card-border)] flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-[var(--app-text)]">{monitorSelectedDevice.hostname}</p>
-                            <p className="text-[11px] text-[var(--muted-text)] font-mono">{monitorSelectedDevice.ip_address}</p>
-                            <div className="mt-1 flex flex-wrap gap-3 text-[10px] text-[var(--muted-text)] font-mono">
-                              <span>IN {fmtRate(Number(monitorRealtime?.summary?.in_bps || 0))}</span>
-                              <span>OUT {fmtRate(Number(monitorRealtime?.summary?.out_bps || 0))}</span>
-                              <span>ERR {Number(monitorRealtime?.summary?.errors || 0).toLocaleString()}</span>
-                              <span>DROP {Number(monitorRealtime?.summary?.drops || 0).toLocaleString()}</span>
+                       <>
+                        {isSelectedServer ? (
+                          <>
+                            <div className="px-4 py-3 bg-black/[0.02] border-b border-[var(--card-border)] flex items-center justify-between">
+                              <div>
+                                <p className="text-sm font-semibold text-[var(--app-text)]">{monitorSelectedDevice.hostname}</p>
+                                <p className="text-[11px] text-[var(--muted-text)] font-mono">{monitorSelectedDevice.ip_address}</p>
+                              </div>
+                              <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-lg bg-emerald-100 text-emerald-700">ONLINE</span>
                             </div>
-                          </div>
-                          <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-lg bg-emerald-100 text-emerald-700">ONLINE</span>
-                        </div>
-                        <div className="max-h-[260px] overflow-auto">
-                          <table className="w-full text-xs">
-                            <thead className="bg-black/[0.02] sticky top-0">
-                              <tr>
-                                <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">Interface</th>
-                                <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">Status</th>
-                                <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">IN</th>
-                                <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">OUT</th>
-                                <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">BW%</th>
-                                <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">Err</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-black/5">
-                              {(monitorRealtime?.latest_interfaces || []).slice(0, 50).map((it: any, idx: number) => {
-                                const bw = Math.max(Number(it.bw_in_pct || 0), Number(it.bw_out_pct || 0));
-                                return (
-                                  <tr key={`${it.interface_name}-${idx}`} className="hover:bg-black/[0.01]">
-                                    <td className="px-3 py-2 font-mono text-[var(--app-text)]">{it.interface_name}</td>
-                                    <td className="px-3 py-2"><span className={`text-[10px] font-bold uppercase ${String(it.status).toLowerCase() === 'up' ? 'text-emerald-600' : 'text-red-500'}`}>{it.status}</span></td>
-                                    <td className="px-3 py-2 text-right font-mono text-blue-600">{fmtRate(it.in_bps)}</td>
-                                    <td className="px-3 py-2 text-right font-mono text-orange-600">{fmtRate(it.out_bps)}</td>
-                                    <td className="px-3 py-2 text-right font-mono text-[var(--app-text)]">{bw.toFixed(1)}%</td>
-                                    <td className="px-3 py-2 text-right font-mono text-[var(--app-text)]">{Number(it.in_errors || 0) + Number(it.out_errors || 0)}</td>
+                            <div className="p-4 space-y-4">
+                              <div>
+                                <h4 className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-text)] mb-2">
+                                  {language === 'zh' ? '关键服务存活状态' : 'Critical Services Status'}
+                                </h4>
+                                <div className="grid grid-cols-3 gap-2">
+                                  {[
+                                    { key: 'service_sshd', name: 'SSHD', label: 'sshd' },
+                                    { key: 'service_docker', name: 'Docker', label: 'docker' },
+                                    { key: 'service_crond', name: 'Cron', label: 'crond' }
+                                  ].map((srv) => {
+                                    const statusVal = latestPoint?.[srv.key];
+                                    const isUp = statusVal === 1;
+                                    return (
+                                      <div key={srv.key} className={`flex flex-col items-center justify-center p-3 rounded-xl border ${isUp ? 'border-emerald-200 bg-emerald-500/[0.04]' : 'border-red-200 bg-red-500/[0.06]'}`}>
+                                        <Shield size={16} className={isUp ? 'text-emerald-600' : 'text-red-500'} />
+                                        <span className="text-xs font-bold text-[var(--app-text)] mt-1">{srv.name}</span>
+                                        <span className={`text-[9px] font-black uppercase mt-0.5 ${isUp ? 'text-emerald-600' : 'text-red-500'}`}>
+                                          {isUp ? (language === 'zh' ? '运行中' : 'ACTIVE') : (language === 'zh' ? '未运行' : 'INACTIVE')}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              <div>
+                                <h4 className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-text)] mb-2">
+                                  {language === 'zh' ? '最新系统指标快照' : 'Latest Metrics Snapshot'}
+                                </h4>
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                  <div className="p-2.5 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)]">
+                                    <span className="text-[10px] uppercase text-[var(--muted-text)] font-semibold">CPU Util</span>
+                                    <p className="text-sm font-bold text-[var(--app-text)]">{latestPoint?.cpu_util != null ? `${Math.round(latestPoint.cpu_util)}%` : '--'}</p>
+                                  </div>
+                                  <div className="p-2.5 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)]">
+                                    <span className="text-[10px] uppercase text-[var(--muted-text)] font-semibold">Load Average</span>
+                                    <p className="text-sm font-bold text-[var(--app-text)]">{latestPoint?.cpu_load != null ? `${latestPoint.cpu_load.toFixed(2)}%` : '--'}</p>
+                                  </div>
+                                  <div className="p-2.5 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)]">
+                                    <span className="text-[10px] uppercase text-[var(--muted-text)] font-semibold">Memory Avail</span>
+                                    <p className="text-sm font-bold text-[var(--app-text)]">{latestPoint?.mem_avail != null ? `${Math.round(latestPoint.mem_avail)}%` : '--'}</p>
+                                  </div>
+                                  <div className="p-2.5 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)]">
+                                    <span className="text-[10px] uppercase text-[var(--muted-text)] font-semibold">Disk Space</span>
+                                    <p className="text-sm font-bold text-[var(--app-text)]">{latestPoint?.disk_util != null ? `${Math.round(latestPoint.disk_util)}%` : '--'}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="px-4 py-3 bg-black/[0.02] border-b border-[var(--card-border)] flex items-center justify-between">
+                              <div>
+                                <p className="text-sm font-semibold text-[var(--app-text)]">{monitorSelectedDevice.hostname}</p>
+                                <p className="text-[11px] text-[var(--muted-text)] font-mono">{monitorSelectedDevice.ip_address}</p>
+                                <div className="mt-1 flex flex-wrap gap-3 text-[10px] text-[var(--muted-text)] font-mono">
+                                  <span>IN {fmtRate(Number(monitorRealtime?.summary?.in_bps || 0))}</span>
+                                  <span>OUT {fmtRate(Number(monitorRealtime?.summary?.out_bps || 0))}</span>
+                                  <span>ERR {Number(monitorRealtime?.summary?.errors || 0).toLocaleString()}</span>
+                                  <span>DROP {Number(monitorRealtime?.summary?.drops || 0).toLocaleString()}</span>
+                                </div>
+                              </div>
+                              <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-lg bg-emerald-100 text-emerald-700">ONLINE</span>
+                            </div>
+                            <div className="max-h-[260px] overflow-auto">
+                              <table className="w-full text-xs">
+                                <thead className="bg-black/[0.02] sticky top-0">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">Interface</th>
+                                    <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">Status</th>
+                                    <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">IN</th>
+                                    <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">OUT</th>
+                                    <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">BW%</th>
+                                    <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">Err</th>
                                   </tr>
-                                );
-                              })}
-                              {(!monitorRealtime?.latest_interfaces || monitorRealtime.latest_interfaces.length === 0) && (
-                                <tr><td colSpan={6} className="px-3 py-6 text-center text-sm text-[var(--muted-text)]">{language === 'zh' ? '\u6682\u65e0\u5b9e\u65f6\u63a5\u53e3\u6837\u672c' : 'No realtime interface samples yet'}</td></tr>
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
+                                </thead>
+                                <tbody className="divide-y divide-black/5">
+                                  {(monitorRealtime?.latest_interfaces || []).slice(0, 50).map((it: any, idx: number) => {
+                                    const bw = Math.max(Number(it.bw_in_pct || 0), Number(it.bw_out_pct || 0));
+                                    return (
+                                      <tr key={`${it.interface_name}-${idx}`} className="hover:bg-black/[0.01]">
+                                        <td className="px-3 py-2 font-mono text-[var(--app-text)]">{it.interface_name}</td>
+                                        <td className="px-3 py-2"><span className={`text-[10px] font-bold uppercase ${String(it.status).toLowerCase() === 'up' ? 'text-emerald-600' : 'text-red-500'}`}>{it.status}</span></td>
+                                        <td className="px-3 py-2 text-right font-mono text-blue-600">{fmtRate(it.in_bps)}</td>
+                                        <td className="px-3 py-2 text-right font-mono text-orange-600">{fmtRate(it.out_bps)}</td>
+                                        <td className="px-3 py-2 text-right font-mono text-[var(--app-text)]">{bw.toFixed(1)}%</td>
+                                        <td className="px-3 py-2 text-right font-mono text-[var(--app-text)]">{Number(it.in_errors || 0) + Number(it.out_errors || 0)}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                  {(!monitorRealtime?.latest_interfaces || monitorRealtime.latest_interfaces.length === 0) && (
+                                    <tr><td colSpan={6} className="px-3 py-6 text-center text-sm text-[var(--muted-text)]">{language === 'zh' ? '\u6682\u65e0\u5b9e\u65f6\u63a5\u53e3\u6837\u672c' : 'No realtime interface samples yet'}</td></tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
@@ -1235,8 +1513,8 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
             <div className="space-y-3">
               <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
                 <div>
-                  <h3 className="text-base font-bold text-[var(--app-text)]">{language === 'zh' ? '\u8d8b\u52bf\u5206\u6790' : 'Trend Analysis'}</h3>
-                  <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '\u652f\u6301\u62d6\u62fd\u7f29\u653e\u4e0e\u65f6\u95f4\u7a97\u56de\u653e\u3002' : 'Drag to zoom, supports time window replay.'}</p>
+                  <h3 className="text-base font-bold text-[var(--app-text)]">{language === 'zh' ? '趋势分析' : 'Trend Analysis'}</h3>
+                  <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '支持框选缩放，双击或点击重置按钮可还原。' : 'Drag to zoom, supports time window replay.'}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="inline-flex rounded-lg border border-[var(--card-border)] overflow-hidden">
@@ -1246,10 +1524,12 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
                   {[{ h: 0.25, l: '15m' }, { h: 1, l: '1h' }, { h: 6, l: '6h' }, { h: 24, l: '24h' }].map((p) => (
                     <button key={p.l} type="button" onClick={() => applyQuickRange(p.h)} className="rounded-lg border border-[var(--card-border)] px-2.5 py-1 text-[10px] font-bold text-[var(--muted-text)] hover:bg-black/[0.03]">{p.l}</button>
                   ))}
-                  <select value={monitorTrendInterface} onChange={(e) => setMonitorTrendInterface(e.target.value)} disabled={!monitorSelectedDevice} className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-xs outline-none disabled:opacity-50 text-[var(--app-text)]" title={language === 'zh' ? '\u63a5\u53e3' : 'Interface'}>
-                    <option value="">{language === 'zh' ? '\u6574\u673a' : 'Device'}</option>
-                    {interfaceOptions.map((name: string) => <option key={name} value={name}>{name}</option>)}
-                  </select>
+                  {!isSelectedServer && (
+                    <select value={monitorTrendInterface} onChange={(e) => setMonitorTrendInterface(e.target.value)} disabled={!monitorSelectedDevice} className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-xs outline-none disabled:opacity-50 text-[var(--app-text)]" title={language === 'zh' ? '\u63a5\u53e3' : 'Interface'}>
+                      <option value="">{language === 'zh' ? '\u6574\u673a' : 'Device'}</option>
+                      {interfaceOptions.map((name: string) => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                  )}
                   <select value={monitorTrendResolution} onChange={(e) => setMonitorTrendResolution(e.target.value as '1m' | '5m')} disabled={!monitorSelectedDevice} className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-xs outline-none disabled:opacity-50 text-[var(--app-text)]"><option value="1m">1m</option><option value="5m">5m</option></select>
                   <button type="button" onClick={() => { setMonitorTrendZoom(null); setMonitorTrendDragStart(null); setMonitorTrendDragEnd(null); }} disabled={!zoomActive || chartData.length === 0} className="rounded-lg border border-[var(--card-border)] px-2 py-1 text-[10px] font-bold text-[var(--muted-text)] hover:bg-black/[0.03] disabled:opacity-30">{language === 'zh' ? '\u91cd\u7f6e' : 'Reset'}</button>
                 </div>
@@ -1263,21 +1543,23 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
                 <button type="button" onClick={() => { setMonitorTrendStartInput(''); setMonitorTrendEndInput(''); setMonitorTrendZoom(null); setMonitorTrendDragStart(null); setMonitorTrendDragEnd(null); setMonitorTrendRange({}); }} className="rounded-lg border border-[var(--card-border)] px-3 py-1 text-[10px] font-bold text-[var(--muted-text)] hover:bg-black/[0.03]">{language === 'zh' ? '\u6700\u8fd124h' : 'Last 24h'}</button>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                {trendMetricDefs.map((m) => {
-                  const active = monitorTrendMetrics.includes(m.key);
-                  return (
-                    <button key={m.key} type="button" onClick={() => toggleTrendMetric(m.key)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-all ${active ? 'border-black/20 bg-black/[0.04] text-[var(--app-text)]' : 'border-transparent text-[var(--muted-text)] hover:bg-black/[0.02]'}`}>
-                      <span className={`h-2 w-2 rounded-full ${!active ? 'bg-slate-300' : ''}`} style={active ? { backgroundColor: m.color } : undefined} />
-                      {m.short}
-                    </button>
-                  );
-                })}
-                <button type="button" onClick={selectAllTrendMetrics} className="text-[10px] font-bold text-[var(--muted-text)] hover:text-[var(--app-text)]">{language === 'zh' ? '\u5168\u9009' : 'All'}</button>
-                <button type="button" onClick={clearAllTrendMetrics} className="text-[10px] font-bold text-[var(--muted-text)] hover:text-[var(--app-text)]">{language === 'zh' ? '\u6e05\u9664' : 'Clear'}</button>
-              </div>
+              {!isSelectedServer && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {trendMetricDefs.map((m) => {
+                    const active = monitorTrendMetrics.includes(m.key);
+                    return (
+                      <button key={m.key} type="button" onClick={() => toggleTrendMetric(m.key)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-all ${active ? 'border-black/20 bg-black/[0.04] text-[var(--app-text)]' : 'border-transparent text-[var(--muted-text)] hover:bg-black/[0.02]'}`}>
+                        <span className={`h-2 w-2 rounded-full ${!active ? 'bg-slate-300' : ''}`} style={active ? { backgroundColor: m.color } : undefined} />
+                        {m.short}
+                      </button>
+                    );
+                  })}
+                  <button type="button" onClick={selectAllTrendMetrics} className="text-[10px] font-bold text-[var(--muted-text)] hover:text-[var(--app-text)]">{language === 'zh' ? '\u5168\u90e8' : 'All'}</button>
+                  <button type="button" onClick={clearAllTrendMetrics} className="text-[10px] font-bold text-[var(--muted-text)] hover:text-[var(--app-text)]">{language === 'zh' ? '\u6e05\u9664' : 'Clear'}</button>
+                </div>
+              )}
 
-              {latestPoint && selectedMetricDefs.length > 0 && (
+              {!isSelectedServer && latestPoint && selectedMetricDefs.length > 0 && (
                 <div className="flex flex-wrap gap-2 text-[11px]">
                   {selectedMetricDefs.map((m) => (
                     <span key={`l-${m.key}`} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-1">
@@ -1289,32 +1571,133 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
                 </div>
               )}
 
-              <div className={`${isCompactTrend ? 'h-[250px]' : 'h-[300px]'} rounded-xl border border-[var(--card-border)] bg-black/[0.01] p-2`}>
-                {showChart ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={displayedChartData} margin={{ top: 12, right: 16, left: 8, bottom: !zoomActive && chartData.length > 12 ? 18 : 0 }}
-                      onMouseDown={(state: any) => { const li = Number(state?.activeTooltipIndex); if (!Number.isInteger(li)) return; setMonitorTrendDragStart(dragBaseIndex + li); setMonitorTrendDragEnd(dragBaseIndex + li); }}
-                      onMouseMove={(state: any) => { if (monitorTrendDragStart == null) return; const li = Number(state?.activeTooltipIndex); if (!Number.isInteger(li)) return; setMonitorTrendDragEnd(dragBaseIndex + li); }}
-                      onMouseUp={() => { if (monitorTrendDragStart == null || monitorTrendDragEnd == null) return; const si = Math.max(0, Math.min(monitorTrendDragStart, monitorTrendDragEnd)); const ei = Math.min(fullEndIndex, Math.max(monitorTrendDragStart, monitorTrendDragEnd)); if (ei - si >= 2) setMonitorTrendZoom({ startIndex: si, endIndex: ei }); setMonitorTrendDragStart(null); setMonitorTrendDragEnd(null); }}
-                      onMouseLeave={() => { if (monitorTrendDragStart != null) { setMonitorTrendDragStart(null); setMonitorTrendDragEnd(null); } }}
-                    >
-                      <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
-                      <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} minTickGap={isCompactTrend ? 44 : 30} tickCount={axisTickCount} interval="preserveStartEnd" tickFormatter={(v) => formatPromAxisTimestamp(String(v), displayedRangeMs)} />
-                      {hasThroughputMetric && <YAxis yAxisId="throughput" width={80} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(v) => fmtThroughputAxis(Number(v))} />}
-                      {hasCountMetric && <YAxis yAxisId="count" width={68} orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(v) => Number(v || 0).toLocaleString()} />}
-                      <Tooltip contentStyle={{ borderRadius: 12, borderColor: ct.tooltipBorder, boxShadow: ct.tooltipShadow, padding: '10px 14px', background: ct.tooltipBg, color: ct.tooltipText }} labelFormatter={(_, payload: any) => { const row = payload?.[0]?.payload; return row?.ts ? formatPromTimestamp(row.ts) : _; }} formatter={(v: any, _n: any, entry: any) => { const mk = String(entry?.dataKey || ''); const def = trendMetricMap[mk as keyof typeof trendMetricMap]; if (v == null || !Number.isFinite(Number(v))) return [language === 'zh' ? '\u65e0\u6837\u672c' : 'No sample', def?.short || mk]; if (def?.unit === 'throughput') return [fmtThroughputProm(Number(v)), def.short]; return [Number(v).toLocaleString(), def?.short || mk]; }} />
-                      {selectedMetricDefs.map((m) => <Area key={m.key} type="monotone" dataKey={m.key} yAxisId={m.unit === 'throughput' ? 'throughput' : 'count'} stroke={m.color} fill={`${m.color}1f`} strokeWidth={2} name={m.short} isAnimationActive={false} connectNulls={false} />)}
-                      {!zoomActive && chartData.length > 12 && <Brush dataKey="ts" height={24} travellerWidth={10} startIndex={0} endIndex={fullEndIndex} stroke="#94a3b8" fill={ct.brushFill} tickFormatter={(v: any) => formatPromAxisTimestamp(String(v), displayedRangeMs)} onChange={(next: any) => { const si = Number(next?.startIndex), ei = Number(next?.endIndex); if (!Number.isInteger(si) || !Number.isInteger(ei)) return; if (si <= 0 && ei >= fullEndIndex) { setMonitorTrendZoom(null); return; } setMonitorTrendZoom({ startIndex: si, endIndex: ei }); }} />}
-                    </AreaChart>
-                  </ResponsiveContainer>
-                ) : monitorSelectedDevice && selectedMetricDefs.length === 0 ? (
-                  <div className="h-full" />
-                ) : monitorSelectedDevice && hasTrendResponse && chartData.length === 0 ? (
-                  <div className="flex h-full items-center justify-center text-sm text-[var(--muted-text)]">{language === 'zh' ? '\u8be5\u65f6\u95f4\u8303\u56f4\u6682\u65e0\u8d8b\u52bf\u6570\u636e\u3002' : 'No trend data in the selected time range.'}</div>
+              {isSelectedServer ? (
+                displayedChartData.length > 0 ? (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* Chart 1: CPU & Load */}
+                    <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-xs font-bold text-[var(--app-text)]">{language === 'zh' ? 'CPU 与负载' : 'CPU & Load'}</h4>
+                        <div className="flex gap-4 text-[10px] text-[var(--muted-text)] font-semibold">
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#3b82f6]" />CPU: {latestPoint?.cpu_util != null ? `${Math.round(latestPoint.cpu_util)}%` : '--'}</span>
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#10b981]" />Load/Core: {latestPoint?.cpu_load != null ? `${latestPoint.cpu_load.toFixed(2)}%` : '--'}</span>
+                        </div>
+                      </div>
+                      <div className="h-[200px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={displayedChartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
+                            <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} tickCount={6} tickFormatter={(v) => formatPromAxisTimestamp(String(v), displayedRangeMs)} />
+                            <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} tickFormatter={(v) => `${v}%`} />
+                            <Tooltip contentStyle={{ borderRadius: 12, borderColor: ct.tooltipBorder, padding: '6px 10px', background: ct.tooltipBg, color: ct.tooltipText, fontSize: '11px' }} labelFormatter={(v) => formatPromTimestamp(String(v))} />
+                            <Area type="monotone" dataKey="cpu_util" stroke="#3b82f6" fill="#3b82f61f" strokeWidth={2} name="CPU Util" connectNulls />
+                            <Area type="monotone" dataKey="cpu_load" stroke="#10b981" fill="#10b9811f" strokeWidth={2} name="CPU Load" connectNulls />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Chart 2: Memory & Swap */}
+                    <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-xs font-bold text-[var(--app-text)]">{language === 'zh' ? '内存与 Swap' : 'Memory & Swap'}</h4>
+                        <div className="flex gap-4 text-[10px] text-[var(--muted-text)] font-semibold">
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#8b5cf6]" />Memory: {latestPoint?.mem_avail != null ? `${Math.round(latestPoint.mem_avail)}%` : '--'}</span>
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#ec4899]" />Swap: {latestPoint?.swap_util != null ? `${Math.round(latestPoint.swap_util)}%` : '--'}</span>
+                        </div>
+                      </div>
+                      <div className="h-[200px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={displayedChartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
+                            <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} tickCount={6} tickFormatter={(v) => formatPromAxisTimestamp(String(v), displayedRangeMs)} />
+                            <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} tickFormatter={(v) => `${v}%`} />
+                            <Tooltip contentStyle={{ borderRadius: 12, borderColor: ct.tooltipBorder, padding: '6px 10px', background: ct.tooltipBg, color: ct.tooltipText, fontSize: '11px' }} labelFormatter={(v) => formatPromTimestamp(String(v))} />
+                            <Area type="monotone" dataKey="mem_avail" stroke="#8b5cf6" fill="#8b5cf61f" strokeWidth={2} name="Memory Util" connectNulls />
+                            <Area type="monotone" dataKey="swap_util" stroke="#ec4899" fill="#ec48991f" strokeWidth={2} name="Swap Util" connectNulls />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Chart 3: Disk & Inodes */}
+                    <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-xs font-bold text-[var(--app-text)]">{language === 'zh' ? '磁盘与 Inode' : 'Disk & Inodes'}</h4>
+                        <div className="flex gap-4 text-[10px] text-[var(--muted-text)] font-semibold">
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#f59e0b]" />Disk: {latestPoint?.disk_util != null ? `${Math.round(latestPoint.disk_util)}%` : '--'}</span>
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#06b6d4]" />Inode: {latestPoint?.inode_util != null ? `${Math.round(latestPoint.inode_util)}%` : '--'}</span>
+                        </div>
+                      </div>
+                      <div className="h-[200px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={displayedChartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
+                            <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} tickCount={6} tickFormatter={(v) => formatPromAxisTimestamp(String(v), displayedRangeMs)} />
+                            <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} tickFormatter={(v) => `${v}%`} />
+                            <Tooltip contentStyle={{ borderRadius: 12, borderColor: ct.tooltipBorder, padding: '6px 10px', background: ct.tooltipBg, color: ct.tooltipText, fontSize: '11px' }} labelFormatter={(v) => formatPromTimestamp(String(v))} />
+                            <Area type="monotone" dataKey="disk_util" stroke="#f59e0b" fill="#f59e0b1f" strokeWidth={2} name="Disk Util" connectNulls />
+                            <Area type="monotone" dataKey="inode_util" stroke="#06b6d4" fill="#06b6d41f" strokeWidth={2} name="Inode Util" connectNulls />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Chart 4: TCP & IO Wait (Double Y-Axis) */}
+                    <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-xs font-bold text-[var(--app-text)]">{language === 'zh' ? 'TCP 连接与 IO Wait' : 'TCP Conns & IO Wait'}</h4>
+                        <div className="flex gap-4 text-[10px] text-[var(--muted-text)] font-semibold">
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#6366f1]" />TCP ESTAB: {latestPoint?.tcp_conns != null ? Math.round(latestPoint.tcp_conns) : '--'}</span>
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#ef4444]" />IO Wait: {latestPoint?.io_wait != null ? `${latestPoint.io_wait.toFixed(1)}%` : '--'}</span>
+                        </div>
+                      </div>
+                      <div className="h-[200px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={displayedChartData} margin={{ top: 8, right: -12, left: -20, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
+                            <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} tickCount={6} tickFormatter={(v) => formatPromAxisTimestamp(String(v), displayedRangeMs)} />
+                            <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} />
+                            <YAxis yAxisId="right" orientation="right" domain={[0, 100]} axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} tickFormatter={(v) => `${v}%`} />
+                            <Tooltip contentStyle={{ borderRadius: 12, borderColor: ct.tooltipBorder, padding: '6px 10px', background: ct.tooltipBg, color: ct.tooltipText, fontSize: '11px' }} labelFormatter={(v) => formatPromTimestamp(String(v))} />
+                            <Area yAxisId="left" type="monotone" dataKey="tcp_conns" stroke="#6366f1" fill="#6366f11f" strokeWidth={2} name="TCP ESTAB" connectNulls />
+                            <Area yAxisId="right" type="monotone" dataKey="io_wait" stroke="#ef4444" fill="#ef44441f" strokeWidth={2} name="IO Wait" connectNulls />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
                 ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-[var(--muted-text)]">{language === 'zh' ? '\u9009\u62e9\u8bbe\u5907\u540e\u67e5\u770b\u8d8b\u52bf\u3002' : 'Select a device to view trend.'}</div>
-                )}
-              </div>
+                  <div className="flex h-[250px] items-center justify-center text-sm text-[var(--muted-text)]">{language === 'zh' ? '\u8be5\u65f6\u95f4\u8303\u56f4\u6682\u65e0\u8d8b\u52bf\u6570\u636e\u3002' : 'No trend data in the selected time range.'}</div>
+                )
+              ) : (
+                <div className={`${isCompactTrend ? 'h-[250px]' : 'h-[300px]'} rounded-xl border border-[var(--card-border)] bg-black/[0.01] p-2`}>
+                  {showChart ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={displayedChartData} margin={{ top: 12, right: 16, left: 8, bottom: !zoomActive && chartData.length > 12 ? 18 : 0 }}
+                        onMouseDown={(state: any) => { const li = Number(state?.activeTooltipIndex); if (!Number.isInteger(li)) return; setMonitorTrendDragStart(dragBaseIndex + li); setMonitorTrendDragEnd(dragBaseIndex + li); }}
+                        onMouseMove={(state: any) => { if (monitorTrendDragStart == null) return; const li = Number(state?.activeTooltipIndex); if (!Number.isInteger(li)) return; setMonitorTrendDragEnd(dragBaseIndex + li); }}
+                        onMouseUp={() => { if (monitorTrendDragStart == null || monitorTrendDragEnd == null) return; const si = Math.max(0, Math.min(monitorTrendDragStart, monitorTrendDragEnd)); const ei = Math.min(fullEndIndex, Math.max(monitorTrendDragStart, monitorTrendDragEnd)); if (ei - si >= 2) setMonitorTrendZoom({ startIndex: si, endIndex: ei }); setMonitorTrendDragStart(null); setMonitorTrendDragEnd(null); }}
+                        onMouseLeave={() => { if (monitorTrendDragStart != null) { setMonitorTrendDragStart(null); setMonitorTrendDragEnd(null); } }}
+                      >
+                        <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
+                        <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} minTickGap={isCompactTrend ? 44 : 30} tickCount={axisTickCount} interval="preserveStartEnd" tickFormatter={(v) => formatPromAxisTimestamp(String(v), displayedRangeMs)} />
+                        {hasThroughputMetric && <YAxis yAxisId="throughput" width={80} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(v) => fmtThroughputAxis(Number(v))} />}
+                        {hasCountMetric && <YAxis yAxisId="count" width={68} orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(v) => Number(v || 0).toLocaleString()} />}
+                        <Tooltip contentStyle={{ borderRadius: 12, borderColor: ct.tooltipBorder, boxShadow: ct.tooltipShadow, padding: '10px 14px', background: ct.tooltipBg, color: ct.tooltipText }} labelFormatter={(_, payload: any) => { const row = payload?.[0]?.payload; return row?.ts ? formatPromTimestamp(row.ts) : _; }} formatter={(v: any, _n: any, entry: any) => { const mk = String(entry?.dataKey || ''); const def = trendMetricMap[mk as keyof typeof trendMetricMap]; if (v == null || !Number.isFinite(Number(v))) return [language === 'zh' ? '\u65e0\u6837\u672c' : 'No sample', def?.short || mk]; if (def?.unit === 'throughput') return [fmtThroughputProm(Number(v)), def.short]; return [Number(v).toLocaleString(), def?.short || mk]; }} />
+                        {selectedMetricDefs.map((m) => <Area key={m.key} type="monotone" dataKey={m.key} yAxisId={m.unit === 'throughput' ? 'throughput' : 'count'} stroke={m.color} fill={`${m.color}1f`} strokeWidth={2} name={m.short} isAnimationActive={false} connectNulls={false} />)}
+                        {!zoomActive && chartData.length > 12 && <Brush dataKey="ts" height={24} travellerWidth={10} startIndex={0} endIndex={fullEndIndex} stroke="#94a3b8" fill={ct.brushFill} tickFormatter={(v: any) => formatPromAxisTimestamp(String(v), displayedRangeMs)} onChange={(next: any) => { const si = Number(next?.startIndex), ei = Number(next?.endIndex); if (!Number.isInteger(si) || !Number.isInteger(ei)) return; if (si <= 0 && ei >= fullEndIndex) { setMonitorTrendZoom(null); return; } setMonitorTrendZoom({ startIndex: si, endIndex: ei }); }} />}
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : monitorSelectedDevice && selectedMetricDefs.length === 0 ? (
+                    <div className="h-full" />
+                  ) : monitorSelectedDevice && hasTrendResponse && chartData.length === 0 ? (
+                    <div className="flex h-full items-center justify-center text-sm text-[var(--muted-text)]">{language === 'zh' ? '\u8be5\u65f6\u95f4\u8303\u56f4\u6682\u65e0\u8d8b\u52bf\u6570\u636e\u3002' : 'No trend data in the selected time range.'}</div>
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-sm text-[var(--muted-text)]">{language === 'zh' ? '\u9009\u62e9\u8bbe\u5907\u540e\u67e5\u770b\u8d8b\u52bf\u3002' : 'Select a device to view trend.'}</div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Alert Timeline */}

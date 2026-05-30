@@ -34,6 +34,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [platformFilter, setPlatformFilter] = useState('All');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'inspection' | 'change' | 'system'>('all');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
@@ -178,14 +179,26 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
     return codes.some(c => c.toLowerCase() === p);
   };
 
-  const filteredScripts = useMemo(() => scripts.filter(s =>
-    (s.name + (s.id||'')).toLowerCase().includes(searchQuery.toLowerCase())
-    && matchesPlatformGroup(s.platform || '', platformFilter)
-  ), [scripts, searchQuery, platformFilter]);
+  const filteredScripts = useMemo(() => scripts.filter(s => {
+    const matchesSearch = (s.name + (s.id||'') + (s.description||'')).toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesPlatform = matchesPlatformGroup(s.platform || '', platformFilter);
+    
+    let matchesCategory = true;
+    if (categoryFilter === 'inspection') {
+      matchesCategory = s.category === 'inspection' || s.category === 'standard';
+    } else if (categoryFilter === 'change') {
+      matchesCategory = s.category === 'change';
+    } else if (categoryFilter === 'system') {
+      matchesCategory = s.submitter_name === 'system' || s.author === 'system';
+    }
+    
+    return matchesSearch && matchesPlatform && matchesCategory;
+  }), [scripts, searchQuery, platformFilter, categoryFilter]);
   const paginatedScripts = useMemo(() => filteredScripts.slice((currentPage - 1) * pageSize, currentPage * pageSize), [filteredScripts, currentPage, pageSize]);
 
+  const isSystemScript = editForm.submitter_name === 'system' || editForm.author === 'system';
   const isReviewMode = editForm.status === 'pending_audit' && editForm.approver_username === currentUser;
-  const isReadOnly = isReviewMode || (editForm.status === 'pending_audit' && editForm.submitter_name === currentUser);
+  const isReadOnly = isReviewMode || (editForm.status === 'pending_audit' && editForm.submitter_name === currentUser) || isSystemScript;
 
   const inputClass = `w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-[13px] outline-none transition-all ${isReadOnly ? 'text-slate-400 cursor-not-allowed opacity-70' : 'text-slate-700 dark:text-slate-100 focus:ring-2 focus:ring-[#00a9ce]/20'}`;
   const labelClass = "text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5";
@@ -222,77 +235,160 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
       />
 
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 no-scrollbar">
-        <div className="flex items-center justify-between">
-           <div className="flex items-center gap-1.5 p-1 bg-slate-200/20 dark:bg-slate-800/30 rounded-xl border border-white/5 flex-wrap">
-             {['All', 'Linux', 'Cisco', 'Huawei', 'H3C', 'Juniper', 'Arista'].map(p => (
-               <button key={p} onClick={() => { setPlatformFilter(p); setCurrentPage(1); }} className={`px-4 py-1.5 rounded-lg text-[11px] font-bold transition-all ${platformFilter === p ? 'bg-[#00a9ce] text-white shadow-sm' : 'text-slate-400 hover:text-[#00a9ce]'}`}>{p}</button>
-             ))}
-           </div>
-           <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-[#00a9ce]/10 flex items-center justify-center text-[#00a9ce] border border-[#00a9ce]/20">
-                 <User size={14} />
-              </div>
-           </div>
+        <div className="flex flex-col gap-4 bg-slate-50/50 dark:bg-slate-900/10 p-5 rounded-2xl border border-slate-100 dark:border-white/5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+             <div className="flex flex-col gap-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{zh ? '适用平台' : 'Platform'}</span>
+                <div className="flex items-center gap-1.5 p-1 bg-slate-200/20 dark:bg-slate-800/30 rounded-xl border border-slate-100/50 dark:border-white/5 flex-wrap">
+                  {['All', 'Linux', 'Cisco', 'Huawei', 'H3C', 'Juniper', 'Arista'].map(p => (
+                    <button key={p} onClick={() => { setPlatformFilter(p); setCurrentPage(1); }} className={`px-4 py-1.5 rounded-lg text-[11px] font-bold transition-all ${platformFilter === p ? 'bg-[#00a9ce] text-white shadow-sm' : 'text-slate-400 hover:text-[#00a9ce]'}`}>{p}</button>
+                  ))}
+                </div>
+             </div>
+             
+             <div className="flex flex-col gap-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{zh ? '脚本分类' : 'Category'}</span>
+                <div className="flex items-center gap-1.5 p-1 bg-slate-200/20 dark:bg-slate-800/30 rounded-xl border border-slate-100/50 dark:border-white/5 flex-wrap">
+                  {(zh ? [
+                    { key: 'all', label: '全部' },
+                    { key: 'inspection', label: '巡检采集' },
+                    { key: 'change', label: '配置下发' },
+                    { key: 'system', label: '系统内置' }
+                  ] : [
+                    { key: 'all', label: 'All' },
+                    { key: 'inspection', label: 'Inspection / Collect' },
+                    { key: 'change', label: 'Change / Push' },
+                    { key: 'system', label: 'System Built-in' }
+                  ]).map(c => (
+                    <button key={c.key} onClick={() => { setCategoryFilter(c.key as any); setCurrentPage(1); }} className={`px-4 py-1.5 rounded-lg text-[11px] font-bold transition-all ${categoryFilter === c.key ? 'bg-[#00a9ce] text-white shadow-sm' : 'text-slate-400 hover:text-[#00a9ce]'}`}>{c.label}</button>
+                  ))}
+                </div>
+             </div>
+          </div>
         </div>
 
-        <div className="space-y-3">
-          <AnimatePresence mode="popLayout">
-            {paginatedScripts.map((script) => (
-              <motion.div
-                key={script.id}
-                layout
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-white dark:bg-slate-900/40 border border-slate-100 dark:border-white/5 rounded-[20px] p-5 hover:shadow-xl transition-all group"
-              >
-                <div className="flex items-center gap-6">
-                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 border ${script.status === 'released' ? 'bg-cyan-500/10 border-cyan-500/20 text-[#00a9ce]' : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-300'}`}>
-                    <FileCode size={24} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-2">
-                       <div className="flex items-center gap-3">
-                          <h3 className="text-[14px] font-bold text-slate-700 dark:text-slate-200">{script.name}</h3>
-                          <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase border ${STATUS_MAP[script.status]?.bg || STATUS_MAP.draft.bg} ${STATUS_MAP[script.status]?.color || STATUS_MAP.draft.color} ${STATUS_MAP[script.status]?.border || STATUS_MAP.draft.border}`}>
-                            {getStatusLabel(script.status)}
-                          </span>
-                       </div>
-                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                          <button
-                            onClick={() => {
-                              setModalMode('create');
-                              setEditForm({
-                                ...script,
-                                id: `${script.id}_copy`,
-                                name: zh ? `${script.name} - 副本` : `${script.name} (Copy)`,
-                                status: 'draft',
-                                submitter_name: currentUser,
-                                approver_username: '',
-                                rejected_reason: '',
-                              });
-                              setIsModalOpen(true);
-                            }}
-                            className="p-2 text-slate-400 hover:text-[#00a9ce]"
-                            title={zh ? '克隆/复制为自定义脚本' : 'Clone/Copy as custom script'}
+        <div className="bg-white dark:bg-slate-900/40 border border-slate-100 dark:border-white/5 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all">
+          {/* Table Header */}
+          <div className="grid grid-cols-12 gap-4 px-6 py-4 bg-slate-50 dark:bg-slate-800/30 border-b border-slate-100 dark:border-white/5 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+            <div className="col-span-4">{zh ? '脚本名称与标识' : 'Name & ID'}</div>
+            <div className="col-span-2 text-center">{zh ? '适用平台' : 'Platform'}</div>
+            <div className="col-span-2 text-center">{zh ? '脚本分类' : 'Category'}</div>
+            <div className="col-span-1 text-center">{zh ? '语言类型' : 'Type'}</div>
+            <div className="col-span-1 text-center">{zh ? '提交人' : 'Author'}</div>
+            <div className="col-span-1 text-center">{zh ? '状态' : 'Status'}</div>
+            <div className="col-span-1 text-right">{zh ? '操作' : 'Actions'}</div>
+          </div>
+          
+          {/* Table Body */}
+          <div className="divide-y divide-slate-100 dark:divide-white/5">
+            <AnimatePresence mode="popLayout">
+              {paginatedScripts.length > 0 ? (
+                paginatedScripts.map((script) => {
+                  const isSystem = script.submitter_name === 'system' || script.author === 'system';
+                  return (
+                    <motion.div
+                      key={script.id}
+                      layout
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors text-[13px] text-slate-700 dark:text-slate-200"
+                    >
+                      <div className="col-span-4 min-w-0">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${script.status === 'released' ? 'bg-[#00a9ce]/10 border-[#00a9ce]/20 text-[#00a9ce]' : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400'}`}>
+                            <FileCode size={16} />
+                          </div>
+                          <div className="truncate">
+                            <span className="font-bold block truncate text-slate-800 dark:text-slate-200" title={script.name}>{script.name}</span>
+                            <span className="text-[10.5px] text-slate-400 font-mono block truncate" title={script.id}>{script.id}</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="col-span-2 text-center">
+                        <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded text-[11px] font-medium font-mono uppercase">
+                          {script.platform}
+                        </span>
+                      </div>
+                      
+                      <div className="col-span-2 text-center">
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${script.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-cyan-500/10 text-[#00a9ce]'}`}>
+                          {script.category === 'change' ? (zh ? '配置下发' : 'Change') : (script.category === 'standard' ? (zh ? '性能指标' : 'Metric') : (zh ? '周期巡检' : 'Inspection'))}
+                        </span>
+                      </div>
+                      
+                      <div className="col-span-1 text-center font-mono text-[11px] uppercase text-slate-500 dark:text-slate-400">
+                        {script.script_type}
+                      </div>
+                      
+                      <div className="col-span-1 text-center text-slate-500 dark:text-slate-400 truncate" title={script.submitter_name}>
+                        {script.submitter_name || script.author}
+                      </div>
+                      
+                      <div className="col-span-1 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${STATUS_MAP[script.status]?.bg || STATUS_MAP.draft.bg} ${STATUS_MAP[script.status]?.color || STATUS_MAP.draft.color} ${STATUS_MAP[script.status]?.border || STATUS_MAP.draft.border}`}>
+                          {getStatusLabel(script.status)}
+                        </span>
+                      </div>
+                      
+                      <div className="col-span-1 text-right flex items-center justify-end gap-1.5">
+                        {/* 一键克隆复制系统/已有脚本 */}
+                        <button
+                          onClick={() => {
+                            setModalMode('create');
+                            setEditForm({
+                              ...script,
+                              id: `${script.id}_copy`,
+                              name: zh ? `${script.name} - 副本` : `${script.name} (Copy)`,
+                              status: 'draft',
+                              submitter_name: currentUser,
+                              approver_username: '',
+                              rejected_reason: '',
+                            });
+                            setIsModalOpen(true);
+                          }}
+                          className="p-1.5 rounded hover:bg-[#00a9ce]/10 text-slate-400 hover:text-[#00a9ce] transition-colors"
+                          title={zh ? '一键克隆为自定义脚本' : 'Clone/Copy as custom script'}
+                        >
+                          <Copy size={13.5} />
+                        </button>
+                        
+                        {/* 查看或编辑 */}
+                        <button 
+                          onClick={() => { setModalMode('edit'); setEditForm(script); setIsModalOpen(true); }} 
+                          className="p-1.5 rounded hover:bg-[#00a9ce]/10 text-slate-400 hover:text-[#00a9ce] transition-colors"
+                          title={isSystem ? (zh ? '查看系统内置脚本' : 'View system script') : (zh ? '编辑脚本' : 'Edit script')}
+                        >
+                          <Edit3 size={13.5} />
+                        </button>
+                        
+                        {/* 删除非系统内置脚本 */}
+                        {!isSystem ? (
+                          <button 
+                            onClick={() => { if(window.confirm(zh?'确认删除此脚本？':'Delete this script?')) fetch(`/api/scripts/${script.id}`, {method:'DELETE', headers:getHeaders()}).then(fetchScripts) }} 
+                            className="p-1.5 rounded hover:bg-rose-500/10 text-slate-400 hover:text-rose-500 transition-colors"
+                            title={zh ? '删除脚本' : 'Delete script'}
                           >
-                            <Copy size={15} />
+                            <Trash2 size={13.5} />
                           </button>
-                          <button onClick={() => { setModalMode('edit'); setEditForm(script); setIsModalOpen(true); }} className="p-2 text-slate-400 hover:text-[#00a9ce]"><Edit3 size={15} /></button>
-                          <button onClick={() => { if(window.confirm(zh?'删除？':'Delete?')) fetch(`/api/scripts/${script.id}`, {method:'DELETE', headers:getHeaders()}).then(fetchScripts) }} className="p-2 text-slate-400 hover:text-red-500"><Trash2 size={15} /></button>
-                       </div>
-                    </div>
-                    <div className="flex items-center gap-6 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                       <span className="flex items-center gap-1.5"><User size={10} className="text-[#00a9ce]" /> {script.submitter_name}</span>
-                       <span className="flex items-center gap-1.5"><Terminal size={10} className="text-[#00a9ce]" /> {script.script_type}</span>
-                       <span className="flex-1 truncate italic opacity-50 ml-2">{script.description}</span>
-                    </div>
-                  </div>
+                        ) : (
+                          <div className="w-[26.5px]" />
+                        )}
+                      </div>
+                    </motion.div>
+                  );
+                })
+              ) : (
+                <div className="px-6 py-12 text-center text-[12px] text-slate-400 italic">
+                  {zh ? '暂无匹配的脚本数据' : 'No scripts found matching the filters'}
                 </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
+
 
       <div className="px-10 py-5 bg-transparent border-t border-slate-200/10">
         <Pagination currentPage={currentPage} totalItems={filteredScripts.length} itemsPerPage={pageSize} onPageChange={setCurrentPage} onItemsPerPageChange={setPageSize} language={language} />

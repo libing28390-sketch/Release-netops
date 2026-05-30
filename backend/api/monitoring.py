@@ -11,6 +11,8 @@ from services.device_health_service import annotate_devices_with_health, build_h
 
 router = APIRouter()
 
+_SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
+
 _OVERVIEW_CACHE_TTL_SECONDS = 30
 _overview_cache_lock = threading.Lock()
 _overview_cache: dict[str, object] = {
@@ -100,7 +102,7 @@ def search_online_devices(
         pattern = f"%{qv}%"
         rows = conn.execute(
             '''
-            SELECT id, hostname, ip_address, platform, role, site, status
+            SELECT id, hostname, ip_address, platform, role, site, status, device_category
             FROM devices
             WHERE status = 'online'
                             AND (LOWER(hostname) LIKE LOWER(?) OR LOWER(ip_address) LIKE LOWER(?))
@@ -291,13 +293,46 @@ def monitoring_device_realtime(
     conn = get_db_connection()
     try:
         device = conn.execute(
-            "SELECT id, hostname, ip_address, platform, status, interface_data FROM devices WHERE id = ?",
+            "SELECT id, hostname, ip_address, platform, status, interface_data, device_category FROM devices WHERE id = ?",
             (device_id,),
         ).fetchone()
         if not device:
             raise HTTPException(status_code=404, detail='Device not found')
+        device = dict(device)
+
+        plat = str(device.get('platform') or '').lower()
+        category = str(device.get('device_category') or '').lower()
+        is_server = plat in _SERVER_PLATFORMS or 'server' in category
 
         cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).replace(microsecond=0).isoformat()
+        if is_server:
+            rows = conn.execute(
+                '''
+                SELECT ts, cpu_load, cpu_util, mem_avail, swap_util, io_wait, io_latency,
+                       disk_util, inode_util, tcp_conns, tcp_retrans,
+                       tcp_estab, tcp_time_wait, tcp_close_wait, tcp_syn_recv, tcp_listen,
+                       process_health, service_sshd, service_crond, service_docker
+                FROM device_telemetry_samples
+                WHERE device_id = ? AND ts >= ?
+                ORDER BY ts ASC
+                LIMIT ?
+                ''',
+                (device_id, cutoff, limit),
+            ).fetchall()
+            series = [dict(r) for r in rows]
+            return {
+                'device': {
+                    'id': device['id'],
+                    'hostname': device['hostname'],
+                    'ip_address': device['ip_address'],
+                    'platform': device['platform'],
+                    'status': device['status'],
+                },
+                'is_server': True,
+                'series': series,
+                'window_minutes': window_minutes,
+                'updated_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            }
         rows = conn.execute(
             '''
             SELECT ts, interface_name, status, speed_mbps, in_bps, out_bps, bw_in_pct, bw_out_pct,
@@ -389,11 +424,12 @@ def monitoring_device_trend(
     conn = get_db_connection()
     try:
         device = conn.execute(
-            "SELECT id, hostname, status FROM devices WHERE id = ?",
+            "SELECT id, hostname, ip_address, platform, status, device_category FROM devices WHERE id = ?",
             (device_id,),
         ).fetchone()
         if not device:
             raise HTTPException(status_code=404, detail='Device not found')
+        device = dict(device)
 
         now_utc = datetime.now(timezone.utc)
 
@@ -421,6 +457,70 @@ def monitoring_device_trend(
         start_iso = start_dt.isoformat()
         end_iso = end_dt.isoformat()
         target_resolution = (resolution or 'auto').strip().lower()
+
+        plat = str(device.get('platform') or '').lower()
+        category = str(device.get('device_category') or '').lower()
+        is_server = plat in _SERVER_PLATFORMS or 'server' in category
+
+        if is_server:
+            use_raw = range_hours <= 24 and target_resolution != '5m'
+            if use_raw:
+                rows = conn.execute(
+                    '''
+                    SELECT ts AS ts_minute, cpu_load, cpu_util, mem_avail, swap_util, io_wait, io_latency,
+                           disk_util, inode_util, tcp_conns, tcp_retrans,
+                           tcp_estab, tcp_time_wait, tcp_close_wait, tcp_syn_recv, tcp_listen,
+                           process_health, service_sshd, service_crond, service_docker
+                    FROM device_telemetry_samples
+                    WHERE device_id = ? AND ts >= ? AND ts <= ?
+                    ORDER BY ts ASC
+                    ''',
+                    (device_id, start_iso, end_iso),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    '''
+                    SELECT ts_hour AS ts_minute,
+                           avg_cpu_load AS cpu_load,
+                           avg_cpu_util AS cpu_util,
+                           avg_mem_avail AS mem_avail,
+                           avg_swap_util AS swap_util,
+                           avg_io_wait AS io_wait,
+                           avg_io_latency AS io_latency,
+                           avg_disk_util AS disk_util,
+                           avg_inode_util AS inode_util,
+                           avg_tcp_conns AS tcp_conns,
+                           avg_tcp_retrans AS tcp_retrans,
+                           avg_tcp_estab AS tcp_estab,
+                           avg_tcp_time_wait AS tcp_time_wait,
+                           avg_tcp_close_wait AS tcp_close_wait,
+                           avg_tcp_syn_recv AS tcp_syn_recv,
+                           avg_tcp_listen AS tcp_listen,
+                           avg_process_health AS process_health,
+                           0 AS service_sshd, 0 AS service_crond, 0 AS service_docker
+                    FROM device_telemetry_hourly
+                    WHERE device_id = ? AND ts_hour >= ? AND ts_hour <= ?
+                    ORDER BY ts_hour ASC
+                    ''',
+                    (device_id, start_iso, end_iso),
+                ).fetchall()
+
+            series = [dict(r) for r in rows]
+            return {
+                'device': {
+                    'id': device['id'],
+                    'hostname': device['hostname'],
+                    'ip_address': device.get('ip_address'),
+                    'platform': device.get('platform'),
+                    'status': device['status'],
+                },
+                'is_server': True,
+                'range_hours': range_hours,
+                'resolution': '1m' if use_raw else '5m',
+                'start_time': start_iso,
+                'end_time': end_iso,
+                'series': series,
+            }
 
         # Explicit user-selected resolutions.
         if target_resolution == '5m':

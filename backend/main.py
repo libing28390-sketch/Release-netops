@@ -137,6 +137,9 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(record_host_resource_snapshot, 'interval', minutes=1, id='host_resource_sampler', replace_existing=True)
     scheduler.add_job(record_device_health_snapshot, 'interval', minutes=1, id='device_health_sampler', replace_existing=True)
     
+    from services.telemetry_service import record_device_telemetry_snapshot
+    scheduler.add_job(record_device_telemetry_snapshot, 'interval', minutes=1, id='device_telemetry_sampler', replace_existing=True)
+    
     reschedule_backup(schedule_cfg)
     
     from services.ip_locator_service import run_arp_sweep, ARP_SWEEP_INTERVAL_SECONDS

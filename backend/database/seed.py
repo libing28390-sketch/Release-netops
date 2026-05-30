@@ -191,15 +191,102 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
 
 # Seed standard scripts
 std_scripts = [
-    ('std_linux_mem', 'Linux 内存使用率', '#!/bin/bash\n# 计算内存使用率: (MemTotal - MemAvailable) / MemTotal * 100\n# MemAvailable 自动剔除可回收 buffer/cache, 是 Linux 推荐口径 (kernel >= 3.14)\n# 旧内核回退: MemAvailable 缺失时使用 MemFree + Buffers + Cached 估算\nawk \'/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2; have_a=1} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{ if(!have_a) a=f+b+c; if(t>0) printf "%.2f\\n",(t-a)/t*100; else print 0 }\' /proc/meminfo', '计算系统内存使用百分比 (0-100)', 'Linux', 'standard'),
-    ('std_linux_cpu', 'Linux CPU 使用率', '#!/bin/bash\n# 提取 top 输出中的 idle%, 用 100 减去得到整体使用率\ntop -bn1 | grep "Cpu(s)" | sed \'s/.*, *\\([0-9.]*\\)%* id.*/\\1/\' | awk \'{print 100 - $1}\'', '计算系统整体 CPU 使用率 (0-100)', 'Linux', 'standard'),
-    ('std_linux_disk', 'Linux 全量磁盘空间', '#!/bin/bash\n# 扫描所有本地挂载点,过滤虚拟分区,按使用率排序\necho "Detailed Disk Usage (Top 10):"\ndf -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10\n# 提取全局最大利用率作为判定值\nmax_usage=$(df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk \'{print $5}\' | sed \'s/%//\' | sort -rn | head -1)\necho "MAX_UTILIZATION: ${max_usage:-0}"', '扫描所有本地分区，取最大利用率百分比', 'Linux', 'standard'),
-    ('std_linux_inode', 'Linux 全量磁盘 Inode', '#!/bin/bash\n# 扫描所有本地挂载点 Inode 使用率\necho "Detailed Inode Usage (Top 10):"\ndf -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10\nmax_inode=$(df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk \'{print $5}\' | sed \'s/%//\' | sort -rn | head -1)\necho "MAX_INODE_UTIL: ${max_inode:-0}"', '扫描所有本地分区，取最大 Inode 使用率', 'Linux', 'standard'),
-    ('std_linux_iowait', 'Linux IO Wait 延迟', '#!/bin/bash\n# 提取 CPU IO 等待比例 (取第二次采样,首次包含开机以来累计值)\niostat -c 1 2 | grep -v "avg-cpu" | tail -1 | awk \'{print $4}\'', 'CPU 等待磁盘 IO 时间占比 (0-100)', 'Linux', 'standard'),
-    ('std_linux_swap', 'Linux Swap 使用率', '#!/bin/bash\nfree | grep Swap | awk \'{if ($2>0) print ($3/$2)*100; else print 0}\'', '交换分区使用百分比 (0-100)', 'Linux', 'standard'),
-    ('std_linux_load', 'Linux CPU 负载比例', '#!/bin/bash\n# 计算 1min 负载与核心数的比值\ncores=$(grep -c ^processor /proc/cpuinfo)\nload=$(uptime | awk -F\'load average:\' \'{print $2}\' | cut -d, -f1 | xargs)\nawk -v l="$load" -v c="$cores" \'BEGIN{ if(c>0) printf "%.2f\\n", (l/c)*100; else print 0 }\'', '系统 1min 负载相对于核心数的比例', 'Linux', 'standard'),
-    ('std_linux_conns', 'Linux TCP 连接数', '#!/bin/bash\nss -ant | grep ESTAB | wc -l', '统计系统 Established 状态的 TCP 连接总数', 'Linux', 'standard'),
-    ('std_linux_proc', 'Linux 关键进程巡检', '#!/bin/bash\n# 检查指定的多个关键进程，返回丢失的数量\nprocs=${1:-"sshd crond docker"}\nmissing=0\nfor p in $procs; do\n  if ! pgrep -f "$p" > /dev/null; then\n    echo "[CRITICAL] Process not found: $p"\n    missing=$((missing + 1))\n  fi\ndone\necho "MISSING_COUNT: $missing"', '检查进程存活状态，返回未运行的进程数', 'Linux', 'standard'),
+    ('std_linux_mem', 'Linux 内存使用率',
+     r"""#!/bin/bash
+# 计算内存使用率: (MemTotal - MemAvailable) / MemTotal * 100
+# MemAvailable 自动剔除可回收 buffer/cache, 是 Linux 推荐口径 (kernel >= 3.14)
+# 旧内核回退: MemAvailable 缺失时使用 MemFree + Buffers + Cached 估算
+awk '/^MemTotal:/{t=$2}
+     /^MemAvailable:/{a=$2; have_a=1}
+     /^MemFree:/{f=$2}
+     /^Buffers:/{b=$2}
+     /^Cached:/{c=$2}
+     END {
+         if (!have_a) {
+             a = f + b + c
+         }
+         if (t > 0) {
+             printf "%.2f\n", (t - a) / t * 100
+         } else {
+             print 0
+         }
+     }' /proc/meminfo""",
+     '计算系统内存使用百分比 (0-100)', 'Linux', 'standard'),
+
+    ('std_linux_cpu', 'Linux CPU 使用率',
+     r"""#!/bin/bash
+# 提取 top 输出中的 idle%, 用 100 减去得到整体使用率
+idle_pct=$(top -bn1 | grep "Cpu(s)" | sed 's/.*, *\([0-9.]*\)%* id.*/\1/')
+awk -v idle="$idle_pct" 'BEGIN { printf "%.2f\n", 100 - idle }'""",
+     '计算系统整体 CPU 使用率 (0-100)', 'Linux', 'standard'),
+
+    ('std_linux_disk', 'Linux 全量磁盘空间',
+     r"""#!/bin/bash
+# 扫描所有本地挂载点,过滤虚拟分区,按使用率排序
+echo "Detailed Disk Usage (Top 10):"
+df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10
+
+# 提取全局最大利用率作为判定值
+max_usage=$(df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk '{print $5}' | sed 's/%//' | sort -rn | head -1)
+echo "MAX_UTILIZATION: ${max_usage:-0}"
+""",
+     '扫描所有本地分区，取最大利用率百分比', 'Linux', 'standard'),
+
+    ('std_linux_inode', 'Linux 全量磁盘 Inode',
+     r"""#!/bin/bash
+# 扫描所有本地挂载点 Inode 使用率
+echo "Detailed Inode Usage (Top 10):"
+df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10
+
+max_inode=$(df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk '{print $5}' | sed 's/%//' | sort -rn | head -1)
+echo "MAX_INODE_UTIL: ${max_inode:-0}"
+""",
+     '扫描所有本地分区，取最大 Inode 使用率', 'Linux', 'standard'),
+
+    ('std_linux_iowait', 'Linux IO Wait 延迟',
+     r"""#!/bin/bash
+# 提取 CPU IO 等待比例 (取第二次采样,首次包含开机以来累计值)
+iostat -c 1 2 | grep -v "avg-cpu" | tail -1 | awk '{print $4}'""",
+     'CPU 等待磁盘 IO 时间占比 (0-100)', 'Linux', 'standard'),
+
+    ('std_linux_swap', 'Linux Swap 使用率',
+     r"""#!/bin/bash
+free | grep Swap | awk '{if ($2>0) print ($3/$2)*100; else print 0}'""",
+     '交换分区使用百分比 (0-100)', 'Linux', 'standard'),
+
+    ('std_linux_load', 'Linux CPU 负载比例',
+     r"""#!/bin/bash
+# 计算 1min 负载与核心数的比值
+cores=$(grep -c ^processor /proc/cpuinfo)
+load=$(uptime | awk -F'load average:' '{print $2}' | cut -d, -f1 | xargs)
+awk -v l="$load" -v c="$cores" 'BEGIN {
+    if (c > 0) {
+        printf "%.2f\n", (l / c) * 100
+    } else {
+        print 0
+    }
+}'""",
+     '系统 1min 负载相对于核心数的比例', 'Linux', 'standard'),
+
+    ('std_linux_conns', 'Linux TCP 连接数',
+     r"""#!/bin/bash
+ss -ant | grep ESTAB | wc -l""",
+     '统计系统 Established 状态的 TCP 连接总数', 'Linux', 'standard'),
+
+    ('std_linux_proc', 'Linux 关键进程巡检',
+     r"""#!/bin/bash
+# 检查指定的多个关键进程，返回丢失的数量
+procs=${1:-"sshd crond docker"}
+missing=0
+for p in $procs; do
+    if ! pgrep -f "$p" > /dev/null; then
+        echo "[CRITICAL] Process not found: $p"
+        missing=$((missing + 1))
+    fi
+done
+echo "MISSING_COUNT: $missing"
+""",
+     '检查进程存活状态，返回未运行的进程数', 'Linux', 'standard'),
 
     # Cisco IOS / IOS-XE
     ('insp_cisco_ios_full', 'Cisco IOS 综合巡检', 'show version\nshow processes cpu sorted\nshow processes memory sorted\nshow environment temperature\nshow environment power all\nshow interfaces status\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Cisco IOS / IOS-XE 综合巡检脚本，覆盖 CPU/内存/温度/电源/接口/路由协议/路由数量', 'cisco_ios', 'inspection'),
@@ -214,7 +301,480 @@ std_scripts = [
     # Juniper JunOS
     ('insp_juniper_junos_full', 'Juniper JunOS 综合巡检', 'show version\nshow chassis routing-engine\nshow chassis environment\nshow interfaces terse\nshow bgp summary\nshow ospf neighbor\nshow route summary', 'Juniper JunOS 综合巡检脚本（MX/EX/QFX/SRX 通用）', 'juniper_junos', 'inspection'),
     # Arista EOS
-    ('insp_arista_eos_full', 'Arista EOS 综合巡检', 'show version\nshow processes top once\nshow memory\nshow environment temperature\nshow environment power\nshow interfaces status\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Arista EOS 综合巡检脚本', 'arista_eos', 'inspection')
+    ('insp_arista_eos_full', 'Arista EOS 综合巡检', 'show version\nshow processes top once\nshow memory\nshow environment temperature\nshow environment power\nshow interfaces status\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Arista EOS 综合巡检脚本', 'arista_eos', 'inspection'),
+
+    ('insp_linux_full', 'Linux 综合巡检',
+     r"""#!/bin/bash
+# ======================================================================
+# Linux Server Comprehensive Health Inspection Script
+# ======================================================================
+
+LOAD_WARN_PCT=80
+MEM_WARN_PCT=85
+MEM_CRIT_PCT=95
+SWAP_WARN_PCT=50
+DISK_WARN_PCT=90
+DISK_CRIT_PCT=95
+INODE_WARN_PCT=90
+INODE_CRIT_PCT=95
+IOWAIT_WARN_PCT=15
+IOWAIT_CRIT_PCT=30
+TCP_CONN_WARN=5000
+TCP_CONN_CRIT=10000
+SSH_FAIL_WARN_COUNT=20
+
+TOTAL_ERRORS=0
+TOTAL_WARNINGS=0
+
+print_section_header() {
+    local status="$1"
+    local title="$2"
+    echo "======================================================================"
+    echo "[$status] $title"
+    echo "----------------------------------------------------------------------"
+}
+
+# 1. 系统基本运行状态 (System Basic Info)
+print_section_header "SUCCESS" "1. 系统基本运行状态 (System Basic Info)"
+hostname=$(hostname)
+os_version=$(cat /etc/os-release 2>/dev/null | grep -i PRETTY_NAME | cut -d'"' -f2)
+if [ -z "$os_version" ]; then
+    os_version=$(uname -sr)
+fi
+kernel_version=$(uname -r)
+uptime_info=$(uptime -p 2>/dev/null)
+if [ -z "$uptime_info" ]; then
+    uptime_info=$(uptime | awk -F',  ' '{print $1}')
+fi
+system_time=$(date "+%Y-%m-%d %H:%M:%S %Z")
+
+echo "主机名称: ${hostname}"
+echo "操作系统: ${os_version}"
+echo "内核版本: ${kernel_version}"
+echo "运行时间: ${uptime_info}"
+echo "系统时间: ${system_time}"
+
+# 2. CPU 利用率与系统负载 (CPU & Load)
+cpu_cores=$(grep -c ^processor /proc/cpuinfo)
+load_avg=$(cat /proc/loadavg | awk '{print $1", "$2", "$3}')
+load_1min=$(cat /proc/loadavg | awk '{print $1}')
+load_pct=$(awk -v l="$load_1min" -v c="$cpu_cores" 'BEGIN { if (c>0) printf "%.2f", (l/c)*100; else print 0 }')
+cpu_idle=$(top -bn1 | grep "Cpu(s)" | sed 's/.*, *\([0-9.]*\)%* id.*/\1/' | awk '{print $1}')
+cpu_util=$(awk -v idle="$cpu_idle" 'BEGIN { printf "%.2f", 100 - idle }')
+cpu_iowait=$(top -bn1 | grep "Cpu(s)" | sed 's/.*, *\([0-9.]*\)%* wa.*/\1/' | awk '{print $1}')
+if [ -z "$cpu_iowait" ]; then
+    cpu_iowait=$(vmstat 1 2 | tail -n 1 | awk '{print $16}')
+fi
+
+load_status="SUCCESS"
+cpu_status="OK"
+if (( $(echo "$load_pct >= 100" | bc -l) )); then
+    load_status="ERROR"
+    cpu_status="CRITICAL"
+    TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+elif (( $(echo "$load_pct >= $LOAD_WARN_PCT" | bc -l) )); then
+    load_status="WARNING"
+    cpu_status="ERROR"
+    TOTAL_WARNINGS=$((TOTAL_WARNINGS + 1))
+fi
+
+print_section_header "${load_status}" "2. CPU 利用率与系统负载 (CPU & Load)"
+echo "逻辑 CPU 核心: ${cpu_cores} 核"
+echo "系统平均负载 (1/5/15 min): ${load_avg}"
+echo "系统负载比例 (负载/核数): ${load_pct}%"
+echo "CPU 整体利用率: ${cpu_util}%"
+echo "CPU IO等待占比: ${cpu_iowait}%"
+
+if [ "$load_status" = "ERROR" ]; then
+    echo "[ERROR] 系统平均负载率已超过 100%，CPU 资源极度紧张！"
+elif [ "$load_status" = "WARNING" ]; then
+    echo "[WARNING] 系统平均负载率超过 ${LOAD_WARN_PCT}%，请关注系统资源消耗。"
+fi
+
+echo "--- CPU 占用前 5 的进程 ---"
+ps -eo pid,ppid,%cpu,%mem,comm --sort=-%cpu | head -n 6
+
+# 3. 内存与交换空间使用情况 (Memory & Swap)
+mem_total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+mem_avail=$(awk '/^MemAvailable:/{print $2; have_a=1} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{if(!have_a) print f+b+c}' /proc/meminfo)
+mem_util=$(awk -v t="$mem_total" -v a="$mem_avail" 'BEGIN { printf "%.2f", ((t-a)/t)*100 }')
+swap_total=$(awk '/^SwapTotal:/{print $2}' /proc/meminfo)
+swap_free=$(awk '/^SwapFree:/{print $2}' /proc/meminfo)
+swap_util=0
+if [ "$swap_total" -gt 0 ]; then
+    swap_util=$(awk -v t="$swap_total" -v f="$swap_free" 'BEGIN { printf "%.2f", ((t-f)/t)*100 }')
+fi
+oom_events=$(dmesg -T 2>/dev/null | grep -i -E "oom-killer|out of memory" | tail -n 5)
+
+mem_status="SUCCESS"
+mem_level="OK"
+if (( $(echo "$mem_util >= $MEM_CRIT_PCT" | bc -l) )) || [ -n "$oom_events" ]; then
+    mem_status="ERROR"
+    mem_level="CRITICAL"
+    TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+elif (( $(echo "$mem_util >= $MEM_WARN_PCT" | bc -l) )) || (( $(echo "$swap_util >= $SWAP_WARN_PCT" | bc -l) )); then
+    mem_status="WARNING"
+    mem_level="ERROR"
+    TOTAL_WARNINGS=$((TOTAL_WARNINGS + 1))
+fi
+
+print_section_header "${mem_status}" "3. 内存与交换空间使用情况 (Memory & Swap)"
+echo "物理内存: 总量 $(awk -v t="$mem_total" 'BEGIN {printf "%.2f GB", t/1024/1024}'), 可用 $(awk -v a="$mem_avail" 'BEGIN {printf "%.2f GB", a/1024/1024}') (使用率: ${mem_util}%)"
+if [ "$swap_total" -gt 0 ]; then
+    echo "交换空间: 总量 $(awk -v t="$swap_total" 'BEGIN {printf "%.2f GB", t/1024/1024}'), 已用 $(awk -v t="$swap_total" -v f="$swap_free" 'BEGIN {printf "%.2f GB", (t-f)/1024/1024}') (使用率: ${swap_util}%)"
+else
+    echo "交换空间: 未启用 Swap"
+fi
+
+if [ -n "$oom_events" ]; then
+    echo "[ERROR] 检测到系统最近发生过 OOM Killer 杀进程事件："
+    echo "${oom_events}"
+elif (( $(echo "$mem_util >= $MEM_CRIT_PCT" | bc -l) )); then
+    echo "[ERROR] 物理内存使用率已超过 ${MEM_CRIT_PCT}%，极易触发 OOM！"
+elif (( $(echo "$mem_util >= $MEM_WARN_PCT" | bc -l) )); then
+    echo "[WARNING] 物理内存使用率超过 ${MEM_WARN_PCT}%，可用内存较低。"
+fi
+
+if (( $(echo "$swap_util >= $SWAP_WARN_PCT" | bc -l) )); then
+    echo "[WARNING] 交换分区使用率超过 ${SWAP_WARN_PCT}%，物理内存可能不足且开始换页！"
+fi
+
+echo "--- 内存占用前 5 的进程 ---"
+ps -eo pid,ppid,%cpu,%mem,comm --sort=-%mem | head -n 6
+
+# 4. 磁盘与 Inode 空间使用率 (Disk & Inode Space)
+disk_status="SUCCESS"
+disk_level="OK"
+disk_messages=""
+df_out=$(df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2)
+while read -r line; do
+    fs=$(echo "$line" | awk '{print $1}')
+    pct=$(echo "$line" | awk '{print $5}' | sed 's/%//')
+    mnt=$(echo "$line" | awk '{print $6}')
+    [ -z "$pct" ] && continue
+    if [ "$pct" -ge "$DISK_CRIT_PCT" ]; then
+        disk_status="ERROR"
+        disk_level="CRITICAL"
+        disk_messages="${disk_messages}\n[ERROR] 挂载点 ${mnt} 空间已达 ${pct}% (超过严重阈值 ${DISK_CRIT_PCT}%)"
+    elif [ "$pct" -ge "$DISK_WARN_PCT" ]; then
+        if [ "$disk_status" != "ERROR" ]; then
+            disk_status="WARNING"
+            disk_level="ERROR"
+        fi
+        disk_messages="${disk_messages}\n[WARNING] 挂载点 ${mnt} 空间已达 ${pct}% (超过警告阈值 ${DISK_WARN_PCT}%)"
+    fi
+done <<< "$df_out"
+
+ro_mounts=$(mount | grep -iE " \(ro," | grep -vE "type (tmpfs|devtmpfs|proc|sysfs|cgroup)")
+if [ -n "$ro_mounts" ]; then
+    disk_status="ERROR"
+    disk_level="CRITICAL"
+    disk_messages="${disk_messages}\n[ERROR] 检测到有文件系统处于只读模式 (Read-only):\n${ro_mounts}"
+fi
+
+inode_messages=""
+inode_level="OK"
+df_i_out=$(df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2)
+while read -r line; do
+    fs=$(echo "$line" | awk '{print $1}')
+    pct=$(echo "$line" | awk '{print $5}' | sed 's/%//')
+    mnt=$(echo "$line" | awk '{print $6}')
+    [ -z "$pct" ] && continue
+    if [ "$pct" -ge "$INODE_CRIT_PCT" ]; then
+        disk_status="ERROR"
+        inode_level="CRITICAL"
+        inode_messages="${inode_messages}\n[ERROR] 挂载点 ${mnt} Inode 已达 ${pct}% (超过严重阈值 ${INODE_CRIT_PCT}%)"
+    elif [ "$pct" -ge "$INODE_WARN_PCT" ]; then
+        if [ "$disk_status" != "ERROR" ]; then
+            disk_status="WARNING"
+        fi
+        if [ "$inode_level" != "CRITICAL" ]; then
+            inode_level="ERROR"
+        fi
+        inode_messages="${inode_messages}\n[WARNING] 挂载点 ${mnt} Inode 已达 ${pct}% (超过警告阈值 ${INODE_WARN_PCT}%)"
+    fi
+done <<< "$df_i_out"
+
+if [ "$disk_status" = "ERROR" ]; then
+    TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+elif [ "$disk_status" = "WARNING" ]; then
+    TOTAL_WARNINGS=$((TOTAL_WARNINGS + 1))
+fi
+
+print_section_header "${disk_status}" "4. 磁盘与 Inode 空间使用率 (Disk & Inode Space)"
+echo "--- 磁盘分区空间使用详情 ---"
+df -hP | grep -vE "tmpfs|devtmpfs"
+[ -n "$disk_messages" ] && echo -e "$disk_messages"
+
+echo "--- Inode 使用详情 ---"
+df -iP | grep -vE "tmpfs|devtmpfs"
+[ -n "$inode_messages" ] && echo -e "$inode_messages"
+
+# 5. TCP 连接状态监控 (TCP Connections)
+tcp_estab=0
+tcp_syn_sent=0
+tcp_syn_recv=0
+tcp_fin_wait1=0
+tcp_fin_wait2=0
+tcp_time_wait=0
+tcp_close=0
+tcp_close_wait=0
+tcp_last_ack=0
+tcp_listen=0
+tcp_closing=0
+
+if type ss >/dev/null 2>&1; then
+    ss_out=$(ss -ant | tail -n +2)
+    while read -r line; do
+        state=$(echo "$line" | awk '{print $1}')
+        case "$state" in
+            ESTAB) tcp_estab=$((tcp_estab + 1)) ;;
+            SYN-SENT) tcp_syn_sent=$((tcp_syn_sent + 1)) ;;
+            SYN-RECV) tcp_syn_recv=$((tcp_syn_recv + 1)) ;;
+            FIN-WAIT-1) tcp_fin_wait1=$((tcp_fin_wait1 + 1)) ;;
+            FIN-WAIT-2) tcp_fin_wait2=$((tcp_fin_wait2 + 1)) ;;
+            TIME-WAIT) tcp_time_wait=$((tcp_time_wait + 1)) ;;
+            CLOSE-WAIT) tcp_close_wait=$((tcp_close_wait + 1)) ;;
+            LAST-ACK) tcp_last_ack=$((tcp_last_ack + 1)) ;;
+            LISTEN) tcp_listen=$((tcp_listen + 1)) ;;
+            UNCONN) tcp_close=$((tcp_close + 1)) ;;
+        esac
+    done <<< "$ss_out"
+else
+    parse_proc_tcp() {
+        local file="$1"
+        [ ! -f "$file" ] && return
+        while read -r line; do
+            state=$(echo "$line" | awk '{print $4}')
+            case "$state" in
+                01) tcp_estab=$((tcp_estab + 1)) ;;
+                02) tcp_syn_sent=$((tcp_syn_sent + 1)) ;;
+                03) tcp_syn_recv=$((tcp_syn_recv + 1)) ;;
+                04) tcp_fin_wait1=$((tcp_fin_wait1 + 1)) ;;
+                05) tcp_fin_wait2=$((tcp_fin_wait2 + 1)) ;;
+                06) tcp_time_wait=$((tcp_time_wait + 1)) ;;
+                07) tcp_close=$((tcp_close + 1)) ;;
+                08) tcp_close_wait=$((tcp_close_wait + 1)) ;;
+                09) tcp_last_ack=$((tcp_last_ack + 1)) ;;
+                0A) tcp_listen=$((tcp_listen + 1)) ;;
+                0B) tcp_closing=$((tcp_closing + 1)) ;;
+            esac
+        done < <(tail -n +2 "$file")
+    }
+    parse_proc_tcp "/proc/net/tcp"
+    parse_proc_tcp "/proc/net/tcp6"
+fi
+
+tcp_total=$((tcp_estab + tcp_syn_sent + tcp_syn_recv + tcp_fin_wait1 + tcp_fin_wait2 + tcp_time_wait + tcp_close_wait + tcp_last_ack + tcp_closing))
+tcp_status="SUCCESS"
+tcp_estab_level="OK"
+tcp_tw_level="OK"
+
+# TCP 重传率 (RetransSegs / OutSegs * 100)，优先用 nstat，回退到 /proc/net/snmp
+tcp_retrans_pct=0
+if type nstat >/dev/null 2>&1; then
+    _out_segs=$(nstat -az 2>/dev/null | awk '/TcpOutSegs/{print $2; exit}')
+    _retr_segs=$(nstat -az 2>/dev/null | awk '/TcpRetransSegs/{print $2; exit}')
+fi
+if [ -z "$_out_segs" ] || [ -z "$_retr_segs" ]; then
+    # /proc/net/snmp: 取 Tcp: 行，OutSegs 与 RetransSegs 列
+    _snmp=$(awk '/^Tcp:/{if(h==""){h=$0}else{d=$0}} END{print h"\n"d}' /proc/net/snmp 2>/dev/null)
+    _out_segs=$(echo "$_snmp" | awk 'NR==1{for(i=1;i<=NF;i++)if($i=="OutSegs")c=i} NR==2{print $c}')
+    _retr_segs=$(echo "$_snmp" | awk 'NR==1{for(i=1;i<=NF;i++)if($i=="RetransSegs")c=i} NR==2{print $c}')
+fi
+if [[ "$_out_segs" =~ ^[0-9]+$ ]] && [ "$_out_segs" -gt 0 ] && [[ "$_retr_segs" =~ ^[0-9]+$ ]]; then
+    tcp_retrans_pct=$(awk -v r="$_retr_segs" -v o="$_out_segs" 'BEGIN { printf "%.2f", (r/o)*100 }')
+fi
+
+if [ "$tcp_total" -ge "$TCP_CONN_CRIT" ] || [ "$tcp_close_wait" -ge 100 ]; then
+    tcp_status="ERROR"
+    tcp_estab_level="CRITICAL"
+    TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+elif [ "$tcp_total" -ge "$TCP_CONN_WARN" ] || [ "$tcp_close_wait" -ge 20 ]; then
+    tcp_status="WARNING"
+    tcp_estab_level="ERROR"
+    TOTAL_WARNINGS=$((TOTAL_WARNINGS + 1))
+fi
+
+if [ "$tcp_time_wait" -ge 2000 ]; then
+    tcp_tw_level="CRITICAL"
+elif [ "$tcp_time_wait" -ge 1000 ]; then
+    tcp_tw_level="ERROR"
+fi
+
+print_section_header "${tcp_status}" "5. TCP 连接状态监控 (TCP Connections)"
+echo "ESTABLISHED 连接数 : ${tcp_estab}"
+echo "TIME_WAIT 连接数   : ${tcp_time_wait}"
+echo "CLOSE_WAIT 连接数  : ${tcp_close_wait}"
+echo "LISTEN 端口数      : ${tcp_listen}"
+echo "SYN_RECV 状态数    : ${tcp_syn_recv}"
+echo "活动连接总数 (无L) : ${tcp_total}"
+echo "TCP 重传率         : ${tcp_retrans_pct}%"
+
+if [ "$tcp_total" -ge "$TCP_CONN_CRIT" ]; then
+    echo "[ERROR] 并发 TCP 活动连接数已达 ${tcp_total}，超过严重限制 (${TCP_CONN_CRIT})！"
+elif [ "$tcp_total" -ge "$TCP_CONN_WARN" ]; then
+    echo "[WARNING] 并发 TCP 活动连接数较高，超过警告阈值 (${TCP_CONN_WARN})。"
+fi
+
+if [ "$tcp_close_wait" -ge 50 ]; then
+    echo "[ERROR] 检测到 CLOSE_WAIT 数量达到 ${tcp_close_wait}，可能存在应用程序连接泄漏！"
+elif [ "$tcp_close_wait" -ge 20 ]; then
+    echo "[WARNING] CLOSE_WAIT 数量为 ${tcp_close_wait}，请关注应用释放连接情况。"
+fi
+
+# 6. 磁盘 I/O 延迟与吞吐 (Disk I/O Latency)
+io_status="SUCCESS"
+io_level="OK"
+iowait_pct=$(cat /proc/stat | grep '^cpu ' | awk '{t=$2+$3+$4+$5+$6+$7+$8+$9+$10; io=$6; printf "%.2f", (io/t)*100}')
+read_lat_ms=0
+write_lat_ms=0
+
+if type iostat >/dev/null 2>&1; then
+    read_lat_ms=$(iostat -dx 1 2 | awk '/^[a-zA-Z]/{dev=$1; r_await=$(NF-4); w_await=$(NF-3); util=$NF} END{print r_await}')
+    write_lat_ms=$(iostat -dx 1 2 | awk '/^[a-zA-Z]/{dev=$1; r_await=$(NF-4); w_await=$(NF-3); util=$NF} END{print w_await}')
+    [[ ! "$read_lat_ms" =~ ^[0-9.]+$ ]] && read_lat_ms=0
+    [[ ! "$write_lat_ms" =~ ^[0-9.]+$ ]] && write_lat_ms=0
+fi
+
+# 综合 I/O 延迟指标：取读/写平均延迟中的较大值 (ms)
+io_latency_ms=$(awk -v r="$read_lat_ms" -v w="$write_lat_ms" 'BEGIN { printf "%.2f", (r>w?r:w) }')
+
+if (( $(echo "$iowait_pct >= $IOWAIT_CRIT_PCT" | bc -l) )); then
+    io_status="ERROR"
+    io_level="CRITICAL"
+    TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+elif (( $(echo "$iowait_pct >= $IOWAIT_WARN_PCT" | bc -l) )); then
+    io_status="WARNING"
+    io_level="ERROR"
+    TOTAL_WARNINGS=$((TOTAL_WARNINGS + 1))
+fi
+
+print_section_header "${io_status}" "6. 磁盘 I/O 延迟与吞吐 (Disk I/O Latency)"
+echo "CPU IOWait 比例 : ${iowait_pct}%"
+if type iostat >/dev/null 2>&1; then
+    echo "读取平均延迟   : ${read_lat_ms} ms"
+    echo "写入平均延迟   : ${write_lat_ms} ms"
+    iostat -d -x 1 1
+else
+    echo "I/O 响应时间    : 无法获取 (iostat 未安装，请安装 sysstat 软件包以获取精确延迟数据)"
+fi
+
+if (( $(echo "$iowait_pct >= $IOWAIT_CRIT_PCT" | bc -l) )); then
+    echo "[ERROR] CPU IOWait 达到 ${iowait_pct}%，磁盘 I/O 拥堵非常严重！"
+elif (( $(echo "$iowait_pct >= $IOWAIT_WARN_PCT" | bc -l) )); then
+    echo "[WARNING] CPU IOWait 达到 ${iowait_pct}%，磁盘读写出现等待。"
+fi
+
+# 7. 系统核心服务与进程 (Critical Services)
+serv_status="SUCCESS"
+failed_units=""
+if type systemctl >/dev/null 2>&1; then
+    failed_units=$(systemctl list-units --state=failed --no-legend)
+    [ -n "$failed_units" ] && { serv_status="WARNING"; TOTAL_WARNINGS=$((TOTAL_WARNINGS + 1)); }
+fi
+
+missing_procs=""
+missing_procs_count=0
+for p in sshd crond docker; do
+    if ! pgrep -x "$p" >/dev/null && ! pgrep -f "$p" >/dev/null; then
+        missing_procs_count=$((missing_procs_count + 1))
+        if type systemctl >/dev/null 2>&1; then
+            if ! systemctl is-active "$p" >/dev/null 2>&1; then
+                missing_procs="${missing_procs}\n[ERROR] 关键服务进程 $p 未运行！"
+                serv_status="ERROR"
+            fi
+        else
+            missing_procs="${missing_procs}\n[ERROR] 关键服务进程 $p 未运行！"
+            serv_status="ERROR"
+        fi
+    fi
+done
+
+if [ "$serv_status" = "ERROR" ]; then
+    TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+fi
+
+print_section_header "${serv_status}" "7. 系统核心服务与进程 (Critical Services)"
+if type systemctl >/dev/null 2>&1; then
+    echo "--- 失败的 systemd 服务单元 ---"
+    [ -n "$failed_units" ] && echo "${failed_units}" || echo "无失败服务 (正常)"
+fi
+
+echo "--- 关键服务存活状态 ---"
+for p in sshd crond docker; do
+    if pgrep -x "$p" >/dev/null || pgrep -f "$p" >/dev/null; then
+        echo "进程 $p: 运行中 [SUCCESS]"
+    else
+        echo "进程 $p: 未运行 [ERROR]"
+    fi
+done
+[ -n "$missing_procs" ] && echo -e "$missing_procs"
+
+# 8. 安全防线与入侵审计 (Security Audit)
+sec_status="SUCCESS"
+ssh_fail_count=0
+sec_logs=""
+
+if [ -f "/var/log/secure" ]; then
+    ssh_fail_count=$(grep -i "failed" /var/log/secure | grep -c "invalid user\|password")
+    sec_logs=$(grep -i "failed" /var/log/secure | grep "invalid user\|password" | tail -n 5)
+elif [ -f "/var/log/auth.log" ]; then
+    ssh_fail_count=$(grep -i "failed" /var/log/auth.log | grep -c "invalid user\|password")
+    sec_logs=$(grep -i "failed" /var/log/auth.log | grep "invalid user\|password" | tail -n 5)
+fi
+
+if [ "$ssh_fail_count" -ge "$SSH_FAIL_WARN_COUNT" ]; then
+    sec_status="WARNING"
+    TOTAL_WARNINGS=$((TOTAL_WARNINGS + 1))
+fi
+
+print_section_header "${sec_status}" "8. 安全防线与入侵审计 (Security Audit)"
+echo "最近 24小时 SSH 登录失败次数 : ${ssh_fail_count}"
+[ -n "$sec_logs" ] && { echo "--- 最近登录失败日志片段 ---"; echo "${sec_logs}"; }
+if [ "$ssh_fail_count" -ge "$SSH_FAIL_WARN_COUNT" ]; then
+    echo "[WARNING] 检测到频繁的 SSH 登录失败，可能存在暴力破解风险，请核查安全组及防火墙配置！"
+fi
+
+# 9. 巡检汇总 (Summary)
+overall_status="SUCCESS"
+if [ "$TOTAL_ERRORS" -gt 0 ]; then
+    overall_status="ERROR"
+elif [ "$TOTAL_WARNINGS" -gt 0 ]; then
+    overall_status="WARNING"
+fi
+
+max_usage=$(df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk '{print $5}' | sed 's/%//' | sort -rn | head -1)
+max_inode=$(df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk '{print $5}' | sed 's/%//' | sort -rn | head -1)
+
+echo "======================================================================"
+echo "巡检汇总 (Summary)"
+echo "======================================================================"
+echo "发现严重错误 (ERROR)   : ${TOTAL_ERRORS} 个"
+echo "发现警告信息 (WARNING) : ${TOTAL_WARNINGS} 个"
+echo "综合健康评级           : [${overall_status}]"
+
+echo "--- METRICS ---"
+echo "cpu_load: ${load_pct}"
+echo "cpu_util: ${cpu_util}"
+echo "mem_avail: ${mem_util}"
+echo "swap_util: ${swap_util}"
+echo "io_wait: ${iowait_pct}"
+echo "io_latency: ${io_latency_ms:-0}"
+echo "disk_util: ${max_usage:-0}"
+echo "inode_util: ${max_inode:-0}"
+echo "tcp_conns: ${tcp_total}"
+echo "tcp_retrans: ${tcp_retrans_pct:-0}"
+echo "tcp_estab: ${tcp_estab}"
+echo "tcp_time_wait: ${tcp_time_wait}"
+echo "tcp_close_wait: ${tcp_close_wait}"
+echo "tcp_syn_recv: ${tcp_syn_recv}"
+echo "tcp_listen: ${tcp_listen}"
+echo "service_sshd: $( (pgrep -x sshd >/dev/null || pgrep -f sshd >/dev/null) && echo 1 || echo 0 )"
+echo "service_crond: $( (pgrep -x crond >/dev/null || pgrep -f crond >/dev/null) && echo 1 || echo 0 )"
+echo "service_docker: $( (pgrep -x docker >/dev/null || pgrep -f docker >/dev/null) && echo 1 || echo 0 )"
+echo "======================================================================"
+""", 'Linux 主机综合巡检脚本，覆盖系统负载/CPU/内存/磁盘/TCP连接/IO延迟/关键服务及安全审计', 'Linux', 'inspection'),
 ]
 
 
@@ -236,8 +796,14 @@ def get_default_items(now: str) -> list[tuple]:
         ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'std_linux_iowait', 'std_linux_iowait', 15, 30, 'Linux', '', now, now),
         ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控根分区空间占用 (0-100)', 'Shell', 'std_linux_disk', 'std_linux_disk', 90, 95, 'Linux', '', now, now),
         ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控根分区 Inode 占用 (0-100)', 'Shell', 'std_linux_inode', 'std_linux_inode', 90, 95, 'Linux', '', now, now),
-        ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
-        ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定进程是否存在', 'Shell', 'std_linux_proc', 'std_linux_proc', 1, 0, 'Linux', '', now, now),
+        ('srv_disk_latency', 'Disk IO Latency', '磁盘 IO 延迟', 'Server', 'io_latency', '监控磁盘读写平均延迟 (ms)', 'Shell', 'std_linux_iowait', 'std_linux_iowait', 20, 50, 'Linux', '', now, now),
+        ('srv_net_conns', 'Active TCP Connections', '活动连接总数', 'Server', 'tcp_conns', '监控 TCP 活动连接总数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
+        ('srv_net_retrans', 'TCP Retransmission', 'TCP 重传率', 'Server', 'tcp_retrans', '监控 TCP 重传率 (%)', 'Shell', 'std_linux_conns', 'std_linux_conns', 5, 15, 'Linux', '', now, now),
+        ('srv_tcp_estab', 'ESTABLISHED Connections', 'ESTABLISHED 连接数', 'Server', 'tcp_estab', '监控 TCP ESTABLISHED 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
+        ('srv_tcp_time_wait', 'TIME_WAIT Connections', 'TIME_WAIT 连接数', 'Server', 'tcp_time_wait', '监控 TCP TIME_WAIT 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 1000, 2000, 'Linux', '', now, now),
+        ('srv_tcp_close_wait', 'CLOSE_WAIT Connections', 'CLOSE_WAIT 连接数', 'Server', 'tcp_close_wait', '监控 TCP CLOSE_WAIT 状态连接数 (连接泄漏风险)', 'Shell', 'std_linux_conns', 'std_linux_conns', 20, 100, 'Linux', '', now, now),
+        ('srv_tcp_syn_recv', 'SYN_RECV Connections', 'SYN_RECV 连接数', 'Server', 'tcp_syn_recv', '监控 TCP SYN_RECV 状态连接数 (SYN Flood 风险)', 'Shell', 'std_linux_conns', 'std_linux_conns', 100, 500, 'Linux', '', now, now),
+        ('srv_tcp_listen', 'LISTEN Ports', 'LISTEN 端口数', 'Server', 'tcp_listen', '监控 TCP LISTEN 监听端口数量', 'Shell', 'std_linux_conns', 'std_linux_conns', None, None, 'Linux', '', now, now),
     ]
 
 
