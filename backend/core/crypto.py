@@ -22,11 +22,33 @@ def _get_fernet() -> Fernet:
         return _fernet
     from core.config import settings
     key_material = settings.CREDENTIAL_ENCRYPTION_KEY
-    if not key_material or key_material == 'change-me-to-a-random-secret':
+
+    # Reject obvious unsafe defaults / placeholders. The startup must hard-fail
+    # so an operator can never run production with an unconfigured key — losing
+    # this key after data is encrypted means losing every stored credential.
+    _bad_values = {
+        '',
+        'change-me-to-a-random-secret',
+        'replace-with-a-32-char-random-secret-key',
+    }
+    if (
+        key_material is None
+        or key_material in _bad_values
+        or '__CHANGE_ME__' in (key_material or '')
+    ):
         raise RuntimeError(
-            "CREDENTIAL_ENCRYPTION_KEY is not configured. "
-            "Set it in .env or environment variables before starting the application."
+            "CREDENTIAL_ENCRYPTION_KEY is not configured.\n"
+            "Generate a real value and put it in your .env before starting:\n"
+            "    openssl rand -hex 32\n"
+            "Then set:\n"
+            "    CREDENTIAL_ENCRYPTION_KEY=<the-generated-value>\n"
         )
+    if len(key_material) < 24:
+        raise RuntimeError(
+            "CREDENTIAL_ENCRYPTION_KEY is too short (< 24 chars). "
+            "Use `openssl rand -hex 32` to generate a stronger key."
+        )
+
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,

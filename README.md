@@ -128,24 +128,94 @@ The platform runs a background SNMP polling loop (concurrency: 20 devices simult
 
 ### Core Features
 
-| Module | Description |
-|--------|-------------|
-| Dashboard | Device status, job trends, compliance KPIs, real-time overview |
-| Device Inventory | Multi-vendor assets with platform, model, version, site, role metadata |
-| Interface Monitoring | Traffic, bandwidth utilization, status changes, flap detection |
-| Topology Map | Auto-discovered physical links, real-time LLDP/CDP graph |
-| Automation Center | Direct execution, Playbooks, scenario orchestration, execution history |
-| Configuration Center | Backup, snapshot browsing, diff comparison, rollback workflows |
-| Config Drift Detection | Full-scan running-config changes, color-coded diff, line-level rollback preview |
-| Change Orders | Dual-approval workflow, scheduling, compliance enforcement |
-| IPAM | Subnet CRUD, IP assignment, utilization bars, conflict detection |
-| Capacity Planning | CPU/memory/link trends, 30-day linear forecast, days-to-threshold risk |
-| Compliance Auditing | Findings, severity breakdown, remediation-oriented views |
-| Alert Center | Alert desk, rule management, maintenance windows |
-| PAM / Credential Vault | Encrypted SSH/Telnet profiles, password rotation, offline guard |
-| Rack Management | 2D physical chassis mapping across data center locations |
-| Reports | KPI cards, trend charts, multi-sheet XLSX export |
-| Audit Logs | Full operational traceability and access control |
+The platform is organised into **9 modules** that mirror the left-side navigation:
+
+#### 1. Real-time Monitoring (`/monitor/...`)
+
+| Page | Purpose |
+|------|---------|
+| Overview (`/monitor/overview`) | Operations dashboard — device status, recent automation jobs, upcoming scheduled tasks, compliance KPIs |
+| Monitoring Center (`/monitor/telemetry`) | NOC command center — host telemetry, performance trend chart (CPU / Memory / Disk), live alert stream |
+| Server Monitoring (`/monitor/servers`) | Per-server SSH/Shell telemetry — CPU, memory, disk, key services |
+| Network Monitoring (`/monitor/networks`) | Per-device SNMP/CLI telemetry — interface traffic, errors, drops |
+| Topology (`/monitor/topology`) | Auto-discovered LLDP/CDP physical link map, drag-and-drop layout |
+
+#### 2. Terminal Access (`/access/...`)
+
+| Page | Purpose |
+|------|---------|
+| Operation Workspace (`/access/workspace`) | Unified asset gateway — launch web SSH sessions through the controlled PAM proxy |
+| PAM Audit (`/access/pam-audit`) | Active session monitor + history archive with command audit and asciinema replay |
+
+#### 3. Alerts (`/alerts/...`)
+
+| Page | Purpose |
+|------|---------|
+| Alert Center (`/alerts/desk`) | Real-time alert desk with assignment, acknowledge, resolve workflow |
+| Alert History (`/alerts/history`) | Closed-alert archive with filters and export |
+| Alert Rules (`/alerts/rules`) | Threshold and trigger rule management for CPU / memory / interfaces / temperature / hosts |
+| Maintenance (`/alerts/maintenance`) | Maintenance window management — silence alerts during planned changes |
+
+#### 4. Assets & Inventory (`/assets/...`)
+
+| Page | Purpose |
+|------|---------|
+| Asset Dashboard (`/assets/dashboard`) | Physical asset registry — vendor, model, serial number, lifecycle status, location |
+| Network Devices (`/assets/devices`) | Logical device list with platform, status, credentials, server-side paging |
+| Servers (`/assets/servers`) | Linux / Windows server inventory |
+| IP/VLAN Mgmt (`/assets/ipam`) | Subnet CRUD, IP allocation, utilisation bars, conflict detection |
+| IP Toolbox (`/assets/toolbox`) | IP locator (find which switch port owns an IP), connectivity probe, ARP cache, MAC change history |
+| Tags (`/assets/tags`) | Tag taxonomy — vendor, location, role, environment groupings used across the platform |
+| Rack Layout (`/assets/racks`) | 2D rack visualisation with U-position drag-and-drop, power/space accounting |
+
+#### 5. Configuration (`/config/...`)
+
+| Page | Purpose |
+|------|---------|
+| Backup Center (`/config/backup`) | Manual / on-demand running-config backup, snapshot browser, per-device history |
+| Backup Schedule (`/config/schedule`) | Cron-based recurring backup jobs with execution log |
+| Config Diff (`/config/diff`) | Side-by-side or unified diff between any two snapshots, color-coded line-level view |
+| Config Search (`/config/search`) | Full-text grep across **all** snapshots (every device × every version) |
+| Templates (`/config/templates`) | Vendor-specific configuration template library with variable substitution and rollback hooks |
+| Drift Detection (`/config/drift`) | Background scan that compares each device's latest config against the previous baseline; flag drift with line-level review and rollback preview |
+
+#### 6. Automation (`/automation/...`)
+
+| Page | Purpose |
+|------|---------|
+| Automation Tasks (`/automation/tasks`) | Direct execution + Quick Playbook + scenario library, real-time WebSocket stream of per-device output |
+| Inspection Overview (`/automation/inspections`) | Trigger ad-hoc network health inspections, full-fleet snapshot view |
+| Inspection Records (`/automation/records`) | Archive of inspection runs with downloadable XLSX / HTML / PDF / JSON reports |
+| Execution Schedules (`/automation/schedules`) | One-shot inspection plans within a defined time window |
+| Execution History (`/automation/history`) | Playbook execution history with per-device drill-down, raw output, rerun |
+| Scheduled Jobs (`/automation/scheduled-jobs`) | Recurring (cron / interval) automation jobs — backup, inspection, custom scripts |
+| Inspection Metrics (`/automation/metrics`) | Catalog of inspection probes (SNMP OID, CLI command, SSH script) — define what "healthy" means per platform |
+| Parse Templates (`/automation/textfsm`) | TextFSM template manager for normalising vendor CLI output |
+| Operations / Scripts (`/automation/scripts`) | Submit / approve / publish workflow for shell, Python, and CLI scripts |
+
+#### 7. Tickets / Change Orders (`/change-orders/...`)
+
+| Page | Purpose |
+|------|---------|
+| New Order (`/change-orders/new`) | Wizard-driven change request — scenario, target devices, schedule, attachments |
+| My Todo / Group Todo / My Drafts / All Orders / My Focus / My Participated | Filtered views over the change-order workflow |
+| Per-order detail | Initial review → final approval → implementation with control-sheet enforcement, command preview, rollback plan, asciinema-style execution log |
+
+#### 8. Capacity & Reports (`/capacity/...`)
+
+| Page | Purpose |
+|------|---------|
+| Capacity (`/capacity/analysis`) | CPU / memory / interface utilisation trends, 30-day linear forecast, days-to-threshold risk score |
+| Reports (`/capacity/reports`) | KPI cards + trend charts + multi-sheet XLSX export |
+
+#### 9. Platform Management (`/management/...`)
+
+| Page | Purpose |
+|------|---------|
+| Audit Logs (`/management/audit`) | Full operational audit trail — login, config change, automation execution, PAM session, deletion |
+| Users (`/management/users`) | User CRUD, role assignment (Administrator / Operator / Viewer), group membership, MFA seed |
+| Password Rotation (`/management/credentials`) | Vault-style scheduled password rotation for managed devices |
+| License (`/management/license`) | Upload / inspect license file, view feature gating and device-count limits |
 
 ### Technology Stack
 
@@ -164,6 +234,30 @@ Nexora uses a signed license file for feature and device limit control.
 3. The platform validates the license on startup and enforces feature access accordingly
 
 Trial licenses are available — reach out to get started.
+
+---
+
+### Production Pre-flight Checklist
+
+Before exposing the service to real users, walk through this list. The bundled `scripts/preflight-check.sh` script automates most of these checks and fails the deployment pipeline if anything is wrong.
+
+```bash
+cd /opt/netops-automation
+bash scripts/preflight-check.sh
+```
+
+The checklist itself:
+
+1. **Replace every `__CHANGE_ME__*` value in `.env`** — `SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, `POSTGRES_PASSWORD`, `DATABASE_URL`. Use `openssl rand -hex 32` for the keys and `openssl rand -hex 16` for the DB password. The `deploy-ubuntu.sh` script does this on a fresh install; a manual `cp .env.example .env` does **not**.
+2. **Change the default admin password** (`admin / admin`) to a strong one immediately after first login. The backend will refuse to boot in production mode if `SECRET_KEY` or `CREDENTIAL_ENCRYPTION_KEY` look like placeholders.
+3. **Verify HTTPS** — Nginx must terminate TLS in production. Run `sudo certbot --nginx -d <your-domain>` after the first deploy if you have not already.
+4. **Confirm the backend binds to loopback only** — the systemd unit shipped by `deploy-ubuntu.sh` uses `--host 127.0.0.1`. If you start the backend manually, set `HOST=127.0.0.1` so external traffic must come through Nginx.
+5. **Install daily backups** — `sudo bash scripts/install-daily-backup.sh` writes a `pg_dump` cron job to `/etc/cron.daily/netops-backup` and keeps 30 days of compressed dumps under `/var/backups/netops/`.
+6. **Install log rotation (container/bare-metal mode only)** — `sudo cp scripts/netops.logrotate /etc/logrotate.d/netops`. systemd installs go through journald and don't need this.
+7. **Review the firewall** — only the Nginx port (80 / 443) and SSH should be reachable from outside; PostgreSQL (5432) must stay on `localhost`.
+8. **Disable trial / test data** — if you ran any automated demo seed, remove its rows before going live.
+
+> 中文版 checklist 见下方「上线前自检清单」。
 
 ---
 
@@ -350,24 +444,94 @@ netops-automation/
 
 ### 主要功能
 
-| 模块 | 说明 |
+平台分为 **9 个模块**，与左侧菜单一一对应：
+
+#### 1. 实时监控（`/monitor/...`）
+
+| 页面 | 说明 |
 |------|------|
-| 运维看板 | 设备状态、作业趋势、合规 KPI、实时概览 |
-| 设备资产管理 | 多厂商设备台账，支持平台、型号、版本、站点、角色 |
-| 接口监控 | 流量、带宽利用率、状态变化、flap 检测 |
-| 拓扑大屏 | LLDP/CDP 自动发现物理链路，实时拓扑图 |
-| 自动化中心 | 直接执行、Playbook 场景编排、执行历史 |
-| 配置中心 | 备份、快照浏览、差异对比、回滚流程 |
-| 配置漂移检测 | 全量扫描配置变化，彩色 diff，行级回滚预览 |
-| 变更工单 | 双因子审批流程、变更排期、合规保障 |
-| IPAM | 子网增删改查、IP 分配、利用率进度条、冲突检测 |
-| 容量规划 | CPU/内存/链路趋势，30 天线性预测，距阈值天数风险 |
-| 合规审计 | 发现项、严重级别统计、整改视图 |
-| 告警中心 | 告警工作台、规则管理、维护期管理 |
-| 凭据保险箱 | 加密 SSH/Telnet 凭据、密码轮换、离线防护 |
-| 机架管理 | 2D 物理机架可视化，跨机房空间映射 |
-| 运维报表 | KPI 卡片、趋势图表、多 Sheet XLSX 导出 |
-| 审计日志 | 全量操作留痕与权限管控 |
+| 运营总览（`/monitor/overview`） | 运维看板 — 设备状态、最近自动化作业、即将进行的任务、合规 KPI |
+| 监控中心（`/monitor/telemetry`） | NOC 指挥中心 — 平台宿主机遥测、CPU/内存/磁盘性能趋势图、实时告警流 |
+| 服务器监控（`/monitor/servers`） | 单机服务器 SSH/Shell 遥测 — CPU、内存、磁盘、关键服务 |
+| 网络监控（`/monitor/networks`） | 单机网络设备 SNMP/CLI 遥测 — 接口流量、错包、丢包 |
+| 网络拓扑（`/monitor/topology`） | LLDP/CDP 自动发现的物理链路图，支持拖拽布局 |
+
+#### 2. 终端接入（`/access/...`）
+
+| 页面 | 说明 |
+|------|------|
+| 操作工作台（`/access/workspace`） | 资产统一入口 — 通过受控 PAM 代理打开 Web SSH 会话 |
+| 受控审计（`/access/pam-audit`） | 实时活动会话监控 + 历史归档，含命令审计与 asciinema 录像回放 |
+
+#### 3. 告警处置（`/alerts/...`）
+
+| 页面 | 说明 |
+|------|------|
+| 告警中心（`/alerts/desk`） | 实时告警工作台，支持指派、确认、解决工作流 |
+| 历史告警（`/alerts/history`） | 已关闭告警归档，支持过滤与导出 |
+| 告警规则（`/alerts/rules`） | CPU/内存/接口/温度/主机等阈值与触发规则管理 |
+| 维护期（`/alerts/maintenance`） | 维护窗口管理，变更期间静默告警 |
+
+#### 4. 资产与库存（`/assets/...`）
+
+| 页面 | 说明 |
+|------|------|
+| 资产管理（`/assets/dashboard`） | 物理资产台账 — 厂商、型号、序列号、生命周期状态、位置 |
+| 网络设备（`/assets/devices`） | 逻辑设备列表，含平台、状态、凭据，支持服务端分页 |
+| 服务器（`/assets/servers`） | Linux / Windows 服务器清单 |
+| IP/VLAN 管理（`/assets/ipam`） | 子网增删改查、IP 分配、利用率进度条、冲突检测 |
+| IP 工具箱（`/assets/toolbox`） | IP 定位（找出某 IP 落在哪个交换机端口）、连通性探测、ARP 缓存、MAC 变更历史 |
+| 标签管理（`/assets/tags`） | 标签分类系统 — 厂商、位置、角色、环境，跨平台复用 |
+| 机柜管理（`/assets/racks`） | 2D 机架可视化，U 位拖拽，电力 / 空间核算 |
+
+#### 5. 配置管理（`/config/...`）
+
+| 页面 | 说明 |
+|------|------|
+| 备份中心（`/config/backup`） | 手动 / 即时备份 running-config，快照浏览，按设备查看历史 |
+| 备份计划（`/config/schedule`） | 基于 cron 的周期性备份作业，含执行日志 |
+| 配置对比（`/config/diff`） | 任意两个快照的并列 / 统一 diff，行级彩色差异 |
+| 配置搜索（`/config/search`） | **全量** 快照（所有设备 × 所有版本）的全文 grep |
+| 配置模板（`/config/templates`） | 多厂商配置模板库，支持变量替换与回滚指令 |
+| 漂移检测（`/config/drift`） | 后台扫描每台设备最新配置 vs 上次基线，标记漂移并提供行级回滚预览 |
+
+#### 6. 自动化（`/automation/...`）
+
+| 页面 | 说明 |
+|------|------|
+| 自动化任务（`/automation/tasks`） | 直接执行 + Quick Playbook + 场景库，WebSocket 实时返回每台设备输出 |
+| 巡检概览（`/automation/inspections`） | 按需触发网络健康巡检，全网快照视图 |
+| 巡检记录（`/automation/records`） | 巡检执行历史归档，可下载 XLSX / HTML / PDF / JSON 报表 |
+| 执行计划（`/automation/schedules`） | 在指定时间窗口内执行的一次性巡检计划 |
+| 执行历史（`/automation/history`） | Playbook 执行历史，可下钻到单台设备、查看原始输出、重跑 |
+| 定时作业（`/automation/scheduled-jobs`） | 周期性（cron / interval）自动化作业 — 备份、巡检、自定义脚本 |
+| 巡检指标（`/automation/metrics`） | 巡检探针目录（SNMP OID / CLI 命令 / SSH 脚本）— 定义"健康"在每个平台的具体含义 |
+| 解析模板（`/automation/textfsm`） | TextFSM 模板管理，将厂商 CLI 输出标准化 |
+| 操作管理（`/automation/scripts`） | Shell / Python / CLI 脚本的提交→审核→发布全流程 |
+
+#### 7. 工单管理（`/change-orders/...`）
+
+| 页面 | 说明 |
+|------|------|
+| 新建工单（`/change-orders/new`） | 向导式变更申请 — 场景、目标设备、排期、附件 |
+| 个人待办 / 组内待办 / 草稿箱 / 全部工单 / 我的关注 / 我参与的 | 工单流的多视图筛选 |
+| 工单详情 | 初审 → 终审 → 实施全流程，含控制单强制项、命令预览、回滚方案、asciinema 风格的执行日志 |
+
+#### 8. 容量与报表（`/capacity/...`）
+
+| 页面 | 说明 |
+|------|------|
+| 容量分析（`/capacity/analysis`） | CPU / 内存 / 接口利用率趋势，30 天线性预测，距阈值天数风险评分 |
+| 报表中心（`/capacity/reports`） | KPI 卡片 + 趋势图表 + 多 Sheet XLSX 导出 |
+
+#### 9. 平台管理（`/management/...`）
+
+| 页面 | 说明 |
+|------|------|
+| 审计日志（`/management/audit`） | 全量运维操作留痕 — 登录、配置变更、自动化执行、PAM 会话、删除操作 |
+| 用户管理（`/management/users`） | 用户增删改查，角色（Administrator / Operator / Viewer）与组管理，MFA 种子 |
+| 凭据轮换（`/management/credentials`） | 类 Vault 的设备口令周期性轮换 |
+| 授权管理（`/management/license`） | 上传 / 查看 license 文件，查看功能门控与设备数量限制 |
 
 ### 技术栈
 
@@ -386,6 +550,28 @@ Nexora 使用签名 License 文件控制功能权限和设备数量上限。
 3. 平台启动时自动验证 License，并按授权范围控制功能访问
 
 可申请试用 License，欢迎联系我们。
+
+---
+
+### 上线前自检清单
+
+正式商用前请按以下清单逐项确认。仓库自带 `scripts/preflight-check.sh` 脚本可自动检测大部分项，并在发现问题时返回非 0 退出码（适合接入 CI / 发布流水线）：
+
+```bash
+cd /opt/netops-automation
+bash scripts/preflight-check.sh
+```
+
+清单本身：
+
+1. **替换 `.env` 中所有 `__CHANGE_ME__*` 占位符**：`SECRET_KEY`、`CREDENTIAL_ENCRYPTION_KEY`、`POSTGRES_PASSWORD`、`DATABASE_URL`。两个 key 用 `openssl rand -hex 32` 生成，数据库密码用 `openssl rand -hex 16`。`deploy-ubuntu.sh` 全新部署时会自动生成；手工 `cp .env.example .env` 则**不会**。
+2. **首次登录立即改 admin 密码**：默认 `admin / admin`，强口令替换后再开放访问。后端在 `ENVIRONMENT=production` 模式下检测到 key 仍是占位符会**拒绝启动**。
+3. **启用 HTTPS**：生产环境必须用 Nginx 终结 TLS。首次部署后跑 `sudo certbot --nginx -d <你的域名>`。
+4. **确认后端绑定回环地址**：`deploy-ubuntu.sh` 写入的 systemd 单元已经是 `--host 127.0.0.1`；手工启动则需 `HOST=127.0.0.1`，外部流量必须走 Nginx。
+5. **安装每日备份**：`sudo bash scripts/install-daily-backup.sh` 会写入 `/etc/cron.daily/netops-backup`，每天 `pg_dump` 到 `/var/backups/netops/`，保留 30 天。
+6. **安装日志轮转（容器 / 裸机模式）**：`sudo cp scripts/netops.logrotate /etc/logrotate.d/netops`。systemd 安装走 journald，无需配置。
+7. **检查防火墙**：仅放行 Nginx 端口（80 / 443）和 SSH；PostgreSQL（5432）必须只监听 `localhost`。
+8. **清理试用数据**：如果运行过 demo seed，上线前删除相关测试数据。
 
 ---
 

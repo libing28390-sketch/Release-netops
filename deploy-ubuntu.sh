@@ -562,6 +562,11 @@ server {
     add_header X-Content-Type-Options  "nosniff"          always;
     add_header X-XSS-Protection        "1; mode=block"    always;
     add_header Referrer-Policy          "strict-origin-when-cross-origin" always;
+    # Content-Security-Policy: locks down which origins the page may
+    # pull resources from. `'unsafe-inline'` on script-src is needed
+    # because Vite injects a tiny inline bootstrap; everything else
+    # must come from the same origin or trusted CDNs.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'self';" always;
 
     client_max_body_size 20m;
 
