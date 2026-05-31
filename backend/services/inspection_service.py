@@ -1345,9 +1345,30 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
         result['analysis_json'] = '[]'
     result['correlated_risks_json'] = '[]'
 
-    # 映射常用字段以保证 Dashboard 兼容
-    result['cpu_usage'] = metrics_results.get('cpu_util')
-    result['memory_usage'] = metrics_results.get('mem_avail')
+    # 映射常用字段以保证 Dashboard 兼容。
+    # `metrics_results[ck]` may be either a numeric scalar (success path) or
+    # a `{'value': None, 'error': '...'}` dict (collection failure path). The
+    # SQLite/PG driver rejects dict values with
+    #   `type 'dict' is not supported`, so we must coerce both shapes into
+    # a plain int/float/None before binding to SQL parameters.
+    def _scalar(value: Any) -> int | float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+        if isinstance(value, dict):
+            inner = value.get('value')
+            if isinstance(inner, (int, float)) and not isinstance(inner, bool):
+                return inner
+            return None
+        # Strings / other unexpected types — try one numeric coercion.
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    result['cpu_usage'] = _scalar(metrics_results.get('cpu_util'))
+    result['memory_usage'] = _scalar(metrics_results.get('mem_avail'))
 
     return result
 
@@ -1467,6 +1488,32 @@ def run_inspection(
                  compliance_status, compliance_findings, findings_json, metrics_json,
                  raw_outputs_json, analysis_json, checked_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'''
+
+        def _scalar_metric(value: Any) -> int | float | None:
+            """Coerce a metric value into something the DB driver accepts.
+
+            `inspection_service` mixes "numeric on success" with "dict on
+            failure" (e.g. {'value': None, 'error': '...'}). SQLite and
+            psycopg2 both reject dict / list parameter binds with
+                type 'dict' is not supported
+            so we sanitize at the write boundary.
+            """
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                return int(value)
+            if isinstance(value, (int, float)):
+                return value
+            if isinstance(value, dict):
+                inner = value.get('value')
+                if isinstance(inner, (int, float)) and not isinstance(inner, bool):
+                    return inner
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
         write_failed_count = 0
         for r in results:
             try:
@@ -1475,7 +1522,9 @@ def run_inspection(
                     r.get('platform'), r.get('role', ''), r.get('site', ''),
                     r.get('ping_ok', 0), r.get('ping_latency_ms'), r.get('ssh_ok', 0), r.get('ssh_error', ''),
                     r.get('health_score', 100), r.get('health_status', 'unknown'),
-                    r.get('cpu_usage'), r.get('memory_usage'), r.get('temperature'),
+                    _scalar_metric(r.get('cpu_usage')),
+                    _scalar_metric(r.get('memory_usage')),
+                    _scalar_metric(r.get('temperature')),
                     r.get('fan_status', ''), r.get('psu_status', ''),
                     r.get('interface_total', 0), r.get('interface_up', 0), r.get('interface_down', 0),
                     r.get('interface_flapping', 0), r.get('interface_high_util', 0), r.get('interface_errors', 0),
