@@ -324,17 +324,17 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => {
                   const next = !monitoringGroupOpen;
                   setMonitoringGroupOpen(next);
-                  if (next && activeTab !== 'monitoring' && currentPath !== '/inventory/interfaces') {
+                  if (next && activeTab !== 'monitoring') {
                     setActiveTab('monitoring');
                   }
                 }}
                 className={`${navButtonGroupClass} ${
-                  activeTab === 'monitoring' || currentPath === '/inventory/interfaces'
+                  activeTab === 'monitoring'
                     ? activePrimaryNavClass
                     : inactivePrimaryNavClass
                 }`}
               >
-                <TrendingUp size={17} className={activeTab === 'monitoring' || currentPath === '/inventory/interfaces' ? 'text-[#5fe6ff]' : 'text-white/72'} />
+                <TrendingUp size={17} className={activeTab === 'monitoring' ? 'text-[#5fe6ff]' : 'text-white/72'} />
                 <span className={navLabelClass}>{language === 'zh' ? '监控中心' : 'Monitoring'}</span>
                 <span className={metricBadgeClass} title={hostResourceSummary}>
                   {hostResources
@@ -353,7 +353,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <div className={subNavRailClass}>
                   {([
                     { id: 'monitoring', path: null, icon: Monitor, label: language === 'zh' ? '平台资源' : 'Host Resources' },
-                    { id: 'inventory-interfaces', path: '/inventory/interfaces', icon: Activity, label: t('interfaceMonitoring') },
                   ] as const).map((item) => {
                     const isActive = item.path ? currentPath === item.path : activeTab === 'monitoring';
                     return (

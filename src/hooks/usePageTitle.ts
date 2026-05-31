@@ -55,7 +55,6 @@ export const usePageTitle = ({
     if (activeTab === 'inventory') {
       const map: Record<string, string> = {
         devices: t('deviceList'),
-        interfaces: t('interfaceMonitoring'),
         servers: language === 'zh' ? '服务器' : 'Servers',
       };
       return map[inventorySubPage] || inventorySubPage;

@@ -492,17 +492,17 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               </h3>
               <p className="text-xs text-black/40 dark:text-white/40 mt-1">{t('recentActivitySub')}</p>
             </div>
-            <button className="text-[10px] font-bold uppercase text-[#00bceb] hover:underline" onClick={() => setActiveTab('history')}>
-              {t('viewAuditLog')}
+            <button className="text-[10px] font-bold uppercase text-[#00bceb] hover:underline" onClick={() => navigate('/automation/history')}>
+              {t('viewFullJobHistory')}
             </button>
           </div>
           <div className="space-y-2">
             {jobs.slice(0, 5).map(job => (
               <div 
                 key={job.id} 
-                onClick={() => setSelectedJob(job)}
+                onClick={() => navigate('/automation/history')}
                 className="flex items-center justify-between p-4 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] rounded-xl transition-all border border-transparent hover:border-black/5 dark:hover:border-white/5 cursor-pointer group/item"
-                title={language === 'zh' ? '点击查看执行日志' : 'Click to View Execution Log'}
+                title={language === 'zh' ? '点击查看作业历史详情' : 'Click to view full execution history'}
               >
                 <div className="flex items-center gap-4">
                   <div className={`p-2.5 rounded-xl transition-colors ${
@@ -549,31 +549,47 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             {t('upcomingTasks')}
           </h3>
           <div className="space-y-4">
-            {scheduledTasks.filter(st => st.status === 'active').slice(0, 4).map(task => (
-              <div key={task.id} className="flex items-center justify-between p-4 bg-[#F0F2F5] dark:bg-[#0d1527]/40 rounded-2xl border border-black/5 dark:border-white/5 group hover:bg-white dark:hover:bg-[#0d1527] hover:shadow-md transition-all">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-white dark:bg-slate-900 rounded-xl shadow-sm flex items-center justify-center text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all">
-                    <Clock size={18} />
+            {scheduledTasks.filter(st => st.status === 'active').slice(0, 4).map(task => {
+              // 友好显示 ISO 时间：今天则只显示 HH:mm，否则显示 MM-DD HH:mm
+              const fmt = (iso: string) => {
+                if (!iso) return '-';
+                const d = new Date(iso);
+                if (Number.isNaN(d.getTime())) return iso;
+                const now = new Date();
+                const sameDay = d.toDateString() === now.toDateString();
+                const pad = (n: number) => String(n).padStart(2, '0');
+                const hhmm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                return sameDay ? hhmm : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hhmm}`;
+              };
+              const typeLabel = task.schedule_type === 'recurring'
+                ? (language === 'zh' ? '周期' : 'Recurring')
+                : (language === 'zh' ? '一次性' : 'Once');
+              return (
+                <div key={task.id} className="flex items-center justify-between p-4 bg-[#F0F2F5] dark:bg-[#0d1527]/40 rounded-2xl border border-black/5 dark:border-white/5 group hover:bg-white dark:hover:bg-[#0d1527] hover:shadow-md transition-all">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-white dark:bg-slate-900 rounded-xl shadow-sm flex items-center justify-center text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all">
+                      <Clock size={18} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-[#00172D] dark:text-white">{task.task_name}</p>
+                      <p className="text-[10px] text-black/40 dark:text-white/40 font-medium tabular-nums">{fmt(task.scheduled_time)}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-bold text-[#00172D] dark:text-white">{task.task_name}</p>
-                    <p className="text-[10px] text-black/40 dark:text-white/40 font-medium">{task.scheduled_time} ({task.timezone})</p>
+                  <div className="text-right">
+                    <p className="text-[10px] font-bold uppercase text-[#005073] dark:text-[#00bceb] bg-[#005073]/10 dark:bg-[#00bceb]/20 px-2.5 py-1 rounded-lg">{typeLabel}</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-bold uppercase text-[#005073] dark:text-[#00bceb] bg-[#005073]/10 dark:bg-[#00bceb]/20 px-2.5 py-1 rounded-lg">{task.schedule_type}</p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
             {scheduledTasks.filter(st => st.status === 'active').length === 0 && (
               <div className="text-center py-5">
                 <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-orange-50 mb-2">
                   <Clock size={18} className="text-orange-400/70" />
                 </div>
                 <p className="text-xs text-black/45 font-medium">{language === 'zh' ? '暂无计划中的任务' : 'No scheduled tasks yet'}</p>
-                <button onClick={() => navigate('/config/schedule')} className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all">
+                <button onClick={() => navigate('/automation/scheduled-jobs')} className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all">
                   <CalendarPlus size={10} />
-                  {language === 'zh' ? '创建定时任务' : 'Create Schedule'}
+                  {language === 'zh' ? '创建定时作业' : 'Create Scheduled Job'}
                 </button>
               </div>
             )}

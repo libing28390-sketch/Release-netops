@@ -376,16 +376,88 @@ export const useAutomation = ({
     return 0;
   }, []);
 
+  /**
+   * Load recent automation execution history (playbook executions).
+   *
+   * The legacy `/api/jobs` table is no longer written to by any code path; the
+   * real automation history is stored in `playbook_executions` and exposed via
+   * `/api/playbooks`. We project each playbook execution row onto the lighter
+   * `Job` shape consumed by the Dashboard so existing callers (success-rate
+   * trend chart, failed-count tile, "Recent Activity" panel) keep working
+   * without any refactor.
+   */
   const loadJobs = useCallback(async () => {
     try {
-      const resp = await fetch('/api/jobs');
-      if (resp.ok) {
-        setJobs(await resp.json());
-      }
+      const resp = await fetch('/api/playbooks?page=1&page_size=50&status=all');
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      const items: any[] = Array.isArray(payload?.items) ? payload.items : [];
+      const mapped: Job[] = items.map((row) => ({
+        id: row.id,
+        device_id: '',
+        task_name: row.scenario_name || (language === 'zh' ? '未命名作业' : 'Unnamed Job'),
+        // Status values from playbook engine: success | failed | partial | running | pending.
+        // `partial` / `running` / `pending` are not part of the Job union but the
+        // dashboard's filters only react to 'success' and 'failed' so passing them
+        // through is harmless; we cast to satisfy TS.
+        status: (row.status || 'pending') as Job['status'],
+        output: '',
+        created_at: row.created_at,
+      }));
+      setJobs(mapped);
     } catch (error) {
-      console.error('Failed to load jobs:', error);
+      console.error('Failed to load automation jobs:', error);
     }
-  }, []);
+  }, [language]);
+
+  /**
+   * Load upcoming scheduled task instances within the next 24h.
+   * Source: /api/scheduled-jobs/future — expands cron and one-shot jobs into
+   * concrete execution timestamps. Used to power the dashboard's
+   * "即将进行的任务 / Upcoming Tasks" panel.
+   */
+  const loadUpcomingTasks = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('netops_token');
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const resp = await fetch('/api/scheduled-jobs/future?time_range=1d', { headers });
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      const runs: any[] = Array.isArray(payload?.data) ? payload.data : [];
+
+      // Map server-side future runs → ScheduledTask shape consumed by DashboardTab.
+      // We use a stable string identifier (jobId|runAt) hashed to a number to
+      // keep the existing `id: number` contract without collisions.
+      const hashId = (s: string): number => {
+        let h = 0;
+        for (let i = 0; i < s.length; i++) {
+          h = ((h << 5) - h) + s.charCodeAt(i);
+          h |= 0;
+        }
+        return Math.abs(h) || 1;
+      };
+
+      const tasks: ScheduledTask[] = runs.map((r) => {
+        const runAt: string = r.run_at || r.scheduled_at || '';
+        const jobId: string = r.job_id || r.id || '';
+        const isCron = r.job_type === 'cron';
+        return {
+          id: hashId(`${jobId}|${runAt}`),
+          device_id: r.device_scope || '',
+          task_name: r.name || (language === 'zh' ? '未命名作业' : 'Unnamed Job'),
+          schedule_type: isCron ? 'recurring' : 'once',
+          interval: isCron ? 'daily' : undefined,
+          scheduled_time: runAt,
+          timezone: 'Local',
+          status: 'active',
+        };
+      });
+
+      setScheduledTasks(tasks);
+    } catch (error) {
+      console.error('Failed to load upcoming tasks:', error);
+    }
+  }, [language]);
 
   const runPlaybook = useCallback(async (params: {
     scenarioId: string;
@@ -1157,7 +1229,7 @@ export const useAutomation = ({
     setExecutionStatus, quickTargetDevices, quickDetectedPlatforms, quickHasMixedPlatforms, quickDetectedPlatform,
     quickScenarioSupportsDetectedPlatform, quickAutoPlatform, quickPlatformMismatch, hasQuickTargets,
     quickMissingRequiredFields, automationSearch, setAutomationSearch, handleAutomationSearch, scenarioSearch, setScenarioSearch, handleScenarioSearch,
-    filteredScenarios, loadScenarios, loadPlaybookHistory, loadJobs, runPlaybook, openQuickPlaybookModal,
+    filteredScenarios, loadScenarios, loadPlaybookHistory, loadJobs, loadUpcomingTasks, runPlaybook, openQuickPlaybookModal,
     loadQuickPlaybookPreview, previewPlaybook, resetAutomationSubmenuState, executePlaybook,
     runQuickPlaybook,
     playbookHistoryPageSize, setPlaybookHistoryPageSize,

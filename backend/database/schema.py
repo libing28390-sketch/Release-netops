@@ -1395,11 +1395,21 @@ def _init_db_logic(conn):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_token_exp ON pam_session_tokens(expires_at)')
 
     # PAM Controlled Sessions
+    #
+    # Soft-delete policy (Plan A): when an underlying asset is removed,
+    # `assets.py` / `devices.py` set `asset_id = ''` and `archived = 1`
+    # rather than dropping the row, so the audit trail survives.
+    # The FK below uses ON DELETE SET NULL for fresh databases so that
+    # even with PRAGMA foreign_keys=ON the cascade behavior is correct.
+    # Existing databases were created with ON DELETE CASCADE; that FK is
+    # currently inert because the connection layer does not enable
+    # foreign_keys, and the application-level soft-delete is the source
+    # of truth.
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS pam_sessions (
         id TEXT PRIMARY KEY,
         request_id TEXT DEFAULT '',
-        asset_id TEXT NOT NULL,
+        asset_id TEXT DEFAULT '',
         device_id TEXT DEFAULT '',
         requester_username TEXT NOT NULL,
         access_level TEXT NOT NULL DEFAULT 'normal',
@@ -1416,12 +1426,14 @@ def _init_db_logic(conn):
         recording_path TEXT DEFAULT '',
         risk_level TEXT DEFAULT 'low',
         risk_summary TEXT DEFAULT '',
+        target_hostname TEXT DEFAULT '',
+        archived INTEGER DEFAULT 0,
         session_token TEXT UNIQUE,
         token_expires_at TEXT NOT NULL,
         token_consumed INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY (asset_id) REFERENCES physical_assets(id) ON DELETE CASCADE
+        FOREIGN KEY (asset_id) REFERENCES physical_assets(id) ON DELETE SET NULL
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_sessions_status ON pam_sessions(status)')
@@ -1438,6 +1450,54 @@ def _init_db_logic(conn):
         cursor.execute("ALTER TABLE pam_sessions ADD COLUMN risk_level TEXT DEFAULT 'low'")
     if pam_ses_cols and 'risk_summary' not in pam_ses_cols:
         cursor.execute("ALTER TABLE pam_sessions ADD COLUMN risk_summary TEXT DEFAULT ''")
+
+    # Soft-delete support: snapshot the asset hostname at session creation time
+    # so the audit trail remains identifiable after the underlying asset/device
+    # is removed (asset_id is then cleared but the row itself is preserved).
+    ensure_column('pam_sessions', 'target_hostname', "TEXT DEFAULT ''")
+    ensure_column('pam_sessions', 'archived', 'INTEGER DEFAULT 0')
+
+    # Soft-delete migration: relax the asset_id NOT NULL constraint and switch
+    # the FK from ON DELETE CASCADE to ON DELETE SET NULL on existing PG
+    # databases so that deleting an asset preserves the audit row. The CREATE
+    # TABLE above already encodes this for fresh databases; here we patch
+    # legacy installations in-place. SQLite cannot ALTER FK / NOT NULL, but
+    # its FK enforcement is also off in our connection layer so the cascade
+    # never fires there — the application-level soft-delete is the source
+    # of truth for SQLite.
+    if _USE_PG:
+        for _tbl in ('pam_sessions', 'pam_access_requests'):
+            try:
+                cursor.execute(f"ALTER TABLE {_tbl} ALTER COLUMN asset_id DROP NOT NULL")
+            except Exception as _exc:
+                logger.debug("[migration] %s.asset_id DROP NOT NULL skipped: %s", _tbl, _exc)
+            try:
+                cursor.execute(
+                    "SELECT conname FROM pg_constraint c "
+                    "JOIN pg_class t ON c.conrelid = t.oid "
+                    "WHERE t.relname = %s AND c.contype = 'f' "
+                    "AND pg_get_constraintdef(c.oid) ILIKE '%%asset_id%%REFERENCES%%physical_assets%%' "
+                    "AND pg_get_constraintdef(c.oid) ILIKE '%%CASCADE%%'",
+                    (_tbl,)
+                )
+                for (conname,) in list(cursor.fetchall()):
+                    cursor.execute(f'ALTER TABLE {_tbl} DROP CONSTRAINT "{conname}"')
+                    logger.info("[migration] Dropped CASCADE FK %s on %s", conname, _tbl)
+                # Re-create only if no asset_id FK exists at all now.
+                cursor.execute(
+                    "SELECT 1 FROM pg_constraint c JOIN pg_class t ON c.conrelid = t.oid "
+                    "WHERE t.relname = %s AND c.contype = 'f' "
+                    "AND pg_get_constraintdef(c.oid) ILIKE '%%asset_id%%REFERENCES%%physical_assets%%'",
+                    (_tbl,)
+                )
+                if not cursor.fetchone():
+                    cursor.execute(
+                        f"ALTER TABLE {_tbl} ADD CONSTRAINT {_tbl}_asset_id_fkey "
+                        f"FOREIGN KEY (asset_id) REFERENCES physical_assets(id) ON DELETE SET NULL"
+                    )
+                    logger.info("[migration] Re-created %s.asset_id FK as ON DELETE SET NULL", _tbl)
+            except Exception as _exc:
+                logger.warning("[migration] Failed to update %s.asset_id FK to SET NULL: %s", _tbl, _exc)
 
     # Auto-link existing devices to matching assets
     unlinked = cursor.execute(

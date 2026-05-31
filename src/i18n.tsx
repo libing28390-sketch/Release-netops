@@ -36,6 +36,7 @@ export const translations: Translations = {
   complianceTrendSub: { en: 'Network-wide compliance stability over time', zh: '全网合规稳定性趋势' },
   recentActivitySub: { en: 'Latest automation and configuration tasks', zh: '最近的自动化与配置任务' },
   viewAuditLog: { en: 'View Full Audit Log', zh: '查看完整审计日志' },
+  viewFullJobHistory: { en: 'View Full Execution History', zh: '查看完整作业历史' },
   noActivity: { en: 'No recent activity found.', zh: '暂无最近活动。' },
   noUpcomingTasks: { en: 'No upcoming tasks scheduled.', zh: '暂无计划中的任务。' },
   systemHealthy: { en: 'System Healthy', zh: '系统健康' },
@@ -104,7 +105,6 @@ export const translations: Translations = {
 
   // Inventory
   deviceList: { en: 'Network Devices', zh: '网络设备' },
-  interfaceMonitoring: { en: 'Interfaces', zh: '接口监控' },
   deviceInventory: { en: 'Network Devices', zh: '网络设备' },
   manageMonitor: { en: 'Manage and monitor your network infrastructure.', zh: '管理和监控您的网络基础设施。' },
   import: { en: 'Import', zh: '导入' },

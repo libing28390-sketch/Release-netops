@@ -287,13 +287,16 @@ def create_session(payload: SessionCreateIn):
             INSERT INTO pam_sessions (
                 id, asset_id, device_id, requester_username, access_level,
                 login_username, connect_method, target_ip, target_port,
+                target_hostname,
                 status, session_token, token_expires_at, token_consumed,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
         ''', (
             session_id, payload.asset_id, device['id'], requester,
             level, creds['username'], payload.connect_method,
-            ip, 22, 'connecting', session_token, expires_at, now, now,
+            ip, 22,
+            asset.get('hostname') or device.get('hostname') or ip,
+            'connecting', session_token, expires_at, now, now,
         ))
         conn.commit()
 
@@ -376,7 +379,8 @@ def list_sessions(
             SELECT id, asset_id, device_id, requester_username, access_level,
                    login_username, connect_method, target_ip, status,
                    connected_at, closed_at, close_reason, duration_seconds,
-                   command_count, recording_path, risk_level, risk_summary, 
+                   command_count, recording_path, risk_level, risk_summary,
+                   target_hostname, archived,
                    created_at, updated_at
             FROM pam_sessions {where}
             ORDER BY created_at DESC LIMIT ? OFFSET ?
@@ -384,14 +388,24 @@ def list_sessions(
             params + [page_size, offset],
         ).fetchall()
 
-        # Enrich with asset hostname
+        # Enrich with asset hostname (live lookup) and fall back to the
+        # snapshot captured at session creation time when the asset has been
+        # removed since (soft-delete preserves the audit trail). After the
+        # ON DELETE SET NULL FK migration runs, archived rows have
+        # asset_id = NULL on PG; pre-migration SQLite rows may have ''.
         items = []
         for r in rows:
             item = dict(r)
-            asset_row = conn.execute(
-                'SELECT hostname FROM physical_assets WHERE id = ?', (item['asset_id'],)
-            ).fetchone()
-            item['asset_hostname'] = asset_row['hostname'] if asset_row else ''
+            asset_row = None
+            asset_id_val = item.get('asset_id')
+            if asset_id_val:
+                asset_row = conn.execute(
+                    'SELECT hostname FROM physical_assets WHERE id = ?', (asset_id_val,)
+                ).fetchone()
+            if asset_row:
+                item['asset_hostname'] = asset_row['hostname']
+            else:
+                item['asset_hostname'] = item.get('target_hostname') or ''
             # Normalise: if session is in memory map, always report as 'active'
             if item['id'] in _active_sessions:
                 item['status'] = 'active'

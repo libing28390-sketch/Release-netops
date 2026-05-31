@@ -39,6 +39,9 @@ interface PAMSession {
   command_count: number;
   recording_path: string;
   created_at: string;
+  /** Set to 1 when the underlying asset has been deleted; the session row
+   *  itself is preserved for audit purposes (Plan A soft-delete). */
+  archived?: number;
 }
 
 const STATUS_CONFIG = {
@@ -319,7 +322,17 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <div className="flex flex-col">
-                            <span className="text-sm font-semibold text-slate-900">{s.asset_hostname || '—'}</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-semibold text-slate-900">{s.asset_hostname || '—'}</span>
+                              {s.archived ? (
+                                <span
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200"
+                                  title={isZh ? '关联资产已删除，会话记录已归档保留' : 'Underlying asset removed; session archived for audit'}
+                                >
+                                  {isZh ? '已归档' : 'Archived'}
+                                </span>
+                              ) : null}
+                            </div>
                             <span className="text-xs text-slate-400 font-mono mt-0.5">{s.target_ip}</span>
                           </div>
                           {(s as any).risk_level > 0 && (

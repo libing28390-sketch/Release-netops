@@ -180,7 +180,6 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
           metricSlot,
           children: [
             { id: 'monitoring', path: null, icon: Monitor, labelZh: '平台资源', labelEn: 'Host Resources' },
-            { id: 'inventory-interfaces', path: '/inventory/interfaces', icon: Activity, labelZh: '接口监控', labelEn: 'Interfaces' },
           ],
         },
         { id: 'topology', tabKey: 'topology', icon: Globe, labelZh: '网络拓扑', labelEn: 'Topology' },
@@ -270,7 +269,7 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
     'monitoring-group': () => {
       const next = !props.monitoringGroupOpen;
       setMonitoringGroupOpen(next);
-      if (next && activeTab !== 'monitoring' && currentPath !== '/inventory/interfaces') setActiveTab('monitoring');
+      if (next && activeTab !== 'monitoring') setActiveTab('monitoring');
     },
     'alert-group': () => {
       const next = !props.alertGroupOpen;

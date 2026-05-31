@@ -25,6 +25,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
+    "@tanstack/react-virtual": "^3.13.26",
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^5.0.4",
     "concurrently": "^9.2.1",

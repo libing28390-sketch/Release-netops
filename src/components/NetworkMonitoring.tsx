@@ -9,6 +9,7 @@ import type { Device } from '../types';
 import PageHero from './PageHero';
 import { useChartTheme } from '../hooks/useChartTheme';
 import { useMonitoringStore } from '../store/monitoringStore';
+import { VirtualizedDeviceList } from './VirtualizedDeviceList';
 
 interface NetworkMonitoringProps {
   language: 'zh' | 'en';
@@ -517,13 +518,15 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
             </p>
           </div>
 
-          <div className="flex-1 overflow-auto p-2 space-y-1">
-            {filteredDevices.map((dev) => {
+          <VirtualizedDeviceList
+            items={filteredDevices}
+            getKey={(dev) => dev.id}
+            empty={<p className="p-4 text-center text-xs text-[var(--muted-text)]">{zh ? '无匹配设备' : 'No match'}</p>}
+            renderItem={(dev) => {
               const online = String(dev.status || '').toLowerCase() === 'online';
               const active = selectedId === dev.id;
               return (
                 <button
-                  key={dev.id}
                   type="button"
                   onClick={() => setSelectedId(dev.id)}
                   className={`w-full flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-all ${active ? 'border-sky-400 bg-sky-500/[0.07] shadow-sm' : 'border-transparent hover:border-[var(--card-border)] hover:bg-black/[0.02]'}`}
@@ -540,11 +543,8 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                   </div>
                 </button>
               );
-            })}
-            {filteredDevices.length === 0 && (
-              <p className="p-4 text-center text-xs text-[var(--muted-text)]">{zh ? '无匹配设备' : 'No match'}</p>
-            )}
-          </div>
+            }}
+          />
         </div>
 
         {/* ── Right: Telemetry details ── */}

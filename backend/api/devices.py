@@ -551,10 +551,21 @@ def delete_device(device_id: str):
         row = conn.execute('SELECT hostname, asset_id FROM devices WHERE id = ?', (device_id,)).fetchone()
         # Plan-A: cascade-delete linked asset
         if row and row['asset_id']:
-            # PAM: clean up sessions, tokens and requests linked to this asset before deletion
-            conn.execute('DELETE FROM pam_sessions WHERE asset_id = ?', (row['asset_id'],))
+            # PAM: archive (don't delete) sessions and access requests so the
+            # audit trail survives device removal. The FK on pam_sessions.asset_id
+            # is configured ON DELETE SET NULL (PG) so the column itself is
+            # nulled when physical_assets is deleted below. Tokens are
+            # short-lived and have no audit value, so they are hard-deleted.
+            now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+            conn.execute(
+                "UPDATE pam_sessions SET archived = 1, updated_at = ? WHERE asset_id = ?",
+                (now_iso, row['asset_id']),
+            )
+            conn.execute(
+                "UPDATE pam_access_requests SET updated_at = ? WHERE asset_id = ?",
+                (now_iso, row['asset_id']),
+            )
             conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (row['asset_id'],))
-            conn.execute('DELETE FROM pam_access_requests WHERE asset_id = ?', (row['asset_id'],))
             conn.execute('DELETE FROM physical_assets WHERE id = ?', (row['asset_id'],))
         conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
         conn.commit()

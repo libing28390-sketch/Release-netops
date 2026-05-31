@@ -810,12 +810,24 @@ def delete_asset(asset_id: str):
             raise HTTPException(status_code=404, detail='Asset not found')
         # Plan-A: cascade-delete linked device first
         _delete_linked_device(conn, asset_id)
-        
-        # PAM: clean up sessions, tokens and requests linked to this asset
-        conn.execute('DELETE FROM pam_sessions WHERE asset_id = ?', (asset_id,))
+
+        # PAM: archive (don't delete) sessions and access requests so the audit
+        # trail survives asset removal. We mark `archived = 1` here; the FK on
+        # asset_id is configured ON DELETE SET NULL (PG) so the column itself
+        # is nulled automatically when physical_assets is deleted below.
+        # Tokens are short-lived and have no audit value, so they are still
+        # hard-deleted to free the asset_id reference cleanly.
+        now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+        conn.execute(
+            "UPDATE pam_sessions SET archived = 1, updated_at = ? WHERE asset_id = ?",
+            (now_iso, asset_id),
+        )
+        conn.execute(
+            "UPDATE pam_access_requests SET updated_at = ? WHERE asset_id = ?",
+            (now_iso, asset_id),
+        )
         conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (asset_id,))
-        conn.execute('DELETE FROM pam_access_requests WHERE asset_id = ?', (asset_id,))
-        
+
         conn.execute('DELETE FROM physical_assets WHERE id = ?', (asset_id,))
         conn.commit()
         return {'ok': True}

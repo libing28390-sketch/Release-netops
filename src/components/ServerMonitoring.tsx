@@ -8,6 +8,7 @@ import type { Device } from '../types';
 import PageHero from './PageHero';
 import { useChartTheme } from '../hooks/useChartTheme';
 import { useMonitoringStore } from '../store/monitoringStore';
+import { VirtualizedDeviceList } from './VirtualizedDeviceList';
 
 interface ServerMonitoringProps {
   language: 'zh' | 'en';
@@ -533,13 +534,15 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
             </p>
           </div>
 
-          <div className="flex-1 overflow-auto p-2 space-y-1">
-            {filteredServers.map((srv) => {
+          <VirtualizedDeviceList
+            items={filteredServers}
+            getKey={(srv) => srv.id}
+            empty={<p className="p-4 text-center text-xs text-[var(--muted-text)]">{zh ? '无匹配服务器' : 'No match'}</p>}
+            renderItem={(srv) => {
               const online = String(srv.status || '').toLowerCase() === 'online';
               const active = selectedId === srv.id;
               return (
                 <button
-                  key={srv.id}
                   type="button"
                   onClick={() => setSelectedId(srv.id)}
                   className={`w-full flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-all ${active ? 'border-sky-400 bg-sky-500/[0.07] shadow-sm' : 'border-transparent hover:border-[var(--card-border)] hover:bg-black/[0.02]'}`}
@@ -556,11 +559,8 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                   </div>
                 </button>
               );
-            })}
-            {filteredServers.length === 0 && (
-              <p className="p-4 text-center text-xs text-[var(--muted-text)]">{zh ? '无匹配服务器' : 'No match'}</p>
-            )}
-          </div>
+            }}
+          />
         </div>
 
         {/* ── Right: metrics ── */}

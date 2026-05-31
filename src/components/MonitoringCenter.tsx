@@ -4,9 +4,8 @@ import {
   Search, ChevronLeft, ChevronRight, RefreshCw,
   AlertTriangle, CheckCircle2, XCircle, Shield,
   Zap, Bell, Clock, ArrowUpRight, Eye, Activity,
-  Radio, Play, ChevronDown, ChevronUp, Server,
+  Radio, Play, ChevronDown, ChevronUp,
   Terminal, Download, Wrench, Map as MapIcon, Globe, Layers, BarChart3,
-  Network,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Brush } from 'recharts';
 import type { Device, HostResourceSnapshot, HostResourceHistoryPayload } from '../types';
@@ -145,43 +144,6 @@ const MiniGauge: React.FC<{ value: number | null; label: string; max?: number }>
   );
 };
 
-/* ─── classified device card (server | network) ─── */
-
-const DeviceClassCard: React.FC<{
-  device: any; kind: 'server' | 'network'; language: 'zh' | 'en'; selected: boolean; onClick: () => void;
-}> = ({ device, kind, language, selected, onClick }) => {
-  const isOnline = String(device.status || '').toLowerCase() === 'online';
-  const statusColor = isOnline ? '#10b981' : '#94a3b8';
-  const Icon = kind === 'server' ? Server : Network;
-  const selectedCls = kind === 'server'
-    ? 'border-sky-400 bg-sky-500/[0.06] shadow-sm'
-    : 'border-violet-400 bg-violet-500/[0.06] shadow-sm';
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`group flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all ${selected ? selectedCls : 'border-[var(--card-border)] bg-[var(--card-bg)] hover:border-black/15 hover:bg-black/[0.02]'}`}
-    >
-      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${kind === 'server' ? 'bg-sky-500/10 text-sky-600' : 'bg-violet-500/10 text-violet-600'}`}>
-        <Icon size={16} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <p className="truncate text-sm font-semibold text-[var(--app-text)]">{device.hostname || device.ip_address}</p>
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: statusColor }} title={isOnline ? 'online' : 'offline'} />
-        </div>
-        <p className="mt-0.5 truncate text-[11px] font-mono text-[var(--muted-text)]">{device.ip_address || '-'}</p>
-      </div>
-      <span className="shrink-0 text-right">
-        <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--muted-text)]">{device.platform || (kind === 'server' ? 'Linux' : 'Network')}</span>
-        <span className={`text-[10px] font-bold uppercase tracking-wider ${isOnline ? 'text-emerald-600' : 'text-slate-400'}`}>
-          {isOnline ? (language === 'zh' ? '在线' : 'Online') : (language === 'zh' ? '离线' : 'Offline')}
-        </span>
-      </span>
-    </button>
-  );
-};
-
 /* ─── pagination helper ─── */
 
 const buildPaginationItems = (currentPage: number, totalPages: number) => {
@@ -246,8 +208,6 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [hostResourceAlertView, setHostResourceAlertView] = useState<'active' | 'history'>('active');
   const advancedSectionRef = useRef<HTMLDivElement | null>(null);
-  const explorerSectionRef = useRef<HTMLDivElement | null>(null);
-  const [deviceClassTab, setDeviceClassTab] = useState<'server' | 'network'>('server');
 
   // Read all monitoring state from store
   const {
@@ -327,16 +287,6 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   // Device inventory split by class — drives the always-visible classified
   // explorer so Linux servers (LinuxDriver telemetry) and network devices
   // (Netmiko/SNMP telemetry) are reachable without guessing.
-  const serverDevices = React.useMemo(
-    () => (allDevices || []).filter(isServerDevice),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [allDevices],
-  );
-  const networkDevices = React.useMemo(
-    () => (allDevices || []).filter((d) => !isServerDevice(d)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [allDevices],
-  );
 
   // Get fetch functions from the hook (they use store internally)
   const {
@@ -719,32 +669,6 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     setMonitorSelectedDevice(nextDevice);
   };
 
-  // Open a device's monitoring view from the classified explorer: select it,
-  // ensure the detail/search panel is expanded, and scroll there. Preserves the
-  // server-ish fields (device_category / asset_type) so isServerDevice stays
-  // correct even when the platform is mis-tagged as a network OS.
-  const openClassedDevice = (device: any) => {
-    if (!device?.id && !device?.device_id) return;
-    const nextDevice = {
-      id: device.id || device.device_id,
-      hostname: device.hostname || '-',
-      ip_address: device.ip_address || '-',
-      platform: device.platform || '-',
-      role: device.role || '',
-      site: device.site || '',
-      status: device.status || '',
-      device_category: device.device_category || '',
-      asset_type: device.asset_type || '',
-    };
-    setDeviceClassTab(isServerDevice(nextDevice) ? 'server' : 'network');
-    setMonitorSearch(nextDevice.hostname === '-' ? nextDevice.ip_address : nextDevice.hostname);
-    setMonitorSelectedDevice(nextDevice);
-    setShowAdvanced(true);
-    setTimeout(() => {
-      advancedSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 80);
-  };
-
   const toUtcIso = (localVal: string) => {
     if (!localVal) return '';
     const dt = new Date(localVal);
@@ -839,7 +763,6 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   useEffect(() => {
     if (monitorSelectedDevice?.id) {
       setShowAdvanced(true);
-      setDeviceClassTab(isServerDevice(monitorSelectedDevice) ? 'server' : 'network');
     }
   }, [monitorSelectedDevice]);
 
@@ -1085,32 +1008,90 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-4">
 
         {/* LEFT: Performance Trends */}
-        <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-3">
+        <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-600">{language === 'zh' ? '\u6027\u80fd\u8d8b\u52bf' : 'Performance Trends'}</p>
               <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? 'CPU / \u5185\u5b58 / \u78c1\u76d8' : 'CPU / Memory / Disk'}</h3>
             </div>
-            <div className="flex items-center gap-1">
-              {([1, 24, 168] as const).map((h) => (
-                <button key={h} type="button" onClick={() => setHostResourceRange(h)} className={`rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-all ${hostResourceRange === h ? 'bg-[var(--app-text)] text-[var(--card-bg)] shadow-sm' : 'text-[var(--muted-text)] hover:bg-black/[0.04]'}`}>
-                  {h === 1 ? '1h' : h === 24 ? '24h' : '7d'}
-                </button>
-              ))}
+            {/* Segmented range control */}
+            <div className="inline-flex items-center gap-0.5 rounded-xl bg-black/[0.04] p-0.5">
+              {([1, 24, 168] as const).map((h) => {
+                const active = hostResourceRange === h;
+                return (
+                  <button
+                    key={h}
+                    type="button"
+                    onClick={() => setHostResourceRange(h)}
+                    className={`rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-all tabular-nums ${
+                      active
+                        ? 'bg-white text-[var(--app-text)] shadow-sm'
+                        : 'text-[var(--muted-text)] hover:text-[var(--app-text)]'
+                    }`}
+                  >
+                    {h === 1 ? '1h' : h === 24 ? '24h' : '7d'}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          <div className="h-[220px] rounded-xl border border-[var(--card-border)] bg-black/[0.01] p-2">
+          <div className="h-[220px] -mx-1">
             {hostTrendData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={hostTrendData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
-                  <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(value) => formatTs(String(value), hostResourceRange === 1)} minTickGap={28} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} domain={[0, 100]} tickFormatter={(v) => `${v}%`} width={38} />
-                  <Tooltip contentStyle={{ borderRadius: 12, borderColor: ct.tooltipBorder, boxShadow: ct.tooltipShadow, padding: '10px 14px', background: ct.tooltipBg, color: ct.tooltipText }} formatter={(value: any, name: any) => [`${Math.round(Number(value || 0))}%`, String(name)]} />
-                  <Area type="monotone" dataKey="cpu_percent" name="CPU" stroke="#2563eb" fill="#2563eb1a" strokeWidth={2} isAnimationActive={false} connectNulls />
-                  <Area type="monotone" dataKey="memory_percent" name={language === 'zh' ? '\u5185\u5b58' : 'Memory'} stroke="#ea580c" fill="#ea580c14" strokeWidth={2} isAnimationActive={false} connectNulls />
-                  <Area type="monotone" dataKey="disk_percent" name={language === 'zh' ? '\u78c1\u76d8' : 'Disk'} stroke="#16a34a" fill="#16a34a14" strokeWidth={2} isAnimationActive={false} connectNulls />
+                <AreaChart data={hostTrendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="cpuFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.28} />
+                      <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="memFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f97316" stopOpacity={0.22} />
+                      <stop offset="100%" stopColor="#f97316" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="diskFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#10b981" stopOpacity={0.18} />
+                      <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid vertical={false} stroke={ct.gridAlt} strokeOpacity={0.45} />
+                  <XAxis
+                    dataKey="ts"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 10, fill: ct.axisAlt, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+                    tickFormatter={(value) => formatTs(String(value), hostResourceRange === 1)}
+                    minTickGap={48}
+                    padding={{ left: 4, right: 4 }}
+                  />
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 10, fill: ct.axisAlt }}
+                    domain={[0, 100]}
+                    ticks={[0, 25, 50, 75, 100]}
+                    tickFormatter={(v) => `${v}%`}
+                    width={36}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      borderRadius: 12,
+                      border: '1px solid rgba(255,255,255,0.06)',
+                      boxShadow: '0 12px 32px -12px rgba(15, 23, 42, 0.45)',
+                      padding: '10px 12px',
+                      background: 'rgba(15, 23, 42, 0.94)',
+                      backdropFilter: 'blur(8px)',
+                      color: '#f1f5f9',
+                      fontSize: 12,
+                    }}
+                    itemStyle={{ color: '#f1f5f9', padding: '2px 0' }}
+                    labelStyle={{ color: '#94a3b8', fontSize: 10, fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.08em' }}
+                    cursor={{ stroke: '#0ea5e9', strokeOpacity: 0.35, strokeWidth: 1, strokeDasharray: '3 3' }}
+                    formatter={(value: any, name: any) => [`${Math.round(Number(value || 0))}%`, String(name)]}
+                  />
+                  <Area type="monotone" dataKey="cpu_percent" name="CPU" stroke="#0ea5e9" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="url(#cpuFill)" isAnimationActive={false} connectNulls dot={false} activeDot={{ r: 4, strokeWidth: 2, stroke: '#ffffff' }} />
+                  <Area type="monotone" dataKey="memory_percent" name={language === 'zh' ? '\u5185\u5b58' : 'Memory'} stroke="#f97316" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="url(#memFill)" isAnimationActive={false} connectNulls dot={false} activeDot={{ r: 4, strokeWidth: 2, stroke: '#ffffff' }} />
+                  <Area type="monotone" dataKey="disk_percent" name={language === 'zh' ? '\u78c1\u76d8' : 'Disk'} stroke="#10b981" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="url(#diskFill)" isAnimationActive={false} connectNulls dot={false} activeDot={{ r: 4, strokeWidth: 2, stroke: '#ffffff' }} />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
@@ -1134,33 +1115,37 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-[11px]">
+          {/* Inline metric strip — current values, color-keyed to chart series */}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[11px] tabular-nums">
             {[
-              { key: 'cpu', label: 'CPU', color: '#2563eb', value: hostResources?.cpu_percent },
-              { key: 'mem', label: language === 'zh' ? '\u5185\u5b58' : 'MEM', color: '#ea580c', value: hostResources?.memory_percent },
-              { key: 'disk', label: language === 'zh' ? '\u78c1\u76d8' : 'DISK', color: '#16a34a', value: hostResources?.disk_percent },
+              { key: 'cpu', label: 'CPU', color: '#0ea5e9', value: hostResources?.cpu_percent },
+              { key: 'mem', label: language === 'zh' ? '\u5185\u5b58' : 'MEM', color: '#f97316', value: hostResources?.memory_percent },
+              { key: 'disk', label: language === 'zh' ? '\u78c1\u76d8' : 'DISK', color: '#10b981', value: hostResources?.disk_percent },
             ].map((m) => (
-              <span key={m.key} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-1">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: m.color }} />
+              <span key={m.key} className="inline-flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: m.color, boxShadow: `0 0 0 3px ${m.color}1f` }} />
                 <span className="font-semibold text-[var(--muted-text)]">{m.label}</span>
                 <span className="font-bold text-[var(--app-text)]">{m.value != null ? `${Math.round(m.value)}%` : '--'}</span>
               </span>
             ))}
-            <span className="text-[10px] text-[var(--muted-text)]">
+            <span className="ml-auto text-[10px] text-[var(--muted-text)] opacity-70">
               {hostResourceHistoryLoading ? '...' : `${hostResourceHistory?.sample_count || hostTrendData.length} pts \u00b7 ${hostResourceHistory?.resolution_hint || '1m'}`}
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 text-[11px]">
-            <span className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-semibold ${hostResources?.database_ok ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${hostResources?.database_ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+          {/* Status pills — system health at a glance */}
+          <div className="flex flex-wrap items-center gap-2 text-[11px] tabular-nums">
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold ${hostResources?.database_ok ? 'bg-emerald-500/10 text-emerald-700' : 'bg-red-500/10 text-red-700'}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${hostResources?.database_ok ? 'bg-emerald-500' : 'bg-red-500'} ${hostResources?.database_ok ? '' : 'animate-pulse'}`} />
               DB {hostResources?.database_ok ? 'OK' : 'ERR'}
             </span>
-            <span className="inline-flex items-center gap-1 rounded-lg bg-black/[0.03] px-2 py-1 text-[var(--muted-text)]">
-              Load {hostResources?.load_1m?.toFixed(2) ?? '--'}
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.04] px-2.5 py-1 text-[var(--muted-text)]">
+              <span className="font-semibold opacity-70">Load</span>
+              <span className="font-bold text-[var(--app-text)]">{hostResources?.load_1m?.toFixed(2) ?? '--'}</span>
             </span>
-            <span className="inline-flex items-center gap-1 rounded-lg bg-black/[0.03] px-2 py-1 text-[var(--muted-text)]">
-              Up {hostResources?.uptime_hours != null ? `${hostResources.uptime_hours.toFixed(0)}h` : '--'}
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.04] px-2.5 py-1 text-[var(--muted-text)]">
+              <span className="font-semibold opacity-70">Up</span>
+              <span className="font-bold text-[var(--app-text)]">{hostResources?.uptime_hours != null ? `${hostResources.uptime_hours.toFixed(0)}h` : '--'}</span>
             </span>
           </div>
         </div>
@@ -1214,153 +1199,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
         </div>
       </div>
 
-      {/* SECTION 3.4: DEVICE EXPLORER — classified by monitoring backend (server vs network) */}
-      <div ref={explorerSectionRef} className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-600">{language === 'zh' ? '设备监控' : 'Device Monitoring'}</p>
-            <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '分类设备浏览' : 'Device Explorer'}</h3>
-            <p className="text-xs text-[var(--muted-text)]">
-              {deviceClassTab === 'server'
-                ? (language === 'zh' ? '服务器走 SSH/Shell 采集，展示 CPU / 内存 / 磁盘 / 关键服务遥测。' : 'Servers use SSH/Shell collection — CPU / memory / disk / service telemetry.')
-                : (language === 'zh' ? '网络设备走 SNMP/CLI 采集，展示接口流量与丢包等指标。' : 'Network devices use SNMP/CLI collection — interface traffic & errors.')}
-            </p>
-          </div>
-          {/* Class tabs */}
-          <div className="inline-flex rounded-xl border border-[var(--card-border)] p-1 bg-black/[0.02] self-start">
-            <button
-              type="button"
-              onClick={() => setDeviceClassTab('server')}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all ${deviceClassTab === 'server' ? 'bg-sky-600 text-white shadow-sm' : 'text-[var(--muted-text)] hover:text-[var(--app-text)]'}`}
-            >
-              <Server size={13} />
-              {language === 'zh' ? '服务器' : 'Servers'}
-              <span className={`ml-0.5 rounded-full px-1.5 text-[10px] ${deviceClassTab === 'server' ? 'bg-white/20' : 'bg-black/10'}`}>{serverDevices.length}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setDeviceClassTab('network')}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-all ${deviceClassTab === 'network' ? 'bg-violet-600 text-white shadow-sm' : 'text-[var(--muted-text)] hover:text-[var(--app-text)]'}`}
-            >
-              <Network size={13} />
-              {language === 'zh' ? '网络设备' : 'Network'}
-              <span className={`ml-0.5 rounded-full px-1.5 text-[10px] ${deviceClassTab === 'network' ? 'bg-white/20' : 'bg-black/10'}`}>{networkDevices.length}</span>
-            </button>
-          </div>
-        </div>
 
-        {(() => {
-          const list = deviceClassTab === 'server' ? serverDevices : networkDevices;
-          if (list.length === 0) {
-            return (
-              <div className="rounded-xl border border-dashed border-[var(--card-border)] p-8 text-center text-sm text-[var(--muted-text)]">
-                {deviceClassTab === 'server'
-                  ? (language === 'zh' ? '暂无服务器设备。请在资产管理中将平台设为 Linux 或设备分类设为服务器。' : 'No server devices. Set platform to Linux or category to server in Asset Management.')
-                  : (language === 'zh' ? '暂无网络设备。' : 'No network devices.')}
-              </div>
-            );
-          }
-          return (
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {list.map((dev) => (
-                <DeviceClassCard
-                  key={dev.id}
-                  device={dev}
-                  kind={deviceClassTab}
-                  language={language}
-                  selected={monitorSelectedDevice?.id === dev.id}
-                  onClick={() => openClassedDevice(dev)}
-                />
-              ))}
-            </div>
-          );
-        })()}
-
-        {monitorSelectedDevice?.id && (
-          <p className={`text-[11px] ${isSelectedServer ? 'text-sky-600' : 'text-violet-600'}`}>
-            {language === 'zh'
-              ? `已选中 ${monitorSelectedDevice.hostname}（${isSelectedServer ? '服务器' : '网络设备'}），下方详情面板已展开实时遥测。`
-              : `Selected ${monitorSelectedDevice.hostname} (${isSelectedServer ? 'server' : 'network'}) — telemetry expanded in the panel below.`}
-          </p>
-        )}
-      </div>
-
-      {/* SECTION 3.5: BUSINESS SERVICES — driven by real device roles */}
-      {(() => {
-        const roleLower = (d: Device) => (d.role || '').toLowerCase();
-        const vpnDevices = allDevices.filter(d => { const r = roleLower(d); const p = (d.platform || '').toLowerCase(); return r.includes('vpn') || r.includes('firewall') || p.includes('fortinet'); });
-        const edgeDevices = allDevices.filter(d => { const r = roleLower(d); return r.includes('edge') || r.includes('border') || r.includes('wan'); });
-        const coreDevices = allDevices.filter(d => { const r = roleLower(d); return r.includes('core') || r.includes('distribution') || r.includes('spine') || r.includes('leaf'); });
-        const accessDevices = allDevices.filter(d => { const r = roleLower(d); return r.includes('access') || r.includes('campus'); });
-
-        const svcStatus = (devs: Device[]): 'operational' | 'degraded' | 'outage' => {
-          if (devs.length === 0) return 'operational';
-          const offCount = devs.filter(d => d.status === 'offline').length;
-          const critCount = devs.filter(d => d.health_status === 'critical').length;
-          if (offCount > devs.length / 2) return 'outage';
-          if (offCount > 0 || critCount > 0) return 'degraded';
-          return 'operational';
-        };
-        const svcDetail = (devs: Device[]): string => {
-          if (devs.length === 0) return language === 'zh' ? '未分配设备' : 'No devices assigned';
-          const on = devs.filter(d => d.status === 'online').length;
-          const off = devs.length - on;
-          if (off === 0) return language === 'zh' ? `${on}/${devs.length} 全部在线` : `${on}/${devs.length} all online`;
-          return language === 'zh' ? `${on}/${devs.length} 在线 · ${off} 离线` : `${on}/${devs.length} online · ${off} offline`;
-        };
-
-        const services = [
-          { name: language === 'zh' ? 'VPN / 安全' : 'VPN / Security', icon: <Shield size={16} />, status: svcStatus(vpnDevices), details: svcDetail(vpnDevices), count: vpnDevices.length },
-          { name: language === 'zh' ? '互联网出口' : 'Internet Edge', icon: <Globe size={16} />, status: svcStatus(edgeDevices), details: svcDetail(edgeDevices), count: edgeDevices.length },
-          { name: language === 'zh' ? '核心网络' : 'Core Network', icon: <Server size={16} />, status: svcStatus(coreDevices), details: svcDetail(coreDevices), count: coreDevices.length },
-          { name: language === 'zh' ? '接入层 / 园区' : 'Access / Campus', icon: <Layers size={16} />, status: svcStatus(accessDevices), details: svcDetail(accessDevices), count: accessDevices.length },
-        ];
-
-        const platformStatus: 'operational' | 'degraded' | 'outage' = hostResources?.database_ok === false ? 'degraded' : (hostResources?.status === 'critical') ? 'outage' : (hostResources?.status === 'degraded') ? 'degraded' : 'operational';
-        const platformDetail = `DB ${hostResources?.database_ok ? 'OK' : 'ERR'} · CPU ${hostResources?.cpu_percent != null ? Math.round(hostResources.cpu_percent) + '%' : '--'} · Up ${hostResources?.uptime_hours != null ? Math.round(hostResources.uptime_hours) + 'h' : '--'}`;
-
-        const activeServices = services.filter(s => s.count > 0);
-        const colCount = Math.min(activeServices.length + 1, 5);
-
-        const renderCard = (name: string, icon: React.ReactNode, status: string, details: string) => {
-          const cfg = status === 'outage'
-            ? { color: 'border-red-300 bg-red-50', dot: 'bg-red-500', text: 'text-red-700', label: language === 'zh' ? '故障' : 'Outage' }
-            : status === 'degraded'
-              ? { color: 'border-amber-300 bg-amber-50', dot: 'bg-amber-500', text: 'text-amber-700', label: language === 'zh' ? '降级' : 'Degraded' }
-              : { color: 'border-emerald-300 bg-emerald-50', dot: 'bg-emerald-500', text: 'text-emerald-700', label: language === 'zh' ? '正常' : 'Operational' };
-          return (
-            <div key={name} className={`rounded-xl border ${cfg.color} p-4 transition-all hover:shadow-sm`}>
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-[var(--muted-text)]">{icon}</span>
-                  <span className="text-sm font-semibold text-[var(--app-text)]">{name}</span>
-                </div>
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${cfg.text}`}>
-                  <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot} ${status !== 'operational' ? 'animate-pulse' : ''}`} />
-                  {cfg.label}
-                </span>
-              </div>
-              <p className="text-[11px] text-[var(--muted-text)]">{details}</p>
-            </div>
-          );
-        };
-
-        return (
-          <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-600">{language === 'zh' ? '业务服务' : 'Business Services'}</p>
-                <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '服务状态总览' : 'Service Status Overview'}</h3>
-              </div>
-              <span className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? `基于 ${allDevices.length} 台设备角色` : `Based on ${allDevices.length} device roles`}</span>
-            </div>
-            <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-${colCount} gap-3`}>
-              {activeServices.map(svc => renderCard(svc.name, svc.icon, svc.status, svc.details))}
-              {renderCard(language === 'zh' ? '监控平台' : 'Platform', <Activity size={16} />, platformStatus, platformDetail)}
-            </div>
-          </div>
-        );
-      })()}
       </div>
     </div>
   );

@@ -244,7 +244,7 @@ const App: React.FC = () => {
     quickTargetDevices, quickDetectedPlatforms, quickHasMixedPlatforms, quickDetectedPlatform, quickScenarioSupportsDetectedPlatform,
     quickAutoPlatform, quickPlatformMismatch, hasQuickTargets, quickMissingRequiredFields,
     automationSearch, setAutomationSearch, handleAutomationSearch, scenarioSearch, setScenarioSearch, handleScenarioSearch, filteredScenarios,
-    loadScenarios, loadPlaybookHistory, loadJobs, runPlaybook, openQuickPlaybookModal, loadQuickPlaybookPreview, previewPlaybook, executePlaybook, resetAutomationSubmenuState,
+    loadScenarios, loadPlaybookHistory, loadJobs, loadUpcomingTasks, runPlaybook, openQuickPlaybookModal, loadQuickPlaybookPreview, previewPlaybook, executePlaybook, resetAutomationSubmenuState,
     runQuickPlaybook, runQuickQuery, handleResetQuickQuery, handleToggleBatchMode, handleToggleBatchDevice, handleSelectAutomationDevice, handleClearQuickScenario, handleResetQuickExecutionState, exportQuickQueryTable,
     extractVars, splitLines,
     saveQuickQueryModalOpen, setSaveQuickQueryModalOpen, quickQuerySaveLabel, setQuickQuerySaveLabel,
@@ -432,7 +432,6 @@ const App: React.FC = () => {
       '/maintenance': '/alerts/maintenance',
       '/inventory/devices': '/assets/devices',
       '/inventory/servers': '/assets/servers',
-      '/inventory/interfaces': '/assets/interfaces',
       '/ipam': '/assets/ipam',
       '/ip-locator': '/assets/toolbox',
       '/tags': '/assets/tags',
@@ -606,9 +605,6 @@ const App: React.FC = () => {
       setInventorySortConfig(null);
       setSelectedDeviceIds([]);
       setInventoryPage(1);
-      return;
-    }
-    if (page === 'interfaces') {
       return;
     }
   }, []);
@@ -786,8 +782,7 @@ const App: React.FC = () => {
 
   const fetchSharedData = useCallback(async () => {
     try {
-      const [jobsRes, scriptsRes, usersRes, templatesRes, varsRes, linksRes] = await Promise.all([
-        fetch('/api/jobs'),
+      const [scriptsRes, usersRes, templatesRes, varsRes, linksRes] = await Promise.all([
         fetch('/api/scripts'),
         fetch('/api/users'),
         fetch('/api/templates'),
@@ -795,7 +790,9 @@ const App: React.FC = () => {
         fetch('/api/topology/links')
       ]);
 
-      if (jobsRes.ok) setJobs(await jobsRes.json());
+      // Recent automation history is loaded separately (sources playbook_executions).
+      loadJobs();
+
       if (scriptsRes.ok) setScripts(await scriptsRes.json());
       if (usersRes.ok) setUsers(await usersRes.json());
       if (templatesRes.ok) {
@@ -819,11 +816,13 @@ const App: React.FC = () => {
           setTopologyUnmanagedLinks([]);
         }
       }
+      // 加载未来 24h 内的定时作业触发计划，喂给 Dashboard 的「即将进行的任务」面板
+      loadUpcomingTasks();
       setDashLastRefresh(new Date());
     } catch (error) {
       console.error('Failed to fetch shared data:', error);
     }
-  }, [selectedTemplateId]);
+  }, [selectedTemplateId, loadUpcomingTasks, loadJobs]);
 
   const handleOpenTemplateDeploy = () => {
     setConfigWorkspaceView('checks');
@@ -870,9 +869,7 @@ const App: React.FC = () => {
       // Reduce heavy full device refresh pressure while inventory table uses server-side paging.
       const devicePollMs = activeTab === 'inventory' && inventorySubPage === 'devices'
         ? 30000
-        : activeTab === 'inventory' && inventorySubPage === 'interfaces'
-          ? 10000
-          : 15000;
+        : 15000;
       devicesInterval = setInterval(fetchDevicesData, devicePollMs);
     }
 

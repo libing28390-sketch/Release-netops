@@ -73,9 +73,6 @@ export function getRouteContext(pathname: string): RouteContext {
     } else if (second === 'servers') {
       activeTab = 'inventory';
       inventorySubPage = 'servers';
-    } else if (second === 'interfaces') {
-      activeTab = 'inventory';
-      inventorySubPage = 'interfaces';
     } else if (second === 'ipam') {
       activeTab = 'ipam';
     } else if (second === 'toolbox') {

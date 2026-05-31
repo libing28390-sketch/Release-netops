@@ -36,7 +36,6 @@ const IPLocatorPage = lazy(() => import('../pages/IPLocatorPage'));
 const AssetManagementTab = lazy(() => import('../pages/AssetManagementTab'));
 const CredentialManagementTab = lazy(() => import('../components/PasswordRotationPanel'));
 const ChangeOrderTab = lazy(() => import('../pages/ChangeOrderTab'));
-const InterfaceMonitoringTab = lazy(() => import('../pages/InterfaceMonitoringTab'));
 const AutomationExecuteTab = lazy(() => import('../pages/AutomationExecuteTab'));
 const AutomationPlaybooksTab = lazy(() => import('../pages/AutomationPlaybooksTab'));
 const AutomationScenariosTab = lazy(() => import('../pages/AutomationScenariosTab'));
@@ -589,20 +588,6 @@ const AppMainContent: React.FC = () => {
             onRefresh={() => {/* TODO: implement inventory refresh */}}
             language={language}
             t={t}
-          />
-        </Suspense>
-      )}
-
-      {activeTab === 'inventory' && inventorySubPage === 'interfaces' && (
-        <Suspense fallback={lazyPanelFallback}>
-          <InterfaceMonitoringTab
-            devices={devices}
-            devicesLastUpdatedAt={devicesLastUpdatedAt}
-            language={language}
-            snmpTestingId={snmpTestingId}
-            snmpSyncingId={snmpSyncingId}
-            onSnmpTest={handleSnmpTest}
-            onSnmpSyncNow={handleSnmpSyncNow}
           />
         </Suspense>
       )}
