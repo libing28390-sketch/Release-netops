@@ -780,7 +780,14 @@ const App: React.FC = () => {
   // handleAddUser and handleEditUser moved to useUserManagement hook
 
 
-  const fetchSharedData = useCallback(async () => {
+  /**
+   * Fetch the rarely-changing shared lookup tables. These power dropdowns
+   * and page-level metadata; they don't need to be polled aggressively.
+   * Was previously fired every 15 s along with the other shared data,
+   * which amplified backend load proportional to the user count, script
+   * count and topology link count.
+   */
+  const fetchSharedLookups = useCallback(async () => {
     try {
       const [scriptsRes, usersRes, templatesRes, varsRes, linksRes] = await Promise.all([
         fetch('/api/scripts'),
@@ -789,9 +796,6 @@ const App: React.FC = () => {
         fetch('/api/vars'),
         fetch('/api/topology/links')
       ]);
-
-      // Recent automation history is loaded separately (sources playbook_executions).
-      loadJobs();
 
       if (scriptsRes.ok) setScripts(await scriptsRes.json());
       if (usersRes.ok) setUsers(await usersRes.json());
@@ -810,19 +814,39 @@ const App: React.FC = () => {
           setTopologyUnmanagedNodes(Array.isArray(linksPayload.unmanaged_nodes) ? linksPayload.unmanaged_nodes : []);
           setTopologyUnmanagedLinks(Array.isArray(linksPayload.unmanaged_links) ? linksPayload.unmanaged_links : []);
         } else {
-          // Backward compat: plain array response
           setTopologyLinks(Array.isArray(linksPayload) ? linksPayload : []);
           setTopologyUnmanagedNodes([]);
           setTopologyUnmanagedLinks([]);
         }
       }
-      // 加载未来 24h 内的定时作业触发计划，喂给 Dashboard 的「即将进行的任务」面板
+    } catch (error) {
+      console.error('Failed to fetch shared lookups:', error);
+    }
+  }, [selectedTemplateId]);
+
+  /**
+   * Fetch only the data that genuinely changes often (recent jobs, upcoming
+   * tasks). Used by the short-cadence interval. The Dashboard manual
+   * refresh button still calls `fetchSharedData` for a full refresh.
+   */
+  const fetchHotData = useCallback(async () => {
+    try {
+      loadJobs();
       loadUpcomingTasks();
       setDashLastRefresh(new Date());
     } catch (error) {
-      console.error('Failed to fetch shared data:', error);
+      console.error('Failed to fetch hot data:', error);
     }
-  }, [selectedTemplateId, loadUpcomingTasks, loadJobs]);
+  }, [loadUpcomingTasks, loadJobs]);
+
+  /**
+   * Full shared-data refresh: lookups + hot data. Used on initial load,
+   * on route change, and when the user clicks the Dashboard refresh button.
+   * Polling intervals do NOT call this (see fetchHotData / fetchSharedLookups).
+   */
+  const fetchSharedData = useCallback(async () => {
+    await Promise.all([fetchSharedLookups(), fetchHotData()]);
+  }, [fetchSharedLookups, fetchHotData]);
 
   const handleOpenTemplateDeploy = () => {
     setConfigWorkspaceView('checks');
@@ -859,13 +883,21 @@ const App: React.FC = () => {
       return;
     }
     setIsLoading(true);
-    Promise.all([fetchSharedData(), fetchDevicesData()]).finally(() => setIsLoading(false));
+    // Initial load: lookups (rarely change) + hot data (recent activity) + devices.
+    Promise.all([fetchSharedLookups(), fetchHotData(), fetchDevicesData()])
+      .finally(() => setIsLoading(false));
 
-    let sharedInterval: any;
+    let hotInterval: any;
+    let lookupsInterval: any;
     let devicesInterval: any;
 
     if (autoRefreshEnabled) {
-      sharedInterval = setInterval(fetchSharedData, 15000);
+      // Recent activity / upcoming tasks — light, refresh frequently.
+      hotInterval = setInterval(fetchHotData, 30000);
+      // Heavy lookup tables (users / scripts / templates / vars / topology
+      // links) — slow-changing, refresh on a long cadence. Page-level
+      // forms still trigger their own fetches when they need fresh data.
+      lookupsInterval = setInterval(fetchSharedLookups, 120000);
       // Reduce heavy full device refresh pressure while inventory table uses server-side paging.
       const devicePollMs = activeTab === 'inventory' && inventorySubPage === 'devices'
         ? 30000
@@ -874,19 +906,23 @@ const App: React.FC = () => {
     }
 
     return () => {
-      if (sharedInterval) clearInterval(sharedInterval);
+      if (hotInterval) clearInterval(hotInterval);
+      if (lookupsInterval) clearInterval(lookupsInterval);
       if (devicesInterval) clearInterval(devicesInterval);
     };
-  }, [isAuthenticated, fetchSharedData, fetchDevicesData, activeTab, inventorySubPage, autoRefreshEnabled]);
+  }, [isAuthenticated, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, inventorySubPage, autoRefreshEnabled]);
 
-  // Force refresh when switching between submenus so returning pages always show latest data.
+  // Force refresh when switching between submenus so returning pages always
+  // show latest data. Only refresh shared lookups on explicit route changes
+  // (not on each polling tick) to avoid the prior amplification.
   useEffect(() => {
     if (!isAuthenticated) return;
-    fetchSharedData();
+    fetchSharedLookups();
+    fetchHotData();
     if (!(activeTab === 'inventory' && inventorySubPage === 'devices')) {
       fetchDevicesData();
     }
-  }, [isAuthenticated, location.pathname, fetchSharedData, fetchDevicesData, activeTab, inventorySubPage]);
+  }, [isAuthenticated, location.pathname, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, inventorySubPage]);
 
   // 合规趋势：基于过去N天任务执行成功率
   const complianceTrend = useMemo(() => {

@@ -510,31 +510,49 @@ def get_backup_stats():
         storage_row = conn.execute("SELECT COALESCE(SUM(size), 0) as s FROM config_snapshots").fetchone()
         storage_bytes = storage_row['s'] if storage_row else 0
 
-        # Per-device latest backup & count
+        # Per-device latest backup & count.
+        # Original code did 2 SQL queries per device (count+max, then last
+        # trigger) inside a Python loop, scaling linearly with device count.
+        # Replaced with two grouped queries — independent of device count.
         devices = conn.execute(
             "SELECT id, hostname, ip_address, platform, status FROM devices"
         ).fetchall()
+
+        agg_rows = conn.execute(
+            """SELECT device_id, COUNT(*) AS cnt, MAX(timestamp) AS latest
+               FROM config_snapshots
+               GROUP BY device_id"""
+        ).fetchall()
+        agg_map = {r['device_id']: {'cnt': r['cnt'], 'latest': r['latest']} for r in agg_rows}
+
+        # Last trigger per device. We compute MAX(timestamp) per device, then
+        # join back to find that row's `trigger`. Works in both PG and SQLite.
+        last_trigger_rows = conn.execute(
+            """SELECT cs.device_id, cs.trigger
+               FROM config_snapshots cs
+               INNER JOIN (
+                   SELECT device_id, MAX(timestamp) AS max_ts
+                   FROM config_snapshots GROUP BY device_id
+               ) m ON m.device_id = cs.device_id AND m.max_ts = cs.timestamp"""
+        ).fetchall()
+        last_trigger_map: dict = {}
+        for r in last_trigger_rows:
+            # In the unlikely case of duplicate max_ts within a device, last
+            # write wins — matches the previous LIMIT 1 behaviour.
+            last_trigger_map[r['device_id']] = r['trigger']
+
         device_stats = []
         for dev in devices:
-            dev_snaps = conn.execute(
-                """SELECT COUNT(*) as cnt, MAX(timestamp) as latest
-                   FROM config_snapshots WHERE device_id = ?""",
-                (dev['id'],)
-            ).fetchone()
-            last_trigger = conn.execute(
-                """SELECT trigger FROM config_snapshots WHERE device_id = ?
-                   ORDER BY timestamp DESC LIMIT 1""",
-                (dev['id'],)
-            ).fetchone()
+            agg = agg_map.get(dev['id'], {'cnt': 0, 'latest': None})
             device_stats.append({
                 'id': dev['id'],
                 'hostname': dev['hostname'],
                 'ip_address': dev['ip_address'],
                 'platform': dev['platform'],
                 'status': dev['status'],
-                'backup_count': dev_snaps['cnt'] if dev_snaps else 0,
-                'latest_backup': dev_snaps['latest'] if dev_snaps else None,
-                'last_trigger': last_trigger['trigger'] if last_trigger else None,
+                'backup_count': agg['cnt'] or 0,
+                'latest_backup': agg['latest'],
+                'last_trigger': last_trigger_map.get(dev['id']),
             })
 
         # Recent 20 backups (execution log)

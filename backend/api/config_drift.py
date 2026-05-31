@@ -7,6 +7,7 @@ import os
 import uuid
 import difflib
 import logging
+import threading
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
@@ -14,6 +15,131 @@ from pydantic import BaseModel
 from database import get_db_connection
 
 logger = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────────────────────────────
+# Drift scan execution
+# ──────────────────────────────────────────────────────────────────────
+# A full drift scan walks every device with snapshots, reads two files
+# from disk per device, and writes a row into `config_drift_results`.
+# At 1 k+ devices that easily takes tens of seconds, blocking the FastAPI
+# worker if done in-request. We therefore expose two paths:
+#   * `/config-drift/scan`         — fire-and-forget; returns the latest
+#                                    cached results immediately and kicks
+#                                    off a background scan if stale.
+#   * `/config-drift/scan?force=1` — start a fresh scan in the background.
+#
+# Lock + last-finished timestamp so concurrent triggers don't pile up.
+_drift_scan_lock = threading.Lock()
+_drift_scan_in_progress: dict = {'running': False, 'started_at': None, 'finished_at': None}
+
+
+def _run_drift_scan_sync():
+    """The full per-device scan, run in a worker thread. Writes results
+    into `config_drift_results` so the GET endpoint can serve them without
+    re-running the scan."""
+    conn = get_db_connection()
+    try:
+        devices = conn.execute('''
+            SELECT DISTINCT cs.device_id, cs.hostname, d.ip_address, d.platform, d.status
+            FROM config_snapshots cs
+            LEFT JOIN devices d ON d.id = cs.device_id
+        ''').fetchall()
+        now_iso = datetime.utcnow().isoformat()
+
+        for dev in devices:
+            device_id = dev['device_id']
+            snaps = conn.execute('''
+                SELECT id, timestamp, trigger, file_path
+                FROM config_snapshots
+                WHERE device_id = ?
+                ORDER BY timestamp DESC
+                LIMIT 2
+            ''', (device_id,)).fetchall()
+
+            if len(snaps) < 2:
+                continue
+            current_snap = snaps[0]
+            baseline_snap = snaps[1]
+
+            current_content = _read_config_file(current_snap['file_path']) if current_snap['file_path'] else ''
+            baseline_content = _read_config_file(baseline_snap['file_path']) if baseline_snap['file_path'] else ''
+
+            if not current_content or not baseline_content:
+                drift_status = 'error'
+                added = removed = changed = 0
+            else:
+                diff_result = _compute_diff(baseline_content, current_content)
+                added = diff_result['added']
+                removed = diff_result['removed']
+                changed = diff_result['changed']
+                drift_status = 'drifted' if diff_result['has_drift'] else 'compliant'
+
+            drift_id = f"drift-{uuid.uuid4().hex[:12]}"
+            conn.execute('''
+                INSERT INTO config_drift_results
+                (id, device_id, hostname, baseline_snapshot_id, current_snapshot_id,
+                 drift_status, added_lines, removed_lines, changed_lines, diff_summary, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                  device_id=excluded.device_id, hostname=excluded.hostname,
+                  baseline_snapshot_id=excluded.baseline_snapshot_id,
+                  current_snapshot_id=excluded.current_snapshot_id,
+                  drift_status=excluded.drift_status, added_lines=excluded.added_lines,
+                  removed_lines=excluded.removed_lines, changed_lines=excluded.changed_lines,
+                  diff_summary=excluded.diff_summary, checked_at=excluded.checked_at
+            ''', (drift_id, device_id, dev['hostname'] or '', baseline_snap['id'],
+                  current_snap['id'], drift_status, added, removed, changed, '', now_iso))
+
+        conn.commit()
+    except Exception as exc:
+        logger.exception("[drift] background scan failed: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        with _drift_scan_lock:
+            _drift_scan_in_progress['running'] = False
+            _drift_scan_in_progress['finished_at'] = datetime.utcnow().isoformat()
+
+
+def _kick_off_drift_scan() -> bool:
+    """Start a drift scan in a daemon thread if one isn't already running.
+    Returns True if a scan was started, False if one was already in flight."""
+    with _drift_scan_lock:
+        if _drift_scan_in_progress['running']:
+            return False
+        _drift_scan_in_progress['running'] = True
+        _drift_scan_in_progress['started_at'] = datetime.utcnow().isoformat()
+        _drift_scan_in_progress['finished_at'] = None
+    threading.Thread(target=_run_drift_scan_sync, daemon=True, name='drift-scan').start()
+    return True
+
+
+def _read_cached_drift_results() -> list[dict]:
+    """Read the latest drift results for every device from
+    `config_drift_results` in a single query. Falls back to an empty list
+    if the table doesn't exist yet."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute('''
+            SELECT r.device_id, r.hostname, r.drift_status, r.added_lines,
+                   r.removed_lines, r.changed_lines, r.checked_at,
+                   r.baseline_snapshot_id, r.current_snapshot_id,
+                   d.ip_address, d.platform, d.status as device_status
+            FROM config_drift_results r
+            LEFT JOIN devices d ON d.id = r.device_id
+            ORDER BY r.checked_at DESC
+        ''').fetchall()
+        return [dict(row) for row in rows]
+    except Exception as exc:
+        logger.debug("[drift] failed reading cached results: %s", exc)
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 router = APIRouter()
 
@@ -77,109 +203,73 @@ def _compute_diff(old_text: str, new_text: str):
 # ──────────────────────────────────────────────
 
 @router.get('/config-drift/scan')
-def scan_all_devices():
-    """Run drift scan across all devices that have at least 2 snapshots.
-    Compares the latest snapshot against the second-latest (baseline)."""
-    conn = get_db_connection()
-    try:
-        # Get every device that has at least one snapshot
-        devices = conn.execute('''
-            SELECT DISTINCT cs.device_id, cs.hostname, d.ip_address, d.platform, d.status
-            FROM config_snapshots cs
-            LEFT JOIN devices d ON d.id = cs.device_id
-        ''').fetchall()
+def scan_all_devices(force: bool = False):
+    """Return drift status for every device.
 
-        results = []
-        now_iso = datetime.utcnow().isoformat()
+    The heavy work (reading two config files per device, diffing, writing
+    `config_drift_results`) is done in a background thread; this endpoint
+    serves the cached rows immediately. The frontend can poll without
+    blocking the FastAPI worker.
 
-        for dev in devices:
-            device_id = dev['device_id']
-            # Get the two most recent snapshots
-            snaps = conn.execute('''
-                SELECT id, timestamp, trigger, file_path
-                FROM config_snapshots
-                WHERE device_id = ?
-                ORDER BY timestamp DESC
-                LIMIT 2
-            ''', (device_id,)).fetchall()
+    * If `force=1` is passed, kick off a fresh scan in the background.
+    * If results are missing or older than 10 minutes, also kick off a scan
+      automatically.
+    * Either way, return the current cached snapshot synchronously.
+    """
+    cached = _read_cached_drift_results()
 
-            if len(snaps) < 2:
-                results.append({
-                    'device_id': device_id,
-                    'hostname': dev['hostname'] or '',
-                    'ip_address': dev['ip_address'] or '',
-                    'platform': dev['platform'] or '',
-                    'device_status': dev['status'] or '',
-                    'drift_status': 'no_baseline',
-                    'added_lines': 0,
-                    'removed_lines': 0,
-                    'changed_lines': 0,
-                    'last_checked': now_iso,
-                    'baseline_time': snaps[0]['timestamp'] if snaps else '',
-                    'current_time': '',
-                })
-                continue
+    # Decide whether to launch a background refresh.
+    needs_refresh = bool(force)
+    if not needs_refresh:
+        if not cached:
+            needs_refresh = True
+        else:
+            try:
+                latest = max(
+                    (datetime.fromisoformat(r['checked_at']) for r in cached if r.get('checked_at')),
+                    default=None,
+                )
+                if latest is None:
+                    needs_refresh = True
+                else:
+                    age_seconds = (datetime.utcnow() - latest).total_seconds()
+                    if age_seconds > 600:  # 10 minutes
+                        needs_refresh = True
+            except Exception:
+                needs_refresh = True
 
-            current_snap = snaps[0]
-            baseline_snap = snaps[1]
+    scan_started = False
+    if needs_refresh:
+        scan_started = _kick_off_drift_scan()
 
-            current_content = _read_config_file(current_snap['file_path']) if current_snap['file_path'] else ''
-            baseline_content = _read_config_file(baseline_snap['file_path']) if baseline_snap['file_path'] else ''
+    items = []
+    for r in cached:
+        items.append({
+            'device_id': r.get('device_id'),
+            'hostname': r.get('hostname') or '',
+            'ip_address': r.get('ip_address') or '',
+            'platform': r.get('platform') or '',
+            'device_status': r.get('device_status') or '',
+            'drift_status': r.get('drift_status') or 'unknown',
+            'added_lines': r.get('added_lines') or 0,
+            'removed_lines': r.get('removed_lines') or 0,
+            'changed_lines': r.get('changed_lines') or 0,
+            'last_checked': r.get('checked_at'),
+            'baseline_snapshot_id': r.get('baseline_snapshot_id'),
+            'current_snapshot_id': r.get('current_snapshot_id'),
+        })
 
-            if not current_content or not baseline_content:
-                drift_status = 'error'
-                added = removed = changed = 0
-            else:
-                diff_result = _compute_diff(baseline_content, current_content)
-                added = diff_result['added']
-                removed = diff_result['removed']
-                changed = diff_result['changed']
-                drift_status = 'drifted' if diff_result['has_drift'] else 'compliant'
-
-            # Upsert drift result
-            drift_id = f"drift-{uuid.uuid4().hex[:12]}"
-            conn.execute('''
-                INSERT INTO config_drift_results
-                (id, device_id, hostname, baseline_snapshot_id, current_snapshot_id,
-                 drift_status, added_lines, removed_lines, changed_lines, diff_summary, checked_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                  device_id=excluded.device_id, hostname=excluded.hostname,
-                  baseline_snapshot_id=excluded.baseline_snapshot_id,
-                  current_snapshot_id=excluded.current_snapshot_id,
-                  drift_status=excluded.drift_status, added_lines=excluded.added_lines,
-                  removed_lines=excluded.removed_lines, changed_lines=excluded.changed_lines,
-                  diff_summary=excluded.diff_summary, checked_at=excluded.checked_at
-            ''', (drift_id, device_id, dev['hostname'] or '', baseline_snap['id'],
-                  current_snap['id'], drift_status, added, removed, changed, '', now_iso))
-
-            results.append({
-                'device_id': device_id,
-                'hostname': dev['hostname'] or '',
-                'ip_address': dev['ip_address'] or '',
-                'platform': dev['platform'] or '',
-                'device_status': dev['status'] or '',
-                'drift_status': drift_status,
-                'added_lines': added,
-                'removed_lines': removed,
-                'changed_lines': changed,
-                'last_checked': now_iso,
-                'baseline_time': baseline_snap['timestamp'],
-                'current_time': current_snap['timestamp'],
-                'baseline_snapshot_id': baseline_snap['id'],
-                'current_snapshot_id': current_snap['id'],
-            })
-
-        conn.commit()
-        return {
-            'total': len(results),
-            'drifted': sum(1 for r in results if r['drift_status'] == 'drifted'),
-            'compliant': sum(1 for r in results if r['drift_status'] == 'compliant'),
-            'no_baseline': sum(1 for r in results if r['drift_status'] == 'no_baseline'),
-            'items': results,
-        }
-    finally:
-        conn.close()
+    return {
+        'total': len(items),
+        'drifted': sum(1 for r in items if r['drift_status'] == 'drifted'),
+        'compliant': sum(1 for r in items if r['drift_status'] == 'compliant'),
+        'no_baseline': sum(1 for r in items if r['drift_status'] == 'no_baseline'),
+        'items': items,
+        'scan_in_progress': _drift_scan_in_progress['running'],
+        'scan_started': scan_started,
+        'last_scan_started_at': _drift_scan_in_progress['started_at'],
+        'last_scan_finished_at': _drift_scan_in_progress['finished_at'],
+    }
 
 
 @router.get('/config-drift/device/{device_id}/diff')

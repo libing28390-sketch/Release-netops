@@ -58,42 +58,85 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [showPlayback, setShowPlayback] = useState(false);
   const [selectedSession, setSelectedSession] = useState<PAMSession | null>(null);
   // Kill confirmation modal
   const [killTarget, setKillTarget] = useState<PAMSession | null>(null);
   const [isKilling, setIsKilling] = useState(false);
-  // Pagination
+  // Pagination — server-driven so we never pull the whole history table.
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [totalItems, setTotalItems] = useState(0);
+  // Counts for the tab badges. Fetched independently with page_size=1 so a
+  // 5k-row history table does not have to ship to the client just to show "n".
+  const [activeCnt, setActiveCnt] = useState(0);
+  const [historyCnt, setHistoryCnt] = useState(0);
+
+  // Debounce the search box so we don't send a request per keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const fetchSessions = useCallback(async () => {
     setLoading(true);
     try {
-      // Active tab: query status=active (backend also returns 'connecting')
-      // History tab: no status filter → returns ALL sessions (including closed)
       const statusFilter = activeTab === 'active' ? 'active' : '';
-      const res = await fetch(`/api/pam/sessions?status=${statusFilter}&page_size=200`);
+      const params = new URLSearchParams({
+        status: statusFilter,
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      if (debouncedSearch) params.set('search', debouncedSearch);
+      const res = await fetch(`/api/pam/sessions?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.items) {
         setSessions(data.items);
+        setTotalItems(typeof data.total === 'number' ? data.total : (data.items?.length || 0));
       }
     } catch (err) {
       showToast(isZh ? '加载会话失败' : 'Failed to load sessions', 'error');
     } finally {
       setLoading(false);
     }
-  }, [activeTab, isZh, showToast]);
+  }, [activeTab, page, pageSize, debouncedSearch, isZh, showToast]);
+
+  // Cheap badge counts — one tiny request each, parallel with the main list.
+  const fetchCounts = useCallback(async () => {
+    try {
+      const [activeRes, historyRes] = await Promise.all([
+        fetch('/api/pam/sessions?status=active&page=1&page_size=1'),
+        // Closed sessions across all non-active states. We pass status=closed
+        // to bucket the most common case; the History tab's tab badge is a
+        // ballpark indicator, not a precise count, so this is acceptable.
+        fetch('/api/pam/sessions?status=closed&page=1&page_size=1'),
+      ]);
+      if (activeRes.ok) {
+        const j = await activeRes.json();
+        setActiveCnt(typeof j.total === 'number' ? j.total : 0);
+      }
+      if (historyRes.ok) {
+        const j = await historyRes.json();
+        setHistoryCnt(typeof j.total === 'number' ? j.total : 0);
+      }
+    } catch { /* ignore — badges are best-effort */ }
+  }, []);
 
   useEffect(() => {
     fetchSessions();
-    // Auto-refresh active sessions every 8 seconds
+    fetchCounts();
+    // Auto-refresh active sessions every 15 seconds. (Was 8 s; raised to
+    // reduce backend pressure now that paging is server-side.)
     if (activeTab === 'active') {
-      const timer = setInterval(fetchSessions, 8000);
+      const timer = setInterval(() => {
+        fetchSessions();
+        fetchCounts();
+      }, 15000);
       return () => clearInterval(timer);
     }
-  }, [activeTab, fetchSessions]);
+  }, [activeTab, fetchSessions, fetchCounts]);
 
   // ESC to dismiss kill confirmation modal
   useEffect(() => {
@@ -163,31 +206,22 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
     } catch { return ts; }
   };
 
-  const filteredSessions = sessions.filter(s => {
-    const q = searchQuery.toLowerCase();
-    return (
-      (s.asset_hostname || '').toLowerCase().includes(q) ||
-      (s.requester_username || '').toLowerCase().includes(q) ||
-      (s.login_username || '').toLowerCase().includes(q) ||
-      (s.target_ip || '').includes(q)
-    );
-  });
+  // The server has already filtered + paginated the results.
+  // Sessions list is exactly what we need to render.
+  const filteredSessions = sessions;
+  const paginatedSessions = sessions;
 
-  // Reset to first page whenever filter or tab changes
+  // Reset to first page whenever filter or tab changes (so the user is not
+  // stranded on a page that no longer exists).
   useEffect(() => {
     setPage(1);
-  }, [activeTab, searchQuery]);
+  }, [activeTab, debouncedSearch]);
 
-  // Clamp page if total items shrink
-  const totalPages = Math.max(1, Math.ceil(filteredSessions.length / pageSize));
+  // Clamp page if total items shrink (e.g. an active session just closed).
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
-
-  const paginatedSessions = filteredSessions.slice((page - 1) * pageSize, page * pageSize);
-
-  const activeCnt  = sessions.filter(s => s.status === 'active' || s.status === 'connecting').length;
-  const historyCnt = sessions.filter(s => !['active', 'connecting'].includes(s.status)).length;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -458,7 +492,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
           <div className="mt-4 rounded-2xl bg-white border border-slate-200 overflow-hidden">
             <Pagination
               currentPage={page}
-              totalItems={filteredSessions.length}
+              totalItems={totalItems}
               onPageChange={setPage}
               itemsPerPage={pageSize}
               onItemsPerPageChange={(n) => { setPageSize(n); setPage(1); }}

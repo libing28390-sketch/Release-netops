@@ -59,13 +59,20 @@ async def trigger_discovery(background_tasks: BackgroundTasks):
 
 
 @router.get('/topology/links')
-def get_links():
-    managed_links = get_current_links()
+def get_links(limit: int = 5000):
+    """Return all topology links, optionally capped to `limit`.
+
+    The default 5000 cap protects against meshed-DC blowups; the Topology
+    canvas filters client-side anyway so a hard cap is acceptable.
+    """
+    managed_links = get_current_links(limit=limit)
     unmanaged = get_unmanaged_neighbors()
     return {
         'links': managed_links,
         'unmanaged_nodes': unmanaged.get('unmanaged_nodes', []),
         'unmanaged_links': unmanaged.get('unmanaged_links', []),
+        'truncated': len(managed_links) >= limit,
+        'limit': limit,
     }
 
 

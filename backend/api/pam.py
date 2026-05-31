@@ -343,6 +343,7 @@ def create_session(payload: SessionCreateIn):
 def list_sessions(
     status: str = '',
     requester_username: str = '',
+    search: str = '',
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
 ):
@@ -371,6 +372,15 @@ def list_sessions(
         if requester_username:
             conditions.append('requester_username = ?')
             params.append(requester_username.strip())
+        # Free-text search across host/IP/user fields. The query adapter
+        # rewrites LIKE to ILIKE on PG so case-insensitive search is free.
+        if search:
+            q = f"%{search.strip()}%"
+            conditions.append(
+                "(target_hostname LIKE ? OR target_ip LIKE ? OR "
+                "requester_username LIKE ? OR login_username LIKE ?)"
+            )
+            params.extend([q, q, q, q])
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ''
         total = conn.execute(f'SELECT COUNT(*) FROM pam_sessions {where}', params).fetchone()[0]
         offset = (page - 1) * page_size
@@ -393,19 +403,27 @@ def list_sessions(
         # removed since (soft-delete preserves the audit trail). After the
         # ON DELETE SET NULL FK migration runs, archived rows have
         # asset_id = NULL on PG; pre-migration SQLite rows may have ''.
+        #
+        # Was previously a per-row SELECT against physical_assets — a 200×
+        # query amplification on the History tab. Replaced with a single
+        # batched IN-list lookup keyed by asset_id.
+        rows = [dict(r) for r in rows]
+        asset_ids = [r['asset_id'] for r in rows if r.get('asset_id')]
+        hostname_map: dict[str, str] = {}
+        if asset_ids:
+            unique_ids = list({aid for aid in asset_ids})
+            placeholders = ', '.join(['?'] * len(unique_ids))
+            asset_rows = conn.execute(
+                f'SELECT id, hostname FROM physical_assets WHERE id IN ({placeholders})',
+                unique_ids,
+            ).fetchall()
+            hostname_map = {a['id']: (a['hostname'] or '') for a in asset_rows}
+
         items = []
-        for r in rows:
-            item = dict(r)
-            asset_row = None
+        for item in rows:
             asset_id_val = item.get('asset_id')
-            if asset_id_val:
-                asset_row = conn.execute(
-                    'SELECT hostname FROM physical_assets WHERE id = ?', (asset_id_val,)
-                ).fetchone()
-            if asset_row:
-                item['asset_hostname'] = asset_row['hostname']
-            else:
-                item['asset_hostname'] = item.get('target_hostname') or ''
+            live_hostname = hostname_map.get(asset_id_val) if asset_id_val else None
+            item['asset_hostname'] = live_hostname or item.get('target_hostname') or ''
             # Normalise: if session is in memory map, always report as 'active'
             if item['id'] in _active_sessions:
                 item['status'] = 'active'

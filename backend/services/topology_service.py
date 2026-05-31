@@ -764,18 +764,38 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
     )
 
 
-def get_current_links() -> list[dict[str, Any]]:
+def get_current_links(limit: int | None = 5000) -> list[dict[str, Any]]:
+    """Return managed topology links.
+
+    A `limit` is enforced (default 5000) so a fully meshed datacenter doesn't
+    ship hundreds of thousands of rows on every poll. The Topology page
+    renders client-side anyway; if you need more than 5000 links you should
+    be using filters or paging APIs at the canvas level.
+    """
     conn = get_db_connection()
     try:
-        rows = conn.execute(
-            '''
-            SELECT l.*, s.hostname as source_hostname_resolved, t.hostname as target_hostname_resolved
-            FROM links l
-            JOIN devices s ON l.source_device_id = s.id
-            JOIN devices t ON l.target_device_id = t.id
-            ORDER BY l.source_hostname, l.source_port_normalized, l.target_hostname, l.target_port_normalized
-            '''
-        ).fetchall()
+        if limit and limit > 0:
+            rows = conn.execute(
+                '''
+                SELECT l.*, s.hostname as source_hostname_resolved, t.hostname as target_hostname_resolved
+                FROM links l
+                JOIN devices s ON l.source_device_id = s.id
+                JOIN devices t ON l.target_device_id = t.id
+                ORDER BY l.source_hostname, l.source_port_normalized, l.target_hostname, l.target_port_normalized
+                LIMIT ?
+                ''',
+                (int(limit),),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                '''
+                SELECT l.*, s.hostname as source_hostname_resolved, t.hostname as target_hostname_resolved
+                FROM links l
+                JOIN devices s ON l.source_device_id = s.id
+                JOIN devices t ON l.target_device_id = t.id
+                ORDER BY l.source_hostname, l.source_port_normalized, l.target_hostname, l.target_port_normalized
+                '''
+            ).fetchall()
         return [dict(row) for row in rows]
     finally:
         conn.close()

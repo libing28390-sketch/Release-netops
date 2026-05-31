@@ -115,51 +115,77 @@ def _mask_webhook_url(url: str) -> str:
         return '***'
 
 
-def _hydrate_user_row(row) -> dict:
+def _fetch_global_notification_channels() -> list[dict]:
+    """Fetch the (small) global channel template list once.
+
+    The table has at most a handful of rows (one per platform). Hoisting this
+    query out of `_hydrate_user_row` removes a 500× amplification when listing
+    all users — previously each row opened a new connection and ran this query.
+    """
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            'SELECT platform, webhook_url, enabled, secret, creator_username FROM global_notification_channels'
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _build_user_channels(user_channels: dict, shared_rows: list[dict]) -> dict:
+    """Merge a user's personal channel prefs with the shared channel templates."""
+    final_channels: dict[str, dict] = {}
+    for s_row in shared_rows:
+        platform = s_row['platform']
+        url = (s_row.get('webhook_url') or '').strip()
+        masked_url = _mask_webhook_url(url)
+        user_pref = user_channels.get(platform, {})
+        is_enabled = (
+            bool(user_pref.get('enabled'))
+            if 'enabled' in user_pref
+            else bool(s_row.get('enabled'))
+        )
+        final_channels[platform] = {
+            'webhook_url': masked_url,
+            'enabled': is_enabled,
+            'secret': '***' if (s_row.get('secret') or '').strip() else '',
+            'creator_username': s_row.get('creator_username'),
+        }
+    # Ensure all standard platforms are present even if not configured.
+    for p in ('feishu', 'dingtalk', 'wechat'):
+        if p not in final_channels:
+            final_channels[p] = {
+                'webhook_url': '',
+                'enabled': False,
+                'secret': '',
+                'creator_username': '',
+            }
+    return final_channels
+
+
+def _hydrate_user_row(row, shared_channels: list[dict] | None = None) -> dict:
+    """Project a raw user row to the API response shape.
+
+    Pass `shared_channels` when hydrating multiple users in a batch — the
+    caller fetches the list once and the helper reuses it for every row.
+    Falls back to fetching on its own when called for a single row (e.g. the
+    profile endpoint), which keeps the public API stable.
+    """
     result = dict(row)
-    
-    # 1. Parse user's personal notification settings from the 'notification_channels' column
+
+    # 1. Parse user's personal notification settings.
     try:
         user_channels = json.loads(result.get('notification_channels') or '{}')
     except Exception:
         user_channels = {}
 
-    conn = get_db_connection()
     try:
-        # 2. Fetch global channel templates (URLs, secrets)
-        shared_rows = conn.execute(
-            'SELECT platform, webhook_url, enabled, secret, creator_username FROM global_notification_channels'
-        ).fetchall()
-        
-        final_channels = {}
-        for s_row in shared_rows:
-            platform = s_row['platform']
-            url = (s_row['webhook_url'] or '').strip()
-            masked_url = _mask_webhook_url(url)
-            
-            # 3. MASKED Logic: Use global config as template, but prioritize USER'S enabled state if present
-            user_pref = user_channels.get(platform, {})
-            # If the user has a personal preference for this platform, use their 'enabled' state
-            is_enabled = bool(user_pref.get('enabled')) if 'enabled' in user_pref else bool(s_row['enabled'])
-                    
-            final_channels[platform] = {
-                'webhook_url': masked_url,
-                'enabled': is_enabled,
-                'secret': '***' if (s_row['secret'] or '').strip() else '',
-                'creator_username': s_row['creator_username']
-            }
-            
-        # Ensure all standard platforms are present
-        for p in ['feishu', 'dingtalk', 'wechat']:
-            if p not in final_channels:
-                final_channels[p] = {'webhook_url': '', 'enabled': False, 'secret': '', 'creator_username': ''}
-                
-        result['notification_channels'] = final_channels
+        if shared_channels is None:
+            shared_channels = _fetch_global_notification_channels()
+        result['notification_channels'] = _build_user_channels(user_channels, shared_channels)
     except Exception as e:
         logger.error(f"Error hydrating user row: {e}")
         result['notification_channels'] = user_channels
-    finally:
-        conn.close()
 
     try:
         raw_groups = json.loads(result.get('change_groups_json') or '[]')
@@ -290,7 +316,14 @@ def read_users():
         users = conn.execute(
             'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email FROM users'
         ).fetchall()
-        return [_hydrate_user_row(u) for u in users]
+        # Fetch the (small) shared notification-channel templates once and
+        # reuse for every row — was previously per-row (N+1 query and
+        # connection amplification).
+        shared_rows = conn.execute(
+            'SELECT platform, webhook_url, enabled, secret, creator_username FROM global_notification_channels'
+        ).fetchall()
+        shared_channels = [dict(r) for r in shared_rows]
+        return [_hydrate_user_row(u, shared_channels=shared_channels) for u in users]
     finally:
         conn.close()
 

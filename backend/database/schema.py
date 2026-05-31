@@ -2061,6 +2061,45 @@ def _init_db_logic(conn):
                 (expected, item_id, '')
             )
 
+    # ──────────────────────────────────────────────────────────────────
+    # Performance indexes
+    # ──────────────────────────────────────────────────────────────────
+    # Hot-path tables that grow with device count / activity but were
+    # missing covering indexes. Adding them is idempotent (`IF NOT EXISTS`)
+    # and works on both PG and SQLite. Each index targets a query pattern
+    # in the API layer that previously did a sequential scan.
+    _perf_indexes = (
+        # `jobs` — every list call orders by created_at DESC and may filter
+        # on status / device_id; the table previously had zero indexes.
+        'CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_jobs_device_id ON jobs(device_id)',
+        'CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)',
+        # `config_snapshots` — backup-stats N+1 and drift-scan both filter
+        # by device_id and order by timestamp DESC; covered by composite.
+        'CREATE INDEX IF NOT EXISTS idx_config_snapshots_device_ts ON config_snapshots(device_id, timestamp DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_config_snapshots_timestamp ON config_snapshots(timestamp DESC)',
+        # `playbook_executions` — listing endpoint orders by created_at DESC
+        # with optional status / scenario_id filters.
+        'CREATE INDEX IF NOT EXISTS idx_playbook_executions_created_at ON playbook_executions(created_at DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_playbook_executions_status ON playbook_executions(status)',
+        'CREATE INDEX IF NOT EXISTS idx_playbook_executions_scenario ON playbook_executions(scenario_id)',
+        # `devices` — virtually every page filters by status and joins on asset_id.
+        'CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status)',
+        'CREATE INDEX IF NOT EXISTS idx_devices_asset_id ON devices(asset_id)',
+        'CREATE INDEX IF NOT EXISTS idx_devices_site ON devices(site)',
+        # `scripts` — list endpoint orders by updated_at DESC; UI filters by status.
+        'CREATE INDEX IF NOT EXISTS idx_scripts_updated_at ON scripts(updated_at DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_scripts_status ON scripts(status)',
+        # `alert_events` — alert desk filters by device_id; existing indexes
+        # cover dedupe_key/created_at but not these.
+        'CREATE INDEX IF NOT EXISTS idx_alert_events_device_id ON alert_events(device_id)',
+    )
+    for _idx_sql in _perf_indexes:
+        try:
+            cursor.execute(_idx_sql)
+        except Exception as _exc:
+            logger.debug("[migration] index skipped (%s): %s", _idx_sql.split(' ON ')[0], _exc)
+
     admin_row = cursor.execute("SELECT id, password FROM users WHERE username = 'admin'").fetchone()
     if not admin_row:
         hashed = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
