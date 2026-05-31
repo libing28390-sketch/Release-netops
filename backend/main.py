@@ -99,84 +99,10 @@ async def _bg_init():
         logger.error(f"[Background] Initialization failed: {e}")
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Startup preflight — fail fast on misconfigured secrets.
-# Catches the common "deployed with .env.example placeholders" mistake.
-# ─────────────────────────────────────────────────────────────────────
-
-_PLACEHOLDER_TOKENS = (
-    '__CHANGE_ME__',
-    'replace-with-',
-    'change-me-to-',
-    'your-secret-key-here',
-    'supersecret',
-)
-
-
-def _is_placeholder(value: str | None) -> bool:
-    if value is None:
-        return True
-    s = value.strip()
-    if not s:
-        return True
-    s_lower = s.lower()
-    return any(token.lower() in s_lower for token in _PLACEHOLDER_TOKENS)
-
-
-def _preflight_check_secrets() -> None:
-    """Validate that critical secrets are not at their template placeholders.
-
-    Behaviour:
-      * In production, raise RuntimeError so the process refuses to start.
-      * In development, log a loud warning but continue (so local hacking
-        with a fresh checkout still works).
-    """
-    is_prod = (settings.ENVIRONMENT or '').lower() == 'production'
-    issues: list[str] = []
-
-    if _is_placeholder(settings.CREDENTIAL_ENCRYPTION_KEY):
-        issues.append(
-            "CREDENTIAL_ENCRYPTION_KEY is a placeholder. Generate with "
-            "`openssl rand -hex 32` and set in .env."
-        )
-
-    if _is_placeholder(settings.SECRET_KEY):
-        issues.append(
-            "SECRET_KEY is a placeholder. Generate with "
-            "`openssl rand -hex 32` and set in .env."
-        )
-
-    db_url = settings.DATABASE_URL or ''
-    if '__CHANGE_ME__' in db_url:
-        issues.append(
-            "DATABASE_URL still contains a __CHANGE_ME__ placeholder. "
-            "Replace the password segment with the real value."
-        )
-
-    if not issues:
-        return
-
-    banner = "\n  - " + "\n  - ".join(issues)
-    if is_prod:
-        raise RuntimeError(
-            "Refusing to start: insecure configuration detected:" + banner +
-            "\n\nFix .env (or environment variables) and restart."
-        )
-    logger.warning(
-        "[Preflight] Insecure configuration detected (continuing in dev mode):%s",
-        banner,
-    )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── startup ──
     logger.info(f"Starting up {settings.PROJECT_NAME} in {settings.ENVIRONMENT} mode...")
-
-    # Preflight: refuse to start with placeholder secrets in production.
-    # Catches the common "forgot to replace .env.example values" mistake
-    # before any data gets encrypted with a publicly-known key.
-    _preflight_check_secrets()
 
     # Initialize Database once
     init_db()
