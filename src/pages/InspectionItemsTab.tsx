@@ -709,334 +709,361 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
 
         {/* View Content — List (Table) */}
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <table className="min-w-full border-collapse text-left">
-            <thead className="sticky top-0 z-10">
-              <tr className="border-y border-black/5 bg-[#f8fafc] text-[10px] font-bold uppercase tracking-widest text-black/40">
-                <th className="px-6 py-4">{zh ? '名称' : 'Name'}</th>
-                <th className="px-6 py-4">{zh ? '分类 / 平台' : 'Category / Platform'}</th>
-                <th className="px-6 py-4">{zh ? '检查 Key' : 'Check Key'}</th>
-                <th className="px-6 py-4">{zh ? '采集详情' : 'Acquisition'}</th>
-                <th className="px-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
-              </tr>
-            </thead>
-            <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-black/20 italic">
-                      <div className="flex flex-col items-center gap-2">
-                        <RotateCcw className="w-5 h-5 animate-spin" />
-                        <span>{zh ? '获取中...' : 'Loading...'}</span>
-                      </div>
-                    </td>
-                  </tr>
-                ) : paginatedItems.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-black/20 italic">
-                      {zh ? '暂无匹配的指标项' : 'No items found'}
-                    </td>
-                  </tr>
-                ) : (
-                                  paginatedItems.map((item) => {
-                                const isEditing = editingId === item.id;
-                                const isExpanded = expandedId === item.id;
+          {loading ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-12 text-black/20 italic h-64">
+              <div className="flex flex-col items-center gap-2">
+                <RotateCcw className="w-5 h-5 animate-spin" />
+                <span>{zh ? '获取中...' : 'Loading...'}</span>
+              </div>
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-12 text-black/20 italic h-64">
+              {zh ? '暂无匹配的指标项' : 'No items found'}
+            </div>
+          ) : (
+            <table className="min-w-full border-collapse text-left">
+              <thead className="sticky top-0 z-10">
+                <tr className="border-y border-black/5 bg-[#f8fafc] text-[10px] font-bold uppercase tracking-widest text-black/40">
+                  <th className="px-6 py-4">{zh ? '名称 / ID' : 'Name / ID'}</th>
+                  <th className="px-6 py-4">{zh ? '分类 / 厂商' : 'Category / Vendor'}</th>
+                  <th className="px-6 py-4">{zh ? '检查 Key' : 'Check Key'}</th>
+                  <th className="px-6 py-4">{zh ? '采集详情' : 'Acquisition'}</th>
+                  <th className="px-6 py-4">{zh ? '描述' : 'Description'}</th>
+                  <th className="px-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/[0.04]">
+                {paginatedItems.map((item) => {
+                  const isEditing = editingId === item.id;
+                  const isExpanded = expandedId === item.id;
+                  return (
+                    <React.Fragment key={item.id}>
+                      <tr
+                        className={`hover:bg-black/[0.01] transition-colors group cursor-pointer ${isExpanded ? 'bg-cyan-50/30' : ''}`}
+                        onClick={() => !isEditing && setExpandedId(isExpanded ? null : item.id)}
+                      >
+                        <td className="px-6 py-4">
+                          {isEditing ? (
+                            <div className="space-y-2" onClick={e => e.stopPropagation()}>
+                              <input
+                                type="text"
+                                value={form.name_zh || ''}
+                                onChange={e => setForm({ ...form, name_zh: e.target.value })}
+                                className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
+                                placeholder="Name (ZH)"
+                              />
+                              <input
+                                type="text"
+                                value={form.name || ''}
+                                onChange={e => setForm({ ...form, name: e.target.value })}
+                                className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] text-black/40 focus:outline-none"
+                                placeholder="Name (EN)"
+                              />
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-3">
+                              <div className={`w-1.5 h-1.5 rounded-full ${isExpanded ? 'bg-cyan-500 scale-150 shadow-lg' : 'bg-black/10'}`} />
+                              <div className="flex flex-col">
+                                <span className="font-bold text-[#164e63]">{zh ? item.name_zh : item.name}</span>
+                                <span className="text-[10px] text-black/30 font-mono">{item.name}</span>
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4">
+                          {isEditing ? (
+                            <div className="space-y-2" onClick={e => e.stopPropagation()}>
+                              <select
+                                value={form.category || ''}
+                                onChange={e => setForm({ ...form, category: e.target.value })}
+                                className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none bg-white"
+                              >
+                                <option value="Network">Network</option>
+                                <option value="Server">Server</option>
+                                <option value="Connectivity">Connectivity</option>
+                                <option value="Interface">Interface</option>
+                                <option value="Health">Health</option>
+                                <option value="Compliance">Compliance</option>
+                              </select>
+                              <select
+                                value={form.vendor || ''}
+                                onChange={e => setForm({ ...form, vendor: e.target.value })}
+                                className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] focus:outline-none bg-white"
+                              >
+                                <option value="">{zh ? '选择厂商' : 'Vendor'}</option>
+                                {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
+                              </select>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-cyan-50 text-cyan-600 w-fit">
+                                {zh ? (CATEGORIES.find(c => c.id === item.category)?.zh || item.category) : item.category}
+                              </span>
+                              {item.vendor && (
+                                <span className="text-[9px] text-black/30 font-bold px-2 tracking-widest">{item.vendor}</span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-[11px] text-black/50 tracking-tight">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={form.check_key || ''}
+                              onChange={e => setForm({ ...form, check_key: e.target.value })}
+                              className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
+                              onClick={e => e.stopPropagation()}
+                            />
+                          ) : item.check_key}
+                        </td>
+                        <td className="px-6 py-4">
+                          {isEditing ? (
+                            <div className="space-y-2" onClick={e => e.stopPropagation()}>
+                              <select
+                                value={form.method || ''}
+                                onChange={e => setForm({ ...form, method: e.target.value })}
+                                className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none bg-white"
+                              >
+                                <option value="SNMP">SNMP</option>
+                                <option value="SSH">SSH</option>
+                                <option value="Shell">Shell</option>
+                                <option value="ICMP">ICMP</option>
+                                <option value="TCP">TCP</option>
+                                <option value="Agent">Agent</option>
+                              </select>
+                              {form.method === 'SNMP' && (
+                                <input
+                                  type="text"
+                                  value={form.oid || ''}
+                                  onChange={e => setForm({ ...form, oid: e.target.value })}
+                                  className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                  placeholder="OID"
+                                />
+                              )}
+                              <div className="flex gap-2">
+                                <input
+                                  type="number"
+                                  value={form.warning_threshold ?? ''}
+                                  onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                                  className="w-1/2 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                  placeholder="W%"
+                                />
+                                <input
+                                  type="number"
+                                  value={form.critical_threshold ?? ''}
+                                  onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                                  className="w-1/2 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                  placeholder="C%"
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-1.5">
+                              {(() => {
+                                const method = item.method?.toUpperCase();
+                                const isScript = !!item.script_id;
+                                const scriptName = isScript ? (scripts.find(s => s.id === item.script_id)?.name || item.script_id).replace(/（精细化）|\(精细化\)/g, '').trim() : null;
+                                
+                                const cfg = method === 'SNMP' ? { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100', icon: Database }
+                                          : method === 'SSH' ? { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100', icon: Shield }
+                                          : method === 'ICMP' ? { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100', icon: Activity }
+                                          : isScript ? { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-100', icon: FileCode }
+                                          : { bg: 'bg-slate-50', text: 'text-slate-500', border: 'border-slate-100', icon: Info };
+                                const Icon = cfg.icon;
                                 return (
-                                  <React.Fragment key={item.id}>
-                                    <tr 
-                                      className={`hover:bg-black/[0.01] transition-colors group cursor-pointer ${isExpanded ? 'bg-cyan-50/30' : ''}`}
-                                      onClick={() => !isEditing && setExpandedId(isExpanded ? null : item.id)}
-                                    >
-                                      <td className="px-6 py-4">
-                                        {isEditing ? (
-                                          <div className="space-y-2">
-                                            <input
-                                              type="text" value={form.name_zh} onChange={e => setForm({ ...form, name_zh: e.target.value })}
-                                              className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
-                                              placeholder="Name (ZH)"
-                                            />
-                                            <input
-                                              type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                                              className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] text-black/40 focus:outline-none"
-                                              placeholder="Name (EN)"
-                                            />
-                                          </div>
-                                        ) : (
-                                          <div className="flex items-center gap-3">
-                                            <div className={`w-1.5 h-1.5 rounded-full ${isExpanded ? 'bg-cyan-500 scale-150 shadow-lg' : 'bg-black/10'}`} />
-                                            <div className="flex flex-col">
-                                              <span className="font-bold text-[#164e63]">{zh ? item.name_zh : item.name}</span>
-                                              <span className="text-[10px] text-black/30 font-mono">{item.name}</span>
-                                            </div>
-                                          </div>
-                                        )}
-                                      </td>
-                                      <td className="px-6 py-4">
-                                        {isEditing ? (
-                                          <div className="space-y-2">
-                                            <select
-                                              value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-                                              className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none bg-white"
-                                            >
-                                              <option value="Network">Network</option>
-                                              <option value="Server">Server</option>
-                                              <option value="Connectivity">Connectivity</option>
-                                              <option value="Interface">Interface</option>
-                                              <option value="Health">Health</option>
-                                              <option value="Compliance">Compliance</option>
-                                            </select>
-                                            <select
-                                              value={form.vendor} onChange={e => setForm({ ...form, vendor: e.target.value })}
-                                              className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] focus:outline-none bg-white"
-                                            >
-                                              <option value="">{zh ? '选择平台' : 'Platform'}</option>
-                                              {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
-                                            </select>
-                                          </div>
-                                        ) : (
-                                          <div className="flex flex-col gap-1">
-                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-cyan-50 text-cyan-600 w-fit">
-                                              {zh ? (CATEGORIES.find(c => c.id === item.category)?.zh || item.category) : item.category}
-                                            </span>
-                                            {item.vendor && (
-                                              <span className="text-[9px] text-black/30 font-bold px-2 tracking-widest">{item.vendor}</span>
-                                            )}
-                                          </div>
-                                        )}
-                                      </td>
-                                      <td className="px-6 py-4 font-mono text-[11px] text-black/50 tracking-tight">
-                                        {isEditing ? (
-                                          <input
-                                            type="text" value={form.check_key} onChange={e => setForm({ ...form, check_key: e.target.value })}
-                                            className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
-                                          />
-                                        ) : item.check_key}
-                                      </td>
-                                      <td className="px-6 py-4 text-xs text-black/60 italic">
-                                        {isEditing ? (
-                                          <div className="space-y-2">
-                                            <textarea
-                                              value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
-                                              className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                              rows={1}
-                                              placeholder={zh ? "指标描述" : "Description"}
-                                            />
-                                            <div className="flex gap-2">
-                                              <select
-                                                value={form.method} onChange={e => setForm({ ...form, method: e.target.value })}
-                                                className="flex-1 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none bg-white"
-                                              >
-                                                <option value="SNMP">SNMP</option>
-                                                <option value="SSH">SSH</option>
-                                                <option value="Shell">Shell</option>
-                                                <option value="ICMP">ICMP</option>
-                                                <option value="TCP">TCP</option>
-                                                <option value="Agent">Agent</option>
-                                              </select>
-                                              {form.method === 'SNMP' && (
-                                                <input
-                                                  type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })}
-                                                  className="flex-1 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                                  placeholder="OID"
-                                                />
-                                              )}
-                                              <input
-                                                type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
-                                                className="w-16 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                                placeholder="W%"
-                                              />
-                                              <input
-                                                type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
-                                                className="w-16 px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
-                                                placeholder="C%"
-                                              />
-                                            </div>
-                                            <textarea
-                                              value={form.command} onChange={e => setForm({ ...form, command: e.target.value })}
-                                              className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none font-mono"
-                                              rows={2}
-                                              placeholder={zh ? "采集指令" : "Command"}
-                                            />
-                                          </div>
-                                        ) : (
-                                          <div className="space-y-2">
-                                            <div className="line-clamp-1 max-w-[240px] break-all text-slate-400 text-[10px] font-medium leading-relaxed" title={item.description}>
-                                              {item.description || (zh ? "暂无指标业务描述" : "No description")}
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                              {(() => {
-                                                const method = item.method?.toUpperCase();
-                                                const isScript = !!item.script_id;
-                                                const scriptName = isScript ? (scripts.find(s => s.id === item.script_id)?.name || item.script_id).replace(/（精细化）|\(精细化\)/g, '').trim() : null;
-                                                
-                                                const cfg = method === 'SNMP' ? { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100', icon: Database }
-                                                          : method === 'SSH' ? { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100', icon: Shield }
-                                                          : method === 'ICMP' ? { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100', icon: Activity }
-                                                          : isScript ? { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-100', icon: FileCode }
-                                                          : { bg: 'bg-slate-50', text: 'text-slate-500', border: 'border-slate-100', icon: Info };
-                                                const Icon = cfg.icon;
-                                                return (
-                                                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${cfg.bg} ${cfg.text} ${cfg.border} text-[10px] font-black uppercase tracking-wider shadow-sm`}>
-                                                    <Icon size={12} />
-                                                    {isScript ? `${zh ? '脚本: ' : 'Script: '}${scriptName}` : method}
-                                                  </span>
-                                                );
-                                              })()}
-                                              {item.warning_threshold !== undefined && item.warning_threshold !== null && (
-                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-orange-50 text-orange-600 border border-orange-100 text-[9px] font-bold">
-                                                  W: {item.warning_threshold}%
-                                                </span>
-                                              )}
-                                              {item.critical_threshold !== undefined && item.critical_threshold !== null && (
-                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-red-50 text-red-600 border border-red-100 text-[9px] font-bold">
-                                                  C: {item.critical_threshold}%
-                                                </span>
-                                              )}
-                                            </div>
-                                          </div>
-                                        )}
-                                      </td>
-                                      <td className="px-6 py-4 text-right">
-                                        <div className="flex justify-end gap-2">
-                                          {isEditing ? (
-                                            <>
-                                              <button onClick={(e) => { e.stopPropagation(); handleUpdate(item.id, form); }} className="p-1.5 rounded-lg hover:bg-cyan-50 text-cyan-600 transition-colors shadow-sm border border-cyan-100"><Save className="w-4 h-4" /></button>
-                                              <button onClick={(e) => { e.stopPropagation(); setEditingId(null); }} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 transition-colors shadow-sm border border-red-100"><X className="w-4 h-4" /></button>
-                                            </>
-                                          ) : (
-                                            <>
-                                              <button 
-                                                onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }} 
-                                                className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 border border-slate-100 transition-all shadow-sm"
-                                                title={zh ? '编辑指标' : 'Edit Metric'}
-                                              >
-                                                <Edit3 size={14} />
-                                              </button>
-                                              <button 
-                                                onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }} 
-                                                className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 border border-slate-100 transition-all shadow-sm"
-                                                title={zh ? '删除指标' : 'Delete Metric'}
-                                              >
-                                                <Trash2 size={14} />
-                                              </button>
-                                            </>
-                                          )}
-                                        </div>
-                                      </td>
-                                    </tr>
-                                    <AnimatePresence>
-                                      {isExpanded && !isEditing && (
-                                        <tr>
-                                          <td colSpan={5} className="px-6 py-0 border-none">
-                                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                                              <div className="py-4 px-8 bg-black/[0.01] rounded-xl mb-4 mt-1 border border-black/[0.03] grid grid-cols-1 md:grid-cols-2 gap-8 relative">
-                                                <div className="absolute top-4 left-4 w-1 h-12 bg-cyan-500/20 rounded-full" />
-                                                <div className="space-y-4">
-                                                  <div>
-                                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-2">{zh ? '详细描述' : 'DETAILED DESCRIPTION'}</h4>
-                                                    <p className="text-xs text-black/70 leading-relaxed font-medium break-all">{item.description || '-'}</p>
-                                                  </div>
-                                                  <div className="flex gap-8">
-                                                    <div>
-                                                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '更新时间' : 'UPDATED AT'}</h4>
-                                                      <p className="text-[10px] font-mono text-black/40">{item.updated_at}</p>
-                                                    </div>
-                                                    <div>
-                                                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '指标 ID' : 'METRIC ID'}</h4>
-                                                      <p className="text-[10px] font-mono text-black/40 uppercase">{item.id}</p>
-                                                    </div>
-                                                  </div>
-                                                </div>
-                                                <div className="bg-white/40 backdrop-blur-sm p-5 rounded-2xl border border-black/[0.03] space-y-4 shadow-sm">
-                                                  <div className="flex items-center justify-between">
-                                                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/30">
-                                                      {item.script_id
-                                                        ? (zh ? '自动化采集脚本源代码' : 'AUTOMATED SCRIPT SOURCE')
-                                                        : item.method?.toUpperCase() === 'SNMP'
-                                                          ? (zh ? 'SNMP OID' : 'SNMP OID')
-                                                          : (zh ? '数据采集与指令' : 'ACQUISITION & COMMAND')}
-                                                    </h4>
-                                                    <div className="flex gap-2">
-                                                      {item.oid && (
-                                                        <button
-                                                          type="button"
-                                                          onClick={(e) => { e.stopPropagation(); copyToClipboard(item.oid, `${item.id}-oid`); }}
-                                                          title={zh ? '点击复制 OID' : 'Click to copy OID'}
-                                                          className={`group/oid inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black shadow-lg transition-all active:scale-95 ${
-                                                            copiedId === `${item.id}-oid`
-                                                              ? 'bg-emerald-500 text-white shadow-emerald-500/20'
-                                                              : 'bg-indigo-500 text-white shadow-indigo-500/20 hover:bg-indigo-600'
-                                                          }`}
-                                                        >
-                                                          {copiedId === `${item.id}-oid` ? (
-                                                            <>
-                                                              <Check className="w-3 h-3" />
-                                                              <span>{zh ? '已复制' : 'Copied'}</span>
-                                                            </>
-                                                          ) : (
-                                                            <>
-                                                              <span className="font-mono tracking-tight">OID: {item.oid}</span>
-                                                              <Copy className="w-3 h-3 opacity-60 group-hover/oid:opacity-100 transition-opacity" />
-                                                            </>
-                                                          )}
-                                                        </button>
-                                                      )}
-                                                      <span className="px-2.5 py-1 rounded-lg bg-cyan-500 text-white text-[10px] font-black shadow-lg shadow-cyan-500/20">{item.method}</span>
-                                                    </div>
-                                                  </div>
-                                                  <div className="bg-[#00172d] p-4 rounded-xl border border-white/5 relative overflow-hidden shadow-inner">
-                                                    <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
-                                                    {(() => {
-                                                      const isSnmp = item.method?.toUpperCase() === 'SNMP';
-                                                      const codeText = isSnmp
-                                                        ? (item.oid || (zh ? '# 该 SNMP 指标尚未配置 OID' : '# No OID configured for this SNMP metric'))
-                                                        : item.script_id
-                                                          ? (scripts.find(s => s.id === item.script_id)?.content || '# Script content loading...')
-                                                          : (item.command || '# No command defined');
-                                                      const copyKey = `${item.id}-cmd`;
-                                                      const isCopied = copiedId === copyKey;
-                                                      return (
-                                                        <div className="relative">
-                                                          <code className="text-[11px] text-cyan-300 font-mono whitespace-pre-wrap break-all relative z-10 block pr-24 leading-relaxed">
-                                                            {codeText}
-                                                          </code>
-                                                          <button
-                                                            type="button"
-                                                            onClick={(e) => { e.stopPropagation(); copyToClipboard(codeText, copyKey); }}
-                                                            title={zh ? '复制代码' : 'Copy code'}
-                                                            className={`absolute top-0 right-0 z-20 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border transition-all active:scale-95 ${
-                                                              isCopied
-                                                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                                                                : 'bg-white/5 text-cyan-200/80 border-white/10 hover:bg-white/10 hover:text-cyan-100'
-                                                            }`}
-                                                          >
-                                                            {isCopied ? (
-                                                              <>
-                                                                <Check className="w-3 h-3" />
-                                                                <span>{zh ? '已复制' : 'Copied'}</span>
-                                                              </>
-                                                            ) : (
-                                                              <>
-                                                                <Copy className="w-3 h-3" />
-                                                                <span>{zh ? '复制' : 'Copy'}</span>
-                                                              </>
-                                                            )}
-                                                          </button>
-                                                        </div>
-                                                      );
-                                                    })()}
-                                                  </div>
-                                                </div>
-                                              </div>
-                                            </motion.div>
-                                          </td>
-                                        </tr>
-                                      )}
-                                    </AnimatePresence>
-                                  </React.Fragment>
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border ${cfg.bg} ${cfg.text} ${cfg.border} text-[9px] font-bold uppercase tracking-wider shadow-sm max-w-[160px] truncate`}>
+                                    <Icon size={10} className="flex-shrink-0" />
+                                    <span className="truncate">{isScript ? `${zh ? '脚本: ' : 'Script: '}${scriptName}` : method}</span>
+                                  </span>
                                 );
-                              })
-                )}
+                              })()}
+                              <div className="flex gap-1.5">
+                                {item.warning_threshold !== undefined && item.warning_threshold !== null && (
+                                  <span className="px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-100 text-[9px] font-bold">
+                                    W: {item.warning_threshold}%
+                                  </span>
+                                )}
+                                {item.critical_threshold !== undefined && item.critical_threshold !== null && (
+                                  <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-100 text-[9px] font-bold">
+                                    C: {item.critical_threshold}%
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-xs text-black/60 italic">
+                          {isEditing ? (
+                            <div className="space-y-2" onClick={e => e.stopPropagation()}>
+                              <textarea
+                                value={form.description || ''}
+                                onChange={e => setForm({ ...form, description: e.target.value })}
+                                className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                rows={1}
+                                placeholder={zh ? "指标描述" : "Description"}
+                              />
+                              <textarea
+                                value={form.command || ''}
+                                onChange={e => setForm({ ...form, command: e.target.value })}
+                                className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none font-mono"
+                                rows={2}
+                                placeholder={zh ? "采集指令" : "Command"}
+                              />
+                            </div>
+                          ) : (
+                            <div className="line-clamp-2 max-w-[320px] break-all text-slate-400 text-[10px] font-medium leading-relaxed" title={item.description}>
+                              {item.description || (zh ? "暂无指标业务描述" : "No description")}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-2">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleUpdate(item.id, form); }}
+                                  className="p-1.5 rounded-lg hover:bg-cyan-50 text-cyan-600 transition-colors shadow-sm border border-cyan-100"
+                                  title={zh ? '保存' : 'Save'}
+                                >
+                                  <Save className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setEditingId(null); }}
+                                  className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 transition-colors shadow-sm border border-red-100"
+                                  title={zh ? '取消' : 'Cancel'}
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }}
+                                  className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 border border-slate-100 transition-all shadow-sm"
+                                  title={zh ? '编辑指标' : 'Edit Metric'}
+                                >
+                                  <Edit3 size={14} />
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
+                                  className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 border border-slate-100 transition-all shadow-sm"
+                                  title={zh ? '删除指标' : 'Delete Metric'}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      <AnimatePresence>
+                        {isExpanded && !isEditing && (
+                          <tr>
+                            <td colSpan={6} className="px-6 py-0 border-none">
+                              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                                <div className="py-4 px-8 bg-black/[0.01] rounded-xl mb-4 mt-1 border border-black/[0.03] grid grid-cols-1 md:grid-cols-2 gap-8 relative">
+                                  <div className="absolute top-4 left-4 w-1 h-12 bg-cyan-500/20 rounded-full" />
+                                  <div className="space-y-4">
+                                    <div>
+                                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-2">{zh ? '详细描述' : 'DETAILED DESCRIPTION'}</h4>
+                                      <p className="text-xs text-black/70 leading-relaxed font-medium break-all">{item.description || '-'}</p>
+                                    </div>
+                                    <div className="flex gap-8">
+                                      <div>
+                                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '更新时间' : 'UPDATED AT'}</h4>
+                                        <p className="text-[10px] font-mono text-black/40">{item.updated_at}</p>
+                                      </div>
+                                      <div>
+                                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '指标 ID' : 'METRIC ID'}</h4>
+                                        <p className="text-[10px] font-mono text-black/40 uppercase">{item.id}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="bg-white/40 backdrop-blur-sm p-5 rounded-2xl border border-black/[0.03] space-y-4 shadow-sm">
+                                    <div className="flex items-center justify-between">
+                                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/30">
+                                        {item.script_id ? (zh ? '自动化采集脚本源代码' : 'AUTOMATED SCRIPT SOURCE') : (zh ? '数据采集与指令' : 'ACQUISITION & COMMAND')}
+                                      </h4>
+                                      <div className="flex gap-2">
+                                        {item.oid && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); copyToClipboard(item.oid, `${item.id}-oid`); }}
+                                            title={zh ? '点击复制 OID' : 'Click to copy OID'}
+                                            className={`group/oid inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black shadow-lg transition-all active:scale-95 ${
+                                              copiedId === `${item.id}-oid`
+                                                ? 'bg-emerald-500 text-white shadow-emerald-500/20'
+                                                : 'bg-indigo-500 text-white shadow-indigo-500/20 hover:bg-indigo-600'
+                                            }`}
+                                          >
+                                            {copiedId === `${item.id}-oid` ? (
+                                              <>
+                                                <Check className="w-3 h-3" />
+                                                <span>{zh ? '已复制' : 'Copied'}</span>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <span className="font-mono tracking-tight">OID: {item.oid}</span>
+                                                <Copy className="w-3 h-3 opacity-60 group-hover/oid:opacity-100 transition-opacity" />
+                                              </>
+                                            )}
+                                          </button>
+                                        )}
+                                        <span className="px-2.5 py-1 rounded-lg bg-cyan-500 text-white text-[10px] font-black shadow-lg shadow-cyan-500/20">{item.method}</span>
+                                      </div>
+                                    </div>
+                                    <div className="bg-[#00172d] p-4 rounded-xl border border-white/5 relative overflow-hidden shadow-inner">
+                                      <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
+                                      {(() => {
+                                        const codeText = item.script_id
+                                          ? (scripts.find(s => s.id === item.script_id)?.content || '# Script content loading...')
+                                          : (item.command || (item.method?.toUpperCase() === 'SNMP' ? '# SNMP-only metric — no CLI command' : '# No command defined'));
+                                        const copyKey = `${item.id}-cmd`;
+                                        const isCopied = copiedId === copyKey;
+                                        return (
+                                          <div className="relative">
+                                            <code className="text-[11px] text-cyan-300 font-mono whitespace-pre-wrap break-all relative z-10 block pr-24 leading-relaxed">
+                                              {codeText}
+                                            </code>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); copyToClipboard(codeText, copyKey); }}
+                                              title={zh ? '复制代码' : 'Copy code'}
+                                              className={`absolute top-0 right-0 z-20 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border transition-all active:scale-95 ${
+                                                isCopied
+                                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                                  : 'bg-white/5 text-cyan-200/80 border-white/10 hover:bg-white/10 hover:text-cyan-100'
+                                              }`}
+                                            >
+                                              {isCopied ? (
+                                                <>
+                                                  <Check className="w-3 h-3" />
+                                                  <span>{zh ? '已复制' : 'Copied'}</span>
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <Copy className="w-3 h-3" />
+                                                  <span>{zh ? '复制' : 'Copy'}</span>
+                                                </>
+                                              )}
+                                            </button>
+                                          </div>
+                                        );
+                                      })()}
+                                    </div>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            </td>
+                          </tr>
+                        )}
+                      </AnimatePresence>
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
+          )}
         </div>
 
         {/* Pagination */}

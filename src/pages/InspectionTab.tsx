@@ -698,18 +698,37 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex flex-wrap gap-1.5 max-w-[300px]">
-                                {Object.entries(metrics).map(([key, val]) => (
-                                  <div key={key} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${typeof val === 'number' ? 'bg-slate-50 border-slate-200 text-slate-700' : 'bg-red-50 border-red-100 text-red-600'}`}>
-                                    <span className="opacity-50 mr-1">{key}:</span>
-                                    <span className="font-mono">{typeof val === 'number' ? val.toFixed(1) + (key.includes('util') || key.includes('avail') ? '%' : '') : String(val)}</span>
-                                  </div>
-                                ))}
+                                {Object.entries(metrics)
+                                  .filter(([key]) => !key.endsWith('_status'))
+                                  .map(([key, val]) => {
+                                    const status = metrics[`${key}_status`] || (typeof val === 'number' ? 'SUCCESS' : 'ERROR');
+                                    const isError = status === 'ERROR';
+                                    return (
+                                      <div key={key} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${!isError ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-100 text-red-600'}`}>
+                                        <span className="opacity-50 mr-1">{key}:</span>
+                                        <span className="font-mono">
+                                          {typeof val === 'number'
+                                            ? val.toFixed(1) + (key.includes('util') || key.includes('avail') || key.includes('pct') ? '%' : '')
+                                            : (val && typeof val === 'object' && 'error' in val)
+                                              ? String(val.error)
+                                              : String(val)}
+                                        </span>
+                                        <span className="ml-1 text-[8px] opacity-75">({status})</span>
+                                      </div>
+                                    );
+                                  })}
                                 {Object.keys(metrics).length === 0 && <span className="text-black/20 text-[10px] italic">No metrics collected</span>}
                               </div>
                             </td>
                             <td className="px-4 py-3">
-                              <div className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${statusToneMap[r.health_status] || statusToneMap.unknown}`}>
-                                {r.health_status} ({r.health_score ?? '—'})
+                              <div className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                                r.health_status === 'healthy' 
+                                  ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60' 
+                                  : (r.health_status === 'warning' || r.health_status === 'critical') 
+                                    ? 'bg-red-50 text-red-700 ring-1 ring-red-200/60' 
+                                    : 'bg-slate-50 text-slate-600 ring-1 ring-slate-200/60'
+                              }`}>
+                                {r.health_status === 'healthy' ? 'SUCCESS' : (r.health_status === 'warning' || r.health_status === 'critical') ? 'ERROR' : r.health_status} ({r.health_score ?? '—'})
                               </div>
                             </td>
                             <td className="px-4 py-3">

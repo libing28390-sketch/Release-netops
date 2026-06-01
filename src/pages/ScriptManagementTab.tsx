@@ -35,6 +35,8 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const [searchQuery, setSearchQuery] = useState('');
   const [platformFilter, setPlatformFilter] = useState('All');
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'inspection' | 'change' | 'system'>('all');
+  const [typeFilter, setTypeFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('All');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
@@ -182,6 +184,8 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const filteredScripts = useMemo(() => scripts.filter(s => {
     const matchesSearch = (s.name + (s.id||'') + (s.description||'')).toLowerCase().includes(searchQuery.toLowerCase());
     const matchesPlatform = matchesPlatformGroup(s.platform || '', platformFilter);
+    const matchesType = typeFilter === 'All' || (s.script_type || '').toLowerCase() === typeFilter.toLowerCase();
+    const matchesStatus = statusFilter === 'All' || (s.status || '').toLowerCase() === statusFilter.toLowerCase();
     
     let matchesCategory = true;
     if (categoryFilter === 'inspection') {
@@ -192,8 +196,8 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
       matchesCategory = s.submitter_name === 'system' || s.author === 'system';
     }
     
-    return matchesSearch && matchesPlatform && matchesCategory;
-  }), [scripts, searchQuery, platformFilter, categoryFilter]);
+    return matchesSearch && matchesPlatform && matchesType && matchesStatus && matchesCategory;
+  }), [scripts, searchQuery, platformFilter, categoryFilter, typeFilter, statusFilter]);
   const paginatedScripts = useMemo(() => filteredScripts.slice((currentPage - 1) * pageSize, currentPage * pageSize), [filteredScripts, currentPage, pageSize]);
 
   const isSystemScript = editForm.submitter_name === 'system' || editForm.author === 'system';
@@ -265,128 +269,143 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                 </div>
              </div>
           </div>
+
+          <div className="h-px bg-slate-100 dark:bg-white/5 w-full" />
+
+          <div className="flex flex-wrap items-center gap-6">
+             {/* Type Dropdown */}
+             <div className="flex items-center gap-2">
+               <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '语言类型' : 'Type'}:</span>
+               <select
+                 value={typeFilter}
+                 onChange={(e) => { setTypeFilter(e.target.value); setCurrentPage(1); }}
+                 className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 rounded-xl px-3 py-1.5 text-[11.5px] font-bold text-slate-600 dark:text-slate-300 outline-none focus:ring-1 focus:ring-[#00a9ce]"
+               >
+                 <option value="All">{zh ? '全部类型' : 'All Types'}</option>
+                 <option value="shell">Shell</option>
+                 <option value="python">Python</option>
+                 <option value="cli">CLI</option>
+               </select>
+             </div>
+
+             {/* Status Dropdown */}
+             <div className="flex items-center gap-2">
+               <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '审核状态' : 'Status'}:</span>
+               <select
+                 value={statusFilter}
+                 onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
+                 className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 rounded-xl px-3 py-1.5 text-[11.5px] font-bold text-slate-600 dark:text-slate-300 outline-none focus:ring-1 focus:ring-[#00a9ce]"
+               >
+                 <option value="All">{zh ? '全部状态' : 'All Status'}</option>
+                 <option value="draft">{zh ? '草稿' : 'Draft'}</option>
+                 <option value="pending_audit">{zh ? '待审核' : 'Pending Audit'}</option>
+                 <option value="released">{zh ? '已发布' : 'Released'}</option>
+                 <option value="rejected">{zh ? '已驳回' : 'Rejected'}</option>
+               </select>
+             </div>
+          </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-900/40 border border-slate-100 dark:border-white/5 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all">
-          {/* Table Header */}
-          <div className="grid grid-cols-12 gap-4 px-6 py-4 bg-slate-50 dark:bg-slate-800/30 border-b border-slate-100 dark:border-white/5 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-            <div className="col-span-4">{zh ? '脚本名称与标识' : 'Name & ID'}</div>
-            <div className="col-span-2 text-center">{zh ? '适用平台' : 'Platform'}</div>
-            <div className="col-span-2 text-center">{zh ? '脚本分类' : 'Category'}</div>
-            <div className="col-span-1 text-center">{zh ? '语言类型' : 'Type'}</div>
-            <div className="col-span-1 text-center">{zh ? '提交人' : 'Author'}</div>
-            <div className="col-span-1 text-center">{zh ? '状态' : 'Status'}</div>
-            <div className="col-span-1 text-right">{zh ? '操作' : 'Actions'}</div>
-          </div>
-          
-          {/* Table Body */}
-          <div className="divide-y divide-slate-100 dark:divide-white/5">
-            <AnimatePresence mode="popLayout">
-              {paginatedScripts.length > 0 ? (
-                paginatedScripts.map((script) => {
-                  const isSystem = script.submitter_name === 'system' || script.author === 'system';
-                  return (
-                    <motion.div
-                      key={script.id}
-                      layout
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      className="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors text-[13px] text-slate-700 dark:text-slate-200"
-                    >
-                      <div className="col-span-4 min-w-0">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${script.status === 'released' ? 'bg-[#00a9ce]/10 border-[#00a9ce]/20 text-[#00a9ce]' : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400'}`}>
-                            <FileCode size={16} />
-                          </div>
-                          <div className="truncate">
-                            <span className="font-bold block truncate text-slate-800 dark:text-slate-200" title={script.name}>{script.name}</span>
-                            <span className="text-[10.5px] text-slate-400 font-mono block truncate" title={script.id}>{script.id}</span>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="col-span-2 text-center">
-                        <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded text-[11px] font-medium font-mono uppercase">
-                          {script.platform}
-                        </span>
-                      </div>
-                      
-                      <div className="col-span-2 text-center">
-                        <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${script.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-cyan-500/10 text-[#00a9ce]'}`}>
-                          {script.category === 'change' ? (zh ? '配置下发' : 'Change') : (script.category === 'standard' ? (zh ? '性能指标' : 'Metric') : (zh ? '周期巡检' : 'Inspection'))}
-                        </span>
-                      </div>
-                      
-                      <div className="col-span-1 text-center font-mono text-[11px] uppercase text-slate-500 dark:text-slate-400">
-                        {script.script_type}
-                      </div>
-                      
-                      <div className="col-span-1 text-center text-slate-500 dark:text-slate-400 truncate" title={script.submitter_name}>
-                        {script.submitter_name || script.author}
-                      </div>
-                      
-                      <div className="col-span-1 text-center">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${STATUS_MAP[script.status]?.bg || STATUS_MAP.draft.bg} ${STATUS_MAP[script.status]?.color || STATUS_MAP.draft.color} ${STATUS_MAP[script.status]?.border || STATUS_MAP.draft.border}`}>
-                          {getStatusLabel(script.status)}
-                        </span>
-                      </div>
-                      
-                      <div className="col-span-1 text-right flex items-center justify-end gap-1.5">
-                        {/* 一键克隆复制系统/已有脚本 */}
-                        <button
-                          onClick={() => {
-                            setModalMode('create');
-                            setEditForm({
-                              ...script,
-                              id: `${script.id}_copy`,
-                              name: zh ? `${script.name} - 副本` : `${script.name} (Copy)`,
-                              status: 'draft',
-                              submitter_name: currentUser,
-                              approver_username: '',
-                              rejected_reason: '',
-                            });
-                            setIsModalOpen(true);
-                          }}
-                          className="p-1.5 rounded hover:bg-[#00a9ce]/10 text-slate-400 hover:text-[#00a9ce] transition-colors"
-                          title={zh ? '一键克隆为自定义脚本' : 'Clone/Copy as custom script'}
+        <div className="rounded-[24px] border border-slate-100 dark:border-white/5 overflow-hidden bg-white dark:bg-slate-900/20 shadow-lg">
+          <div className="overflow-x-auto no-scrollbar">
+            <table className="w-full text-left text-sm border-collapse">
+              <thead>
+                <tr className="bg-slate-50/50 dark:bg-slate-800/30 border-b border-slate-100 dark:border-white/5">
+                  <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '脚本名称' : 'Name'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '适用平台' : 'OS/Platform'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '分类' : 'Category'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '类型' : 'Type'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '状态' : 'Status'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '提交人' : 'Author'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '描述' : 'Description'}</th>
+                  <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider w-28 text-right">{zh ? '操作' : 'Actions'}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                <AnimatePresence mode="popLayout">
+                  {paginatedScripts.length > 0 ? (
+                    paginatedScripts.map((script) => {
+                      const isSystem = script.submitter_name === 'system' || script.author === 'system';
+                      return (
+                        <motion.tr
+                          key={script.id}
+                          layout
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="hover:bg-slate-50/40 dark:hover:bg-slate-800/20 transition-colors group"
                         >
-                          <Copy size={13.5} />
-                        </button>
-                        
-                        {/* 查看或编辑 */}
-                        <button 
-                          onClick={() => { setModalMode('edit'); setEditForm(script); setIsModalOpen(true); }} 
-                          className="p-1.5 rounded hover:bg-[#00a9ce]/10 text-slate-400 hover:text-[#00a9ce] transition-colors"
-                          title={isSystem ? (zh ? '查看系统内置脚本' : 'View system script') : (zh ? '编辑脚本' : 'Edit script')}
-                        >
-                          <Edit3 size={13.5} />
-                        </button>
-                        
-                        {/* 删除非系统内置脚本 */}
-                        {!isSystem ? (
-                          <button 
-                            onClick={() => { if(window.confirm(zh?'确认删除此脚本？':'Delete this script?')) fetch(`/api/scripts/${script.id}`, {method:'DELETE', headers:getHeaders()}).then(fetchScripts) }} 
-                            className="p-1.5 rounded hover:bg-rose-500/10 text-slate-400 hover:text-rose-500 transition-colors"
-                            title={zh ? '删除脚本' : 'Delete script'}
-                          >
-                            <Trash2 size={13.5} />
-                          </button>
-                        ) : (
-                          <div className="w-[26.5px]" />
-                        )}
-                      </div>
-                    </motion.div>
-                  );
-                })
-              ) : (
-                <div className="px-6 py-12 text-center text-[12px] text-slate-400 italic">
-                  {zh ? '暂无匹配的脚本数据' : 'No scripts found matching the filters'}
-                </div>
-              )}
-            </AnimatePresence>
+                          <td className="px-6 py-3.5">
+                            <div className="font-bold text-slate-700 dark:text-slate-200 text-[13px]">{script.name}</div>
+                            <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{script.id}</div>
+                          </td>
+                          <td className="px-6 py-3.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300">
+                            {script.platform}
+                          </td>
+                          <td className="px-6 py-3.5">
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${script.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-cyan-500/10 text-[#00a9ce]'}`}>
+                              {script.category === 'change' ? (zh ? '配置下发' : 'Change') : (script.category === 'standard' ? (zh ? '性能指标' : 'Metric') : (zh ? '周期巡检' : 'Inspection'))}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3.5">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase bg-slate-100 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 border border-slate-200/50 dark:border-slate-700/50">
+                              {script.script_type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3.5">
+                            <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase border ${STATUS_MAP[script.status]?.bg || STATUS_MAP.draft.bg} ${STATUS_MAP[script.status]?.color || STATUS_MAP.draft.color} ${STATUS_MAP[script.status]?.border || STATUS_MAP.draft.border}`}>
+                              {getStatusLabel(script.status)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3.5 text-[12px] text-slate-500 dark:text-slate-400 font-medium">
+                            {script.submitter_name || script.author || 'system'}
+                          </td>
+                          <td className="px-6 py-3.5 text-[12px] text-slate-400 dark:text-slate-500 max-w-xs truncate" title={script.description}>
+                            {script.description || '—'}
+                          </td>
+                          <td className="px-6 py-3.5 text-right">
+                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => {
+                                  setModalMode('create');
+                                  setEditForm({
+                                    ...script,
+                                    id: `${script.id}_copy`,
+                                    name: zh ? `${script.name} - 副本` : `${script.name} (Copy)`,
+                                    status: 'draft',
+                                    submitter_name: currentUser,
+                                    approver_username: '',
+                                    rejected_reason: '',
+                                  });
+                                  setIsModalOpen(true);
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-[#00a9ce] dark:hover:text-[#00a9ce] transition-colors"
+                                title={zh ? '克隆/复制为自定义脚本' : 'Clone/Copy as custom script'}
+                              >
+                                <Copy size={14} />
+                              </button>
+                              <button onClick={() => { setModalMode('edit'); setEditForm(script); setIsModalOpen(true); }} className="p-1.5 text-slate-400 hover:text-[#00a9ce] dark:hover:text-[#00a9ce] transition-colors"><Edit3 size={14} /></button>
+                              {!isSystem && (
+                                <button onClick={() => { if(window.confirm(zh?'删除？':'Delete?')) fetch(`/api/scripts/${script.id}`, {method:'DELETE', headers:getHeaders()}).then(fetchScripts) }} className="p-1.5 text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
+                              )}
+                            </div>
+                          </td>
+                        </motion.tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={8} className="px-6 py-12 text-center text-[12px] text-slate-400 italic">
+                        {zh ? '暂无匹配的脚本数据' : 'No scripts found matching the filters'}
+                      </td>
+                    </tr>
+                  )}
+                </AnimatePresence>
+              </tbody>
+            </table>
           </div>
         </div>
+
       </div>
 
 

@@ -288,6 +288,92 @@ echo "MISSING_COUNT: $missing"
 """,
      '检查进程存活状态，返回未运行的进程数', 'Linux', 'standard'),
 
+    ('std_linux_integrated', 'Linux 集成巡检脚本',
+     r"""#!/bin/bash
+# Linux 集成巡检脚本
+cores=$(grep -c ^processor /proc/cpuinfo)
+load=$(uptime | awk -F'load average:' '{print $2}' | cut -d, -f1 | xargs)
+cpu_load=$(awk -v l="$load" -v c="$cores" 'BEGIN{ if(c>0) printf "%.2f\n", (l/c)*100; else print 0 }')
+echo "cpu_load:$cpu_load"
+cpu_util=$(top -bn1 | grep "Cpu(s)" | sed 's/.*, *\([0-9.]*\)%* id.*/\1/' | awk '{print 100 - $1}')
+echo "cpu_util:$cpu_util"
+mem_avail=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2; have_a=1} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{ if(!have_a) a=f+b+c; if(t>0) printf "%.2f\n",(t-a)/t*100; else print 0 }' /proc/meminfo)
+echo "mem_avail:$mem_avail"
+swap_util=$(free | grep Swap | awk '{if ($2>0) print ($3/$2)*100; else print 0}')
+echo "swap_util:$swap_util"
+io_wait=$(iostat -c 1 2 2>/dev/null | grep -v "avg-cpu" | tail -1 | awk '{print $4}')
+if [ -z "$io_wait" ]; then
+  io_wait=$(vmstat 1 2 | tail -1 | awk '{print $16}')
+fi
+echo "io_wait:${io_wait:-0}"
+max_disk=$(df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk '{print $5}' | sed 's/%//' | sort -rn | head -1)
+echo "disk_util:${max_disk:-0}"
+max_inode=$(df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk '{print $5}' | sed 's/%//' | sort -rn | head -1)
+echo "inode_util:${max_inode:-0}"
+tcp_conns=$(ss -ant 2>/dev/null | grep ESTAB | wc -l)
+echo "tcp_conns:$tcp_conns"
+procs="sshd crond docker"
+missing=0
+for p in $procs; do
+  if ! pgrep -f "$p" > /dev/null; then
+    missing=$((missing + 1))
+  fi
+done
+echo "process_health:$missing"
+oom_events=$(dmesg 2>/dev/null | grep -iE "oom-killer|killed process" | wc -l)
+echo "oom_events:$oom_events"
+ro_mounts=$(mount 2>/dev/null | grep -E '\(ro[,$]|\(,ro,' | wc -l)
+echo "ro_mounts:$ro_mounts"
+kernel_errs=$(dmesg 2>/dev/null | tail -n 200 | grep -iE "critical|error|corrupt" | wc -l)
+echo "kernel_errs:$kernel_errs"
+zombie_procs=$(ps -ef | grep defunc | grep -v grep | wc -l)
+echo "zombie_procs:$zombie_procs"
+fd_util=$(cat /proc/sys/fs/file-nr 2>/dev/null | awk '{if ($3>0) printf "%.2f", ($1/$3)*100; else print 0}')
+echo "fd_util:${fd_util:-0}"
+net_errs=$(awk 'NR>2 {err+=$4+$5+$12+$13} END {print err}' /proc/net/dev 2>/dev/null)
+echo "net_errs:${net_errs:-0}"
+ntp_desync=1
+if chronyc tracking &>/dev/null; then
+  if chronyc tracking | grep -q "Reference ID"; then
+    ntp_desync=0
+  fi
+elif ntpq -p &>/dev/null; then
+  if ntpq -p | grep -q '^\*'; then
+    ntp_desync=0
+  fi
+fi
+echo "ntp_desync:$ntp_desync"
+dns_latency=$(curl -o /dev/null -s -w '%{time_namelookup}' --connect-timeout 2 http://www.baidu.com 2>/dev/null | awk '{print $1 * 1000}')
+if [ -z "$dns_latency" ] || [ "$dns_latency" = "0" ]; then
+  start_t=$(date +%s%3N 2>/dev/null || date +%s)
+  if getent hosts www.baidu.com &>/dev/null; then
+    end_t=$(date +%s%3N 2>/dev/null || date +%s)
+    diff=$((end_t - start_t))
+    if [ $diff -eq 0 ]; then diff=5; fi
+    dns_latency=$diff
+  else
+    dns_latency=9999
+  fi
+fi
+echo "dns_latency:${dns_latency:-9999}"
+uptime_s=$(cat /proc/uptime 2>/dev/null | awk '{print int($1)}')
+recent_reboot=0
+if [ ! -z "$uptime_s" ] && [ $uptime_s -lt 900 ]; then
+  recent_reboot=1
+fi
+echo "recent_reboot:$recent_reboot"
+core_dumps=$(find /var/crash/ -type f 2>/dev/null | wc -l)
+core_files=$(find /tmp/ -name "core.[0-9]*" 2>/dev/null | wc -l)
+echo "core_dumps_count:$((core_dumps + core_files))"
+disk_io_await=$(iostat -dx 1 2 2>/dev/null | awk '/^[a-zA-Z0-9]/ {if ($10 ~ /^[0-9]/) {sum+=$10; count++}} END {if (count>0) printf "%.2f", sum/count; else print 0}')
+echo "disk_io_await:${disk_io_await:-0}"
+tcp_close_wait=$(ss -ant 2>/dev/null | grep -i "close-wait" | wc -l)
+echo "tcp_close_wait:$tcp_close_wait"
+tcp_retrans_pct=$(awk '/^Tcp:/ {if ($13 != "") {out=$12; retrans=$13}} END {if (out > 0) printf "%.2f", (retrans/out)*100; else print 0}' /proc/net/snmp 2>/dev/null)
+echo "tcp_retrans_pct:${tcp_retrans_pct:-0}"""",
+     '集成巡检脚本，采集 CPU负载、CPU使用率、内存使用率、交换分区、IOWait、磁盘空间、Inode、TCP连接、关键进程、OOM事件、只读文件系统、内核错误日志、僵尸进程、文件句柄、网络报错、NTP同步状态、DNS延迟、最近重启、CoreDump奔溃、磁盘IO await延迟、TCP CLOSE_WAIT泄漏、TCP重传率', 'Linux', 'standard'),
+]
+
     # Cisco IOS / IOS-XE
     ('insp_cisco_ios_full', 'Cisco IOS 综合巡检', 'show version\nshow processes cpu sorted\nshow processes memory sorted\nshow environment temperature\nshow environment power all\nshow interfaces status\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Cisco IOS / IOS-XE 综合巡检脚本，覆盖 CPU/内存/温度/电源/接口/路由协议/路由数量', 'cisco_ios', 'inspection'),
     # Cisco NX-OS
@@ -788,22 +874,28 @@ def get_default_items(now: str) -> list[tuple]:
         ('net_mem', 'Memory Utilization', '内存利用率 (SNMP)', 'Network', 'memory', '监控网络设备内存消耗', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.48.1.1.1.5.1', '', 90, 98, 'Cisco', '1.3.6.1.4.1.9.9.48.1.1.1.5.1', now, now),
         ('net_bgp', 'BGP Peer Status', 'BGP 邻居状态', 'Network', 'bgp_neighbor', '监控 BGP 状态机', 'SSH', 'show ip bgp summary', '', 0, 1, 'Generic', '', now, now),
 
-        # --- Server / Host ---
-        ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min 负载相对于核心数的比例', 'Shell', 'std_linux_load', 'std_linux_load', 80, 150, 'Linux', '', now, now),
-        ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (0-100)', 'Shell', 'std_linux_cpu', 'std_linux_cpu', 90, 95, 'Linux', '', now, now),
-        ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统内存使用百分比 (0-100)', 'Shell', 'std_linux_mem', 'std_linux_mem', 85, 95, 'Linux', '', now, now),
-        ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控交换分区使用百分比 (0-100)', 'Shell', 'std_linux_swap', 'std_linux_swap', 70, 90, 'Linux', '', now, now),
-        ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'std_linux_iowait', 'std_linux_iowait', 15, 30, 'Linux', '', now, now),
-        ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控根分区空间占用 (0-100)', 'Shell', 'std_linux_disk', 'std_linux_disk', 90, 95, 'Linux', '', now, now),
-        ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控根分区 Inode 占用 (0-100)', 'Shell', 'std_linux_inode', 'std_linux_inode', 90, 95, 'Linux', '', now, now),
-        ('srv_disk_latency', 'Disk IO Latency', '磁盘 IO 延迟', 'Server', 'io_latency', '监控磁盘读写平均延迟 (ms)', 'Shell', 'std_linux_iowait', 'std_linux_iowait', 20, 50, 'Linux', '', now, now),
-        ('srv_net_conns', 'Active TCP Connections', '活动连接总数', 'Server', 'tcp_conns', '监控 TCP 活动连接总数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
-        ('srv_net_retrans', 'TCP Retransmission', 'TCP 重传率', 'Server', 'tcp_retrans', '监控 TCP 重传率 (%)', 'Shell', 'std_linux_conns', 'std_linux_conns', 5, 15, 'Linux', '', now, now),
-        ('srv_tcp_estab', 'ESTABLISHED Connections', 'ESTABLISHED 连接数', 'Server', 'tcp_estab', '监控 TCP ESTABLISHED 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
-        ('srv_tcp_time_wait', 'TIME_WAIT Connections', 'TIME_WAIT 连接数', 'Server', 'tcp_time_wait', '监控 TCP TIME_WAIT 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 1000, 2000, 'Linux', '', now, now),
-        ('srv_tcp_close_wait', 'CLOSE_WAIT Connections', 'CLOSE_WAIT 连接数', 'Server', 'tcp_close_wait', '监控 TCP CLOSE_WAIT 状态连接数 (连接泄漏风险)', 'Shell', 'std_linux_conns', 'std_linux_conns', 20, 100, 'Linux', '', now, now),
-        ('srv_tcp_syn_recv', 'SYN_RECV Connections', 'SYN_RECV 连接数', 'Server', 'tcp_syn_recv', '监控 TCP SYN_RECV 状态连接数 (SYN Flood 风险)', 'Shell', 'std_linux_conns', 'std_linux_conns', 100, 500, 'Linux', '', now, now),
-        ('srv_tcp_listen', 'LISTEN Ports', 'LISTEN 端口数', 'Server', 'tcp_listen', '监控 TCP LISTEN 监听端口数量', 'Shell', 'std_linux_conns', 'std_linux_conns', None, None, 'Linux', '', now, now),
+        ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min 负载相对于核心数的比例', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 80, 150, 'Linux', '', now, now),
+        ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (0-100)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 90, 95, 'Linux', '', now, now),
+        ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统内存使用百分比 (0-100)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 85, 95, 'Linux', '', now, now),
+        ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控交换分区使用百分比 (0-100)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 70, 90, 'Linux', '', now, now),
+        ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 15, 30, 'Linux', '', now, now),
+        ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控根分区空间占用 (0-100)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 90, 95, 'Linux', '', now, now),
+        ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控根分区 Inode 占用 (0-100)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 90, 95, 'Linux', '', now, now),
+        ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 5000, 10000, 'Linux', '', now, now),
+        ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定进程是否存在', 'Shell', 'std_linux_integrated', 'std_linux_integrated', None, 1, 'Linux', '', now, now),
+        ('srv_oom_events', 'OOM Killer Events', 'OOM 杀进程事件数', 'Server', 'oom_events', '监控系统最近是否触发过 OOM-killer 强制杀死过进程', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 5, 'Linux', '', now, now),
+        ('srv_ro_mounts', 'Read-only Mounts', '只读挂载文件系统数', 'Server', 'ro_mounts', '监控是否存在只读挂载的文件系统，防止硬盘故障', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 1, 'Linux', '', now, now),
+        ('srv_kernel_errs', 'Kernel Error Log Count', '内核严重报错日志数', 'Server', 'kernel_errs', '监控系统内核报错日志数量 (dmesg)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 10, 'Linux', '', now, now),
+        ('srv_zombie_procs', 'Zombie Processes', '僵尸进程数', 'Server', 'zombie_procs', '监控未能被正常回收的僵尸进程占用量', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 2, 5, 'Linux', '', now, now),
+        ('srv_fd_util', 'File Descriptor Utilization %', '文件句柄使用率', 'Server', 'fd_util', '监控系统已开启文件句柄数占上限的比例', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 80, 90, 'Linux', '', now, now),
+        ('srv_net_errs', 'Network Interface Errors/Drops', '网卡丢包与报错数', 'Server', 'net_errs', '监测系统所有网卡接口 errors 和 dropped 的总计数', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 10, 100, 'Linux', '', now, now),
+        ('srv_ntp_desync', 'NTP Desync Status', 'NTP 时间失步状态', 'Server', 'ntp_desync', '监控 NTP 本地时钟是否同步 (0=同步, 1=失步/失败)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 1, 'Linux', '', now, now),
+        ('srv_dns_latency', 'DNS Resolution Latency', 'DNS 解析延迟 (ms)', 'Server', 'dns_latency', '监控域名解析延迟 (单位: 毫秒，超时失败为 9999)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1000, 5000, 'Linux', '', now, now),
+        ('srv_recent_reboot', 'Recent Reboot Alert', '系统最近重启告警', 'Server', 'recent_reboot', '监控系统最近 15 分钟内是否重启过 (0=否, 1=是)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 1, 'Linux', '', now, now),
+        ('srv_core_dumps_count', 'Core Dump Files', 'CoreDump 崩溃文件数', 'Server', 'core_dumps_count', '监控系统关键目录和临时目录下崩溃文件数', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 1, 5, 'Linux', '', now, now),
+        ('srv_disk_io_await', 'Disk I/O Await Latency', '磁盘 I/O 等待延迟 (ms)', 'Server', 'disk_io_await', '监控系统磁盘平均读写响应等待耗时 (毫秒)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 20, 50, 'Linux', '', now, now),
+        ('srv_tcp_close_wait', 'TCP CLOSE_WAIT Connections', 'TCP CLOSE_WAIT 异常连接数', 'Server', 'tcp_close_wait', '监控系统处于 CLOSE_WAIT 异常未关闭状态的 TCP 连接数', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 50, 200, 'Linux', '', now, now),
+        ('srv_tcp_retrans_pct', 'TCP Retransmission Ratio %', 'TCP 协议栈重传段比例', 'Server', 'tcp_retrans_pct', '监控 TCP 协议栈中重传的报文比例 (%)', 'Shell', 'std_linux_integrated', 'std_linux_integrated', 2, 5, 'Linux', '', now, now),
     ]
 
 
