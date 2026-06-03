@@ -89,26 +89,35 @@ def _linux_change_password_commands(username: str, new_password: str) -> list[st
 
 _CHANGE_PASSWORD_HANDLERS: dict[str, Any] = {
     'cisco_ios': _cisco_change_password_commands,
+    'cisco_iosxe': _cisco_change_password_commands,
+    'cisco_xe': _cisco_change_password_commands,
     'cisco_nxos': _cisco_change_password_commands,
     'huawei_vrp': _huawei_change_password_commands,
     'h3c_comware': _h3c_change_password_commands,
+    'hp_comware': _h3c_change_password_commands,
     'arista_eos': _arista_change_password_commands,
     'linux': _linux_change_password_commands,
     'ubuntu': _linux_change_password_commands,
     'centos': _linux_change_password_commands,
     'debian': _linux_change_password_commands,
+    'redhat': _linux_change_password_commands,
 }
 
 # Exec-mode save commands per platform (run AFTER config mode exit)
 _SAVE_COMMANDS: dict[str, str] = {
     'cisco_ios': 'write memory',
+    'cisco_iosxe': 'write memory',
+    'cisco_xe': 'write memory',
     'cisco_nxos': 'copy running-config startup-config',
     'huawei_vrp': 'save force',
     'h3c_comware': 'save force',
+    'hp_comware': 'save force',
     'arista_eos': 'write memory',
     'linux': 'sync',
     'ubuntu': 'sync',
     'centos': 'sync',
+    'debian': 'sync',
+    'redhat': 'sync',
 }
 
 
@@ -205,6 +214,29 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
             logger.info(f"[Rotation] Overriding default platform to 'linux' because asset_type is 'server'")
         else:
             platform = 'cisco_ios'
+
+    # Smart inference: if platform is not a known handler key (e.g. someone stored
+    # a model name like "c2960-48" instead of "cisco_ios"), try to infer from
+    # vendor, model, or platform string keywords.
+    if platform not in _CHANGE_PASSWORD_HANDLERS:
+        vendor = (device.get('vendor') or '').lower()
+        combined = f"{vendor} {platform}".lower()
+        inferred = None
+        if 'cisco' in combined or 'c29' in combined or 'c93' in combined or 'c38' in combined or 'nexus' in combined:
+            inferred = 'cisco_nxos' if 'nxos' in combined or 'nexus' in combined else 'cisco_ios'
+        elif 'huawei' in combined or 'vrp' in combined:
+            inferred = 'huawei_vrp'
+        elif 'h3c' in combined or 'comware' in combined:
+            inferred = 'h3c_comware'
+        elif 'arista' in combined or 'eos' in combined:
+            inferred = 'arista_eos'
+        elif asset_type == 'server':
+            inferred = 'linux'
+        if inferred:
+            logger.warning(f"[Rotation] Platform '{platform}' not recognized, inferred as '{inferred}' from vendor/model")
+            platform = inferred
+        else:
+            logger.warning(f"[Rotation] Platform '{platform}' not recognized and could not be inferred")
 
     is_server = asset_type == 'server' or any(tag in platform for tag in ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server']) or 'server' in str(device.get('device_category') or '').lower()
     

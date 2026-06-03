@@ -250,20 +250,29 @@ class AssetCreate(BaseModel):
     auth_model: str = 'single'
     snmp_community: str = 'public'
     snmp_port: int = 161
+    management_port: int = 22
     device_category: str = ''
     power_watts: int = 0
 
-    @field_validator('u_height')
+    @field_validator('u_height', mode='before')
     @classmethod
-    def validate_u_height(cls, v: int) -> int:
-        return max(1, min(60, int(v) if v is not None else 1))
+    def validate_u_height(cls, v):
+        if v is None or v == '':
+            return 1
+        try:
+            return max(1, min(60, int(v)))
+        except (ValueError, TypeError):
+            return 1
 
-    @field_validator('planned_start_u')
+    @field_validator('planned_start_u', mode='before')
     @classmethod
-    def validate_planned_start_u(cls, v: Optional[int]) -> Optional[int]:
-        if v is None:
+    def validate_planned_start_u(cls, v):
+        if v is None or v == '':
             return None
-        vi = int(v)
+        try:
+            vi = int(v)
+        except (ValueError, TypeError):
+            return None
         if vi < 1 or vi > 60:
             return None
         return vi
@@ -277,6 +286,26 @@ class AssetCreate(BaseModel):
             return int(v)
         except (ValueError, TypeError):
             return 0
+
+    @field_validator('snmp_port', mode='before')
+    @classmethod
+    def validate_snmp_port(cls, v):
+        if v is None or v == '':
+            return 161
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return 161
+
+    @field_validator('management_port', mode='before')
+    @classmethod
+    def validate_management_port(cls, v):
+        if v is None or v == '':
+            return 22
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return 22
 
 
 class AssetUpdate(BaseModel):
@@ -878,20 +907,31 @@ def import_assets(items: list[AssetCreate]):
                     id, asset_type, asset_tag, serial_number, vendor, model, hostname,
                     datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                     vlan, uplink_switch, uplink_port,
-                    status, purchase_date, warranty_expiry, department, notes,
-                    platform, connection_method, username, password, snmp_community, snmp_port,
+                    status, lifecycle_status, purchase_date, warranty_expiry, department, notes,
+                    platform, connection_method, username, password,
+                    normal_username, normal_password, admin_username, admin_password,
+                    enable_password, auth_model,
+                    snmp_community, snmp_port, management_port, device_category, power_watts,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
                 body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
                 max(1, min(60, body.u_height)), body.planned_start_u,
                 body.management_ip, body.business_ip, body.device_role,
                 body.vlan, body.uplink_switch, body.uplink_port,
-                body.status,
+                body.status, body.lifecycle_status,
                 body.purchase_date, body.warranty_expiry, body.department, body.notes,
                 body.platform, body.connection_method, body.username, _safe_encrypt(body.password),
+                getattr(body, 'normal_username', '') or '',
+                _safe_encrypt(getattr(body, 'normal_password', '') or ''),
+                getattr(body, 'admin_username', '') or '',
+                _safe_encrypt(getattr(body, 'admin_password', '') or ''),
+                _safe_encrypt(getattr(body, 'enable_password', '') or ''),
+                getattr(body, 'auth_model', '') or 'single',
                 body.snmp_community, body.snmp_port,
+                getattr(body, 'management_port', 22) or 22,
+                body.device_category, body.power_watts,
                 now, now
             ))
             # Plan-A: auto-create linked device for managed assets
