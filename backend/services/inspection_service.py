@@ -811,6 +811,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         if err and value is None:
             # 命令级 / 解析级异常：写入 metrics_json 的 error 子字段（R2.9–R2.16）
             metrics[check_key] = {'value': None, 'error': err}
+            metrics[f"{check_key}_status"] = "ERROR"
             findings.append(make_finding(
                 'parse_error' if 'TextFSM' in err or '解析' in err or '模板' in err or '字段' in err else 'command_error',
                 f"{name_zh} 数据采集/解析失败: {err}",
@@ -822,6 +823,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             continue
 
         metrics[check_key] = value
+        is_abnormal = False
 
         # 阈值判定
         if parse_type in ('numeric', 'count') and isinstance(value, (int, float)):
@@ -834,6 +836,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                 health_deduct += 25
                 if result['health_status'] != 'critical':
                     result['health_status'] = 'critical'
+                is_abnormal = True
             elif warn_threshold is not None and value >= float(warn_threshold):
                 findings.append(make_finding(
                     'data_error',
@@ -843,6 +846,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                 health_deduct += 14
                 if result['health_status'] == 'healthy':
                     result['health_status'] = 'warning'
+                is_abnormal = True
 
         elif parse_type == 'diff' and isinstance(value, (int, float)):
             last_val = _get_last_metric_value(device_id, check_key)
@@ -859,6 +863,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                     health_deduct += 20
                     if result['health_status'] != 'critical':
                         result['health_status'] = 'critical'
+                    is_abnormal = True
                 elif warn_threshold is not None and change_pct >= float(warn_threshold):
                     findings.append(make_finding(
                         'data_error',
@@ -868,6 +873,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                     health_deduct += 10
                     if result['health_status'] == 'healthy':
                         result['health_status'] = 'warning'
+                    is_abnormal = True
 
         # SNMP status 类型（Fan/PSU 等）— 检查状态是否正常
         elif parse_type == 'status' and item_method == 'SNMP' and value is not None:
@@ -884,6 +890,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                 health_deduct += 10
                 if result['health_status'] == 'healthy':
                     result['health_status'] = 'warning'
+                is_abnormal = True
 
         # R8.3: 合规判定 — parse_type='status' 且 expected_value 非空时对比
         elif parse_type == 'status' and item.get('expected_value') and value is not None:
@@ -902,6 +909,9 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                     health_deduct += 5
                     if result['health_status'] == 'healthy':
                         result['health_status'] = 'warning'
+                    is_abnormal = True
+
+        metrics[f"{check_key}_status"] = "ERROR" if is_abnormal else "SUCCESS"
 
     # 5b. 计算合规状态（R8.5）
     compliance_items = [it for it in inspection_items if (it.get('category') or '').lower() == 'compliance']
@@ -1065,7 +1075,7 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
 
 
 def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], shell_items: list[dict]) -> dict[str, Any]:
-    """服务器巡检（Shell 脚本方式），保留原有逻辑。"""
+    """服务器巡检（Shell 脚本方式），整合优化后只执行一次集成脚本。"""
     device_id = str(device.get('id') or '')
     ip = device.get('ip_address') or ''
     hostname = device.get('hostname') or ip
@@ -1100,6 +1110,17 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
     findings = []
     raw_outputs = {}
 
+    def _parse_metric_from_integrated(output: str, key: str) -> float | None:
+        pattern = rf"^\s*{re.escape(key)}\s*:\s*([-+]?\d*\.\d+|\d+)"
+        for line in output.split('\n'):
+            match = re.search(pattern, line, re.IGNORECASE)
+            if match:
+                try:
+                    return float(match.group(1))
+                except ValueError:
+                    pass
+        return None
+
     conn = get_db_connection()
     try:
         # 综合巡检脚本优先：只要存在 insp_linux_full 就用它一次性采集所有指标。
@@ -1127,6 +1148,7 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                 ))
                 for item in shell_items:
                     metrics_results[item['check_key']] = {'value': None, 'error': raw_output}
+                    metrics_results[f"{item['check_key']}_status"] = "ERROR"
             else:
                 # Parse metrics from --- METRICS ---
                 parsed_metrics = {}
@@ -1152,14 +1174,22 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                 # Map parsed_metrics to metrics_results.
                 # 1) 先把综合脚本解析出的所有指标全部纳入结果（即使没有对应的
                 #    inspection_item 定义），保证 Dashboard / 报表能拿到数据。
-                #    这修复了「shell_items 为空时 metrics 全空」的问题。
                 for m_key, m_val in parsed_metrics.items():
                     metrics_results[m_key] = m_val
+                    metrics_results[f"{m_key}_status"] = "SUCCESS"
                 # 2) 对于显式定义但综合脚本未采集到的指标，标注缺失原因。
                 for item in shell_items:
                     ck = item['check_key']
                     if ck not in parsed_metrics:
                         metrics_results[ck] = {'value': None, 'error': '未在综合巡检中采集到此指标'}
+                        metrics_results[f"{ck}_status"] = "ERROR"
+                    else:
+                        val = parsed_metrics[ck]
+                        if isinstance(val, (int, float)):
+                            w = item.get('warning_threshold')
+                            c = item.get('critical_threshold')
+                            if (c is not None and val >= c) or (w is not None and val >= w):
+                                metrics_results[f"{ck}_status"] = "ERROR"
 
                 # Parse finding lines starting with [WARNING] or [ERROR]
                 total_errors = 0
@@ -1268,19 +1298,33 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                     raw_outputs['insp_linux_full'] = raw_output + "\n\n" + "\n".join(health_check_block)
 
         else:
-            # Fallback to original loop-based execution
+            # Group shell items by script_id to run each unique script only once
+            items_by_script = {}
             for item in shell_items:
                 script_id = item.get('script_id') or ''
-                if not script_id:
-                    continue
+                if script_id:
+                    items_by_script.setdefault(script_id, []).append(item)
 
+            # Run scripts and cache their raw outputs
+            script_outputs = {}
+            for script_id in items_by_script.keys():
                 script_row = conn.execute("SELECT content FROM scripts WHERE id = ?", (script_id,)).fetchone()
                 if not script_row:
                     continue
-
                 raw_output = _execute_shell_script(ip, script_row['content'], device)
+                script_outputs[script_id] = raw_output
+                raw_outputs[f"script_{script_id}"] = raw_output
+
+            # Process each shell item
+            for item in shell_items:
+                script_id = item.get('script_id') or ''
                 cmd_key = item.get('check_key') or f"script_{script_id}"
-                raw_outputs[cmd_key] = raw_output
+                
+                raw_output = script_outputs.get(script_id, '')
+                if not raw_output:
+                    metrics_results[item['check_key']] = {'value': None, 'error': '未获取到脚本输出'}
+                    metrics_results[f"{item['check_key']}_status"] = "ERROR"
+                    continue
 
                 if "ERROR:" in raw_output:
                     result['ssh_ok'] = 0
@@ -1294,15 +1338,20 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                         severity='critical',
                     ))
                     metrics_results[item['check_key']] = {'value': None, 'error': raw_output}
+                    metrics_results[f"{item['check_key']}_status"] = "ERROR"
                     continue
 
-                val = _extract_numeric_value(raw_output)
+                # Parse metric value (try integrated format first, then fallback to legacy)
+                val = _parse_metric_from_integrated(raw_output, item['check_key'])
+                if val is None:
+                    val = _extract_numeric_value(raw_output)
 
                 if val is not None:
                     metrics_results[item['check_key']] = val
                     w = item.get('warning_threshold')
                     c = item.get('critical_threshold')
 
+                    is_abnormal = False
                     if c is not None and val >= c:
                         findings.append(make_finding(
                             'data_error',
@@ -1310,6 +1359,7 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                             severity='critical',
                         ))
                         result['health_status'] = 'critical'
+                        is_abnormal = True
                     elif w is not None and val >= w:
                         findings.append(make_finding(
                             'data_error',
@@ -1318,8 +1368,12 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                         ))
                         if result['health_status'] != 'critical':
                             result['health_status'] = 'warning'
+                        is_abnormal = True
+                    
+                    metrics_results[f"{item['check_key']}_status"] = "ERROR" if is_abnormal else "SUCCESS"
                 else:
                     metrics_results[item['check_key']] = {'value': None, 'error': '采集失败或无法提取数值'}
+                    metrics_results[f"{item['check_key']}_status"] = "ERROR"
 
     except Exception as e:
         findings.append(make_finding(

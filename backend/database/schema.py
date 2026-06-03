@@ -1977,10 +1977,24 @@ def _init_db_logic(conn):
 
     now = _beijing_now_iso()
 
-    cursor.executemany(
-        'INSERT INTO scripts (id, name, content, description, platform, category) VALUES (?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, description = EXCLUDED.description',
-        std_scripts
-    )
+    if _USE_PG:
+        cursor.executemany(
+            'INSERT INTO scripts (id, name, content, description, platform, category) '
+            'VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO UPDATE SET '
+            'name = EXCLUDED.name, content = EXCLUDED.content, '
+            'description = EXCLUDED.description, platform = EXCLUDED.platform, '
+            'category = EXCLUDED.category',
+            std_scripts
+        )
+    else:
+        cursor.executemany(
+            'INSERT INTO scripts (id, name, content, description, platform, category) '
+            'VALUES (?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET '
+            'name = EXCLUDED.name, content = EXCLUDED.content, '
+            'description = EXCLUDED.description, platform = EXCLUDED.platform, '
+            'category = EXCLUDED.category',
+            std_scripts
+        )
 
     insp_script_ids = [
         'insp_cisco_ios_full', 'insp_cisco_nxos_full',
@@ -2020,6 +2034,14 @@ def _init_db_logic(conn):
                 (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', item)
+
+        valid_srv_ids = [item[0] for item in default_items if item[3] == 'Server']
+        if valid_srv_ids:
+            placeholders = ','.join(['%s' if _USE_PG else '?'] * len(valid_srv_ids))
+            cursor.execute(
+                f"DELETE FROM inspection_items WHERE category='Server' AND id NOT IN ({placeholders})",
+                tuple(valid_srv_ids)
+            )
 
     network_sql_columns = (
         'id, name, name_zh, category, check_key, description, method, command, script_id, '
