@@ -376,7 +376,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                 </tr>
               ) : rows.length > 0 ? (
                 rows.map(row => (
-                  <tr key={row.id} className="border-b border-black/5 hover:bg-black/[0.02] transition-colors">
+                  <tr key={row.device_id} className="border-b border-black/5 hover:bg-black/[0.02] transition-colors">
                     <td className="px-5 py-4 align-top">
                       <div className="flex items-center gap-2">
                         <div className={`h-2 w-2 flex-shrink-0 rounded-full ${row.device_status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
@@ -415,7 +415,8 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                         </button>
                         <button
                           onClick={() => void handleView(row)}
-                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2]"
+                          disabled={!row.id}
+                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2] disabled:opacity-40 disabled:hover:translate-y-0"
                           title={zh ? '查看配置' : 'View config'}
                         >
                           <Eye size={14} />
@@ -423,7 +424,8 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                         </button>
                         <button
                           onClick={() => handleDownload(row)}
-                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2]"
+                          disabled={!row.id}
+                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2] disabled:opacity-40 disabled:hover:translate-y-0"
                           title={zh ? '下载配置' : 'Download'}
                         >
                           <Download size={14} />
@@ -431,7 +433,8 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                         </button>
                         <button
                           onClick={() => setDeleteTarget(row)}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent bg-white text-red-400 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-all hover:-translate-y-0.5 hover:bg-red-50 hover:text-red-600"
+                          disabled={!row.id}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent bg-white text-red-400 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-all hover:-translate-y-0.5 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 disabled:hover:translate-y-0"
                           title={zh ? '删除备份' : 'Delete backup'}
                         >
                           <Trash2 size={14} />

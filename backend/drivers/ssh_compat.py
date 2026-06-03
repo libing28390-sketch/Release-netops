@@ -44,12 +44,14 @@ def build_netmiko_compatibility_kwargs() -> Dict[str, Any]:
       从而保留 diffie-hellman-group14-sha1、ssh-rsa 等 legacy 算法
     - use_keys/allow_agent 关闭本地 SSH agent 干扰
     - disable_sha2_fix 打开旧 Cisco/旧 Paramiko 兼容路径
+    - conn_timeout: 增加 SSH 连接/协商超时时间以防止慢速设备超时 (R2.7)
     """
     return {
         "disabled_algorithms": {},
         "use_keys": False,
         "allow_agent": False,
         "disable_sha2_fix": True,
+        "conn_timeout": 20,
     }
 
 

@@ -103,6 +103,10 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     enable_pwd  = getattr(body, 'enable_password', '') or ''
     auth_model  = getattr(body, 'auth_model', '') or 'single'
 
+    # Auto-detect dual-account mode if PAM credentials are provided
+    if auth_model == 'single' and (normal_user or admin_user or normal_pwd or admin_pwd):
+        auth_model = 'dual'
+
     # If PAM is in use but legacy username/password are empty, fill them from
     # the admin side so existing code paths that still read username/password
     # (e.g. quick connectivity check) keep working.
@@ -112,14 +116,20 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         if not pwd and admin_pwd:
             pwd = admin_pwd
 
+    # If credentials are provided during import, mark onboarding as verified
+    # so the user doesn't have to manually verify each device before takeover.
+    has_creds = bool((uname and pwd) or (admin_user and admin_pwd) or (normal_user and normal_pwd))
+    onboarding = 'verified' if has_creds else 'pending_credentials'
+
     conn.execute('''
         INSERT INTO devices (
             id, asset_id, hostname, ip_address, platform, status, compliance,
             username, password, sn, model, version, role, site, uptime,
             connection_method, vendor, snmp_community, snmp_port,
             normal_username, normal_password, admin_username, admin_password,
-            enable_password, auth_model, device_category, power_watts
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            enable_password, auth_model, device_category, power_watts,
+            onboarding_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         device_id, asset_id,
         body.hostname, body.management_ip,
@@ -134,6 +144,7 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         auth_model,
         getattr(body, 'device_category', '') or '',
         getattr(body, 'power_watts', 0) or 0,
+        onboarding,
     ))
     return device_id
 
@@ -592,7 +603,7 @@ def create_asset(body: AssetCreate):
 # ── Update ───────────────────────────────────────────────────────────
 
 @router.put('/assets/{asset_id}')
-def update_asset(asset_id: str, body: AssetUpdate):
+def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
     conn = get_db_connection()
     try:
         row = conn.execute('SELECT * FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
@@ -810,11 +821,12 @@ def update_asset(asset_id: str, body: AssetUpdate):
                             except Exception:
                                 pass
 
-                    threading.Thread(
-                        target=_bg_rotate,
-                        args=(_device_id, asset_id, old_lifecycle),
-                        daemon=True,
-                    ).start()
+                    if run_bg_rotate:
+                        threading.Thread(
+                            target=_bg_rotate,
+                            args=(_device_id, asset_id, old_lifecycle),
+                            daemon=True,
+                        ).start()
                     rotation_result = {'pending': True}
 
         return {
@@ -1087,32 +1099,161 @@ async def verify_asset_connectivity(asset_id: str):
         conn.close()
 
 
+TAKEOVER_CONCURRENCY = int(os.environ.get('TAKEOVER_CONCURRENCY', '10'))
+TAKEOVER_MAX_LIMIT = 100
+
+def _run_batch_takeover(tasks: list[dict]):
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from services.password_rotation_service import rotate_password
+
+    start_time = time.time()
+    total_tasks = len(tasks)
+    logger.info(f"[Batch Takeover] Starting batch takeover task for {total_tasks} devices... Concurrency limit: {TAKEOVER_CONCURRENCY} at a time.")
+
+    success_count = 0
+    failed_count = 0
+
+    def _worker(task):
+        nonlocal success_count, failed_count
+        dev_id = task['dev_id']
+        a_id = task['a_id']
+        old_lc = task['old_lc']
+        hostname = task['hostname']
+
+        try:
+            # Re-fetch current device state to check auth_model
+            bg_conn_init = get_db_connection()
+            try:
+                dev_state = bg_conn_init.execute('SELECT auth_model, hostname FROM devices WHERE id = ?', (dev_id,)).fetchone()
+            finally:
+                bg_conn_init.close()
+                
+            auth_model = dev_state['auth_model'] if dev_state else 'single'
+            hostname = dev_state['hostname'] if dev_state else dev_id
+            
+            # Scheme A: Start atomic takeover
+            if auth_model == 'dual':
+                logger.info(f"[Takeover] Starting Normal role for {hostname}")
+                normal_result = rotate_password(dev_id, role='normal')
+                if not normal_result.get('success'):
+                    raise Exception(f"普通账号改密失败: {normal_result.get('message')}")
+                logger.info(f"[Takeover] Normal role success for {hostname}")
+
+            logger.info(f"[Takeover] Starting Admin role for {hostname}")
+            admin_result = rotate_password(dev_id, role='admin')
+            
+            if admin_result and admin_result.get('success'):
+                logger.info(f"[Takeover] Admin role success for {hostname}. Transitioning to production.")
+                # SUCCESS: Commit lifecycle change and clear errors
+                bg_conn = get_db_connection()
+                try:
+                    bg_conn.execute(
+                        "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
+                        (dev_id,)
+                    )
+                    bg_conn.execute(
+                        "UPDATE physical_assets SET is_managed = 1, takeover_error = '' WHERE id = ?",
+                        (a_id,)
+                    )
+                    bg_conn.commit()
+                finally:
+                    bg_conn.close()
+                success_count += 1
+            else:
+                raise Exception(f"特权账号改密失败: {admin_result.get('message') if admin_result else '连接超时'}")
+
+        except Exception as e:
+            err_msg = str(e)
+            logger.error(f"[Takeover] FAILED for {dev_id}: {err_msg}")
+            failed_count += 1
+            try:
+                bg_conn_fail = get_db_connection()
+                # Rollback lifecycle status on failure
+                bg_conn_fail.execute(
+                    "UPDATE devices SET rotation_status = 'failed', lifecycle_status = ?, takeover_error = ? WHERE id = ?",
+                    (old_lc, err_msg, dev_id)
+                )
+                bg_conn_fail.execute(
+                    'UPDATE physical_assets SET lifecycle_status = ?, takeover_error = ? WHERE id = ?',
+                    (old_lc, err_msg, a_id)
+                )
+                bg_conn_fail.commit()
+                bg_conn_fail.close()
+            except Exception:
+                pass
+
+    with ThreadPoolExecutor(max_workers=TAKEOVER_CONCURRENCY) as executor:
+        executor.map(_worker, tasks)
+
+    duration = round(time.time() - start_time, 2)
+    logger.info(f"[Batch Takeover] Done - {success_count} succeeded, {failed_count} failed. Concurrency limit: {TAKEOVER_CONCURRENCY}. Total elapsed time: {duration} seconds.")
+
+
 @router.post('/assets/takeover/batch')
 def batch_takeover(body: BatchTakeoverRequest):
     """
     Batch transition multiple assets to production state, triggering atomic takeover.
     """
+    if len(body.asset_ids) > TAKEOVER_MAX_LIMIT:
+        raise HTTPException(status_code=400, detail=f'批量上收的设备数量超过上限（最多支持 {TAKEOVER_MAX_LIMIT} 台设备）')
+
     results = []
-    for asset_id in body.asset_ids:
-        try:
-            # Re-use the existing update logic for each asset
-            # This handles the lifecycle transition and triggers the background rotation
-            res = update_asset(asset_id, AssetUpdate(lifecycle_status='production'))
-            results.append({
-                'id': asset_id,
-                'status': 'triggered',
-                'message': 'Takeover process started in background'
-            })
-        except HTTPException as e:
-            results.append({
-                'id': asset_id,
-                'status': 'error',
-                'message': str(e.detail)
-            })
-        except Exception as e:
-            results.append({
-                'id': asset_id,
-                'status': 'error',
-                'message': str(e)
-            })
+    tasks = []
+    
+    conn = get_db_connection()
+    try:
+        for asset_id in body.asset_ids:
+            try:
+                # First check old lifecycle
+                row = conn.execute('SELECT lifecycle_status FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail='Asset not found')
+                old_lc = row['lifecycle_status']
+                
+                # Check linked device
+                device_row = conn.execute('SELECT id, hostname FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+                if not device_row:
+                    raise HTTPException(status_code=404, detail='Linked device not found')
+                dev_id = device_row['id']
+                hostname = device_row['hostname']
+                
+                # Run update_asset with run_bg_rotate=False
+                update_asset(asset_id, AssetUpdate(lifecycle_status='production'), run_bg_rotate=False)
+                
+                tasks.append({
+                    'dev_id': dev_id,
+                    'a_id': asset_id,
+                    'old_lc': old_lc,
+                    'hostname': hostname
+                })
+                
+                results.append({
+                    'id': asset_id,
+                    'status': 'triggered',
+                    'message': 'Takeover process started in background'
+                })
+            except HTTPException as e:
+                results.append({
+                    'id': asset_id,
+                    'status': 'error',
+                    'message': str(e.detail)
+                })
+            except Exception as e:
+                results.append({
+                    'id': asset_id,
+                    'status': 'error',
+                    'message': str(e)
+                })
+    finally:
+        conn.close()
+        
+    if tasks:
+        import threading
+        threading.Thread(
+            target=_run_batch_takeover,
+            args=(tasks,),
+            daemon=True
+        ).start()
+        
     return {'results': results}

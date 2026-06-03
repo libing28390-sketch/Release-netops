@@ -258,7 +258,7 @@ def list_latest_backups(
 
         if search and search.strip():
             fuzzy = f"%{search.strip().lower()}%"
-            where_clauses.append("(LOWER(cs.hostname) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ?)")
+            where_clauses.append("(LOWER(d.hostname) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ?)")
             params.extend([fuzzy, fuzzy])
 
         filter_sql = ''
@@ -266,30 +266,27 @@ def list_latest_backups(
             filter_sql = ' AND ' + ' AND '.join(where_clauses)
 
         count_sql = f'''
-            SELECT COUNT(DISTINCT cs.device_id)
-            FROM config_snapshots cs
-            LEFT JOIN devices d ON d.id = cs.device_id
-            INNER JOIN (
-                SELECT device_id, MAX(timestamp) AS max_ts
-                FROM config_snapshots GROUP BY device_id
-            ) latest ON cs.device_id = latest.device_id AND cs.timestamp = latest.max_ts
+            SELECT COUNT(*)
+            FROM devices d
             WHERE 1=1 {filter_sql}
         '''
         total = conn.execute(count_sql, tuple(params)).fetchone()[0]
 
         offset = (page - 1) * page_size
         data_sql = f'''
-            SELECT cs.id, cs.device_id, cs.hostname, cs.vendor, cs.trigger,
-                   cs.timestamp, cs.size, d.ip_address, d.status AS device_status,
-                   d.platform
-            FROM config_snapshots cs
-            LEFT JOIN devices d ON d.id = cs.device_id
-            INNER JOIN (
-                SELECT device_id, MAX(timestamp) AS max_ts
-                FROM config_snapshots GROUP BY device_id
-            ) latest ON cs.device_id = latest.device_id AND cs.timestamp = latest.max_ts
+            SELECT d.id AS device_id, d.hostname, d.vendor, d.ip_address, d.status AS device_status,
+                   d.platform, cs.id AS snapshot_id, cs.timestamp, cs.size, cs.trigger
+            FROM devices d
+            LEFT JOIN (
+                SELECT cs1.*
+                FROM config_snapshots cs1
+                INNER JOIN (
+                    SELECT device_id, MAX(timestamp) AS max_ts
+                    FROM config_snapshots GROUP BY device_id
+                ) cs2 ON cs1.device_id = cs2.device_id AND cs1.timestamp = cs2.max_ts
+            ) cs ON d.id = cs.device_id
             WHERE 1=1 {filter_sql}
-            ORDER BY cs.timestamp DESC
+            ORDER BY CASE WHEN cs.timestamp IS NULL THEN 1 ELSE 0 END, cs.timestamp DESC, d.hostname ASC
             LIMIT ? OFFSET ?
         '''
         rows = conn.execute(data_sql, tuple([*params, page_size, offset])).fetchall()
@@ -297,7 +294,7 @@ def list_latest_backups(
         items = []
         for r in rows:
             items.append({
-                'id': r['id'],
+                'id': r['snapshot_id'] or '',
                 'device_id': r['device_id'],
                 'hostname': r['hostname'],
                 'ip_address': r['ip_address'] or '',
@@ -305,7 +302,7 @@ def list_latest_backups(
                 'platform': r['platform'] or '',
                 'device_status': r['device_status'] or 'unknown',
                 'trigger': r['trigger'] or '',
-                'timestamp': r['timestamp'],
+                'timestamp': r['timestamp'] or '',
                 'size': r['size'] or 0,
             })
 
@@ -965,7 +962,8 @@ async def run_scheduled_backup(run_id: str | None = None):
     from api.devices import _record_instant_execution
     import time as _time
 
-    logger.info("[Scheduled Backup] Starting daily config backup for all online network devices...")
+    start_time = _time.time()
+    logger.info(f"[Scheduled Backup] Starting config backup task. Concurrency limit: {BACKUP_CONCURRENCY} devices at a time.")
     conn = get_db_connection()
     try:
         devices = conn.execute(
@@ -1164,9 +1162,11 @@ async def run_scheduled_backup(run_id: str | None = None):
             entry['devices'].append(result)
         return result
 
-    await asyncio.gather(*[_run_with_progress(dev) for dev in eligible])
-
-    logger.info(f"[Scheduled Backup] Done - {success_count} succeeded, {failed_count} failed, {skipped_count} skipped")
+    duration = round(_time.time() - start_time, 2)
+    logger.info(
+        f"[Scheduled Backup] Done - {success_count} succeeded, {failed_count} failed, {skipped_count} skipped. "
+        f"Concurrency limit: {BACKUP_CONCURRENCY}. Total elapsed time: {duration} seconds."
+    )
 
     # Mark run as finished
     if run_id and run_id in _backup_runs:

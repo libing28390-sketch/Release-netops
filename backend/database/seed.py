@@ -370,9 +370,9 @@ echo "disk_io_await:${disk_io_await:-0}"
 tcp_close_wait=$(ss -ant 2>/dev/null | grep -i "close-wait" | wc -l)
 echo "tcp_close_wait:$tcp_close_wait"
 tcp_retrans_pct=$(awk '/^Tcp:/ {if ($13 != "") {out=$12; retrans=$13}} END {if (out > 0) printf "%.2f", (retrans/out)*100; else print 0}' /proc/net/snmp 2>/dev/null)
-echo "tcp_retrans_pct:${tcp_retrans_pct:-0}"""",
+echo "tcp_retrans_pct:${tcp_retrans_pct:-0}"
+""",
      '集成巡检脚本，采集 CPU负载、CPU使用率、内存使用率、交换分区、IOWait、磁盘空间、Inode、TCP连接、关键进程、OOM事件、只读文件系统、内核错误日志、僵尸进程、文件句柄、网络报错、NTP同步状态、DNS延迟、最近重启、CoreDump奔溃、磁盘IO await延迟、TCP CLOSE_WAIT泄漏、TCP重传率', 'Linux', 'standard'),
-]
 
     # Cisco IOS / IOS-XE
     ('insp_cisco_ios_full', 'Cisco IOS 综合巡检', 'show version\nshow processes cpu sorted\nshow processes memory sorted\nshow environment temperature\nshow environment power all\nshow interfaces status\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Cisco IOS / IOS-XE 综合巡检脚本，覆盖 CPU/内存/温度/电源/接口/路由协议/路由数量', 'cisco_ios', 'inspection'),
