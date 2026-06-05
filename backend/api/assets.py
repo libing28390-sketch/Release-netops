@@ -6,6 +6,7 @@ auto-created / synced / cascade-deleted so that the asset registry serves as
 the single source of truth (Plan-A).
 """
 
+import os
 import uuid
 import logging
 import threading

@@ -37,6 +37,7 @@ import {
   Search,
   Server,
   Shield,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Star,
@@ -69,7 +70,7 @@ const iconMap: Record<string, React.ElementType> = {
   ClipboardCheck, ClipboardList, Clock, Code2, Columns3,
   FileCode2, FileEdit, FileSearch, FileText, GitCompare, Globe,
   History, Inbox, Key, LayoutDashboard, MapPin, Network, Package,
-  PlusCircle, Router, Search, Server, Shield, ShieldCheck,
+  PlusCircle, Router, Search, Server, Shield, ShieldAlert, ShieldCheck,
   SlidersHorizontal, Star, Tag, Terminal, Timer, TrendingUp,
   User, UserCheck, Users, Wrench, Zap,
 };

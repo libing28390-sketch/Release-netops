@@ -4,10 +4,11 @@ IP Locator API — 根据 IP 地址实时定位设备所在交换机端口。
 
 import logging
 from fastapi import APIRouter, HTTPException
-from schemas.schemas import IPLocateRequest, ConnectivityProbeRequest
+from schemas.schemas import IPLocateRequest, ConnectivityProbeRequest, PathDiagnoseRequest
 from core.rbac import require_role
 from services.ip_locator_service import locate_ip_async_with_options, get_arp_table_async, run_arp_sweep_async, get_mac_changes_async
 from services.connectivity_service import run_probe_async
+from services.diagnose_service import run_diagnose_async
 from services.audit_service import log_audit_event
 
 logger = logging.getLogger(__name__)
@@ -90,3 +91,34 @@ async def api_connectivity_probe(body: ConnectivityProbeRequest, user=require_ro
         target_name=body.target,
     )
     return result
+
+
+@router.post('/ip-locator/diagnose')
+async def api_path_diagnose(body: PathDiagnoseRequest, user=require_role("Viewer")):
+    """一键路径诊断。"""
+    try:
+        result = await run_diagnose_async(
+            source_ip=body.source_ip,
+            target_ip=body.target_ip,
+            port=body.port,
+            protocol=body.protocol,
+            vrf=body.vrf,
+            src_vrf=body.src_vrf,
+        )
+    except Exception as exc:
+        logger.error(f"[PathDiagnose] diagnose failed: {exc}")
+        raise HTTPException(status_code=500, detail=f'路径诊断失败: {exc}')
+
+    log_audit_event(
+        event_type="path.diagnose",
+        category="network",
+        severity="info",
+        status="success",
+        summary=f"Path diagnose: {body.source_ip} -> {body.target_ip}:{body.port} [{body.protocol}]",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ip_address",
+        target_name=body.target_ip,
+    )
+    return result
+

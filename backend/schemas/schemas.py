@@ -472,3 +472,39 @@ class RackDeviceUpdate(BaseModel):
     status: Optional[str] = None
     serial_number: Optional[str] = None
     asset_id: Optional[str] = None
+
+
+class PathDiagnoseRequest(BaseModel):
+    source_ip: str
+    target_ip: str
+    port: int = 443
+    protocol: str = 'TCP'
+    vrf: Optional[str] = None
+    src_vrf: Optional[str] = None
+
+    @field_validator('source_ip', 'target_ip')
+    @classmethod
+    def validate_ips(cls, v: str) -> str:
+        v = v.strip()
+        try:
+            _ipaddress.ip_address(v)
+        except ValueError:
+            raise ValueError(f'Invalid IP address: {v}')
+        return v
+
+    @field_validator('port')
+    @classmethod
+    def validate_port(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError('port must be between 1 and 65535')
+        return v
+
+    @field_validator('protocol')
+    @classmethod
+    def validate_protocol(cls, v: str) -> str:
+        allowed = {'TCP', 'UDP', 'ICMP'}
+        v = v.upper()
+        if v not in allowed:
+            raise ValueError(f'protocol must be one of {allowed}')
+        return v
+

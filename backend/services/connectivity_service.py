@@ -142,17 +142,18 @@ def _server_traceroute(target: str, max_hops: int = 15, timeout: int = 3) -> dic
 # 设备侧探测
 # ──────────────────────────────────────────────
 
-def _load_device(device_id: int) -> dict | None:
+def _load_device(device_id: str | int) -> dict | None:
     """加载设备信息并解密密码。"""
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT id, hostname, ip_address, device_type, username, password, enable_password, priv_username, port, credential_source, vault_path "
+            "SELECT id, hostname, ip_address, platform, username, password, enable_password, priv_username, management_port AS port, credential_source, vault_path "
             "FROM devices WHERE id = ?", (device_id,)
         ).fetchone()
         if not row:
             return None
         d = dict(row)
+        d['device_type'] = d.get('platform') or 'cisco_ios'
         creds = resolve_device_credentials(d)
         d['username'] = creds['username'] or d.get('username', '')
         d['password'] = creds['password']
@@ -313,7 +314,7 @@ def run_probe(
     target: str,
     tests: list[str] | None = None,
     tcp_ports: list[int] | None = None,
-    source_device_id: int | None = None,
+    source_device_id: str | int | None = None,
     source_interface: str = '',
     ping_count: int = 4,
 ) -> dict[str, Any]:
@@ -379,7 +380,7 @@ async def run_probe_async(
     target: str,
     tests: list[str] | None = None,
     tcp_ports: list[int] | None = None,
-    source_device_id: int | None = None,
+    source_device_id: str | int | None = None,
     source_interface: str = '',
     ping_count: int = 4,
 ) -> dict[str, Any]:

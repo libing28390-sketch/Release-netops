@@ -1121,9 +1121,15 @@ const AppMainContent: React.FC = () => {
         </Suspense>
       )}
 
+      {activeTab === 'path-diagnose' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <IPLocatorPage language={language} t={t} mode="diagnose-only" />
+        </Suspense>
+      )}
+
       {activeTab === 'ip-locator' && (
         <Suspense fallback={lazyPanelFallback}>
-          <IPLocatorPage language={language} t={t} />
+          <IPLocatorPage language={language} t={t} mode="toolbox" />
         </Suspense>
       )}
 

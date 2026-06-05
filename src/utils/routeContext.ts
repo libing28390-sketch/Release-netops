@@ -75,6 +75,8 @@ export function getRouteContext(pathname: string): RouteContext {
       inventorySubPage = 'servers';
     } else if (second === 'ipam') {
       activeTab = 'ipam';
+    } else if (second === 'diagnose') {
+      activeTab = 'path-diagnose';
     } else if (second === 'toolbox') {
       activeTab = 'ip-locator';
     } else if (second === 'tags') {
@@ -154,6 +156,7 @@ export function getRouteContext(pathname: string): RouteContext {
     else if (first === 'alert-rules') activeTab = 'alert-rules';
     else if (first === 'maintenance') activeTab = 'maintenance';
     else if (first === 'ipam') activeTab = 'ipam';
+    else if (first === 'path-diagnose') activeTab = 'path-diagnose';
     else if (first === 'ip-locator') activeTab = 'ip-locator';
     else if (first === 'tags') activeTab = 'tags';
     else if (first === 'racks') activeTab = 'racks';

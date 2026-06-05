@@ -36,6 +36,15 @@ interface AccessCenterTabProps {
 export default function AccessCenterTab({ devices, language, showToast }: AccessCenterTabProps) {
   const isZh = language === 'zh';
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Read ?q= URL param on mount to pre-fill search (deep-link from NPA hop popover)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const q = params.get('q');
+      if (q) setSearchQuery(q);
+    } catch { /* ignore */ }
+  }, []);
   const [activeProtocol, setActiveProtocol] = useState('ALL');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);

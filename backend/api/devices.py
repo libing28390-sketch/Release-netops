@@ -340,7 +340,7 @@ def read_devices(
     sort_key: Optional[str] = Query(default=None),
     sort_direction: Optional[str] = Query(default='asc'),
     page: Optional[int] = Query(default=None, ge=1),
-    page_size: Optional[int] = Query(default=None, ge=1, le=200),
+    page_size: Optional[int] = Query(default=None, ge=1, le=1000),
     asset_type: Optional[str] = Query(default='all'),
 ):
     conn = get_db_connection()

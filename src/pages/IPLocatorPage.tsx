@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download, X } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download, X, ShieldAlert, Check, Play, FileText, Copy, Router, ExternalLink, Cpu, MemoryStick, Eye } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import * as XLSX from 'xlsx';
@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 interface IPLocatorPageProps {
   language: string;
   t: (key: string) => string;
+  mode?: 'diagnose-only' | 'toolbox';
 }
 
 interface LocationEntry {
@@ -58,7 +59,7 @@ interface ProbeResult {
   };
 }
 
-type TabMode = 'locate' | 'probe' | 'arp-table' | 'mac-changes';
+type TabMode = 'locate' | 'probe' | 'arp-table' | 'mac-changes' | 'diagnose';
 
 interface ArpEntry {
   ip: string;
@@ -114,9 +115,14 @@ function formatRelativeTime(isoStr: string, zhLang: boolean): string {
   }
 }
 
-const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
+const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const zh = language === 'zh';
-  const [activeTab, setActiveTab] = useState<TabMode>('locate');
+  const [activeTab, setActiveTab] = useState<TabMode>(mode === 'diagnose-only' ? 'diagnose' : 'locate');
+
+  useEffect(() => {
+    setActiveTab(mode === 'diagnose-only' ? 'diagnose' : 'locate');
+  }, [mode]);
+
   const [ip, setIp] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<LocateResult | null>(null);
@@ -130,9 +136,21 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
   const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
   const [probeError, setProbeError] = useState('');
   const [probePorts, setProbePorts] = useState('22, 80, 443');
-  const [probeTests, setProbeTests] = useState<Set<string>>(new Set(['ping', 'tcp', 'traceroute']));
-  const [devices, setDevices] = useState<{ id: number; hostname: string; ip_address: string }[]>([]);
+  const [probeTests, setProbeTests] = useState<Set<string>>(new Set(['ping']));
+  const [devices, setDevices] = useState<{ id: number; hostname: string; ip_address: string; platform?: string; cpu_usage?: number; memory_usage?: number; status?: string; model?: string; vendor?: string; role?: string; device_category?: string }[]>([]);
+  const [allDevices, setAllDevices] = useState<{ id: number; hostname: string; ip_address: string; platform?: string; cpu_usage?: number; memory_usage?: number; status?: string; model?: string; vendor?: string; role?: string; device_category?: string }[]>([]);
   const [sourceDeviceId, setSourceDeviceId] = useState<number | null>(null);
+
+  // ── CMDB Autocomplete state ──
+  const [showSourceDropdown, setShowSourceDropdown] = useState(false);
+  const [showTargetDropdown, setShowTargetDropdown] = useState(false);
+  const sourceDropdownRef = useRef<HTMLDivElement>(null);
+  const targetDropdownRef = useRef<HTMLDivElement>(null);
+
+  // ── Hop popover state ──
+  const [activeHopIdx, setActiveHopIdx] = useState<number | null>(null);
+  const [cmdbFilterQuery, setCmdbFilterQuery] = useState('');
+  const hopPopoverRef = useRef<HTMLDivElement>(null);
 
   // ── ARP Table state ──
   const [arpTable, setArpTable] = useState<ArpTableData | null>(null);
@@ -151,7 +169,219 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
   const [macPage, setMacPage] = useState(1);
   const [macPageSize, setMacPageSize] = useState(10);
 
+  // ── Path Diagnose state ──
+  const [diagHistory, setDiagHistory] = useState<{
+    source_ip: string;
+    target_ip: string;
+    protocol: string;
+    port: string;
+    vrf: string;
+    conclusion: string;
+    timestamp: string;
+  }[]>(() => {
+    try {
+      const stored = localStorage.getItem('nexora_npa_history');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [diagSourceIp, setDiagSourceIp] = useState('10.1.1.10');
+  const [diagTargetIp, setDiagTargetIp] = useState('172.16.1.100');
+  const [diagPort, setDiagPort] = useState('443');
+  const [diagProtocol, setDiagProtocol] = useState('TCP');
+  const [diagVrf, setDiagVrf] = useState('');
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [diagResult, setDiagResult] = useState<any>(null);
+  const [diagError, setDiagError] = useState('');
+  const [diagCurrentStep, setDiagCurrentStep] = useState<number>(-1);
+  const [copiedCmd, setCopiedCmd] = useState(false);
+  const [selectedStepIdx, setSelectedStepIdx] = useState<number | null>(null);
+
   const token = localStorage.getItem('netops_token') || '';
+
+  const getStepNames = useCallback(() => {
+    const p8Name = diagProtocol === 'ICMP' ? "P8. ICMP 验证 (ICMP Validation)" : `P8. ${diagProtocol} 验证 (${diagProtocol} Validation)`;
+    return [
+      "P0. VRF 发现 (VRF Discovery)",
+      "P1. 资产发现 (Asset Discovery)",
+      "P2. 目标分类 (Target Classification)",
+      "P3. ARP 分析 (ARP Analysis)",
+      "P4. MAC 定位 (MAC Analysis)",
+      "P5. 路由递归 (Route Recursion)",
+      "P5.5. FIB 验证 (FIB Verification)",
+      "P6. 策略分析 (Policy Analysis)",
+      "P6.5. BGP 分析 (BGP Analysis)",
+      "P7. Overlay 分析 (Overlay Analysis)",
+      "P7.5. HA 分析 (HA Analysis)",
+      p8Name,
+      "P8.5. 性能分析 (Performance Analysis)",
+      "P9. AI 根因推导 (AI Root Cause Engine)",
+      "P10. 智能报告 (Smart Report)"
+    ];
+  }, [diagProtocol]);
+
+  const doDiagnose = useCallback(async (
+    overrideSrc?: string,
+    overrideTgt?: string,
+    overrideProto?: string,
+    overridePort?: string,
+    overrideVrf?: string
+  ) => {
+    const srcIp = (overrideSrc !== undefined ? overrideSrc : diagSourceIp).trim();
+    const tgtIp = (overrideTgt !== undefined ? overrideTgt : diagTargetIp).trim();
+    const proto = overrideProto !== undefined ? overrideProto : diagProtocol;
+    const portStr = overridePort !== undefined ? overridePort : diagPort;
+    const vrf = overrideVrf !== undefined ? overrideVrf : diagVrf;
+
+    if (!srcIp || !tgtIp) return;
+    setDiagLoading(true);
+    setDiagError('');
+    setDiagResult(null);
+    setDiagCurrentStep(0);
+    setSelectedStepIdx(null);
+
+    // Sync input fields if overridden
+    if (overrideSrc !== undefined) setDiagSourceIp(overrideSrc);
+    if (overrideTgt !== undefined) setDiagTargetIp(overrideTgt);
+    if (overrideProto !== undefined) setDiagProtocol(overrideProto);
+    if (overridePort !== undefined) setDiagPort(overrideProto === 'ICMP' ? '' : overridePort);
+    if (overrideVrf !== undefined) setDiagVrf(overrideVrf);
+
+    const stepNames = getStepNames();
+    
+    let currentStepIdx = 0;
+    const interval = setInterval(() => {
+      // 自动前进到 P5 路由递归。之后需要等待真实的 API 结果。
+      if (currentStepIdx < 5) {
+        currentStepIdx += 1;
+        setDiagCurrentStep(currentStepIdx);
+      } else {
+        clearInterval(interval);
+      }
+    }, 500);
+
+    try {
+      const resp = await fetch('/api/ip-locator/diagnose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          source_ip: srcIp,
+          target_ip: tgtIp,
+          port: parseInt(portStr, 10) || 443,
+          protocol: proto,
+          vrf: vrf.trim() || undefined,
+        }),
+      });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error(errData.detail || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      
+      clearInterval(interval);
+      setDiagCurrentStep(stepNames.length - 1);
+      setDiagResult(data);
+
+      // Save to local diagnostic history
+      setDiagHistory(prev => {
+        const newEntry = {
+          source_ip: srcIp,
+          target_ip: tgtIp,
+          protocol: proto,
+          port: proto === 'ICMP' ? 'N/A' : portStr,
+          vrf: vrf.trim(),
+          conclusion: data.report?.conclusion || 'unknown',
+          timestamp: new Date().toISOString(),
+        };
+        const filtered = prev.filter(h => !(h.source_ip === srcIp && h.target_ip === tgtIp && h.protocol === proto && h.port === newEntry.port && h.vrf === newEntry.vrf));
+        const updated = [newEntry, ...filtered].slice(0, 10);
+        try {
+          localStorage.setItem('nexora_npa_history', JSON.stringify(updated));
+        } catch { /* noop */ }
+        return updated;
+      });
+    } catch (e: unknown) {
+      clearInterval(interval);
+      setDiagError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDiagLoading(false);
+    }
+  }, [diagSourceIp, diagTargetIp, diagPort, diagProtocol, diagVrf, token, getStepNames]);
+
+  const exportToMarkdown = (res: any) => {
+    if (!res || !res.report) return;
+    const rep = res.report;
+    const stepsText = res.steps ? res.steps.map((s: any) => {
+      let mark = '[-]';
+      if (s.status === 'success') mark = '[x]';
+      else if (s.status === 'failed') mark = '[!]';
+      else if (s.status === 'warning') mark = '[?]';
+      return `- ${mark} **${s.name}**: ${s.message || s.desc || ''}`;
+    }).join('\n') : '';
+
+    const evidenceText = rep.evidence && rep.evidence.length > 0
+      ? rep.evidence.map((ev: string) => `- ⚠️ ${ev}`).join('\n')
+      : (zh ? '无' : 'None');
+
+    const markdown = `# Smart NPA 智能路径诊断报告
+
+- **诊断时间**: ${res.timestamp?.replace('T', ' ').slice(0, 19) || ''}
+- **源 IP 地址**: ${res.source_ip || ''}
+- **目标 IP 地址**: ${res.target_ip || ''}
+- **协议/端口**: ${res.protocol || 'TCP'}${res.protocol !== 'ICMP' ? `:${res.port || '443'}` : ''}
+- **诊断结论**: ${rep.conclusion === 'interrupted' ? (zh ? '检测到阻断' : 'Blocked') : (zh ? '路径可达' : 'Reachable')}
+- **AI 置信度**: ${rep.confidence || 'N/A'}
+
+---
+
+## 🛠 诊断验证清单 (AI Checklist)
+
+${stepsText}
+
+---
+
+## ⚠️ 关键根因证据 (Key Evidences)
+
+${evidenceText}
+
+---
+
+## 📄 诊断结论与分析
+
+### 1. 结论详情
+${rep.conclusion === 'interrupted' ? (zh ? `路径中断于设备：${rep.interrupted_at}` : `Path blocked at device: ${rep.interrupted_at}`) : (zh ? '全路径网络连通性正常' : 'End-to-end connectivity is normal')}
+
+### 2. 根因分析
+${rep.reason || ''}
+
+### 3. 业务影响范围
+${rep.impact || ''}
+
+### 4. 修复与优化建议
+${rep.suggestion || ''}
+
+${rep.repair_commands ? `---
+
+## 💻 修复命令 (Recommended CLI Fixes)
+
+\`\`\`
+${rep.repair_commands}
+\`\`\`
+` : ''}
+`;
+
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `NPA_Report_${res.target_ip || 'npa'}_${new Date().toISOString().slice(0, 10)}.md`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
 
   // 加载设备列表用于设备侧探测 (使用 mode=light 和 page_size=500 防止加载过慢)
   useEffect(() => {
@@ -159,10 +389,68 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       .then(r => r.ok ? r.json() : { items: [] })
       .then(data => {
         const list = Array.isArray(data) ? data : data?.items || data?.data || [];
+        setAllDevices(list);
         setDevices(list.filter((d: any) => d.status === 'online' && d.username));
       })
       .catch(() => {});
   }, [token]);
+
+  // ── CMDB autocomplete helpers ──
+  const isServerPlatform = useCallback((platform: string) => {
+    const p = (platform || '').toLowerCase();
+    return ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'server', 'windows'].some(k => p.includes(k));
+  }, []);
+
+  const filterCmdbDevices = useCallback((query: string) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allDevices.slice(0, 12);
+    return allDevices.filter(d =>
+      (d.hostname || '').toLowerCase().includes(q) ||
+      (d.ip_address || '').toLowerCase().includes(q) ||
+      (d.model || '').toLowerCase().includes(q)
+    ).slice(0, 12);
+  }, [allDevices]);
+
+  const sourceMatches = useMemo(() => filterCmdbDevices(diagSourceIp), [filterCmdbDevices, diagSourceIp]);
+  const targetMatches = useMemo(() => filterCmdbDevices(diagTargetIp), [filterCmdbDevices, diagTargetIp]);
+
+  const quickSelectDevices = useMemo(() => {
+    const q = cmdbFilterQuery.toLowerCase().trim();
+    if (!q) return allDevices.slice(0, 6);
+    return allDevices.filter(d => 
+      (d.hostname || '').toLowerCase().includes(q) || 
+      (d.ip_address || '').toLowerCase().includes(q) ||
+      (d.model || '').toLowerCase().includes(q)
+    ).slice(0, 10);
+  }, [allDevices, cmdbFilterQuery]);
+
+  // Click-outside handler for dropdowns and escape key for modal
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (sourceDropdownRef.current && !sourceDropdownRef.current.contains(e.target as Node)) {
+        setShowSourceDropdown(false);
+      }
+      if (targetDropdownRef.current && !targetDropdownRef.current.contains(e.target as Node)) {
+        setShowTargetDropdown(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setActiveHopIdx(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  // Find CMDB device by IP for hop popover
+  const findDeviceByIp = useCallback((ip: string) => {
+    return allDevices.find(d => d.ip_address === ip) || null;
+  }, [allDevices]);
 
   // 切换到 ARP 表 tab 时自动加载
   const fetchArpTable = useCallback(async () => {
@@ -329,45 +617,56 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <PageHero
-        icon={MapPin}
-        title={zh ? 'IP 工具箱' : 'IP Toolbox'}
-        subtitle={zh ? 'IP 地址定位 · 连通性探测 · 全链路诊断' : 'IP Locate · Connectivity Probe · Full-path Diagnostics'}
+        icon={mode === 'diagnose-only' ? ShieldAlert : MapPin}
+        title={mode === 'diagnose-only' ? (zh ? 'NPA 智能路径诊断' : 'NPA Path Diagnostics') : (zh ? 'IP 工具箱' : 'IP Toolbox')}
+        subtitle={mode === 'diagnose-only' ? (zh ? '网络协议与路径全链条故障排查与一键式诊断' : 'End-to-end network protocol and path diagnostics') : (zh ? 'IP 地址定位 · 连通性探测 · 全链路诊断' : 'IP Locate · Connectivity Probe · Full-path Diagnostics')}
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
       {/* ── Tab Bar ── */}
-      <div className="flex gap-1 bg-black/[0.03] dark:bg-white/[0.04] rounded-xl p-1 w-fit">
-        <button
-          onClick={() => setActiveTab('locate')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'locate' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
-        >
-          <MapPin size={14} />
-          {zh ? 'IP 定位' : 'IP Locate'}
-        </button>
-        <button
-          onClick={() => setActiveTab('probe')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'probe' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
-        >
-          <Activity size={14} />
-          {zh ? '连通性探测' : 'Connectivity Probe'}
-        </button>
-        <button
-          onClick={() => setActiveTab('arp-table')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'arp-table' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
-        >
-          <Database size={14} />
-          {zh ? 'ARP 表' : 'ARP Table'}
-          {arpTable && <span className="text-[10px] bg-[#06b6d4]/10 text-[#0891b2] rounded-full px-1.5 py-0.5 font-mono">{arpTable.total}</span>}
-        </button>
-        <button
-          onClick={() => setActiveTab('mac-changes')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'mac-changes' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
-        >
-          <RefreshCw size={14} />
-          {zh ? 'MAC 变更' : 'MAC Changes'}
-          {macChanges && macChanges.total > 0 && <span className="text-[10px] bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 rounded-full px-1.5 py-0.5 font-mono">{macChanges.total}</span>}
-        </button>
-      </div>
+      {mode !== 'diagnose-only' && (
+        <div className="flex gap-1 bg-black/[0.03] dark:bg-white/[0.04] rounded-xl p-1 w-fit">
+          {mode !== 'toolbox' && (
+            <button
+              onClick={() => setActiveTab('diagnose')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'diagnose' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
+            >
+              <ShieldAlert size={14} className="text-rose-500" />
+              {zh ? 'NPA 智能路径诊断' : 'NPA Path Diagnostics'}
+            </button>
+          )}
+          <button
+            onClick={() => setActiveTab('locate')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'locate' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
+          >
+            <MapPin size={14} />
+            {zh ? 'IP 定位' : 'IP Locate'}
+          </button>
+          <button
+            onClick={() => setActiveTab('probe')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'probe' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
+          >
+            <Activity size={14} />
+            {zh ? '连通性探测' : 'Connectivity Probe'}
+          </button>
+          <button
+            onClick={() => setActiveTab('arp-table')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'arp-table' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
+          >
+            <Database size={14} />
+            {zh ? 'ARP 表' : 'ARP Table'}
+            {arpTable && <span className="text-[10px] bg-[#06b6d4]/10 text-[#0891b2] rounded-full px-1.5 py-0.5 font-mono">{arpTable.total}</span>}
+          </button>
+          <button
+            onClick={() => setActiveTab('mac-changes')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'mac-changes' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
+          >
+            <RefreshCw size={14} />
+            {zh ? 'MAC 变更' : 'MAC Changes'}
+            {macChanges && macChanges.total > 0 && <span className="text-[10px] bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 rounded-full px-1.5 py-0.5 font-mono">{macChanges.total}</span>}
+          </button>
+        </div>
+      )}
 
       {/* ────────────────────────────────────── */}
       {/* TAB: IP Locate                         */}
@@ -1201,7 +1500,832 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language }) => {
       })()}
 
       </>)}
+
+      {/* ────────────────────────────────────── */}
+      {/* TAB: Path Diagnose                    */}
+      {/* ────────────────────────────────────── */}
+      {activeTab === 'diagnose' && (<>
+      {/* ── Inputs Card ── */}
+      <div className="bg-white dark:bg-[#1f2937]/30 rounded-2xl border border-black/5 dark:border-white/5 shadow-sm p-5 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
+          <div ref={sourceDropdownRef} className="relative">
+            <label className="block text-xs font-semibold text-black/50 dark:text-white/50 mb-1.5">{zh ? '源 IP 地址' : 'Source IP'}</label>
+            <div className="relative">
+              <input
+                type="text"
+                value={diagSourceIp}
+                onChange={e => { setDiagSourceIp(e.target.value); setShowSourceDropdown(true); }}
+                onFocus={() => setShowSourceDropdown(true)}
+                placeholder="e.g. 10.1.1.10"
+                autoComplete="off"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-black/10 dark:border-white/10 text-sm bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all font-mono dark:text-white pr-8"
+              />
+              <Database size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/25 dark:text-white/25 pointer-events-none" />
+            </div>
+            {showSourceDropdown && sourceMatches.length > 0 && (
+              <div className="absolute z-50 left-0 right-0 mt-1.5 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl border border-black/10 dark:border-white/10 rounded-xl shadow-xl max-h-56 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="px-3 py-2 border-b border-black/5 dark:border-white/5">
+                  <span className="text-[10px] font-semibold text-black/35 dark:text-white/35 uppercase tracking-wider">CMDB {zh ? '资产匹配' : 'Asset Matches'} · {sourceMatches.length}</span>
+                </div>
+                {sourceMatches.map(d => (
+                  <button
+                    key={d.id}
+                    onClick={() => { setDiagSourceIp(d.ip_address); setShowSourceDropdown(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-[#06b6d4]/5 dark:hover:bg-[#06b6d4]/10 transition-colors group"
+                  >
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${isServerPlatform(d.platform || '') ? 'bg-violet-50 dark:bg-violet-900/30' : 'bg-cyan-50 dark:bg-cyan-900/30'}`}>
+                      {isServerPlatform(d.platform || '') ? <Monitor size={13} className="text-violet-500" /> : <Router size={13} className="text-[#0891b2]" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold text-[#164e63] dark:text-[var(--app-text)] truncate group-hover:text-[#0891b2]">{d.hostname}</div>
+                      <div className="text-[10px] text-black/40 dark:text-white/40 font-mono">{d.ip_address} · {d.platform || 'Unknown'}</div>
+                    </div>
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${d.status === 'online' ? 'bg-emerald-400' : 'bg-neutral-300'}`} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div ref={targetDropdownRef} className="relative">
+            <label className="block text-xs font-semibold text-black/50 dark:text-white/50 mb-1.5">{zh ? '目标 IP 地址' : 'Target IP'}</label>
+            <div className="relative">
+              <input
+                type="text"
+                value={diagTargetIp}
+                onChange={e => { setDiagTargetIp(e.target.value); setShowTargetDropdown(true); }}
+                onFocus={() => setShowTargetDropdown(true)}
+                placeholder="e.g. 172.16.1.100"
+                autoComplete="off"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-black/10 dark:border-white/10 text-sm bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all font-mono dark:text-white pr-8"
+              />
+              <Database size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/25 dark:text-white/25 pointer-events-none" />
+            </div>
+            {showTargetDropdown && targetMatches.length > 0 && (
+              <div className="absolute z-50 left-0 right-0 mt-1.5 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl border border-black/10 dark:border-white/10 rounded-xl shadow-xl max-h-56 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="px-3 py-2 border-b border-black/5 dark:border-white/5">
+                  <span className="text-[10px] font-semibold text-black/35 dark:text-white/35 uppercase tracking-wider">CMDB {zh ? '资产匹配' : 'Asset Matches'} · {targetMatches.length}</span>
+                </div>
+                {targetMatches.map(d => (
+                  <button
+                    key={d.id}
+                    onClick={() => { setDiagTargetIp(d.ip_address); setShowTargetDropdown(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-[#06b6d4]/5 dark:hover:bg-[#06b6d4]/10 transition-colors group"
+                  >
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${isServerPlatform(d.platform || '') ? 'bg-violet-50 dark:bg-violet-900/30' : 'bg-cyan-50 dark:bg-cyan-900/30'}`}>
+                      {isServerPlatform(d.platform || '') ? <Monitor size={13} className="text-violet-500" /> : <Router size={13} className="text-[#0891b2]" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold text-[#164e63] dark:text-[var(--app-text)] truncate group-hover:text-[#0891b2]">{d.hostname}</div>
+                      <div className="text-[10px] text-black/40 dark:text-white/40 font-mono">{d.ip_address} · {d.platform || 'Unknown'}</div>
+                    </div>
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${d.status === 'online' ? 'bg-emerald-400' : 'bg-neutral-300'}`} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-black/50 dark:text-white/50 mb-1.5">{zh ? '协议' : 'Protocol'}</label>
+            <select
+              value={diagProtocol}
+              onChange={e => setDiagProtocol(e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-black/10 dark:border-white/10 text-sm bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all dark:text-white dark:bg-[#1f2937]"
+            >
+              <option value="TCP">TCP</option>
+              <option value="UDP">UDP</option>
+              <option value="ICMP">ICMP</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-black/50 dark:text-white/50 mb-1.5">{zh ? '目标端口' : 'Target Port'}</label>
+            <input
+              type="text"
+              value={diagProtocol === 'ICMP' ? '' : diagPort}
+              onChange={e => setDiagPort(e.target.value)}
+              disabled={diagProtocol === 'ICMP'}
+              placeholder={diagProtocol === 'ICMP' ? 'N/A' : '443'}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-black/10 dark:border-white/10 text-sm bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all font-mono dark:text-white disabled:opacity-50 disabled:bg-neutral-100 dark:disabled:bg-white/[0.03] disabled:cursor-not-allowed"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-black/50 dark:text-white/50 mb-1.5">{zh ? 'VRF 路由表 (选填)' : 'VRF Context (Optional)'}</label>
+            <input
+              type="text"
+              value={diagVrf}
+              onChange={e => setDiagVrf(e.target.value)}
+              placeholder="e.g. VRF-Busi"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-black/10 dark:border-white/10 text-sm bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all font-mono dark:text-white"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-2">
+          <div className="text-[11px] text-black/35 dark:text-white/35 flex items-center gap-1.5">
+            <Zap size={12} className="text-[#06b6d4]" />
+            <span>{zh ? '提示：输入源 10.1.1.10 与目标 172.16.1.100 可进行 NPA 智能路径诊断效果演示。' : 'Tip: Input source 10.1.1.10 and target 172.16.1.100 for mock NPA Path Diagnostics demo.'}</span>
+          </div>
+          <button
+            onClick={() => doDiagnose()}
+            disabled={diagLoading || !diagSourceIp.trim() || !diagTargetIp.trim()}
+            className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#0891b2] to-[#06b6d4] text-white text-sm font-semibold hover:from-[#0e7490] hover:to-[#0891b2] disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2 shadow-sm"
+          >
+            {diagLoading ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
+            {zh ? '开始诊断' : 'Start Diagnose'}
+          </button>
+        </div>
       </div>
+
+      {/* ── Diagnose History Panel ── */}
+      {diagHistory.length > 0 && !diagLoading && (
+        <div className="bg-white dark:bg-[#1f2937]/30 rounded-2xl border border-black/5 dark:border-white/5 shadow-sm p-5 mt-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Clock size={14} className="text-black/30 dark:text-white/30" />
+            <p className="text-xs font-semibold text-black/40 dark:text-white/40 uppercase tracking-wider">{zh ? '最近路径诊断记录' : 'Recent NPA Diagnostics'}</p>
+            <button
+              onClick={() => {
+                setDiagHistory([]);
+                localStorage.removeItem('nexora_npa_history');
+              }}
+              className="ml-auto text-[10px] text-black/25 dark:text-white/25 hover:text-black/50 dark:hover:text-white/50 transition-colors flex items-center gap-1"
+            >
+              <RotateCcw size={10} />
+              {zh ? '清空记录' : 'Clear'}
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {diagHistory.map((h, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  setDiagSourceIp(h.source_ip);
+                  setDiagTargetIp(h.target_ip);
+                  setDiagProtocol(h.protocol);
+                  setDiagPort(h.port === 'N/A' ? '' : h.port);
+                  setDiagVrf(h.vrf || '');
+                }}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all hover:shadow-sm ${h.conclusion === 'reachable' ? 'border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/15' : 'border-rose-200 dark:border-rose-500/20 bg-rose-50/50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/15'}`}
+                title={zh ? '点击填入此历史记录参数' : 'Click to fill parameters from this history record'}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${h.conclusion === 'reachable' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                <span>{h.source_ip} ➔ {h.target_ip}</span>
+                <span className="text-[10px] text-black/30 font-sans">({h.protocol}{h.protocol !== 'ICMP' ? `:${h.port}` : ''})</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden;
+          }
+          #npa-report-card, #npa-report-card * {
+            visibility: visible;
+          }
+          #npa-report-card {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+          }
+        }
+      `}</style>
+
+      {/* ── Error Box ── */}
+      {diagError && (
+        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl px-5 py-4 flex items-start gap-3">
+          <AlertCircle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-red-700 dark:text-red-300">{zh ? '诊断出错' : 'Diagnose Failed'}</p>
+            <p className="text-xs text-red-500 dark:text-red-400 mt-0.5">{diagError}</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Diagnose Stepper and Log Console ── */}
+      {(diagLoading || diagResult) && (
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+          {/* Stepper Card */}
+          <div className="md:col-span-5 bg-white dark:bg-[#1f2937]/30 rounded-2xl border border-black/5 dark:border-white/5 shadow-sm p-5 space-y-4">
+            <h3 className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)] flex items-center gap-2">
+              <Activity size={15} className="text-[#0891b2]" />
+              {zh ? '诊断步骤进度' : 'Diagnosis Stepper'}
+            </h3>
+
+            <div className="relative pl-6 space-y-5">
+              {/* Stepper line */}
+              <div className="absolute left-[9px] top-2 bottom-2 w-0.5 bg-black/5 dark:bg-white/10" />
+
+              {(() => {
+                const TEMPLATE_STEPS = [
+                  { name: "P0. VRF 发现 (VRF Discovery)", desc: zh ? "感知多路由上下文/VRF状态" : "Discover VRF contexts" },
+                  { name: "P1. 资产发现 (Asset Discovery)", desc: zh ? "关联CMDB与基础数据收集" : "Associate asset details and collect data" },
+                  { name: "P2. 目标分类 (Target Classification)", desc: zh ? "判定目标为直连还是远程网段" : "Determine subnet classification" },
+                  { name: "P3. ARP 分析 (ARP Analysis)", desc: zh ? "查询网关 ARP 获取 MAC 地址" : "Retrieve MAC from gateway ARP table" },
+                  { name: "P4. MAC 定位 (MAC Analysis)", desc: zh ? "在二层交换机定位物理接口与STP" : "Track MAC to switch port and check STP" },
+                  { name: "P5. 路由递归 (Route Recursion)", desc: zh ? "多跳路由路径递归跟踪" : "Recursively track routing hops" },
+                  { name: "P5.5. FIB 验证 (FIB Verification)", desc: zh ? "控制面与转发面(CEF/FIB)一致性校验" : "Verify CEF/FIB forwarding plane" },
+                  { name: "P6. 策略分析 (Policy Analysis)", desc: zh ? "核验接口 ACL 与防火墙策略过滤" : "Check ACLs and firewall security policies" },
+                  { name: "P6.5. BGP 分析 (BGP Analysis)", desc: zh ? "边界路由 BGP 接收与宣告核验" : "Analyze BGP routing and policies" },
+                  { name: "P7. Overlay 分析 (Overlay Analysis)", desc: zh ? "分析底层隧道(VXLAN/EVPN/IPsec)" : "Inspect Overlay tunnel status" },
+                  { name: "P7.5. HA 分析 (HA Analysis)", desc: zh ? "核验冗余双机(VRRP/HSRP)与脑裂状态" : "Check HA redundancy and split-brain" },
+                  {
+                    name: diagProtocol === 'ICMP' ? "P8. ICMP 验证 (ICMP Validation)" : `P8. ${diagProtocol} 验证 (${diagProtocol} Validation)`,
+                    desc: diagProtocol === 'ICMP'
+                      ? (zh ? "目标主机 ICMP Ping 验证" : "Probe ICMP Ping connection")
+                      : (zh ? `目标端口 ${diagProtocol} 探测验证` : `Probe ${diagProtocol} port connection`)
+                  },
+                  { name: "P8.5. 性能分析 (Performance Analysis)", desc: zh ? "收集端口错包(CRC)、丢包与CPU负荷" : "Analyze packet drops, CRC errors and CPU" },
+                  { name: "P9. AI 根因推导 (AI Root Cause Engine)", desc: zh ? "多维证据链关联与置信度推算" : "Correlate evidence & calculate confidence" },
+                  { name: "P10. 智能报告 (Smart Report)", desc: zh ? "生成精确 of CLI配置建议与修复结论" : "Format suggestion report & CLI commands" }
+                ];
+
+                const displaySteps = (diagResult && diagResult.steps && diagResult.steps.length > 0)
+                  ? diagResult.steps
+                  : TEMPLATE_STEPS;
+
+                return displaySteps.map((step: any, idx: number) => {
+                  let status = "pending";
+                  let msg = "";
+
+                  if (diagResult && diagResult.steps && diagResult.steps[idx]) {
+                    status = diagResult.steps[idx].status;
+                    msg = diagResult.steps[idx].message;
+                  } else if (diagLoading) {
+                    if (diagCurrentStep > idx) {
+                      status = "success";
+                    } else if (diagCurrentStep === idx) {
+                      status = "loading";
+                    }
+                  }
+
+                  const isSelectable = diagResult && diagResult.steps && diagResult.steps[idx];
+
+                  return (
+                    <div 
+                      key={idx} 
+                      onClick={() => {
+                        if (isSelectable) {
+                          setSelectedStepIdx(selectedStepIdx === idx ? null : idx);
+                        }
+                      }}
+                      className={`relative group pl-2 pr-1.5 py-1.5 rounded-xl transition-all select-none ${
+                        isSelectable ? "cursor-pointer" : ""
+                      } ${
+                        selectedStepIdx === idx 
+                          ? "bg-[#06b6d4]/10 dark:bg-[#06b6d4]/15 shadow-sm border border-[#06b6d4]/20" 
+                          : isSelectable ? "hover:bg-neutral-50 dark:hover:bg-white/[0.02]" : ""
+                      }`}
+                    >
+                      {/* Circle Node */}
+                      <div className={`absolute -left-[23px] top-2.5 w-4 h-4 rounded-full flex items-center justify-center border transition-all z-10 ${
+                        status === "success" ? "bg-emerald-500 border-emerald-500 text-white" :
+                        status === "failed" ? "bg-rose-500 border-rose-500 text-white" :
+                        status === "warning" ? "bg-amber-500 border-amber-500 text-white" :
+                        status === "loading" ? "bg-[#ecfeff] dark:bg-cyan-900/30 border-[#0891b2] text-[#0891b2]" :
+                        "bg-white dark:bg-neutral-900 border-black/10 dark:border-white/10"
+                      }`}>
+                        {status === "success" && <Check size={10} strokeWidth={3} />}
+                        {status === "failed" && <X size={10} strokeWidth={3} />}
+                        {status === "warning" && <AlertCircle size={10} strokeWidth={3} />}
+                        {status === "loading" && <Loader2 size={10} strokeWidth={3} className="animate-spin" />}
+                      </div>
+
+                      {/* Content */}
+                      <div className="flex flex-col">
+                        <span className={`text-xs font-bold transition-colors ${
+                          status === "loading" ? "text-[#0891b2]" :
+                          status === "success" ? "text-emerald-700 dark:text-emerald-400" :
+                          status === "failed" ? "text-rose-600 dark:text-rose-400" :
+                          "text-black/60 dark:text-white/60"
+                        }`}>{step.name}</span>
+                        <span className="text-[10px] text-black/35 dark:text-white/35 mt-0.5">{msg || step.desc}</span>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+
+          {/* Console Card */}
+          <div className="md:col-span-7 md:sticky md:top-5 bg-slate-50/70 dark:bg-[#111827]/40 rounded-2xl border border-slate-200/80 dark:border-white/5 shadow-sm p-4 flex flex-col h-full min-h-[400px] md:min-h-[500px] overflow-hidden">
+            <div className="flex items-center justify-between pb-2.5 border-b border-slate-200/80 dark:border-white/5 mb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-500 dark:text-neutral-400 uppercase tracking-wider font-semibold">
+                  {selectedStepIdx === null 
+                    ? (zh ? '实时执行日志' : 'Execution Logs')
+                    : (zh ? `步骤日志: P${selectedStepIdx}` : `Step Logs: P${selectedStepIdx}`)}
+                </span>
+                {selectedStepIdx !== null && (
+                  <button 
+                    onClick={() => setSelectedStepIdx(null)}
+                    className="text-[9px] text-[#06b6d4] hover:underline hover:text-[#0891b2] font-semibold cursor-pointer"
+                  >
+                    {zh ? '(显示全部)' : '(Show All)'}
+                  </button>
+                )}
+              </div>
+              <div className="flex gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-rose-400/80 dark:bg-rose-500/20 border border-rose-400 dark:border-rose-500/40" />
+                <span className="w-2 h-2 rounded-full bg-amber-400/80 dark:bg-amber-500/20 border border-amber-400 dark:border-amber-500/40" />
+                <span className="w-2 h-2 rounded-full bg-emerald-400/80 dark:bg-emerald-500/20 border border-emerald-400 dark:border-emerald-500/40" />
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-auto space-y-1.5 pr-2 custom-scrollbar select-text text-slate-600 dark:text-neutral-400 font-mono text-xs">
+              {selectedStepIdx === null ? (
+                <>
+                  {diagLoading && diagCurrentStep >= 0 && (
+                    <div className="text-[#0891b2] animate-pulse">
+                      &gt; {zh ? '正在执行步骤：' : 'Executing step: '} {getStepNames()[diagCurrentStep]}...
+                    </div>
+                  )}
+                  {diagResult && diagResult.steps ? (
+                    diagResult.steps.map((st: any, i: number) => (
+                      <div key={i} className="border-b border-slate-200/40 dark:border-white/[0.03] pb-2 last:border-0">
+                        <div className="flex items-center justify-between">
+                          <span className={`font-semibold cursor-pointer hover:underline ${
+                            st.status === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
+                            st.status === 'failed' ? 'text-rose-600 dark:text-rose-400' :
+                            st.status === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-neutral-400'
+                          }`} onClick={() => setSelectedStepIdx(i)}>[{st.name}]</span>
+                          {st.log && (
+                            <span className="text-[10px] text-[#06b6d4] hover:text-[#0891b2] cursor-pointer font-sans" onClick={() => setSelectedStepIdx(i)}>
+                              {zh ? '查看原始日志 ➔' : 'View CLI Log ➔'}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 text-[11px] text-slate-500 dark:text-neutral-400 leading-relaxed pl-3 border-l border-slate-200/80 dark:border-white/5">{st.message}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-slate-400 dark:text-neutral-600 italic mt-12 text-center">{zh ? '等待诊断开始...' : 'Waiting for diagnostics to begin...'}</div>
+                  )}
+                </>
+              ) : (
+                diagResult && diagResult.steps && diagResult.steps[selectedStepIdx] ? (() => {
+                  const st = diagResult.steps[selectedStepIdx];
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className={`font-semibold ${
+                          st.status === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
+                          st.status === 'failed' ? 'text-rose-600 dark:text-rose-400' :
+                          st.status === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-neutral-400'
+                        }`}>[{st.name}]</span>
+                      </div>
+                      <pre className="mt-1 text-[11px] whitespace-pre-wrap leading-relaxed text-slate-700 dark:text-neutral-300 font-mono pl-3 border-l border-slate-200/80 dark:border-white/5 bg-white/70 dark:bg-black/30 border border-slate-200/50 dark:border-white/5 p-3 rounded-xl overflow-x-auto max-h-[350px] md:max-h-[420px] custom-scrollbar">
+                        {st.log || st.message}
+                      </pre>
+                    </div>
+                  );
+                })() : (
+                  <div className="text-slate-400 dark:text-neutral-600 italic mt-12 text-center">{zh ? '步骤日志为空' : 'Step logs are empty'}</div>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Path Topology Visualization ── */}
+      {diagResult && diagResult.hops && (
+        <div className="bg-white dark:bg-[#1f2937]/30 rounded-2xl border border-black/5 dark:border-white/5 shadow-sm p-6 space-y-5">
+          <h3 className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)] flex items-center gap-2 mb-2">
+            <Network size={15} className="text-[#0891b2]" />
+            {zh ? '可视化链路路径拓扑' : 'Visual Link Path Topology'}
+          </h3>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-6 pb-4 overflow-x-auto">
+            {/* Source Node */}
+            <div className="flex flex-col items-center flex-shrink-0 bg-white dark:bg-zinc-900 border border-violet-200 dark:border-violet-500/20 rounded-2xl p-4 w-36 shadow-sm">
+              <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mb-2">
+                <Monitor className="text-violet-500" size={18} />
+              </div>
+              <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '源主机' : 'Source Host'}</span>
+              <span className="text-[10px] text-black/35 font-mono mt-0.5">{diagResult.source_ip}</span>
+            </div>
+
+            {/* Path hops */}
+            {diagResult.hops.map((hop: any, idx: number) => {
+              const isBlocked = hop.status === 'blocked';
+              const isTimeout = hop.status === 'timeout';
+              const cmdbDevice = findDeviceByIp(hop.ip);
+              const isActive = activeHopIdx === idx;
+              const isSrv = cmdbDevice ? isServerPlatform(cmdbDevice.platform || '') : false;
+
+              return (
+                <React.Fragment key={idx}>
+                  {/* Arrow connector */}
+                  <div className="flex items-center justify-center flex-shrink-0 w-8">
+                    <div className={`h-0.5 flex-1 ${
+                      isBlocked || isTimeout ? "border-t-2 border-dashed border-rose-400" : "border-t-2 border-emerald-400"
+                    }`} />
+                    <ArrowRight size={14} className={isBlocked || isTimeout ? "text-rose-400" : "text-emerald-400"} />
+                  </div>
+
+                  {/* Device Node (Interactive) */}
+                  <div className="relative flex-shrink-0">
+                    <button
+                      onClick={() => setActiveHopIdx(isActive ? null : idx)}
+                      className={`flex flex-col items-center bg-white dark:bg-zinc-900 border rounded-2xl p-4 w-36 shadow-sm transition-all cursor-pointer hover:shadow-md hover:scale-[1.03] ${
+                        isBlocked ? "border-rose-400 dark:border-rose-500/30 ring-2 ring-rose-500/20 animate-pulse" :
+                        isTimeout ? "border-neutral-200 dark:border-neutral-800 opacity-60" :
+                        isActive ? "border-[#06b6d4] dark:border-[#06b6d4]/40 ring-2 ring-[#06b6d4]/25 shadow-lg" :
+                        "border-[#06b6d4]/20 dark:border-[#06b6d4]/10"
+                      }`}
+                    >
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${
+                        isBlocked ? "bg-rose-100 dark:bg-rose-950/40 text-rose-500" :
+                        isTimeout ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-400" :
+                        "bg-cyan-50 dark:bg-cyan-950/40 text-[#0891b2]"
+                      }`}>
+                        {isBlocked ? <ShieldAlert size={18} className="animate-bounce" /> :
+                         hop.device_type === 'firewall' ? <ShieldAlert size={18} /> :
+                         <Server size={18} />}
+                      </div>
+                      <span className={`text-xs font-bold truncate w-full text-center ${
+                        isBlocked ? "text-rose-600 dark:text-rose-400 font-bold" :
+                        isTimeout ? "text-neutral-400" : "text-[#164e63] dark:text-[var(--app-text)]"
+                      }`} title={hop.device_name}>{hop.device_name}</span>
+                      <span className="text-[10px] text-black/35 font-mono mt-0.5">{hop.ip}</span>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full mt-1.5 font-mono font-medium ${
+                        isBlocked ? "bg-rose-50 dark:bg-rose-950/30 text-rose-600" :
+                        isTimeout ? "bg-neutral-50 dark:bg-neutral-950/30 text-neutral-400" :
+                        "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600"
+                      }`}>{hop.detail || (isBlocked ? (zh ? "阻断" : "Blocked") : (zh ? "正常" : "Active"))}</span>
+                      {cmdbDevice && <Eye size={10} className="absolute top-2 right-2 text-black/20 dark:text-white/20" />}
+                    </button>
+
+                    {/* Popover removed, now rendered as a centered Modal at the page root */}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+
+            {/* Target Node */}
+            {diagResult.report.conclusion === 'reachable' && (
+              <>
+                <div className="flex items-center justify-center flex-shrink-0 w-8">
+                  <div className="h-0.5 flex-1 border-t-2 border-emerald-400" />
+                  <ArrowRight size={14} className="text-emerald-400" />
+                </div>
+                <div className="flex flex-col items-center flex-shrink-0 bg-white dark:bg-zinc-900 border border-emerald-200 dark:border-emerald-500/20 rounded-2xl p-4 w-36 shadow-sm">
+                  <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
+                    <Globe className="text-emerald-500" size={18} />
+                  </div>
+                  <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '目标主机' : 'Target Host'}</span>
+                  <span className="text-[10px] text-black/35 font-mono mt-0.5">{diagResult.target_ip}</span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Diagnostic Report ── */}
+      {diagResult && diagResult.report && (
+        <div id="npa-report-card" className="bg-white dark:bg-[#1f2937]/20 border border-neutral-200 dark:border-white/5 rounded-2xl overflow-hidden shadow-lg transition-all duration-300 hover:shadow-xl">
+          {/* Card Header with Status and AI Confidence */}
+          <div className="px-6 py-5 border-b border-neutral-100 dark:border-white/5 bg-neutral-50/50 dark:bg-white/[0.01] flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm ${
+                diagResult.report.conclusion === 'interrupted'
+                  ? "bg-rose-500 text-white animate-pulse"
+                  : "bg-emerald-500 text-white"
+              }`}>
+                <FileText size={18} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-neutral-800 dark:text-neutral-200">
+                  {zh ? 'Smart NPA 智能故障分析报告' : 'Smart NPA Path Diagnostics Report'}
+                </h3>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  {zh ? '报告生成时间' : 'Report generated at'}: {diagResult.timestamp?.replace('T', ' ').slice(0, 19)}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4 flex-wrap">
+              {/* Export Buttons */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => exportToMarkdown(diagResult)}
+                  className="flex items-center gap-1.5 text-xs text-neutral-500 hover:text-[#0891b2] dark:text-neutral-400 dark:hover:text-[#06b6d4] bg-neutral-100 dark:bg-white/[0.05] hover:bg-neutral-200/60 dark:hover:bg-white/[0.08] transition-colors px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-white/5 font-semibold"
+                  title={zh ? '导出 Markdown 格式报告' : 'Export report as Markdown'}
+                >
+                  <Download size={13} />
+                  {zh ? '导出 Markdown' : 'Export MD'}
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="flex items-center gap-1.5 text-xs text-neutral-500 hover:text-[#0891b2] dark:text-neutral-400 dark:hover:text-[#06b6d4] bg-neutral-100 dark:bg-white/[0.05] hover:bg-neutral-200/60 dark:hover:bg-white/[0.08] transition-colors px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-white/5 font-semibold"
+                  title={zh ? '使用系统打印机保存为 PDF' : 'Save as PDF using system print dialogue'}
+                >
+                  <FileText size={13} />
+                  {zh ? '打印 / 导出 PDF' : 'Print / PDF'}
+                </button>
+              </div>
+
+              {/* AI Confidence Badge */}
+              {diagResult.report.confidence && (
+                <div className="flex items-center gap-2 bg-violet-50 dark:bg-violet-950/20 border border-violet-100 dark:border-violet-500/10 px-3.5 py-1.5 rounded-full">
+                  <Zap size={14} className="text-violet-500 animate-bounce" />
+                  <span className="text-xs text-neutral-500 dark:text-neutral-400 font-medium">
+                    {zh ? 'AI 置信度' : 'AI Confidence'}:
+                  </span>
+                  <span className="text-xs font-bold text-violet-600 dark:text-violet-400">
+                    {diagResult.report.confidence}
+                  </span>
+                </div>
+              )}
+
+              {/* Status Badge */}
+              <span className={`text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider border ${
+                diagResult.report.conclusion === 'interrupted'
+                  ? "bg-rose-100 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800/30"
+                  : "bg-emerald-100 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/30"
+              }`}>
+                {diagResult.report.conclusion === 'interrupted' ? (zh ? '检测到阻断' : 'Blocked') : (zh ? '路径可达' : 'Reachable')}
+              </span>
+            </div>
+          </div>
+
+          {/* Card Body */}
+          <div className="p-6 space-y-6">
+            {/* Grid Layout for Checklist and Cause/Impact */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              
+              {/* Left Column: AI Checklist & Verification Steps */}
+              <div className="lg:col-span-5 bg-neutral-50/50 dark:bg-white/[0.01] rounded-2xl p-5 border border-neutral-100 dark:border-white/5 space-y-4">
+                <div className="flex items-center gap-2 pb-2 border-b border-neutral-100 dark:border-white/5">
+                  <CheckCircle2 size={16} className="text-emerald-500" />
+                  <h4 className="text-xs font-bold text-neutral-800 dark:text-neutral-200 uppercase tracking-wider">
+                    {zh ? 'AI 诊断验证清单' : 'AI Diagnostic Checklist'}
+                  </h4>
+                </div>
+
+                <div className="space-y-3">
+                  {/* Dynamic Checklist derived from steps */}
+                  {diagResult.steps && diagResult.steps.map((step: any, idx: number) => {
+                    let statusColor = "text-neutral-400";
+                    let Icon = Minus;
+                    if (step.status === 'success') {
+                      statusColor = "text-emerald-500";
+                      Icon = CheckCircle2;
+                    } else if (step.status === 'failed') {
+                      statusColor = "text-rose-500";
+                      Icon = XCircle;
+                    } else if (step.status === 'warning') {
+                      statusColor = "text-amber-500";
+                      Icon = AlertCircle;
+                    }
+
+                    return (
+                      <div key={idx} className="flex items-start gap-2.5 text-xs">
+                        <Icon size={14} className={`mt-0.5 flex-shrink-0 ${statusColor}`} />
+                        <div>
+                          <div className="font-semibold text-neutral-700 dark:text-neutral-300">
+                            {step.name}
+                          </div>
+                          {step.message && (
+                            <div className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5 leading-relaxed font-mono">
+                              {step.message}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Evidence Panel */}
+                {diagResult.report.evidence && diagResult.report.evidence.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-neutral-200/50 dark:border-white/5">
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-2">
+                      {zh ? '关键根因证据' : 'Key Evidences'}
+                    </span>
+                    <div className="space-y-2">
+                      {diagResult.report.evidence.map((ev: string, idx: number) => (
+                        <div key={idx} className="flex items-start gap-2 bg-rose-50/50 dark:bg-rose-950/10 border border-rose-100 dark:border-rose-900/20 rounded-lg p-2.5">
+                          <ShieldAlert size={14} className="text-rose-500 mt-0.5 flex-shrink-0" />
+                          <span className="text-xs text-rose-700 dark:text-rose-300 font-medium">
+                            {ev}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Root Cause, Impact and Suggestions */}
+              <div className="lg:col-span-7 space-y-4">
+                {/* Conclusion Banner */}
+                <div className={`rounded-xl p-4 border flex items-start gap-3 ${
+                  diagResult.report.conclusion === 'interrupted'
+                    ? "bg-rose-50/30 dark:bg-rose-950/10 border-rose-200/60 dark:border-rose-900/20"
+                    : "bg-emerald-50/30 dark:bg-emerald-950/10 border-emerald-200/60 dark:border-emerald-900/20"
+                }`}>
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                    diagResult.report.conclusion === 'interrupted'
+                      ? "bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400"
+                      : "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400"
+                  }`}>
+                    {diagResult.report.conclusion === 'interrupted' ? <ShieldAlert size={16} /> : <CheckCircle2 size={16} />}
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">
+                      {zh ? '诊断结论' : 'Diagnostic Conclusion'}
+                    </span>
+                    <p className="text-sm font-bold text-neutral-800 dark:text-neutral-200 mt-1 leading-relaxed">
+                      {diagResult.report.conclusion === 'interrupted' ? (
+                        zh ? `路径中断于设备：${diagResult.report.interrupted_at}` : `Path blocked at device: ${diagResult.report.interrupted_at}`
+                      ) : (
+                        zh ? '全路径网络连通性正常' : 'End-to-end connectivity is normal'
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Root Cause Details */}
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-white/5 rounded-xl p-4 shadow-sm space-y-2">
+                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wide block">
+                    {zh ? '根因分析' : 'Root Cause Analysis'}
+                  </span>
+                  <p className="text-xs text-neutral-700 dark:text-neutral-300 font-medium font-mono leading-relaxed bg-neutral-50 dark:bg-black/20 p-3 rounded-lg border border-neutral-100 dark:border-white/[0.03]">
+                    {diagResult.report.reason}
+                  </p>
+                </div>
+
+                {/* Business Impact */}
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-white/5 rounded-xl p-4 shadow-sm space-y-2">
+                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wide block">
+                    {zh ? '业务影响范围' : 'Business Impact'}
+                  </span>
+                  <p className="text-xs text-neutral-700 dark:text-neutral-300 leading-relaxed font-mono bg-neutral-50 dark:bg-black/20 p-3 rounded-lg border border-neutral-100 dark:border-white/[0.03]">
+                    {diagResult.report.impact}
+                  </p>
+                </div>
+
+                {/* Suggestions */}
+                <div className="bg-gradient-to-r from-emerald-50 to-teal-50/30 dark:from-emerald-950/20 dark:to-teal-950/10 border border-emerald-200/40 dark:border-emerald-500/20 rounded-xl p-4 shadow-sm space-y-2">
+                  <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide block">
+                    {zh ? '优化与修复建议' : 'Actionable Suggestion'}
+                  </span>
+                  <p className="text-xs text-emerald-800 dark:text-emerald-300 font-medium leading-relaxed">
+                    {diagResult.report.suggestion}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* CLI Repair Commands Section */}
+            {diagResult.report.repair_commands && (
+              <div className="bg-neutral-900 dark:bg-black/40 border border-neutral-800 rounded-xl p-5 shadow-inner space-y-3 relative group">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                    <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-mono ml-2">
+                      {zh ? '建议配置修复指令 (设备: ' + diagResult.report.interrupted_at + ')' : 'Recommended CLI Fixes (' + diagResult.report.interrupted_at + ')'}
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(diagResult.report.repair_commands);
+                      setCopiedCmd(true);
+                      setTimeout(() => setCopiedCmd(false), 2000);
+                    }}
+                    className="flex items-center gap-1 text-[10px] text-neutral-400 hover:text-white bg-neutral-800 hover:bg-neutral-700 transition-colors px-2.5 py-1 rounded border border-neutral-700/50"
+                  >
+                    {copiedCmd ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                    {copiedCmd ? (zh ? '已复制' : 'Copied!') : (zh ? '复制代码' : 'Copy Code')}
+                  </button>
+                </div>
+                <pre className="text-xs text-neutral-300 font-mono overflow-x-auto whitespace-pre leading-relaxed max-h-60 pt-2 custom-scrollbar">
+                  {diagResult.report.repair_commands}
+                </pre>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      </>)}
+      </div>
+
+      {/* ── CMDB Hop Device Detail Modal ── */}
+      {diagResult && diagResult.hops && activeHopIdx !== null && (() => {
+        const activeHop = diagResult.hops[activeHopIdx];
+        if (!activeHop) return null;
+        const cmdbDevice = findDeviceByIp(activeHop.ip);
+        const isSrv = cmdbDevice ? isServerPlatform(cmdbDevice.platform || '') : false;
+        return (
+          <div 
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setActiveHopIdx(null)}
+          >
+            <div 
+              className="w-full max-w-sm mx-4 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl border border-black/10 dark:border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="px-5 py-4 border-b border-black/5 dark:border-white/5 bg-gradient-to-r from-[#0891b2]/5 to-transparent flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${cmdbDevice ? (isSrv ? 'bg-violet-50 dark:bg-violet-900/30' : 'bg-cyan-50 dark:bg-cyan-900/30') : 'bg-neutral-100 dark:bg-neutral-800'}`}>
+                    {cmdbDevice ? (isSrv ? <Monitor size={16} className="text-violet-500" /> : <Router size={16} className="text-[#0891b2]" />) : <Server size={16} className="text-neutral-400" />}
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)]">{activeHop.device_name}</div>
+                    <div className="text-xs text-black/45 dark:text-white/45 font-mono">{activeHop.ip}</div>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setActiveHopIdx(null)} 
+                  className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-black/40 dark:text-white/40 transition-colors"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="px-5 py-4 space-y-4">
+                {cmdbDevice ? (
+                  <>
+                    {/* Device Info Grid */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-neutral-50 dark:bg-white/[0.02] border border-black/[0.03] dark:border-white/[0.02] rounded-xl px-3 py-2.5">
+                        <div className="text-[10px] text-black/35 dark:text-white/35 uppercase font-semibold tracking-wider">{zh ? '设备型号' : 'Model'}</div>
+                        <div className="text-xs font-mono font-semibold text-[#164e63] dark:text-[var(--app-text)] mt-1 truncate" title={cmdbDevice.model}>{cmdbDevice.model || '—'}</div>
+                      </div>
+                      <div className="bg-neutral-50 dark:bg-white/[0.02] border border-black/[0.03] dark:border-white/[0.02] rounded-xl px-3 py-2.5">
+                        <div className="text-[10px] text-black/35 dark:text-white/35 uppercase font-semibold tracking-wider">{zh ? '系统平台' : 'Platform'}</div>
+                        <div className="text-xs font-mono font-semibold text-[#164e63] dark:text-[var(--app-text)] mt-1 truncate" title={cmdbDevice.platform}>{cmdbDevice.platform || '—'}</div>
+                      </div>
+                    </div>
+
+                    {/* CPU & Memory Utilization */}
+                    <div className="space-y-3">
+                      <div>
+                        <div className="flex justify-between text-xs font-medium">
+                          <span className="text-black/50 dark:text-white/50 flex items-center gap-1.5"><Cpu size={12} /> CPU 使用率</span>
+                          <span className="font-mono font-bold text-[#164e63] dark:text-[var(--app-text)]">{cmdbDevice.cpu_usage ?? '—'}%</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-neutral-100 dark:bg-white/5 mt-1.5 overflow-hidden">
+                          <div className="h-full rounded-full bg-gradient-to-r from-[#0891b2] to-[#06b6d4] transition-all" style={{ width: `${cmdbDevice.cpu_usage ?? 0}%` }} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-xs font-medium">
+                          <span className="text-black/50 dark:text-white/50 flex items-center gap-1.5"><MemoryStick size={12} /> 内存使用率</span>
+                          <span className="font-mono font-bold text-[#164e63] dark:text-[var(--app-text)]">{cmdbDevice.memory_usage ?? '—'}%</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-neutral-100 dark:bg-white/5 mt-1.5 overflow-hidden">
+                          <div className="h-full rounded-full bg-gradient-to-r from-violet-400 to-violet-500 transition-all" style={{ width: `${cmdbDevice.memory_usage ?? 0}%` }} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Details status row */}
+                    <div className="flex items-center gap-2 text-xs border-t border-black/5 dark:border-white/5 pt-3.5">
+                      <span className={`w-2.5 h-2.5 rounded-full ${cmdbDevice.status === 'online' ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-rose-500 shadow-sm shadow-rose-500/50'}`} />
+                      <span className="font-semibold text-black/60 dark:text-white/60">{cmdbDevice.status === 'online' ? (zh ? '设备在线 (Online)' : 'Online') : (zh ? '设备离线 (Offline)' : 'Offline')}</span>
+                      {cmdbDevice.vendor && (
+                        <span className="text-black/40 dark:text-white/40 ml-auto font-mono text-[10px] uppercase font-semibold">{cmdbDevice.vendor}</span>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-6">
+                    <div className="text-xs text-black/40 dark:text-white/40">{zh ? '该 IP 设备未在 CMDB 资产中注册' : 'Device not found in CMDB'}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer / Actions */}
+              <div className="px-5 py-3.5 bg-neutral-50/50 dark:bg-white/[0.01] border-t border-black/5 dark:border-white/5 flex gap-3">
+                <a
+                  href={isSrv ? `/monitor/servers?q=${encodeURIComponent(activeHop.ip)}` : `/monitor/networks?q=${encodeURIComponent(activeHop.ip)}`}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#06b6d4]/5 hover:bg-[#06b6d4]/10 text-[#0891b2] text-xs font-semibold transition-colors"
+                >
+                  <Activity size={13} /> {zh ? '监控中心' : 'Monitor'}
+                  <ExternalLink size={10} className="ml-0.5 opacity-60" />
+                </a>
+                <a
+                  href={`/access/workspace?q=${encodeURIComponent(activeHop.ip)}`}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-violet-50 dark:bg-violet-900/20 hover:bg-violet-100 dark:hover:bg-violet-900/30 text-violet-600 dark:text-violet-400 text-xs font-semibold transition-colors"
+                >
+                  <Cable size={13} /> {zh ? '登录排障' : 'SSH'}
+                  <ExternalLink size={10} className="ml-0.5 opacity-60" />
+                </a>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

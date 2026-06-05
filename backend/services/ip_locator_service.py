@@ -33,11 +33,24 @@ from services.operational_data_service import (
     PLATFORM_DEVICE_TYPE_MAP,
 )
 from services.oui_lookup import lookup_vendor
+from core.cmd_cache import get_cached_command, set_cached_command
 
 # 并发 SSH 连接上限，避免瞬间打开过多连接
 # 小规模 (≤10 台) 取 5；中规模动态扩展到 10；大规模上限 15
 MAX_SSH_WORKERS_MIN = 5
 MAX_SSH_WORKERS_MAX = 15
+
+def normalize_interface_name(name: str) -> str:
+    if not name:
+        return ""
+    name = name.strip()
+    name = re.sub(r'^(eth|ethernet)\s*(\d)', r'Ethernet\2', name, flags=re.I)
+    name = re.sub(r'^(gi|gigabitethernet)\s*(\d)', r'GigabitEthernet\2', name, flags=re.I)
+    name = re.sub(r'^(te|ten-gigabitethernet|tengigabitethernet)\s*(\d)', r'TenGigabitEthernet\2', name, flags=re.I)
+    name = re.sub(r'^(lo|loopback)\s*(\d)', r'Loopback\2', name, flags=re.I)
+    name = re.sub(r'^(vl|vlan)\s*(\d)', r'Vlan\2', name, flags=re.I)
+    name = re.sub(r'\s+', '', name)
+    return name
 
 
 def _calc_ssh_workers(device_count: int) -> int:
@@ -349,6 +362,11 @@ def _build_ssh_params(device_info: dict) -> dict[str, Any]:
 
 def _send_command(device_info: dict, command: str) -> str:
     """SSH 到设备执行单条命令并返回原始输出。"""
+    device_ip = device_info.get('ip_address') or device_info.get('hostname') or 'unknown'
+    cached = get_cached_command(device_ip, command)
+    if cached is not None:
+        return cached
+
     conn_params = _build_ssh_params(device_info)
     with ConnectHandler(**conn_params) as client:
         if conn_params.get('secret'):
@@ -356,29 +374,46 @@ def _send_command(device_info: dict, command: str) -> str:
                 client.enable()
             except Exception:
                 pass
-        return client.send_command(
+        output = client.send_command(
             command,
             cmd_verify=False,
             strip_prompt=True,
             strip_command=True,
             read_timeout=30,
         )
+        set_cached_command(device_ip, command, output)
+        return output
 
 
 # ── 精确 ARP 查询 ─────────────────────────────────────
 
-def _targeted_arp_query(device_info: dict, target_ip: str) -> dict | None:
+def _targeted_arp_query(device_info: dict, target_ip: str, vrf: str = None) -> dict | None:
     """
     向设备发送精确 ARP 查询命令，仅返回目标 IP 的记录。
     数据量：1 条记录 vs 全表可能上万条。
+    支持可选的 vrf 参数，用于在特定的 VRF 虚拟路由上下文中查询 ARP 表。
     失败时回退到全表采集。
     """
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
-    cmd_template = _TARGETED_ARP_COMMANDS.get(platform)
+    
+    if vrf:
+        if platform in ('cisco_ios', 'cisco_nxos', 'arista_eos', 'ruijie_rgos'):
+            cmd_template = 'show ip arp vrf {vrf} {ip}'
+        elif platform in ('huawei_vrp', 'h3c_comware'):
+            cmd_template = 'display arp vpn-instance {vrf} | include {ip}'
+        elif platform in ('juniper_junos',):
+            cmd_template = 'show arp table {vrf} no-resolve | match {ip}'
+        else:
+            cmd_template = _TARGETED_ARP_COMMANDS.get(platform)
+    else:
+        cmd_template = _TARGETED_ARP_COMMANDS.get(platform)
 
     if cmd_template:
         try:
-            cmd = cmd_template.format(ip=target_ip)
+            if vrf:
+                cmd = cmd_template.format(ip=target_ip, vrf=vrf)
+            else:
+                cmd = cmd_template.format(ip=target_ip)
             output = _send_command(device_info, cmd)
             # 解析输出行，寻找包含目标 IP 的 ARP 条目
             for line in output.splitlines():
@@ -540,6 +575,35 @@ def _collect_lldp_from_device(device_info: dict) -> list[dict]:
     return records
 
 
+def _check_local_device_ip(device_info: dict, target_ip: str, vrf: str = None) -> dict | None:
+    """检查 target_ip 是否是设备的本地接口 IP（如 Loopback 口），支持 VRF 上下文"""
+    platform = str(device_info.get('platform') or 'cisco_ios').lower()
+    if platform in _ARP_UNSUPPORTED_PLATFORMS:
+        return None
+    
+    if platform in ('huawei_vrp', 'h3c_comware'):
+        cmd = 'display ip interface brief'
+    else:
+        cmd = 'show ip interface brief'
+        
+    try:
+        output = _send_command(device_info, cmd)
+        for line in output.splitlines():
+            if re.search(r'\b' + re.escape(target_ip) + r'\b', line):
+                parts = line.split()
+                if parts:
+                    intf_name = parts[0]
+                    return {
+                        'ip': target_ip,
+                        'interface': intf_name,
+                        'device_id': device_info.get('id'),
+                        'device_name': device_info.get('hostname') or device_info.get('ip_address'),
+                    }
+    except Exception as exc:
+        logger.debug(f"[IPLocator] Local IP check failed on {device_info.get('ip_address')}: {exc}")
+    return None
+
+
 def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     """
     核心定位逻辑：IP → MAC（ARP） → Port（MAC表） → Uplink（LLDP）
@@ -625,6 +689,44 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
 
         if target_mac:
             _set_cached_arp(target_ip, target_mac, arp_source_info)
+
+    # ── Step 1.7: 如果 ARP 未找到，并发检查是否是网络设备自身的本地接口/环回口 ──
+    if not target_mac:
+        workers = _calc_ssh_workers(len(all_eligible))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_map_local = {
+                executor.submit(_check_local_device_ip, dev, target_ip): dev
+                for dev in all_eligible
+            }
+            for future in as_completed(future_map_local):
+                dev = future_map_local[future]
+                try:
+                    local_hit = future.result()
+                    if local_hit:
+                        target_mac = 'N/A'
+                        result['mac'] = 'N/A'
+                        result['mac_display'] = 'N/A (环回口/设备接口)'
+                        result['arp_source'] = {
+                            'device_id': local_hit['device_id'],
+                            'device': local_hit['device_name'],
+                            'interface': local_hit['interface']
+                        }
+                        result['found'] = True
+                        result['locations'] = [{
+                            'switch_id': local_hit['device_id'],
+                            'switch_name': local_hit['device_name'],
+                            'port': local_hit['interface'],
+                            'vlan': '',
+                            'type': 'DEVICE_INTERFACE',
+                            'is_uplink': False,
+                            'note': '该 IP 为网络设备自身的接口/环回口地址',
+                        }]
+                        for pending_f in future_map_local:
+                            if not pending_f.done():
+                                pending_f.cancel()
+                        return result
+                except Exception as exc:
+                    logger.debug(f"[IPLocator] Local IP check error: {exc}")
 
     if not target_mac:
         result['errors'].append(f'在 {len(gateway_devices)} 台网关设备的 ARP 表中未找到 {target_ip}')

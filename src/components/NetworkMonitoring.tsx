@@ -104,6 +104,20 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Read ?q= URL param on mount to pre-fill search (deep-link from NPA hop popover)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const q = params.get('q');
+      if (q) {
+        setSearch(q);
+        // Auto-select matching device
+        const match = (devices || []).find(d => !isServerDevice(d) && d.ip_address === q);
+        if (match) setSelectedId(String(match.id));
+      }
+    } catch { /* ignore */ }
+  }, [devices]);
   const [realtimeData, setRealtimeData] = useState<any>(null);
   const [trendSeries, setTrendSeries] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);

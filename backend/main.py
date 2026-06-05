@@ -526,7 +526,8 @@ if __name__ == "__main__":
 
     # On modern uvicorn versions, loop must be one of: auto/asyncio/uvloop/none.
     # Windows Proactor is already enforced via event loop policy above.
-    loop_type = "asyncio" if sys.platform == "win32" else "auto"
+    loop_type = "none" if sys.platform == "win32" else "auto"
+
 
     # Windows 热重载方案：
     #   uvicorn 原生 reload 在 Windows 下会让子进程回退到 select() 事件循环，

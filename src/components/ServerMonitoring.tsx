@@ -181,6 +181,19 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
   const [search, setSearch] = useState('');
   const [metricCatalog, setMetricCatalog] = useState<MetricItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Read ?q= URL param on mount to pre-fill search (deep-link from NPA hop popover)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const q = params.get('q');
+      if (q) {
+        setSearch(q);
+        const match = (devices || []).find(d => isServerDevice(d) && d.ip_address === q);
+        if (match) setSelectedId(String(match.id));
+      }
+    } catch { /* ignore */ }
+  }, [devices]);
   const [series, setSeries] = useState<SamplePoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);

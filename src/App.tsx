@@ -434,6 +434,7 @@ const App: React.FC = () => {
       '/inventory/servers': '/assets/servers',
       '/ipam': '/assets/ipam',
       '/ip-locator': '/assets/toolbox',
+      '/path-diagnose': '/assets/diagnose',
       '/tags': '/assets/tags',
       '/racks': '/assets/racks',
       '/audit': '/management/audit',
