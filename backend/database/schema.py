@@ -319,6 +319,138 @@ def _init_db_logic(conn):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_last_seen ON links(last_seen)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_source_target ON links(source_device_id, target_device_id)')
 
+    # ── IP Locator tables ──
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS arp_cache (
+        target_ip   TEXT PRIMARY KEY,
+        mac         TEXT NOT NULL,
+        arp_source  TEXT NOT NULL DEFAULT '{}',
+        cached_at   TEXT NOT NULL,
+        expires_at  REAL NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_arp_cache_expires ON arp_cache(expires_at)')
+
+    cursor.execute(f'''
+    CREATE TABLE IF NOT EXISTS mac_change_log (
+        id          {_SERIAL_PK},
+        ip          TEXT NOT NULL,
+        old_mac     TEXT NOT NULL,
+        new_mac     TEXT NOT NULL,
+        old_vendor  TEXT NOT NULL DEFAULT '',
+        new_vendor  TEXT NOT NULL DEFAULT '',
+        old_device  TEXT NOT NULL DEFAULT '',
+        new_device  TEXT NOT NULL DEFAULT '',
+        detected_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_mac_change_ip ON mac_change_log(ip)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_mac_change_time ON mac_change_log(detected_at DESC)')
+
+    # Check if network_endpoints has the old 'port' column instead of 'switch_port'
+    try:
+        if _USE_PG:
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'network_endpoints' AND column_name = 'port'"
+            )
+            has_old_port = bool(cursor.fetchone())
+        else:
+            cols = [row['name'] for row in cursor.execute("PRAGMA table_info(network_endpoints)").fetchall()]
+            has_old_port = ('port' in cols and 'switch_port' not in cols)
+        if has_old_port:
+            cursor.execute("DROP TABLE network_endpoints")
+    except Exception:
+        pass
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS network_endpoints (
+        id          TEXT PRIMARY KEY,
+        ip          TEXT UNIQUE,
+        mac         TEXT NOT NULL,
+        hostname    TEXT NOT NULL DEFAULT '',
+        vendor      TEXT NOT NULL DEFAULT '',
+        os_type     TEXT NOT NULL DEFAULT '',
+        asset_type  TEXT NOT NULL DEFAULT 'host',
+        switch_id   TEXT NOT NULL,
+        switch_port TEXT NOT NULL,
+        vlan        TEXT NOT NULL DEFAULT '',
+        vrf         TEXT NOT NULL DEFAULT '',
+        site        TEXT NOT NULL DEFAULT '',
+        source_type TEXT NOT NULL DEFAULT 'arp',
+        confidence  TEXT NOT NULL DEFAULT '95%',
+        first_seen  TEXT NOT NULL,
+        last_seen   TEXT NOT NULL,
+        is_active   INTEGER NOT NULL DEFAULT 1
+    )
+    ''')
+
+    for col, dtype in [
+        ('ip', "TEXT UNIQUE"),
+        ('mac', "TEXT DEFAULT ''"),
+        ('hostname', "TEXT NOT NULL DEFAULT ''"),
+        ('vendor', "TEXT NOT NULL DEFAULT ''"),
+        ('os_type', "TEXT NOT NULL DEFAULT ''"),
+        ('asset_type', "TEXT NOT NULL DEFAULT 'host'"),
+        ('switch_id', "TEXT DEFAULT ''"),
+        ('switch_port', "TEXT DEFAULT ''"),
+        ('vlan', "TEXT NOT NULL DEFAULT ''"),
+        ('vrf', "TEXT NOT NULL DEFAULT ''"),
+        ('site', "TEXT NOT NULL DEFAULT ''"),
+        ('source_type', "TEXT NOT NULL DEFAULT 'arp'"),
+        ('confidence', "TEXT NOT NULL DEFAULT '95%'"),
+        ('first_seen', "TEXT DEFAULT ''"),
+        ('last_seen', "TEXT DEFAULT ''"),
+        ('is_active', "INTEGER NOT NULL DEFAULT 1")
+    ]:
+        ensure_column('network_endpoints', col, dtype)
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ip_inventory (
+        ip          TEXT PRIMARY KEY,
+        mask        TEXT NOT NULL DEFAULT '255.255.255.255',
+        device_id   TEXT NOT NULL,
+        interface   TEXT NOT NULL,
+        type        TEXT NOT NULL,
+        last_seen   TEXT NOT NULL
+    )
+    ''')
+
+    for col, dtype in [
+        ('mask', "TEXT NOT NULL DEFAULT '255.255.255.255'"),
+        ('device_id', "TEXT DEFAULT ''"),
+        ('interface', "TEXT DEFAULT ''"),
+        ('type', "TEXT DEFAULT ''"),
+        ('last_seen', "TEXT DEFAULT ''")
+    ]:
+        ensure_column('ip_inventory', col, dtype)
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS route_cache (
+        id          TEXT PRIMARY KEY,
+        device_id   TEXT NOT NULL,
+        prefix      TEXT NOT NULL,
+        mask        TEXT NOT NULL,
+        next_hop    TEXT NOT NULL,
+        protocol    TEXT NOT NULL,
+        interface   TEXT NOT NULL DEFAULT '',
+        metric      INTEGER NOT NULL DEFAULT 0,
+        last_update TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_route_cache_device_prefix ON route_cache(device_id, prefix)')
+
+    for col, dtype in [
+        ('device_id', "TEXT DEFAULT ''"),
+        ('prefix', "TEXT DEFAULT ''"),
+        ('mask', "TEXT DEFAULT ''"),
+        ('next_hop', "TEXT DEFAULT ''"),
+        ('protocol', "TEXT DEFAULT ''"),
+        ('interface', "TEXT DEFAULT ''"),
+        ('metric', "INTEGER DEFAULT 0"),
+        ('last_update', "TEXT DEFAULT ''")
+    ]:
+        ensure_column('route_cache', col, dtype)
+
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS topology_discovery_runs (
         id TEXT PRIMARY KEY,

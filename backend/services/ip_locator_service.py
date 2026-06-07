@@ -23,7 +23,7 @@ from typing import Any
 
 from netmiko import ConnectHandler
 
-from database import get_db_connection, _SERIAL_PK
+from database import get_db_connection, _SERIAL_PK, init_db
 from core.crypto import decrypt_credential
 from services.vault_service import resolve_device_credentials
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
@@ -152,37 +152,7 @@ import json as _json
 
 def _ensure_arp_cache_table():
     """建表（幂等），在模块加载时调用一次。"""
-    conn = get_db_connection()
-    try:
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS arp_cache (
-                target_ip   TEXT PRIMARY KEY,
-                mac         TEXT NOT NULL,
-                arp_source  TEXT NOT NULL DEFAULT '{}',
-                cached_at   TEXT NOT NULL,
-                expires_at  REAL NOT NULL
-            )
-        ''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_arp_cache_expires ON arp_cache(expires_at)')
-        # MAC 变更日志表
-        conn.execute(f'''
-            CREATE TABLE IF NOT EXISTS mac_change_log (
-                id          {_SERIAL_PK},
-                ip          TEXT NOT NULL,
-                old_mac     TEXT NOT NULL,
-                new_mac     TEXT NOT NULL,
-                old_vendor  TEXT NOT NULL DEFAULT '',
-                new_vendor  TEXT NOT NULL DEFAULT '',
-                old_device  TEXT NOT NULL DEFAULT '',
-                new_device  TEXT NOT NULL DEFAULT '',
-                detected_at TEXT NOT NULL
-            )
-        ''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_mac_change_ip ON mac_change_log(ip)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_mac_change_time ON mac_change_log(detected_at DESC)')
-        conn.commit()
-    finally:
-        conn.close()
+    init_db()
 
 # 模块加载时建表
 try:
@@ -606,13 +576,12 @@ def _check_local_device_ip(device_info: dict, target_ip: str, vrf: str = None) -
 
 def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     """
-    核心定位逻辑：IP → MAC（ARP） → Port（MAC表） → Uplink（LLDP）
+    核心定位逻辑：IP → MAC（ARP） → Port（MAC表 + LLDP 拓扑追踪）
 
-    性能策略：
-    - 设备端精确过滤：发送 "show ip arp <ip>" 而非 "show arp"（数据量从万级→1条）
-    - 并发 SSH：ThreadPoolExecutor 并行查询多台设备
-    - 早期终止：ARP 阶段找到目标后立即取消剩余设备查询
-    - 单次设备列表加载：避免重复查库
+    性能与精度策略：
+    - L1 级事实库缓存：优先查询 network_endpoints 表，0 连接数据库毫秒返回。
+    - L2 级 IP 资产库：查询 ip_inventory（Loopback/VIP等无 ARP 设备 IP）与 IPAM / 设备管理 IP。
+    - L3 级 拓扑跳步追踪（Path-Tracing）：缓存未命中时，使用数据库 links 拓扑库寻找邻居交换机，消除实时的 show lldp neighbors 命令行连接。
     """
     result: dict[str, Any] = {
         'target_ip': target_ip,
@@ -632,6 +601,57 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
         'timestamp': _beijing_now_iso(),
         'errors': [],
     }
+
+    # ── Step 0: 预检查缓存与 IP 资产库 ──
+    if not force_refresh:
+        # 1. 查找 network_endpoints 事实缓存
+        cached_ep = _get_cached_endpoint(target_ip)
+        if cached_ep:
+            result['found'] = True
+            result['mac'] = cached_ep['mac']
+            result['mac_display'] = _format_mac(cached_ep['mac'])
+            result['locations'] = [{
+                'switch_id': cached_ep.get('switch_id') or cached_ep.get('device_id'),
+                'switch_name': cached_ep.get('site') or '',
+                'port': cached_ep.get('switch_port') or cached_ep.get('port'),
+                'vlan': cached_ep.get('vlan') or '',
+                'type': 'CACHED_ENDPOINT',
+                'is_uplink': False,
+                'note': '本地事实缓存命中',
+            }]
+            result['cache']['cached_at'] = cached_ep.get('last_seen')
+            result['cache']['arp_cache_hit'] = True
+            return result
+
+        # 2. 查找 ip_inventory 资产库 (支持 Loopback/设备接口等无 ARP 数据)
+        try:
+            conn = get_db_connection()
+            try:
+                row = conn.execute(
+                    "SELECT inv.ip, inv.mask, inv.device_id, inv.interface, inv.type, d.hostname "
+                    "FROM ip_inventory inv "
+                    "LEFT JOIN devices d ON inv.device_id = d.id "
+                    "WHERE inv.ip = ?",
+                    (target_ip,)
+                ).fetchone()
+                if row:
+                    result['found'] = True
+                    result['mac'] = 'N/A'
+                    result['mac_display'] = 'N/A (IP 资产登记)'
+                    result['locations'] = [{
+                        'switch_id': row['device_id'],
+                        'switch_name': row['hostname'] or '',
+                        'port': row['interface'],
+                        'vlan': '',
+                        'type': 'IP_INVENTORY',
+                        'is_uplink': False,
+                        'note': f"该 IP 为网络设备登记资产，接口: {row['interface']}, 类型: {row['type']}",
+                    }]
+                    return result
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.debug(f"[IPLocator] ip_inventory check error: {e}")
 
     # ── 一次性加载所有有 SSH 凭据的在线设备 ──
     all_eligible = _load_eligible_devices()
@@ -736,81 +756,154 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     result['mac_display'] = _format_mac(target_mac)
     result['arp_source'] = arp_source_info
 
-    # ── Step 2: 并发 MAC 地址表查询（仅交换机，路由器无二层 MAC 表）──
-    # 白名单：只查已知具备 MAC 地址表的设备角色
+    # ── Step 2: 拓扑追踪定位 (Path Tracing) ──
+    curr_device_id = arp_source_info.get('device_id')
+    visited_switches = {curr_device_id}
+    trace_notes = []
+    terminal_switch_id = None
+    terminal_port = None
+    terminal_vlan = ''
+    terminal_type = 'DYNAMIC'
+
+    trace_notes.append(f"开始追踪：源 ARP 学习自网关 {arp_source_info.get('device')} ({arp_source_info.get('interface')})")
+
     _SWITCH_ROLES = frozenset({'switch', 'access', 'distribution', 'core', 'aggregation', 'l2', 'l3switch'})
-    # 如果 role 字段为空或不在白名单，也允许查询（兼容未填 role 的设备）
-    # 明确排除路由器和防火墙
     _MAC_EXCLUDED_ROLES = frozenset({'router', 'firewall', 'gateway', 'server', 'linux', 'windows'})
     switch_devices = [
         d for d in all_eligible
         if (d.get('role') or '').lower().strip() not in _MAC_EXCLUDED_ROLES
     ]
 
-    mac_matches: list[dict] = []
+    try:
+        conn = get_db_connection()
+        try:
+            while True:
+                dev_dict = next((d for d in all_eligible if d.get('id') == curr_device_id), None)
+                if not dev_dict:
+                    trace_notes.append(f"设备 ID {curr_device_id} 不在管理资产中或未在线，追踪终止。")
+                    break
 
-    workers = _calc_ssh_workers(len(switch_devices))
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map_mac: dict[Future, dict] = {}
-        for dev in switch_devices:
-            f = executor.submit(_targeted_mac_query, dev, target_mac)
-            future_map_mac[f] = dev
+                dev_label = dev_dict.get('hostname') or dev_dict.get('ip_address')
+                result['searched_devices']['mac'].append(dev_label)
 
-        for future in as_completed(future_map_mac):
-            dev = future_map_mac[future]
-            dev_label = dev.get('hostname') or dev.get('ip_address')
-            result['searched_devices']['mac'].append(dev_label)
+                try:
+                    mac_records = _targeted_mac_query(dev_dict, target_mac)
+                except Exception as e:
+                    trace_notes.append(f"查询设备 {dev_label} MAC 表出错: {e}")
+                    break
 
-            try:
-                device_mac_records = future.result()
-            except Exception as exc:
-                logger.debug(f"[IPLocator] MAC future error for {dev_label}: {exc}")
-                continue
+                if not mac_records:
+                    trace_notes.append(f"在设备 {dev_label} 上未匹配到 MAC {target_mac}。")
+                    break
 
-            for rec in device_mac_records:
-                port_lower = rec['port'].lower()
-                is_uplink = any(kw in port_lower for kw in ('po', 'port-channel', 'lag', 'eth-trunk'))
-                rec['is_uplink'] = is_uplink
-                mac_matches.append(rec)
+                mac_rec = mac_records[0]
+                curr_port = mac_rec['port']
+                terminal_vlan = mac_rec.get('vlan', '')
+                terminal_type = mac_rec.get('type', 'DYNAMIC')
+                
+                terminal_switch_id = curr_device_id
+                terminal_port = curr_port
 
-    # ── Step 2.5: MAC 表未命中时，利用 ARP 源信息回退 ──
-    if not mac_matches and arp_source_info:
-        mac_matches.append({
+                # 判断是否为上联端口
+                neighbor_id = None
+                neighbor_name = None
+                port_norm = normalize_interface_name(curr_port).lower()
+
+                # [Topology Cache 优化]：优先查本地 links 数据库，避免 SSH 收集 lldp neighbors
+                row_link = conn.execute(
+                    "SELECT target_device_id AS neighbor_id, target_hostname AS neighbor_name "
+                    "FROM links WHERE source_device_id = ? AND LOWER(source_port_normalized) = ?",
+                    (curr_device_id, port_norm)
+                ).fetchone()
+                if not row_link:
+                    row_link = conn.execute(
+                        "SELECT source_device_id AS neighbor_id, source_hostname AS neighbor_name "
+                        "FROM links WHERE target_device_id = ? AND LOWER(target_port_normalized) = ?",
+                        (curr_device_id, port_norm)
+                    ).fetchone()
+
+                if row_link:
+                    neighbor_name = row_link['neighbor_name']
+                    neighbor_id = row_link['neighbor_id']
+                    trace_notes.append(f"[拓扑缓存命中] 接口 {curr_port} 连接了下游邻居 {neighbor_name}")
+                    if neighbor_id not in visited_switches:
+                        curr_device_id = neighbor_id
+                        visited_switches.add(curr_device_id)
+                        continue
+                    else:
+                        break
+                else:
+                    result['searched_devices']['lldp'].append(dev_label)
+                    try:
+                        lldp_records = _collect_lldp_from_device(dev_dict)
+                    except Exception as e:
+                        logger.debug(f"[IPLocator] Error querying LLDP neighbors on {dev_label}: {e}")
+                        lldp_records = []
+
+                    for lrec in lldp_records:
+                        if normalize_interface_name(lrec['local_interface']).lower() == port_norm:
+                            neighbor_name = lrec['neighbor']
+                            break
+
+                    if neighbor_name:
+                        neighbor_dev = lookup_neighbor_device(conn, neighbor_name, "")
+                        if neighbor_dev and neighbor_dev['id'] not in visited_switches:
+                            curr_device_id = neighbor_dev['id']
+                            visited_switches.add(curr_device_id)
+                            trace_notes.append(f"设备 {dev_label} 接口 {curr_port} 连接了下游邻居 {neighbor_name}，继续追踪。")
+                            continue
+                        else:
+                            trace_notes.append(f"发现接口 {curr_port} 存在邻居 {neighbor_name}，但其不在管理资产中或已访问过，追踪终止。")
+                            break
+                    else:
+                        trace_notes.append(f"设备 {dev_label} 接口 {curr_port} 无下挂邻居设备，判定为直连主机的接入端口。")
+                        break
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.error(f"[IPLocator] Path tracing database error: {exc}")
+
+    # ── Step 3: 构造最终结果与缓存 ──
+    if terminal_switch_id and terminal_port:
+        term_dev = next((d for d in all_eligible if d.get('id') == terminal_switch_id), None)
+        term_label = term_dev.get('hostname') or term_dev.get('ip_address') if term_dev else ''
+        
+        result['found'] = True
+        result['locations'] = [{
+            'switch_id': terminal_switch_id,
+            'switch_name': term_label,
+            'port': terminal_port,
+            'vlan': terminal_vlan,
+            'type': 'PATH_TRACED',
+            'is_uplink': False,
+            'note': ' -> '.join(trace_notes),
+        }]
+        
+        # 保存事实缓存
+        _set_cached_endpoint(
+            ip=target_ip,
+            mac=target_mac,
+            device_id=terminal_switch_id,
+            port=terminal_port,
+            vlan=terminal_vlan,
+            site=term_label,
+            confidence='98% (精准拓扑追踪端口)',
+            source_type='path_traced'
+        )
+    elif arp_source_info:
+        result['found'] = True
+        result['locations'] = [{
             'switch_id': arp_source_info.get('device_id'),
             'switch_name': arp_source_info.get('device'),
             'port': arp_source_info.get('interface') or 'N/A',
             'vlan': '',
             'type': 'ARP_DIRECT',
             'is_uplink': False,
-            'note': '该 MAC 未在交换机 MAC 表中发现，可能是直连网关/路由器接口，定位基于 ARP 记录',
-        })
-
-    # ── Step 3: 用 LLDP 补充上联信息 ──
-    for match in mac_matches:
-        if match.get('type') == 'ARP_DIRECT':
-            continue
-        switch_id = match.get('switch_id')
-        dev_dict = next((d for d in switch_devices if d.get('id') == switch_id), None)
-        if not dev_dict:
-            continue
-
-        dev_label = dev_dict.get('hostname') or dev_dict.get('ip_address')
-        if dev_label not in result['searched_devices']['lldp']:
-            result['searched_devices']['lldp'].append(dev_label)
-
-        lldp_records = _collect_lldp_from_device(dev_dict)
-        for lrec in lldp_records:
-            if lrec['local_interface'].lower() == match['port'].lower():
-                match['uplink_neighbor'] = lrec['neighbor']
-                match['uplink_port'] = lrec['neighbor_port']
-                break
-
-    # 优先返回非上联口的结果
-    mac_matches.sort(key=lambda m: (m.get('is_uplink', False), m.get('type', '') == 'STATIC'))
-
-    result['found'] = len(mac_matches) > 0
-    result['locations'] = mac_matches
+            'note': '该 MAC 未在交换机 MAC 表中发现，定位基于 ARP 记录',
+        }]
+    
     return result
+
 
 
 async def locate_ip_async(target_ip: str) -> dict[str, Any]:
@@ -1080,3 +1173,896 @@ def get_mac_changes(limit: int = 200) -> dict[str, Any]:
 
 async def get_mac_changes_async(limit: int = 200) -> dict[str, Any]:
     return await asyncio.to_thread(get_mac_changes, limit)
+
+
+# === RESTORED MISSING FUNCTIONS ===
+
+
+def lookup_neighbor_device(conn, neighbor_host: str, next_hop_ip: str) -> dict | None:
+    """在设备表和 IPAM 表中根据主机名或 IP 地址查找匹配的设备。"""
+    if neighbor_host:
+        h = neighbor_host.strip().lower()
+        row = conn.execute(
+            "SELECT id, hostname, role, platform, ip_address FROM devices WHERE LOWER(hostname) = ? OR LOWER(hostname) LIKE ?",
+            (h, h + ".%")
+        ).fetchone()
+        if row:
+            return dict(row)
+
+    if next_hop_ip and next_hop_ip != "directly connected" and next_hop_ip != "local":
+        ip = next_hop_ip.strip()
+        row = conn.execute(
+            "SELECT id, hostname, role, platform, ip_address FROM devices WHERE TRIM(ip_address) = ?",
+            (ip,)
+        ).fetchone()
+        if row:
+            return dict(row)
+
+        row_ip = conn.execute(
+            "SELECT d.id, d.hostname, d.role, d.platform, d.ip_address "
+            "FROM ip_addresses ip "
+            "JOIN devices d ON ip.device_id = d.id "
+            "WHERE TRIM(ip.address) = ?", (ip,)
+        ).fetchone()
+        if row_ip:
+            return dict(row_ip)
+
+        row_inv = conn.execute(
+            "SELECT d.id, d.hostname, d.role, d.platform, d.ip_address "
+            "FROM ip_inventory inv "
+            "JOIN devices d ON inv.device_id = d.id "
+            "WHERE TRIM(inv.ip) = ?", (ip,)
+        ).fetchone()
+        if row_inv:
+            return dict(row_inv)
+
+    return None
+
+
+def _get_cached_endpoint(ip: str) -> dict[str, Any] | None:
+    """从 SQLite network_endpoints 事实表中查询终端。"""
+    try:
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                'SELECT id, ip, mac, hostname, vendor, os_type, asset_type, switch_id, switch_port, vlan, vrf, site, source_type, confidence, first_seen, last_seen, is_active '
+                'FROM network_endpoints WHERE ip = ? AND is_active = 1',
+                (ip,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug(f"[IPLocator] get cached endpoint error: {e}")
+        return None
+
+    if not row:
+        return None
+
+    res = dict(row)
+    if 'device_id' not in res and 'switch_id' in res:
+        res['device_id'] = res['switch_id']
+    if 'switch_port' in res:
+        res['port'] = res['switch_port']
+    return res
+
+
+def _set_cached_endpoint(
+    ip: str, mac: str, device_id: str, port: str,
+    vlan: str = '', site: str = '', confidence: str = '95%',
+    hostname: str = '', vendor: str = '', os_type: str = '',
+    asset_type: str = 'host', vrf: str = '', source_type: str = 'arp',
+    first_seen: str = None
+):
+    """保存或更新终端事实记录到 network_endpoints 表。"""
+    import uuid
+    last_seen = _beijing_now_iso()
+    if not first_seen:
+        first_seen = last_seen
+    uid = f"{ip}_{mac}"
+    try:
+        conn = get_db_connection()
+        try:
+            existing = conn.execute("SELECT first_seen FROM network_endpoints WHERE ip = ?", (ip,)).fetchone()
+            if existing:
+                first_seen = existing['first_seen']
+
+            conn.execute(
+                '''INSERT INTO network_endpoints (id, ip, mac, hostname, vendor, os_type, asset_type, switch_id, switch_port, vlan, vrf, site, source_type, confidence, first_seen, last_seen, is_active)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                   ON CONFLICT(ip) DO UPDATE SET
+                       mac = excluded.mac,
+                       hostname = excluded.hostname,
+                       vendor = excluded.vendor,
+                       os_type = excluded.os_type,
+                       asset_type = excluded.asset_type,
+                       switch_id = excluded.switch_id,
+                       switch_port = excluded.switch_port,
+                       vlan = excluded.vlan,
+                       vrf = excluded.vrf,
+                       site = excluded.site,
+                       source_type = excluded.source_type,
+                       confidence = excluded.confidence,
+                       last_seen = excluded.last_seen,
+                       is_active = 1''',
+                (uid, ip, mac, hostname, vendor or lookup_vendor(mac), os_type, asset_type, device_id, port, vlan, vrf, site, source_type, confidence, first_seen, last_seen),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.error(f"[IPLocator] write endpoint cache DB error: {exc}")
+
+
+
+
+# ── 全量 MAC 表采集 ─────────────────────────────────────────
+
+def _collect_full_mac_table_from_device(device_info: dict) -> list[dict]:
+    """从单台交换机采集完整的 MAC 地址表（所有 VLAN）。"""
+    platform = str(device_info.get('platform') or 'cisco_ios').lower()
+    if platform in ('huawei_vrp', 'h3c_comware'):
+        cmd = 'display mac-address'
+    elif platform in ('juniper_junos',):
+        cmd = 'show ethernet-switching table'
+    else:
+        cmd = 'show mac address-table'
+
+    try:
+        output = _send_command(device_info, cmd)
+    except Exception as exc:
+        logger.debug(f"[MAC Collector] Failed from {device_info.get('ip_address')}: {exc}")
+        return []
+
+    records = []
+    dev_id = device_info.get('id', '')
+    dev_name = device_info.get('hostname') or device_info.get('ip_address') or ''
+
+    for line in output.splitlines():
+        m = _MAC_LINE_RE.search(line)
+        if not m:
+            continue
+        vlan = m.group('vlan')
+        mac_raw = m.group('mac')
+        port_field = m.group('port')
+        mac_norm = _normalize_mac(mac_raw)
+        if not mac_norm or len(mac_norm) != 12:
+            continue
+
+        records.append({
+            'mac': mac_norm,
+            'vlan': str(vlan).strip(),
+            'port': str(port_field).strip(),
+            'type': m.group('type'),
+            'switch_id': dev_id,
+            'switch_name': dev_name,
+        })
+    return records
+
+
+def get_network_endpoints() -> dict[str, Any]:
+    """查询 network_endpoints 表所有活跃终端，供前端展示。"""
+    try:
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                'SELECT id, ip, mac, hostname, vendor, os_type, asset_type, switch_id, switch_port, vlan, vrf, site, source_type, confidence, first_seen, last_seen, is_active '
+                'FROM network_endpoints WHERE is_active = 1 ORDER BY last_seen DESC'
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        rows = []
+
+    entries = []
+    stats = {}
+    for row in rows:
+        e = dict(row)
+        if 'switch_port' in e:
+            e['port'] = e['switch_port']
+        if 'mac' in e:
+            e['mac_display'] = _format_mac(e['mac']) if e['mac'] else '—'
+        t = e.get('asset_type', 'host')
+        stats[t] = stats.get(t, 0) + 1
+        entries.append(e)
+
+    return {
+        'total': len(entries),
+        'type_stats': stats,
+        'entries': entries,
+        'table_name': 'network_endpoints',
+        'columns': ['ip', 'mac', 'hostname', 'vendor', 'os_type', 'asset_type', 'switch_id', 'switch_port', 'vlan', 'vrf', 'site', 'source_type', 'confidence', 'first_seen', 'last_seen'],
+        'timestamp': _beijing_now_iso(),
+    }
+
+
+async def get_network_endpoints_async() -> dict[str, Any]:
+    return await asyncio.to_thread(get_network_endpoints)
+
+
+def get_ip_inventory() -> dict[str, Any]:
+    """查询 ip_inventory 表所有 IP 资产，供前端展示。"""
+    try:
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                'SELECT inv.ip, inv.mask, inv.device_id, inv.interface, inv.type, inv.last_seen, d.hostname AS device_name '
+                'FROM ip_inventory inv LEFT JOIN devices d ON inv.device_id = d.id '
+                'ORDER BY inv.last_seen DESC'
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        rows = []
+
+    entries = [dict(row) for row in rows]
+    type_stats = {}
+    for e in entries:
+        t = e.get('type', 'unknown')
+        type_stats[t] = type_stats.get(t, 0) + 1
+
+    return {
+        'total': len(entries),
+        'type_stats': type_stats,
+        'entries': entries,
+        'table_name': 'ip_inventory',
+        'columns': ['ip', 'mask', 'device_id', 'device_name', 'interface', 'type', 'last_seen'],
+        'timestamp': _beijing_now_iso(),
+    }
+
+
+async def get_ip_inventory_async() -> dict[str, Any]:
+    return await asyncio.to_thread(get_ip_inventory)
+
+
+def get_route_cache() -> dict[str, Any]:
+    """查询 route_cache 表所有路由条目，供前端展示。"""
+    try:
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                'SELECT rc.id, rc.device_id, rc.prefix, rc.mask, rc.next_hop, rc.protocol, rc.interface, rc.metric, rc.last_update, d.hostname AS device_name '
+                'FROM route_cache rc LEFT JOIN devices d ON rc.device_id = d.id '
+                'ORDER BY rc.device_id, rc.prefix'
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        rows = []
+
+    entries = [dict(row) for row in rows]
+    proto_stats = {}
+    for e in entries:
+        p = e.get('protocol', 'unknown')
+        proto_stats[p] = proto_stats.get(p, 0) + 1
+    device_stats = {}
+    for e in entries:
+        dn = e.get('device_name') or e.get('device_id', 'unknown')
+        device_stats[dn] = device_stats.get(dn, 0) + 1
+
+    return {
+        'total': len(entries),
+        'protocol_stats': proto_stats,
+        'device_stats': device_stats,
+        'entries': entries,
+        'table_name': 'route_cache',
+        'columns': ['id', 'device_id', 'device_name', 'prefix', 'mask', 'next_hop', 'protocol', 'interface', 'metric', 'last_update'],
+        'timestamp': _beijing_now_iso(),
+    }
+
+
+async def get_route_cache_async() -> dict[str, Any]:
+    return await asyncio.to_thread(get_route_cache)
+
+
+# ── 设备接口 IP 采集 ──────────────────────────────────────
+
+def _collect_device_interface_ips(device_info: dict) -> list[dict]:
+    """从设备采集所有本地接口 IP（Loopback/物理接口/VLAN 等），用于 ip_inventory 同步。"""
+    platform = str(device_info.get('platform') or 'cisco_ios').lower()
+    if platform in _ARP_UNSUPPORTED_PLATFORMS:
+        return []
+
+    if platform in ('huawei_vrp', 'h3c_comware'):
+        cmd = 'display ip interface brief'
+    else:
+        cmd = 'show ip interface brief'
+
+    try:
+        output = _send_command(device_info, cmd)
+    except Exception as exc:
+        logger.debug(f"[IP Inventory] Failed to collect interface IPs from {device_info.get('ip_address')}: {exc}")
+        return []
+
+    records = []
+    dev_id = device_info.get('id', '')
+    dev_name = device_info.get('hostname') or device_info.get('ip_address') or ''
+
+    ipv4_re = re.compile(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})')
+
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if any(kw in line.lower() for kw in ('interface', 'ip-address', 'ok?', 'method', 'status', 'protocol', 'physical')):
+            continue
+
+        match = ipv4_re.search(line)
+        if not match:
+            continue
+
+        ip = match.group(1)
+        if ip in ('0.0.0.0', '255.255.255.255'):
+            continue
+        if ip.startswith('169.254.'):
+            continue
+
+        parts = line.split()
+        intf_name = parts[0] if parts else 'unknown'
+
+        mask = '255.255.255.255'
+        ip_col = match.group(0)
+        if '/' in ip_col and ip_col.startswith(ip):
+            prefix_len = ip_col.split('/')[1]
+            try:
+                pl = int(prefix_len)
+                mask = _int_to_netmask(pl)
+            except ValueError:
+                pass
+        else:
+            for part in parts[1:]:
+                if '/' in part and part.startswith(ip):
+                    prefix_len = part.split('/')[1]
+                    try:
+                        pl = int(prefix_len)
+                        mask = _int_to_netmask(pl)
+                    except ValueError:
+                        pass
+                    break
+
+        records.append({
+            'ip': ip,
+            'mask': mask,
+            'interface': intf_name,
+            'device_id': dev_id,
+            'device_name': dev_name,
+        })
+
+    return records
+
+
+# ── IP Inventory 同步 ────────────────────────────────────
+
+def sync_ip_inventory():
+    """从已登记的 IPAM (ip_addresses) 与设备接口配置中同步 Loopback/物理接口 IP 到 ip_inventory。"""
+    logger.info("[IP Inventory Sync] Starting sync from ip_addresses and device interfaces...")
+    total_ipam = 0
+    total_device = 0
+
+    # ── Phase 1: Sync from IPAM (ip_addresses) ──
+    try:
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                "SELECT ip.address, ip.device_id, ip.interface_name, d.hostname "
+                "FROM ip_addresses ip "
+                "JOIN devices d ON ip.device_id = d.id"
+            ).fetchall()
+
+            last_seen = _beijing_now_iso()
+            for row in rows:
+                ip = row['address'].strip()
+                if '/' in ip:
+                    ip = ip.split('/')[0]
+                intf = row['interface_name'] or 'unknown'
+                dev_id = row['device_id']
+
+                intf_lower = intf.lower()
+                ip_type = 'physical'
+                if 'loopback' in intf_lower or 'lo' in intf_lower:
+                    ip_type = 'loopback'
+                elif 'vlan' in intf_lower or 'vl' in intf_lower:
+                    ip_type = 'vlan'
+                elif 'tunnel' in intf_lower:
+                    ip_type = 'tunnel'
+
+                conn.execute(
+                    '''INSERT INTO ip_inventory (ip, mask, device_id, interface, type, last_seen)
+                       VALUES (?, '255.255.255.255', ?, ?, ?, ?)
+                       ON CONFLICT(ip) DO UPDATE SET
+                           device_id = excluded.device_id,
+                           interface = excluded.interface,
+                           type = excluded.type,
+                           last_seen = excluded.last_seen''',
+                    (ip, dev_id, intf, ip_type, last_seen),
+                )
+                total_ipam += 1
+            conn.commit()
+            logger.info(f"[IP Inventory Sync] Phase 1 (IPAM): synced {total_ipam} IPs.")
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"[IP Inventory Sync] Phase 1 (IPAM) failed: {e}")
+
+    # ── Phase 2: Auto-discover interface IPs from online devices ──
+    try:
+        all_devices = _load_eligible_devices()
+        if all_devices:
+            workers = min(5, len(all_devices))
+            device_ips: list[dict] = []
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_map = {
+                    executor.submit(_collect_device_interface_ips, dev): dev
+                    for dev in all_devices
+                }
+                for future in as_completed(future_map):
+                    try:
+                        records = future.result()
+                        device_ips.extend(records)
+                    except Exception as exc:
+                        logger.debug(f"[IP Inventory Sync] Device collection error: {exc}")
+
+            if device_ips:
+                conn = get_db_connection()
+                try:
+                    last_seen = _beijing_now_iso()
+                    for rec in device_ips:
+                        ip = rec['ip']
+                        intf = rec['interface']
+                        dev_id = rec['device_id']
+                        mask = rec.get('mask', '255.255.255.255')
+
+                        intf_lower = intf.lower()
+                        ip_type = 'physical'
+                        if 'loopback' in intf_lower or 'lo' in intf_lower:
+                            ip_type = 'loopback'
+                        elif 'vlan' in intf_lower or 'vl' in intf_lower:
+                            ip_type = 'vlan'
+                        elif 'tunnel' in intf_lower:
+                            ip_type = 'tunnel'
+
+                        conn.execute(
+                            '''INSERT INTO ip_inventory (ip, mask, device_id, interface, type, last_seen)
+                               VALUES (?, ?, ?, ?, ?, ?)
+                               ON CONFLICT(ip) DO UPDATE SET
+                                   mask = excluded.mask,
+                                   device_id = excluded.device_id,
+                                   interface = excluded.interface,
+                                   type = excluded.type,
+                                   last_seen = excluded.last_seen''',
+                            (ip, mask, dev_id, intf, ip_type, last_seen),
+                        )
+                        total_device += 1
+                    conn.commit()
+                    logger.info(f"[IP Inventory Sync] Phase 2 (Devices): synced {total_device} IPs from {len(all_devices)} devices.")
+                finally:
+                    conn.close()
+    except Exception as e:
+        logger.error(f"[IP Inventory Sync] Phase 2 (Devices) failed: {e}")
+
+    logger.info(f"[IP Inventory Sync] Complete — IPAM: {total_ipam}, Devices: {total_device}")
+
+
+# ── 终端事实库后台同步 ──────────────────────────────────
+
+def run_endpoint_collector():
+    """
+    后台终端事实库同步任务：
+    1. 触发 ARP Sweep 以确保本地 ARP 缓存最新。
+    2. 获取所有的在线交换机设备，并发采集其完整的 MAC 地址表。
+    3. 获取所有的 LLDP/CDP 拓扑连接，构建上联口白名单。
+    4. 对比 ARP 和 MAC，找出每个活跃 IP 的最佳接入端口，写入 network_endpoints 表。
+    5. 同步 IP Inventory 表。
+    """
+    logger.info("[Endpoint Collector] Starting endpoint cache sync...")
+    t0 = time.time()
+
+    # 1. 确保 ARP 缓存最新
+    try:
+        run_arp_sweep()
+    except Exception as e:
+        logger.error(f"[Endpoint Collector] ARP sweep failed: {e}")
+
+    arp_data = get_arp_table()
+    arp_entries = arp_data.get('entries', [])
+    if not arp_entries:
+        logger.info("[Endpoint Collector] No active ARP entries found, skipping.")
+        # Still sync IP inventory even without ARP
+        try:
+            sync_ip_inventory()
+        except Exception as e:
+            logger.error(f"[Endpoint Collector] Error syncing IP Inventory: {e}")
+        return
+
+    # 2. 获取所有在线交换机
+    all_eligible = _load_eligible_devices()
+    _MAC_EXCLUDED_ROLES = frozenset({'router', 'firewall', 'gateway', 'server', 'linux', 'windows'})
+    switch_devices = [
+        d for d in all_eligible
+        if (d.get('role') or '').lower().strip() not in _MAC_EXCLUDED_ROLES
+    ]
+    if not switch_devices:
+        logger.info("[Endpoint Collector] No eligible switch devices found.")
+        try:
+            sync_ip_inventory()
+        except Exception as e:
+            logger.error(f"[Endpoint Collector] Error syncing IP Inventory: {e}")
+        return
+
+    workers = min(3, len(switch_devices))
+    all_mac_records: list[dict] = []
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(_collect_full_mac_table_from_device, dev): dev for dev in switch_devices}
+        for future in as_completed(future_map):
+            dev = future_map[future]
+            try:
+                records = future.result()
+                all_mac_records.extend(records)
+            except Exception as exc:
+                logger.debug(f"[Endpoint Collector] MAC collection error from {dev.get('ip_address')}: {exc}")
+
+    if not all_mac_records:
+        logger.warning("[Endpoint Collector] No MAC entries collected from switches. Proceeding with fallback logic.")
+
+    # 3. 收集 LLDP/CDP 邻居以判定上联口
+    conn = get_db_connection()
+    uplink_ports = set()
+    try:
+        rows = conn.execute("SELECT local_device_id, local_port, remote_device_id, remote_port FROM links").fetchall()
+        for r in rows:
+            if r['local_device_id'] and r['local_port']:
+                uplink_ports.add((r['local_device_id'], normalize_interface_name(r['local_port']).lower()))
+            if r['remote_device_id'] and r['remote_port']:
+                uplink_ports.add((r['remote_device_id'], normalize_interface_name(r['remote_port']).lower()))
+    except Exception as e:
+        logger.debug(f"[Endpoint Collector] Error querying topology links: {e}")
+    finally:
+        conn.close()
+
+    # 4. 对比匹配
+    mac_to_locations = {}
+    for rec in all_mac_records:
+        mac = rec['mac']
+        switch_id = rec['switch_id']
+        port_norm = normalize_interface_name(rec['port']).lower()
+
+        is_uplink = (switch_id, port_norm) in uplink_ports or any(kw in port_norm for kw in ('po', 'port-channel', 'lag', 'eth-trunk'))
+        rec['is_uplink'] = is_uplink
+
+        if mac not in mac_to_locations:
+            mac_to_locations[mac] = []
+        mac_to_locations[mac].append(rec)
+
+    endpoints_to_save = []
+    for arp in arp_entries:
+        ip = arp['ip']
+        mac_raw = arp['mac_raw']
+        mac_norm = _normalize_mac(mac_raw)
+
+        locations = mac_to_locations.get(mac_norm, [])
+        if not locations:
+            if arp.get('device_id') and arp.get('interface'):
+                endpoints_to_save.append({
+                    'ip': ip,
+                    'mac': mac_norm,
+                    'device_id': arp['device_id'],
+                    'port': arp['interface'],
+                    'vlan': '',
+                    'site': arp.get('device', ''),
+                    'confidence': '80% (基于 ARP 学习源)',
+                })
+            continue
+
+        locations.sort(key=lambda x: (x.get('is_uplink', False), x.get('type', '') == 'STATIC'))
+        best_loc = locations[0]
+
+        confidence = '98% (精准接入端口)'
+        if best_loc.get('is_uplink'):
+            confidence = '70% (仅发现上联端口匹配)'
+
+        endpoints_to_save.append({
+            'ip': ip,
+            'mac': mac_norm,
+            'device_id': best_loc['switch_id'],
+            'port': best_loc['port'],
+            'vlan': best_loc['vlan'],
+            'site': best_loc['switch_name'],
+            'confidence': confidence,
+        })
+
+    if endpoints_to_save:
+        try:
+            conn = get_db_connection()
+            try:
+                conn.execute("UPDATE network_endpoints SET is_active = 0")
+
+                last_seen = _beijing_now_iso()
+                for ep in endpoints_to_save:
+                    existing = conn.execute("SELECT first_seen FROM network_endpoints WHERE ip = ?", (ep['ip'],)).fetchone()
+                    first_seen = existing['first_seen'] if existing else last_seen
+                    uid = f"{ep['ip']}_{ep['mac']}"
+
+                    conn.execute(
+                        '''INSERT INTO network_endpoints (id, ip, mac, hostname, vendor, os_type, asset_type, switch_id, switch_port, vlan, vrf, site, source_type, confidence, first_seen, last_seen, is_active)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                           ON CONFLICT(ip) DO UPDATE SET
+                               mac = excluded.mac,
+                               hostname = excluded.hostname,
+                               vendor = excluded.vendor,
+                               os_type = excluded.os_type,
+                               asset_type = excluded.asset_type,
+                               switch_id = excluded.switch_id,
+                               switch_port = excluded.switch_port,
+                               vlan = excluded.vlan,
+                               vrf = excluded.vrf,
+                               site = excluded.site,
+                               source_type = excluded.source_type,
+                               confidence = excluded.confidence,
+                               last_seen = excluded.last_seen,
+                               is_active = 1''',
+                        (uid, ep['ip'], ep['mac'], ep.get('hostname', ''), lookup_vendor(ep['mac']), ep.get('os_type', ''), ep.get('asset_type', 'host'), ep['device_id'], ep['port'], ep['vlan'], ep.get('vrf', ''), ep['site'], ep.get('source_type', 'arp'), ep['confidence'], first_seen, last_seen),
+                    )
+                conn.commit()
+                logger.info(f"[Endpoint Collector] Successfully synced {len(endpoints_to_save)} endpoints to Network Source of Truth cache.")
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.error(f"[Endpoint Collector] Error writing to network_endpoints table: {e}")
+
+    # 同步 IP Inventory 表
+    try:
+        sync_ip_inventory()
+    except Exception as e:
+        logger.error(f"[Endpoint Collector] Error syncing IP Inventory: {e}")
+
+    elapsed = round(time.time() - t0, 1)
+    logger.info(f"[Endpoint Collector] Finished endpoint cache sync in {elapsed}s.")
+
+
+async def run_endpoint_collector_async():
+    await asyncio.to_thread(run_endpoint_collector)
+
+
+# ── 路由表解析与采集 ─────────────────────────────────────
+
+def _int_to_netmask(prefix_len: int) -> str:
+    """把前缀长度 (0-32) 转换为子网掩码字符串。"""
+    mask = (0xffffffff >> (32 - prefix_len)) << (32 - prefix_len)
+    return f"{(mask >> 24) & 0xff}.{(mask >> 16) & 0xff}.{(mask >> 8) & 0xff}.{mask & 0xff}"
+
+
+def parse_routing_table(output: str, platform: str) -> list[dict]:
+    """解析完整的 show ip route / display ip routing-table 输出，提取前缀、掩码、下一跳、出接口和协议类型。"""
+    platform = platform.lower()
+    routes = []
+
+    # ── Huawei/H3C ──
+    if any(p in platform for p in ('huawei', 'vrp', 'comware', 'h3c')):
+        for line in output.splitlines():
+            m = re.search(r'(\d+\.\d+\.\d+\.\d+)/(\d+)\s+(\w+)\s+\d+\s+\d+\s+\w*\s+(\S+)\s+(\S+)', line)
+            if m:
+                dest, mask_len_str, proto, next_hop, interface = m.groups()
+                mask_len = int(mask_len_str)
+                netmask = _int_to_netmask(mask_len)
+                routes.append({
+                    'prefix': dest,
+                    'mask': netmask,
+                    'next_hop': "directly connected" if proto.lower() == 'direct' else next_hop,
+                    'protocol': proto.lower(),
+                    'interface': interface,
+                    'metric': 0
+                })
+        return routes
+
+    # ── Juniper ──
+    if 'juniper' in platform or 'junos' in platform:
+        current_dest = None
+        current_mask = None
+        for line in output.splitlines():
+            m_dest = re.search(r'(\d+\.\d+\.\d+\.\d+)/(\d+)', line)
+            if m_dest:
+                current_dest = m_dest.group(1)
+                current_mask = _int_to_netmask(int(m_dest.group(2)))
+                continue
+            if current_dest and ('Next hop:' in line or 'via' in line):
+                m_nh = re.search(r'Next hop:\s+([^\s,]+)\s+via\s+(\S+)|via\s+(\S+)', line)
+                if m_nh:
+                    if m_nh.group(1) and m_nh.group(2):
+                        nh = m_nh.group(1)
+                        intf = m_nh.group(2)
+                    else:
+                        nh = "directly connected"
+                        intf = m_nh.group(3)
+                    routes.append({
+                        'prefix': current_dest,
+                        'mask': current_mask,
+                        'next_hop': nh,
+                        'protocol': 'static',
+                        'interface': intf,
+                        'metric': 0
+                    })
+        return routes
+
+    # ── Cisco IOS / Default ──
+    current_subnet = None
+    last_dest = None
+    last_mask = None
+    last_proto = None
+
+    for line in output.splitlines():
+        line = line.strip()
+        m_subnet = re.search(r'^(\d+\.\d+\.\d+\.\d+)/(\d+)\s+is\s+subnetted', line)
+        if m_subnet:
+            current_subnet = m_subnet.group(2)
+            continue
+
+        m_route = re.search(
+            r'^(?P<proto>[C|S|O|B|D|R|L]\*?\s*(?:IA|EX2|E2|E1|L1|L2)?)\s+'
+            r'(?P<dest>\d+\.\d+\.\d+\.\d+)(?P<mask_len_part>/\d+)?',
+            line
+        )
+        if m_route:
+            gd = m_route.groupdict()
+            proto = gd['proto'].strip().lower()
+            dest = gd['dest']
+            mask_len_part = gd['mask_len_part']
+            if mask_len_part:
+                mask_len = int(mask_len_part.strip('/'))
+            else:
+                mask_len = int(current_subnet) if current_subnet else 32
+
+            netmask = _int_to_netmask(mask_len)
+
+            rest_of_line = line[m_route.end():].strip()
+            next_hop = ""
+            interface = ""
+            if 'directly connected' in rest_of_line or 'is directly connected' in rest_of_line:
+                next_hop = "directly connected"
+                parts = [p.strip() for p in rest_of_line.replace('is directly connected', '').replace('directly connected', '').split(',')]
+                for p in reversed(parts):
+                    p_clean = p.replace('via', '').strip()
+                    if p_clean and p_clean[0].isalpha():
+                        interface = p_clean
+                        break
+            elif 'via' in rest_of_line:
+                parts = [p.strip() for p in rest_of_line.split('via')[1].split(',')]
+                if parts:
+                    next_hop = parts[0]
+                    if len(parts) > 1:
+                        last_part = parts[-1]
+                        if last_part and last_part[0].isalpha():
+                            interface = last_part
+
+            if next_hop:
+                routes.append({
+                    'prefix': dest,
+                    'mask': netmask,
+                    'next_hop': next_hop,
+                    'protocol': proto,
+                    'interface': interface,
+                    'metric': 0
+                })
+
+                last_dest = dest
+                last_mask = netmask
+                last_proto = proto
+                continue
+
+        if last_dest:
+            next_hop = ""
+            interface = ""
+            if 'directly connected' in line or 'is directly connected' in line:
+                next_hop = "directly connected"
+                parts = [p.strip() for p in line.replace('is directly connected', '').replace('directly connected', '').split(',')]
+                for p in reversed(parts):
+                    p_clean = p.replace('via', '').strip()
+                    if p_clean and p_clean[0].isalpha():
+                        interface = p_clean
+                        break
+            elif 'via' in line:
+                parts = [p.strip() for p in line.split('via')[1].split(',')]
+                if parts:
+                    next_hop = parts[0]
+                    if len(parts) > 1:
+                        last_part = parts[-1]
+                        if last_part and last_part[0].isalpha():
+                            interface = last_part
+
+            if next_hop:
+                routes.append({
+                    'prefix': last_dest,
+                    'mask': last_mask,
+                    'next_hop': next_hop,
+                    'protocol': last_proto,
+                    'interface': interface,
+                    'metric': 0
+                })
+                continue
+            elif line:
+                # If we encounter a non-empty line that doesn't match a next-hop,
+                # we have moved past the multi-path block. Clear state.
+                last_dest = None
+                last_mask = None
+                last_proto = None
+
+    return routes
+
+
+def run_route_collector():
+    """
+    后台路由事实库同步任务：
+    1. 获取所有支持路由的在线设备。
+    2. 并发连接，拉取 `show ip route` 路由表。
+    3. 解析后批量写入 `route_cache` 表。
+    """
+    logger.info("[Route Collector] Starting route cache sync...")
+    t0 = time.time()
+
+    all_eligible = _load_eligible_devices()
+    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'aggregation', 'l3switch'}
+    route_devices = [
+        d for d in all_eligible
+        if (d.get('role') or '').lower().strip() in _L3_ROLES
+    ]
+
+    if not route_devices:
+        logger.info("[Route Collector] No eligible L3 routing devices found.")
+        return
+
+    workers = min(5, len(route_devices))
+    all_routes_to_save = []
+
+    def collect_device_routes(dev: dict) -> list[dict]:
+        platform = str(dev.get('platform') or 'cisco_ios').lower()
+        if platform in ('huawei_vrp', 'h3c_comware'):
+            cmd = "display ip routing-table"
+        elif platform in ('juniper_junos',):
+            cmd = "show route"
+        else:
+            cmd = "show ip route"
+
+        try:
+            output = _send_command(dev, cmd)
+            parsed = parse_routing_table(output, platform)
+            for r in parsed:
+                r['device_id'] = dev['id']
+            return parsed
+        except Exception as e:
+            logger.debug(f"[Route Collector] Failed to collect routes from {dev.get('hostname') or dev.get('ip_address')}: {e}")
+            return []
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(collect_device_routes, dev): dev for dev in route_devices}
+        for future in as_completed(future_map):
+            dev = future_map[future]
+            try:
+                device_routes = future.result()
+                all_routes_to_save.extend(device_routes)
+            except Exception as exc:
+                logger.debug(f"[Route Collector] Error from {dev.get('ip_address')}: {exc}")
+
+    if all_routes_to_save:
+        try:
+            conn = get_db_connection()
+            try:
+                conn.execute("DELETE FROM route_cache")
+                last_update = _beijing_now_iso()
+                for r in all_routes_to_save:
+                    rid = f"{r['device_id']}_{r['prefix']}_{r['mask']}_{r['next_hop']}_{r['interface']}"
+                    conn.execute(
+                        '''INSERT INTO route_cache (id, device_id, prefix, mask, next_hop, protocol, interface, metric, last_update)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                        (rid, r['device_id'], r['prefix'], r['mask'], r['next_hop'], r['protocol'], r['interface'], r['metric'], last_update)
+                    )
+                conn.commit()
+                logger.info(f"[Route Collector] Successfully synced {len(all_routes_to_save)} routes to route_cache.")
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.error(f"[Route Collector] Error writing to route_cache: {e}")
+
+    elapsed = round(time.time() - t0, 1)
+    logger.info(f"[Route Collector] Finished route cache sync in {elapsed}s.")
+
+
+async def run_route_collector_async():
+    await asyncio.to_thread(run_route_collector)

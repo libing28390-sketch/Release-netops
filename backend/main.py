@@ -143,8 +143,9 @@ async def lifespan(app: FastAPI):
     
     reschedule_backup(schedule_cfg)
     
-    from services.ip_locator_service import run_arp_sweep, ARP_SWEEP_INTERVAL_SECONDS
-    scheduler.add_job(run_arp_sweep, 'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='arp_cache_sweep', replace_existing=True)
+    from services.ip_locator_service import run_endpoint_collector, run_route_collector, ARP_SWEEP_INTERVAL_SECONDS
+    scheduler.add_job(run_endpoint_collector, 'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='arp_cache_sweep', replace_existing=True)
+    scheduler.add_job(run_route_collector, 'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='route_cache_sweep', replace_existing=True)
     
     from services.inspection_service import run_scheduled_inspections
     scheduler.add_job(run_scheduled_inspections, CronTrigger(minute='0,30'), id='inspection_scheduler', replace_existing=True)

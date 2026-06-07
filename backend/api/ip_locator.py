@@ -3,10 +3,10 @@ IP Locator API — 根据 IP 地址实时定位设备所在交换机端口。
 """
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from schemas.schemas import IPLocateRequest, ConnectivityProbeRequest, PathDiagnoseRequest
 from core.rbac import require_role
-from services.ip_locator_service import locate_ip_async_with_options, get_arp_table_async, run_arp_sweep_async, get_mac_changes_async
+from services.ip_locator_service import locate_ip_async_with_options, get_arp_table_async, run_arp_sweep_async, get_mac_changes_async, get_network_endpoints_async, get_ip_inventory_async, get_route_cache_async
 from services.connectivity_service import run_probe_async
 from services.diagnose_service import run_diagnose_async
 from services.audit_service import log_audit_event
@@ -55,6 +55,15 @@ async def api_trigger_arp_sweep(user=require_role("Operator")):
     except Exception as exc:
         logger.error(f"[ARP Sweep] manual trigger failed: {exc}")
         raise HTTPException(status_code=500, detail=f'ARP 采集失败: {exc}')
+
+
+@router.post('/ip-locator/nsot-sweep')
+async def api_trigger_nsot_sweep(background_tasks: BackgroundTasks, user=require_role("Operator")):
+    """手动触发全量网络事实库同步任务（包括 ARP Sweep、交换机 MAC 采集与路由表采集）。"""
+    from services.ip_locator_service import run_endpoint_collector, run_route_collector
+    background_tasks.add_task(run_endpoint_collector)
+    background_tasks.add_task(run_route_collector)
+    return {'success': True, 'message': '数据采集任务已在后台启动，同步过程可能需要 1~2 分钟，请稍后刷新查看。'}
 
 
 @router.get('/ip-locator/mac-changes')
@@ -122,3 +131,20 @@ async def api_path_diagnose(body: PathDiagnoseRequest, user=require_role("Viewer
     )
     return result
 
+
+@router.get('/ip-locator/network-endpoints')
+async def api_get_network_endpoints(user=require_role("Viewer")):
+    """查询网络终端事实库 (network_endpoints)。"""
+    return await get_network_endpoints_async()
+
+
+@router.get('/ip-locator/ip-inventory')
+async def api_get_ip_inventory(user=require_role("Viewer")):
+    """查询 IP 资产明细 (ip_inventory)。"""
+    return await get_ip_inventory_async()
+
+
+@router.get('/ip-locator/route-cache')
+async def api_get_route_cache(user=require_role("Viewer")):
+    """查询路由缓存表 (route_cache)。"""
+    return await get_route_cache_async()

@@ -79,6 +79,8 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'path-diagnose';
     } else if (second === 'toolbox') {
       activeTab = 'ip-locator';
+    } else if (second === 'nsot') {
+      activeTab = 'nsot';
     } else if (second === 'tags') {
       activeTab = 'tags';
     } else if (second === 'racks') {
@@ -158,6 +160,7 @@ export function getRouteContext(pathname: string): RouteContext {
     else if (first === 'ipam') activeTab = 'ipam';
     else if (first === 'path-diagnose') activeTab = 'path-diagnose';
     else if (first === 'ip-locator') activeTab = 'ip-locator';
+    else if (first === 'nsot') activeTab = 'nsot';
     else if (first === 'tags') activeTab = 'tags';
     else if (first === 'racks') activeTab = 'racks';
     else if (first === 'audit') activeTab = 'audit';

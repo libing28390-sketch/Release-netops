@@ -1127,6 +1127,12 @@ const AppMainContent: React.FC = () => {
         </Suspense>
       )}
 
+      {activeTab === 'nsot' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <IPLocatorPage language={language} t={t} mode="nsot-only" />
+        </Suspense>
+      )}
+
       {activeTab === 'ip-locator' && (
         <Suspense fallback={lazyPanelFallback}>
           <IPLocatorPage language={language} t={t} mode="toolbox" />

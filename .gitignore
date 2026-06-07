@@ -88,3 +88,7 @@ docs/tts_scripts/test_concat.mp3
 scripts/generate_device_onboarding_audio.py
 README.gitee.md
 deploy-ubuntu.gitee.sh
+
+# Local session links and codex-bridge cache
+artifacts_symlink/
+~/

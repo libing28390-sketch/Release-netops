@@ -56,6 +56,7 @@ export const navConfig: NavGroup[] = [
       { id: 'servers',    label: '服务器',      labelEn: 'Servers',         path: '/assets/servers',     icon: 'Server' },
       { id: 'ipam',       label: 'IP/VLAN管理', labelEn: 'IP/VLAN Mgmt',    path: '/assets/ipam',        icon: 'Globe' },
       { id: 'path-diagnose', label: 'NPA 智能路径诊断', labelEn: 'NPA Path Diagnostics', path: '/assets/diagnose', icon: 'ShieldAlert' },
+      { id: 'nsot',          label: '网络事实库',      labelEn: 'Network Facts (NSOT)', path: '/assets/nsot',     icon: 'Database' },
       { id: 'ip-locator', label: 'IP 工具箱',   labelEn: 'IP Toolbox',      path: '/assets/toolbox',     icon: 'MapPin' },
       { id: 'tags',       label: '标签管理',    labelEn: 'Tags',            path: '/assets/tags',        icon: 'Tag' },
       { id: 'racks',      label: '机柜管理',    labelEn: 'Rack Layout',     path: '/assets/racks',       icon: 'Columns3' },
