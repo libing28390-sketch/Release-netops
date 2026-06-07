@@ -1162,6 +1162,8 @@ async def run_scheduled_backup(run_id: str | None = None):
             entry['devices'].append(result)
         return result
 
+    await asyncio.gather(*[_run_with_progress(dev) for dev in eligible])
+
     duration = round(_time.time() - start_time, 2)
     logger.info(
         f"[Scheduled Backup] Done - {success_count} succeeded, {failed_count} failed, {skipped_count} skipped. "
