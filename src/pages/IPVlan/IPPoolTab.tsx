@@ -48,6 +48,8 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
   const [tenants, setTenants] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   // Modals
   const [showAddEdit, setShowAddEdit] = useState(false);
@@ -178,6 +180,8 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
     );
   });
 
+  const paginatedPools = filteredPools.slice((page - 1) * pageSize, page * pageSize);
+
   const getUtilColor = (util: number) => {
     if (util < 60) return 'from-emerald-400 to-green-500';
     if (util < 80) return 'from-amber-400 to-orange-500';
@@ -205,7 +209,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
             <input
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder={zh ? '搜索地址池名称、网段...' : 'Search pools...'}
               className="w-full pl-10 pr-4 py-1.5 text-xs rounded-xl border border-black/5 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
             />
@@ -236,8 +240,8 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
                 </tr>
               </thead>
               <tbody>
-                {filteredPools.length > 0 ? (
-                  filteredPools.map((node) => (
+                {paginatedPools.length > 0 ? (
+                  paginatedPools.map((node) => (
                     <tr 
                       key={node.id} 
                       className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group"
@@ -296,6 +300,18 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
               </tbody>
             </table>
           )}
+        </div>
+
+        {/* Pagination */}
+        <div className="px-6 py-4 border-t border-gray-100">
+          <Pagination
+            currentPage={page}
+            totalItems={filteredPools.length}
+            itemsPerPage={pageSize}
+            onPageChange={setPage}
+            language={language}
+            alwaysVisible={true}
+          />
         </div>
       </div>
 

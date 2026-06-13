@@ -37,6 +37,8 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [stateFilter, setStateFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   // Modals
   const [showAddEdit, setShowAddEdit] = useState(false);
@@ -151,6 +153,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
     }
   };
 
+  // Filter lease list
   const filteredLeases = leases.filter((l) => {
     const matchesSearch =
       l.address.includes(search) ||
@@ -161,6 +164,8 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
     const matchesState = stateFilter === 'all' || l.lease_state === stateFilter;
     return matchesSearch && matchesState;
   });
+
+  const paginatedLeases = filteredLeases.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
@@ -182,7 +187,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
             {/* State Filter */}
             <select
               value={stateFilter}
-              onChange={(e) => setStateFilter(e.target.value)}
+              onChange={(e) => { setStateFilter(e.target.value); setPage(1); }}
               className="px-3.5 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none"
             >
               <option value="all">{zh ? '所有租约状态' : 'All Lease States'}</option>
@@ -196,7 +201,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
               <input
                 type="text"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                 placeholder={zh ? '搜索IP、MAC地址、DHCP服务器...' : 'Search DHCP leases...'}
                 className="w-full pl-10 pr-4 py-1.5 text-xs rounded-xl border border-black/5 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
               />
@@ -227,8 +232,8 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                 </tr>
               </thead>
               <tbody>
-                {filteredLeases.length > 0 ? (
-                  filteredLeases.map((node) => (
+                {paginatedLeases.length > 0 ? (
+                  paginatedLeases.map((node) => (
                     <tr 
                       key={node.id} 
                       className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group"
@@ -277,6 +282,18 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
               </tbody>
             </table>
           )}
+        </div>
+
+        {/* Pagination */}
+        <div className="px-6 py-4 border-t border-gray-100">
+          <Pagination
+            currentPage={page}
+            totalItems={filteredLeases.length}
+            itemsPerPage={pageSize}
+            onPageChange={setPage}
+            language={language}
+            alwaysVisible={true}
+          />
         </div>
       </div>
 

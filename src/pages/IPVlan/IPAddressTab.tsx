@@ -594,17 +594,16 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         </div>
 
         {/* Pagination */}
-        {filteredAddresses.length > pageSize && (
-          <div className="px-6 py-4 border-t border-gray-100">
-            <Pagination
-              currentPage={page}
-              totalItems={filteredAddresses.length}
-              itemsPerPage={pageSize}
-              onPageChange={setPage}
-              language={language}
-            />
-          </div>
-        )}
+        <div className="px-6 py-4 border-t border-gray-100">
+          <Pagination
+            currentPage={page}
+            totalItems={filteredAddresses.length}
+            itemsPerPage={pageSize}
+            onPageChange={setPage}
+            language={language}
+            alwaysVisible={true}
+          />
+        </div>
       </div>
 
       {/* Add / Edit Modal */}

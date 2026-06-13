@@ -43,6 +43,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   // Modals
   const [showAddEdit, setShowAddEdit] = useState(false);
@@ -194,6 +196,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
     return matchesSearch && matchesType;
   });
 
+  const paginatedVips = filteredVips.slice((page - 1) * pageSize, page * pageSize);
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
       <PageHero
@@ -214,7 +218,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
             {/* Type Filter */}
             <select
               value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
+              onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}
               className="px-3.5 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none"
             >
               <option value="all">{zh ? '所有高可用类型' : 'All VIP Types'}</option>
@@ -232,7 +236,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
               <input
                 type="text"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                 placeholder={zh ? '搜索VIP地址、真实服务器...' : 'Search VIPs...'}
                 className="w-full pl-10 pr-4 py-1.5 text-xs rounded-xl border border-black/5 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
               />
@@ -265,8 +269,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
                 </tr>
               </thead>
               <tbody>
-                {filteredVips.length > 0 ? (
-                  filteredVips.map((node) => (
+                {paginatedVips.length > 0 ? (
+                  paginatedVips.map((node) => (
                     <tr 
                       key={node.id} 
                       className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group"
@@ -328,6 +332,18 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
               </tbody>
             </table>
           )}
+        </div>
+
+        {/* Pagination */}
+        <div className="px-6 py-4 border-t border-gray-100">
+          <Pagination
+            currentPage={page}
+            totalItems={filteredVips.length}
+            itemsPerPage={pageSize}
+            onPageChange={setPage}
+            language={language}
+            alwaysVisible={true}
+          />
         </div>
       </div>
 

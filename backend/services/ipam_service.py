@@ -704,7 +704,53 @@ def list_pools() -> list[dict]:
             LEFT JOIN tenants t ON p.tenant_id = t.id
             ORDER BY p.name
         ''').fetchall()
-        return [dict(r) for r in rows]
+        
+        pools = []
+        for r in rows:
+            p_dict = dict(r)
+            p_dict['prefix'] = p_dict.get('prefix_cidr') or ''
+            
+            start_ip_str = p_dict.get('start_ip', '')
+            end_ip_str = p_dict.get('end_ip', '')
+            
+            total_ips = 0
+            used_ips = 0
+            
+            try:
+                start = ipaddress.ip_address(start_ip_str)
+                end = ipaddress.ip_address(end_ip_str)
+                if start.version == end.version:
+                    total_ips = int(end) - int(start) + 1
+            except Exception:
+                pass
+            
+            p_dict['total_ips'] = total_ips
+            
+            prefix_id = p_dict.get('prefix_id')
+            if prefix_id and total_ips > 0:
+                addr_rows = conn.execute('''
+                    SELECT address FROM ip_addresses WHERE subnet_id = ?
+                ''', (prefix_id,)).fetchall()
+                
+                try:
+                    start = ipaddress.ip_address(start_ip_str)
+                    end = ipaddress.ip_address(end_ip_str)
+                    for ar in addr_rows:
+                        addr_str = ar['address']
+                        try:
+                            addr_obj = ipaddress.ip_address(addr_str)
+                            if start <= addr_obj <= end:
+                                used_ips += 1
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            
+            p_dict['used_ips'] = used_ips
+            p_dict['utilization'] = round((used_ips / total_ips * 100), 1) if total_ips > 0 else 0
+            pools.append(p_dict)
+            
+        return pools
     finally:
         conn.close()
 
@@ -1102,7 +1148,8 @@ def get_ipam_reconciliation() -> dict:
 
         ip_rows = conn.execute(f'''
             SELECT ip.id, ip.address, ip.hostname, ip.mac_address, ip.subnet_id, ip.status,
-                   p.prefix AS subnet_prefix, p.name AS subnet_name
+                   ip.device_type, ip.interface_name,
+                   p.prefix AS subnet_prefix, p.name AS subnet_name, p.network_type
             FROM ip_addresses ip
             LEFT JOIN prefixes p ON ip.subnet_id = p.id
         ''').fetchall()
@@ -1146,6 +1193,15 @@ def get_ipam_reconciliation() -> dict:
                 
         for ip, ipam in ipam_map.items():
             if ip not in endpoints_map:
+                # Exclude loopbacks and VIPs because they don't have switch port endpoints/ARP
+                is_loopback_or_vip = (
+                    (ipam.get('device_type') or '').lower() in ('loopback', 'vip') or
+                    (ipam.get('interface_name') or '').lower().startswith('loopback') or
+                    (ipam.get('network_type') or '').lower() in ('loopback', 'vip')
+                )
+                if is_loopback_or_vip:
+                    continue
+
                 stale_ip_addresses.append({
                     'id': ipam['id'],
                     'address': ip,

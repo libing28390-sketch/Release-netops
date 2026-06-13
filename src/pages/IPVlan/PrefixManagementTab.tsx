@@ -962,7 +962,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         </div>
 
         {/* Pagination */}
-        {viewMode === 'table' && filteredPrefixes.length > pageSize && (
+        {viewMode === 'table' && (
           <div className="px-6 py-4 border-t border-gray-100">
             <Pagination
               currentPage={page}
@@ -970,6 +970,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               itemsPerPage={pageSize}
               onPageChange={setPage}
               language={language}
+              alwaysVisible={true}
             />
           </div>
         )}

@@ -600,17 +600,16 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
         </div>
 
         {/* Pagination */}
-        {filteredList.length > pageSize && (
-          <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0">
-            <Pagination
-              currentPage={page}
-              totalItems={filteredList.length}
-              itemsPerPage={pageSize}
-              onPageChange={setPage}
-              language={language}
-            />
-          </div>
-        )}
+        <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0">
+          <Pagination
+            currentPage={page}
+            totalItems={filteredList.length}
+            itemsPerPage={pageSize}
+            onPageChange={setPage}
+            language={language}
+            alwaysVisible={true}
+          />
+        </div>
       </div>
 
       {/* Modal 1: Register IP */}
