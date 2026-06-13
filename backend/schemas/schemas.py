@@ -41,6 +41,14 @@ class Job(JobBase):
 
 _MAC_RE = _re.compile(r'^([0-9a-fA-F]{2}[:\-]){5}[0-9a-fA-F]{2}$')
 
+def _normalize_mac(v: Optional[str]) -> Optional[str]:
+    if not v:
+        return v
+    clean = _re.sub(r'[^0-9a-fA-F]', '', v)
+    if len(clean) != 12:
+        raise ValueError('Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)')
+    return ':'.join(clean[i:i+2].lower() for i in range(0, 12, 2))
+
 
 class SubnetCreate(BaseModel):
     name: str = ''
@@ -116,9 +124,7 @@ class IPAddressCreate(BaseModel):
     @field_validator('mac_address')
     @classmethod
     def validate_mac(cls, v: str) -> str:
-        if v and not _MAC_RE.match(v):
-            raise ValueError('Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)')
-        return v
+        return _normalize_mac(v) or ''
 
     @field_validator('status')
     @classmethod
@@ -140,9 +146,7 @@ class IPAddressUpdate(BaseModel):
     @field_validator('mac_address')
     @classmethod
     def validate_mac(cls, v: Optional[str]) -> Optional[str]:
-        if v and not _MAC_RE.match(v):
-            raise ValueError('Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)')
-        return v
+        return _normalize_mac(v)
 
     @field_validator('status')
     @classmethod
@@ -851,9 +855,7 @@ class DHCPLeaseCreate(BaseModel):
     @field_validator('mac_address')
     @classmethod
     def validate_mac(cls, v: str) -> str:
-        if v and not _MAC_RE.match(v):
-            raise ValueError('Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)')
-        return v
+        return _normalize_mac(v) or ''
 
 
 class DHCPLeaseUpdate(BaseModel):
@@ -864,3 +866,8 @@ class DHCPLeaseUpdate(BaseModel):
     lease_state: Optional[str] = None
     lease_start: Optional[str] = None
     lease_end: Optional[str] = None
+
+    @field_validator('mac_address')
+    @classmethod
+    def validate_mac(cls, v: Optional[str]) -> Optional[str]:
+        return _normalize_mac(v)

@@ -1967,7 +1967,7 @@ def _init_db_logic(conn):
         last_seen TEXT DEFAULT '',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY (subnet_id) REFERENCES ip_subnets(id)
+        FOREIGN KEY (subnet_id) REFERENCES prefixes(id)
     )
     ''')
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_addr_unique ON ip_addresses(subnet_id, address)')
