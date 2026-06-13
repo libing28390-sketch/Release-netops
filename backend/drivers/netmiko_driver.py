@@ -200,6 +200,14 @@ class NetmikoDriver(BaseDriver):
         }
         logger.info(f"Login to {self.host} as username={self.username!r} pwd_len={len(self.password or '')}")
         device_params.update(build_netmiko_compatibility_kwargs())
+        
+        # Override connection timeout if specified in device_info
+        custom_timeout = self.device_info.get('conn_timeout') or self.device_info.get('timeout')
+        if custom_timeout:
+            device_params['timeout'] = custom_timeout
+            device_params['conn_timeout'] = custom_timeout
+            logger.info(f"Using custom connection timeout: {custom_timeout}s")
+            
         # enable secret: only use an explicitly configured enable_password.
         # Do NOT fall back to the login password — if the device has no enable
         # password, passing a non-empty secret causes Netmiko to expect a

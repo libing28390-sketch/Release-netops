@@ -729,11 +729,11 @@ def update_schedule(body: ScheduleUpdate):
 _backup_runs: dict[str, dict] = {}
 
 # How many devices to back up in parallel. SSH connections are I/O-bound so
-# 10 concurrent workers is a safe default that won't overwhelm most networks.
+# 30 concurrent workers is a safe default that won't overwhelm most networks.
 # Increase via BACKUP_CONCURRENCY env var if your network can handle more.
-# Recommended range: 5–20. Higher values may trigger SSH rate-limiting on devices.
+# Recommended range: 5–50. Higher values may trigger SSH rate-limiting on devices.
 import os as _os
-BACKUP_CONCURRENCY = int(_os.environ.get('BACKUP_CONCURRENCY', '10'))
+BACKUP_CONCURRENCY = int(_os.environ.get('BACKUP_CONCURRENCY', '30'))
 
 
 @router.post('/configs/run-now')
@@ -1049,6 +1049,7 @@ async def run_scheduled_backup(run_id: str | None = None):
             _backup_cmd = 'display current-configuration'
 
         d = dict(device)
+        d['conn_timeout'] = 8  # Use a shorter connection timeout of 8s for backup tasks to fail fast
         from services.vault_service import resolve_device_credentials
         creds = resolve_device_credentials(d)
         username = creds.get('username') or ''
@@ -1058,7 +1059,12 @@ async def run_scheduled_backup(run_id: str | None = None):
         if not username or not password:
             failed_count += 1
             logger.error(f"[Scheduled Backup] [X] {device['hostname']}: no usable credentials")
-            return {'hostname': device['hostname'], 'status': 'failed', 'reason': 'no_credentials'}
+            return {
+                'hostname': device['hostname'],
+                'status': 'failed',
+                'reason': '缺失凭证',
+                'detail': '该设备没有配置可用的用户名或密码凭证。'
+            }
 
         d['username'] = username
         d['password'] = password
@@ -1074,8 +1080,10 @@ async def run_scheduled_backup(run_id: str | None = None):
                 service = AutomationService(driver_type=driver_type)
                 commands = [_backup_cmd]
 
+                # Use the built-in ThreadPoolExecutor with 50 workers from ExecutionOrchestrator
+                # instead of the event loop's default thread pool (which is limited by CPU cores)
                 results = await asyncio.get_event_loop().run_in_executor(
-                    None,
+                    service.orchestrator.executor,
                     lambda: service.execute_commands(d, commands, is_config=False)
                 )
 
@@ -1101,7 +1109,35 @@ async def run_scheduled_backup(run_id: str | None = None):
                 f"[Scheduled Backup] [X] {device['hostname']} ({cred_kind}): "
                 f"no valid config obtained (output length={len(output)})"
             )
-            return {'hostname': device['hostname'], 'status': 'failed', 'reason': 'invalid_output'}
+            
+            # Determine error reason
+            err_str = 'Unknown error'
+            if results and results[0]:
+                err_str = results[0].get('error') or results[0].get('stderr') or 'No config output'
+            elif results is None:
+                err_str = 'No connection could be established'
+
+            from drivers.ssh_compat import get_ssh_error_code, build_ssh_error_guidance
+            err_code = get_ssh_error_code(str(err_str))
+            detail_reason = build_ssh_error_guidance(str(err_str))
+
+            if err_code == 'legacy_ssh_algorithms':
+                short_reason = 'SSH协商失败'
+            elif err_code == 'ssh_authentication_failed':
+                short_reason = '认证失败'
+            elif err_code == 'ssh_transport_timeout':
+                short_reason = '网络超时'
+            elif err_code == 'ssh_transport_unreachable':
+                short_reason = '连接被拒'
+            else:
+                short_reason = '无法获取配置'
+
+            return {
+                'hostname': device['hostname'],
+                'status': 'failed',
+                'reason': short_reason,
+                'detail': detail_reason
+            }
 
         try:
             platform = (device['platform'] or '').lower()
@@ -1138,7 +1174,12 @@ async def run_scheduled_backup(run_id: str | None = None):
         except Exception as e:
             failed_count += 1
             logger.error(f"[Scheduled Backup] [X] {device['hostname']}: {e}")
-            return {'hostname': device['hostname'], 'status': 'failed', 'reason': str(e)}
+            return {
+                'hostname': device['hostname'],
+                'status': 'failed',
+                'reason': '系统异常',
+                'detail': str(e)
+            }
 
     # Run all eligible devices concurrently (bounded by semaphore)
     async def _run_with_progress(device):

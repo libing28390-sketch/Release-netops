@@ -341,6 +341,26 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     setShowAddEdit(true);
   };
 
+  const handleGetSuggestedIP = async () => {
+    setErrorMsg('');
+    if (!form.subnet_id) {
+      setErrorMsg(zh ? '请先选择一个归属前缀网段' : 'Please select an allocating prefix first');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/ipam/subnets/${form.subnet_id}/next-available-ip`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setForm((prev) => ({ ...prev, address: data.next_available_ip }));
+      } else {
+        const err = await res.json().catch(() => null);
+        setErrorMsg(err?.detail || (zh ? '无法获取推荐 IP，网段可能已满。' : 'Failed to fetch suggested IP. Subnet might be full.'));
+      }
+    } catch (e) {
+      setErrorMsg(zh ? '获取推荐 IP 出错' : 'Error fetching suggested IP');
+    }
+  };
+
   const handleSave = async () => {
     setErrorMsg('');
     if (!form.address) {
@@ -632,7 +652,18 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
                   {/* IP Address */}
                   <div className="space-y-1.5 col-span-2">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'IP地址 *' : 'IP Address *'}</label>
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'IP地址 *' : 'IP Address *'}</label>
+                      {!editingIP && (
+                        <button
+                          type="button"
+                          onClick={handleGetSuggestedIP}
+                          className="text-[10px] font-extrabold text-cyan-600 hover:text-cyan-800 transition-colors"
+                        >
+                          {zh ? '获取推荐 IP' : 'Get Suggested IP'}
+                        </button>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={form.address}

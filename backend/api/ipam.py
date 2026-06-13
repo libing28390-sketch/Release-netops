@@ -39,6 +39,9 @@ from services.ipam_service import (
     update_lease,
     delete_lease,
     get_utilization_analytics,
+    get_next_available_ip,
+    get_next_available_prefix,
+    get_ipam_reconciliation,
 )
 from services.audit_service import log_audit_event
 
@@ -493,3 +496,24 @@ def api_get_subnets_tree(_user=require_role("Viewer")):
 @router.get('/ipam/analytics')
 def api_get_analytics(_user=require_role("Viewer")):
     return get_utilization_analytics()
+
+
+@router.get('/ipam/subnets/{subnet_id}/next-available-ip')
+def api_next_available_ip(subnet_id: str, _user=require_role("Viewer")):
+    ip = get_next_available_ip(subnet_id)
+    if not ip:
+        raise HTTPException(status_code=404, detail="No available IP addresses in this subnet")
+    return {"subnet_id": subnet_id, "next_available_ip": ip}
+
+
+@router.get('/ipam/subnets/{subnet_id}/next-available-prefix')
+def api_next_available_prefix(subnet_id: str, prefix_len: int = Query(..., ge=1, le=128), _user=require_role("Viewer")):
+    prefix = get_next_available_prefix(subnet_id, prefix_len)
+    if not prefix:
+        raise HTTPException(status_code=404, detail="No available child prefixes found")
+    return {"parent_subnet_id": subnet_id, "next_available_prefix": prefix}
+
+
+@router.get('/ipam/reconciliation')
+def api_ipam_reconciliation(_user=require_role("Viewer")):
+    return get_ipam_reconciliation()

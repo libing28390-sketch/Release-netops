@@ -7,6 +7,7 @@ const IPPoolTab = lazy(() => import('./IPVlan/IPPoolTab'));
 const VIPManagementTab = lazy(() => import('./IPVlan/VIPManagementTab'));
 const DHCPLeaseTab = lazy(() => import('./IPVlan/DHCPLeaseTab'));
 const IPUtilizationTab = lazy(() => import('./IPVlan/IPUtilizationTab'));
+const IPReconciliationTab = lazy(() => import('./IPVlan/IPReconciliationTab'));
 
 interface IPAMManagementTabProps {
   language: string;
@@ -29,6 +30,7 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
       {ipamPage === 'vips' && <VIPManagementTab language={language} t={t} />}
       {ipamPage === 'dhcp' && <DHCPLeaseTab language={language} t={t} />}
       {ipamPage === 'utilization' && <IPUtilizationTab language={language} t={t} />}
+      {ipamPage === 'reconciliation' && <IPReconciliationTab language={language} t={t} />}
     </Suspense>
   );
 };

@@ -960,3 +960,241 @@ def delete_lease(lease_id: str) -> bool:
         return True
     finally:
         conn.close()
+
+
+def get_next_available_ip(subnet_id: str) -> Optional[str]:
+    """Calculate the first unused IP address in the subnet CIDR range."""
+    conn = get_db_connection()
+    try:
+        subnet = conn.execute(
+            f'SELECT prefix, gateway FROM prefixes WHERE id = {_PH}', (subnet_id,)
+        ).fetchone()
+        if not subnet:
+            return None
+        
+        prefix_str = subnet['prefix']
+        gateway_ip = subnet['gateway']
+        
+        try:
+            net = ipaddress.ip_network(prefix_str, strict=False)
+        except ValueError:
+            return None
+            
+        allocated_rows = conn.execute(
+            f'SELECT address FROM ip_addresses WHERE subnet_id = {_PH}', (subnet_id,)
+        ).fetchall()
+        allocated_ips = {r['address'] for r in allocated_rows}
+        
+        limit = 10000
+        count = 0
+        for ip_obj in net.hosts():
+            count += 1
+            if count > limit:
+                break
+            ip_str = str(ip_obj)
+            if ip_str == gateway_ip:
+                continue
+            if ip_str in allocated_ips:
+                continue
+            return ip_str
+            
+        return None
+    finally:
+        conn.close()
+
+
+def get_next_available_prefix(subnet_id: str, prefix_len: int) -> Optional[str]:
+    """Calculate the first unused child prefix of length prefix_len inside parent subnet."""
+    conn = get_db_connection()
+    try:
+        parent = conn.execute(
+            f'SELECT prefix, vrf_id FROM prefixes WHERE id = {_PH}', (subnet_id,)
+        ).fetchone()
+        if not parent:
+            return None
+            
+        parent_prefix = parent['prefix']
+        vrf_id = parent['vrf_id']
+        
+        try:
+            parent_net = ipaddress.ip_network(parent_prefix, strict=False)
+        except ValueError:
+            return None
+            
+        if prefix_len <= parent_net.prefixlen:
+            return None
+            
+        if vrf_id:
+            existing_rows = conn.execute(
+                f'SELECT prefix FROM prefixes WHERE vrf_id = {_PH}', (vrf_id,)
+            ).fetchall()
+        else:
+            existing_rows = conn.execute(
+                f'SELECT prefix FROM prefixes WHERE vrf_id IS NULL OR vrf_id = {_PH}', ('',)
+            ).fetchall()
+            
+        existing_nets = []
+        for r in existing_rows:
+            try:
+                existing_nets.append(ipaddress.ip_network(r['prefix'], strict=False))
+            except ValueError:
+                continue
+                
+        limit = 1000
+        count = 0
+        for candidate in parent_net.subnets(new_prefix=prefix_len):
+            count += 1
+            if count > limit:
+                break
+            
+            overlap_found = False
+            for existing in existing_nets:
+                if candidate.overlaps(existing):
+                    # We only allow overlapping if the existing subnet is a strict supernet of candidate (e.g. parent container)
+                    is_supernet = (candidate.subnet_of(existing) and existing.prefixlen < candidate.prefixlen)
+                    if not is_supernet:
+                        overlap_found = True
+                        break
+            if overlap_found:
+                continue
+            return str(candidate)
+            
+        return None
+    finally:
+        conn.close()
+
+
+def get_ipam_reconciliation() -> dict:
+    """Compare documented IPAM records against discovered active hosts in network_endpoints.
+    Detect:
+      - undocumented_endpoints: present in network_endpoints (is_active=1) but NOT in ip_addresses.
+      - stale_ip_addresses: present in ip_addresses but NOT active in network_endpoints.
+      - mismatched_endpoints: present in both but with different MAC address or hostname.
+    """
+    conn = get_db_connection()
+    try:
+        prefix_rows = conn.execute(
+            'SELECT id, prefix, name FROM prefixes'
+        ).fetchall()
+        
+        prefixes_list = []
+        for r in prefix_rows:
+            try:
+                prefixes_list.append({
+                    'id': r['id'],
+                    'prefix': r['prefix'],
+                    'name': r['name'] or '',
+                    'net': ipaddress.ip_network(r['prefix'], strict=False)
+                })
+            except ValueError:
+                continue
+        prefixes_list.sort(key=lambda x: x['net'].prefixlen, reverse=True)
+        
+        def find_matching_subnet(ip_str: str) -> Optional[dict]:
+            try:
+                ip_obj = ipaddress.ip_address(ip_str)
+            except ValueError:
+                return None
+            for p in prefixes_list:
+                if ip_obj in p['net']:
+                    return p
+            return None
+
+        ip_rows = conn.execute(f'''
+            SELECT ip.id, ip.address, ip.hostname, ip.mac_address, ip.subnet_id, ip.status,
+                   p.prefix AS subnet_prefix, p.name AS subnet_name
+            FROM ip_addresses ip
+            LEFT JOIN prefixes p ON ip.subnet_id = p.id
+        ''').fetchall()
+        
+        endpoint_rows = conn.execute('''
+            SELECT id, ip, mac, hostname, vendor, switch_id, switch_port, vlan, vrf, site, last_seen
+            FROM network_endpoints
+            WHERE is_active = 1 AND ip IS NOT NULL AND ip != ''
+        ''').fetchall()
+        
+        def normalize_mac(mac_str: Optional[str]) -> str:
+            if not mac_str:
+                return ''
+            return mac_str.replace(':', '').replace('-', '').replace('.', '').strip().lower()
+
+        ipam_map = {r['address']: dict(r) for r in ip_rows}
+        endpoints_map = {r['ip']: dict(r) for r in endpoint_rows}
+        
+        undocumented_endpoints = []
+        stale_ip_addresses = []
+        mismatched_endpoints = []
+        
+        for ip, ep in endpoints_map.items():
+            if ip not in ipam_map:
+                p = find_matching_subnet(ip)
+                undocumented_endpoints.append({
+                    'ip': ip,
+                    'mac': ep['mac'],
+                    'hostname': ep['hostname'] or '',
+                    'vendor': ep['vendor'] or '',
+                    'switch_id': ep['switch_id'] or '',
+                    'switch_port': ep['switch_port'] or '',
+                    'vlan': ep['vlan'] or '',
+                    'vrf': ep['vrf'] or '',
+                    'site': ep['site'] or '',
+                    'last_seen': ep['last_seen'] or '',
+                    'subnet_id': p['id'] if p else '',
+                    'subnet_prefix': p['prefix'] if p else '',
+                    'subnet_name': p['name'] if p else (p['prefix'] if p else '')
+                })
+                
+        for ip, ipam in ipam_map.items():
+            if ip not in endpoints_map:
+                stale_ip_addresses.append({
+                    'id': ipam['id'],
+                    'address': ip,
+                    'hostname': ipam['hostname'] or '',
+                    'mac_address': ipam['mac_address'] or '',
+                    'subnet_id': ipam['subnet_id'] or '',
+                    'subnet_prefix': ipam['subnet_prefix'] or '',
+                    'subnet_name': ipam['subnet_name'] or '',
+                    'status': ipam['status'] or 'active'
+                })
+            else:
+                ep = endpoints_map[ip]
+                mac_mismatch = False
+                hostname_mismatch = False
+                
+                norm_ipam_mac = normalize_mac(ipam['mac_address'])
+                norm_ep_mac = normalize_mac(ep['mac'])
+                if norm_ipam_mac and norm_ep_mac and norm_ipam_mac != norm_ep_mac:
+                    mac_mismatch = True
+                    
+                ipam_host = (ipam['hostname'] or '').strip().lower()
+                ep_host = (ep['hostname'] or '').strip().lower()
+                if ipam_host and ep_host and ipam_host != ep_host:
+                    hostname_mismatch = True
+                    
+                if mac_mismatch or hostname_mismatch:
+                    mismatched_endpoints.append({
+                        'ip': ip,
+                        'ipam_address_id': ipam['id'],
+                        'ipam_hostname': ipam['hostname'] or '',
+                        'endpoint_hostname': ep['hostname'] or '',
+                        'ipam_mac': ipam['mac_address'] or '',
+                        'endpoint_mac': ep['mac'] or '',
+                        'subnet_id': ipam['subnet_id'] or '',
+                        'subnet_prefix': ipam['subnet_prefix'] or '',
+                        'subnet_name': ipam['subnet_name'] or '',
+                        'mac_mismatch': mac_mismatch,
+                        'hostname_mismatch': hostname_mismatch
+                    })
+                    
+        return {
+            'undocumented_endpoints': undocumented_endpoints,
+            'stale_ip_addresses': stale_ip_addresses,
+            'mismatched_endpoints': mismatched_endpoints,
+            'summary': {
+                'total_undocumented': len(undocumented_endpoints),
+                'total_stale': len(stale_ip_addresses),
+                'total_mismatched': len(mismatched_endpoints)
+            }
+        }
+    finally:
+        conn.close()

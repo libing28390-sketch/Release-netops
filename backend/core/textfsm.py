@@ -91,6 +91,46 @@ def _find_template(platform: str, command: str) -> Path | None:
     return None
 
 
+# 设备命令错误回显特征（小写匹配）：命令不支持 / 功能未启用 / 权限不足等。
+# 这类输出不是有效数据，喂给 TextFSM 会触发 State Error，应直接判定为空结果。
+_DEVICE_ERROR_KEYWORDS = (
+    'invalid input',
+    'incomplete command',
+    'ambiguous command',
+    'unrecognized command',
+    'unknown command',
+    'not enabled',
+    'syntax error',
+    'command not found',
+    'permission denied',
+    'authorization failed',
+    'wrong parameter',
+    'too many parameters',
+    'no such',
+    'is not supported',
+    'unsupported command',
+)
+
+
+def _looks_like_device_error(output: str) -> str | None:
+    """检测设备返回的命令错误回显（如 `%SNMP agent not enabled`、`% Invalid input`）。
+
+    仅在输出较短时判定，避免误伤正常的长输出。匹配则返回该错误行（供日志使用），
+    否则返回 None。
+    """
+    lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+    if not lines or len(lines) > 5:
+        return None
+    for ln in lines:
+        low = ln.lower()
+        # Cisco 以 % 开头、华为/H3C 以 Error: 开头的多为命令级错误回显
+        if ln.startswith('%') or low.startswith('error:'):
+            return ln
+        if any(kw in low for kw in _DEVICE_ERROR_KEYWORDS):
+            return ln
+    return None
+
+
 def parse_with_textfsm(platform: str, command: str, output: str) -> list[dict[str, Any]]:
     """
     带自定义目录优先级的 TextFSM 解析。
@@ -115,6 +155,16 @@ def parse_with_textfsm(platform: str, command: str, output: str) -> list[dict[st
     # 如果清洗后为空，则使用原输出（保守策略）
     if not clean_output:
         clean_output = output
+
+    # 设备命令错误回显（功能未启用 / 命令不支持等）——无需解析，直接返回空，
+    # 避免 TextFSM 状态机对错误文本抛 State Error，制造误导性的 WARNING 日志。
+    err_line = _looks_like_device_error(clean_output)
+    if err_line:
+        logger.info(
+            'Device returned an unsupported/disabled response for %s/%s: %s',
+            platform, command, err_line,
+        )
+        return []
 
     template_path = _find_template(platform, command)
     if template_path:

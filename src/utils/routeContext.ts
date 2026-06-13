@@ -169,6 +169,8 @@ export function getRouteContext(pathname: string): RouteContext {
       ipamPage = 'dhcp';
     } else if (second === 'utilization') {
       ipamPage = 'utilization';
+    } else if (second === 'reconciliation') {
+      ipamPage = 'reconciliation';
     } else {
       ipamPage = 'prefixes';
     }

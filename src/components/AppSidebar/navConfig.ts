@@ -86,6 +86,7 @@ export const navConfig: NavGroup[] = [
       { id: 'ipam-vips',     label: 'VIP管理',    labelEn: 'VIP Mgmt',       path: '/ipam/vips',         icon: 'ShieldCheck' },
       { id: 'ipam-dhcp',     label: 'DHCP租约',   labelEn: 'DHCP Leases',    path: '/ipam/dhcp',         icon: 'Clock' },
       { id: 'ipam-util',     label: '利用率分析',  labelEn: 'Utilization',    path: '/ipam/utilization',  icon: 'TrendingUp' },
+      { id: 'ipam-reconciliation', label: 'IP对账中心', labelEn: 'IP Reconciliation', path: '/ipam/reconciliation', icon: 'ClipboardCheck' },
     ]
   },
   {

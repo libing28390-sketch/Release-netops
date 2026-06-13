@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Network,
   Plus,
@@ -11,11 +11,13 @@ import {
   X,
   PlusCircle,
   Eye,
+  Info,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { useNavigate } from 'react-router-dom';
+import { isValidIPv4, isValidIPv6, toNum } from './helpers';
 
 interface Prefix {
   id: string;
@@ -93,6 +95,245 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     traceable: 1,
   });
   const [errorMsg, setErrorMsg] = useState('');
+  const [parentSubnetId, setParentSubnetId] = useState('');
+  const [desiredPrefixLen, setDesiredPrefixLen] = useState(24);
+  const [excludeNetBroadcast, setExcludeNetBroadcast] = useState(true);
+  const [excludeGateway, setExcludeGateway] = useState(true);
+
+  const usableIpDetails = useMemo(() => {
+    const cidr = form.prefix.trim();
+    if (!cidr || !cidr.includes('/')) return null;
+    const parts = cidr.split('/');
+    const ipStr = parts[0].trim();
+    const maskStr = parts[1].trim();
+    const mask = parseInt(maskStr, 10);
+    if (isNaN(mask)) return null;
+
+    const isV6 = ipStr.includes(':');
+
+    if (!isV6) {
+      // IPv4
+      if (mask < 0 || mask > 32) return null;
+      if (!isValidIPv4(ipStr)) return null;
+
+      const ipNum = toNum(ipStr);
+      const maskBin = mask === 0 ? 0 : (0xFFFFFFFF << (32 - mask)) >>> 0;
+      const netNum = (ipNum & maskBin) >>> 0;
+      const broadNum = (netNum | ~maskBin) >>> 0;
+
+      const networkIp = [
+        (netNum >>> 24) & 0xFF,
+        (netNum >>> 16) & 0xFF,
+        (netNum >>> 8) & 0xFF,
+        netNum & 0xFF
+      ].join('.');
+
+      const broadcastIp = [
+        (broadNum >>> 24) & 0xFF,
+        (broadNum >>> 16) & 0xFF,
+        (broadNum >>> 8) & 0xFF,
+        broadNum & 0xFF
+      ].join('.');
+
+      const total = Math.pow(2, 32 - mask);
+      let subtracted = 0;
+      let netBroadcastLabel = '';
+      
+      const hasNetBroadcast = mask <= 30;
+      if (hasNetBroadcast && excludeNetBroadcast) {
+        subtracted += 2;
+        netBroadcastLabel = zh 
+          ? `已排除网络地址 (${networkIp}) 与广播地址 (${broadcastIp})`
+          : `Excluded network (${networkIp}) & broadcast (${broadcastIp})`;
+      } else if (hasNetBroadcast) {
+        netBroadcastLabel = zh
+          ? `网络地址 (${networkIp}) 与广播地址 (${broadcastIp}) 计入可用`
+          : `Network (${networkIp}) & broadcast (${broadcastIp}) included`;
+      } else {
+        netBroadcastLabel = zh
+          ? '点对点/主机网段，无网络或广播地址'
+          : 'P2P or host subnet, no network/broadcast';
+      }
+
+      // Check gateway
+      const hasGateway = form.gateway.trim() !== '';
+      let gatewayValidAndInSubnet = false;
+      let gatewayIp = form.gateway.trim();
+      if (hasGateway && isValidIPv4(gatewayIp)) {
+        const gwNum = toNum(gatewayIp);
+        if ((gwNum & maskBin) === netNum) {
+          gatewayValidAndInSubnet = true;
+        }
+      }
+
+      let gatewayLabel = '';
+      if (hasGateway) {
+        if (!gatewayValidAndInSubnet) {
+          gatewayLabel = zh 
+            ? '网关 IP 不在当前子网范围内' 
+            : 'Gateway IP is not within the subnet';
+        } else if (excludeGateway) {
+          subtracted += 1;
+          gatewayLabel = zh 
+            ? `已排除网关地址 (${gatewayIp})` 
+            : `Excluded gateway (${gatewayIp})`;
+        } else {
+          gatewayLabel = zh 
+            ? `网关地址 (${gatewayIp}) 计入可用` 
+            : `Gateway (${gatewayIp}) included`;
+        }
+      } else {
+        gatewayLabel = zh ? '未设置网关' : 'Gateway not set';
+      }
+
+      const usable = Math.max(0, total - subtracted);
+
+      // Usable Host Range
+      let firstUsableNum = netNum;
+      let lastUsableNum = broadNum;
+      if (mask <= 30) {
+        if (excludeNetBroadcast) {
+          firstUsableNum = netNum + 1;
+          lastUsableNum = broadNum - 1;
+        }
+      }
+
+      let usableRangeStr = '';
+      if (usable === 0) {
+        usableRangeStr = zh ? '无可用地址' : 'No usable addresses';
+      } else if (usable === 1) {
+        const singleIp = [
+          (firstUsableNum >>> 24) & 0xFF,
+          (firstUsableNum >>> 16) & 0xFF,
+          (firstUsableNum >>> 8) & 0xFF,
+          firstUsableNum & 0xFF
+        ].join('.');
+        usableRangeStr = singleIp;
+      } else {
+        const startIp = [
+          (firstUsableNum >>> 24) & 0xFF,
+          (firstUsableNum >>> 16) & 0xFF,
+          (firstUsableNum >>> 8) & 0xFF,
+          firstUsableNum & 0xFF
+        ].join('.');
+        const endIp = [
+          (lastUsableNum >>> 24) & 0xFF,
+          (lastUsableNum >>> 16) & 0xFF,
+          (lastUsableNum >>> 8) & 0xFF,
+          lastUsableNum & 0xFF
+        ].join('.');
+        usableRangeStr = `${startIp} ~ ${endIp}`;
+        if (hasGateway && gatewayValidAndInSubnet && excludeGateway) {
+          usableRangeStr += zh ? ` (排除 ${gatewayIp})` : ` (excluding ${gatewayIp})`;
+        }
+      }
+
+      return {
+        total,
+        usable,
+        networkIp,
+        broadcastIp,
+        hasNetBroadcast,
+        netBroadcastLabel,
+        hasGateway,
+        gatewayValidAndInSubnet,
+        gatewayIp,
+        gatewayLabel,
+        usableRangeStr,
+        isV6: false
+      };
+    } else {
+      // IPv6
+      if (mask < 0 || mask > 128) return null;
+      if (!isValidIPv6(ipStr)) return null;
+
+      let total = 0;
+      let usable = 0;
+      const exponent = 128 - mask;
+      let isMassive = false;
+
+      if (exponent >= 60) {
+        isMassive = true;
+      } else {
+        total = Math.pow(2, exponent);
+      }
+
+      const networkIp = ipStr;
+      let netBroadcastLabel = '';
+      let subtracted = 0;
+
+      const hasNetBroadcast = mask <= 126;
+      if (hasNetBroadcast && excludeNetBroadcast) {
+        subtracted += 1; // Exclude subnet router anycast
+        netBroadcastLabel = zh
+          ? `已排除子网路由器任播地址 (${networkIp})`
+          : `Excluded Subnet Router Anycast (${networkIp})`;
+      } else if (hasNetBroadcast) {
+        netBroadcastLabel = zh
+          ? `所有子网地址均计入可用`
+          : `All subnet addresses included`;
+      } else {
+        netBroadcastLabel = zh
+          ? '点对点/主机网段，无保留地址'
+          : 'P2P or host subnet, no reserved addresses';
+      }
+
+      const hasGateway = form.gateway.trim() !== '';
+      let gatewayValidAndInSubnet = false;
+      let gatewayIp = form.gateway.trim();
+      if (hasGateway && isValidIPv6(gatewayIp)) {
+        gatewayValidAndInSubnet = true;
+      }
+
+      let gatewayLabel = '';
+      if (hasGateway) {
+        if (!gatewayValidAndInSubnet) {
+          gatewayLabel = zh 
+            ? '网关 IP 格式不正确' 
+            : 'Gateway IP format is invalid';
+        } else if (excludeGateway) {
+          subtracted += 1;
+          gatewayLabel = zh 
+            ? `已排除网关地址 (${gatewayIp})` 
+            : `Excluded gateway (${gatewayIp})`;
+        } else {
+          gatewayLabel = zh 
+            ? `网关地址 (${gatewayIp}) 计入可用` 
+            : `Gateway (${gatewayIp}) included`;
+        }
+      } else {
+        gatewayLabel = zh ? '未设置网关' : 'Gateway not set';
+      }
+
+      if (isMassive) {
+        usable = -1;
+      } else {
+        usable = Math.max(0, total - subtracted);
+      }
+
+      let usableRangeStr = '';
+      if (isMassive) {
+        usableRangeStr = zh ? '海量可用 IP (极多)' : 'Massive usable capacity';
+      } else {
+        usableRangeStr = zh ? `共可分配 ${usable.toLocaleString()} 个 IP` : `${usable.toLocaleString()} usable IPs`;
+      }
+
+      return {
+        total: isMassive ? -1 : total,
+        usable,
+        networkIp,
+        broadcastIp: 'N/A',
+        hasNetBroadcast,
+        netBroadcastLabel,
+        hasGateway,
+        gatewayValidAndInSubnet,
+        gatewayIp,
+        gatewayLabel,
+        usableRangeStr,
+        isV6: true
+      };
+    }
+  }, [form.prefix, form.gateway, excludeNetBroadcast, excludeGateway, zh]);
 
   const authHeaders = useCallback(() => {
     const token = localStorage.getItem('netops_token');
@@ -175,6 +416,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
 
   const openForm = (prefixItem: Prefix | null = null) => {
     setErrorMsg('');
+    setParentSubnetId('');
+    setDesiredPrefixLen(24);
+    setExcludeNetBroadcast(true);
+    setExcludeGateway(true);
     if (prefixItem) {
       setEditingPrefix(prefixItem);
       setForm({
@@ -211,6 +456,26 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       });
     }
     setShowAddEdit(true);
+  };
+
+  const handleGetSuggestedPrefix = async () => {
+    setErrorMsg('');
+    if (!parentSubnetId) {
+      setErrorMsg(zh ? '请先选择父网段' : 'Please select a parent prefix');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/ipam/subnets/${parentSubnetId}/next-available-prefix?prefix_len=${desiredPrefixLen}`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setForm((prev) => ({ ...prev, prefix: data.next_available_prefix }));
+      } else {
+        const err = await res.json().catch(() => null);
+        setErrorMsg(err?.detail || (zh ? '无法获取推荐子网，父网段容量可能已满或存在冲突。' : 'Failed to fetch suggested prefix. Parent subnet might be full or conflicting.'));
+      }
+    } catch (e) {
+      setErrorMsg(zh ? '获取推荐子网出错' : 'Error fetching suggested prefix');
+    }
   };
 
   const handleSave = async () => {
@@ -745,6 +1010,52 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                 )}
 
                 <div className="grid grid-cols-2 gap-4">
+                  {/* Recommend from Parent Prefix (Only for creating new prefix) */}
+                  {!editingPrefix && (
+                    <div className="col-span-2 p-4 bg-gray-50 rounded-2xl border border-gray-150 space-y-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-cyan-600">
+                        {zh ? '智能子网推荐 (从父网段切分)' : 'Subnet Recommendation (Split from Parent)'}
+                      </p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold text-gray-400">{zh ? '选择父网段' : 'Parent Subnet'}</label>
+                          <select
+                            value={parentSubnetId}
+                            onChange={(e) => setParentSubnetId(e.target.value)}
+                            className="w-full px-3 py-1.5 text-xs rounded-xl border border-gray-250 bg-white outline-none focus:border-cyan-400"
+                          >
+                            <option value="">{zh ? '— 请选择 —' : '— Select —'}</option>
+                            {prefixes.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.prefix} {p.name ? `(${p.name})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold text-gray-400">{zh ? '期望子网掩码长度' : 'Desired Prefix Length'}</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              value={desiredPrefixLen}
+                              onChange={(e) => setDesiredPrefixLen(parseInt(e.target.value, 10) || 24)}
+                              min={1}
+                              max={128}
+                              className="w-20 px-3 py-1.5 text-xs rounded-xl border border-gray-250 bg-white outline-none focus:border-cyan-400"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleGetSuggestedPrefix}
+                              className="flex-1 px-3 py-1.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-xl text-[10px] font-bold transition-all active:scale-95 cursor-pointer text-center"
+                            >
+                              {zh ? '推荐可用网段' : 'Find Free'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* CIDR Prefix */}
                   <div className="space-y-1.5 col-span-2">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '前缀/CIDR网段 *' : 'Prefix / CIDR *'}</label>
@@ -771,6 +1082,103 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                       disabled={editingPrefix !== null}
                     />
+                    {usableIpDetails && (
+                      <div className="col-span-2 p-4 bg-cyan-50/30 rounded-2xl border border-cyan-500/10 mt-1 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-cyan-600 uppercase tracking-wider flex items-center gap-1.5">
+                            <Info size={12} />
+                            {zh ? '网段 IP 规划助手' : 'Subnet IP Allocator Helper'}
+                          </span>
+                          <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
+                            {usableIpDetails.isV6 ? 'IPv6' : 'IPv4'}
+                          </span>
+                        </div>
+
+                        {/* Toggles */}
+                        <div className="flex flex-wrap gap-4 text-[10px] font-semibold text-gray-600 bg-white/60 p-2.5 rounded-xl border border-black/5">
+                          <div className="flex items-center gap-2">
+                            <input
+                              id="exclude-net-broadcast-checkbox"
+                              type="checkbox"
+                              checked={excludeNetBroadcast}
+                              onChange={(e) => setExcludeNetBroadcast(e.target.checked)}
+                              className="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500 w-3.5 h-3.5 cursor-pointer"
+                            />
+                            <label 
+                              htmlFor="exclude-net-broadcast-checkbox"
+                              className="cursor-pointer select-none"
+                            >
+                              {zh ? '排除网络与广播地址 (首尾 IP)' : 'Exclude Network & Broadcast (First/Last IP)'}
+                            </label>
+                          </div>
+                          <div className={`flex items-center gap-2 ${!usableIpDetails.hasGateway ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                            <input
+                              id="exclude-gateway-checkbox"
+                              type="checkbox"
+                              checked={excludeGateway}
+                              disabled={!usableIpDetails.hasGateway}
+                              onChange={(e) => setExcludeGateway(e.target.checked)}
+                              className="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500 w-3.5 h-3.5 cursor-pointer disabled:cursor-not-allowed"
+                            />
+                            <label 
+                              htmlFor="exclude-gateway-checkbox"
+                              className={`${!usableIpDetails.hasGateway ? 'cursor-not-allowed' : 'cursor-pointer'} select-none`}
+                            >
+                              {zh ? '排除默认网关' : 'Exclude Default Gateway'}
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Breakdown Grid */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                          <div className="p-2 bg-white/40 rounded-lg border border-black/5 flex flex-col">
+                            <span className="text-gray-400 font-medium">{zh ? '总 IP 数量' : 'Total IPs'}</span>
+                            <span className="font-mono font-bold text-gray-800 mt-0.5">
+                              {usableIpDetails.total === -1 ? (zh ? '海量' : 'Massive') : usableIpDetails.total.toLocaleString()}
+                            </span>
+                          </div>
+
+                          <div className="p-2 bg-white/40 rounded-lg border border-black/5 flex flex-col">
+                            <span className="text-gray-400 font-medium">{zh ? '网络/首地址' : 'Network/First IP'}</span>
+                            <span className={`font-mono font-bold mt-0.5 ${excludeNetBroadcast && usableIpDetails.hasNetBroadcast ? 'text-rose-500 line-through' : 'text-gray-700'}`}>
+                              {usableIpDetails.networkIp}
+                            </span>
+                          </div>
+
+                          <div className="p-2 bg-white/40 rounded-lg border border-black/5 flex flex-col">
+                            <span className="text-gray-400 font-medium">{zh ? '广播/尾地址' : 'Broadcast/Last IP'}</span>
+                            <span className={`font-mono font-bold mt-0.5 ${excludeNetBroadcast && usableIpDetails.hasNetBroadcast ? 'text-rose-500 line-through' : 'text-gray-700'}`}>
+                              {usableIpDetails.broadcastIp}
+                            </span>
+                          </div>
+
+                          <div className="p-2 bg-white/40 rounded-lg border border-black/5 flex flex-col">
+                            <span className="text-gray-400 font-medium">{zh ? '默认网关' : 'Default Gateway'}</span>
+                            {usableIpDetails.hasGateway ? (
+                              <span className={`font-mono font-bold mt-0.5 ${excludeGateway && usableIpDetails.gatewayValidAndInSubnet ? 'text-amber-600 line-through' : 'text-gray-700'}`}>
+                                {usableIpDetails.gatewayIp}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 italic mt-0.5">{zh ? '未配置' : 'Not configured'}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Usable Result Summary */}
+                        <div className="p-3 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-xl border border-cyan-500/20 flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                          <div>
+                            <span className="text-[10px] text-gray-500 font-bold block">{zh ? '可用主机 IP 范围' : 'Usable Host Range'}</span>
+                            <span className="font-mono text-xs font-bold text-gray-700 mt-0.5 block">{usableIpDetails.usableRangeStr}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[10px] text-gray-500 font-bold block">{zh ? '最终可用 IP 数量' : 'Final Usable IPs'}</span>
+                            <span className="text-sm font-extrabold text-cyan-600 block">
+                              {usableIpDetails.usable === -1 ? (zh ? '海量' : 'Massive') : `${usableIpDetails.usable.toLocaleString()} 个`}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Name */}
