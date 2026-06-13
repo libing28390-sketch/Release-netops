@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from database import get_db_connection
+from database import get_db_connection, fetch_interface_data
 
 
 DEVICE_HEALTH_RETENTION_DAYS = 30
@@ -12,7 +12,7 @@ DEVICE_HEALTH_RETENTION_DAYS = 30
 _SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
 DEVICE_HEALTH_SELECT = (
     'id, hostname, ip_address, platform, status, compliance, role, site, '
-    'cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data'
+    'cpu_usage, memory_usage, temp, fan_status, psu_status'
 )
 
 
@@ -306,7 +306,12 @@ def load_devices_for_health(conn, device_id: str | None = None) -> list[dict[str
         rows = conn.execute(
             f'SELECT {DEVICE_HEALTH_SELECT} FROM devices ORDER BY hostname ASC'
         ).fetchall()
-    return [dict(row) for row in rows]
+    res = []
+    for row in rows:
+        item = dict(row)
+        item['interface_data'] = fetch_interface_data(conn, item['id'])
+        res.append(item)
+    return res
 
 
 def record_device_health_snapshot() -> dict[str, Any]:

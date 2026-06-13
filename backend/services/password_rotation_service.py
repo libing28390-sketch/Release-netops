@@ -21,6 +21,9 @@ import logging
 import secrets
 import string
 import shlex
+import threading
+import uuid as _uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -47,6 +50,52 @@ def _generate_password(length: int = 20) -> str:
                 and any(c.isdigit() for c in pwd)
                 and any(c in _SAFE_SPECIAL for c in pwd)):
             return pwd
+
+
+def _sync_credential_vault(device: dict, role: str, enc_new: str) -> None:
+    """
+    Mirror a successful rotation into the credentials vault (``credentials`` table).
+
+    After the credential-decoupling refactor, the vault — not the legacy
+    ``devices.*`` columns — is the source of truth for login/backup. Rotation
+    historically wrote only to ``devices.*``, so a rotated password never reached
+    the vault and config backup would break. This keeps them consistent.
+
+    The vault stores a single account per device, so the stored login password is
+    updated only when the rotated *role* matches the account the vault represents.
+    The ``enable`` role always updates the vault's ``enable_password``.
+    """
+    cred_id = device.get('credential_id')
+    if not cred_id or not enc_new:
+        return
+    try:
+        conn = get_db_connection()
+        try:
+            row = conn.execute('SELECT username FROM credentials WHERE id = ?', (cred_id,)).fetchone()
+            if not row:
+                return
+            vault_user = (dict(row).get('username') or '').strip().lower()
+
+            if role == 'enable':
+                conn.execute('UPDATE credentials SET enable_password = ? WHERE id = ?', (enc_new, cred_id))
+                conn.commit()
+                logger.info("[Rotation] Synced new enable secret into credential vault %s", cred_id)
+                return
+
+            target_user = (
+                (device.get('admin_username') or device.get('username'))
+                if role == 'admin'
+                else (device.get('normal_username') or 'user')
+            )
+            if vault_user and target_user and vault_user == str(target_user).strip().lower():
+                conn.execute('UPDATE credentials SET encrypted_password = ? WHERE id = ?', (enc_new, cred_id))
+                conn.commit()
+                logger.info("[Rotation] Synced new %s password into credential vault %s", role, cred_id)
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.error("[Rotation] Failed to sync credential vault for %s: %s",
+                     device.get('hostname') or device.get('id'), exc, exc_info=True)
 
 
 # ── 厂商改密命令生成 ──────────────────────────────
@@ -455,6 +504,7 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
                             (enc_new, asset_id)
                         )
                 conn_post.commit()
+                _sync_credential_vault(device, role, enc_new)
                 logger.info(
                     f"[Rotation] Completed for {device.get('hostname')} "
                     f"({role} written to DB and device)"
@@ -635,6 +685,7 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
     finally:
         conn2.close()
 
+    _sync_credential_vault(device, role, enc_new)
     logger.info("Password rotated for device %s (%s)", device.get('hostname'), device_id)
 
     return {
@@ -721,3 +772,106 @@ def run_rotation_sweep():
             failed += 1
             logger.warning("[PasswordRotation] Failed for %s: %s", dev.get('hostname'), result['message'])
     logger.info("[PasswordRotation] Sweep complete: %d rotated, %d failed", rotated, failed)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Bulk "rotate all" — background execution with in-memory progress
+# ──────────────────────────────────────────────────────────────────
+
+# run_id -> {run_id, role, total, done, rotated, failed, status, results, ...}
+_rotate_all_runs: dict[str, dict[str, Any]] = {}
+_rotate_all_lock = threading.Lock()
+# How many devices to rotate in parallel. Rotation performs SSH config changes,
+# so keep this modest to avoid overwhelming (often emulated) lab devices.
+_ROTATE_ALL_WORKERS = 5
+
+
+def get_rotate_all_progress(run_id: str) -> dict[str, Any] | None:
+    """Return a snapshot of a bulk-rotation run, or None if unknown."""
+    with _rotate_all_lock:
+        entry = _rotate_all_runs.get(run_id)
+        return dict(entry) if entry else None
+
+
+def run_rotation_all(role: str = 'admin', run_id: str | None = None,
+                     max_workers: int = _ROTATE_ALL_WORKERS) -> dict[str, Any]:
+    """
+    Rotate the *role* password for ALL non-decommissioned devices.
+
+    Progress is tracked in ``_rotate_all_runs[run_id]`` so the API can poll it.
+    Runs with modest concurrency. The new secret is mirrored into the credential
+    vault by ``rotate_password`` (via ``_sync_credential_vault``).
+    """
+    run_id = run_id or _uuid.uuid4().hex
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, hostname FROM devices WHERE COALESCE(status, '') != 'decommissioned'"
+        ).fetchall()
+        devices = [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+    with _rotate_all_lock:
+        entry = _rotate_all_runs.setdefault(run_id, {})
+        entry.update({
+            'run_id': run_id, 'role': role, 'total': len(devices),
+            'done': 0, 'rotated': 0, 'failed': 0, 'status': 'running',
+            'results': entry.get('results', []),
+            'started_at': entry.get('started_at') or datetime.now(timezone.utc).isoformat(),
+        })
+
+    logger.info("[PasswordRotation] Bulk rotate-all started: run=%s role=%s devices=%d",
+                run_id, role, len(devices))
+
+    def _do(dev: dict) -> tuple[dict, dict]:
+        try:
+            res = rotate_password(dev['id'], role=role)
+        except Exception as exc:  # noqa: BLE001
+            res = {'success': False, 'message': str(exc)}
+        return dev, res
+
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
+            futures = [ex.submit(_do, d) for d in devices]
+            for fut in as_completed(futures):
+                dev, res = fut.result()
+                ok = bool(res.get('success'))
+                with _rotate_all_lock:
+                    e = _rotate_all_runs[run_id]
+                    e['done'] += 1
+                    e['rotated'] += 1 if ok else 0
+                    e['failed'] += 0 if ok else 1
+                    e['results'].append({
+                        'device_id': dev['id'],
+                        'hostname': dev.get('hostname'),
+                        'success': ok,
+                        'message': res.get('message', ''),
+                    })
+    finally:
+        with _rotate_all_lock:
+            _rotate_all_runs[run_id]['status'] = 'completed'
+            _rotate_all_runs[run_id]['finished_at'] = datetime.now(timezone.utc).isoformat()
+
+    with _rotate_all_lock:
+        final = dict(_rotate_all_runs[run_id])
+    logger.info("[PasswordRotation] Bulk rotate-all done: run=%s rotated=%d failed=%d",
+                run_id, final['rotated'], final['failed'])
+    return final
+
+
+def start_rotation_all(role: str = 'admin') -> str:
+    """Create a bulk-rotation run and execute it on a background thread.
+    Returns the run_id immediately for progress polling."""
+    run_id = _uuid.uuid4().hex
+    with _rotate_all_lock:
+        _rotate_all_runs[run_id] = {
+            'run_id': run_id, 'role': role, 'total': None,
+            'done': 0, 'rotated': 0, 'failed': 0, 'status': 'starting',
+            'results': [], 'started_at': datetime.now(timezone.utc).isoformat(),
+        }
+    threading.Thread(
+        target=run_rotation_all, kwargs={'role': role, 'run_id': run_id}, daemon=True
+    ).start()
+    return run_id

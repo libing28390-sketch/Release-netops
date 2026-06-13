@@ -968,7 +968,8 @@ async def run_scheduled_backup(run_id: str | None = None):
     try:
         devices = conn.execute(
             "SELECT id, hostname, ip_address, platform, role, username, password, "
-            "normal_username, normal_password, admin_username, admin_password, enable_password "
+            "normal_username, normal_password, admin_username, admin_password, enable_password, "
+            "credential_id, credential_source, vault_path, management_port "
             "FROM devices WHERE status = 'online'"
         ).fetchall()
     finally:
@@ -1048,33 +1049,21 @@ async def run_scheduled_backup(run_id: str | None = None):
             _backup_cmd = 'display current-configuration'
 
         d = dict(device)
-        admin_user = (d.get('admin_username') or '').strip()
-        admin_pass = decrypt_credential(d.get('admin_password') or '') or ''
-        normal_user = (d.get('normal_username') or '').strip()
-        normal_pass = decrypt_credential(d.get('normal_password') or '') or ''
-        default_user = (d.get('username') or '').strip()
-        default_pass = decrypt_credential(d.get('password') or '') or ''
-        enable_pass = decrypt_credential(d.get('enable_password') or '') or ''
+        from services.vault_service import resolve_device_credentials
+        creds = resolve_device_credentials(d)
+        username = creds.get('username') or ''
+        password = creds.get('password') or ''
+        enable_pass = creds.get('enable_password') or ''
 
-        if admin_user and admin_pass:
-            d['username'] = admin_user
-            d['password'] = admin_pass
-            d['enable_password'] = enable_pass or admin_pass
-            cred_kind = 'admin'
-        elif default_user and default_pass:
-            d['username'] = default_user
-            d['password'] = default_pass
-            d['enable_password'] = enable_pass or default_pass
-            cred_kind = 'default'
-        elif normal_user and normal_pass:
-            d['username'] = normal_user
-            d['password'] = normal_pass
-            d['enable_password'] = enable_pass or normal_pass
-            cred_kind = 'normal (fallback)'
-        else:
+        if not username or not password:
             failed_count += 1
             logger.error(f"[Scheduled Backup] [X] {device['hostname']}: no usable credentials")
             return {'hostname': device['hostname'], 'status': 'failed', 'reason': 'no_credentials'}
+
+        d['username'] = username
+        d['password'] = password
+        d['enable_password'] = enable_pass
+        cred_kind = 'resolved'
 
         output = ''
         backup_ok = False

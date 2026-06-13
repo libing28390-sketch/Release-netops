@@ -508,3 +508,353 @@ class PathDiagnoseRequest(BaseModel):
             raise ValueError(f'protocol must be one of {allowed}')
         return v
 
+
+
+# ─── Credential Vault ───────────────────────────────────
+
+_CREDENTIAL_TYPES = {
+    'ssh_password', 'ssh_key', 'snmpv2', 'snmpv3', 'api_token',
+}
+
+
+class CredentialCreate(BaseModel):
+    credential_name: str
+    credential_type: str = 'ssh_password'
+    username: str = ''
+    password: str = ''          # plaintext on input; stored encrypted
+    enable_password: str = ''   # plaintext on input; stored encrypted
+    private_key: str = ''       # plaintext on input; stored encrypted
+    snmp_community: str = ''     # plaintext on input; stored encrypted
+
+    @field_validator('credential_name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError('credential_name must be 1-100 characters')
+        return v
+
+    @field_validator('credential_type')
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        v = v.strip()
+        if v not in _CREDENTIAL_TYPES:
+            raise ValueError(f'credential_type must be one of {sorted(_CREDENTIAL_TYPES)}')
+        return v
+
+
+class CredentialUpdate(BaseModel):
+    credential_name: Optional[str] = None
+    credential_type: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    enable_password: Optional[str] = None
+    private_key: Optional[str] = None
+    snmp_community: Optional[str] = None
+
+    @field_validator('credential_name')
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError('credential_name must be 1-100 characters')
+        return v
+
+    @field_validator('credential_type')
+    @classmethod
+    def validate_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if v not in _CREDENTIAL_TYPES:
+            raise ValueError(f'credential_type must be one of {sorted(_CREDENTIAL_TYPES)}')
+        return v
+
+
+# ─── CMDB Core Entities (tenants / sites / vrfs / vlans) ───
+
+_SITE_STATUSES = {'active', 'planned', 'staging', 'decommissioned', 'offline'}
+
+
+class TenantCreate(BaseModel):
+    name: str
+    description: str = ''
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError('name must be 1-100 characters')
+        return v
+
+
+class TenantUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError('name must be 1-100 characters')
+        return v
+
+
+class SiteCreate(BaseModel):
+    site_code: str
+    site_name: str
+    country: str = ''
+    city: str = ''
+    timezone: str = 'Asia/Shanghai'
+    address: str = ''
+    status: str = 'active'
+    tenant_id: str = 'tenant-default'
+
+    @field_validator('site_code', 'site_name')
+    @classmethod
+    def validate_required(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError('value must be 1-100 characters')
+        return v
+
+    @field_validator('status')
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        if v not in _SITE_STATUSES:
+            raise ValueError(f'status must be one of {sorted(_SITE_STATUSES)}')
+        return v
+
+
+class SiteUpdate(BaseModel):
+    site_code: Optional[str] = None
+    site_name: Optional[str] = None
+    country: Optional[str] = None
+    city: Optional[str] = None
+    timezone: Optional[str] = None
+    address: Optional[str] = None
+    status: Optional[str] = None
+    tenant_id: Optional[str] = None
+
+    @field_validator('status')
+    @classmethod
+    def validate_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in _SITE_STATUSES:
+            raise ValueError(f'status must be one of {sorted(_SITE_STATUSES)}')
+        return v
+
+
+class VrfCreate(BaseModel):
+    vrf_name: str
+    rd: str = ''
+    description: str = ''
+    tenant_id: str = 'tenant-default'
+
+    @field_validator('vrf_name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError('vrf_name must be 1-100 characters')
+        return v
+
+
+class VrfUpdate(BaseModel):
+    vrf_name: Optional[str] = None
+    rd: Optional[str] = None
+    description: Optional[str] = None
+    tenant_id: Optional[str] = None
+
+    @field_validator('vrf_name')
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError('vrf_name must be 1-100 characters')
+        return v
+
+
+class VlanCreate(BaseModel):
+    vlan_id: int
+    name: str
+    site_id: Optional[str] = None
+    status: str = 'active'
+    tenant_id: str = 'tenant-default'
+
+    @field_validator('vlan_id')
+    @classmethod
+    def validate_vlan_id(cls, v: int) -> int:
+        if not (1 <= v <= 4094):
+            raise ValueError('vlan_id must be between 1 and 4094')
+        return v
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError('name must be 1-100 characters')
+        return v
+
+
+class VlanUpdate(BaseModel):
+    vlan_id: Optional[int] = None
+    name: Optional[str] = None
+    site_id: Optional[str] = None
+    status: Optional[str] = None
+    tenant_id: Optional[str] = None
+
+    @field_validator('vlan_id')
+    @classmethod
+    def validate_vlan_id(cls, v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return v
+        if not (1 <= v <= 4094):
+            raise ValueError('vlan_id must be between 1 and 4094')
+        return v
+
+
+# ─── New IPAM Schemas (Prefix, Pool, VIP, Lease) ───────────────────
+
+class PrefixCreate(BaseModel):
+    prefix: str
+    vrf_id: Optional[str] = None
+    vlan_id: Optional[str] = None
+    site_id: Optional[str] = None
+    tenant_id: Optional[str] = 'tenant-default'
+    status: str = 'active'
+    name: str = ''
+    gateway: str = ''
+    description: str = ''
+    network_type: str = 'server'
+    gateway_device_id: Optional[str] = None
+    gateway_interface_id: Optional[str] = None
+    traceable: int = 1
+
+    @field_validator('prefix')
+    @classmethod
+    def validate_prefix(cls, v: str) -> str:
+        _ipaddress.ip_network(v, strict=False)
+        return v
+
+    @field_validator('gateway')
+    @classmethod
+    def validate_gateway(cls, v: str) -> str:
+        if v:
+            _ipaddress.ip_address(v)
+        return v
+
+
+class PrefixUpdate(BaseModel):
+    prefix: Optional[str] = None
+    vrf_id: Optional[str] = None
+    vlan_id: Optional[str] = None
+    site_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    status: Optional[str] = None
+    name: Optional[str] = None
+    gateway: Optional[str] = None
+    description: Optional[str] = None
+    network_type: Optional[str] = None
+    gateway_device_id: Optional[str] = None
+    gateway_interface_id: Optional[str] = None
+    traceable: Optional[int] = None
+
+
+class IPPoolCreate(BaseModel):
+    name: str
+    prefix_id: str
+    start_ip: str
+    end_ip: str
+    description: str = ''
+    status: str = 'active'
+    tenant_id: str = 'tenant-default'
+
+    @field_validator('start_ip', 'end_ip')
+    @classmethod
+    def validate_ips(cls, v: str) -> str:
+        _ipaddress.ip_address(v)
+        return v
+
+
+class IPPoolUpdate(BaseModel):
+    name: Optional[str] = None
+    prefix_id: Optional[str] = None
+    start_ip: Optional[str] = None
+    end_ip: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    tenant_id: Optional[str] = None
+
+
+class VIPCreate(BaseModel):
+    address: str
+    vip_type: str
+    device_id: Optional[str] = None
+    backup_device_id: Optional[str] = None
+    interface_name: str = ''
+    description: str = ''
+    real_servers: str = ''
+    status: str = 'active'
+    tenant_id: str = 'tenant-default'
+
+    @field_validator('address')
+    @classmethod
+    def validate_address(cls, v: str) -> str:
+        _ipaddress.ip_address(v)
+        return v
+
+
+class VIPUpdate(BaseModel):
+    address: Optional[str] = None
+    vip_type: Optional[str] = None
+    device_id: Optional[str] = None
+    backup_device_id: Optional[str] = None
+    interface_name: Optional[str] = None
+    description: Optional[str] = None
+    real_servers: Optional[str] = None
+    status: Optional[str] = None
+    tenant_id: Optional[str] = None
+
+
+class DHCPLeaseCreate(BaseModel):
+    address: str
+    mac_address: str
+    hostname: str = ''
+    dhcp_server: str = ''
+    lease_state: str = 'active'
+    lease_start: str = ''
+    lease_end: str = ''
+
+    @field_validator('address')
+    @classmethod
+    def validate_address(cls, v: str) -> str:
+        _ipaddress.ip_address(v)
+        return v
+
+    @field_validator('mac_address')
+    @classmethod
+    def validate_mac(cls, v: str) -> str:
+        if v and not _MAC_RE.match(v):
+            raise ValueError('Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)')
+        return v
+
+
+class DHCPLeaseUpdate(BaseModel):
+    address: Optional[str] = None
+    mac_address: Optional[str] = None
+    hostname: Optional[str] = None
+    dhcp_server: Optional[str] = None
+    lease_state: Optional[str] = None
+    lease_start: Optional[str] = None
+    lease_end: Optional[str] = None

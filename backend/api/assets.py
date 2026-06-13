@@ -122,6 +122,21 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     has_creds = bool((uname and pwd) or (admin_user and admin_pwd) or (normal_user and normal_pwd))
     onboarding = 'verified' if has_creds else 'pending_credentials'
 
+    credential_id = f"cred-{uuid.uuid4().hex[:12]}"
+    cred_name = f"cred-{body.hostname}-{device_id[:8]}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    resolved_pwd = normal_pwd or pwd or admin_pwd or ''
+    enc_pwd = _safe_encrypt(resolved_pwd) if resolved_pwd else ''
+    enc_enable = _safe_encrypt(enable_pwd) if enable_pwd else ''
+    enc_snmp = _safe_encrypt(community) if community else ''
+    resolved_uname = normal_user or uname or admin_user or ''
+
+    conn.execute('''
+        INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (credential_id, cred_name, 'ssh_password', resolved_uname, enc_pwd, enc_enable, enc_snmp, now))
+
     conn.execute('''
         INSERT INTO devices (
             id, asset_id, hostname, ip_address, platform, status, compliance,
@@ -129,32 +144,85 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
             connection_method, vendor, snmp_community, snmp_port,
             normal_username, normal_password, admin_username, admin_password,
             enable_password, auth_model, device_category, power_watts,
-            onboarding_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            onboarding_status, credential_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         device_id, asset_id,
         body.hostname, body.management_ip,
         platform, 'pending', 'unknown',
-        uname, _safe_encrypt(pwd),
+        uname, '', # password column empty
         body.serial_number, body.model, '', body.device_role,
         body.datacenter, '0d 0h', method, body.vendor,
         community, port,
-        normal_user, _safe_encrypt(normal_pwd),
-        admin_user,  _safe_encrypt(admin_pwd),
-        _safe_encrypt(enable_pwd),
+        normal_user, '', # normal_password column empty
+        admin_user,  '', # admin_password column empty
+        '', # enable_password column empty
         auth_model,
         getattr(body, 'device_category', '') or '',
         getattr(body, 'power_watts', 0) or 0,
         onboarding,
+        credential_id
     ))
     return device_id
 
 
 def _sync_device_from_asset(conn, asset_id: str, body) -> None:
     """Push basic-info changes from asset to its linked device row."""
-    row = conn.execute('SELECT id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+    row = conn.execute('SELECT id, credential_id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
     if not row:
         return
+    device_id = row['id']
+    credential_id = row['credential_id']
+
+    # Update credentials if modified in asset update
+    username = getattr(body, 'username', None) or getattr(body, 'normal_username', None) or getattr(body, 'admin_username', None)
+    pwd = getattr(body, 'password', None) or getattr(body, 'normal_password', None) or getattr(body, 'admin_password', None)
+    enable_pwd = getattr(body, 'enable_password', None)
+    community = getattr(body, 'snmp_community', None)
+
+    if credential_id:
+        cred_row = conn.execute('SELECT username, encrypted_password, enable_password, snmp_community FROM credentials WHERE id = ?', (credential_id,)).fetchone()
+        if cred_row:
+            stored_uname = username if username is not None else cred_row['username']
+            
+            if pwd is not None and pwd != '':
+                stored_pwd = _safe_encrypt(pwd)
+            else:
+                stored_pwd = cred_row['encrypted_password']
+                
+            if enable_pwd is not None and enable_pwd != '':
+                stored_enable = _safe_encrypt(enable_pwd)
+            else:
+                stored_enable = cred_row['enable_password']
+                
+            if community is not None and community != '':
+                stored_snmp = _safe_encrypt(community)
+            else:
+                stored_snmp = cred_row['snmp_community']
+
+            conn.execute('''
+                UPDATE credentials
+                SET username = ?, encrypted_password = ?, enable_password = ?, snmp_community = ?
+                WHERE id = ?
+            ''', (stored_uname, stored_pwd, stored_enable, stored_snmp, credential_id))
+    else:
+        # Create credential_id if missing
+        if username is not None or (pwd is not None and pwd != '') or (enable_pwd is not None and enable_pwd != '') or (community is not None and community != ''):
+            credential_id = f"cred-{uuid.uuid4().hex[:12]}"
+            cred_name = f"cred-{body.hostname or 'device'}-{device_id[:8]}"
+            now = datetime.now(timezone.utc).isoformat()
+            
+            enc_pwd = _safe_encrypt(pwd) if pwd else ''
+            enc_enable = _safe_encrypt(enable_pwd) if enable_pwd else ''
+            enc_snmp = _safe_encrypt(community) if community else ''
+            
+            conn.execute('''
+                INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (credential_id, cred_name, 'ssh_password', username or '', enc_pwd, enc_enable, enc_snmp, now))
+            
+            conn.execute('UPDATE devices SET credential_id = ? WHERE id = ?', (credential_id, device_id))
+
     updates = {
         'hostname': body.hostname,
         'ip_address': body.management_ip,
@@ -171,23 +239,16 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
         'device_category': getattr(body, 'device_category', None),
         'power_watts': getattr(body, 'power_watts', None),
     }
-    # Handle username/password specially (including PAM)
-    u_fields = [
-        ('username', 'password'),
-        ('normal_username', 'normal_password'),
-        ('admin_username', 'admin_password')
-    ]
-    for u_f, p_f in u_fields:
-        uname = getattr(body, u_f, None)
-        pwd = getattr(body, p_f, None)
-        if uname is not None: updates[u_f] = uname
-        if pwd is not None and pwd != '':
-            updates[p_f] = _safe_encrypt(pwd)
-    # Sync enable_password separately (no paired username)
-    ep = getattr(body, 'enable_password', None)
-    if ep is not None and ep != '':
-        updates['enable_password'] = _safe_encrypt(ep)
-    # Only update non-None values (AssetUpdate has Optional fields)
+
+    if getattr(body, 'username', None) is not None: updates['username'] = body.username
+    if getattr(body, 'normal_username', None) is not None: updates['normal_username'] = body.normal_username
+    if getattr(body, 'admin_username', None) is not None: updates['admin_username'] = body.admin_username
+    
+    updates['password'] = ''
+    updates['normal_password'] = ''
+    updates['admin_password'] = ''
+    updates['enable_password'] = ''
+
     set_parts = []
     params = []
     for col, val in updates.items():
@@ -210,7 +271,7 @@ def _delete_linked_device(conn, asset_id: str) -> None:
     # Delete from all tables that reference devices(id)
     conn.execute('DELETE FROM jobs WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM config_snapshots WHERE device_id = ?', (device_id,))
-    conn.execute('DELETE FROM links WHERE source_device_id = ? OR target_device_id = ?', (device_id, device_id))
+    conn.execute('DELETE FROM topology_links WHERE source_device_id = ? OR target_device_id = ?', (device_id, device_id))
     conn.execute('DELETE FROM topology_discovery_run_devices WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM topology_observations WHERE source_device_id = ? OR target_device_id = ?', (device_id, device_id))
     conn.execute('DELETE FROM compliance_findings WHERE device_id = ?', (device_id,))

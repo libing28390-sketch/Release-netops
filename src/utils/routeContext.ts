@@ -5,6 +5,8 @@ export interface RouteContext {
   automationPage: string;
   inventorySubPage: string;
   changeOrderPage: string;
+  ipamPage: string;
+  cmdbPage: string;
 }
 
 export function getRouteContext(pathname: string): RouteContext {
@@ -18,6 +20,8 @@ export function getRouteContext(pathname: string): RouteContext {
   let automationPage = '';
   let inventorySubPage = 'devices';
   let changeOrderPage = '';
+  let ipamPage = 'prefixes';
+  let cmdbPage = 'credentials';
 
   // 1. Dashboard / Home
   if (first === 'dashboard') {
@@ -85,6 +89,8 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'tags';
     } else if (second === 'racks') {
       activeTab = 'racks';
+    } else if (second === 'cmdb') {
+      activeTab = 'cmdb';
     } else {
       activeTab = 'assets';
     }
@@ -148,7 +154,43 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'audit';
     }
   }
-  // 11. Legacy or other direct paths
+  // 11. IPAM (/ipam/...)
+  else if (first === 'ipam') {
+    activeTab = 'ipam';
+    if (second === 'prefixes') {
+      ipamPage = 'prefixes';
+    } else if (second === 'ips') {
+      ipamPage = 'ips';
+    } else if (second === 'pools') {
+      ipamPage = 'pools';
+    } else if (second === 'vips') {
+      ipamPage = 'vips';
+    } else if (second === 'dhcp') {
+      ipamPage = 'dhcp';
+    } else if (second === 'utilization') {
+      ipamPage = 'utilization';
+    } else {
+      ipamPage = 'prefixes';
+    }
+  }
+  // 13. CMDB (/cmdb/...)
+  else if (first === 'cmdb') {
+    activeTab = 'cmdb';
+    if (second === 'credentials') {
+      cmdbPage = 'credentials';
+    } else if (second === 'sites') {
+      cmdbPage = 'sites';
+    } else if (second === 'vrfs') {
+      cmdbPage = 'vrfs';
+    } else if (second === 'vlans') {
+      cmdbPage = 'vlans';
+    } else if (second === 'tenants') {
+      cmdbPage = 'tenants';
+    } else {
+      cmdbPage = 'credentials';
+    }
+  }
+  // 12. Legacy or other direct paths
   else {
     if (first === 'overview') activeTab = 'overview';
     else if (first === 'monitoring') activeTab = 'monitoring';
@@ -157,7 +199,14 @@ export function getRouteContext(pathname: string): RouteContext {
     else if (first === 'alert-history') activeTab = 'alert-history';
     else if (first === 'alert-rules') activeTab = 'alert-rules';
     else if (first === 'maintenance') activeTab = 'maintenance';
-    else if (first === 'ipam') activeTab = 'ipam';
+    else if (first === 'ipam') {
+      activeTab = 'ipam';
+      ipamPage = 'prefixes';
+    }
+    else if (first === 'cmdb') {
+      activeTab = 'cmdb';
+      cmdbPage = 'credentials';
+    }
     else if (first === 'path-diagnose') activeTab = 'path-diagnose';
     else if (first === 'ip-locator') activeTab = 'ip-locator';
     else if (first === 'nsot') activeTab = 'nsot';
@@ -177,6 +226,8 @@ export function getRouteContext(pathname: string): RouteContext {
     automationPage,
     inventorySubPage,
     changeOrderPage,
+    ipamPage,
+    cmdbPage,
   };
 }
 

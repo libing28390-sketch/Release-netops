@@ -9,7 +9,7 @@ import datetime as dt
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Query
-from database import get_db_connection
+from database import get_db_connection, fetch_interface_data
 from services.forecast_engine import ForecastEngine, calculate_capacity_score
 
 logger = logging.getLogger(__name__)
@@ -63,15 +63,18 @@ def capacity_overview():
     """Overall capacity dashboard: top utilized interfaces, devices with high CPU/memory."""
     conn = get_db_connection()
     try:
-        # Get devices with CPU/memory info
-        devices = conn.execute('''
+        devices_rows = conn.execute('''
             SELECT id, hostname, ip_address, platform, status,
-                   cpu_usage, memory_usage, interface_data,
-                   uptime, model
+                   cpu_usage, memory_usage, uptime, model
             FROM devices
             WHERE status = 'online'
             ORDER BY cpu_usage DESC
         ''').fetchall()
+        devices = []
+        for r in devices_rows:
+            d = dict(r)
+            d['interface_data'] = fetch_interface_data(conn, d['id'])
+            devices.append(d)
 
         high_cpu = [dict(d) for d in devices if (d['cpu_usage'] or 0) >= 80]
         high_mem = [dict(d) for d in devices if (d['memory_usage'] or 0) >= 80]
@@ -138,16 +141,18 @@ def device_capacity_trend(
     conn = get_db_connection()
     try:
         # 1. Retrieve current device status info
-        dev = conn.execute(
-            '''SELECT hostname, cpu_usage, memory_usage, interface_data,
+        dev_row = conn.execute(
+            '''SELECT hostname, cpu_usage, memory_usage,
                       COALESCE(ports_count, 0) as ports_count, 
                       COALESCE(ports_bandwidth_gbps, 0.0) as ports_bandwidth_gbps, 
                       COALESCE(switching_capacity_gbps, 0.0) as switching_capacity_gbps 
                FROM devices WHERE id = ?''',
             (device_id,)
         ).fetchone()
-        if not dev:
+        if not dev_row:
             return {'error': 'Device not found'}
+        dev = dict(dev_row)
+        dev['interface_data'] = fetch_interface_data(conn, device_id)
         hostname = dev['hostname'] or ''
         cpu_curr = float(dev['cpu_usage'] or 0)
         mem_curr = float(dev['memory_usage'] or 0)
@@ -157,10 +162,9 @@ def device_capacity_trend(
         ports_bandwidth_gbps = float(dev['ports_bandwidth_gbps'] or 0.0)
         switching_capacity_gbps = float(dev['switching_capacity_gbps'] or 0.0)
         
-        import json
         if dev['interface_data']:
             try:
-                intf_list = json.loads(dev['interface_data'])
+                intf_list = dev['interface_data']
                 # Filter out loopbacks, VLANs, tunnels, etc.
                 phys_intfs = []
                 for i in intf_list:

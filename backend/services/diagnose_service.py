@@ -217,7 +217,7 @@ import ipaddress
 
 def match_route_offline(device_id: str, target_ip: str) -> list[dict]:
     """
-    在本地 route_cache 数据库中执行最长前缀匹配 (LPM)，寻找匹配的路由条目。
+    在本地 route_table 数据库中执行最长前缀匹配 (LPM)，寻找匹配的路由条目。
     如果有多条等价路由 (ECMP)，则全部返回。
     """
     try:
@@ -228,8 +228,8 @@ def match_route_offline(device_id: str, target_ip: str) -> list[dict]:
     conn = get_db_connection()
     try:
         rows = conn.execute(
-            "SELECT prefix, mask, next_hop, protocol, interface, metric "
-            "FROM route_cache WHERE device_id = ?",
+            "SELECT destination, next_hop, protocol, outgoing_interface, metric "
+            "FROM route_table WHERE device_id = ?",
             (device_id,)
         ).fetchall()
     finally:
@@ -237,18 +237,22 @@ def match_route_offline(device_id: str, target_ip: str) -> list[dict]:
 
     matched_routes = []
     for row in rows:
-        prefix = row['prefix'].strip()
-        mask = row['mask'].strip()
+        dest = row['destination'].strip()
         try:
-            net = ipaddress.ip_network(f"{prefix}/{mask}", strict=False)
+            net = ipaddress.ip_network(dest, strict=False)
             if ip_obj in net:
+                prefix, mask_len_str = dest.split('/')
+                mask_len = int(mask_len_str)
+                mask_int = (0xffffffff >> (32 - mask_len)) << (32 - mask_len)
+                mask = f"{(mask_int >> 24) & 0xff}.{(mask_int >> 16) & 0xff}.{(mask_int >> 8) & 0xff}.{mask_int & 0xff}"
+                
                 matched_routes.append({
                     'prefix': prefix,
                     'mask': mask,
                     'prefix_len': net.prefixlen,
                     'next_hop': row['next_hop'],
                     'protocol': row['protocol'],
-                    'interface': row['interface'],
+                    'interface': row['outgoing_interface'],
                     'metric': row['metric']
                 })
         except Exception:
@@ -474,13 +478,13 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                     port_norm = normalize_interface_name(egress_intf).lower()
                     row_link = conn_db.execute(
                         "SELECT target_device_id, target_hostname "
-                        "FROM links WHERE source_device_id = ? AND LOWER(source_port_normalized) = ?",
+                        "FROM topology_links WHERE source_device_id = ? AND LOWER(source_port_normalized) = ?",
                         (dev['id'], port_norm)
                     ).fetchone()
                     if not row_link:
                         row_link = conn_db.execute(
                             "SELECT source_device_id, source_hostname "
-                            "FROM links WHERE target_device_id = ? AND LOWER(target_port_normalized) = ?",
+                            "FROM topology_links WHERE target_device_id = ? AND LOWER(target_port_normalized) = ?",
                             (dev['id'], port_norm)
                         ).fetchone()
                         if row_link:
@@ -1306,13 +1310,17 @@ async def run_diagnose_async(
     if not source_dev_id:
         conn = get_db_connection()
         try:
-            arp_row = conn.execute("SELECT * FROM arp_cache WHERE TRIM(target_ip) = ?", (source_ip.strip(),)).fetchone()
+            arp_row = conn.execute("SELECT * FROM arp_table WHERE TRIM(ip_address) = ? LIMIT 1", (source_ip.strip(),)).fetchone()
             if arp_row:
                 arp_row = dict(arp_row)
+                arp_row['target_ip'] = arp_row.get('ip_address')
+                arp_row['mac'] = arp_row.get('mac_address')
+                arp_row['arp_source'] = json.dumps({
+                    'device_id': arp_row.get('device_id'),
+                    'interface': arp_row.get('interface_name')
+                })
                 arp_found = True
-                import json
-                source_data = json.loads(arp_row.get('arp_source') or '{}')
-                source_dev_id = source_data.get('device_id')
+                source_dev_id = arp_row.get('device_id')
         except Exception:
             pass
         finally:

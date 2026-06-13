@@ -11,6 +11,8 @@ interface CoreAppContextValue {
   configPage: string;
   automationPage: string;
   changeOrderPage: string;
+  ipamPage: string;
+  cmdbPage: string;
   language: Language;
   t: (key: string) => string;
   navigate: NavigateFunction;

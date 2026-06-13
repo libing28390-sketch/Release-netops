@@ -143,11 +143,11 @@ def delete_credentials(vault_path: str) -> bool:
         return False
 
 
-def resolve_device_credentials(device: dict[str, Any]) -> dict[str, str]:
+def resolve_device_credentials(device: dict) -> dict[str, str]:
     """
     Unified credential resolver.
     - If credential_source='vault' and Vault is available, fetch from Vault.
-    - Otherwise, decrypt from local DB fields.
+    - Otherwise, decrypt from local DB fields (supporting credentials table).
     Returns dict: {username, password, enable_password, priv_username,
                     normal_username, normal_password, admin_username, admin_password}
 
@@ -169,11 +169,29 @@ def resolve_device_credentials(device: dict[str, Any]) -> dict[str, str]:
                 logger.warning("Vault read failed for %s, falling back to local", vault_path)
 
     if resolved is None:
+        # Check if credential_id is set to retrieve from credentials table
+        credential_id = device.get('credential_id')
+        db_creds = {}
+        if credential_id:
+            try:
+                from database import get_db_connection
+                conn = get_db_connection()
+                try:
+                    row = conn.execute('SELECT * FROM credentials WHERE id = ?', (credential_id,)).fetchone()
+                    if row:
+                        db_creds = dict(row)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch credentials for id {credential_id}: {e}")
+                finally:
+                    conn.close()
+            except Exception as e:
+                logger.warning(f"Database error during resolve_device_credentials in vault_service: {e}")
+
         # Local decryption fallback
         resolved = {
-            'username': device.get('username') or '',
-            'password': decrypt_credential(device.get('password')) or '',
-            'enable_password': decrypt_credential(device.get('enable_password')) or '',
+            'username': db_creds.get('username') or device.get('username') or '',
+            'password': decrypt_credential(db_creds.get('encrypted_password') or device.get('password')) or '',
+            'enable_password': decrypt_credential(db_creds.get('enable_password') or device.get('enable_password')) or '',
             'priv_username': device.get('priv_username') or '',
             'normal_username': device.get('normal_username') or '',
             'normal_password': decrypt_credential(device.get('normal_password')) or '',

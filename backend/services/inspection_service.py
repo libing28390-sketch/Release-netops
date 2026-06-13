@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncio
-from database import get_db_connection
+from database import get_db_connection, fetch_interface_data
 from services.device_health_service import (
     evaluate_device_health,
     _build_open_alert_stats,
@@ -1665,7 +1665,7 @@ def run_inspection(
 def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, Any]]:
     select = (
         'id, hostname, ip_address, platform, status, compliance, role, site, '
-        'cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data, '
+        'cpu_usage, memory_usage, temp, fan_status, psu_status, '
         'username, password, normal_username, normal_password, '
         'admin_username, admin_password, management_port, enable_password, '
         'credential_source, vault_path, snmp_community, snmp_port'
@@ -1713,7 +1713,13 @@ def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, An
         rows = conn.execute(f'SELECT {select} FROM devices WHERE id IN ({id_placeholders}) ORDER BY hostname', tuple(ids)).fetchall()
     else:
         rows = conn.execute(f'SELECT {select} FROM devices ORDER BY hostname').fetchall()
-    return [dict(r) for r in rows]
+    
+    res = []
+    for r in rows:
+        item = dict(r)
+        item['interface_data'] = fetch_interface_data(conn, item['id'])
+        res.append(item)
+    return res
 
 
 # ──────────────────────────────────────────────

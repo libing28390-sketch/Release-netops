@@ -472,7 +472,7 @@ def _replace_device_observations(device: dict[str, Any], observations: list[dict
 def rebuild_links_from_observations() -> int:
     conn = get_db_connection()
     try:
-        existing_rows = conn.execute('SELECT * FROM links').fetchall()
+        existing_rows = conn.execute('SELECT * FROM topology_links').fetchall()
         existing_by_key = {str(row['link_key'] or ''): dict(row) for row in existing_rows if row['link_key']}
         rows = conn.execute(
             '''
@@ -493,8 +493,17 @@ def rebuild_links_from_observations() -> int:
             )
             grouped.setdefault(link_key, []).append(item)
 
+        # Load all interfaces into memory for fast lookup
+        intf_rows = conn.execute("SELECT id, device_id, interface_name FROM interfaces").fetchall()
+        interface_map = {}
+        for row in intf_rows:
+            dev_id = row['device_id']
+            intf_name = row['interface_name']
+            norm = normalize_interface_name(intf_name).lower()
+            interface_map[(dev_id, norm)] = row['id']
+
         now = _utc_now_iso()
-        conn.execute('DELETE FROM links')
+        conn.execute('DELETE FROM topology_links')
         active_link_keys: set[str] = set()
 
         for link_key, observations in grouped.items():
@@ -526,23 +535,51 @@ def rebuild_links_from_observations() -> int:
                 key=lambda item: (item['device_id'], item['port_normalized'] or item['port_raw']),
             )
 
+            # Resolve source_interface_id
+            src_dev = ordered[0]['device_id']
+            src_port = ordered[0]['port_normalized'] or ordered[0]['port_raw']
+            src_port_norm = normalize_interface_name(src_port).lower()
+            src_intf_id = interface_map.get((src_dev, src_port_norm))
+            if src_dev and src_port_norm and not src_intf_id:
+                src_intf_id = str(uuid.uuid4())
+                conn.execute(
+                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
+                    (src_intf_id, src_dev, ordered[0]['port_raw'] or src_port)
+                )
+                interface_map[(src_dev, src_port_norm)] = src_intf_id
+
+            # Resolve target_interface_id
+            tgt_dev = ordered[1]['device_id']
+            tgt_port = ordered[1]['port_normalized'] or ordered[1]['port_raw']
+            tgt_port_norm = normalize_interface_name(tgt_port).lower()
+            tgt_intf_id = interface_map.get((tgt_dev, tgt_port_norm))
+            if tgt_dev and tgt_port_norm and not tgt_intf_id:
+                tgt_intf_id = str(uuid.uuid4())
+                conn.execute(
+                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
+                    (tgt_intf_id, tgt_dev, ordered[1]['port_raw'] or tgt_port)
+                )
+                interface_map[(tgt_dev, tgt_port_norm)] = tgt_intf_id
+
             conn.execute(
                 '''
-                INSERT INTO links (
-                    id, link_key, source_device_id, source_hostname, source_port, source_port_normalized,
-                    target_device_id, target_hostname, target_port, target_port_normalized,
+                INSERT INTO topology_links (
+                    id, link_key, source_device_id, source_interface_id, source_hostname, source_port, source_port_normalized,
+                    target_device_id, target_interface_id, target_hostname, target_port, target_port_normalized,
                     discovery_source, confidence, status, is_inferred, evidence_count,
                     metadata_json, created_at, updated_at, last_seen
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     str(uuid.uuid4()),
                     link_key,
                     ordered[0]['device_id'],
+                    src_intf_id,
                     ordered[0]['hostname'],
                     ordered[0]['port_raw'],
                     ordered[0]['port_normalized'],
                     ordered[1]['device_id'],
+                    tgt_intf_id,
                     ordered[1]['hostname'],
                     ordered[1]['port_raw'],
                     ordered[1]['port_normalized'],
@@ -579,21 +616,23 @@ def rebuild_links_from_observations() -> int:
 
             conn.execute(
                 '''
-                INSERT INTO links (
-                    id, link_key, source_device_id, source_hostname, source_port, source_port_normalized,
-                    target_device_id, target_hostname, target_port, target_port_normalized,
+                INSERT INTO topology_links (
+                    id, link_key, source_device_id, source_interface_id, source_hostname, source_port, source_port_normalized,
+                    target_device_id, target_interface_id, target_hostname, target_port, target_port_normalized,
                     discovery_source, confidence, status, is_inferred, evidence_count,
                     metadata_json, created_at, updated_at, last_seen
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     str(existing.get('id') or uuid.uuid4()),
                     link_key,
                     existing.get('source_device_id'),
+                    existing.get('source_interface_id'),
                     existing.get('source_hostname') or '',
                     existing.get('source_port') or '',
                     existing.get('source_port_normalized') or '',
                     existing.get('target_device_id'),
+                    existing.get('target_interface_id'),
                     existing.get('target_hostname') or '',
                     existing.get('target_port') or '',
                     existing.get('target_port_normalized') or '',
@@ -742,7 +781,7 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
 
     conn = get_db_connection()
     try:
-        total_links = conn.execute('SELECT COUNT(*) AS c FROM links').fetchone()['c']
+        total_links = conn.execute('SELECT COUNT(*) AS c FROM topology_links').fetchone()['c']
     finally:
         conn.close()
 
@@ -778,7 +817,7 @@ def get_current_links(limit: int | None = 5000) -> list[dict[str, Any]]:
             rows = conn.execute(
                 '''
                 SELECT l.*, s.hostname as source_hostname_resolved, t.hostname as target_hostname_resolved
-                FROM links l
+                FROM topology_links l
                 JOIN devices s ON l.source_device_id = s.id
                 JOIN devices t ON l.target_device_id = t.id
                 ORDER BY l.source_hostname, l.source_port_normalized, l.target_hostname, l.target_port_normalized
@@ -790,7 +829,7 @@ def get_current_links(limit: int | None = 5000) -> list[dict[str, Any]]:
             rows = conn.execute(
                 '''
                 SELECT l.*, s.hostname as source_hostname_resolved, t.hostname as target_hostname_resolved
-                FROM links l
+                FROM topology_links l
                 JOIN devices s ON l.source_device_id = s.id
                 JOIN devices t ON l.target_device_id = t.id
                 ORDER BY l.source_hostname, l.source_port_normalized, l.target_hostname, l.target_port_normalized

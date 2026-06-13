@@ -51,6 +51,8 @@ from api.textfsm_templates import router as textfsm_templates_router
 from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
+from api.credentials import router as credentials_router
+from api.cmdb import router as cmdb_router
 from license_auth.api import router as license_router
 from api.system import router as system_router
 from api.access import router as access_router
@@ -236,6 +238,8 @@ app.include_router(jobs_router,          prefix="/api", dependencies=_lic)
 app.include_router(templates_router,     prefix="/api", dependencies=_lic)
 app.include_router(assets_router,        prefix="/api", dependencies=_lic)
 app.include_router(racks_router,         prefix="/api", dependencies=_lic)
+app.include_router(credentials_router,   prefix="/api", dependencies=_lic)
+app.include_router(cmdb_router,          prefix="/api", dependencies=_lic)
 app.include_router(ip_locator_router,    prefix="/api", dependencies=_lic)
 app.include_router(device_health_router, prefix="/api", dependencies=_lic)
 app.include_router(access_router,        prefix="/api", dependencies=_lic)

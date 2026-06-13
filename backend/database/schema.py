@@ -46,6 +46,16 @@ def init_db():
 
         _init_db_logic(conn)
         conn.commit()
+
+        # Apply versioned, tracked schema migrations on top of the baseline.
+        try:
+            from .migrations import run_migrations
+            applied = run_migrations(conn, _USE_PG)
+            if applied:
+                logger.info("Applied %d pending schema migration(s).", applied)
+        except Exception as mig_exc:
+            logger.error("Schema migration runner error: %s", mig_exc, exc_info=True)
+
         _db_initialized = True
         logger.info("Database initialization completed successfully.")
     except Exception as e:
@@ -68,6 +78,21 @@ def _init_db_logic(conn):
         if column_name not in cols:
             cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}')
         
+    # Create credentials table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS credentials (
+        id TEXT PRIMARY KEY,
+        credential_name TEXT UNIQUE,
+        credential_type TEXT,
+        username TEXT DEFAULT '',
+        encrypted_password TEXT DEFAULT '',
+        enable_password TEXT DEFAULT '',
+        private_key TEXT DEFAULT '',
+        snmp_community TEXT DEFAULT '',
+        created_at TEXT
+    )
+    ''')
+
     # Create devices table if not exists
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS devices (
@@ -90,7 +115,6 @@ def _init_db_logic(conn):
         config_history TEXT,
         cpu_usage INTEGER DEFAULT 0,
         memory_usage INTEGER DEFAULT 0,
-        interface_data TEXT DEFAULT '[]',
         snmp_community TEXT DEFAULT 'public',
         snmp_port INTEGER DEFAULT 161,
         cpu_history TEXT DEFAULT '[]',
@@ -108,7 +132,251 @@ def _init_db_logic(conn):
         switching_capacity_gbps REAL DEFAULT 0.0
     )
     ''')
-        
+
+    # Create interfaces table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS interfaces (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        interface_name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        admin_status TEXT DEFAULT 'down',
+        oper_status TEXT DEFAULT 'down',
+        mac_address TEXT DEFAULT '',
+        mtu INTEGER DEFAULT 1500,
+        speed REAL DEFAULT 0.0,
+        interface_type TEXT DEFAULT 'physical',
+        duplex TEXT DEFAULT 'auto',
+        bandwidth REAL DEFAULT 0.0,
+        parent_interface_id TEXT,
+        channel_group INTEGER,
+        vrf_id TEXT,
+        switchport_mode TEXT DEFAULT 'access',
+        access_vlan INTEGER,
+        native_vlan INTEGER,
+        allowed_vlans TEXT DEFAULT '',
+        ip_enabled INTEGER DEFAULT 0,
+        last_flapped TEXT,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE,
+        FOREIGN KEY (parent_interface_id) REFERENCES interfaces (id) ON DELETE SET NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_interfaces_device_id ON interfaces(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_interfaces_mac ON interfaces(mac_address)')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_interfaces_device_name ON interfaces(device_id, interface_name)')
+    
+    # Create tenants table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS tenants (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT ''
+    )
+    ''')
+
+    # Create roles table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS roles (
+        id TEXT PRIMARY KEY,
+        role_name TEXT NOT NULL UNIQUE,
+        description TEXT DEFAULT ''
+    )
+    ''')
+
+    # Create sites table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS sites (
+        id TEXT PRIMARY KEY,
+        site_code TEXT NOT NULL UNIQUE,
+        site_name TEXT NOT NULL,
+        country TEXT DEFAULT '',
+        city TEXT DEFAULT '',
+        timezone TEXT DEFAULT 'Asia/Shanghai',
+        address TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        tenant_id TEXT,
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
+    )
+    ''')
+
+    # Create racks table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS racks (
+        id TEXT PRIMARY KEY,
+        site_id TEXT,
+        rack_code TEXT DEFAULT '',
+        rack_name TEXT DEFAULT '',
+        name TEXT DEFAULT '',
+        datacenter TEXT DEFAULT '',
+        room TEXT DEFAULT '',
+        row TEXT DEFAULT '',
+        total_u INTEGER DEFAULT 42,
+        available_u INTEGER DEFAULT 42,
+        description TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        created_at TEXT,
+        updated_at TEXT,
+        FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE CASCADE,
+        UNIQUE (site_id, rack_code)
+    )
+    ''')
+    ensure_column('racks', 'site_id', "TEXT")
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_racks_site_id ON racks(site_id)')
+    ensure_column('racks', 'rack_code', "TEXT DEFAULT ''")
+    ensure_column('racks', 'rack_name', "TEXT DEFAULT ''")
+    ensure_column('racks', 'name', "TEXT DEFAULT ''")
+    ensure_column('racks', 'datacenter', "TEXT DEFAULT ''")
+    ensure_column('racks', 'room', "TEXT DEFAULT ''")
+    ensure_column('racks', 'row', "TEXT DEFAULT ''")
+    ensure_column('racks', 'available_u', "INTEGER DEFAULT 42")
+    ensure_column('racks', 'description', "TEXT DEFAULT ''")
+    ensure_column('racks', 'status', "TEXT DEFAULT 'active'")
+    ensure_column('racks', 'created_at', "TEXT")
+    ensure_column('racks', 'updated_at', "TEXT")
+
+    # Create device_types table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS device_types (
+        id TEXT PRIMARY KEY,
+        vendor TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        part_number TEXT DEFAULT '',
+        u_height INTEGER DEFAULT 1,
+        device_role TEXT DEFAULT 'switch',
+        is_full_depth INTEGER DEFAULT 1,
+        description TEXT DEFAULT '',
+        created_at TEXT,
+        updated_at TEXT,
+        UNIQUE (vendor, model)
+    )
+    ''')
+    ensure_column('device_types', 'vendor', "TEXT DEFAULT ''")
+    ensure_column('device_types', 'model', "TEXT DEFAULT ''")
+    ensure_column('device_types', 'part_number', "TEXT DEFAULT ''")
+    ensure_column('device_types', 'u_height', "INTEGER DEFAULT 1")
+    ensure_column('device_types', 'device_role', "TEXT DEFAULT 'switch'")
+    ensure_column('device_types', 'is_full_depth', "INTEGER DEFAULT 1")
+    ensure_column('device_types', 'description', "TEXT DEFAULT ''")
+    ensure_column('device_types', 'created_at', "TEXT")
+    ensure_column('device_types', 'updated_at', "TEXT")
+
+
+    # Create vrfs table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS vrfs (
+        id TEXT PRIMARY KEY,
+        vrf_name TEXT NOT NULL UNIQUE,
+        rd TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        tenant_id TEXT,
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
+    )
+    ''')
+
+    # Create vlans table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS vlans (
+        id TEXT PRIMARY KEY,
+        vlan_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        site_id TEXT,
+        status TEXT DEFAULT 'active',
+        tenant_id TEXT,
+        FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE CASCADE,
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_vlans_site_vlan ON vlans(site_id, vlan_id)')
+
+    # Create prefixes table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS prefixes (
+        id TEXT PRIMARY KEY,
+        prefix TEXT NOT NULL,
+        vrf_id TEXT,
+        vlan_id TEXT,
+        site_id TEXT,
+        tenant_id TEXT,
+        status TEXT DEFAULT 'active',
+        name TEXT DEFAULT '',
+        gateway TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT '',
+        FOREIGN KEY (vrf_id) REFERENCES vrfs (id) ON DELETE SET NULL,
+        FOREIGN KEY (vlan_id) REFERENCES vlans (id) ON DELETE SET NULL,
+        FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE SET NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_prefixes_prefix ON prefixes(prefix)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_prefixes_tenant ON prefixes(tenant_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_prefixes_vrf_prefix ON prefixes(vrf_id, prefix)')
+
+    ensure_column('prefixes', 'parent_prefix_id', "TEXT")
+    ensure_column('prefixes', 'network_type', "TEXT DEFAULT 'server'")
+    ensure_column('prefixes', 'gateway_device_id', "TEXT")
+    ensure_column('prefixes', 'gateway_interface_id', "TEXT")
+    ensure_column('prefixes', 'traceable', "INTEGER DEFAULT 1")
+
+    # Create ipam_pools table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ipam_pools (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        prefix_id TEXT NOT NULL,
+        start_ip TEXT NOT NULL,
+        end_ip TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        tenant_id TEXT DEFAULT 'tenant-default',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (prefix_id) REFERENCES prefixes (id) ON DELETE CASCADE,
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE SET NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_ipam_pools_prefix ON ipam_pools(prefix_id)')
+
+    # Create ipam_vips table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ipam_vips (
+        id TEXT PRIMARY KEY,
+        address TEXT NOT NULL,
+        vip_type TEXT NOT NULL,
+        device_id TEXT,
+        interface_name TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        real_servers TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        tenant_id TEXT DEFAULT 'tenant-default',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE SET NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE SET NULL
+    )
+    ''')
+    ensure_column('ipam_vips', 'backup_device_id', "TEXT")
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_ipam_vips_device ON ipam_vips(device_id)')
+
+    # Create ipam_dhcp_leases table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ipam_dhcp_leases (
+        id TEXT PRIMARY KEY,
+        address TEXT NOT NULL,
+        mac_address TEXT NOT NULL,
+        hostname TEXT DEFAULT '',
+        dhcp_server TEXT DEFAULT '',
+        lease_state TEXT DEFAULT 'active',
+        lease_start TEXT DEFAULT '',
+        lease_end TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_ipam_dhcp_mac ON ipam_dhcp_leases(mac_address)')
+
+
     # Create jobs table if not exists
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS jobs (
@@ -145,7 +413,7 @@ def _init_db_logic(conn):
     )
     ''')
 
-    # Multi-role credential columns for PAM
+    # Multi-role credential columns for PAM & CMDB/IPAM
     for col, dtype in [
         ('normal_username', "TEXT DEFAULT ''"),
         ('normal_password', "TEXT DEFAULT ''"),
@@ -165,7 +433,23 @@ def _init_db_logic(conn):
         ('vault_path', "TEXT DEFAULT ''"),
         ('ports_count', 'INTEGER DEFAULT 0'),
         ('ports_bandwidth_gbps', 'REAL DEFAULT 0.0'),
-        ('switching_capacity_gbps', 'REAL DEFAULT 0.0')
+        ('switching_capacity_gbps', 'REAL DEFAULT 0.0'),
+        ('tenant_id', "TEXT DEFAULT ''"),
+        ('site_id', "TEXT DEFAULT ''"),
+        ('rack_id', "TEXT DEFAULT ''"),
+        ('device_type_id', "TEXT DEFAULT ''"),
+        ('asset_tag', "TEXT DEFAULT ''"),
+        ('serial_number', "TEXT DEFAULT ''"),
+        ('os_version', "TEXT DEFAULT ''"),
+        ('firmware_version', "TEXT DEFAULT ''"),
+        ('lifecycle_status', "TEXT DEFAULT 'staging'"),
+        ('purchase_date', "TEXT DEFAULT ''"),
+        ('warranty_expire', "TEXT DEFAULT ''"),
+        ('owner_team', "TEXT DEFAULT ''"),
+        ('criticality', "TEXT DEFAULT 'P3'"),
+        ('monitoring_enabled', "INTEGER DEFAULT 1"),
+        ('config_backup_enabled', "INTEGER DEFAULT 1"),
+        ('last_discovered', "TEXT DEFAULT ''")
     ]:
         ensure_column('devices', col, dtype)
 
@@ -226,6 +510,8 @@ def _init_db_logic(conn):
     ensure_column('users', 'display_name', "TEXT DEFAULT ''")
     ensure_column('users', 'phone', "TEXT DEFAULT ''")
     ensure_column('users', 'email', "TEXT DEFAULT ''")
+    ensure_column('users', 'role_id', "TEXT DEFAULT ''")
+    ensure_column('users', 'tenant_id', "TEXT DEFAULT ''")
 
     # Store user-defined scenario templates for playbooks
     cursor.execute('''
@@ -319,6 +605,66 @@ def _init_db_logic(conn):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_last_seen ON links(last_seen)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_source_target ON links(source_device_id, target_device_id)')
 
+    # Create topology_links table if not exists
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS topology_links (
+        id TEXT PRIMARY KEY,
+        link_key TEXT UNIQUE,
+        source_device_id TEXT,
+        source_interface_id TEXT,
+        source_hostname TEXT,
+        source_port TEXT,
+        source_port_normalized TEXT,
+        target_device_id TEXT,
+        target_interface_id TEXT,
+        target_hostname TEXT,
+        target_port TEXT,
+        target_port_normalized TEXT,
+        discovery_source TEXT DEFAULT 'lldp',
+        confidence REAL DEFAULT 0.0,
+        status TEXT DEFAULT 'up',
+        is_inferred INTEGER DEFAULT 0,
+        evidence_count INTEGER DEFAULT 1,
+        metadata_json TEXT DEFAULT '{}',
+        created_at TEXT,
+        updated_at TEXT,
+        last_seen TEXT,
+        FOREIGN KEY (source_device_id) REFERENCES devices (id),
+        FOREIGN KEY (source_interface_id) REFERENCES interfaces (id),
+        FOREIGN KEY (target_device_id) REFERENCES devices (id),
+        FOREIGN KEY (target_interface_id) REFERENCES interfaces (id)
+    )
+    ''')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_topo_links_key ON topology_links(link_key)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topo_links_source_target ON topology_links(source_device_id, target_device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topo_links_src_intf ON topology_links(source_interface_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topo_links_tgt_intf ON topology_links(target_interface_id)')
+
+    for col, dtype in [
+        ('link_key', "TEXT"),
+        ('source_device_id', "TEXT"),
+        ('source_interface_id', "TEXT"),
+        ('source_hostname', "TEXT"),
+        ('source_port', "TEXT"),
+        ('source_port_normalized', "TEXT"),
+        ('target_device_id', "TEXT"),
+        ('target_interface_id', "TEXT"),
+        ('target_hostname', "TEXT"),
+        ('target_port', "TEXT"),
+        ('target_port_normalized', "TEXT"),
+        ('discovery_source', "TEXT DEFAULT 'lldp'"),
+        ('confidence', "REAL DEFAULT 0.0"),
+        ('status', "TEXT DEFAULT 'up'"),
+        ('is_inferred', "INTEGER DEFAULT 0"),
+        ('evidence_count', "INTEGER DEFAULT 1"),
+        ('metadata_json', "TEXT DEFAULT '{}'"),
+        ('created_at', "TEXT"),
+        ('updated_at', "TEXT"),
+        ('last_seen', "TEXT")
+    ]:
+        ensure_column('topology_links', col, dtype)
+
+
     # ── IP Locator tables ──
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS arp_cache (
@@ -405,6 +751,24 @@ def _init_db_logic(conn):
         ensure_column('network_endpoints', col, dtype)
 
     cursor.execute('''
+    CREATE TABLE IF NOT EXISTS endpoint_history (
+        id TEXT PRIMARY KEY,
+        ip TEXT NOT NULL,
+        mac TEXT NOT NULL,
+        old_switch_id TEXT,
+        old_switch_port TEXT,
+        old_vlan TEXT,
+        new_switch_id TEXT,
+        new_switch_port TEXT,
+        new_vlan TEXT,
+        drift_type TEXT NOT NULL,
+        detected_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_endpoint_history_mac ON endpoint_history(mac)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_endpoint_history_ip ON endpoint_history(ip)')
+
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS ip_inventory (
         ip          TEXT PRIMARY KEY,
         mask        TEXT NOT NULL DEFAULT '255.255.255.255',
@@ -450,6 +814,256 @@ def _init_db_logic(conn):
         ('last_update', "TEXT DEFAULT ''")
     ]:
         ensure_column('route_cache', col, dtype)
+
+    # Create route_table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS route_table (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        vrf_name TEXT NOT NULL DEFAULT 'default',
+        destination TEXT NOT NULL,
+        next_hop TEXT NOT NULL DEFAULT '',
+        outgoing_interface TEXT NOT NULL DEFAULT '',
+        protocol TEXT NOT NULL DEFAULT 'static',
+        metric INTEGER DEFAULT 0,
+        preference INTEGER DEFAULT 0,
+        active INTEGER DEFAULT 1,
+        last_updated TEXT NOT NULL,
+        route_source TEXT DEFAULT '',
+        age INTEGER DEFAULT 0,
+        tag INTEGER DEFAULT 0,
+        as_path TEXT DEFAULT '',
+        community TEXT DEFAULT '',
+        origin TEXT DEFAULT '',
+        local_pref INTEGER DEFAULT 0,
+        med INTEGER DEFAULT 0,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_routes_device_vrf ON route_table(device_id, vrf_name)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_routes_destination ON route_table(destination)')
+
+    for col, dtype in [
+        ('device_id', "TEXT"),
+        ('vrf_name', "TEXT DEFAULT 'default'"),
+        ('destination', "TEXT"),
+        ('next_hop', "TEXT DEFAULT ''"),
+        ('outgoing_interface', "TEXT DEFAULT ''"),
+        ('protocol', "TEXT DEFAULT 'static'"),
+        ('metric', "INTEGER DEFAULT 0"),
+        ('preference', "INTEGER DEFAULT 0"),
+        ('active', "INTEGER DEFAULT 1"),
+        ('last_updated', "TEXT"),
+        ('route_source', "TEXT DEFAULT ''"),
+        ('age', "INTEGER DEFAULT 0"),
+        ('tag', "INTEGER DEFAULT 0"),
+        ('as_path', "TEXT DEFAULT ''"),
+        ('community', "TEXT DEFAULT ''"),
+        ('origin', "TEXT DEFAULT ''"),
+        ('local_pref', "INTEGER DEFAULT 0"),
+        ('med', "INTEGER DEFAULT 0")
+    ]:
+        ensure_column('route_table', col, dtype)
+
+    # Create arp_table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS arp_table (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        ip_address TEXT NOT NULL,
+        mac_address TEXT NOT NULL,
+        interface_name TEXT DEFAULT '',
+        vlan_id INTEGER,
+        last_updated TEXT NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_arp_device_ip ON arp_table(device_id, ip_address)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_arp_mac ON arp_table(mac_address)')
+
+    for col, dtype in [
+        ('device_id', "TEXT"),
+        ('ip_address', "TEXT"),
+        ('mac_address', "TEXT"),
+        ('interface_name', "TEXT DEFAULT ''"),
+        ('vlan_id', "INTEGER"),
+        ('last_updated', "TEXT")
+    ]:
+        ensure_column('arp_table', col, dtype)
+
+    # Create mac_table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS mac_table (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        mac_address TEXT NOT NULL,
+        interface_name TEXT NOT NULL,
+        vlan_id INTEGER NOT NULL,
+        entry_type TEXT NOT NULL DEFAULT 'dynamic',
+        last_updated TEXT NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_mac_device_vlan ON mac_table(device_id, vlan_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_mac_address ON mac_table(mac_address)')
+
+    for col, dtype in [
+        ('device_id', "TEXT"),
+        ('mac_address', "TEXT"),
+        ('interface_name', "TEXT"),
+        ('vlan_id', "INTEGER"),
+        ('entry_type', "TEXT DEFAULT 'dynamic'"),
+        ('last_updated', "TEXT")
+    ]:
+        ensure_column('mac_table', col, dtype)
+
+    # Create neighbor_table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS neighbor_table (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        local_interface TEXT NOT NULL,
+        neighbor_hostname TEXT NOT NULL,
+        neighbor_interface TEXT NOT NULL,
+        neighbor_ip TEXT DEFAULT '',
+        protocol TEXT NOT NULL,
+        last_updated TEXT NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_neighbors_device ON neighbor_table(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_neighbors_name ON neighbor_table(neighbor_hostname)')
+
+    for col, dtype in [
+        ('device_id', "TEXT"),
+        ('local_interface', "TEXT"),
+        ('neighbor_hostname', "TEXT"),
+        ('neighbor_interface', "TEXT"),
+        ('neighbor_ip', "TEXT DEFAULT ''"),
+        ('protocol', "TEXT"),
+        ('last_updated', "TEXT")
+    ]:
+        ensure_column('neighbor_table', col, dtype)
+
+    # Create config_backups table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS config_backups (
+        id TEXT PRIMARY KEY,
+        device_id TEXT,
+        config_type TEXT NOT NULL,
+        backup_time TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        config_hash TEXT,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_cfg_backup_device ON config_backups(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_cfg_backup_time ON config_backups(backup_time)')
+
+    for col, dtype in [
+        ('device_id', "TEXT"),
+        ('config_type', "TEXT"),
+        ('backup_time', "TEXT"),
+        ('file_path', "TEXT"),
+        ('config_hash', "TEXT")
+    ]:
+        ensure_column('config_backups', col, dtype)
+
+    # Create alarms table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS alarms (
+        id TEXT PRIMARY KEY,
+        device_id TEXT,
+        severity TEXT NOT NULL,
+        source TEXT NOT NULL,
+        alarm_type TEXT NOT NULL,
+        alarm_time TEXT NOT NULL,
+        clear_time TEXT,
+        status TEXT NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alarms_device ON alarms(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_alarms_status ON alarms(status)')
+
+    for col, dtype in [
+        ('device_id', "TEXT"),
+        ('severity', "TEXT"),
+        ('source', "TEXT"),
+        ('alarm_type', "TEXT"),
+        ('alarm_time', "TEXT"),
+        ('clear_time', "TEXT"),
+        ('status', "TEXT")
+    ]:
+        ensure_column('alarms', col, dtype)
+
+    # Create performance_metrics table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS performance_metrics (
+        id TEXT PRIMARY KEY,
+        device_id TEXT,
+        metric_name TEXT NOT NULL,
+        metric_value REAL NOT NULL,
+        timestamp TEXT NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_perf_device_metric ON performance_metrics(device_id, metric_name)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_perf_timestamp ON performance_metrics(timestamp)')
+
+    for col, dtype in [
+        ('device_id', "TEXT"),
+        ('metric_name', "TEXT"),
+        ('metric_value', "REAL"),
+        ('timestamp', "TEXT")
+    ]:
+        ensure_column('performance_metrics', col, dtype)
+
+    # Create events table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS events (
+        event_id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        event_source TEXT NOT NULL,
+        event_time TEXT NOT NULL,
+        payload TEXT DEFAULT '{}'
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_events_type_time ON events(event_type, event_time)')
+
+    for col, dtype in [
+        ('event_type', "TEXT"),
+        ('event_source', "TEXT"),
+        ('event_time', "TEXT"),
+        ('payload', "TEXT DEFAULT '{}'")
+    ]:
+        ensure_column('events', col, dtype)
+
+    # Create discovery_jobs table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS discovery_jobs (
+        id TEXT PRIMARY KEY,
+        job_type TEXT NOT NULL,
+        target TEXT NOT NULL,
+        status TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        finish_time TEXT,
+        result TEXT DEFAULT '{}'
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_disc_status ON discovery_jobs(status)')
+
+    for col, dtype in [
+        ('job_type', "TEXT"),
+        ('target', "TEXT"),
+        ('status', "TEXT"),
+        ('start_time', "TEXT"),
+        ('finish_time', "TEXT"),
+        ('result', "TEXT DEFAULT '{}'")
+    ]:
+        ensure_column('discovery_jobs', col, dtype)
+
+
 
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS topology_discovery_runs (
@@ -1040,8 +1654,6 @@ def _init_db_logic(conn):
         cursor.execute('ALTER TABLE devices ADD COLUMN cpu_usage INTEGER DEFAULT 0')
     if 'memory_usage' not in columns:
         cursor.execute('ALTER TABLE devices ADD COLUMN memory_usage INTEGER DEFAULT 0')
-    if 'interface_data' not in columns:
-        cursor.execute('ALTER TABLE devices ADD COLUMN interface_data TEXT DEFAULT "[]"')
     if 'snmp_community' not in columns:
         cursor.execute('ALTER TABLE devices ADD COLUMN snmp_community TEXT DEFAULT "public"')
     if 'snmp_port' not in columns:
@@ -1360,9 +1972,11 @@ def _init_db_logic(conn):
     ''')
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_addr_unique ON ip_addresses(subnet_id, address)')
 
-    ip_addr_cols = _table_columns(cursor, 'ip_addresses')
-    if 'device_type' not in ip_addr_cols:
-        cursor.execute("ALTER TABLE ip_addresses ADD COLUMN device_type TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'device_type', "TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'ip_address', "TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'prefix_id', "TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'vrf_id', "TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'interface_id', "TEXT DEFAULT ''")
 
     # Capacity planning snapshots
     cursor.execute('''
@@ -1449,6 +2063,7 @@ def _init_db_logic(conn):
     ensure_column('physical_assets', 'device_category', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'power_watts', "INTEGER DEFAULT 0")
 
+    ensure_column('devices', 'credential_id', 'TEXT')
     ensure_column('devices', 'asset_id', 'TEXT')
     ensure_column('devices', 'vendor', "TEXT DEFAULT ''")
     ensure_column('devices', 'lifecycle_status', "TEXT DEFAULT 'staging'")
@@ -1923,38 +2538,13 @@ def _init_db_logic(conn):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_device_id ON device_tags(device_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_tag_id ON device_tags(tag_id)')
 
-    # Rack Management
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS racks (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        datacenter TEXT DEFAULT '',
-        room TEXT DEFAULT '',
-        row TEXT DEFAULT '',
-        total_u INTEGER NOT NULL DEFAULT 42,
-        description TEXT DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'active',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    )
-    ''')
+    # Rack Management Indexes and Columns
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_racks_name_dc ON racks(name, datacenter)')
     ensure_column('racks', 'power_capacity_watts', "INTEGER DEFAULT 0")
 
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS device_types (
-        id TEXT PRIMARY KEY,
-        model TEXT NOT NULL,
-        vendor TEXT DEFAULT '',
-        u_height INTEGER NOT NULL DEFAULT 1,
-        device_role TEXT NOT NULL DEFAULT 'switch',
-        is_full_depth INTEGER DEFAULT 1,
-        description TEXT DEFAULT '',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    )
-    ''')
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_device_types_model_vendor ON device_types(model, vendor)')
+    ensure_column('device_types', 'power_watts', "INTEGER DEFAULT 0")
+
     ensure_column('device_types', 'power_watts', "INTEGER DEFAULT 0")
 
     cursor.execute('''
@@ -2253,6 +2843,1256 @@ def _init_db_logic(conn):
             cursor.execute(_idx_sql)
         except Exception as _exc:
             logger.debug("[migration] index skipped (%s): %s", _idx_sql.split(' ON ')[0], _exc)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Data migration: Move passwords from devices to credentials table
+    # ──────────────────────────────────────────────────────────────────
+    try:
+        devices_to_migrate = cursor.execute('''
+            SELECT id, hostname, username, password, enable_password, snmp_community,
+                   normal_username, normal_password, admin_username, admin_password,
+                   credential_id
+            FROM devices
+            WHERE credential_id IS NULL OR credential_id = ''
+        ''').fetchall()
+
+        for dev in devices_to_migrate:
+            d_id = dev['id']
+            d_host = dev['hostname'] or d_id
+            d_uname = dev['username'] or ''
+            d_pwd = dev['password'] or ''
+            d_en_pwd = dev['enable_password'] or ''
+            d_snmp = dev['snmp_community'] or ''
+            d_n_uname = dev['normal_username'] or ''
+            d_n_pwd = dev['normal_password'] or ''
+            d_a_uname = dev['admin_username'] or ''
+            d_a_pwd = dev['admin_password'] or ''
+
+            # Select the PRIVILEGED account, pairing each username with its OWN
+            # password (mirrors the pre-decoupling backup logic which logged in as
+            # admin first, then the primary account, then the normal account).
+            # Picking the non-privileged "normal" account here was the regression
+            # that broke config backup: the normal account lands at user-EXEC and
+            # cannot run `show running-config`.
+            if d_a_uname and d_a_pwd:
+                uname, pwd = d_a_uname, d_a_pwd
+            elif d_uname and d_pwd:
+                uname, pwd = d_uname, d_pwd
+            elif d_n_uname and d_n_pwd:
+                uname, pwd = d_n_uname, d_n_pwd
+            else:
+                uname = d_a_uname or d_uname or d_n_uname or ''
+                pwd = d_a_pwd or d_pwd or d_n_pwd or ''
+
+            # Enable secret: explicit field, else fall back to the chosen login
+            # password (matches the historical "enable_password = enable_pass or
+            # login_pass" behaviour).
+            d_en_pwd = d_en_pwd or pwd
+
+            if not uname and not pwd and not d_en_pwd and not d_snmp:
+                continue
+
+            c_id = f"cred-{uuid.uuid4().hex[:12]}"
+            c_name = f"cred-{d_host}-{d_id[:8]}"
+
+            if _USE_PG:
+                cursor.execute('''
+                    INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (c_id, c_name, 'ssh_password', uname, pwd, d_en_pwd, d_snmp, now))
+                cursor.execute('UPDATE devices SET credential_id = %s WHERE id = %s', (c_id, d_id))
+            else:
+                cursor.execute('''
+                    INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (c_id, c_name, 'ssh_password', uname, pwd, d_en_pwd, d_snmp, now))
+                cursor.execute('UPDATE devices SET credential_id = ? WHERE id = ?', (c_id, d_id))
+
+        # NOTE: We intentionally do NOT wipe the devices.* credential columns here.
+        # An earlier version cleared password/enable_password/admin_password/etc.
+        # after migrating, which destroyed the privileged (admin) password and left
+        # config backup unable to reach privileged EXEC. Keeping the columns intact
+        # lets credential resolution fall back to them and avoids irreversible loss.
+    except Exception as exc:
+        logger.error(f"[migration] Failed to migrate credentials to credentials table: {exc}", exc_info=True)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Data migration: Move interface data from devices to interfaces table
+    # ──────────────────────────────────────────────────────────────────
+    try:
+        if _USE_PG:
+            cursor.execute("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'interfaces')")
+            has_interfaces_table = cursor.fetchone()[0]
+        else:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='interfaces'")
+            has_interfaces_table = bool(cursor.fetchone())
+
+        if has_interfaces_table:
+            dev_cols = _table_columns(cursor, 'devices')
+            if 'interface_data' in dev_cols:
+                devices_with_interfaces = cursor.execute('SELECT id, hostname, interface_data FROM devices').fetchall()
+                for dev in devices_with_interfaces:
+                    dev_id = dev['id']
+                    raw_intf_data = dev['interface_data']
+                    if not raw_intf_data:
+                        continue
+                    try:
+                        if isinstance(raw_intf_data, str):
+                            intfs = json.loads(raw_intf_data)
+                        else:
+                            intfs = raw_intf_data
+                    except Exception:
+                        continue
+                    if not isinstance(intfs, list):
+                        continue
+
+                    for iface in intfs:
+                        if not isinstance(iface, dict):
+                            continue
+                        iname = iface.get('name')
+                        if not iname:
+                            continue
+                        
+                        if _USE_PG:
+                            cursor.execute('SELECT 1 FROM interfaces WHERE device_id = %s AND interface_name = %s LIMIT 1', (dev_id, iname))
+                        else:
+                            cursor.execute('SELECT 1 FROM interfaces WHERE device_id = ? AND interface_name = ? LIMIT 1', (dev_id, iname))
+                        if cursor.fetchone():
+                            continue
+
+                        intf_id = f"intf-{uuid.uuid4().hex[:12]}"
+                        status = iface.get('status', 'down')
+                        speed_mbps = float(iface.get('speed_mbps') or 0.0)
+                        speed_bps = speed_mbps * 1_000_000.0
+                        desc = iface.get('description', '')
+                        mac = iface.get('mac_address', '')
+                        
+                        if _USE_PG:
+                            cursor.execute('''
+                                INSERT INTO interfaces (
+                                    id, device_id, interface_name, description, admin_status, oper_status,
+                                    mac_address, speed, bandwidth, duplex, interface_type, switchport_mode, ip_enabled
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ''', (intf_id, dev_id, iname, desc, status, status, mac, speed_bps, speed_bps, 'auto', 'physical', 'access', 0))
+                        else:
+                            cursor.execute('''
+                                INSERT INTO interfaces (
+                                    id, device_id, interface_name, description, admin_status, oper_status,
+                                    mac_address, speed, bandwidth, duplex, interface_type, switchport_mode, ip_enabled
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (intf_id, dev_id, iname, desc, status, status, mac, speed_bps, speed_bps, 'auto', 'physical', 'access', 0))
+
+    except Exception as exc:
+        logger.error(f"[migration] Failed to migrate interfaces to interfaces table: {exc}", exc_info=True)
+
+
+    # ──────────────────────────────────────────────────────────────────
+    # Data migration: Phase 3 CMDB/IPAM Seeding and Migration
+    # ──────────────────────────────────────────────────────────────────
+    try:
+        # 1. Seed default tenant
+        cursor.execute("SELECT 1 FROM tenants WHERE id = 'tenant-default'")
+        if not cursor.fetchone():
+            if _USE_PG:
+                cursor.execute("INSERT INTO tenants (id, name, description) VALUES (%s, %s, %s)",
+                               ('tenant-default', 'Default Tenant', 'Default Tenant for NetOps Platform'))
+            else:
+                cursor.execute("INSERT INTO tenants (id, name, description) VALUES (?, ?, ?)",
+                               ('tenant-default', 'Default Tenant', 'Default Tenant for NetOps Platform'))
+
+        # 2. Seed default roles
+        for r_id, r_name, r_desc in [
+            ('role-admin', 'Administrator', 'Full Administrator Access'),
+            ('role-operator', 'Operator', 'Operator Access with Read-Write'),
+            ('role-viewer', 'Viewer', 'Read-Only Viewer Access')
+        ]:
+            if _USE_PG:
+                cursor.execute("SELECT 1 FROM roles WHERE id = %s", (r_id,))
+                if not cursor.fetchone():
+                    cursor.execute("INSERT INTO roles (id, role_name, description) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (r_id, r_name, r_desc))
+            else:
+                cursor.execute("SELECT 1 FROM roles WHERE id = ?", (r_id,))
+                if not cursor.fetchone():
+                    cursor.execute("INSERT OR IGNORE INTO roles (id, role_name, description) VALUES (?, ?, ?)", (r_id, r_name, r_desc))
+
+        # 3. Map default users
+        cursor.execute("UPDATE users SET tenant_id = 'tenant-default', role_id = 'role-admin' WHERE username = 'admin' AND (tenant_id = '' OR tenant_id IS NULL)")
+
+        # 4. Create sites from existing devices
+        cursor.execute("SELECT DISTINCT site FROM devices WHERE site IS NOT NULL AND site != ''")
+        unique_sites = cursor.fetchall()
+        for site_row in unique_sites:
+            s_name = site_row['site'] if hasattr(site_row, '__getitem__') else site_row[0]
+            s_code = f"SITE_{s_name.upper().replace(' ', '_')}"
+            cursor.execute("SELECT id FROM sites WHERE site_name = ? OR site_code = ?", (s_name, s_code))
+            existing_site = cursor.fetchone()
+            if existing_site:
+                s_id = existing_site['id'] if hasattr(existing_site, '__getitem__') else existing_site[0]
+            else:
+                s_id = f"site-{uuid.uuid4().hex[:12]}"
+                if _USE_PG:
+                    cursor.execute("INSERT INTO sites (id, site_code, site_name, country, city, timezone, address, status, tenant_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                                   (s_id, s_code, s_name, '', '', 'Asia/Shanghai', '', 'active', 'tenant-default'))
+                else:
+                    cursor.execute("INSERT INTO sites (id, site_code, site_name, country, city, timezone, address, status, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   (s_id, s_code, s_name, '', '', 'Asia/Shanghai', '', 'active', 'tenant-default'))
+            # update devices
+            cursor.execute("UPDATE devices SET site_id = ? WHERE site = ?", (s_id, s_name))
+
+        # Ensure a default site
+        cursor.execute("SELECT 1 FROM sites WHERE id = 'site-default'")
+        if not cursor.fetchone():
+            if _USE_PG:
+                cursor.execute("INSERT INTO sites (id, site_code, site_name, country, city, timezone, address, status, tenant_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                               ('site-default', 'DEFAULT_SITE', 'Default Site', '', '', 'Asia/Shanghai', '', 'active', 'tenant-default'))
+            else:
+                cursor.execute("INSERT INTO sites (id, site_code, site_name, country, city, timezone, address, status, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               ('site-default', 'DEFAULT_SITE', 'Default Site', '', '', 'Asia/Shanghai', '', 'active', 'tenant-default'))
+        cursor.execute("UPDATE devices SET site_id = 'site-default' WHERE site_id = '' OR site_id IS NULL")
+
+        # 5. Seed device types from devices
+        cursor.execute("SELECT DISTINCT vendor, model FROM devices WHERE model IS NOT NULL AND model != ''")
+        unique_types = cursor.fetchall()
+        for type_row in unique_types:
+            vendor = type_row['vendor'] if hasattr(type_row, '__getitem__') else type_row[0]
+            model = type_row['model'] if hasattr(type_row, '__getitem__') else type_row[1]
+            if not vendor:
+                vendor = 'Unknown'
+            cursor.execute("SELECT id FROM device_types WHERE vendor = ? AND model = ?", (vendor, model))
+            existing_type = cursor.fetchone()
+            if existing_type:
+                dt_id = existing_type['id'] if hasattr(existing_type, '__getitem__') else existing_type[0]
+            else:
+                dt_id = f"devtype-{uuid.uuid4().hex[:12]}"
+                if _USE_PG:
+                    cursor.execute("INSERT INTO device_types (id, vendor, model, part_number, u_height, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                                   (dt_id, vendor, model, '', 1, now, now))
+                else:
+                    cursor.execute("INSERT INTO device_types (id, vendor, model, part_number, u_height, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                   (dt_id, vendor, model, '', 1, now, now))
+            cursor.execute("UPDATE devices SET device_type_id = ? WHERE vendor = ? AND model = ?", (dt_id, vendor, model))
+
+        # 6. Migrate ip_inventory to ip_addresses and prefixes
+        import ipaddress
+        # Read from ip_inventory
+        cursor.execute("SELECT ip, mask, device_id, interface, type, last_seen FROM ip_inventory")
+        inv_rows = cursor.fetchall()
+
+        # Fetch current prefixes for in-memory CIDR parent resolution
+        cursor.execute("SELECT id, prefix FROM prefixes")
+        existing_prefixes = [dict(r) if hasattr(r, '__getitem__') else {'id': r[0], 'prefix': r[1]} for r in cursor.fetchall()]
+
+        for inv in inv_rows:
+            ip = inv['ip'] if hasattr(inv, '__getitem__') else inv[0]
+            mask = inv['mask'] if hasattr(inv, '__getitem__') else inv[1]
+            d_id = inv['device_id'] if hasattr(inv, '__getitem__') else inv[2]
+            interface = inv['interface'] if hasattr(inv, '__getitem__') else inv[3]
+            itype = inv['type'] if hasattr(inv, '__getitem__') else inv[4]
+            last_seen = inv['last_seen'] if hasattr(inv, '__getitem__') else inv[5]
+
+            # Determine IP version up-front so both IPv4 and IPv6 are supported
+            try:
+                ip_obj = ipaddress.ip_address(ip)
+                ip_version = ip_obj.version
+            except ValueError:
+                # Not a parseable IP address — skip this inventory row
+                continue
+
+            host_len = 128 if ip_version == 6 else 32
+            default_cidr = '::/0' if ip_version == 6 else '0.0.0.0/0'
+
+            # Normalize mask format: dotted (255.255.255.0), '/24', '24', or empty
+            try:
+                norm_mask = str(mask).strip() if mask else ''
+                if norm_mask.startswith('/'):
+                    norm_mask = norm_mask[1:]
+                if not norm_mask:
+                    norm_mask = str(host_len)
+
+                # ip_interface accepts dotted IPv4 masks and integer prefix lengths (v4/v6)
+                iface = ipaddress.ip_interface(f"{ip}/{norm_mask}")
+                net = iface.network
+                prefix_str = str(net)
+                prefix_len = net.prefixlen
+                ip_addr_with_mask = f"{ip}/{prefix_len}"
+                is_host = (prefix_len == host_len)
+            except Exception:
+                is_host = True
+                prefix_len = host_len
+                prefix_str = None
+                ip_addr_with_mask = f"{ip}/{host_len}"
+
+            if is_host:
+                # Do NOT insert host routes (/32, /128) into the prefixes table.
+                # Find the most specific matching parent prefix of the same IP version.
+                parent_prefix_id = None
+                best_len = -1
+
+                for p in existing_prefixes:
+                    try:
+                        pnet = ipaddress.ip_network(p['prefix'], strict=False)
+                        if pnet.version != ip_version:
+                            continue
+                        if pnet.prefixlen < host_len and ip_obj in pnet:
+                            if pnet.prefixlen > best_len:
+                                best_len = pnet.prefixlen
+                                parent_prefix_id = p['id']
+                    except Exception:
+                        continue
+
+                if parent_prefix_id:
+                    prefix_id = parent_prefix_id
+                else:
+                    # If no parent network matches, categorize under a version-specific catch-all
+                    cursor.execute("SELECT id FROM prefixes WHERE prefix = ?", (default_cidr,))
+                    default_prefix_row = cursor.fetchone()
+                    if default_prefix_row:
+                        prefix_id = default_prefix_row['id'] if hasattr(default_prefix_row, '__getitem__') else default_prefix_row[0]
+                    else:
+                        prefix_id = f"prefix-default-{'v6' if ip_version == 6 else 'global'}"
+                        catch_name = "环回 / 孤立主机地址 (IPv6)" if ip_version == 6 else "环回 / 孤立主机地址"
+                        catch_desc = "存放未匹配到任何子网的 Loopback 及孤立主机路由 (/32, /128)"
+                        if _USE_PG:
+                            cursor.execute("INSERT INTO prefixes (id, prefix, name, description, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                                           (prefix_id, default_cidr, catch_name, catch_desc, 'loopback', None, None, 'site-default', 'tenant-default', 'active'))
+                        else:
+                            cursor.execute("INSERT INTO prefixes (id, prefix, name, description, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                           (prefix_id, default_cidr, catch_name, catch_desc, 'loopback', None, None, 'site-default', 'tenant-default', 'active'))
+                        existing_prefixes.append({'id': prefix_id, 'prefix': default_cidr})
+            else:
+                # Normal CIDR subnets (e.g. /24)
+                cursor.execute("SELECT id FROM prefixes WHERE prefix = ?", (prefix_str,))
+                prefix_row = cursor.fetchone()
+                if prefix_row:
+                    prefix_id = prefix_row['id'] if hasattr(prefix_row, '__getitem__') else prefix_row[0]
+                else:
+                    prefix_id = f"prefix-{uuid.uuid4().hex[:12]}"
+                    # Auto-classify point-to-point interconnects as Transit Network:
+                    # IPv4 /30 & /31, or IPv6 /127 are device-to-device links.
+                    auto_role = 'transit' if (
+                        (ip_version == 4 and prefix_len in (30, 31)) or
+                        (ip_version == 6 and prefix_len == 127)
+                    ) else 'server'
+                    if _USE_PG:
+                        cursor.execute("INSERT INTO prefixes (id, prefix, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                       (prefix_id, prefix_str, auto_role, None, None, 'site-default', 'tenant-default', 'active'))
+                    else:
+                        cursor.execute("INSERT INTO prefixes (id, prefix, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                       (prefix_id, prefix_str, auto_role, None, None, 'site-default', 'tenant-default', 'active'))
+                    existing_prefixes.append({'id': prefix_id, 'prefix': prefix_str})
+
+            # Normalize the IP role (device_type) — detect loopbacks by interface name/type
+            iface_l = (interface or '').lower()
+            itype_l = (itype or '').strip().lower()
+            if 'loopback' in iface_l or (iface_l.startswith('lo') and not iface_l.startswith('local')) or itype_l == 'loopback':
+                ip_role = 'loopback'
+            else:
+                ip_role = itype_l or 'host'
+
+            # Find matching interface_id from interfaces table
+            cursor.execute("SELECT id FROM interfaces WHERE device_id = ? AND interface_name = ?", (d_id, interface))
+            intf_row = cursor.fetchone()
+            intf_id = intf_row['id'] if intf_row else None
+
+            # Insert or update ip_addresses to align prefix relationships and masks
+            cursor.execute("SELECT id, ip_address, prefix_id FROM ip_addresses WHERE address = ?", (ip,))
+            existing_addr = cursor.fetchone()
+            if existing_addr:
+                addr_id = existing_addr['id'] if hasattr(existing_addr, '__getitem__') else existing_addr[0]
+                old_ip_addr = existing_addr['ip_address'] if hasattr(existing_addr, '__getitem__') else existing_addr[1]
+                old_prefix_id = existing_addr['prefix_id'] if hasattr(existing_addr, '__getitem__') else existing_addr[2]
+                
+                # Update if mask or prefix association has changed
+                if old_ip_addr != ip_addr_with_mask or old_prefix_id != prefix_id:
+                    cursor.execute(
+                        "UPDATE ip_addresses SET ip_address = ?, prefix_id = ?, subnet_id = ?, interface_id = ?, device_id = ?, interface_name = ?, device_type = ?, last_seen = ?, updated_at = ? WHERE id = ?",
+                        (ip_addr_with_mask, prefix_id, prefix_id, intf_id or '', d_id, interface, ip_role, last_seen, datetime.now(timezone.utc).isoformat(), addr_id)
+                    )
+            else:
+                addr_id = f"ip-{uuid.uuid4().hex[:12]}"
+                now = datetime.now(timezone.utc).isoformat()
+                if _USE_PG:
+                    cursor.execute('''
+                        INSERT INTO ip_addresses (
+                            id, subnet_id, address, hostname, device_id, interface_name,
+                            mac_address, device_type, status, description, last_seen, created_at, updated_at,
+                            ip_address, prefix_id, vrf_id, interface_id
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ''', (addr_id, prefix_id, ip, '', d_id, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, prefix_id, '', intf_id or ''))
+                else:
+                    cursor.execute('''
+                        INSERT INTO ip_addresses (
+                            id, subnet_id, address, hostname, device_id, interface_name,
+                            mac_address, device_type, status, description, last_seen, created_at, updated_at,
+                            ip_address, prefix_id, vrf_id, interface_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (addr_id, prefix_id, ip, '', d_id, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, prefix_id, '', intf_id or ''))
+
+        # Clean up empty, auto-generated host-route prefixes (/32, /128) no longer referenced
+        cursor.execute('''
+            DELETE FROM prefixes
+            WHERE (prefix LIKE '%/32' OR prefix LIKE '%/128')
+              AND (name IS NULL OR name = '')
+              AND (description IS NULL OR description = '')
+              AND id NOT IN (
+                  SELECT DISTINCT prefix_id FROM ip_addresses WHERE prefix_id IS NOT NULL AND prefix_id != ''
+              )
+        ''')
+
+        # 7. Soft isolation values default
+        cursor.execute("UPDATE devices SET tenant_id = 'tenant-default' WHERE tenant_id IS NULL OR tenant_id = ''")
+        cursor.execute("UPDATE sites SET tenant_id = 'tenant-default' WHERE tenant_id IS NULL OR tenant_id = ''")
+        cursor.execute("UPDATE vrfs SET tenant_id = 'tenant-default' WHERE tenant_id IS NULL OR tenant_id = ''")
+        cursor.execute("UPDATE vlans SET tenant_id = 'tenant-default' WHERE tenant_id IS NULL OR tenant_id = ''")
+        cursor.execute("UPDATE prefixes SET tenant_id = 'tenant-default' WHERE tenant_id IS NULL OR tenant_id = ''")
+
+        # 8. Migrate links to topology_links
+        try:
+            cursor.execute("SELECT * FROM links")
+            links_rows = cursor.fetchall()
+
+            interface_map = {}
+            cursor.execute("SELECT id, device_id, interface_name FROM interfaces")
+            intf_rows = cursor.fetchall()
+            
+            def simple_normalize(val):
+                if not val:
+                    return ''
+                raw = str(val).strip().lower().replace(' ', '').replace('\u200b', '')
+                aliases = [
+                    ('tengigabitethernet', 'te'), ('tengigeethernet', 'te'), ('twentyfivegige', 'tw'),
+                    ('twentyfivegigabitethernet', 'tw'), ('fortygigabitethernet', 'fo'), ('fortyge', 'fo'),
+                    ('hundredgigabitethernet', 'hu'), ('hundredge', 'hu'), ('gigabitethernet', 'gi'),
+                    ('gige', 'gi'), ('fastethernet', 'fa'), ('xgigabitethernet', 'xge'),
+                    ('25gige', 'tw'), ('40gige', 'fo'), ('100gige', 'hu'), ('ethernet', 'eth'),
+                    ('eth-trunk', 'eth-trunk'), ('bridge-aggregation', 'bagg'), ('port-channel', 'po'),
+                    ('portchannel', 'po'), ('bundle-ether', 'be'), ('loopback', 'lo'),
+                    ('management', 'mgmt'), ('mgmteth', 'mgmt'), ('meth', 'mgmt'),
+                    ('vlanif', 'vlanif'), ('vlan', 'vl')
+                ]
+                for source, target in aliases:
+                    if raw.startswith(source):
+                        raw = raw.replace(source, target, 1)
+                        break
+                if raw.startswith('ethernet'):
+                    raw = raw.replace('ethernet', 'eth', 1)
+                return raw
+
+            for row in intf_rows:
+                dev_id = row['device_id'] if hasattr(row, '__getitem__') else row[1]
+                intf_name = row['interface_name'] if hasattr(row, '__getitem__') else row[2]
+                norm = simple_normalize(intf_name)
+                interface_map[(dev_id, norm)] = row['id'] if hasattr(row, '__getitem__') else row[0]
+
+            for row in links_rows:
+                lnk = dict(row) if hasattr(row, 'keys') else {
+                    'id': row[0], 'link_key': row[1], 'source_device_id': row[2], 'source_hostname': row[3],
+                    'source_port': row[4], 'source_port_normalized': row[5], 'target_device_id': row[6],
+                    'target_hostname': row[7], 'target_port': row[8], 'target_port_normalized': row[9],
+                    'discovery_source': row[10], 'confidence': row[11], 'status': row[12], 'is_inferred': row[13],
+                    'evidence_count': row[14], 'metadata_json': row[15], 'created_at': row[16], 'updated_at': row[17],
+                    'last_seen': row[18]
+                }
+                
+                link_key = lnk.get('link_key')
+                src_dev = lnk.get('source_device_id')
+                src_port_norm = simple_normalize(lnk.get('source_port_normalized') or lnk.get('source_port') or '')
+                src_intf_id = interface_map.get((src_dev, src_port_norm))
+                
+                tgt_dev = lnk.get('target_device_id')
+                tgt_port_norm = simple_normalize(lnk.get('target_port_normalized') or lnk.get('target_port') or '')
+                tgt_intf_id = interface_map.get((tgt_dev, tgt_port_norm))
+
+                if src_dev and src_port_norm and not src_intf_id:
+                    cursor.execute("SELECT id FROM devices WHERE id = ?", (src_dev,))
+                    if cursor.fetchone():
+                        src_intf_id = f"intf-{uuid.uuid4().hex[:12]}"
+                        if _USE_PG:
+                            cursor.execute(
+                                "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (%s, %s, %s, 'up', 'up')",
+                                (src_intf_id, src_dev, lnk.get('source_port') or src_port_norm)
+                            )
+                        else:
+                            cursor.execute(
+                                "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
+                                (src_intf_id, src_dev, lnk.get('source_port') or src_port_norm)
+                            )
+                        interface_map[(src_dev, src_port_norm)] = src_intf_id
+
+                if tgt_dev and tgt_port_norm and not tgt_intf_id:
+                    cursor.execute("SELECT id FROM devices WHERE id = ?", (tgt_dev,))
+                    if cursor.fetchone():
+                        tgt_intf_id = f"intf-{uuid.uuid4().hex[:12]}"
+                        if _USE_PG:
+                            cursor.execute(
+                                "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (%s, %s, %s, 'up', 'up')",
+                                (tgt_intf_id, tgt_dev, lnk.get('target_port') or tgt_port_norm)
+                            )
+                        else:
+                            cursor.execute(
+                                "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
+                                (tgt_intf_id, tgt_dev, lnk.get('target_port') or tgt_port_norm)
+                            )
+                        interface_map[(tgt_dev, tgt_port_norm)] = tgt_intf_id
+
+                cursor.execute("SELECT id FROM topology_links WHERE link_key = ?", (link_key,))
+                existing_topo = cursor.fetchone()
+                if existing_topo:
+                    if _USE_PG:
+                        cursor.execute(
+                            "UPDATE topology_links SET source_interface_id = %s, target_interface_id = %s WHERE link_key = %s",
+                            (src_intf_id, tgt_intf_id, link_key)
+                        )
+                    else:
+                        cursor.execute(
+                            "UPDATE topology_links SET source_interface_id = ?, target_interface_id = ? WHERE link_key = ?",
+                            (src_intf_id, tgt_intf_id, link_key)
+                        )
+                else:
+                    if _USE_PG:
+                        cursor.execute(
+                            '''INSERT INTO topology_links (
+                                id, link_key, source_device_id, source_interface_id, source_hostname, source_port, source_port_normalized,
+                                target_device_id, target_interface_id, target_hostname, target_port, target_port_normalized,
+                                discovery_source, confidence, status, is_inferred, evidence_count,
+                                metadata_json, created_at, updated_at, last_seen
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
+                            (
+                                lnk.get('id') or str(uuid.uuid4()),
+                                link_key,
+                                src_dev,
+                                src_intf_id,
+                                lnk.get('source_hostname') or '',
+                                lnk.get('source_port') or '',
+                                lnk.get('source_port_normalized') or '',
+                                tgt_dev,
+                                tgt_intf_id,
+                                lnk.get('target_hostname') or '',
+                                lnk.get('target_port') or '',
+                                lnk.get('target_port_normalized') or '',
+                                lnk.get('discovery_source') or 'lldp',
+                                lnk.get('confidence') or 0.0,
+                                lnk.get('status') or 'up',
+                                lnk.get('is_inferred') or 0,
+                                lnk.get('evidence_count') or 1,
+                                lnk.get('metadata_json') or '{}',
+                                lnk.get('created_at'),
+                                lnk.get('updated_at'),
+                                lnk.get('last_seen')
+                            )
+                        )
+                    else:
+                        cursor.execute(
+                            '''INSERT INTO topology_links (
+                                id, link_key, source_device_id, source_interface_id, source_hostname, source_port, source_port_normalized,
+                                target_device_id, target_interface_id, target_hostname, target_port, target_port_normalized,
+                                discovery_source, confidence, status, is_inferred, evidence_count,
+                                metadata_json, created_at, updated_at, last_seen
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                            (
+                                lnk.get('id') or str(uuid.uuid4()),
+                                link_key,
+                                src_dev,
+                                src_intf_id,
+                                lnk.get('source_hostname') or '',
+                                lnk.get('source_port') or '',
+                                lnk.get('source_port_normalized') or '',
+                                tgt_dev,
+                                tgt_intf_id,
+                                lnk.get('target_hostname') or '',
+                                lnk.get('target_port') or '',
+                                lnk.get('target_port_normalized') or '',
+                                lnk.get('discovery_source') or 'lldp',
+                                lnk.get('confidence') or 0.0,
+                                lnk.get('status') or 'up',
+                                lnk.get('is_inferred') or 0,
+                                lnk.get('evidence_count') or 1,
+                                lnk.get('metadata_json') or '{}',
+                                lnk.get('created_at'),
+                                lnk.get('updated_at'),
+                                lnk.get('last_seen')
+                            )
+                        )
+        except Exception as exc_links:
+            logger.error(f"[migration] Failed links to topology_links migration logic: {exc_links}", exc_info=True)
+
+    except Exception as exc:
+        logger.error(f"[migration] Failed Phase 3 CMDB/IPAM migration: {exc}", exc_info=True)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Data migration: Phase 5 Route & Address Intelligence Migration
+    # ──────────────────────────────────────────────────────────────────
+    try:
+        # 1. Migrate route_cache to route_table
+        cursor.execute("SELECT COUNT(*) AS c FROM route_table")
+        rt_cnt = cursor.fetchone()
+        rt_cnt = rt_cnt['c'] if hasattr(rt_cnt, '__getitem__') else rt_cnt[0]
+        if rt_cnt == 0:
+            cursor.execute("SELECT * FROM route_cache")
+            rc_rows = cursor.fetchall()
+            for row in rc_rows:
+                rc = dict(row) if hasattr(row, 'keys') else {
+                    'id': row[0], 'device_id': row[1], 'prefix': row[2], 'mask': row[3],
+                    'next_hop': row[4], 'protocol': row[5], 'interface': row[6],
+                    'metric': row[7], 'last_update': row[8]
+                }
+                r_id = rc.get('id') or str(uuid.uuid4())
+                dest = rc.get('prefix') or ''
+                mask_val = rc.get('mask') or ''
+                if mask_val and '/' not in dest:
+                    try:
+                        if '.' in mask_val:
+                            octets = [int(o) for o in mask_val.split('.')]
+                            binary = ''.join(f'{o:08b}' for o in octets)
+                            cidr = str(binary.count('1'))
+                        else:
+                            cidr = str(int(mask_val))
+                        dest = f"{dest}/{cidr}"
+                    except Exception:
+                        dest = f"{dest}/24"
+                
+                pref_val = 1
+                proto_lower = (rc.get('protocol') or '').lower()
+                if 'direct' in proto_lower or 'connect' in proto_lower:
+                    pref_val = 0
+                elif 'static' in proto_lower:
+                    pref_val = 1
+                elif 'ospf' in proto_lower:
+                    pref_val = 110
+                elif 'bgp' in proto_lower:
+                    pref_val = 200
+
+                if _USE_PG:
+                    cursor.execute(
+                        '''INSERT INTO route_table (
+                            id, device_id, destination, next_hop, outgoing_interface, protocol, metric, preference, last_updated, active
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1)''',
+                        (r_id, rc.get('device_id'), dest, rc.get('next_hop'), rc.get('interface'), rc.get('protocol'), rc.get('metric'), pref_val, rc.get('last_update'))
+                    )
+                else:
+                    cursor.execute(
+                        '''INSERT INTO route_table (
+                            id, device_id, destination, next_hop, outgoing_interface, protocol, metric, preference, last_updated, active
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)''',
+                        (r_id, rc.get('device_id'), dest, rc.get('next_hop'), rc.get('interface'), rc.get('protocol'), rc.get('metric'), pref_val, rc.get('last_update'))
+                    )
+            logger.info(f"[migration] Migrated {len(rc_rows)} routes from route_cache to route_table.")
+
+        # 2. Migrate arp_cache to arp_table
+        cursor.execute("SELECT COUNT(*) AS c FROM arp_table")
+        arp_cnt = cursor.fetchone()
+        arp_cnt = arp_cnt['c'] if hasattr(arp_cnt, '__getitem__') else arp_cnt[0]
+        if arp_cnt == 0:
+            cursor.execute("SELECT * FROM arp_cache")
+            arp_rows = cursor.fetchall()
+            for row in arp_rows:
+                ac = dict(row) if hasattr(row, 'keys') else {
+                    'target_ip': row[0], 'mac': row[1], 'arp_source': row[2], 'cached_at': row[3]
+                }
+                source = {}
+                try:
+                    source = json.loads(ac.get('arp_source') or '{}')
+                except Exception:
+                    pass
+                
+                dev_id = source.get('device_id')
+                if not dev_id:
+                    dev_label = source.get('device')
+                    if dev_label:
+                        cursor.execute("SELECT id FROM devices WHERE hostname = ? OR ip_address = ?", (dev_label, dev_label))
+                        d_row = cursor.fetchone()
+                        if d_row:
+                            dev_id = d_row['id'] if hasattr(d_row, '__getitem__') else d_row[0]
+                
+                if not dev_id:
+                    cursor.execute("SELECT id FROM devices LIMIT 1")
+                    d_row = cursor.fetchone()
+                    if d_row:
+                        dev_id = d_row['id'] if hasattr(d_row, '__getitem__') else d_row[0]
+                
+                if dev_id:
+                    if _USE_PG:
+                        cursor.execute(
+                            '''INSERT INTO arp_table (
+                                id, device_id, ip_address, mac_address, interface_name, last_updated
+                            ) VALUES (%s, %s, %s, %s, %s, %s)''',
+                            (str(uuid.uuid4()), dev_id, ac.get('target_ip'), ac.get('mac'), source.get('interface') or '', ac.get('cached_at'))
+                        )
+                    else:
+                        cursor.execute(
+                            '''INSERT INTO arp_table (
+                                id, device_id, ip_address, mac_address, interface_name, last_updated
+                            ) VALUES (?, ?, ?, ?, ?, ?)''',
+                            (str(uuid.uuid4()), dev_id, ac.get('target_ip'), ac.get('mac'), source.get('interface') or '', ac.get('cached_at'))
+                        )
+            logger.info(f"[migration] Migrated {len(arp_rows)} ARP entries from arp_cache to arp_table.")
+
+        # 3. Migrate topology_observations to neighbor_table
+        cursor.execute("SELECT COUNT(*) AS c FROM neighbor_table")
+        nt_cnt = cursor.fetchone()
+        nt_cnt = nt_cnt['c'] if hasattr(nt_cnt, '__getitem__') else nt_cnt[0]
+        if nt_cnt == 0:
+            cursor.execute("SELECT * FROM topology_observations")
+            obs_rows = cursor.fetchall()
+            for row in obs_rows:
+                obs = dict(row) if hasattr(row, 'keys') else {
+                    'id': row[0], 'source_device_id': row[1], 'source_hostname': row[2],
+                    'source_port_raw': row[3], 'source_port_normalized': row[4],
+                    'neighbor_name_raw': row[5], 'neighbor_name_normalized': row[6],
+                    'neighbor_ip_address': row[7], 'target_device_id': row[8],
+                    'target_hostname': row[9], 'target_port_raw': row[10],
+                    'target_port_normalized': row[11], 'protocol': row[12],
+                    'confidence': row[13], 'status': row[14], 'discovery_run_id': row[15],
+                    'raw_payload_json': row[16], 'collected_at': row[17], 'updated_at': row[18]
+                }
+                src_dev_id = obs.get('source_device_id')
+                local_intf = obs.get('source_port_raw') or obs.get('source_port_normalized') or ''
+                neigh_host = obs.get('neighbor_name_raw') or obs.get('neighbor_name_normalized') or ''
+                neigh_intf = obs.get('target_port_raw') or obs.get('target_port_normalized') or ''
+                neigh_ip = obs.get('neighbor_ip_address') or ''
+                proto = obs.get('protocol') or 'lldp'
+                last_upd = obs.get('updated_at') or obs.get('collected_at') or now
+                
+                if _USE_PG:
+                    cursor.execute(
+                        '''INSERT INTO neighbor_table (
+                            id, device_id, local_interface, neighbor_hostname, neighbor_interface, neighbor_ip, protocol, last_updated
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''',
+                        (str(uuid.uuid4()), src_dev_id, local_intf, neigh_host, neigh_intf, neigh_ip, proto, last_upd)
+                    )
+                else:
+                    cursor.execute(
+                        '''INSERT INTO neighbor_table (
+                            id, device_id, local_interface, neighbor_hostname, neighbor_interface, neighbor_ip, protocol, last_updated
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                        (str(uuid.uuid4()), src_dev_id, local_intf, neigh_host, neigh_intf, neigh_ip, proto, last_upd)
+                    )
+            logger.info(f"[migration] Migrated {len(obs_rows)} observations from topology_observations to neighbor_table.")
+
+    except Exception as exc_p5:
+        logger.error(f"[migration] Failed Phase 5 Route Intelligence migration: {exc_p5}", exc_info=True)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Data migration: Phase 6 Supporting Engines Migration & Triggers
+    # ──────────────────────────────────────────────────────────────────
+    try:
+        # 1. Migrate config_snapshots -> config_backups
+        cursor.execute("SELECT COUNT(*) AS c FROM config_backups")
+        cb_cnt = cursor.fetchone()
+        cb_cnt = cb_cnt['c'] if hasattr(cb_cnt, '__getitem__') else cb_cnt[0]
+        if cb_cnt == 0:
+            cursor.execute("SELECT * FROM config_snapshots")
+            snap_rows = cursor.fetchall()
+            for row in snap_rows:
+                snap = dict(row) if hasattr(row, 'keys') else {
+                    'id': row[0], 'device_id': row[1], 'timestamp': row[4], 'file_path': row[8], 'tag': row[9]
+                }
+                c_id = snap.get('id') or str(uuid.uuid4())
+                if _USE_PG:
+                    cursor.execute(
+                        '''INSERT INTO config_backups (id, device_id, config_type, backup_time, file_path, config_hash)
+                           VALUES (%s, %s, 'running', %s, %s, %s)''',
+                        (c_id, snap.get('device_id'), snap.get('timestamp'), snap.get('file_path'), snap.get('tag'))
+                    )
+                else:
+                    cursor.execute(
+                        '''INSERT INTO config_backups (id, device_id, config_type, backup_time, file_path, config_hash)
+                           VALUES (?, ?, 'running', ?, ?, ?)''',
+                        (c_id, snap.get('device_id'), snap.get('timestamp'), snap.get('file_path'), snap.get('tag'))
+                    )
+            logger.info(f"[migration] Migrated {len(snap_rows)} backups from config_snapshots to config_backups.")
+
+        # 2. Migrate alert_events -> alarms
+        cursor.execute("SELECT COUNT(*) AS c FROM alarms")
+        al_cnt = cursor.fetchone()
+        al_cnt = al_cnt['c'] if hasattr(al_cnt, '__getitem__') else al_cnt[0]
+        if al_cnt == 0:
+            cursor.execute("SELECT * FROM alert_events")
+            alert_rows = cursor.fetchall()
+            for row in alert_rows:
+                al = dict(row) if hasattr(row, 'keys') else {
+                    'id': row[0], 'device_id': row[6], 'severity': row[3], 'source': row[2],
+                    'title': row[4], 'created_at': row[8], 'resolved_at': row[9], 'workflow_status': row[10]
+                }
+                a_id = al.get('id') or str(uuid.uuid4())
+                if _USE_PG:
+                    cursor.execute(
+                        '''INSERT INTO alarms (id, device_id, severity, source, alarm_type, alarm_time, clear_time, status)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''',
+                        (a_id, al.get('device_id'), al.get('severity'), al.get('source'), al.get('title'), al.get('created_at'), al.get('resolved_at'), al.get('workflow_status'))
+                    )
+                else:
+                    cursor.execute(
+                        '''INSERT INTO alarms (id, device_id, severity, source, alarm_type, alarm_time, clear_time, status)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                        (a_id, al.get('device_id'), al.get('severity'), al.get('source'), al.get('title'), al.get('created_at'), al.get('resolved_at'), al.get('workflow_status'))
+                    )
+            logger.info(f"[migration] Migrated {len(alert_rows)} alarms from alert_events to alarms.")
+
+        # 3. Migrate audit_events -> events
+        cursor.execute("SELECT COUNT(*) AS c FROM events")
+        ev_cnt = cursor.fetchone()
+        ev_cnt = ev_cnt['c'] if hasattr(ev_cnt, '__getitem__') else ev_cnt[0]
+        if ev_cnt == 0:
+            cursor.execute("SELECT * FROM audit_events")
+            audit_rows = cursor.fetchall()
+            for row in audit_rows:
+                ae = dict(row) if hasattr(row, 'keys') else {
+                    'id': row[0], 'event_type': row[1], 'category': row[2], 'created_at': row[18],
+                    'status': row[4], 'actor_username': row[6], 'actor_role': row[7], 'summary': row[17]
+                }
+                e_id = ae.get('id') or str(uuid.uuid4())
+                payload_str = json.dumps({
+                    'status': ae.get('status'),
+                    'actor_username': ae.get('actor_username'),
+                    'actor_role': ae.get('actor_role'),
+                    'summary': ae.get('summary')
+                })
+                if _USE_PG:
+                    cursor.execute(
+                        '''INSERT INTO events (event_id, event_type, event_source, event_time, payload)
+                           VALUES (%s, %s, %s, %s, %s)''',
+                        (e_id, ae.get('event_type'), ae.get('category'), ae.get('created_at'), payload_str)
+                    )
+                else:
+                    cursor.execute(
+                        '''INSERT INTO events (event_id, event_type, event_source, event_time, payload)
+                           VALUES (?, ?, ?, ?, ?)''',
+                        (e_id, ae.get('event_type'), ae.get('category'), ae.get('created_at'), payload_str)
+                    )
+            logger.info(f"[migration] Migrated {len(audit_rows)} events from audit_events to events.")
+
+        # 4. Migrate jobs and topology_discovery_runs -> discovery_jobs
+        cursor.execute("SELECT COUNT(*) AS c FROM discovery_jobs")
+        dj_cnt = cursor.fetchone()
+        dj_cnt = dj_cnt['c'] if hasattr(dj_cnt, '__getitem__') else dj_cnt[0]
+        if dj_cnt == 0:
+            # Jobs
+            cursor.execute("SELECT * FROM jobs")
+            job_rows = cursor.fetchall()
+            for row in job_rows:
+                jb = dict(row) if hasattr(row, 'keys') else {
+                    'id': row[0], 'device_id': row[1], 'task_name': row[2], 'status': row[3], 'output': row[4], 'created_at': row[5]
+                }
+                j_id = jb.get('id') or str(uuid.uuid4())
+                res_str = json.dumps({
+                    'task_name': jb.get('task_name'),
+                    'output': jb.get('output')
+                })
+                if _USE_PG:
+                    cursor.execute(
+                        '''INSERT INTO discovery_jobs (id, job_type, target, status, start_time, finish_time, result)
+                           VALUES (%s, 'job', %s, %s, %s, %s, %s)''',
+                        (j_id, jb.get('device_id') or '', jb.get('status'), jb.get('created_at'), jb.get('created_at'), res_str)
+                    )
+                else:
+                    cursor.execute(
+                        '''INSERT INTO discovery_jobs (id, job_type, target, status, start_time, finish_time, result)
+                           VALUES (?, 'job', ?, ?, ?, ?, ?)''',
+                        (j_id, jb.get('device_id') or '', jb.get('status'), jb.get('created_at'), jb.get('created_at'), res_str)
+                    )
+            # Discovery runs
+            cursor.execute("SELECT * FROM topology_discovery_runs")
+            run_rows = cursor.fetchall()
+            for row in run_rows:
+                rn = dict(row) if hasattr(row, 'keys') else {
+                    'id': row[0], 'scope': row[1], 'status': row[2], 'started_at': row[5], 'completed_at': row[6], 'summary_json': row[12]
+                }
+                r_id = rn.get('id') or str(uuid.uuid4())
+                if _USE_PG:
+                    cursor.execute(
+                        '''INSERT INTO discovery_jobs (id, job_type, target, status, start_time, finish_time, result)
+                           VALUES (%s, 'discovery', %s, %s, %s, %s, %s)''',
+                        (r_id, rn.get('scope'), rn.get('status'), rn.get('started_at'), rn.get('completed_at'), rn.get('summary_json'))
+                    )
+                else:
+                    cursor.execute(
+                        '''INSERT INTO discovery_jobs (id, job_type, target, status, start_time, finish_time, result)
+                           VALUES (?, 'discovery', ?, ?, ?, ?, ?)''',
+                        (r_id, rn.get('scope'), rn.get('status'), rn.get('started_at'), rn.get('completed_at'), rn.get('summary_json'))
+                    )
+            logger.info(f"[migration] Migrated jobs & discovery runs to discovery_jobs.")
+
+        # 5. Create database triggers for continuous synchronization (SQLite only)
+        if not _USE_PG:
+            # config_snapshots triggers
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_config_snapshots_insert
+            AFTER INSERT ON config_snapshots
+            BEGIN
+                INSERT INTO config_backups (id, device_id, config_type, backup_time, file_path, config_hash)
+                VALUES (NEW.id, NEW.device_id, 'running', NEW.timestamp, NEW.file_path, COALESCE(NEW.tag, ''));
+            END;
+            ''')
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_config_snapshots_update
+            AFTER UPDATE ON config_snapshots
+            BEGIN
+                UPDATE config_backups SET
+                    device_id = NEW.device_id,
+                    backup_time = NEW.timestamp,
+                    file_path = NEW.file_path,
+                    config_hash = COALESCE(NEW.tag, '')
+                WHERE id = NEW.id;
+            END;
+            ''')
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_config_snapshots_delete
+            AFTER DELETE ON config_snapshots
+            BEGIN
+                DELETE FROM config_backups WHERE id = OLD.id;
+            END;
+            ''')
+
+            # alert_events triggers
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_alert_events_insert
+            AFTER INSERT ON alert_events
+            BEGIN
+                INSERT INTO alarms (id, device_id, severity, source, alarm_type, alarm_time, clear_time, status)
+                VALUES (NEW.id, NEW.device_id, NEW.severity, NEW.source, NEW.title, NEW.created_at, NEW.resolved_at, NEW.workflow_status);
+            END;
+            ''')
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_alert_events_update
+            AFTER UPDATE ON alert_events
+            BEGIN
+                UPDATE alarms SET
+                    device_id = NEW.device_id,
+                    severity = NEW.severity,
+                    source = NEW.source,
+                    alarm_type = NEW.title,
+                    alarm_time = NEW.created_at,
+                    clear_time = NEW.resolved_at,
+                    status = NEW.workflow_status
+                WHERE id = NEW.id;
+            END;
+            ''')
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_alert_events_delete
+            AFTER DELETE ON alert_events
+            BEGIN
+                DELETE FROM alarms WHERE id = OLD.id;
+            END;
+            ''')
+
+            # audit_events triggers
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_audit_events_insert
+            AFTER INSERT ON audit_events
+            BEGIN
+                INSERT INTO events (event_id, event_type, event_source, event_time, payload)
+                VALUES (NEW.id, NEW.event_type, NEW.category, NEW.created_at, json_object(
+                    'status', NEW.status,
+                    'actor_username', NEW.actor_username,
+                    'actor_role', NEW.actor_role,
+                    'summary', NEW.summary
+                ));
+            END;
+            ''')
+
+            # jobs triggers
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_jobs_insert
+            AFTER INSERT ON jobs
+            BEGIN
+                INSERT INTO discovery_jobs (id, job_type, target, status, start_time, finish_time, result)
+                VALUES (NEW.id, 'job', COALESCE(NEW.device_id, ''), NEW.status, NEW.created_at, NEW.created_at, json_object('task_name', NEW.task_name, 'output', NEW.output));
+            END;
+            ''')
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_jobs_update
+            AFTER UPDATE ON jobs
+            BEGIN
+                UPDATE discovery_jobs SET
+                    status = NEW.status,
+                    result = json_object('task_name', NEW.task_name, 'output', NEW.output)
+                WHERE id = NEW.id;
+            END;
+            ''')
+
+            # topology_discovery_runs triggers
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_topo_runs_insert
+            AFTER INSERT ON topology_discovery_runs
+            BEGIN
+                INSERT INTO discovery_jobs (id, job_type, target, status, start_time, finish_time, result)
+                VALUES (NEW.id, 'discovery', NEW.scope, NEW.status, NEW.started_at, NEW.completed_at, NEW.summary_json);
+            END;
+            ''')
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_sync_topo_runs_update
+            AFTER UPDATE ON topology_discovery_runs
+            BEGIN
+                UPDATE discovery_jobs SET
+                    status = NEW.status,
+                    finish_time = NEW.completed_at,
+                    result = NEW.summary_json
+                WHERE id = NEW.id;
+            END;
+            ''')
+
+            # device_telemetry_samples trigger for performance_metrics
+            cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS trg_telemetry_to_perf_metrics
+            AFTER INSERT ON device_telemetry_samples
+            BEGIN
+                INSERT INTO performance_metrics (id, device_id, metric_name, metric_value, timestamp)
+                VALUES (hex(randomblob(16)), NEW.device_id, 'cpu_util', NEW.cpu_util, NEW.ts);
+                INSERT INTO performance_metrics (id, device_id, metric_name, metric_value, timestamp)
+                VALUES (hex(randomblob(16)), NEW.device_id, 'mem_avail', NEW.mem_avail, NEW.ts);
+                INSERT INTO performance_metrics (id, device_id, metric_name, metric_value, timestamp)
+                VALUES (hex(randomblob(16)), NEW.device_id, 'cpu_load', NEW.cpu_load, NEW.ts);
+                INSERT INTO performance_metrics (id, device_id, metric_name, metric_value, timestamp)
+                VALUES (hex(randomblob(16)), NEW.device_id, 'disk_util', NEW.disk_util, NEW.ts);
+            END;
+            ''')
+        else:
+            # PostgreSQL triggers
+            # config_snapshots triggers
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_config_snapshots_insert()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                INSERT INTO config_backups (id, device_id, config_type, backup_time, file_path, config_hash)
+                VALUES (NEW.id, NEW.device_id, 'running', NEW.timestamp, NEW.file_path, COALESCE(NEW.tag, ''));
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_config_snapshots_insert ON config_snapshots')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_config_snapshots_insert
+            AFTER INSERT ON config_snapshots
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_config_snapshots_insert()
+            ''')
+
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_config_snapshots_update()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                UPDATE config_backups SET
+                    device_id = NEW.device_id,
+                    backup_time = NEW.timestamp,
+                    file_path = NEW.file_path,
+                    config_hash = COALESCE(NEW.tag, '')
+                WHERE id = NEW.id;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_config_snapshots_update ON config_snapshots')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_config_snapshots_update
+            AFTER UPDATE ON config_snapshots
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_config_snapshots_update()
+            ''')
+
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_config_snapshots_delete()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                DELETE FROM config_backups WHERE id = OLD.id;
+                RETURN OLD;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_config_snapshots_delete ON config_snapshots')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_config_snapshots_delete
+            AFTER DELETE ON config_snapshots
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_config_snapshots_delete()
+            ''')
+
+            # alert_events triggers
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_alert_events_insert()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                INSERT INTO alarms (id, device_id, severity, source, alarm_type, alarm_time, clear_time, status)
+                VALUES (NEW.id, NEW.device_id, NEW.severity, NEW.source, NEW.title, NEW.created_at, NEW.resolved_at, NEW.workflow_status);
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_alert_events_insert ON alert_events')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_alert_events_insert
+            AFTER INSERT ON alert_events
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_alert_events_insert()
+            ''')
+
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_alert_events_update()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                UPDATE alarms SET
+                    device_id = NEW.device_id,
+                    severity = NEW.severity,
+                    source = NEW.source,
+                    alarm_type = NEW.title,
+                    alarm_time = NEW.created_at,
+                    clear_time = NEW.resolved_at,
+                    status = NEW.workflow_status
+                WHERE id = NEW.id;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_alert_events_update ON alert_events')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_alert_events_update
+            AFTER UPDATE ON alert_events
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_alert_events_update()
+            ''')
+
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_alert_events_delete()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                DELETE FROM alarms WHERE id = OLD.id;
+                RETURN OLD;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_alert_events_delete ON alert_events')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_alert_events_delete
+            AFTER DELETE ON alert_events
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_alert_events_delete()
+            ''')
+
+            # audit_events triggers
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_audit_events_insert()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                INSERT INTO events (event_id, event_type, event_source, event_time, payload)
+                VALUES (NEW.id, NEW.event_type, NEW.category, NEW.created_at, json_build_object(
+                    'status', NEW.status,
+                    'actor_username', NEW.actor_username,
+                    'actor_role', NEW.actor_role,
+                    'summary', NEW.summary
+                )::text);
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_audit_events_insert ON audit_events')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_audit_events_insert
+            AFTER INSERT ON audit_events
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_audit_events_insert()
+            ''')
+
+            # jobs triggers
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_jobs_insert()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                INSERT INTO discovery_jobs (id, job_type, target, status, start_time, finish_time, result)
+                VALUES (NEW.id, 'job', COALESCE(NEW.device_id, ''), NEW.status, NEW.created_at, NEW.created_at, json_build_object(
+                    'task_name', NEW.task_name,
+                    'output', NEW.output
+                )::text);
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_jobs_insert ON jobs')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_jobs_insert
+            AFTER INSERT ON jobs
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_jobs_insert()
+            ''')
+
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_jobs_update()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                UPDATE discovery_jobs SET
+                    status = NEW.status,
+                    result = json_build_object(
+                        'task_name', NEW.task_name,
+                        'output', NEW.output
+                    )::text
+                WHERE id = NEW.id;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_jobs_update ON jobs')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_jobs_update
+            AFTER UPDATE ON jobs
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_jobs_update()
+            ''')
+
+            # topology_discovery_runs triggers
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_topo_runs_insert()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                INSERT INTO discovery_jobs (id, job_type, target, status, start_time, finish_time, result)
+                VALUES (NEW.id, 'discovery', NEW.scope, NEW.status, NEW.started_at, NEW.completed_at, NEW.summary_json);
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_topo_runs_insert ON topology_discovery_runs')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_topo_runs_insert
+            AFTER INSERT ON topology_discovery_runs
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_topo_runs_insert()
+            ''')
+
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_sync_topo_runs_update()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                UPDATE discovery_jobs SET
+                    status = NEW.status,
+                    finish_time = NEW.completed_at,
+                    result = NEW.summary_json
+                WHERE id = NEW.id;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_sync_topo_runs_update ON topology_discovery_runs')
+            cursor.execute('''
+            CREATE TRIGGER trg_sync_topo_runs_update
+            AFTER UPDATE ON topology_discovery_runs
+            FOR EACH ROW EXECUTE FUNCTION fn_sync_topo_runs_update()
+            ''')
+
+            # device_telemetry_samples trigger
+            cursor.execute('''
+            CREATE OR REPLACE FUNCTION fn_telemetry_to_perf_metrics()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                INSERT INTO performance_metrics (id, device_id, metric_name, metric_value, timestamp)
+                VALUES (md5(random()::text), NEW.device_id, 'cpu_util', NEW.cpu_util, NEW.ts);
+                INSERT INTO performance_metrics (id, device_id, metric_name, metric_value, timestamp)
+                VALUES (md5(random()::text), NEW.device_id, 'mem_avail', NEW.mem_avail, NEW.ts);
+                INSERT INTO performance_metrics (id, device_id, metric_name, metric_value, timestamp)
+                VALUES (md5(random()::text), NEW.device_id, 'cpu_load', NEW.cpu_load, NEW.ts);
+                INSERT INTO performance_metrics (id, device_id, metric_name, metric_value, timestamp)
+                VALUES (md5(random()::text), NEW.device_id, 'disk_util', NEW.disk_util, NEW.ts);
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            ''')
+            cursor.execute('DROP TRIGGER IF EXISTS trg_telemetry_to_perf_metrics ON device_telemetry_samples')
+            cursor.execute('''
+            CREATE TRIGGER trg_telemetry_to_perf_metrics
+            AFTER INSERT ON device_telemetry_samples
+            FOR EACH ROW EXECUTE FUNCTION fn_telemetry_to_perf_metrics()
+            ''')
+
+    except Exception as exc_p6:
+        logger.error(f"[migration] Failed Phase 6 Supporting Engines migration: {exc_p6}", exc_info=True)
+
 
     admin_row = cursor.execute("SELECT id, password FROM users WHERE username = 'admin'").fetchone()
     if not admin_row:

@@ -87,6 +87,10 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
   const [copied, setCopied] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [rotateAllRole, setRotateAllRole] = useState<'admin' | 'normal'>('admin');
+  const [rotateAllRunning, setRotateAllRunning] = useState(false);
+  const [rotateAllProgress, setRotateAllProgress] = useState<{ done: number; total: number | null; rotated: number; failed: number } | null>(null);
+  const [rotateAllSummary, setRotateAllSummary] = useState<{ total: number; rotated: number; failed: number; results: Array<{ hostname: string; success: boolean; message: string }> } | null>(null);
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
@@ -130,6 +134,65 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRotating(null);
+    }
+  };
+
+  const handleRotateAll = async () => {
+    if (rotateAllRunning) return;
+    const roleLabel = rotateAllRole === 'admin' ? (zh ? '特权(admin)' : 'admin') : (zh ? '普通(normal)' : 'normal');
+    const ok = window.confirm(
+      zh
+        ? `确认要一键轮换【全部设备】的${roleLabel}密码吗？\n\n这会逐台 SSH 登录并修改密码，过程不可撤销，请确保设备当前凭据正确。`
+        : `Rotate the ${roleLabel} password for ALL devices?\n\nThis SSH-connects to every device and changes its password. It cannot be undone.`
+    );
+    if (!ok) return;
+
+    setRotateAllRunning(true);
+    setRotateAllProgress({ done: 0, total: null, rotated: 0, failed: 0 });
+    setRotateAllSummary(null);
+    setError(null);
+    const token = localStorage.getItem('netops_token') || '';
+    try {
+      const resp = await fetch(`${API_BASE}/api/devices/rotation/rotate-all?role=${rotateAllRole}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await resp.json();
+      if (!data.success || !data.data?.run_id) throw new Error(data.message || 'Failed to start');
+      const runId = data.data.run_id;
+
+      // Poll progress until completed.
+      await new Promise<void>((resolve) => {
+        const timer = setInterval(async () => {
+          try {
+            const pr = await fetch(`${API_BASE}/api/devices/rotation/rotate-all/${runId}/progress`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const pd = await pr.json();
+            if (pd.success && pd.data) {
+              const d = pd.data;
+              setRotateAllProgress({ done: d.done, total: d.total, rotated: d.rotated, failed: d.failed });
+              if (d.status === 'completed') {
+                clearInterval(timer);
+                setRotateAllSummary({
+                  total: d.total ?? d.done,
+                  rotated: d.rotated,
+                  failed: d.failed,
+                  results: Array.isArray(d.results) ? d.results : [],
+                });
+                resolve();
+              }
+            }
+          } catch {
+            /* transient network error; keep polling */
+          }
+        }, 2000);
+      });
+      // Refresh the status table after completion.
+      setTimeout(fetchStatus, 800);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRotateAllRunning(false);
     }
   };
 
@@ -416,14 +479,104 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
           </div>
         </div>
 
-        <button
-          onClick={fetchStatus}
-          disabled={loading}
-          className="h-7 px-2.5 rounded-lg bg-black/[0.02] border border-black/[0.04] text-black/40 hover:bg-black/[0.05] hover:text-cyan-600 transition-all"
-        >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-        </button>
+        <div className="flex items-center gap-2">
+          {rotateAllRunning && rotateAllProgress && (
+            <span className="text-[11px] text-black/50 tabular-nums">
+              {zh ? '进度' : 'Progress'} {rotateAllProgress.done}/{rotateAllProgress.total ?? '…'}
+              <span className="text-emerald-600"> ✓{rotateAllProgress.rotated}</span>
+              {rotateAllProgress.failed > 0 && <span className="text-red-500"> ✗{rotateAllProgress.failed}</span>}
+            </span>
+          )}
+          <select
+            value={rotateAllRole}
+            onChange={e => setRotateAllRole(e.target.value as 'admin' | 'normal')}
+            disabled={rotateAllRunning}
+            className="h-7 px-2 rounded-lg bg-black/[0.02] border border-black/[0.04] text-[11px] text-black/60 focus:ring-1 focus:ring-cyan-500/20"
+            title={zh ? '选择要轮换的账号角色' : 'Role to rotate'}
+          >
+            <option value="admin">{zh ? '特权账号' : 'Admin'}</option>
+            <option value="normal">{zh ? '普通账号' : 'Normal'}</option>
+          </select>
+          <button
+            onClick={handleRotateAll}
+            disabled={rotateAllRunning || loading}
+            className="h-7 px-3 rounded-lg bg-cyan-500 text-white text-[11px] font-semibold flex items-center gap-1.5 shadow-sm shadow-cyan-500/20 hover:bg-cyan-600 disabled:opacity-50 transition-all"
+          >
+            {rotateAllRunning
+              ? <Loader2 size={12} className="animate-spin" />
+              : <RotateCcw size={12} />}
+            {zh ? '一键全部轮换' : 'Rotate All'}
+          </button>
+          <button
+            onClick={fetchStatus}
+            disabled={loading}
+            className="h-7 px-2.5 rounded-lg bg-black/[0.02] border border-black/[0.04] text-black/40 hover:bg-black/[0.05] hover:text-cyan-600 transition-all"
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          </button>
+        </div>
       </div>
+
+      {/* ═══ Rotate-All Completion Summary ═══ */}
+      {rotateAllSummary && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-black/5 overflow-hidden">
+            <div className="px-5 py-4 border-b border-black/5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={18} className="text-cyan-600" />
+                <h2 className="text-sm font-bold text-slate-800">{zh ? '批量轮换结果' : 'Bulk Rotation Result'}</h2>
+              </div>
+              <button onClick={() => setRotateAllSummary(null)} className="p-1 rounded hover:bg-black/5 text-black/40">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 flex items-center gap-3">
+              <div className="flex-1 rounded-xl bg-slate-50 border border-black/5 px-3 py-2 text-center">
+                <div className="text-lg font-black text-slate-700">{rotateAllSummary.total}</div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{zh ? '总数' : 'Total'}</div>
+              </div>
+              <div className="flex-1 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 text-center">
+                <div className="text-lg font-black text-emerald-600">{rotateAllSummary.rotated}</div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-emerald-500/70">{zh ? '成功' : 'Success'}</div>
+              </div>
+              <div className="flex-1 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-center">
+                <div className="text-lg font-black text-red-500">{rotateAllSummary.failed}</div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-red-400">{zh ? '失败' : 'Failed'}</div>
+              </div>
+            </div>
+
+            {rotateAllSummary.failed > 0 && (
+              <div className="px-5 pb-2">
+                <div className="text-[11px] font-bold text-slate-500 mb-1.5 flex items-center gap-1.5">
+                  <ShieldAlert size={12} className="text-red-500" />
+                  {zh ? '失败设备明细' : 'Failed devices'}
+                </div>
+                <div className="max-h-60 overflow-y-auto rounded-lg border border-black/5 divide-y divide-black/[0.04]">
+                  {rotateAllSummary.results.filter(r => !r.success).map((r, i) => (
+                    <div key={i} className="px-3 py-2 flex items-start gap-2">
+                      <ShieldX size={12} className="text-red-400 mt-0.5 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-bold text-slate-700">{r.hostname}</div>
+                        <div className="text-[10px] text-slate-400 break-words">{r.message || (zh ? '未知错误' : 'Unknown error')}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="px-5 py-3 bg-slate-50 border-t border-black/5 flex justify-end">
+              <button
+                onClick={() => setRotateAllSummary(null)}
+                className="h-8 px-4 rounded-lg bg-cyan-500 text-white text-[12px] font-semibold hover:bg-cyan-600 transition-all"
+              >
+                {zh ? '知道了' : 'Done'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ High-Density Pro Table ═══ */}
       <div className="bg-white rounded-xl border border-black/[0.06] shadow-md overflow-hidden">
@@ -553,12 +706,12 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
                               
                               {isRevealed && revealedPwd && (
                                 <motion.div 
-                                  initial={{ opacity: 0, scale: 0.9 }}
-                                  animate={{ opacity: 1, scale: 1 }}
-                                  className="absolute mt-1 z-10 flex items-center gap-2 bg-slate-900 px-2 py-1 rounded-md text-cyan-400 font-mono text-[10px] shadow-2xl border border-white/10"
+                                  initial={{ opacity: 0, y: -4 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className="mt-1.5 inline-flex max-w-full items-center gap-2 bg-slate-900 px-2 py-1 rounded-md text-cyan-400 font-mono text-[10px] shadow-lg border border-white/10 break-all"
                                 >
-                                  {revealedPwd}
-                                  <button onClick={handleCopyPwd} className="hover:text-white transition-colors">
+                                  <span className="break-all">{revealedPwd}</span>
+                                  <button onClick={handleCopyPwd} className="shrink-0 hover:text-white transition-colors">
                                     {copied ? <Check size={10} /> : <Copy size={10} />}
                                   </button>
                                 </motion.div>

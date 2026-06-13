@@ -164,12 +164,12 @@ def _run_telemetry_maintenance():
     link_stale_cutoff = (now - timedelta(hours=24)).replace(microsecond=0).isoformat()
     try:
         deleted = _db_quick(
-            'SELECT COUNT(*) AS cnt FROM links WHERE last_seen IS NOT NULL AND last_seen < ?',
+            'SELECT COUNT(*) AS cnt FROM topology_links WHERE last_seen IS NOT NULL AND last_seen < ?',
             (link_stale_cutoff,), fetch=True,
         )
         stale_count = deleted['cnt'] if deleted else 0
         if stale_count > 0:
-            _db_quick('DELETE FROM links WHERE last_seen IS NOT NULL AND last_seen < ?', (link_stale_cutoff,))
+            _db_quick('DELETE FROM topology_links WHERE last_seen IS NOT NULL AND last_seen < ?', (link_stale_cutoff,))
             logger.info(f"[Maintenance] Pruned {stale_count} stale topology link(s) older than 24 hours")
     except Exception as exc:
         logger.warning(f"[Maintenance] Failed to prune stale links: {exc}")
@@ -179,6 +179,9 @@ open_alerts = {}
 protocol_peer_cache = {}
 protocol_transition_history = {}
 protocol_notify_suppressed_until = {}
+protocol_flap_window_secs = 600
+protocol_flap_threshold = 5
+protocol_flap_silence_secs = 1800
 snmp_failure_streak = {}
 intf_flap_history = {}
 prev_intf_octets = {}
@@ -341,7 +344,7 @@ def load_topology_ports(device_id: str) -> set[str]:
     rows = _db_quick(
         '''
                     SELECT source_device_id, target_device_id, source_port_normalized, target_port_normalized
-        FROM links
+        FROM topology_links
         WHERE (source_device_id = ? OR target_device_id = ?)
           AND COALESCE(is_inferred, 0) = 0
         ''',
@@ -405,7 +408,7 @@ def sync_lldp_neighbor_alerts():
     links = _db_quick(
         '''
         SELECT l.*, s.status AS source_status, t.status AS target_status
-        FROM links l
+        FROM topology_links l
         JOIN devices s ON l.source_device_id = s.id
         JOIN devices t ON l.target_device_id = t.id
         ''',
@@ -883,9 +886,9 @@ async def process_device(device, cycle_tick: int):
             # discard last SNMP snapshot so stale interface rows are not shown.
             _db_quick('''
                 UPDATE devices
-                SET status = ?, interface_data = ?, cpu_usage = ?, memory_usage = ?
+                SET status = ?, cpu_usage = ?, memory_usage = ?
                 WHERE id = ?
-            ''', ('offline', '[]', 0, 0, dev_id))
+            ''', ('offline', 0, 0, dev_id))
             prev_intf_octets.pop(dev_id, None)
 
         if not ip or ip == '0.0.0.0':
@@ -1314,8 +1317,34 @@ async def process_device(device, cycle_tick: int):
                             in_errors, out_errors, in_discards, out_discards
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', raw_rows)
-                    _db_quick('UPDATE devices SET interface_data = ? WHERE id = ?',
-                              (json.dumps(intf_data), dev_id))
+
+                    # Update interfaces table with discovered interfaces
+                    conn = get_db_connection()
+                    try:
+                        for iface in intf_data:
+                            iname = iface['name']
+                            desc = iface.get('description', '')
+                            status = iface.get('status', 'down')
+                            speed_mbps = float(iface.get('speed_mbps') or 0.0)
+                            speed_bps = speed_mbps * 1_000_000.0
+                            
+                            conn.execute('''
+                                INSERT INTO interfaces (
+                                    id, device_id, interface_name, description, admin_status, oper_status,
+                                    mac_address, speed, bandwidth, duplex, interface_type, switchport_mode, ip_enabled
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                ON CONFLICT(device_id, interface_name) DO UPDATE SET
+                                    description = excluded.description,
+                                    admin_status = excluded.admin_status,
+                                    oper_status = excluded.oper_status,
+                                    speed = excluded.speed,
+                                    bandwidth = excluded.bandwidth
+                            ''', (f"intf-{uuid.uuid4().hex[:12]}", dev_id, iname, desc, status, status, '', speed_bps, speed_bps, 'auto', 'physical', 'access', 0))
+                        conn.commit()
+                    except Exception as err:
+                        logger.warning(f"Failed to upsert interfaces to DB for {dev_id}: {err}")
+                    finally:
+                        conn.close()
             except Exception as intf_err:
                 logger.debug(f"[SNMP] {ip} interface collection failed: {intf_err}")
 
@@ -1365,9 +1394,9 @@ async def process_device_fast(device):
     def mark_offline_and_clear_cache():
         _db_quick("""
             UPDATE devices
-            SET status = ?, interface_data = ?, cpu_usage = ?, memory_usage = ?
+            SET status = ?, cpu_usage = ?, memory_usage = ?
             WHERE id = ?
-        """, ('offline', '[]', 0, 0, dev_id))
+        """, ('offline', 0, 0, dev_id))
         prev_intf_octets.pop(dev_id, None)
 
     if not ip or ip == '0.0.0.0':

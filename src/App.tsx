@@ -176,7 +176,7 @@ const App: React.FC = () => {
   });
 
   const routeContext = useMemo(() => getRouteContext(location.pathname), [location.pathname]);
-  const { activeTab, configPage, automationPage, inventorySubPage, changeOrderPage } = routeContext;
+  const { activeTab, configPage, automationPage, inventorySubPage, changeOrderPage, ipamPage, cmdbPage } = routeContext;
 
   // ── License Management ──
   const { isLicenseValid, licenseError, licenseFeatures, checkLicenseStatus } = useLicense({
@@ -432,7 +432,6 @@ const App: React.FC = () => {
       '/maintenance': '/alerts/maintenance',
       '/inventory/devices': '/assets/devices',
       '/inventory/servers': '/assets/servers',
-      '/ipam': '/assets/ipam',
       '/ip-locator': '/assets/toolbox',
       '/path-diagnose': '/assets/diagnose',
       '/nsot': '/assets/nsot',
@@ -443,7 +442,11 @@ const App: React.FC = () => {
       '/credentials': '/management/credentials',
       '/license': '/management/license',
     };
-    if (redirects[p]) {
+    if (p === '/ipam') {
+      navigate('/ipam/prefixes', { replace: true });
+    } else if (p === '/cmdb') {
+      navigate('/cmdb/credentials', { replace: true });
+    } else if (redirects[p]) {
       navigate(redirects[p], { replace: true });
     }
   }, [location.pathname, navigate]);
@@ -469,6 +472,7 @@ const App: React.FC = () => {
     configPage,
     inventorySubPage,
     changeOrderPage,
+    ipamPage,
     language,
     t,
   });
@@ -1510,7 +1514,7 @@ const App: React.FC = () => {
 
   // Create Context values
   const coreAppValue = {
-    activeTab, inventorySubPage, configPage, automationPage, changeOrderPage, language, t, navigate, navTo, showToast, setActiveTab, isAuthenticated,
+    activeTab, inventorySubPage, configPage, automationPage, changeOrderPage, ipamPage, cmdbPage, language, t, navigate, navTo, showToast, setActiveTab, isAuthenticated,
     currentUser, users,
     devices, fetchDevicesData, devicesLastUpdatedAt,
   };

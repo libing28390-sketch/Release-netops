@@ -6,7 +6,7 @@ import threading
 
 from fastapi import APIRouter, HTTPException, Query
 
-from database import get_db_connection
+from database import get_db_connection, fetch_interface_data
 from services.device_health_service import annotate_devices_with_health, build_health_overview
 
 router = APIRouter()
@@ -136,11 +136,16 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
             "SELECT COUNT(*) AS c FROM devices WHERE status = 'online'"
         ).fetchone()['c']
 
-        devices = conn.execute(
+        devices_rows = conn.execute(
             "SELECT id, hostname, ip_address, platform, status, compliance, role, site, "
-            "cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data "
+            "cpu_usage, memory_usage, temp, fan_status, psu_status "
             "FROM devices WHERE status = 'online'"
         ).fetchall()
+        devices = []
+        for r in devices_rows:
+            d = dict(r)
+            d['interface_data'] = fetch_interface_data(conn, d['id'])
+            devices.append(d)
 
         interfaces_up = 0
         interfaces_down = 0
@@ -265,13 +270,18 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         non_online_rows = conn.execute(
             '''
             SELECT id, hostname, ip_address, platform, status, compliance, role, site,
-                   cpu_usage, memory_usage, temp, fan_status, psu_status, interface_data
+                   cpu_usage, memory_usage, temp, fan_status, psu_status
             FROM devices
             WHERE status != 'online'
             ORDER BY hostname ASC
             '''
         ).fetchall()
-        all_device_dicts = online_dicts + [dict(row) for row in non_online_rows]
+        non_online_dicts = []
+        for r in non_online_rows:
+            d = dict(r)
+            d['interface_data'] = fetch_interface_data(conn, d['id'])
+            non_online_dicts.append(d)
+        all_device_dicts = online_dicts + non_online_dicts
         evaluated_devices = annotate_devices_with_health(conn, all_device_dicts)
         payload['device_health_summary'] = build_health_overview(evaluated_devices)
         payload['top_risky_devices'] = payload['device_health_summary']['top_risky_devices']
@@ -293,13 +303,14 @@ def monitoring_device_realtime(
     conn = get_db_connection()
     try:
         device = conn.execute(
-            "SELECT id, hostname, ip_address, platform, status, interface_data, device_category, "
+            "SELECT id, hostname, ip_address, platform, status, device_category, "
             "cpu_usage, memory_usage, temp, fan_status, psu_status FROM devices WHERE id = ?",
             (device_id,),
         ).fetchone()
         if not device:
             raise HTTPException(status_code=404, detail='Device not found')
         device = dict(device)
+        device['interface_data'] = fetch_interface_data(conn, device['id'])
 
         plat = str(device.get('platform') or '').lower()
         category = str(device.get('device_category') or '').lower()

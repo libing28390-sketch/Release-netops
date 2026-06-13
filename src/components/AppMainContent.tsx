@@ -31,7 +31,7 @@ const ConfigBackupTab = lazy(() => import('../pages/ConfigBackupTab'));
 const ConfigDiffViewTab = lazy(() => import('../pages/ConfigDiffViewTab'));
 const ConfigSearchTab = lazy(() => import('../pages/ConfigSearchTab'));
 const CapacityPlanningTab = lazy(() => import('../pages/CapacityPlanningTab'));
-const IPVlanTab = lazy(() => import('../pages/IPVlanTab'));
+const IPAMManagementTab = lazy(() => import('../pages/IPAMManagementTab'));
 const IPLocatorPage = lazy(() => import('../pages/IPLocatorPage'));
 const AssetManagementTab = lazy(() => import('../pages/AssetManagementTab'));
 const CredentialManagementTab = lazy(() => import('../components/PasswordRotationPanel'));
@@ -47,6 +47,7 @@ const TextFSMTemplatesTab = lazy(() => import('../pages/TextFSMTemplatesTab'));
 const ScheduledJobsTab = lazy(() => import('../pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
+const CmdbManagementTab = lazy(() => import('../pages/CmdbManagementTab'));
 const TagManagementTab = lazy(() => import('../pages/TagManagementTab'));
 const LicenseAdminTab = lazy(() => import('../pages/LicenseAdminTab'));
 const ScriptManagementTab = lazy(() => import('../pages/ScriptManagementTab'));
@@ -80,6 +81,8 @@ const AppMainContent: React.FC = () => {
     configPage,
     automationPage,
     changeOrderPage,
+    ipamPage,
+    cmdbPage,
     language,
     t,
     navigate,
@@ -604,6 +607,12 @@ const AppMainContent: React.FC = () => {
         </Suspense>
       )}
 
+      {activeTab === 'cmdb' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <CmdbManagementTab language={language} cmdbPage={cmdbPage} />
+        </Suspense>
+      )}
+
       {activeTab === 'topology' && (
         <Suspense fallback={lazyPanelFallback}>
           <TopologyPage
@@ -1117,7 +1126,7 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'ipam' && (
         <Suspense fallback={lazyPanelFallback}>
-          <IPVlanTab language={language} t={t} />
+          <IPAMManagementTab language={language} t={t} ipamPage={ipamPage} />
         </Suspense>
       )}
 

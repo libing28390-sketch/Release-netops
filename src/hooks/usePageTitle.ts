@@ -7,6 +7,7 @@ interface UsePageTitleArgs {
   configPage: string;
   inventorySubPage: string;
   changeOrderPage: string;
+  ipamPage: string;
   language: Language;
   t: (key: string) => string;
 }
@@ -21,6 +22,7 @@ export const usePageTitle = ({
   configPage,
   inventorySubPage,
   changeOrderPage,
+  ipamPage,
   language,
   t,
 }: UsePageTitleArgs): string => {
@@ -67,7 +69,17 @@ export const usePageTitle = ({
     if (activeTab === 'history' || activeTab === 'audit') return t('auditLogs');
     if (activeTab === 'reports') return language === 'zh' ? '报表中心' : 'Reports';
     if (activeTab === 'capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
-    if (activeTab === 'ipam') return language === 'zh' ? 'IP/VLAN管理' : 'IP/VLAN Management';
+    if (activeTab === 'ipam') {
+      const map: Record<string, string> = {
+        prefixes: language === 'zh' ? 'Prefix管理' : 'Prefix Management',
+        ips: language === 'zh' ? 'IP地址' : 'IP Address Management',
+        pools: language === 'zh' ? '地址池' : 'IP Pool Management',
+        vips: language === 'zh' ? 'VIP管理' : 'VIP Management',
+        dhcp: language === 'zh' ? 'DHCP租约' : 'DHCP Leases',
+        utilization: language === 'zh' ? '利用率分析' : 'IP Utilization Analysis',
+      };
+      return map[ipamPage] || (language === 'zh' ? 'IPAM管理' : 'IPAM Management');
+    }
     if (activeTab === 'ip-locator') return language === 'zh' ? 'IP 定位' : 'IP Locator';
     if (activeTab === 'assets') return language === 'zh' ? '资产管理' : 'Asset Management';
     if (activeTab === 'tags') return language === 'zh' ? '标签管理' : 'Tag Management';

@@ -273,17 +273,12 @@ def _resolve_connection_target(payload: dict) -> dict:
     resolved['priv_username'] = creds.get('priv_username', '') or stored.get('priv_username') or ''
     return resolved
 
-def _normalize_device_row(row):
+def _normalize_device_row(row, conn=None):
     item = dict(row)
     try:
         item['config_history'] = json.loads(item.get('config_history', '[]'))
     except Exception:
         item['config_history'] = []
-
-    try:
-        item['interface_data'] = json.loads(item.get('interface_data', '[]'))
-    except Exception:
-        item['interface_data'] = []
 
     try:
         item['cpu_history'] = json.loads(item.get('cpu_history', '[]'))
@@ -294,6 +289,52 @@ def _normalize_device_row(row):
         item['memory_history'] = json.loads(item.get('memory_history', '[]'))
     except Exception:
         item['memory_history'] = []
+
+    # Dynamically build interface_data by querying interfaces and joining the latest telemetry
+    opened_here = False
+    if conn is None:
+        conn = get_db_connection()
+        opened_here = True
+    try:
+        intf_rows = conn.execute('''
+            SELECT 
+                i.interface_name as name,
+                i.description,
+                COALESCE(t.status, i.oper_status) as status,
+                COALESCE(t.speed_mbps, i.speed / 1000000.0) as speed_mbps,
+                COALESCE(t.in_bps, 0.0) as in_bps,
+                COALESCE(t.out_bps, 0.0) as out_bps,
+                COALESCE(t.bw_in_pct, 0.0) as bw_in_pct,
+                COALESCE(t.bw_out_pct, 0.0) as bw_out_pct,
+                COALESCE(t.in_pkts, 0) as in_ucast_pkts,
+                COALESCE(t.out_pkts, 0) as out_ucast_pkts,
+                COALESCE(t.in_errors, 0) as in_errors,
+                COALESCE(t.out_errors, 0) as out_errors,
+                COALESCE(t.in_discards, 0) as in_discards,
+                COALESCE(t.out_discards, 0) as out_discards
+            FROM interfaces i
+            LEFT JOIN (
+                SELECT latest.*
+                FROM interface_telemetry_raw latest
+                INNER JOIN (
+                    SELECT interface_name, MAX(ts) as max_ts
+                    FROM interface_telemetry_raw
+                    WHERE device_id = ?
+                    GROUP BY interface_name
+                ) sub ON latest.interface_name = sub.interface_name AND latest.ts = sub.max_ts
+                WHERE latest.device_id = ?
+            ) t ON i.interface_name = t.interface_name
+            WHERE i.device_id = ?
+            ORDER BY i.interface_name
+        ''', (item['id'], item['id'], item['id'])).fetchall()
+
+        item['interface_data'] = [dict(r) for r in intf_rows]
+    except Exception as exc:
+        _logger.warning("Failed to fetch interfaces for device %s: %s", item.get('id'), exc)
+        item['interface_data'] = []
+    finally:
+        if opened_here:
+            conn.close()
 
     return _sanitize_device_item(item)
 
@@ -415,7 +456,7 @@ def read_devices(
                 f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT 200',
                 tuple(params)
             ).fetchall()
-            items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d) for d in devices]
+            items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d, conn) for d in devices]
             return annotate_devices_with_health(conn, _annotate_devices_with_tags(conn, items))
 
         total_row = conn.execute(
@@ -437,7 +478,7 @@ def read_devices(
             tuple([*params, page_size, offset])
         ).fetchall()
 
-        items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d) for d in devices]
+        items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d, conn) for d in devices]
 
         return {
             'items': annotate_devices_with_health(conn, _annotate_devices_with_tags(conn, items)),
@@ -456,12 +497,7 @@ def create_device(device: dict = Body(...)):
     cred_source = (device.get('credential_source') or 'local').lower()
     vault_path = device.get('vault_path', '')
 
-    # If Vault mode, push creds to Vault and store empty in DB
-    local_password = ''
-    local_enable = ''
-    local_normal_pwd = ''
-    local_admin_pwd = ''
-    
+    credential_id = ''
     if cred_source == 'vault' and vault_available() and vault_path:
         vault_write(vault_path, {
             'username': device.get('username', ''),
@@ -474,10 +510,23 @@ def create_device(device: dict = Body(...)):
             'admin_password': device.get('admin_password', ''),
         })
     else:
-        local_password = encrypt_credential(device.get('password'))
-        local_enable = encrypt_credential(device.get('enable_password')) if device.get('enable_password') else ''
-        local_normal_pwd = encrypt_credential(device.get('normal_password')) if device.get('normal_password') else ''
-        local_admin_pwd = encrypt_credential(device.get('admin_password')) if device.get('admin_password') else ''
+        credential_id = f"cred-{uuid.uuid4().hex[:12]}"
+        cred_name = f"cred-{device.get('hostname')}-{device_id[:8]}"
+        now = datetime.now(timezone.utc).isoformat()
+        
+        username = device.get('username') or device.get('normal_username') or device.get('admin_username') or ''
+        raw_pwd = device.get('password') or device.get('normal_password') or device.get('admin_password') or ''
+        enc_pwd = encrypt_credential(raw_pwd) if raw_pwd else ''
+        enc_enable = encrypt_credential(device.get('enable_password')) if device.get('enable_password') else ''
+        enc_snmp = encrypt_credential(device.get('snmp_community')) if device.get('snmp_community') else ''
+        
+        try:
+            conn.execute('''
+                INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (credential_id, cred_name, 'ssh_password', username, enc_pwd, enc_enable, enc_snmp, now))
+        except Exception as exc:
+            _logger.error("Failed to create credential row: %s", exc)
 
     try:
         conn.execute('''
@@ -486,9 +535,9 @@ def create_device(device: dict = Body(...)):
                 sn, model, version, role, site, uptime, connection_method, snmp_community, 
                 snmp_port, lifecycle_status, enable_password, priv_username, credential_source, 
                 vault_path, normal_username, normal_password, admin_username, admin_password, auth_model,
-                device_category, power_watts
+                device_category, power_watts, credential_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             device_id,
             device.get('hostname'),
@@ -497,7 +546,7 @@ def create_device(device: dict = Body(...)):
             device.get('status', 'pending'),
             device.get('compliance', 'unknown'),
             device.get('username'),
-            local_password,
+            '', # Store empty password in devices table
             device.get('sn', ''),
             device.get('model', ''),
             device.get('version', ''),
@@ -508,17 +557,18 @@ def create_device(device: dict = Body(...)):
             device.get('snmp_community', 'public'),
             device.get('snmp_port', 161),
             device.get('lifecycle_status', 'staging'),
-            local_enable,
+            '', # Store empty enable_password in devices table
             device.get('priv_username', ''),
             cred_source,
             vault_path,
             device.get('normal_username', ''),
-            local_normal_pwd,
+            '', # Store empty normal_password in devices table
             device.get('admin_username', ''),
-            local_admin_pwd,
+            '', # Store empty admin_password in devices table
             device.get('auth_model', 'single'),
             device.get('device_category', ''),
             int(device.get('power_watts') or 0),
+            credential_id
         ))
         # Plan-A: auto-create linked physical_assets record
         _create_linked_asset_for_device(conn, device_id, device)
@@ -592,7 +642,7 @@ def delete_device(device_id: str):
 def update_device(device_id: str, device: dict = Body(...)):
     conn = get_db_connection()
     try:
-        existing_row = conn.execute('SELECT password, enable_password, lifecycle_status, credential_source FROM devices WHERE id = ?', (device_id,)).fetchone()
+        existing_row = conn.execute('SELECT credential_id, lifecycle_status, credential_source FROM devices WHERE id = ?', (device_id,)).fetchone()
         if not existing_row:
             raise HTTPException(status_code=404, detail='Device not found')
 
@@ -603,6 +653,9 @@ def update_device(device_id: str, device: dict = Body(...)):
         submitted_enable = device.get('enable_password')
         submitted_normal = device.get('normal_password')
         submitted_admin = device.get('admin_password')
+        submitted_snmp = device.get('snmp_community')
+
+        credential_id = existing_row['credential_id'] or ''
 
         if cred_source == 'vault' and vault_available() and vault_path:
             # Push credentials to Vault; store empty in DB
@@ -616,34 +669,36 @@ def update_device(device_id: str, device: dict = Body(...)):
                 'admin_username': device.get('admin_username', ''),
                 'admin_password': submitted_admin or '',
             })
-            stored_password = ''
-            stored_enable = ''
-            stored_normal = ''
-            stored_admin = ''
         else:
-            if submitted_password in (None, ''):
-                stored_password = existing_row['password']
-            else:
-                stored_password = encrypt_credential(submitted_password)
+            username = device.get('username') or device.get('normal_username') or device.get('admin_username') or ''
+            raw_pwd = submitted_password or submitted_normal or submitted_admin
+            enc_pwd = encrypt_credential(raw_pwd) if raw_pwd else ''
+            enc_enable = encrypt_credential(submitted_enable) if submitted_enable else ''
+            enc_snmp = encrypt_credential(submitted_snmp) if submitted_snmp else ''
 
-            if submitted_enable in (None, ''):
-                stored_enable = existing_row['enable_password'] or ''
-            else:
-                stored_enable = encrypt_credential(submitted_enable)
+            if credential_id:
+                # Update existing credentials
+                cred_row = conn.execute('SELECT username, encrypted_password, enable_password, snmp_community FROM credentials WHERE id = ?', (credential_id,)).fetchone()
+                
+                stored_username = username if username else (cred_row['username'] if cred_row else '')
+                stored_password = enc_pwd if submitted_password not in (None, '') else (cred_row['encrypted_password'] if cred_row else '')
+                stored_enable = enc_enable if submitted_enable not in (None, '') else (cred_row['enable_password'] if cred_row else '')
+                stored_snmp = enc_snmp if submitted_snmp not in (None, '') else (cred_row['snmp_community'] if cred_row else '')
 
-            if submitted_normal in (None, ''):
-                # We need to fetch current normal_password if we want to preserve it
-                # For brevity, let's assume update_device payload includes it or we fetch it
-                row = conn.execute('SELECT normal_password, admin_password FROM devices WHERE id = ?', (device_id,)).fetchone()
-                stored_normal = row['normal_password'] if row else ''
+                conn.execute('''
+                    UPDATE credentials
+                    SET username = ?, encrypted_password = ?, enable_password = ?, snmp_community = ?
+                    WHERE id = ?
+                ''', (stored_username, stored_password, stored_enable, stored_snmp, credential_id))
             else:
-                stored_normal = encrypt_credential(submitted_normal)
-
-            if submitted_admin in (None, ''):
-                row = conn.execute('SELECT admin_password FROM devices WHERE id = ?', (device_id,)).fetchone()
-                stored_admin = row['admin_password'] if row else ''
-            else:
-                stored_admin = encrypt_credential(submitted_admin)
+                # Create credentials
+                credential_id = f"cred-{uuid.uuid4().hex[:12]}"
+                cred_name = f"cred-{device.get('hostname', device_id)}-{device_id[:8]}"
+                now = datetime.now(timezone.utc).isoformat()
+                conn.execute('''
+                    INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (credential_id, cred_name, 'ssh_password', username, enc_pwd, enc_enable, enc_snmp, now))
 
         new_lifecycle = device.get('lifecycle_status') or existing_row['lifecycle_status'] or 'staging'
 
@@ -653,7 +708,7 @@ def update_device(device_id: str, device: dict = Body(...)):
                 username = ?, password = ?, current_config = ?, config_history = ?, snmp_community = ?, snmp_port = ?, 
                 lifecycle_status = ?, enable_password = ?, priv_username = ?, credential_source = ?, vault_path = ?,
                 normal_username = ?, normal_password = ?, admin_username = ?, admin_password = ?, auth_model = ?,
-                device_category = ?, power_watts = ?
+                device_category = ?, power_watts = ?, credential_id = ?
             WHERE id = ?
         ''', (
             device.get('hostname', ''),
@@ -666,23 +721,24 @@ def update_device(device_id: str, device: dict = Body(...)):
             device.get('site', ''),
             device.get('connection_method', 'ssh'),
             device.get('username', ''),
-            stored_password,
+            '', # Empty password column
             device.get('current_config', ''),
             json.dumps(device.get('config_history', [])) if device.get('config_history') else '[]',
             device.get('snmp_community', 'public'),
             device.get('snmp_port', 161),
             new_lifecycle,
-            stored_enable,
+            '', # Empty enable_password column
             device.get('priv_username', ''),
             cred_source,
             vault_path,
             device.get('normal_username', ''),
-            stored_normal,
+            '', # Empty normal_password column
             device.get('admin_username', ''),
-            stored_admin,
+            '', # Empty admin_password column
             device.get('auth_model', 'single'),
             device.get('device_category', ''),
             int(device.get('power_watts') or 0),
+            credential_id,
             device_id
         ))
         conn.commit()
@@ -781,6 +837,8 @@ def device_onboard(device_id: str, payload: dict = Body(...)):
             raw_password = payload.get('password', '')
             raw_enable = payload.get('enable_password', '')
 
+            credential_id = device.get('credential_id') or ''
+
             if cred_source == 'vault' and vault_available() and vault_path:
                 vault_write(vault_path, {
                     'username': payload.get('username', ''),
@@ -788,24 +846,46 @@ def device_onboard(device_id: str, payload: dict = Body(...)):
                     'enable_password': raw_enable,
                     'priv_username': payload.get('priv_username', ''),
                 })
-                enc_pwd = ''
-                enc_enable = ''
             else:
                 enc_pwd = encrypt_credential(raw_password) if raw_password else ''
                 enc_enable = encrypt_credential(raw_enable) if raw_enable else ''
+                username = payload.get('username') or device.get('username') or ''
+
+                if credential_id:
+                    # Update credentials
+                    cred_row = conn.execute('SELECT username, encrypted_password, enable_password FROM credentials WHERE id = ?', (credential_id,)).fetchone()
+                    stored_username = username if username else (cred_row['username'] if cred_row else '')
+                    stored_password = enc_pwd if raw_password else (cred_row['encrypted_password'] if cred_row else '')
+                    stored_enable = enc_enable if raw_enable else (cred_row['enable_password'] if cred_row else '')
+
+                    conn.execute('''
+                        UPDATE credentials
+                        SET username = ?, encrypted_password = ?, enable_password = ?
+                        WHERE id = ?
+                    ''', (stored_username, stored_password, stored_enable, credential_id))
+                else:
+                    # Create credentials
+                    credential_id = f"cred-{uuid.uuid4().hex[:12]}"
+                    cred_name = f"cred-{device.get('hostname', device_id)}-{device_id[:8]}"
+                    now_time = datetime.now(timezone.utc).isoformat()
+                    conn.execute('''
+                        INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (credential_id, cred_name, 'ssh_password', username, enc_pwd, enc_enable, '', now_time))
 
             conn.execute(
                 'UPDATE devices SET username = ?, password = ?, enable_password = ?, priv_username = ?, '
-                'credential_source = ?, vault_path = ?, onboarding_status = ?, onboarding_updated_at = ? WHERE id = ?',
+                'credential_source = ?, vault_path = ?, onboarding_status = ?, onboarding_updated_at = ?, credential_id = ? WHERE id = ?',
                 (
                     payload.get('username', ''),
-                    enc_pwd,
-                    enc_enable,
+                    '', # Clear devices.password
+                    '', # Clear devices.enable_password
                     payload.get('priv_username', ''),
                     cred_source,
                     vault_path,
                     target,
                     now,
+                    credential_id,
                     device_id,
                 )
             )
@@ -932,6 +1012,35 @@ def rotate_device_password(device_id: str, role: str = Query(default='admin'), u
         )
         # Fix: Don't raise 422, return success: False with detail
         return {"success": False, "message": result.get('message', 'Rotation failed')}
+
+
+@router.post("/devices/rotation/rotate-all")
+def rotate_all_passwords(role: str = Query(default='admin'), user=require_role("Administrator")):
+    """一键轮换所有在册设备的指定角色密码（后台执行，返回 run_id 供轮询进度）。"""
+    from services.password_rotation_service import start_rotation_all
+    run_id = start_rotation_all(role=role)
+    log_audit_event(
+        event_type='PASSWORD_ROTATE_ALL',
+        category='security',
+        severity='high',
+        status='success',
+        summary=f'Bulk password rotation started (role={role})',
+        actor_username=user.get('username', 'admin'),
+        actor_role=user.get('role', 'Administrator'),
+        target_type='device',
+        target_id='*',
+    )
+    return {"success": True, "data": {"run_id": run_id}}
+
+
+@router.get("/devices/rotation/rotate-all/{run_id}/progress")
+def rotate_all_progress(run_id: str, user=require_role("Administrator")):
+    """查询一键轮换的实时进度。"""
+    from services.password_rotation_service import get_rotate_all_progress
+    prog = get_rotate_all_progress(run_id)
+    if not prog:
+        return {"success": False, "message": "run not found"}
+    return {"success": True, "data": prog}
 
 
 @router.get("/devices/{device_id}/reveal-password")
@@ -1298,18 +1407,36 @@ async def snmp_test(device_id: str):
                 if metrics.get('psu_status') is not None:
                     updates['psu_status'] = metrics['psu_status']
 
-                if intf_data:
-                    updates['interface_data'] = _json.dumps(intf_data)
-
-                if updates:
-                    conn2 = get_db_connection()
-                    try:
+                conn2 = get_db_connection()
+                try:
+                    if updates:
                         set_clause = ', '.join(f'{k} = ?' for k in updates)
                         conn2.execute(f'UPDATE devices SET {set_clause} WHERE id = ?',
                                       (*updates.values(), device_id))
-                        conn2.commit()
-                    finally:
-                        conn2.close()
+                    
+                    if intf_data:
+                        for iface in intf_data:
+                            iname = iface['name']
+                            desc = iface.get('description', '')
+                            status = iface.get('status', 'down')
+                            speed_mbps = float(iface.get('speed_mbps') or 0.0)
+                            speed_bps = speed_mbps * 1_000_000.0
+                            
+                            conn2.execute('''
+                                INSERT INTO interfaces (
+                                    id, device_id, interface_name, description, admin_status, oper_status,
+                                    mac_address, speed, bandwidth, duplex, interface_type, switchport_mode, ip_enabled
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                ON CONFLICT(device_id, interface_name) DO UPDATE SET
+                                    description = excluded.description,
+                                    admin_status = excluded.admin_status,
+                                    oper_status = excluded.oper_status,
+                                    speed = excluded.speed,
+                                    bandwidth = excluded.bandwidth
+                            ''', (f"intf-{uuid.uuid4().hex[:12]}", device_id, iname, desc, status, status, '', speed_bps, speed_bps, 'auto', 'physical', 'access', 0))
+                    conn2.commit()
+                finally:
+                    conn2.close()
             except Exception:
                 pass  # 后台同步失败不影响测试结果
 

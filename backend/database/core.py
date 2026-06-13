@@ -13,7 +13,11 @@ def _beijing_now_iso() -> str:
 # Load .env BEFORE reading DATABASE_URL from os.environ
 try:
     from dotenv import load_dotenv
-    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # core.py lives at backend/database/core.py → the project root is three
+    # levels up. (Two levels only reaches backend/, where there is no .env.)
+    _project_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
     _env_path = os.path.join(_project_root, '.env')
     _env_local_path = os.path.join(_project_root, '.env.local')
     load_dotenv(_env_path, override=True)
@@ -135,10 +139,11 @@ if _USE_PG:
             self._conn.autocommit = value
 
     class _PgPooledConnection:
-        __slots__ = ('_conn', '_raw')
-        def __init__(self, wrapped, raw):
+        __slots__ = ('_conn', '_raw', '_overflow')
+        def __init__(self, wrapped, raw, overflow=False):
             self._conn = wrapped
             self._raw = raw
+            self._overflow = overflow
 
         def close(self):
             raw = self._raw
@@ -148,12 +153,22 @@ if _USE_PG:
             self._conn = None
             try:
                 raw.rollback()
-                _pg_pool.putconn(raw)
             except Exception:
+                pass
+            if self._overflow:
+                # 溢出连接不属于池，直接关闭，避免占用池容量
                 try:
                     raw.close()
                 except Exception:
                     pass
+            else:
+                try:
+                    _pg_pool.putconn(raw)
+                except Exception:
+                    try:
+                        raw.close()
+                    except Exception:
+                        pass
 
         def __getattr__(self, name):
             if self._conn is None:
@@ -226,18 +241,44 @@ else:
 def _make_raw_connection():
     if _USE_PG:
         _ensure_pg_pool()
-        raw = _pg_pool.getconn()
+        overflow = False
+        _pg_kwargs = dict(
+            keepalives=1, keepalives_idle=30,
+            keepalives_interval=10, keepalives_count=5,
+        )
+        try:
+            raw = _pg_pool.getconn()
+        except psycopg2.pool.PoolError:
+            # 池已满：创建临时溢出连接，避免突发并发（如批量巡检）直接失败。
+            # 与 SQLite 路径行为对齐；溢出连接用完即关，不占用池容量。
+            logger.warning(
+                "PG pool exhausted (max=%d). Creating overflow connection.", _POOL_SIZE
+            )
+            raw = psycopg2.connect(dsn=_DATABASE_URL, **_pg_kwargs)
+            overflow = True
+
         try:
             with raw.cursor() as tmp_cur:
                 tmp_cur.execute("SELECT 1")
             raw.rollback()
         except Exception:
+            # 连接已失效，丢弃并重建一个
             try:
-                _pg_pool.putconn(raw, close=True)
+                if overflow:
+                    raw.close()
+                else:
+                    _pg_pool.putconn(raw, close=True)
             except Exception:
                 pass
-            raw = _pg_pool.getconn()
-        return _PgPooledConnection(_PgRawConnection(raw), raw)
+            if overflow:
+                raw = psycopg2.connect(dsn=_DATABASE_URL, **_pg_kwargs)
+            else:
+                try:
+                    raw = _pg_pool.getconn()
+                except psycopg2.pool.PoolError:
+                    raw = psycopg2.connect(dsn=_DATABASE_URL, **_pg_kwargs)
+                    overflow = True
+        return _PgPooledConnection(_PgRawConnection(raw), raw, overflow)
     else:
         conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
         conn.execute('PRAGMA journal_mode=WAL;')
@@ -286,3 +327,43 @@ def get_db_connection():
                     os.remove(path)
             return _make_raw_connection()
         raise e
+
+
+def fetch_interface_data(conn, device_id: str) -> list[dict]:
+    try:
+        intf_rows = conn.execute('''
+            SELECT 
+                i.interface_name as name,
+                i.description,
+                COALESCE(t.status, i.oper_status) as status,
+                COALESCE(t.speed_mbps, i.speed / 1000000.0) as speed_mbps,
+                COALESCE(t.in_bps, 0.0) as in_bps,
+                COALESCE(t.out_bps, 0.0) as out_bps,
+                COALESCE(t.bw_in_pct, 0.0) as bw_in_pct,
+                COALESCE(t.bw_out_pct, 0.0) as bw_out_pct,
+                COALESCE(t.in_pkts, 0) as in_ucast_pkts,
+                COALESCE(t.out_pkts, 0) as out_ucast_pkts,
+                COALESCE(t.in_errors, 0) as in_errors,
+                COALESCE(t.out_errors, 0) as out_errors,
+                COALESCE(t.in_discards, 0) as in_discards,
+                COALESCE(t.out_discards, 0) as out_discards
+            FROM interfaces i
+            LEFT JOIN (
+                SELECT latest.*
+                FROM interface_telemetry_raw latest
+                INNER JOIN (
+                    SELECT interface_name, MAX(ts) as max_ts
+                    FROM interface_telemetry_raw
+                    WHERE device_id = ?
+                    GROUP BY interface_name
+                ) sub ON latest.interface_name = sub.interface_name AND latest.ts = sub.max_ts
+                WHERE latest.device_id = ?
+            ) t ON i.interface_name = t.interface_name
+            WHERE i.device_id = ?
+            ORDER BY i.interface_name
+        ''', (device_id, device_id, device_id)).fetchall()
+        return [dict(r) for r in intf_rows]
+    except Exception as exc:
+        logger.warning(f"Failed to fetch interface data for device {device_id}: {exc}")
+        return []
+

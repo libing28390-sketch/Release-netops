@@ -85,13 +85,20 @@ _install_snmp_error_filter()
 # ═══════════════════════════════════════════════════════════════
 _SNMP_CONCURRENCY = 30
 _snmp_semaphore: asyncio.Semaphore | None = None
+_snmp_semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _get_snmp_semaphore() -> asyncio.Semaphore:
     """Lazy-init semaphore bound to the current event loop."""
-    global _snmp_semaphore
-    if _snmp_semaphore is None:
+    global _snmp_semaphore, _snmp_semaphore_loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.Semaphore(_SNMP_CONCURRENCY)
+        
+    if _snmp_semaphore is None or _snmp_semaphore_loop != current_loop:
         _snmp_semaphore = asyncio.Semaphore(_SNMP_CONCURRENCY)
+        _snmp_semaphore_loop = current_loop
     return _snmp_semaphore
 
 
