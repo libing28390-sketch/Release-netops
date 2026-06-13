@@ -744,14 +744,20 @@ class PrefixCreate(BaseModel):
     @field_validator('prefix')
     @classmethod
     def validate_prefix(cls, v: str) -> str:
-        _ipaddress.ip_network(v, strict=False)
+        try:
+            _ipaddress.ip_network(v, strict=False)
+        except ValueError:
+            raise ValueError('网段格式无效，请输入合法 CIDR（IPv4 如 10.1.1.0/24，IPv6 如 2001:db8::/64）')
         return v
 
     @field_validator('gateway')
     @classmethod
     def validate_gateway(cls, v: str) -> str:
         if v:
-            _ipaddress.ip_address(v)
+            try:
+                _ipaddress.ip_address(v)
+            except ValueError:
+                raise ValueError('网关地址无效，请输入合法的 IP 地址（如 10.1.1.1 或 2001:db8::1）')
         return v
 
 

@@ -195,9 +195,31 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
+    # 注意：Pydantic v2 的 exc.errors() 在 ctx 里可能携带原始异常对象
+    # （如 ValueError），直接塞进 JSONResponse 会触发
+    # "Object of type ValueError is not JSON serializable"，进而被全局
+    # 异常处理器兜成 500。这里清洗成纯可序列化结构，并拼出友好的中文提示。
+    raw_errors = exc.errors()
+    safe_errors = []
+    messages = []
+    for e in raw_errors:
+        loc = [str(x) for x in e.get('loc', ()) if x != 'body']
+        field = loc[-1] if loc else ''
+        msg = str(e.get('msg', '') or '参数校验失败')
+        # 去掉 Pydantic 的 "Value error, " 前缀，让提示更简洁
+        if msg.startswith('Value error, '):
+            msg = msg[len('Value error, '):]
+        messages.append(f"{field}：{msg}" if field else msg)
+        safe_errors.append({
+            'type': e.get('type'),
+            'loc': loc,
+            'msg': msg,
+            'input': None if e.get('input') is None else str(e.get('input')),
+        })
+    detail_msg = '；'.join(messages) or '请求参数校验失败'
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "body": exc.body},
+        content={"detail": detail_msg, "errors": safe_errors},
     )
 
 # CORS - restrict to known origins in production; permissive in dev

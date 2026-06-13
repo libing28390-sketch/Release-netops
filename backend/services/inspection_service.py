@@ -42,6 +42,10 @@ _MAX_CONCURRENT = 20          # 同时巡检的设备数（提升至 20）
 _SSH_CONNECT_TIMEOUT = 15     # SSH 建立超时
 _SSH_COMMAND_TIMEOUT = 30     # 单条命令超时
 
+# 关联规则进程级缓存（批量巡检时避免每台设备各查一次数据库）
+_CORR_RULES_CACHE: dict[str, Any] = {'rules': None, 'ts': 0.0}
+_CORR_RULES_TTL = 60.0        # 缓存有效期（秒）
+
 # 识别为"网络设备"的 platform（走 NetmikoDriver CLI 采集）
 _NETWORK_PLATFORMS = {
     'cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd',
@@ -614,6 +618,33 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
     return snmp_metrics, snmp_interfaces
 
 
+def _get_correlation_rules_cached() -> list[dict]:
+    """获取启用的关联规则，进程级短缓存（TTL 60s）。
+
+    关联规则是全局配置，批量巡检时无需每台设备各查一次数据库——
+    缓存后一轮巡检（几十上百台）只需 1 次查询，显著降低并发连接峰值。
+    """
+    now = time.time()
+    cache = _CORR_RULES_CACHE
+    if cache['rules'] is not None and (now - cache['ts']) < _CORR_RULES_TTL:
+        return cache['rules']
+    rules_list: list[dict] = []
+    try:
+        conn_rules = get_db_connection()
+        try:
+            rule_rows = conn_rules.execute(
+                'SELECT * FROM inspection_correlation_rules WHERE enabled = 1'
+            ).fetchall()
+            rules_list = [dict(r) for r in rule_rows]
+        finally:
+            conn_rules.close()
+    except Exception:
+        rules_list = []
+    cache['rules'] = rules_list
+    cache['ts'] = now
+    return rules_list
+
+
 def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: list[dict], use_admin_creds: bool = False, check_items: list[str] | None = None) -> dict[str, Any]:
     """
     网络设备巡检：支持 SNMP 性能指标采集 + SSH/CLI 协议/合规指标采集。
@@ -794,6 +825,9 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
     # 5. 对每个指标进行解析和判定（合并 CLI + SNMP 指标）
     health_deduct = 0
     active_items = cli_items + snmp_items  # 实际要评估的指标列表
+    # 预取上次巡检指标（一次 DB 连接），供 diff 对比 / 智能分析 / 关联分析复用，
+    # 避免循环内每个 diff 指标都单独开一个数据库连接（降低并发连接峰值）。
+    last_metrics_raw = _get_last_metrics_dict(device_id) or {}
     for item in active_items:
         check_key = item.get('check_key') or ''
         name_zh = item.get('name_zh') or item.get('name') or check_key
@@ -849,7 +883,13 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                 is_abnormal = True
 
         elif parse_type == 'diff' and isinstance(value, (int, float)):
-            last_val = _get_last_metric_value(device_id, check_key)
+            last_val = None
+            _lv = last_metrics_raw.get(check_key)
+            if _lv is not None:
+                try:
+                    last_val = float(_lv)
+                except (TypeError, ValueError):
+                    last_val = None
             if last_val is not None and last_val > 0:
                 change_pct = abs(value - last_val) / last_val * 100.0
                 metrics[f"{check_key}_last"] = last_val
@@ -969,8 +1009,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
 
     # 7. 智能分析
     try:
-        # 尝试获取上一次的指标用于对比
-        last_metrics_raw = _get_last_metrics_dict(device_id)
+        # 复用前面已预取的上次指标，避免再次查询数据库
         analysis = analyze_device_inspection(device, metrics, inspection_items, last_metrics_raw)
         result['analysis_json'] = json.dumps(analysis, ensure_ascii=False)
     except Exception as ae:
@@ -980,17 +1019,8 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
     # 7b. 关联分析 — R4.2/R4.3: 多指标关联风险检测
     correlated_risks = []
     try:
-        conn_rules = get_db_connection()
-        try:
-            rule_rows = conn_rules.execute(
-                'SELECT * FROM inspection_correlation_rules WHERE enabled = 1'
-            ).fetchall()
-            rules_list = [dict(r) for r in rule_rows]
-        finally:
-            conn_rules.close()
-
+        rules_list = _get_correlation_rules_cached()
         if rules_list:
-            last_metrics_raw = last_metrics_raw if 'last_metrics_raw' in dir() else _get_last_metrics_dict(device_id)
             correlated_risks = correlate_risk_patterns(metrics, rules_list, last_metrics_raw)
     except Exception as ce:
         # R4.7: 关联分析失败不影响其他结果
