@@ -180,10 +180,14 @@ const generateSequenceEvents = (result: any, lanes?: any[]) => {
       endCol: hopIdx,
       status: hop.status,
       direction: 'forward',
-      label: proto === 'TCP' ? `Probe SYN (TTL=${ttl})` : `Probe Ping (TTL=${ttl})`
+      label: proto === 'TCP' ? `Probe SYN (TTL=${ttl})` : `Probe Ping (TTL=${ttl})`,
+      cpu_usage: hop.cpu_usage,
+      memory_usage: hop.memory_usage,
+      deviceName: hop.device_name
     });
 
     if (!isBlocked && !isTimeout) {
+      const latencyStr = hop.rtt_ms && hop.rtt_ms.length > 0 ? ` (${Math.round(hop.rtt_ms[0])}ms)` : '';
       events.push({
         id: `response-${idx}`,
         type: 'response',
@@ -199,7 +203,10 @@ const generateSequenceEvents = (result: any, lanes?: any[]) => {
         endCol: hopIdx,
         status: 'active',
         direction: 'backward',
-        label: `ICMP TTL Expired`
+        label: `ICMP TTL Expired${latencyStr}`,
+        cpu_usage: hop.cpu_usage,
+        memory_usage: hop.memory_usage,
+        deviceName: hop.device_name
       });
     }
   });
@@ -217,6 +224,10 @@ const generateSequenceEvents = (result: any, lanes?: any[]) => {
 
   if (isReachable || isPortProbeFailed) {
     const finalTtl = hops.length + 1;
+    const finalHop = hops.length > 0 ? hops[hops.length - 1] : null;
+    const finalCpu = finalHop ? finalHop.cpu_usage : undefined;
+    const finalMem = finalHop ? finalHop.memory_usage : undefined;
+    const finalDevName = finalHop ? finalHop.device_name : undefined;
     
     // final-probe
     events.push({
@@ -238,11 +249,15 @@ const generateSequenceEvents = (result: any, lanes?: any[]) => {
       direction: 'forward',
       label: isTimeout
         ? (proto === 'TCP' ? `TCP SYN (Timeout)` : `ICMP Request (Timeout)`)
-        : (proto === 'TCP' ? `TCP SYN (Port ${port})` : `ICMP Echo Request`)
+        : (proto === 'TCP' ? `TCP SYN (Port ${port})` : `ICMP Echo Request`),
+      cpu_usage: finalCpu,
+      memory_usage: finalMem,
+      deviceName: finalDevName
     });
 
     // final-response (只有在未超时的情况下才会有回包)
     if (!isTimeout) {
+      const latencyStr = finalHop && finalHop.rtt_ms && finalHop.rtt_ms.length > 0 ? ` (${Math.round(finalHop.rtt_ms[0])}ms)` : '';
       events.push({
         id: 'final-response',
         type: 'response',
@@ -261,8 +276,11 @@ const generateSequenceEvents = (result: any, lanes?: any[]) => {
         status: isReachable ? 'active' : 'refused',
         direction: 'backward',
         label: isReachable
-          ? (proto === 'TCP' ? `TCP SYN-ACK (Reachable)` : `ICMP Echo Reply`)
-          : (proto === 'TCP' ? `TCP RST (Closed)` : `Destination Unreachable`)
+          ? (proto === 'TCP' ? `TCP SYN-ACK (Reachable)${latencyStr}` : `ICMP Echo Reply${latencyStr}`)
+          : (proto === 'TCP' ? `TCP RST (Closed)${latencyStr}` : `Destination Unreachable${latencyStr}`),
+        cpu_usage: finalCpu,
+        memory_usage: finalMem,
+        deviceName: finalDevName
       });
     }
   }
@@ -2896,7 +2914,9 @@ ${rep.repair_commands}
               type: isTarget ? 'target' : 'hop',
               device_type: hop.device_type,
               status: hop.status,
-              detail: hop.detail
+              detail: hop.detail,
+              cpu_usage: hop.cpu_usage,
+              memory_usage: hop.memory_usage
             };
           })
         ];
@@ -3060,14 +3080,43 @@ ${rep.repair_commands}
               </div>
             ) : (
               /* New Sequence Flow View rendering */
-              <div className="overflow-x-auto w-full custom-scrollbar pt-6 relative">
-                <div
-                  style={{
-                    minWidth: lanes.length * 150,
-                    gridTemplateColumns: `repeat(${lanes.length}, minmax(140px, 1fr))`
-                  }}
-                  className="grid gap-0 relative"
-                >
+              <div className="space-y-4 pt-4">
+                {/* Flow Summary Bar */}
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3.5 bg-slate-50 dark:bg-zinc-900/60 rounded-2xl border border-slate-100 dark:border-zinc-800 text-xs font-mono shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 dark:text-neutral-500 font-sans font-semibold">{zh ? '传输链路:' : 'Link Path:'}</span>
+                    <span className="text-[#0891b2] dark:text-cyan-400 font-bold">{diagResult.source_ip}</span>
+                    <ArrowRight size={12} className="text-slate-400" />
+                    <span className="text-emerald-500 dark:text-emerald-400 font-bold">{diagResult.target_ip}</span>
+                  </div>
+                  <div className="h-4 w-px bg-slate-200 dark:bg-zinc-800 hidden sm:block" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 dark:text-neutral-500 font-sans font-semibold">{zh ? '总跳数:' : 'Total Hops:'}</span>
+                    <span className="text-slate-700 dark:text-neutral-300 font-bold">{diagResult.hops.length} {zh ? '跳' : 'hops'}</span>
+                  </div>
+                  <div className="h-4 w-px bg-slate-200 dark:bg-zinc-800 hidden sm:block" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 dark:text-neutral-500 font-sans font-semibold">{zh ? '端到端延迟:' : 'End-to-End RTT:'}</span>
+                    <span className="text-violet-500 dark:text-violet-400 font-bold">
+                      {(() => {
+                        const finalHop = diagResult.hops.length > 0 ? diagResult.hops[diagResult.hops.length - 1] : null;
+                        if (finalHop && finalHop.rtt_ms && finalHop.rtt_ms.length > 0) {
+                          return `${Math.round(finalHop.rtt_ms[0])}ms`;
+                        }
+                        return 'N/A';
+                      })()}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto w-full custom-scrollbar pt-2 relative">
+                  <div
+                    style={{
+                      minWidth: lanes.length * 150,
+                      gridTemplateColumns: `repeat(${lanes.length}, minmax(140px, 1fr))`
+                    }}
+                    className="grid gap-0 relative"
+                  >
                   {/* Vertical Lifelines (overlayed absolute lines) */}
                   <div className="absolute inset-y-0 left-0 right-0 pointer-events-none">
                     {lanes.map((lane, idx) => (
@@ -3114,6 +3163,17 @@ ${rep.repair_commands}
                             {lane.name}
                           </span>
                           <span className="text-[9px] text-black/35 font-mono mt-0.5">{lane.ip}</span>
+                          {lane.type === 'hop' && lane.cpu_usage !== undefined && (
+                            <div className="flex gap-1.5 mt-1 text-[8px] font-semibold font-mono">
+                              <span className={lane.cpu_usage > 80 ? "text-rose-500 animate-pulse font-bold" : "text-slate-400 dark:text-neutral-500"}>
+                                CPU:{lane.cpu_usage}%
+                              </span>
+                              <span className="text-slate-300 dark:text-zinc-800">|</span>
+                              <span className={lane.memory_usage > 80 ? "text-rose-500 font-bold" : "text-slate-400 dark:text-neutral-500"}>
+                                MEM:{lane.memory_usage}%
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -3247,12 +3307,35 @@ ${rep.repair_commands}
                               <span className="text-slate-400">{zh ? '传输/控制层 (L4):' : 'Transport/Control (L4):'}</span>
                               <span className="text-white">{event.l4Name}</span>
                             </div>
-                            <div className="pl-3 border-l border-white/10 flex flex-col gap-0.5 text-[9px]">
+                             <div className="pl-3 border-l border-white/10 flex flex-col gap-0.5 text-[9px]">
                               <div className={`flex justify-between ${textColor}`}>
                                 <span>Info:</span>
                                 <span>{event.info}</span>
                               </div>
                             </div>
+                            {event.deviceName && event.cpu_usage !== undefined && (
+                              <>
+                                <div className="border-t border-white/10 my-1 pb-1" />
+                                <div className="flex justify-between text-slate-400">
+                                  <span>{zh ? '网关设备:' : 'Gateway:'}</span>
+                                  <span className="text-white font-bold">{event.deviceName}</span>
+                                </div>
+                                <div className="pl-3 border-l border-white/10 flex flex-col gap-0.5 text-[9px]">
+                                  <div className="flex justify-between">
+                                    <span>CPU Usage:</span>
+                                    <span className={event.cpu_usage > 80 ? "text-rose-500 font-bold" : "text-cyan-400"}>
+                                      {event.cpu_usage}%
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Memory Usage:</span>
+                                    <span className={event.memory_usage > 80 ? "text-rose-500 font-bold" : "text-cyan-400"}>
+                                      {event.memory_usage}%
+                                    </span>
+                                  </div>
+                                </div>
+                              </>
+                            )}
                           </div>
                         </div>
                       );
@@ -3260,8 +3343,9 @@ ${rep.repair_commands}
                   </div>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
+        </div>
         );
       })()}
 

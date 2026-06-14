@@ -437,7 +437,9 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                         "device_id": dev['id'],
                         "device_type": dev.get('role') or 'router',
                         "status": "active",
-                        "detail": f"Reached target local interface"
+                        "detail": f"Reached target local interface",
+                        "cpu_usage": dev.get('cpu_usage', 0),
+                        "memory_usage": dev.get('memory_usage', 0)
                     }, {
                         "hop": hop_count + 1,
                         "ip": target_ip,
@@ -464,7 +466,9 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                     "device_id": dev['id'],
                     "device_type": dev.get('role') or 'router',
                     "status": "active",
-                    "detail": "directly connected"
+                    "detail": "directly connected",
+                    "cpu_usage": dev.get('cpu_usage', 0),
+                    "memory_usage": dev.get('memory_usage', 0)
                 }
                 
                 if mac_str:
@@ -496,7 +500,9 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 "device_id": dev['id'],
                 "device_type": dev.get('role') or 'router',
                 "status": "active",
-                "detail": current_hop_detail
+                "detail": current_hop_detail,
+                "cpu_usage": dev.get('cpu_usage', 0),
+                "memory_usage": dev.get('memory_usage', 0)
             }
             
             branches_results = []
@@ -1680,6 +1686,18 @@ async def run_diagnose_async(
             impact = f"无法访问 {target_ip} 的 {port} 端口服务"
         suggestion = f"请根据第 5 步路径跟踪日志排查中间节点的可达性和配置。"
         repair_commands = "# 无法自动给出具体修复建议，请结合跟踪日志排障。"
+
+    # ── 回填最终探测的真实往返延迟 (RTT) ──
+    final_latency = None
+    if protocol.upper() == 'ICMP':
+        if 'icmp_success' in locals() and icmp_success and 'avg_rtt' in locals() and avg_rtt is not None:
+            final_latency = avg_rtt
+    else:
+        if 'tcp_success' in locals() and tcp_success and 'tcp_res_list' in locals() and tcp_res_list:
+            final_latency = tcp_res_list[0].get('latency_ms', None)
+            
+    if final_latency is not None and hops:
+        hops[-1]['rtt_ms'] = [final_latency]
 
     return {
         "success": True,

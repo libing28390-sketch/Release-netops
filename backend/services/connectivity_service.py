@@ -147,7 +147,7 @@ def _load_device(device_id: str | int) -> dict | None:
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT id, hostname, ip_address, platform, username, password, enable_password, priv_username, management_port AS port, credential_source, vault_path "
+            "SELECT id, hostname, ip_address, platform, username, password, enable_password, priv_username, management_port AS port, credential_source, vault_path, cpu_usage, memory_usage "
             "FROM devices WHERE id = ?", (device_id,)
         ).fetchone()
         if not row:

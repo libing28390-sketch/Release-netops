@@ -2754,6 +2754,32 @@ def _init_db_logic(conn):
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_correlation_rules_enabled ON inspection_correlation_rules(enabled)')
 
+    # Path Measurements (路径性能遥测测量历史表)
+    cursor.execute(f'''
+    CREATE TABLE IF NOT EXISTS path_measurements (
+        id {_SERIAL_PK},
+        trace_id TEXT NOT NULL,
+        src_ip TEXT NOT NULL,
+        dst_ip TEXT NOT NULL,
+        hop_index INTEGER NOT NULL,
+        device_id INTEGER,
+        device_name TEXT,
+        interface_name TEXT,
+        vrf_name TEXT DEFAULT 'default',
+        vlan_id INTEGER,
+        hop_ip TEXT,
+        icmp_rtt REAL,
+        tcp_rtt REAL,
+        loss REAL DEFAULT 0.0,
+        cpu_usage REAL,
+        memory_usage REAL,
+        status TEXT DEFAULT 'active',
+        timestamp TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_path_meas_trace ON path_measurements(trace_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_path_meas_ips ON path_measurements(src_ip, dst_ip)')
+
     correlation_rules_seed = [
         (
             'rule_l2_loop',
