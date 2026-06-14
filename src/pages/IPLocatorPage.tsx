@@ -116,6 +116,160 @@ function formatRelativeTime(isoStr: string, zhLang: boolean): string {
   }
 }
 
+const generateSequenceEvents = (result: any, lanes?: any[]) => {
+  if (!result || !result.hops) return [];
+  const events: any[] = [];
+  const hops = result.hops;
+  const proto = result.protocol || 'ICMP';
+  const port = result.port || 80;
+  
+  const getMac = (ip: string, suffix: string) => {
+    if (!ip) return `00:50:56:00:00:${suffix}`;
+    const parts = ip.split('.');
+    if (parts.length < 4) return `00:50:56:00:00:${suffix}`;
+    const h3 = parseInt(parts[2] || '0').toString(16).padStart(2, '0');
+    const h4 = parseInt(parts[3] || '0').toString(16).padStart(2, '0');
+    return `00:50:56:ab:${h3}:${h4}`;
+  };
+
+  const srcMac = getMac(result.source_ip, '01');
+  const targetMac = getMac(result.target_ip, 'ff');
+
+  const getColIndex = (id: string, defaultVal: number) => {
+    if (lanes) {
+      const idx = lanes.findIndex(l => l.id === id);
+      if (idx !== -1) return idx;
+    }
+    return defaultVal;
+  };
+
+  const targetIdx = lanes ? (lanes.length - 1) : (hops.length + 1);
+  const lastHopIsTarget = hops.length > 0 && hops[hops.length - 1].ip === result.target_ip;
+
+  hops.forEach((hop: any, idx: number) => {
+    // 如果最后一跳的 IP 等于目标 IP，我们跳过它作为“中间跳”的绘制，完全交给最后的端口探测处理
+    if (lastHopIsTarget && idx === hops.length - 1) {
+      return;
+    }
+
+    const hopIdx = getColIndex(`hop-${idx}`, idx + 1);
+    const ttl = idx + 1;
+    
+    const isBlocked = hop.status === 'blocked';
+    const isTimeout = hop.status === 'timeout';
+    
+    let infoStr = proto === 'TCP' ? `TCP SYN (TTL=${ttl}, DstPort=${port})` : `ICMP Echo Request (TTL=${ttl})`;
+    if (isBlocked) {
+      infoStr += ` [Blocked by Firewall/ACL]`;
+    } else if (isTimeout) {
+      infoStr += ` [Request Timeout]`;
+    }
+
+    events.push({
+      id: `probe-${idx}`,
+      type: 'probe',
+      protocol: proto,
+      srcIp: result.source_ip,
+      dstIp: result.target_ip,
+      srcMac,
+      dstMac: getMac(hop.ip, 'aa'),
+      ttl,
+      l4Name: proto,
+      info: infoStr,
+      startCol: 0,
+      endCol: hopIdx,
+      status: hop.status,
+      direction: 'forward',
+      label: proto === 'TCP' ? `Probe SYN (TTL=${ttl})` : `Probe Ping (TTL=${ttl})`
+    });
+
+    if (!isBlocked && !isTimeout) {
+      events.push({
+        id: `response-${idx}`,
+        type: 'response',
+        protocol: 'ICMP',
+        srcIp: hop.ip,
+        dstIp: result.source_ip,
+        srcMac: getMac(hop.ip, 'aa'),
+        dstMac: srcMac,
+        ttl: 64,
+        l4Name: 'ICMP',
+        info: `ICMP Time Exceeded (TTL expired in transit)`,
+        startCol: 0,
+        endCol: hopIdx,
+        status: 'active',
+        direction: 'backward',
+        label: `ICMP TTL Expired`
+      });
+    }
+  });
+
+  const isPortProbeFailed = result.report && result.report.conclusion === 'interrupted' && result.report.interrupted_at === '目标主机/策略层';
+  
+  const isTimeout = isPortProbeFailed && (
+    (result.report.reason || '').toLowerCase().includes('timeout') ||
+    (result.report.reason || '').toLowerCase().includes('超时') ||
+    (result.report.reason || '').toLowerCase().includes('no response')
+  );
+  
+  const isRefused = isPortProbeFailed && !isTimeout;
+  const isReachable = result.report && result.report.conclusion === 'reachable';
+
+  if (isReachable || isPortProbeFailed) {
+    const finalTtl = hops.length + 1;
+    
+    // final-probe
+    events.push({
+      id: 'final-probe',
+      type: 'probe',
+      protocol: proto,
+      srcIp: result.source_ip,
+      dstIp: result.target_ip,
+      srcMac,
+      dstMac: targetMac,
+      ttl: finalTtl,
+      l4Name: proto,
+      info: isTimeout 
+        ? (proto === 'TCP' ? `TCP SYN (DstPort=${port}) [No Response/Timeout]` : `ICMP Echo Request [Timeout]`)
+        : (proto === 'TCP' ? `TCP SYN (DstPort=${port})` : `ICMP Echo Request`),
+      startCol: 0,
+      endCol: targetIdx,
+      status: isTimeout ? 'timeout' : 'active',
+      direction: 'forward',
+      label: isTimeout
+        ? (proto === 'TCP' ? `TCP SYN (Timeout)` : `ICMP Request (Timeout)`)
+        : (proto === 'TCP' ? `TCP SYN (Port ${port})` : `ICMP Echo Request`)
+    });
+
+    // final-response (只有在未超时的情况下才会有回包)
+    if (!isTimeout) {
+      events.push({
+        id: 'final-response',
+        type: 'response',
+        protocol: proto,
+        srcIp: result.target_ip,
+        dstIp: result.source_ip,
+        srcMac: targetMac,
+        dstMac: srcMac,
+        ttl: 64,
+        l4Name: proto,
+        info: isReachable
+          ? (proto === 'TCP' ? `TCP SYN-ACK (Port ${port} Open / Established)` : `ICMP Echo Reply`)
+          : (proto === 'TCP' ? `TCP RST (Connection Refused / Closed)` : `ICMP Destination Unreachable`),
+        startCol: 0,
+        endCol: targetIdx,
+        status: isReachable ? 'active' : 'refused',
+        direction: 'backward',
+        label: isReachable
+          ? (proto === 'TCP' ? `TCP SYN-ACK (Reachable)` : `ICMP Echo Reply`)
+          : (proto === 'TCP' ? `TCP RST (Closed)` : `Destination Unreachable`)
+      });
+    }
+  }
+
+  return events;
+};
+
 const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const zh = language === 'zh';
   const [activeTab, setActiveTab] = useState<TabMode>(mode === 'diagnose-only' ? 'diagnose' : mode === 'nsot-only' ? 'nsot' : 'locate');
@@ -150,6 +304,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
 
   // ── Hop popover state ──
   const [activeHopIdx, setActiveHopIdx] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<'topology' | 'sequence'>('topology');
   const [cmdbFilterQuery, setCmdbFilterQuery] = useState('');
   const hopPopoverRef = useRef<HTMLDivElement>(null);
 
@@ -2722,100 +2877,393 @@ ${rep.repair_commands}
         </div>
       )}
 
-      {/* ── Path Topology Visualization ── */}
-      {diagResult && diagResult.hops && (
-        <div className="bg-white dark:bg-[#1f2937]/30 rounded-2xl border border-black/5 dark:border-white/5 shadow-sm p-6 space-y-5">
-          <h3 className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)] flex items-center gap-2 mb-2">
-            <Network size={15} className="text-[#0891b2]" />
-            {zh ? '可视化链路路径拓扑' : 'Visual Link Path Topology'}
-          </h3>
+      {/* ── Path Topology & Sequence Flow Visualization ── */}
+      {diagResult && diagResult.hops && (() => {
+        const finalHops = diagResult.hops || [];
+        const hasTarget = diagResult.report.conclusion === 'reachable';
+        const lastHopIsTarget = finalHops.length > 0 && finalHops[finalHops.length - 1].ip === diagResult.target_ip;
+        
+        // Construct lanes list
+        const lanes = [
+          { id: 'source', name: zh ? '源主机' : 'Source Host', ip: diagResult.source_ip, type: 'source', status: 'active' },
+          ...finalHops.map((hop: any, idx: number) => {
+            const isLast = idx === finalHops.length - 1;
+            const isTarget = isLast && lastHopIsTarget;
+            return {
+              id: `hop-${idx}`,
+              name: isTarget ? (zh ? '目标主机' : 'Target Host') : (hop.device_name || `Hop ${idx + 1}`),
+              ip: hop.ip,
+              type: isTarget ? 'target' : 'hop',
+              device_type: hop.device_type,
+              status: hop.status,
+              detail: hop.detail
+            };
+          })
+        ];
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-6 pb-4 overflow-x-auto">
-            {/* Source Node */}
-            <div className="flex flex-col items-center flex-shrink-0 bg-white dark:bg-zinc-900 border border-violet-200 dark:border-violet-500/20 rounded-2xl p-4 w-36 shadow-sm">
-              <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mb-2">
-                <Monitor className="text-violet-500" size={18} />
+        if (!lastHopIsTarget) {
+          lanes.push({
+            id: 'target',
+            name: zh ? '目标主机' : 'Target Host',
+            ip: diagResult.target_ip,
+            type: 'target',
+            status: hasTarget ? 'active' : 'unreachable'
+          });
+        }
+
+        // Generate events
+        const events = generateSequenceEvents(diagResult, lanes);
+
+        return (
+          <div className="bg-white dark:bg-[#1f2937]/30 rounded-2xl border border-black/5 dark:border-white/5 shadow-sm p-6 space-y-5">
+            <style>{`
+              @keyframes strokeFlow {
+                from {
+                  stroke-dashoffset: 20;
+                }
+                to {
+                  stroke-dashoffset: 0;
+                }
+              }
+            `}</style>
+            
+            {/* SVG Markers Defs */}
+            <svg style={{ position: 'absolute', width: 0, height: 0 }}>
+              <defs>
+                <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#10b981" />
+                </marker>
+                <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#06b6d4" />
+                </marker>
+                <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#f43f5e" />
+                </marker>
+                <marker id="arrow-gray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#a3a3a3" />
+                </marker>
+              </defs>
+            </svg>
+
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center border-b border-slate-100 dark:border-white/5 pb-3 gap-2">
+              <h3 className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)] flex items-center gap-2">
+                <Network size={15} className="text-[#0891b2]" />
+                {zh ? '可视化链路路径拓扑' : 'Visual Link Path Topology'}
+              </h3>
+              
+              {/* View Mode Switcher */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-800/80 p-1 rounded-xl text-xs self-start sm:self-auto">
+                <button
+                  onClick={() => setViewMode('topology')}
+                  className={`px-3 py-1.5 rounded-lg transition-all font-semibold cursor-pointer ${
+                    viewMode === 'topology'
+                      ? 'bg-white dark:bg-zinc-700 shadow-sm text-[#0891b2] dark:text-cyan-400'
+                      : 'text-slate-500 hover:text-slate-700 dark:text-neutral-400 dark:hover:text-neutral-200'
+                  }`}
+                >
+                  {zh ? '拓扑视图' : 'Topology View'}
+                </button>
+                <button
+                  onClick={() => setViewMode('sequence')}
+                  className={`px-3 py-1.5 rounded-lg transition-all font-semibold cursor-pointer ${
+                    viewMode === 'sequence'
+                      ? 'bg-white dark:bg-zinc-700 shadow-sm text-[#0891b2] dark:text-cyan-400'
+                      : 'text-slate-500 hover:text-slate-700 dark:text-neutral-400 dark:hover:text-neutral-200'
+                  }`}
+                >
+                  {zh ? '时序流向' : 'Sequence Flow'}
+                </button>
               </div>
-              <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '源主机' : 'Source Host'}</span>
-              <span className="text-[10px] text-black/35 font-mono mt-0.5">{diagResult.source_ip}</span>
             </div>
 
-            {/* Path hops */}
-            {diagResult.hops.map((hop: any, idx: number) => {
-              const isBlocked = hop.status === 'blocked';
-              const isTimeout = hop.status === 'timeout';
-              const cmdbDevice = findDeviceByIp(hop.ip);
-              const isActive = activeHopIdx === idx;
-              const isSrv = cmdbDevice ? isServerPlatform(cmdbDevice.platform || '') : false;
-
-              return (
-                <React.Fragment key={idx}>
-                  {/* Arrow connector */}
-                  <div className="flex items-center justify-center flex-shrink-0 w-8">
-                    <div className={`h-0.5 flex-1 ${
-                      isBlocked || isTimeout ? "border-t-2 border-dashed border-rose-400" : "border-t-2 border-emerald-400"
-                    }`} />
-                    <ArrowRight size={14} className={isBlocked || isTimeout ? "text-rose-400" : "text-emerald-400"} />
+            {viewMode === 'topology' ? (
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-6 pb-4 overflow-x-auto">
+                {/* Source Node */}
+                <div className="flex flex-col items-center flex-shrink-0 bg-white dark:bg-zinc-900 border border-violet-200 dark:border-violet-500/20 rounded-2xl p-4 w-36 shadow-sm">
+                  <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mb-2">
+                    <Monitor className="text-violet-500" size={18} />
                   </div>
+                  <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '源主机' : 'Source Host'}</span>
+                  <span className="text-[10px] text-black/35 font-mono mt-0.5">{diagResult.source_ip}</span>
+                </div>
 
-                  {/* Device Node (Interactive) */}
-                  <div className="relative flex-shrink-0">
-                    <button
-                      onClick={() => setActiveHopIdx(isActive ? null : idx)}
-                      className={`flex flex-col items-center bg-white dark:bg-zinc-900 border rounded-2xl p-4 w-36 shadow-sm transition-all cursor-pointer hover:shadow-md hover:scale-[1.03] ${
-                        isBlocked ? "border-rose-400 dark:border-rose-500/30 ring-2 ring-rose-500/20 animate-pulse" :
-                        isTimeout ? "border-neutral-200 dark:border-neutral-800 opacity-60" :
-                        isActive ? "border-[#06b6d4] dark:border-[#06b6d4]/40 ring-2 ring-[#06b6d4]/25 shadow-lg" :
-                        "border-[#06b6d4]/20 dark:border-[#06b6d4]/10"
-                      }`}
-                    >
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${
-                        isBlocked ? "bg-rose-100 dark:bg-rose-950/40 text-rose-500" :
-                        isTimeout ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-400" :
-                        "bg-cyan-50 dark:bg-cyan-950/40 text-[#0891b2]"
-                      }`}>
-                        {isBlocked ? <ShieldAlert size={18} className="animate-bounce" /> :
-                         hop.device_type === 'firewall' ? <ShieldAlert size={18} /> :
-                         <Server size={18} />}
+                {/* Path hops */}
+                {diagResult.hops.map((hop: any, idx: number) => {
+                  const isBlocked = hop.status === 'blocked';
+                  const isTimeout = hop.status === 'timeout';
+                  const cmdbDevice = findDeviceByIp(hop.ip);
+                  const isActive = activeHopIdx === idx;
+
+                  return (
+                    <React.Fragment key={idx}>
+                      {/* Arrow connector */}
+                      <div className="flex items-center justify-center flex-shrink-0 w-8">
+                        <div className={`h-0.5 flex-1 ${
+                          isBlocked || isTimeout ? "border-t-2 border-dashed border-rose-400" : "border-t-2 border-emerald-400"
+                        }`} />
+                        <ArrowRight size={14} className={isBlocked || isTimeout ? "text-rose-400" : "text-emerald-400"} />
                       </div>
-                      <span className={`text-xs font-bold truncate w-full text-center ${
-                        isBlocked ? "text-rose-600 dark:text-rose-400 font-bold" :
-                        isTimeout ? "text-neutral-400" : "text-[#164e63] dark:text-[var(--app-text)]"
-                      }`} title={hop.device_name}>{hop.device_name}</span>
-                      <span className="text-[10px] text-black/35 font-mono mt-0.5">{hop.ip}</span>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full mt-1.5 font-mono font-medium ${
-                        isBlocked ? "bg-rose-50 dark:bg-rose-950/30 text-rose-600" :
-                        isTimeout ? "bg-neutral-50 dark:bg-neutral-950/30 text-neutral-400" :
-                        "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600"
-                      }`}>{hop.detail || (isBlocked ? (zh ? "阻断" : "Blocked") : (zh ? "正常" : "Active"))}</span>
-                      {cmdbDevice && <Eye size={10} className="absolute top-2 right-2 text-black/20 dark:text-white/20" />}
-                    </button>
 
-                    {/* Popover removed, now rendered as a centered Modal at the page root */}
-                  </div>
-                </React.Fragment>
-              );
-            })}
+                      {/* Device Node (Interactive) */}
+                      <div className="relative flex-shrink-0">
+                        <button
+                          onClick={() => setActiveHopIdx(isActive ? null : idx)}
+                          className={`flex flex-col items-center bg-white dark:bg-zinc-900 border rounded-2xl p-4 w-36 shadow-sm transition-all cursor-pointer hover:shadow-md hover:scale-[1.03] ${
+                            isBlocked ? "border-rose-400 dark:border-rose-500/30 ring-2 ring-rose-500/20 animate-pulse" :
+                            isTimeout ? "border-neutral-200 dark:border-neutral-800 opacity-60" :
+                            isActive ? "border-[#06b6d4] dark:border-[#06b6d4]/40 ring-2 ring-[#06b6d4]/25 shadow-lg" :
+                            "border-[#06b6d4]/20 dark:border-[#06b6d4]/10"
+                          }`}
+                        >
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${
+                            isBlocked ? "bg-rose-100 dark:bg-rose-950/40 text-rose-500" :
+                            isTimeout ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-400" :
+                            "bg-cyan-50 dark:bg-cyan-950/40 text-[#0891b2]"
+                          }`}>
+                            {isBlocked ? <ShieldAlert size={18} className="animate-bounce" /> :
+                             hop.device_type === 'firewall' ? <ShieldAlert size={18} /> :
+                             <Server size={18} />}
+                          </div>
+                          <span className={`text-xs font-bold truncate w-full text-center ${
+                            isBlocked ? "text-rose-600 dark:text-rose-400 font-bold" :
+                            isTimeout ? "text-neutral-400" : "text-[#164e63] dark:text-[var(--app-text)]"
+                          }`} title={hop.device_name}>{hop.device_name}</span>
+                          <span className="text-[10px] text-black/35 font-mono mt-0.5">{hop.ip}</span>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full mt-1.5 font-mono font-medium ${
+                            isBlocked ? "bg-rose-50 dark:bg-rose-950/30 text-rose-600" :
+                            isTimeout ? "bg-neutral-50 dark:bg-neutral-950/30 text-neutral-400" :
+                            "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600"
+                          }`}>{hop.detail || (isBlocked ? (zh ? "阻断" : "Blocked") : (zh ? "正常" : "Active"))}</span>
+                          {cmdbDevice && <Eye size={10} className="absolute top-2 right-2 text-black/20 dark:text-white/20" />}
+                        </button>
+                      </div>
+                    </React.Fragment>
+                  );
+                })}
 
-            {/* Target Node */}
-            {diagResult.report.conclusion === 'reachable' && (
-              <>
-                <div className="flex items-center justify-center flex-shrink-0 w-8">
-                  <div className="h-0.5 flex-1 border-t-2 border-emerald-400" />
-                  <ArrowRight size={14} className="text-emerald-400" />
-                </div>
-                <div className="flex flex-col items-center flex-shrink-0 bg-white dark:bg-zinc-900 border border-emerald-200 dark:border-emerald-500/20 rounded-2xl p-4 w-36 shadow-sm">
-                  <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
-                    <Globe className="text-emerald-500" size={18} />
+                {/* Target Node */}
+                {diagResult.report.conclusion === 'reachable' && (
+                  <>
+                    <div className="flex items-center justify-center flex-shrink-0 w-8">
+                      <div className="h-0.5 flex-1 border-t-2 border-emerald-400" />
+                      <ArrowRight size={14} className="text-emerald-400" />
+                    </div>
+                    <div className="flex flex-col items-center flex-shrink-0 bg-white dark:bg-zinc-900 border border-emerald-200 dark:border-emerald-500/20 rounded-2xl p-4 w-36 shadow-sm">
+                      <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
+                        <Globe className="text-emerald-500" size={18} />
+                      </div>
+                      <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '目标主机' : 'Target Host'}</span>
+                      <span className="text-[10px] text-black/35 font-mono mt-0.5">{diagResult.target_ip}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              /* New Sequence Flow View rendering */
+              <div className="overflow-x-auto w-full custom-scrollbar pt-6 relative">
+                <div
+                  style={{
+                    minWidth: lanes.length * 150,
+                    gridTemplateColumns: `repeat(${lanes.length}, minmax(140px, 1fr))`
+                  }}
+                  className="grid gap-0 relative"
+                >
+                  {/* Vertical Lifelines (overlayed absolute lines) */}
+                  <div className="absolute inset-y-0 left-0 right-0 pointer-events-none">
+                    {lanes.map((lane, idx) => (
+                      <div
+                        key={idx}
+                        className="absolute top-0 bottom-0 border-l-2 border-dashed border-slate-200 dark:border-zinc-800"
+                        style={{ left: `${(idx + 0.5) * (100 / lanes.length)}%` }}
+                      />
+                    ))}
                   </div>
-                  <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '目标主机' : 'Target Host'}</span>
-                  <span className="text-[10px] text-black/35 font-mono mt-0.5">{diagResult.target_ip}</span>
+
+                  {/* Grid Header Cards */}
+                  {lanes.map((lane, idx) => {
+                    const isSrc = lane.type === 'source';
+                    const isTgt = lane.type === 'target';
+                    const isBlocked = lane.status === 'blocked';
+                    const isUnreachable = lane.status === 'unreachable';
+                    
+                    let headerBg = 'bg-cyan-50 dark:bg-cyan-950/40 border-cyan-200 dark:border-cyan-500/20';
+                    let iconColor = 'text-cyan-500';
+                    if (isSrc) {
+                      headerBg = 'bg-violet-50 dark:bg-violet-950/40 border-violet-200 dark:border-violet-500/20';
+                      iconColor = 'text-violet-500';
+                    } else if (isTgt) {
+                      headerBg = isUnreachable
+                        ? 'bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800/50 opacity-60'
+                        : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-500/20';
+                      iconColor = isUnreachable ? 'text-neutral-400' : 'text-emerald-500';
+                    } else if (isBlocked) {
+                      headerBg = 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-500/20';
+                      iconColor = 'text-rose-500';
+                    }
+
+                    return (
+                      <div key={lane.id} className="flex flex-col items-center pb-8 z-10 px-2">
+                        <div className={`flex flex-col items-center bg-white dark:bg-zinc-900 border rounded-2xl p-3 w-full shadow-sm ${headerBg}`}>
+                          <div className="w-8 h-8 rounded-full bg-white dark:bg-black/30 flex items-center justify-center mb-1.5 shadow-sm">
+                            {isSrc ? <Monitor className={iconColor} size={14} /> :
+                             isTgt ? <Globe className={iconColor} size={14} /> :
+                             isBlocked ? <ShieldAlert className={iconColor} size={14} /> :
+                             <Server className={iconColor} size={14} />}
+                          </div>
+                          <span className="text-[11px] font-bold text-[#164e63] dark:text-[var(--app-text)] truncate max-w-full text-center">
+                            {lane.name}
+                          </span>
+                          <span className="text-[9px] text-black/35 font-mono mt-0.5">{lane.ip}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Events Rows */}
+                  <div className="col-span-full flex flex-col pt-2 pb-6">
+                    {events.map((event) => {
+                      const isForward = event.direction === 'forward';
+                      const isSuccess = event.status === 'active' || event.status === 'success' || !event.status || event.status === 'refused';
+                      const isBlocked = event.status === 'blocked';
+                      const isRefused = event.status === 'refused';
+                      const isTimeout = event.status === 'timeout';
+                      
+                      let strokeColor = 'stroke-emerald-500 dark:stroke-emerald-400';
+                      let textColor = 'text-emerald-600 dark:text-emerald-400';
+                      let borderClass = 'border-emerald-200 dark:border-emerald-800';
+                      let markerId = 'arrow-green';
+                      
+                      if (isBlocked) {
+                        strokeColor = 'stroke-rose-500 dark:stroke-rose-400';
+                        textColor = 'text-rose-600 dark:text-rose-400';
+                        borderClass = 'border-rose-200 dark:border-rose-800';
+                        markerId = 'arrow-red';
+                      } else if (isRefused) {
+                        strokeColor = 'stroke-rose-500 dark:stroke-rose-400';
+                        textColor = 'text-rose-600 dark:text-rose-400';
+                        borderClass = 'border-rose-200 dark:border-rose-800';
+                        markerId = 'arrow-red';
+                      } else if (isTimeout) {
+                        strokeColor = 'stroke-neutral-300 dark:stroke-neutral-600';
+                        textColor = 'text-neutral-500 dark:text-neutral-400';
+                        borderClass = 'border-neutral-200 dark:border-neutral-800';
+                        markerId = 'arrow-gray';
+                      } else if (event.type === 'response') {
+                        strokeColor = 'stroke-cyan-500 dark:stroke-cyan-400';
+                        textColor = 'text-cyan-600 dark:text-cyan-400';
+                        borderClass = 'border-cyan-200 dark:border-cyan-800';
+                        markerId = 'arrow-blue';
+                      }
+
+                      const leftPos = (Math.min(event.startCol, event.endCol) + 0.5) * (100 / lanes.length);
+                      const widthPos = Math.abs(event.startCol - event.endCol) * (100 / lanes.length);
+
+                      return (
+                        <div
+                          key={event.id}
+                          className="relative h-16 group select-none transition-colors hover:bg-slate-500/5 dark:hover:bg-white/[0.02]"
+                        >
+                          {/* Arrow SVG container */}
+                          <div
+                            className="absolute h-8 flex items-center"
+                            style={{
+                              left: `${leftPos}%`,
+                              width: `${widthPos}%`,
+                              top: '16px'
+                            }}
+                          >
+                            <svg className="w-full h-8 overflow-visible">
+                              <line
+                                x1={isForward ? "0%" : "100%"}
+                                y1="50%"
+                                x2={isForward ? "100%" : "0%"}
+                                y2="50%"
+                                className={`stroke-[1.5] ${strokeColor}`}
+                                style={isSuccess ? {
+                                  strokeDasharray: '6, 4',
+                                  animation: 'strokeFlow 1.5s linear infinite'
+                                } : (isTimeout ? { strokeDasharray: '4, 4', opacity: 0.5 } : undefined)}
+                                markerEnd={!isTimeout ? `url(#${markerId})` : undefined}
+                              />
+                            </svg>
+
+                            {/* Label Overlay */}
+                            <span className={`absolute left-1/2 -translate-x-1/2 bottom-5 px-1.5 py-0.5 bg-white dark:bg-zinc-900 border text-[9px] font-bold rounded-md shadow-sm transition-all group-hover:scale-105 z-10 ${textColor} ${borderClass}`}>
+                              {event.label}
+                            </span>
+
+                            {/* Blocked Barrier Marker */}
+                            {isBlocked && (
+                              <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-4.5 h-4.5 rounded-full bg-rose-500 border border-white dark:border-zinc-900 flex items-center justify-center text-white text-[9px] font-black shadow-md z-20 animate-pulse">
+                                ✕
+                              </div>
+                            )}
+                            {isTimeout && (
+                              <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-4.5 h-4.5 rounded-full bg-neutral-400 border border-white dark:border-zinc-900 flex items-center justify-center text-white text-[10px] font-black shadow-md z-20">
+                                ?
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Simulation Packet Tooltip */}
+                          <div className="absolute z-50 bottom-full mb-1 left-1/2 -translate-x-1/2 pointer-events-none w-72 bg-slate-950/95 border border-white/10 rounded-xl p-3 shadow-2xl opacity-0 group-hover:opacity-100 transition-all duration-200 scale-95 origin-bottom group-hover:scale-100 flex flex-col gap-1.5 text-[10px] text-slate-300 font-mono">
+                            <div className="text-white font-bold border-b border-white/10 pb-1 flex justify-between items-center text-[11px]">
+                              <span>{zh ? '仿真数据包明细' : 'Packet Simulation Details'}</span>
+                              <span className="text-[9px] px-1 bg-cyan-500/20 text-cyan-400 rounded uppercase font-sans font-bold">{event.protocol}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">{zh ? '链路层 (L2):' : 'Data Link (L2):'}</span>
+                              <span className="text-white">Ethernet II</span>
+                            </div>
+                            <div className="pl-3 border-l border-white/10 flex flex-col gap-0.5 text-[9px]">
+                              <div className="flex justify-between">
+                                <span>Src MAC:</span>
+                                <span>{event.srcMac}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Dst MAC:</span>
+                                <span>{event.dstMac}</span>
+                              </div>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">{zh ? '网络层 (L3):' : 'Network (L3):'}</span>
+                              <span className="text-white">IPv4</span>
+                            </div>
+                            <div className="pl-3 border-l border-white/10 flex flex-col gap-0.5 text-[9px]">
+                              <div className="flex justify-between">
+                                <span>Src IP:</span>
+                                <span>{event.srcIp}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Dst IP:</span>
+                                <span>{event.dstIp}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>TTL:</span>
+                                <span className="text-cyan-400">{event.ttl}</span>
+                              </div>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">{zh ? '传输/控制层 (L4):' : 'Transport/Control (L4):'}</span>
+                              <span className="text-white">{event.l4Name}</span>
+                            </div>
+                            <div className="pl-3 border-l border-white/10 flex flex-col gap-0.5 text-[9px]">
+                              <div className={`flex justify-between ${textColor}`}>
+                                <span>Info:</span>
+                                <span>{event.info}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </>
+              </div>
             )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Diagnostic Report ── */}
       {diagResult && diagResult.report && (
