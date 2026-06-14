@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download, X, ShieldAlert, Check, Play, FileText, Copy, Router, ExternalLink, Cpu, MemoryStick, Eye } from 'lucide-react';
+import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download, X, ShieldAlert, Check, Play, FileText, Copy, Router, ExternalLink, Cpu, MemoryStick, Eye, Users } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import * as XLSX from 'xlsx';
@@ -60,7 +60,7 @@ interface ProbeResult {
 }
 
 type TabMode = 'locate' | 'probe' | 'arp-table' | 'mac-changes' | 'diagnose' | 'nsot';
-type NsotSubTab = 'endpoints' | 'inventory' | 'routes';
+type NsotSubTab = 'endpoints' | 'inventory' | 'routes' | 'neighbors' | 'bgp_routes';
 
 interface ArpEntry {
   ip: string;
@@ -175,6 +175,8 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const [nsotEndpoints, setNsotEndpoints] = useState<any>(null);
   const [nsotInventory, setNsotInventory] = useState<any>(null);
   const [nsotRoutes, setNsotRoutes] = useState<any>(null);
+  const [nsotNeighbors, setNsotNeighbors] = useState<any>(null);
+  const [nsotBgpRoutes, setNsotBgpRoutes] = useState<any>(null);
   const [nsotLoading, setNsotLoading] = useState(false);
   const [nsotError, setNsotError] = useState('');
   const [nsotFilter, setNsotFilter] = useState('');
@@ -201,6 +203,15 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const [routeFilterPrefix, setRouteFilterPrefix] = useState('');
   const [routeFilterNextHop, setRouteFilterNextHop] = useState('');
   const [routeFilterProtocol, setRouteFilterProtocol] = useState('all');
+  // Neighbors tab filters
+  const [neighFilterDevice, setNeighFilterDevice] = useState('');
+  const [neighFilterProtocol, setNeighFilterProtocol] = useState('all');
+  // BGP routes filters
+  const [bgpFilterDevice, setBgpFilterDevice] = useState('');
+  const [bgpFilterVrf, setBgpFilterVrf] = useState('');
+  const [bgpFilterPrefix, setBgpFilterPrefix] = useState('');
+  const [bgpFilterNextHop, setBgpFilterNextHop] = useState('');
+  const [bgpFilterStatus, setBgpFilterStatus] = useState('all');
 
   const resetNsotAdvancedFilters = useCallback(() => {
     setEpFilterIp('');
@@ -216,6 +227,13 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
     setRouteFilterPrefix('');
     setRouteFilterNextHop('');
     setRouteFilterProtocol('all');
+    setNeighFilterDevice('');
+    setNeighFilterProtocol('all');
+    setBgpFilterDevice('');
+    setBgpFilterVrf('');
+    setBgpFilterPrefix('');
+    setBgpFilterNextHop('');
+    setBgpFilterStatus('all');
   }, []);
 
   // ── Path Diagnose state ──
@@ -575,16 +593,26 @@ ${rep.repair_commands}
     setNsotLoading(true);
     setNsotError('');
     try {
-      const [epResp, invResp, rcResp] = await Promise.all([
+      const [epResp, invResp, rcResp, rnResp, bgpResp] = await Promise.all([
         fetch('/api/ip-locator/network-endpoints', { headers: { Authorization: `Bearer ${token}` } }),
         fetch('/api/ip-locator/ip-inventory', { headers: { Authorization: `Bearer ${token}` } }),
         fetch('/api/ip-locator/route-cache', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/ip-locator/routing-neighbors', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/ip-locator/bgp-routes', { headers: { Authorization: `Bearer ${token}` } }),
       ]);
-      if (!epResp.ok || !invResp.ok || !rcResp.ok) throw new Error('Failed to fetch NSOT data');
-      const [ep, inv, rc] = await Promise.all([epResp.json(), invResp.json(), rcResp.json()]);
+      if (!epResp.ok || !invResp.ok || !rcResp.ok || !rnResp.ok || !bgpResp.ok) throw new Error('Failed to fetch NSOT data');
+      const [ep, inv, rc, rn, bgp] = await Promise.all([
+        epResp.json(),
+        invResp.json(),
+        rcResp.json(),
+        rnResp.json(),
+        bgpResp.json()
+      ]);
       setNsotEndpoints(ep);
       setNsotInventory(inv);
       setNsotRoutes(rc);
+      setNsotNeighbors(rn);
+      setNsotBgpRoutes(bgp);
     } catch (e: any) {
       setNsotError(e.message || 'Failed to load NSOT data');
     } finally {
@@ -1604,7 +1632,7 @@ ${rep.repair_commands}
       {/* ────────────────────────────────────── */}
       {activeTab === 'nsot' && (<>
       {/* ── Stats Cards ── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         {/* Card: network_endpoints */}
         <button onClick={() => { setNsotSubTab('endpoints'); setNsotPage(1); setNsotFilter(''); resetNsotAdvancedFilters(); }} className={`text-left bg-white dark:bg-[#1f2937]/30 rounded-2xl border shadow-sm p-5 transition-all ${nsotSubTab === 'endpoints' ? 'border-[#06b6d4] ring-2 ring-[#06b6d4]/20' : 'border-black/5 dark:border-white/5 hover:border-[#06b6d4]/30'}`}>
           <div className="flex items-center gap-3 mb-3">
@@ -1648,15 +1676,51 @@ ${rep.repair_commands}
               <Network size={18} className="text-white" />
             </div>
             <div>
-              <div className="text-sm font-semibold text-black/80 dark:text-white/80">{zh ? '路由缓存' : 'Route Cache'}</div>
-              <div className="text-[10px] font-mono text-black/30 dark:text-white/30">route_cache</div>
+              <div className="text-sm font-semibold text-black/80 dark:text-white/80">{zh ? '路由事实库' : 'Route Table'}</div>
+              <div className="text-[10px] font-mono text-black/30 dark:text-white/30">route_table</div>
             </div>
           </div>
           <div className="text-3xl font-bold text-violet-500 mb-1">{nsotRoutes?.total ?? '—'}</div>
           <div className="text-[11px] text-black/40 dark:text-white/40">
-            {nsotRoutes?.protocol_stats ? Object.entries(nsotRoutes.protocol_stats).map(([k, v]) => `${k}: ${v}`).join(' · ') : `${zh ? '字段' : 'Cols'}: 9`}
+            {nsotRoutes?.protocol_stats ? Object.entries(nsotRoutes.protocol_stats).map(([k, v]) => `${k}: ${v}`).join(' · ') : `${zh ? '字段' : 'Cols'}: 11`}
           </div>
           {nsotRoutes?.timestamp && <div className="text-[10px] text-black/25 dark:text-white/25 mt-1">{zh ? '更新于' : 'Updated'}: {formatRelativeTime(nsotRoutes.timestamp, zh)}</div>}
+        </button>
+
+        {/* Card: routing_neighbors */}
+        <button onClick={() => { setNsotSubTab('neighbors'); setNsotPage(1); setNsotFilter(''); resetNsotAdvancedFilters(); }} className={`text-left bg-white dark:bg-[#1f2937]/30 rounded-2xl border shadow-sm p-5 transition-all ${nsotSubTab === 'neighbors' ? 'border-indigo-400 ring-2 ring-indigo-400/20' : 'border-black/5 dark:border-white/5 hover:border-indigo-400/30'}`}>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-400 to-indigo-600 flex items-center justify-center">
+              <Users size={18} className="text-white" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-black/80 dark:text-white/80">{zh ? '路由协议邻居' : 'Routing Neighbors'}</div>
+              <div className="text-[10px] font-mono text-black/30 dark:text-white/30">routing_neighbors</div>
+            </div>
+          </div>
+          <div className="text-3xl font-bold text-indigo-500 mb-1">{nsotNeighbors?.total ?? '—'}</div>
+          <div className="text-[11px] text-black/40 dark:text-white/40">
+            {nsotNeighbors?.protocol_stats ? Object.entries(nsotNeighbors.protocol_stats).map(([k, v]) => `${k}: ${v}`).join(' · ') : `${zh ? '字段' : 'Cols'}: 12`}
+          </div>
+          {nsotNeighbors?.timestamp && <div className="text-[10px] text-black/25 dark:text-white/25 mt-1">{zh ? '更新于' : 'Updated'}: {formatRelativeTime(nsotNeighbors.timestamp, zh)}</div>}
+        </button>
+
+        {/* Card: bgp_routes */}
+        <button onClick={() => { setNsotSubTab('bgp_routes'); setNsotPage(1); setNsotFilter(''); resetNsotAdvancedFilters(); }} className={`text-left bg-white dark:bg-[#1f2937]/30 rounded-2xl border shadow-sm p-5 transition-all ${nsotSubTab === 'bgp_routes' ? 'border-amber-400 ring-2 ring-amber-400/20' : 'border-black/5 dark:border-white/5 hover:border-amber-400/30'}`}>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center">
+              <Activity size={18} className="text-white" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-black/80 dark:text-white/80">{zh ? 'BGP 路由表' : 'BGP RIB Table'}</div>
+              <div className="text-[10px] font-mono text-black/30 dark:text-white/30">bgp_route_table</div>
+            </div>
+          </div>
+          <div className="text-3xl font-bold text-amber-500 mb-1">{nsotBgpRoutes?.total ?? '—'}</div>
+          <div className="text-[11px] text-black/40 dark:text-white/40">
+            {zh ? '最佳路径' : 'Best'}: {nsotBgpRoutes?.entries ? nsotBgpRoutes.entries.filter((e: any) => e.is_best).length : 0} · {zh ? '字段' : 'Cols'}: 13
+          </div>
+          {nsotBgpRoutes?.timestamp && <div className="text-[10px] text-black/25 dark:text-white/25 mt-1">{zh ? '更新于' : 'Updated'}: {formatRelativeTime(nsotBgpRoutes.timestamp, zh)}</div>}
         </button>
       </div>
 
@@ -1691,7 +1755,7 @@ ${rep.repair_commands}
           {zh ? '立即同步全网数据' : 'Sync All Data'}
         </button>
         <button
-          onClick={() => { setNsotEndpoints(null); setNsotInventory(null); setNsotRoutes(null); fetchNsotData(); }}
+          onClick={() => { setNsotEndpoints(null); setNsotInventory(null); setNsotRoutes(null); setNsotNeighbors(null); setNsotBgpRoutes(null); fetchNsotData(); }}
           disabled={nsotLoading || nsotSweeping}
           className="flex items-center gap-1.5 px-4 py-2 bg-[#06b6d4]/10 hover:bg-[#06b6d4]/20 text-[#0891b2] rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
         >
@@ -1875,6 +1939,91 @@ ${rep.repair_commands}
                 </div>
               </>
             )}
+
+            {nsotSubTab === 'neighbors' && (
+              <>
+                <div>
+                  <label className="block text-[11px] font-semibold text-black/40 dark:text-white/40 mb-1">{zh ? '所属设备' : 'Device'}</label>
+                  <input
+                    type="text"
+                    value={neighFilterDevice}
+                    onChange={e => { setNeighFilterDevice(e.target.value); setNsotPage(1); }}
+                    placeholder="e.g. R1"
+                    className="w-full px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-black/40 dark:text-white/40 mb-1">{zh ? '路由协议' : 'Protocol'}</label>
+                  <select
+                    value={neighFilterProtocol}
+                    onChange={e => { setNeighFilterProtocol(e.target.value); setNsotPage(1); }}
+                    className="w-full px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all dark:text-white dark:bg-[#1f2937]"
+                  >
+                    <option value="all">{zh ? '全部协议' : 'All Protocols'}</option>
+                    <option value="ospf">OSPF</option>
+                    <option value="bgp">BGP</option>
+                  </select>
+                </div>
+              </>
+            )}
+
+            {nsotSubTab === 'bgp_routes' && (
+              <>
+                <div>
+                  <label className="block text-[11px] font-semibold text-black/40 dark:text-white/40 mb-1">{zh ? '所属设备' : 'Device'}</label>
+                  <input
+                    type="text"
+                    value={bgpFilterDevice}
+                    onChange={e => { setBgpFilterDevice(e.target.value); setNsotPage(1); }}
+                    placeholder="e.g. R1"
+                    className="w-full px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-black/40 dark:text-white/40 mb-1">VRF</label>
+                  <input
+                    type="text"
+                    value={bgpFilterVrf}
+                    onChange={e => { setBgpFilterVrf(e.target.value); setNsotPage(1); }}
+                    placeholder="e.g. default"
+                    className="w-full px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-black/40 dark:text-white/40 mb-1">{zh ? '目的网络前缀' : 'Destination Prefix'}</label>
+                  <input
+                    type="text"
+                    value={bgpFilterPrefix}
+                    onChange={e => { setBgpFilterPrefix(e.target.value); setNsotPage(1); }}
+                    placeholder="e.g. 10.1.0.0"
+                    className="w-full px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all font-mono dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-black/40 dark:text-white/40 mb-1">{zh ? '下一跳' : 'Next Hop'}</label>
+                  <input
+                    type="text"
+                    value={bgpFilterNextHop}
+                    onChange={e => { setBgpFilterNextHop(e.target.value); setNsotPage(1); }}
+                    placeholder="e.g. 192.168.1.2"
+                    className="w-full px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all font-mono dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-black/40 dark:text-white/40 mb-1">{zh ? '路由状态' : 'Route Status'}</label>
+                  <select
+                    value={bgpFilterStatus}
+                    onChange={e => { setBgpFilterStatus(e.target.value); setNsotPage(1); }}
+                    className="w-full px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs bg-white dark:bg-black/[0.08] focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all dark:text-white dark:bg-[#1f2937]"
+                  >
+                    <option value="all">{zh ? '全部状态' : 'All Statuses'}</option>
+                    <option value="best">{zh ? '最佳路径 (Best)' : 'Best Path'}</option>
+                    <option value="active">{zh ? '活跃 (Active)' : 'Active Path'}</option>
+                    <option value="backup">{zh ? '备用/非最佳 (Backup)' : 'Backup Path'}</option>
+                  </select>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1904,6 +2053,8 @@ ${rep.repair_commands}
       {!nsotLoading && (() => {
         const currentData = nsotSubTab === 'endpoints' ? nsotEndpoints
           : nsotSubTab === 'inventory' ? nsotInventory
+          : nsotSubTab === 'neighbors' ? nsotNeighbors
+          : nsotSubTab === 'bgp_routes' ? nsotBgpRoutes
           : nsotRoutes;
         if (!currentData) return null;
 
@@ -1929,8 +2080,37 @@ ${rep.repair_commands}
               { key: 'type', label: zh ? '类型' : 'Type' },
               { key: 'last_seen', label: zh ? '最后同步' : 'Last Seen' },
             ]
+          : nsotSubTab === 'neighbors'
+          ? [
+              { key: 'device_name', label: zh ? '设备' : 'Device' },
+              { key: 'protocol', label: zh ? '协议' : 'Protocol' },
+              { key: 'neighbor_id', label: zh ? '邻居 Router ID' : 'Neighbor ID' },
+              { key: 'neighbor_ip', label: zh ? '邻居 IP' : 'Neighbor IP' },
+              { key: 'local_interface', label: zh ? '本地接口' : 'Local Intf' },
+              { key: 'state', label: zh ? '状态' : 'State' },
+              { key: 'uptime', label: zh ? '持续时间' : 'Uptime' },
+              { key: 'remote_as', label: zh ? '对端 AS' : 'Remote AS' },
+              { key: 'area_id', label: zh ? 'OSPF 区域' : 'Area ID' },
+              { key: 'last_update', label: zh ? '最后更新' : 'Last Update' },
+            ]
+          : nsotSubTab === 'bgp_routes'
+          ? [
+              { key: 'device_name', label: zh ? '设备' : 'Device' },
+              { key: 'local_as', label: 'Local AS' },
+              { key: 'vrf_name', label: 'VRF' },
+              { key: 'prefix', label: zh ? '目的网络前缀' : 'Prefix' },
+              { key: 'next_hop', label: zh ? '下一跳' : 'Next Hop' },
+              { key: 'metric', label: 'Metric' },
+              { key: 'loc_pref', label: 'Local Pref' },
+              { key: 'weight', label: 'Weight' },
+              { key: 'as_path', label: 'AS Path' },
+              { key: 'is_best', label: zh ? '最佳' : 'Best' },
+              { key: 'is_active', label: zh ? '活跃' : 'Active' },
+              { key: 'last_update', label: zh ? '最后更新' : 'Last Update' },
+            ]
           : [
               { key: 'device_name', label: zh ? '设备' : 'Device' },
+              { key: 'vrf_name', label: 'VRF' },
               { key: 'prefix', label: zh ? '前缀' : 'Prefix' },
               { key: 'mask', label: zh ? '掩码' : 'Mask' },
               { key: 'next_hop', label: zh ? '下一跳' : 'Next Hop' },
@@ -1979,6 +2159,19 @@ ${rep.repair_commands}
               if (routeFilterPrefix && !String(e.prefix ?? '').toLowerCase().includes(routeFilterPrefix.toLowerCase())) return false;
               if (routeFilterNextHop && !String(e.next_hop ?? '').toLowerCase().includes(routeFilterNextHop.toLowerCase())) return false;
               if (routeFilterProtocol !== 'all' && normalizeRouteProtocol(e.protocol) !== routeFilterProtocol.toLowerCase()) return false;
+            } else if (nsotSubTab === 'neighbors') {
+              if (neighFilterDevice && !String(e.device_name ?? '').toLowerCase().includes(neighFilterDevice.toLowerCase())) return false;
+              if (neighFilterProtocol !== 'all' && normalizeRouteProtocol(e.protocol) !== neighFilterProtocol.toLowerCase()) return false;
+            } else if (nsotSubTab === 'bgp_routes') {
+              if (bgpFilterDevice && !String(e.device_name ?? '').toLowerCase().includes(bgpFilterDevice.toLowerCase())) return false;
+              if (bgpFilterVrf && !String(e.vrf_name ?? '').toLowerCase().includes(bgpFilterVrf.toLowerCase())) return false;
+              if (bgpFilterPrefix && !String(e.prefix ?? '').toLowerCase().includes(bgpFilterPrefix.toLowerCase())) return false;
+              if (bgpFilterNextHop && !String(e.next_hop ?? '').toLowerCase().includes(bgpFilterNextHop.toLowerCase())) return false;
+              if (bgpFilterStatus !== 'all') {
+                if (bgpFilterStatus === 'best' && !e.is_best) return false;
+                if (bgpFilterStatus === 'active' && !e.is_active) return false;
+                if (bgpFilterStatus === 'backup' && e.is_best) return false;
+              }
             }
           }
           return true;
@@ -1987,8 +2180,16 @@ ${rep.repair_commands}
         const safePage = Math.min(nsotPage, totalPages);
         const paged = filtered.slice((safePage - 1) * nsotPageSize, safePage * nsotPageSize);
 
-        const accentColor = nsotSubTab === 'endpoints' ? '#0891b2' : nsotSubTab === 'inventory' ? '#10b981' : '#8b5cf6';
-        const tableName = nsotSubTab === 'endpoints' ? 'network_endpoints' : nsotSubTab === 'inventory' ? 'ip_inventory' : 'route_cache';
+        const accentColor = nsotSubTab === 'endpoints' ? '#0891b2'
+          : nsotSubTab === 'inventory' ? '#10b981'
+          : nsotSubTab === 'neighbors' ? '#6366f1'
+          : nsotSubTab === 'bgp_routes' ? '#f59e0b'
+          : '#8b5cf6';
+        const tableName = nsotSubTab === 'endpoints' ? 'network_endpoints'
+          : nsotSubTab === 'inventory' ? 'ip_inventory'
+          : nsotSubTab === 'neighbors' ? 'routing_neighbors'
+          : nsotSubTab === 'bgp_routes' ? 'bgp_route_table'
+          : 'route_table';
 
         return (
           <div className="bg-white dark:bg-[#1f2937]/30 rounded-2xl border border-black/5 dark:border-white/5 shadow-sm overflow-hidden">
@@ -2023,6 +2224,50 @@ ${rep.repair_commands}
                         {columns.map(col => {
                           const val = row[col.key];
                           // Special rendering
+                          if (col.key === 'is_active' && nsotSubTab === 'bgp_routes') {
+                            return (
+                              <td key={col.key} className="px-4 py-2">
+                                {val ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border border-blue-200/50">
+                                    <CheckCircle2 size={10} />
+                                    {zh ? '活跃' : 'Active'}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-gray-50 dark:bg-gray-800 text-gray-500 border border-gray-200/50">
+                                    <Minus size={10} />
+                                    {zh ? '备用' : 'Backup'}
+                                  </span>
+                                )}
+                              </td>
+                            );
+                          }
+                          if (col.key === 'is_best' && nsotSubTab === 'bgp_routes') {
+                            return (
+                              <td key={col.key} className="px-4 py-2">
+                                {val ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border border-emerald-200/50">
+                                    <Check size={10} strokeWidth={3} />
+                                    {zh ? '最佳' : 'Best'}
+                                  </span>
+                                ) : (
+                                  <span className="text-black/30 dark:text-white/30 font-mono">—</span>
+                                )}
+                              </td>
+                            );
+                          }
+                          if (col.key === 'as_path' && nsotSubTab === 'bgp_routes') {
+                            return (
+                              <td key={col.key} className="px-4 py-2 font-mono text-black/70 dark:text-white/70 whitespace-nowrap">
+                                {val ? (
+                                  <span className="bg-black/[0.03] dark:bg-white/[0.05] px-1.5 py-0.5 rounded text-[11px] font-semibold text-black/60 dark:text-white/60">
+                                    {val}
+                                  </span>
+                                ) : (
+                                  <span className="text-black/25 dark:text-white/25 italic">Local</span>
+                                )}
+                              </td>
+                            );
+                          }
                           if (col.key === 'is_active') {
                             return <td key={col.key} className="px-4 py-2">{val ? <span className="inline-flex items-center gap-1 text-emerald-500 text-[11px]"><CheckCircle2 size={11} />{zh ? '活跃' : 'Active'}</span> : <span className="inline-flex items-center gap-1 text-black/30 dark:text-white/30 text-[11px]"><Minus size={11} />{zh ? '离线' : 'Inactive'}</span>}</td>;
                           }
@@ -2036,6 +2281,29 @@ ${rep.repair_commands}
                             const colors: Record<string, string> = { loopback: 'bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400', physical: 'bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600 dark:text-cyan-400', vlan: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400', tunnel: 'bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400' };
                             const cls = colors[(val || '').toLowerCase()] || 'bg-gray-50 dark:bg-gray-900/20 text-gray-600 dark:text-gray-400';
                             return <td key={col.key} className="px-4 py-2"><span className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold ${cls}`}>{val || '—'}</span></td>;
+                          }
+                          if (col.key === 'remote_as' && nsotSubTab === 'neighbors') {
+                            if (row.protocol === 'bgp') {
+                              if (row.local_as && row.remote_as) {
+                                const typeStr = row.local_as === row.remote_as ? 'IBGP' : 'EBGP';
+                                return (
+                                  <td key={col.key} className="px-4 py-2 whitespace-nowrap font-mono">
+                                    <span className="text-black/70 dark:text-white/70">{row.remote_as}</span>
+                                    <span className={`inline-block ml-1.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold ${row.local_as === row.remote_as ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400' : 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'}`}>
+                                      {typeStr}
+                                    </span>
+                                  </td>
+                                );
+                              }
+                              return <td key={col.key} className="px-4 py-2 text-black/70 dark:text-white/70 whitespace-nowrap font-mono">{row.remote_as || '—'}</td>;
+                            }
+                            return <td key={col.key} className="px-4 py-2 text-black/25 dark:text-white/25 whitespace-nowrap font-mono">—</td>;
+                          }
+                          if (col.key === 'area_id' && nsotSubTab === 'neighbors') {
+                            if (row.protocol === 'ospf') {
+                              return <td key={col.key} className="px-4 py-2 text-black/70 dark:text-white/70 whitespace-nowrap font-mono">{val || '0.0.0.0'}</td>;
+                            }
+                            return <td key={col.key} className="px-4 py-2 text-black/25 dark:text-white/25 whitespace-nowrap font-mono">—</td>;
                           }
                           if (col.key === 'last_seen' || col.key === 'last_update') {
                             return <td key={col.key} className="px-4 py-2 text-black/40 dark:text-white/40 whitespace-nowrap">{val ? formatRelativeTime(val, zh) : '—'}</td>;

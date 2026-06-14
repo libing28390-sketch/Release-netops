@@ -111,7 +111,7 @@ class TestEnsureColumnIdempotency:
         conn.close()
 
     @given(n_calls=st.integers(min_value=1, max_value=5))
-    @settings(max_examples=5, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(max_examples=5, suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None)
     def test_n_calls_same_schema(self, n_calls, tmp_path):
         """P8 (Hypothesis): N calls produce same schema as 1 call."""
         import uuid

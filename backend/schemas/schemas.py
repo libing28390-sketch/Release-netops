@@ -358,6 +358,21 @@ class RackCreate(BaseModel):
     status: str = 'active'
     power_capacity_watts: int = 0
 
+    site_id: Optional[str] = 'site-default'
+    rack_code: Optional[str] = ''
+    rack_name: Optional[str] = ''
+    room_name: Optional[str] = ''
+    row_name: Optional[str] = ''
+    used_u: Optional[int] = 0
+    available_u: Optional[int] = 42
+    power_capacity_w: Optional[int] = 5000
+    current_power_w: Optional[int] = 0
+    power_utilization: Optional[float] = 0.0
+    max_weight_kg: Optional[int] = None
+    current_weight_kg: Optional[int] = 0
+    cooling_zone: Optional[str] = ''
+    remarks: Optional[str] = ''
+
     @field_validator('name')
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -390,6 +405,21 @@ class RackUpdate(BaseModel):
     description: Optional[str] = None
     status: Optional[str] = None
     power_capacity_watts: Optional[int] = None
+
+    site_id: Optional[str] = None
+    rack_code: Optional[str] = None
+    rack_name: Optional[str] = None
+    room_name: Optional[str] = None
+    row_name: Optional[str] = None
+    used_u: Optional[int] = None
+    available_u: Optional[int] = None
+    power_capacity_w: Optional[int] = None
+    current_power_w: Optional[int] = None
+    power_utilization: Optional[float] = None
+    max_weight_kg: Optional[int] = None
+    current_weight_kg: Optional[int] = None
+    cooling_zone: Optional[str] = None
+    remarks: Optional[str] = None
 
 
 class DeviceTypeCreate(BaseModel):

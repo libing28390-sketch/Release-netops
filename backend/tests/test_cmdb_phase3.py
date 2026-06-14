@@ -1,7 +1,7 @@
 import uuid
 import pytest
 from database import get_db_connection
-from services.ipam_service import get_subnets_tree
+from services.ipam_service import get_subnets_tree, rebuild_prefixes_hierarchy
 
 def test_cmdb_phase3_tables_and_columns(isolated_db):
     conn = get_db_connection()
@@ -115,6 +115,9 @@ def test_ipam_prefix_parent_child_hierarchy(isolated_db):
         conn.commit()
     finally:
         conn.close()
+
+    # Rebuild hierarchy since we manually inserted raw prefix records bypassing create_subnet
+    rebuild_prefixes_hierarchy()
 
     # Get tree
     tree = get_subnets_tree()

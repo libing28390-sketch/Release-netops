@@ -200,39 +200,95 @@ def _init_db_logic(conn):
     ''')
 
     # Create racks table if not exists
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS racks (
-        id TEXT PRIMARY KEY,
-        site_id TEXT,
-        rack_code TEXT DEFAULT '',
-        rack_name TEXT DEFAULT '',
-        name TEXT DEFAULT '',
-        datacenter TEXT DEFAULT '',
-        room TEXT DEFAULT '',
-        row TEXT DEFAULT '',
-        total_u INTEGER DEFAULT 42,
-        available_u INTEGER DEFAULT 42,
-        description TEXT DEFAULT '',
-        status TEXT DEFAULT 'active',
-        created_at TEXT,
-        updated_at TEXT,
-        FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE CASCADE,
-        UNIQUE (site_id, rack_code)
-    )
-    ''')
-    ensure_column('racks', 'site_id', "TEXT")
+    if _USE_PG:
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS racks (
+            id UUID PRIMARY KEY,
+            site_id UUID NOT NULL,
+            rack_code VARCHAR(50) NOT NULL UNIQUE,
+            rack_name VARCHAR(100) NOT NULL,
+            name VARCHAR(100) DEFAULT '',
+            datacenter VARCHAR(100) DEFAULT '',
+            room VARCHAR(100) DEFAULT '',
+            row VARCHAR(50) DEFAULT '',
+            room_name VARCHAR(100),
+            row_name VARCHAR(50),
+            total_u INTEGER NOT NULL DEFAULT 42,
+            used_u INTEGER NOT NULL DEFAULT 0,
+            available_u INTEGER NOT NULL DEFAULT 42,
+            power_capacity_w INTEGER DEFAULT 5000,
+            power_capacity_watts INTEGER DEFAULT 0,
+            current_power_w INTEGER DEFAULT 0,
+            power_utilization DECIMAL(5,2) DEFAULT 0,
+            max_weight_kg INTEGER,
+            current_weight_kg INTEGER DEFAULT 0,
+            cooling_zone VARCHAR(50),
+            status VARCHAR(20) DEFAULT 'active',
+            remarks TEXT,
+            description TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE CASCADE,
+            UNIQUE (site_id, rack_code)
+        )
+        ''')
+    else:
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS racks (
+            id TEXT PRIMARY KEY,
+            site_id TEXT NOT NULL,
+            rack_code TEXT NOT NULL UNIQUE,
+            rack_name TEXT NOT NULL,
+            name TEXT DEFAULT '',
+            datacenter TEXT DEFAULT '',
+            room TEXT DEFAULT '',
+            row TEXT DEFAULT '',
+            room_name TEXT,
+            row_name TEXT,
+            total_u INTEGER NOT NULL DEFAULT 42,
+            used_u INTEGER NOT NULL DEFAULT 0,
+            available_u INTEGER NOT NULL DEFAULT 42,
+            power_capacity_w INTEGER DEFAULT 5000,
+            power_capacity_watts INTEGER DEFAULT 0,
+            current_power_w INTEGER DEFAULT 0,
+            power_utilization REAL DEFAULT 0,
+            max_weight_kg INTEGER,
+            current_weight_kg INTEGER DEFAULT 0,
+            cooling_zone TEXT,
+            status TEXT DEFAULT 'active',
+            remarks TEXT,
+            description TEXT DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE CASCADE,
+            UNIQUE (site_id, rack_code)
+        )
+        ''')
+    ensure_column('racks', 'site_id', "UUID NOT NULL" if _USE_PG else "TEXT NOT NULL DEFAULT ''")
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_racks_site_id ON racks(site_id)')
-    ensure_column('racks', 'rack_code', "TEXT DEFAULT ''")
-    ensure_column('racks', 'rack_name', "TEXT DEFAULT ''")
-    ensure_column('racks', 'name', "TEXT DEFAULT ''")
-    ensure_column('racks', 'datacenter', "TEXT DEFAULT ''")
-    ensure_column('racks', 'room', "TEXT DEFAULT ''")
-    ensure_column('racks', 'row', "TEXT DEFAULT ''")
-    ensure_column('racks', 'available_u', "INTEGER DEFAULT 42")
-    ensure_column('racks', 'description', "TEXT DEFAULT ''")
-    ensure_column('racks', 'status', "TEXT DEFAULT 'active'")
-    ensure_column('racks', 'created_at', "TEXT")
-    ensure_column('racks', 'updated_at', "TEXT")
+    ensure_column('racks', 'rack_code', "VARCHAR(50) NOT NULL UNIQUE" if _USE_PG else "TEXT NOT NULL UNIQUE DEFAULT ''")
+    ensure_column('racks', 'rack_name', "VARCHAR(100) NOT NULL" if _USE_PG else "TEXT NOT NULL DEFAULT ''")
+    ensure_column('racks', 'name', "VARCHAR(100) DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
+    ensure_column('racks', 'datacenter', "VARCHAR(100) DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
+    ensure_column('racks', 'room', "VARCHAR(100) DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
+    ensure_column('racks', 'row', "VARCHAR(50) DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
+    ensure_column('racks', 'room_name', "VARCHAR(100)" if _USE_PG else "TEXT")
+    ensure_column('racks', 'row_name', "VARCHAR(50)" if _USE_PG else "TEXT")
+    ensure_column('racks', 'total_u', "INTEGER NOT NULL DEFAULT 42" if _USE_PG else "INTEGER DEFAULT 42")
+    ensure_column('racks', 'used_u', "INTEGER NOT NULL DEFAULT 0" if _USE_PG else "INTEGER DEFAULT 0")
+    ensure_column('racks', 'available_u', "INTEGER NOT NULL DEFAULT 42" if _USE_PG else "INTEGER DEFAULT 42")
+    ensure_column('racks', 'power_capacity_w', "INTEGER DEFAULT 5000" if _USE_PG else "INTEGER DEFAULT 5000")
+    ensure_column('racks', 'power_capacity_watts', "INTEGER DEFAULT 0" if _USE_PG else "INTEGER DEFAULT 0")
+    ensure_column('racks', 'current_power_w', "INTEGER DEFAULT 0" if _USE_PG else "INTEGER DEFAULT 0")
+    ensure_column('racks', 'power_utilization', "DECIMAL(5,2) DEFAULT 0" if _USE_PG else "REAL DEFAULT 0")
+    ensure_column('racks', 'max_weight_kg', "INTEGER" if _USE_PG else "INTEGER")
+    ensure_column('racks', 'current_weight_kg', "INTEGER DEFAULT 0" if _USE_PG else "INTEGER DEFAULT 0")
+    ensure_column('racks', 'cooling_zone', "VARCHAR(50)" if _USE_PG else "TEXT")
+    ensure_column('racks', 'status', "VARCHAR(20) DEFAULT 'active'" if _USE_PG else "TEXT DEFAULT 'active'")
+    ensure_column('racks', 'remarks', "TEXT" if _USE_PG else "TEXT")
+    ensure_column('racks', 'description', "TEXT DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
+    ensure_column('racks', 'created_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if _USE_PG else "TEXT")
+    ensure_column('racks', 'updated_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if _USE_PG else "TEXT")
 
     # Create device_types table if not exists
     cursor.execute('''
@@ -792,6 +848,7 @@ def _init_db_logic(conn):
     CREATE TABLE IF NOT EXISTS route_cache (
         id          TEXT PRIMARY KEY,
         device_id   TEXT NOT NULL,
+        vrf_name    TEXT NOT NULL DEFAULT 'default',
         prefix      TEXT NOT NULL,
         mask        TEXT NOT NULL,
         next_hop    TEXT NOT NULL,
@@ -805,6 +862,7 @@ def _init_db_logic(conn):
 
     for col, dtype in [
         ('device_id', "TEXT DEFAULT ''"),
+        ('vrf_name', "TEXT DEFAULT 'default'"),
         ('prefix', "TEXT DEFAULT ''"),
         ('mask', "TEXT DEFAULT ''"),
         ('next_hop', "TEXT DEFAULT ''"),
@@ -944,6 +1002,84 @@ def _init_db_logic(conn):
         ('last_updated', "TEXT")
     ]:
         ensure_column('neighbor_table', col, dtype)
+
+    # Create routing_neighbors table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS routing_neighbors (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        protocol TEXT NOT NULL,
+        neighbor_id TEXT DEFAULT '',
+        neighbor_ip TEXT DEFAULT '',
+        local_ip TEXT DEFAULT '',
+        local_interface TEXT DEFAULT '',
+        vrf_name TEXT NOT NULL DEFAULT 'default',
+        state TEXT NOT NULL DEFAULT '',
+        uptime TEXT DEFAULT '',
+        local_as INTEGER DEFAULT 0,
+        remote_as INTEGER DEFAULT 0,
+        area_id TEXT DEFAULT '',
+        last_updated TEXT NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_routing_neigh_device ON routing_neighbors(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_routing_neigh_proto ON routing_neighbors(protocol)')
+
+    for col, dtype in [
+        ('device_id', "TEXT"),
+        ('protocol', "TEXT"),
+        ('neighbor_id', "TEXT DEFAULT ''"),
+        ('neighbor_ip', "TEXT DEFAULT ''"),
+        ('local_ip', "TEXT DEFAULT ''"),
+        ('local_interface', "TEXT DEFAULT ''"),
+        ('vrf_name', "TEXT DEFAULT 'default'"),
+        ('state', "TEXT DEFAULT ''"),
+        ('uptime', "TEXT DEFAULT ''"),
+        ('local_as', "INTEGER DEFAULT 0"),
+        ('remote_as', "INTEGER DEFAULT 0"),
+        ('area_id', "TEXT DEFAULT ''"),
+        ('last_updated', "TEXT")
+    ]:
+        ensure_column('routing_neighbors', col, dtype)
+
+    # Create bgp_route_table table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS bgp_route_table (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        vrf_name TEXT NOT NULL DEFAULT 'default',
+        prefix TEXT DEFAULT '',
+        next_hop TEXT DEFAULT '',
+        metric INTEGER DEFAULT 0,
+        loc_pref INTEGER DEFAULT 100,
+        weight INTEGER DEFAULT 0,
+        as_path TEXT DEFAULT '',
+        local_as INTEGER DEFAULT 0,
+        is_best INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 0,
+        last_updated TEXT NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_bgp_route_device ON bgp_route_table(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_bgp_route_prefix ON bgp_route_table(prefix)')
+
+    for col, dtype in [
+        ('device_id', "TEXT"),
+        ('vrf_name', "TEXT DEFAULT 'default'"),
+        ('prefix', "TEXT DEFAULT ''"),
+        ('next_hop', "TEXT DEFAULT ''"),
+        ('metric', "INTEGER DEFAULT 0"),
+        ('loc_pref', "INTEGER DEFAULT 100"),
+        ('weight', "INTEGER DEFAULT 0"),
+        ('as_path', "TEXT DEFAULT ''"),
+        ('local_as', "INTEGER DEFAULT 0"),
+        ('is_best', "INTEGER DEFAULT 0"),
+        ('is_active', "INTEGER DEFAULT 0"),
+        ('last_updated', "TEXT")
+    ]:
+        ensure_column('bgp_route_table', col, dtype)
 
     # Create config_backups table
     cursor.execute('''

@@ -64,6 +64,8 @@ interface FieldDef {
   placeholder?: string;
   /** Hidden from the table list view */
   hideInTable?: boolean;
+  /** Hidden from the edit/create form */
+  hideInForm?: boolean;
   /** Shown as a masked presence flag in table (e.g. has_password) */
   secretFlag?: string;
 }
@@ -135,6 +137,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       { key: 'password', label: '密码', labelEn: 'Password', type: 'password', hideInTable: true, secretFlag: 'has_password' },
       { key: 'enable_password', label: 'Enable 密码', labelEn: 'Enable Password', type: 'password', hideInTable: true, secretFlag: 'has_enable_password' },
       { key: 'snmp_community', label: 'SNMP Community', labelEn: 'SNMP Community', type: 'password', hideInTable: true, secretFlag: 'has_snmp_community' },
+      { key: 'devices', label: '关联设备', labelEn: 'Associated Devices', hideInForm: true },
     ],
     sites: [
       { key: 'site_code', label: '站点编码', labelEn: 'Site Code', required: true },
@@ -197,6 +200,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const openCreate = () => {
     const defaults: Record<string, any> = {};
     fieldDefs[tab].forEach(f => {
+      if (f.hideInForm) return;
       if (f.type === 'select' && f.options?.length) defaults[f.key] = f.options[0].value;
       else if (f.key === 'timezone') defaults[f.key] = 'Asia/Shanghai';
       else defaults[f.key] = '';
@@ -210,6 +214,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const openEdit = (row: any) => {
     const f: Record<string, any> = {};
     fieldDefs[tab].forEach(fd => {
+      if (fd.hideInForm) return;
       if (fd.secretFlag) f[fd.key] = ''; // never prefill secrets
       else f[fd.key] = row[fd.key] ?? '';
     });
@@ -223,7 +228,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
 
   const submit = async () => {
     setError('');
-    const defs = fieldDefs[tab];
+    const defs = fieldDefs[tab].filter(fd => !fd.hideInForm);
     // basic required validation
     for (const fd of defs) {
       if (fd.required && (form[fd.key] === '' || form[fd.key] == null)) {
@@ -293,21 +298,63 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     }
   };
 
+  const getCredTypeLabel = (type: string) => {
+    if (zh) {
+      switch (type) {
+        case 'ssh_password': return 'SSH 密码';
+        case 'ssh_key': return 'SSH 私钥';
+        case 'snmpv2': return 'SNMP v2';
+        case 'snmpv3': return 'SNMP v3';
+        case 'api_token': return 'API 令牌';
+        default: return type;
+      }
+    } else {
+      switch (type) {
+        case 'ssh_password': return 'SSH Password';
+        case 'ssh_key': return 'SSH Key';
+        case 'snmpv2': return 'SNMP v2';
+        case 'snmpv3': return 'SNMP v3';
+        case 'api_token': return 'API Token';
+        default: return type;
+      }
+    }
+  };
+
   const getCredTypeStyle = (type: string) => {
     switch (type) {
       case 'ssh_password':
+        return 'bg-indigo-50/70 text-indigo-600 border-indigo-100/60 dark:bg-indigo-950/20 dark:text-indigo-400 dark:border-indigo-900/30';
       case 'ssh_key':
-        return 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-900/30';
+        return 'bg-cyan-50/70 text-cyan-700 border-cyan-100/60 dark:bg-cyan-950/20 dark:text-cyan-400 dark:border-cyan-900/30';
       case 'snmpv2':
+        return 'bg-violet-50/70 text-violet-600 border-violet-100/60 dark:bg-violet-950/20 dark:text-violet-400 dark:border-violet-900/30';
       case 'snmpv3':
-        return 'bg-violet-50 text-violet-700 border-violet-100 dark:bg-violet-950/20 dark:text-violet-400 dark:border-violet-900/30';
+        return 'bg-purple-50/70 text-purple-600 border-purple-100/60 dark:bg-purple-950/20 dark:text-purple-400 dark:border-purple-900/30';
       case 'api_token':
       default:
-        return 'bg-amber-50 text-amber-700 border-amber-100 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-900/30';
+        return 'bg-amber-50/70 text-amber-700 border-amber-100/60 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-900/30';
     }
   };
 
   const renderCell = (row: any, fd: FieldDef) => {
+    if (fd.key === 'devices') {
+      const devList = row.devices || [];
+      if (devList.length === 0) return <span className="text-black/30 dark:text-white/30">—</span>;
+      return (
+        <div className="flex flex-wrap gap-1">
+          {devList.map((d: any) => (
+            <span
+              key={d.id}
+              onClick={() => navigate(`/assets/devices`)}
+              className="cursor-pointer inline-flex items-center gap-1 text-slate-700 dark:text-slate-350 bg-slate-100 dark:bg-slate-800 border border-slate-200/50 dark:border-slate-700 px-2 py-0.5 rounded text-xs font-medium hover:bg-slate-200 dark:hover:bg-slate-750 transition-colors"
+            >
+              <Server size={11} className="text-slate-400" />
+              {d.hostname}
+            </span>
+          ))}
+        </div>
+      );
+    }
     if (fd.secretFlag) {
       return row[fd.secretFlag] ? (
         <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/30 px-2 py-0.5 rounded text-xs font-medium">
@@ -342,8 +389,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       const val = row[fd.key];
       if (!val) return <span className="text-black/30 dark:text-white/30">—</span>;
       return (
-        <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-mono font-semibold ${getCredTypeStyle(val)}`}>
-          {val}
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full border text-[11px] font-medium tracking-wide shadow-sm/5 ${getCredTypeStyle(val)}`}>
+          {getCredTypeLabel(val)}
         </span>
       );
     }
@@ -528,7 +575,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
             </div>
             
             <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
-              {fieldDefs[tab].map(fd => {
+              {fieldDefs[tab].filter(fd => !fd.hideInForm).map(fd => {
                 const opts = fd.key === 'site_id' ? siteOptions : fd.options;
                 return (
                   <div key={fd.key}>

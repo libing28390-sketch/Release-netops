@@ -215,7 +215,25 @@ def parse_cpu_utilization(output: str) -> int:
 
 import ipaddress
 
-def match_route_offline(device_id: str, target_ip: str) -> list[dict]:
+def get_device_vrf_for_ip(conn, device_id: str, ip: str) -> str:
+    try:
+        row = conn.execute(
+            "SELECT vrf_id FROM ip_addresses WHERE device_id = ? AND address = ?",
+            (device_id, ip.strip())
+        ).fetchone()
+        if row and row['vrf_id']:
+            vrf_row = conn.execute(
+                "SELECT vrf_name FROM vrfs WHERE id = ?",
+                (row['vrf_id'],)
+            ).fetchone()
+            if vrf_row:
+                return vrf_row['vrf_name']
+    except Exception:
+        pass
+    return 'default'
+
+
+def match_route_offline(device_id: str, target_ip: str, vrf_name: str = 'default') -> list[dict]:
     """
     在本地 route_table 数据库中执行最长前缀匹配 (LPM)，寻找匹配的路由条目。
     如果有多条等价路由 (ECMP)，则全部返回。
@@ -225,38 +243,46 @@ def match_route_offline(device_id: str, target_ip: str) -> list[dict]:
     except Exception:
         return []
 
-    conn = get_db_connection()
-    try:
-        rows = conn.execute(
-            "SELECT destination, next_hop, protocol, outgoing_interface, metric "
-            "FROM route_table WHERE device_id = ?",
-            (device_id,)
-        ).fetchall()
-    finally:
-        conn.close()
-
-    matched_routes = []
-    for row in rows:
-        dest = row['destination'].strip()
+    def lookup_in_vrf(vrf: str) -> list[dict]:
+        conn = get_db_connection()
         try:
-            net = ipaddress.ip_network(dest, strict=False)
-            if ip_obj in net:
-                prefix, mask_len_str = dest.split('/')
-                mask_len = int(mask_len_str)
-                mask_int = (0xffffffff >> (32 - mask_len)) << (32 - mask_len)
-                mask = f"{(mask_int >> 24) & 0xff}.{(mask_int >> 16) & 0xff}.{(mask_int >> 8) & 0xff}.{mask_int & 0xff}"
-                
-                matched_routes.append({
-                    'prefix': prefix,
-                    'mask': mask,
-                    'prefix_len': net.prefixlen,
-                    'next_hop': row['next_hop'],
-                    'protocol': row['protocol'],
-                    'interface': row['outgoing_interface'],
-                    'metric': row['metric']
-                })
-        except Exception:
-            continue
+            rows = conn.execute(
+                "SELECT destination, next_hop, protocol, outgoing_interface, metric, vrf_name "
+                "FROM route_table WHERE device_id = ? AND vrf_name = ?",
+                (device_id, vrf)
+            ).fetchall()
+        finally:
+            conn.close()
+
+        matched = []
+        for row in rows:
+            dest = row['destination'].strip()
+            try:
+                net = ipaddress.ip_network(dest, strict=False)
+                if ip_obj in net:
+                    prefix, mask_len_str = dest.split('/')
+                    mask_len = int(mask_len_str)
+                    mask_int = (0xffffffff >> (32 - mask_len)) << (32 - mask_len)
+                    mask = f"{(mask_int >> 24) & 0xff}.{(mask_int >> 16) & 0xff}.{(mask_int >> 8) & 0xff}.{mask_int & 0xff}"
+                    
+                    matched.append({
+                        'prefix': prefix,
+                        'mask': mask,
+                        'prefix_len': net.prefixlen,
+                        'next_hop': row['next_hop'],
+                        'protocol': row['protocol'],
+                        'interface': row['outgoing_interface'],
+                        'metric': row['metric'],
+                        'vrf_name': row['vrf_name']
+                    })
+            except Exception:
+                continue
+        return matched
+
+    matched_routes = lookup_in_vrf(vrf_name)
+    if not matched_routes and vrf_name != 'default':
+        # Fallback/leak check
+        matched_routes = lookup_in_vrf('default')
 
     if not matched_routes:
         return []
@@ -317,7 +343,7 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 merged.append(hops_b[i])
         return merged
 
-    async def trace_recursive(current_device_id: str, hop_count: int, visited_ids: set) -> tuple[list[dict], str]:
+    async def trace_recursive(current_device_id: str, hop_count: int, visited_ids: set, current_vrf: str = 'default') -> tuple[list[dict], str]:
         nonlocal last_log
         
         if hop_count > 15:
@@ -341,9 +367,12 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
         platform_lower = platform.lower()
 
         # Try offline route matching first
-        offline_matches = match_route_offline(current_device_id, target_ip)
+        offline_matches = match_route_offline(current_device_id, target_ip, current_vrf)
         
         if offline_matches:
+            matched_vrf = offline_matches[0].get('vrf_name', 'default')
+            if current_vrf != matched_vrf:
+                diag_context["vrf_logs"] += f"[{dev_label}] Route matched in vrf {matched_vrf} (leaked from {current_vrf})\n"
             unique_paths = []
             route_output_lines = [f"[路由缓存命中] 最长前缀匹配 (LPM) 结果:"]
             route_source = "Static/Connected"
@@ -515,7 +544,10 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                             "detail": "检测到路由环路 (Routing loop detected)"
                         }], "interrupted"))
                     else:
-                        sub_hops, sub_conclusion = await trace_recursive(neighbor_dev['id'], hop_count + 1, visited_ids)
+                        next_vrf = get_device_vrf_for_ip(conn_db, neighbor_dev['id'], nh)
+                        if next_vrf != current_vrf:
+                            diag_context["vrf_logs"] += f"[{dev_label}] (Offline) Path crossed VRF boundary from {current_vrf} to {next_vrf} on neighbor {neighbor_dev.get('hostname')}\n"
+                        sub_hops, sub_conclusion = await trace_recursive(neighbor_dev['id'], hop_count + 1, visited_ids, next_vrf)
                         branches_results.append(([current_hop] + sub_hops, sub_conclusion))
             finally:
                 conn_db.close()
@@ -540,6 +572,10 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 return cached
 
             if client is None:
+                port = int(dev.get('port') or 22)
+                from drivers.ssh_compat import is_ssh_port_open
+                if not is_ssh_port_open(device_ip, port):
+                    raise DeviceConnectionError(f"SSH port {port} is closed/unreachable")
                 try:
                     client = await asyncio.to_thread(ConnectHandler, **conn_params)
                     if conn_params.get('secret'):
@@ -575,13 +611,13 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 except Exception as e:
                     diag_context["vrf_logs"] += f"[{dev_label}]# {cmd_vrf}\nError: {e}\n"
 
-            if vrf:
+            if current_vrf and current_vrf != 'default':
                 if platform_lower in ('huawei_vrp', 'h3c_comware'):
-                    cmd_route = f"display ip routing-table vpn-instance {vrf} {target_ip}"
+                    cmd_route = f"display ip routing-table vpn-instance {current_vrf} {target_ip}"
                 elif platform_lower in ('juniper_junos',):
-                    cmd_route = f"show route table {vrf}.inet.0 {target_ip}"
+                    cmd_route = f"show route table {current_vrf}.inet.0 {target_ip}"
                 else:
-                    cmd_route = f"show ip route vrf {vrf} {target_ip}"
+                    cmd_route = f"show ip route vrf {current_vrf} {target_ip}"
             else:
                 if platform_lower in ('huawei_vrp', 'h3c_comware'):
                     cmd_route = f"display ip routing-table {target_ip}"
@@ -619,13 +655,13 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 route_source = "EIGRP"
             diag_context["route_sources"].append({"device": dev_label, "source": route_source})
 
-            if vrf:
+            if current_vrf and current_vrf != 'default':
                 if platform_lower in ('huawei_vrp', 'h3c_comware'):
-                    cmd_cef = f"display fib vpn-instance {vrf} {target_ip}"
+                    cmd_cef = f"display fib vpn-instance {current_vrf} {target_ip}"
                 elif platform_lower in ('juniper_junos',):
-                    cmd_cef = f"show route forwarding-table destination {target_ip} table {vrf}"
+                    cmd_cef = f"show route forwarding-table destination {target_ip} table {current_vrf}"
                 else:
-                    cmd_cef = f"show ip cef vrf {vrf} {target_ip}"
+                    cmd_cef = f"show ip cef vrf {current_vrf} {target_ip}"
             else:
                 if platform_lower in ('huawei_vrp', 'h3c_comware'):
                     cmd_cef = f"display fib {target_ip}"
@@ -645,8 +681,8 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 diag_context["cef_logs"] += f"Error: {e}\n"
 
             if route_source == "BGP":
-                if vrf:
-                    cmd_bgp = f"show ip bgp vrf {vrf} {target_ip}"
+                if current_vrf and current_vrf != 'default':
+                    cmd_bgp = f"show ip bgp vrf {current_vrf} {target_ip}"
                 else:
                     cmd_bgp = f"show ip bgp {target_ip}"
                 diag_context["bgp_logs"] += f"[{dev_label}]# {cmd_bgp}\n"
@@ -789,12 +825,13 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                         "detail": "到达目标 (环回口/本地接口)"
                     }], "reachable"
 
+                use_vrf_arp = current_vrf if (current_vrf and current_vrf != 'default') else None
                 if platform_lower in ('huawei_vrp', 'h3c_comware'):
-                    cmd_arp = f"display arp vpn-instance {vrf} | include {target_ip}" if vrf else f"display arp | include {target_ip}"
+                    cmd_arp = f"display arp vpn-instance {use_vrf_arp} | include {target_ip}" if use_vrf_arp else f"display arp | include {target_ip}"
                 elif platform_lower in ('juniper_junos',):
-                    cmd_arp = f"show arp table {vrf} no-resolve | match {target_ip}" if vrf else f"show arp no-resolve | match {target_ip}"
+                    cmd_arp = f"show arp table {use_vrf_arp} no-resolve | match {target_ip}" if use_vrf_arp else f"show arp no-resolve | match {target_ip}"
                 else:
-                    cmd_arp = f"show ip arp vrf {vrf} {target_ip}" if vrf else f"show ip arp {target_ip}"
+                    cmd_arp = f"show ip arp vrf {use_vrf_arp} {target_ip}" if use_vrf_arp else f"show ip arp {target_ip}"
                 
                 last_log += f"[{dev_label}]# {cmd_arp}\n"
                 try:
@@ -906,7 +943,10 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                         "detail": "检测到路由环路 (Routing loop detected)"
                     }], "interrupted"))
                 else:
-                    sub_hops, sub_conclusion = await trace_recursive(neighbor_dev['id'], hop_count + 1, visited_ids)
+                    next_vrf = get_device_vrf_for_ip(conn, neighbor_dev['id'], nh)
+                    if next_vrf != current_vrf:
+                        diag_context["vrf_logs"] += f"[{dev_label}] (Online) Path crossed VRF boundary from {current_vrf} to {next_vrf} on neighbor {neighbor_dev.get('hostname')}\n"
+                    sub_hops, sub_conclusion = await trace_recursive(neighbor_dev['id'], hop_count + 1, visited_ids, next_vrf)
                     branches_results.append(([current_hop] + sub_hops, sub_conclusion))
 
             if not branches_results:
@@ -937,7 +977,7 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                     pass
 
     visited_ids = set()
-    hops, conclusion = await trace_recursive(start_device_id, 1, visited_ids)
+    hops, conclusion = await trace_recursive(start_device_id, 1, visited_ids, vrf or 'default')
     return hops, conclusion, last_log, diag_context
 
 

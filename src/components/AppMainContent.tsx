@@ -609,7 +609,11 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'cmdb' && (
         <Suspense fallback={lazyPanelFallback}>
-          <CmdbManagementTab language={language} cmdbPage={cmdbPage} />
+          {cmdbPage === 'racks' ? (
+            <RackManagementTab language={language} t={t} />
+          ) : (
+            <CmdbManagementTab language={language} cmdbPage={cmdbPage} />
+          )}
         </Suspense>
       )}
 

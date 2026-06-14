@@ -180,6 +180,8 @@ export function getRouteContext(pathname: string): RouteContext {
     activeTab = 'cmdb';
     if (second === 'credentials') {
       cmdbPage = 'credentials';
+    } else if (second === 'racks') {
+      cmdbPage = 'racks';
     } else if (second === 'sites') {
       cmdbPage = 'sites';
     } else if (second === 'vrfs') {

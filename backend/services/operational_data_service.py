@@ -19,6 +19,7 @@ SUPPORTED_CATEGORIES = (
     'bgp',
     'ospf',
     'bfd',
+    'bgp_routes',
 )
 
 
@@ -43,7 +44,7 @@ NTC_PLATFORM_MAP = {
     'arista_eos': 'arista_eos',
     'huawei_vrp': 'huawei_vrp',
     'h3c_comware': 'hp_comware',
-    # ntc-templates 当前没有 ruijie_os 平台索引，临时回退到 Cisco 语法族做有限复用。
+    # ntc-templates 当前没有 ruijie_os 平台索引，临时回退 to Cisco 语法族做有限复用。
     'ruijie_rgos': 'cisco_ios',
 }
 
@@ -53,7 +54,7 @@ NTC_PLATFORM_MAP = {
 # access/switch: 不采集 bgp、ospf、bfd（纯接入层通常无路由协议邻居）
 ROLE_EXCLUDED_CATEGORIES: dict[str, set[str]] = {
     'router': {'mac_table'},
-    'access': {'bgp', 'ospf', 'bfd'},
+    'access': {'bgp', 'ospf', 'bfd', 'bgp_routes'},
 }
 
 COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
@@ -66,6 +67,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['show ip bgp summary'],
         'ospf': ['show ip ospf neighbor'],
         'bfd': ['show bfd neighbors', 'show bfd neighbors details'],
+        'bgp_routes': ['show ip bgp'],
     },
     'cisco_nxos': {
         'interfaces': ['show ip interface brief'],
@@ -76,6 +78,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['show bgp ipv4 unicast summary'],
         'ospf': ['show ip ospf neighbors'],
         'bfd': ['show bfd neighbors'],
+        'bgp_routes': ['show bgp ipv4 unicast'],
     },
     'juniper_junos': {
         'interfaces': ['show interfaces terse'],
@@ -86,6 +89,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['show bgp summary'],
         'ospf': ['show ospf neighbor'],
         'bfd': ['show bfd session'],
+        'bgp_routes': ['show route protocol bgp'],
     },
     'arista_eos': {
         'interfaces': ['show ip interface brief'],
@@ -96,6 +100,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['show ip bgp summary'],
         'ospf': ['show ip ospf neighbor'],
         'bfd': ['show bfd neighbors'],
+        'bgp_routes': ['show ip bgp'],
     },
     'huawei_vrp': {
         'interfaces': ['display interface brief'],
@@ -106,6 +111,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['display bgp peer'],
         'ospf': ['display ospf peer'],
         'bfd': ['display bfd session all'],
+        'bgp_routes': ['display bgp routing-table'],
     },
     'h3c_comware': {
         'interfaces': ['display interface brief'],
@@ -116,6 +122,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['display bgp peer'],
         'ospf': ['display ospf peer'],
         'bfd': ['display bfd session all'],
+        'bgp_routes': ['display bgp routing-table'],
     },
     'ruijie_rgos': {
         'interfaces': ['show ip interface brief'],
@@ -126,6 +133,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['show ip bgp summary'],
         'ospf': ['show ip ospf neighbor'],
         'bfd': ['show bfd neighbors', 'show bfd neighbors details'],
+        'bgp_routes': ['show ip bgp'],
     },
 }
 
@@ -252,6 +260,326 @@ def _parse_bfd_raw(output: str) -> list[dict[str, Any]]:
     return records
 
 
+def _parse_bgp_raw(output: str, platform: str) -> list[dict[str, Any]]:
+    import ipaddress
+    records: list[dict[str, Any]] = []
+    
+    local_as = 0
+    local_as_match = re.search(r'local AS(?: number)?\s*(?::)?\s*(\d+)', output, re.IGNORECASE)
+    if local_as_match:
+        try:
+            local_as = int(local_as_match.group(1))
+        except ValueError:
+            pass
+
+    for raw_line in str(output or '').splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+            
+        tokens = line.split()
+        if not tokens or len(tokens) < 3:
+            continue
+            
+        neigh_ip = tokens[0]
+        try:
+            ipaddress.ip_address(neigh_ip)
+        except ValueError:
+            continue
+            
+        remote_as = ''
+        if tokens[1].isdigit() and tokens[2].isdigit() and tokens[1] == '4':
+            remote_as = tokens[2]
+        elif tokens[1].isdigit():
+            remote_as = tokens[1]
+            
+        up_down = ''
+        state_pfxrcd = ''
+        
+        if len(tokens) >= 8:
+            last_token = tokens[-1]
+            sec_last = tokens[-2]
+            third_last = tokens[-3]
+            
+            bgp_states = {'established', 'idle', 'active', 'connect', 'opensent', 'openconfirm'}
+            if sec_last.lower() in bgp_states:
+                state_pfxrcd = last_token if last_token.isdigit() else sec_last
+                up_down = third_last
+            elif last_token.lower() in bgp_states or not last_token.isdigit():
+                state_pfxrcd = last_token
+                up_down = sec_last
+            else:
+                state_pfxrcd = last_token
+                up_down = sec_last
+        else:
+            state_pfxrcd = tokens[-1]
+            up_down = tokens[-2] if len(tokens) >= 2 else ''
+            
+        records.append({
+            'bgp_neigh': neigh_ip,
+            'neigh_as': remote_as,
+            'state_pfxrcd': state_pfxrcd,
+            'up_down': up_down,
+            'local_as': local_as
+        })
+        
+    return records
+
+
+def _parse_ospf_raw(output: str, platform: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    tabular_pattern = re.compile(r'^\s*([0-9.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+([0-9.]+)\s+(\S+)\s*$')
+    
+    current_area = '0.0.0.0'
+    current_interface = ''
+    neigh_id = None
+    neigh_ip = None
+    
+    for raw_line in str(output or '').splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+            
+        tab_match = tabular_pattern.match(line)
+        if tab_match:
+            records.append({
+                'neighbor_id': tab_match.group(1),
+                'state': tab_match.group(3),
+                'address': tab_match.group(5),
+                'interface': tab_match.group(6),
+                'area_id': current_area
+            })
+            continue
+            
+        area_match = re.search(r'Area\s+([0-9.]+)\s+interface\s+([^\s\'(]+)', line, re.IGNORECASE)
+        if area_match:
+             current_area = area_match.group(1)
+             current_interface = area_match.group(2)
+             paren_match = re.search(r'interface\s+[0-9.]+\(([^)]+)\)', line, re.IGNORECASE)
+             if paren_match:
+                 current_interface = paren_match.group(1)
+             continue
+             
+        router_match = re.search(r'Router\s*ID:?\s*([0-9.]+)\s+Address:?\s*([0-9.]+)', line, re.IGNORECASE)
+        if router_match:
+            neigh_id = router_match.group(1)
+            neigh_ip = router_match.group(2)
+            continue
+            
+        state_match = re.search(r'State:?\s*([a-zA-Z]+)', line, re.IGNORECASE)
+        if state_match and neigh_id and neigh_ip:
+            records.append({
+                'neighbor_id': neigh_id,
+                'address': neigh_ip,
+                'state': state_match.group(1),
+                'interface': current_interface,
+                'area_id': current_area
+            })
+            neigh_id = None
+            neigh_ip = None
+            
+    return records
+
+
+def _parse_bgp_routes_raw(output: str, platform: str) -> list[dict[str, Any]]:
+    """Parse BGP RIB output from Cisco IOS / NX-OS / Huawei / Juniper.
+
+    Real-world Cisco IOS `show ip bgp` output looks like:
+
+        BGP table version is 10, local router ID is 9.9.9.9
+        ...
+             Network          Next Hop            Metric LocPrf Weight Path
+         r>i  6.6.6.6/32       6.6.6.6                  0    100      0 i
+         *>   9.9.9.9/32       0.0.0.0                  0         32768 i
+         * i                   6.6.6.6                  0    100      0 i
+
+    Key challenges:
+      - Status flags occupy the first 1-4 chars and may include
+        r (RIB-failure), s (suppressed), d (damped), h (history),
+        * (valid), > (best), i (internal).
+      - Continuation lines have NO network column – they inherit the
+        previous prefix.
+      - Column widths are determined by the header line.
+    """
+    import ipaddress
+    records: list[dict[str, Any]] = []
+    lines = str(output or '').splitlines()
+
+    current_prefix = ''
+
+    # ── Juniper-specific handling ──────────────────────────────────
+    if platform.startswith('juniper'):
+        prefix_pattern = re.compile(
+            r'\b(?:[0-9a-fA-F]{1,4}:){1,7}:?[0-9a-fA-F]{0,4}/\d{1,3}\b'
+            r'|\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b'
+        )
+        current_loc_pref = 100
+        current_as_path = ''
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+            prefix_match = prefix_pattern.search(line)
+            if prefix_match:
+                current_prefix = prefix_match.group(0)
+                current_loc_pref = 100
+                current_as_path = ''
+            loc_pref_m = re.search(r'localpref\s*(\d+)', line, re.IGNORECASE)
+            if loc_pref_m:
+                current_loc_pref = int(loc_pref_m.group(1))
+            asp_m = re.search(r'AS\s*path:\s*([^,]+)', line, re.IGNORECASE)
+            if asp_m:
+                current_as_path = asp_m.group(1).strip()
+            to_match = re.search(r'>?\s*to\s+([0-9a-fA-F.:]+)', line)
+            if to_match and current_prefix:
+                next_hop = to_match.group(1)
+                is_best = '>' in line or '*' in line
+                records.append({
+                    'prefix': current_prefix,
+                    'next_hop': next_hop,
+                    'metric': 0,
+                    'loc_pref': current_loc_pref,
+                    'weight': 0,
+                    'as_path': current_as_path,
+                    'is_best': 1 if is_best else 0,
+                    'is_active': 1 if is_best else 0,
+                    'status': 'best' if is_best else 'valid',
+                })
+        return records
+
+    # ── Cisco / Huawei / Arista style handling ─────────────────────
+    # Step 1: Detect column positions from the header line.
+    #   "     Network          Next Hop            Metric LocPrf Weight Path"
+    # If the header is not found, fall back to reasonable defaults.
+    col_network = 0
+    col_nexthop = 20
+    col_metric = 40
+    col_locprf = 47
+    col_weight = 54
+    col_path = 61
+
+    for raw_line in lines:
+        if 'Network' in raw_line and 'Next Hop' in raw_line:
+            col_network = raw_line.index('Network')
+            col_nexthop = raw_line.index('Next Hop')
+            m_col = raw_line.find('Metric')
+            col_metric = m_col if m_col != -1 else col_nexthop + 20
+            lp_col = raw_line.find('LocPrf')
+            col_locprf = lp_col if lp_col != -1 else col_metric + 7
+            w_col = raw_line.find('Weight')
+            col_weight = w_col if w_col != -1 else col_locprf + 7
+            p_col = raw_line.find('Path')
+            col_path = p_col if p_col != -1 else col_weight + 7
+            break
+
+    # The status-flags field spans from column 0 up to (but not including) the
+    # Network column.  Valid flag characters: * > s d h r i (space).
+    flag_chars = set('*>sdhrif ')
+    past_header = False
+
+    for raw_line in lines:
+        # Wait until we pass the header line
+        if not past_header:
+            if 'Network' in raw_line and 'Next Hop' in raw_line:
+                past_header = True
+            continue
+
+        # Skip blank lines
+        if not raw_line.strip():
+            continue
+
+        # ── Parse status flags (everything before col_network) ──
+        flag_zone = raw_line[:col_network] if len(raw_line) > col_network else raw_line
+        # Validate that it looks like a status-flag zone (not a random text line)
+        if flag_zone.strip() and not all(ch in flag_chars for ch in flag_zone):
+            continue
+
+        status_flags = flag_zone.rstrip()
+        is_best = '>' in status_flags
+        is_valid = '*' in status_flags or '>' in status_flags
+
+        # ── Parse Network (prefix) ──
+        if len(raw_line) > col_network:
+            network_zone = raw_line[col_network:col_nexthop].strip() if len(raw_line) > col_nexthop else raw_line[col_network:].strip()
+            if network_zone and '/' in network_zone:
+                current_prefix = network_zone
+            elif network_zone:
+                # Could be a host route shown without mask (e.g. just an IP)
+                ip_m = re.match(r'^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$', network_zone)
+                if ip_m:
+                    current_prefix = network_zone + '/32'
+
+        if not current_prefix:
+            continue
+
+        # ── Parse Next Hop ──
+        nh = ''
+        if len(raw_line) > col_nexthop:
+            nh_zone = raw_line[col_nexthop:col_metric].strip() if len(raw_line) > col_metric else raw_line[col_nexthop:].strip()
+            # Try IPv4 first
+            nh_m = re.match(r'^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', nh_zone)
+            if nh_m:
+                nh = nh_m.group(1)
+            else:
+                # Try IPv6
+                nh_v6 = nh_zone.split()[0] if nh_zone.split() else ''
+                if ':' in nh_v6:
+                    nh = nh_v6
+
+        if not nh:
+            continue
+
+        try:
+            ipaddress.ip_address(nh)
+        except ValueError:
+            continue
+
+        # ── Parse Metric ──
+        metric = 0
+        if len(raw_line) > col_metric:
+            met_zone = raw_line[col_metric:col_locprf].strip() if len(raw_line) > col_locprf else raw_line[col_metric:].strip()
+            if met_zone and met_zone.isdigit():
+                metric = int(met_zone)
+
+        # ── Parse Local Preference ──
+        loc_pref = 0
+        if len(raw_line) > col_locprf:
+            lp_zone = raw_line[col_locprf:col_weight].strip() if len(raw_line) > col_weight else raw_line[col_locprf:].strip()
+            if lp_zone and lp_zone.isdigit():
+                loc_pref = int(lp_zone)
+
+        # ── Parse Weight ──
+        weight = 0
+        if len(raw_line) > col_weight:
+            w_zone = raw_line[col_weight:col_path].strip() if len(raw_line) > col_path else raw_line[col_weight:].strip()
+            if w_zone and w_zone.isdigit():
+                weight = int(w_zone)
+
+        # ── Parse AS Path ──
+        as_path = ''
+        if len(raw_line) > col_path:
+            as_path = raw_line[col_path:].strip()
+
+        # Build human-readable status string
+        status_str = status_flags.strip() or '*'
+        if not is_valid and not status_str:
+            status_str = '?'
+
+        records.append({
+            'prefix': current_prefix,
+            'next_hop': nh,
+            'metric': metric,
+            'loc_pref': loc_pref,
+            'weight': weight,
+            'as_path': as_path,
+            'is_best': 1 if is_best else 0,
+            'is_active': 1 if is_best else 0,
+            'status': status_str,
+        })
+
+    return records
+
+
 def _parse_command_output(platform: str, category: str, command: str, output: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     try:
@@ -265,6 +593,16 @@ def _parse_command_output(platform: str, category: str, command: str, output: st
     normalized_command = _normalize_command_for_template_match(command)
     if category == 'bfd' or ' bfd ' in f' {normalized_command} ':
         return _parse_bfd_raw(output)
+
+    # bgp_routes must be checked BEFORE generic bgp to avoid misrouting
+    if category == 'bgp_routes' or (' bgp ' in f' {normalized_command} ' and 'summary' not in normalized_command and 'peer' not in normalized_command):
+        return _parse_bgp_routes_raw(output, platform)
+
+    if category == 'bgp' or (' bgp ' in f' {normalized_command} ' and ('summary' in normalized_command or 'peer' in normalized_command)):
+        return _parse_bgp_raw(output, platform)
+
+    if category == 'ospf' or ' ospf ' in f' {normalized_command} ':
+        return _parse_ospf_raw(output, platform)
 
     return []
 

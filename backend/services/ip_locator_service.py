@@ -360,6 +360,12 @@ def _send_command(device_info: dict, command: str) -> str:
     if cached is not None:
         return cached
 
+    port = int(device_info.get('port') or 22)
+    from drivers.ssh_compat import is_ssh_port_open
+    if not is_ssh_port_open(device_ip, port):
+        logger.warning("SSH port %s is closed/unreachable for %s", port, device_ip)
+        return ""
+
     conn_params = _build_ssh_params(device_info)
     with ConnectHandler(**conn_params) as client:
         if conn_params.get('secret'):
@@ -1575,7 +1581,7 @@ def get_route_cache() -> dict[str, Any]:
         conn = get_db_connection()
         try:
             rows = conn.execute(
-                'SELECT rc.id, rc.device_id, rc.destination, rc.next_hop, rc.protocol, rc.outgoing_interface, rc.metric, rc.last_updated, d.hostname AS device_name '
+                'SELECT rc.id, rc.device_id, rc.vrf_name, rc.destination, rc.next_hop, rc.protocol, rc.outgoing_interface, rc.metric, rc.last_updated, d.hostname AS device_name '
                 'FROM route_table rc LEFT JOIN devices d ON rc.device_id = d.id '
                 'ORDER BY rc.device_id, rc.destination'
             ).fetchall()
@@ -1602,6 +1608,7 @@ def get_route_cache() -> dict[str, Any]:
             'id': row_dict.get('id'),
             'device_id': row_dict.get('device_id'),
             'device_name': row_dict.get('device_name'),
+            'vrf_name': row_dict.get('vrf_name') or 'default',
             'prefix': prefix,
             'mask': mask,
             'next_hop': row_dict.get('next_hop'),
@@ -1626,13 +1633,125 @@ def get_route_cache() -> dict[str, Any]:
         'device_stats': device_stats,
         'entries': entries,
         'table_name': 'route_table',
-        'columns': ['id', 'device_id', 'device_name', 'prefix', 'mask', 'next_hop', 'protocol', 'interface', 'metric', 'last_update'],
+        'columns': ['id', 'device_id', 'device_name', 'vrf_name', 'prefix', 'mask', 'next_hop', 'protocol', 'interface', 'metric', 'last_update'],
         'timestamp': _beijing_now_iso(),
     }
 
 
 async def get_route_cache_async() -> dict[str, Any]:
     return await asyncio.to_thread(get_route_cache)
+
+
+def get_routing_neighbors() -> dict[str, Any]:
+    """查询 routing_neighbors 表所有路由协议邻居条目，供前端展示。"""
+    try:
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                'SELECT rn.id, rn.device_id, rn.protocol, rn.neighbor_id, rn.neighbor_ip, rn.local_interface, rn.state, rn.uptime, rn.local_as, rn.remote_as, rn.area_id, rn.last_updated, d.hostname AS device_name '
+                'FROM routing_neighbors rn LEFT JOIN devices d ON rn.device_id = d.id '
+                'ORDER BY rn.device_id, rn.protocol, rn.neighbor_ip'
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        rows = []
+
+    entries = []
+    for row in rows:
+        row_dict = dict(row)
+        entries.append({
+            'id': row_dict.get('id'),
+            'device_id': row_dict.get('device_id'),
+            'device_name': row_dict.get('device_name'),
+            'protocol': row_dict.get('protocol'),
+            'neighbor_id': row_dict.get('neighbor_id'),
+            'neighbor_ip': row_dict.get('neighbor_ip'),
+            'local_interface': row_dict.get('local_interface'),
+            'state': row_dict.get('state'),
+            'uptime': row_dict.get('uptime'),
+            'local_as': row_dict.get('local_as'),
+            'remote_as': row_dict.get('remote_as'),
+            'area_id': row_dict.get('area_id'),
+            'last_update': row_dict.get('last_updated')
+        })
+
+    proto_stats = {}
+    for e in entries:
+        p = e.get('protocol', 'unknown')
+        proto_stats[p] = proto_stats.get(p, 0) + 1
+    device_stats = {}
+    for e in entries:
+        dn = e.get('device_name') or e.get('device_id', 'unknown')
+        device_stats[dn] = device_stats.get(dn, 0) + 1
+
+    return {
+        'total': len(entries),
+        'protocol_stats': proto_stats,
+        'device_stats': device_stats,
+        'entries': entries,
+        'table_name': 'routing_neighbors',
+        'columns': ['id', 'device_id', 'device_name', 'protocol', 'neighbor_id', 'neighbor_ip', 'local_interface', 'state', 'uptime', 'remote_as', 'area_id', 'last_update'],
+        'timestamp': _beijing_now_iso(),
+    }
+
+
+def get_bgp_routes() -> dict[str, Any]:
+    """查询 bgp_route_table 表所有路由条目，供前端展示。"""
+    try:
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                'SELECT br.id, br.device_id, br.vrf_name, br.prefix, br.next_hop, br.metric, br.loc_pref, br.weight, br.as_path, br.local_as, br.is_best, br.is_active, br.last_updated, d.hostname AS device_name '
+                'FROM bgp_route_table br LEFT JOIN devices d ON br.device_id = d.id '
+                'ORDER BY br.device_id, br.vrf_name, br.prefix, br.next_hop'
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        rows = []
+
+    entries = []
+    for row in rows:
+        row_dict = dict(row)
+        entries.append({
+            'id': row_dict.get('id'),
+            'device_id': row_dict.get('device_id'),
+            'device_name': row_dict.get('device_name'),
+            'vrf_name': row_dict.get('vrf_name'),
+            'prefix': row_dict.get('prefix'),
+            'next_hop': row_dict.get('next_hop'),
+            'metric': row_dict.get('metric'),
+            'loc_pref': row_dict.get('loc_pref'),
+            'weight': row_dict.get('weight'),
+            'as_path': row_dict.get('as_path'),
+            'local_as': row_dict.get('local_as'),
+            'is_best': row_dict.get('is_best'),
+            'is_active': row_dict.get('is_active'),
+            'last_update': row_dict.get('last_updated')
+        })
+
+    device_stats = {}
+    for e in entries:
+        dn = e.get('device_name') or e.get('device_id', 'unknown')
+        device_stats[dn] = device_stats.get(dn, 0) + 1
+
+    return {
+        'total': len(entries),
+        'device_stats': device_stats,
+        'entries': entries,
+        'table_name': 'bgp_route_table',
+        'columns': ['id', 'device_id', 'device_name', 'vrf_name', 'prefix', 'next_hop', 'metric', 'loc_pref', 'weight', 'as_path', 'local_as', 'is_best', 'is_active', 'last_update'],
+        'timestamp': _beijing_now_iso(),
+    }
+
+
+async def get_routing_neighbors_async() -> dict[str, Any]:
+    return await asyncio.to_thread(get_routing_neighbors)
+
+
+async def get_bgp_routes_async() -> dict[str, Any]:
+    return await asyncio.to_thread(get_bgp_routes)
 
 
 # ── 设备接口 IP 采集 ──────────────────────────────────────
@@ -2276,6 +2395,59 @@ def parse_routing_table(output: str, platform: str) -> list[dict]:
     return routes
 
 
+def _collect_device_vrfs(dev: dict) -> list[str]:
+    import re
+    platform = str(dev.get('platform') or 'cisco_ios').lower()
+    if platform in ('huawei_vrp', 'h3c_comware'):
+        cmd = "display ip vpn-instance"
+    elif platform in ('juniper_junos',):
+        cmd = "show instance"
+    else:
+        cmd = "show ip vrf"
+        
+    vrfs = ['default']
+    try:
+        output = _send_command(dev, cmd)
+        if not output or "Invalid input" in output or "Unrecognized command" in output:
+            return vrfs
+            
+        for raw_line in output.splitlines():
+            line_strip = raw_line.strip()
+            if not line_strip:
+                continue
+            if platform not in ('huawei_vrp', 'h3c_comware', 'juniper_junos'):
+                if any(h in line_strip.lower() for h in ('name', 'default rd', 'protocols', 'interfaces')):
+                    continue
+                tokens = line_strip.split()
+                if tokens and tokens[0] not in ('Name', 'Default', 'Loopback', 'Vlan'):
+                    vrf_name = tokens[0]
+                    if vrf_name not in vrfs:
+                        vrfs.append(vrf_name)
+            elif platform in ('huawei_vrp', 'h3c_comware'):
+                if any(h in line_strip.lower() for h in ('vpn-instance', 'total', 'configured')):
+                    continue
+                if "vpn-instance name" in line_strip.lower():
+                    m = re.search(r'name\s+and\s+id\s*:\s*(\S+)', line_strip, re.IGNORECASE)
+                    if m:
+                        vrfs.append(m.group(1))
+                else:
+                    tokens = line_strip.split()
+                    if tokens:
+                        vrf_name = tokens[0]
+                        if '(' in vrf_name:
+                            vrf_name = vrf_name.split('(')[0]
+                        if vrf_name not in vrfs:
+                            vrfs.append(vrf_name)
+            elif platform == 'juniper_junos':
+                m = re.search(r'Instance:\s*(\S+),', line_strip, re.IGNORECASE)
+                if m:
+                    vrfs.append(m.group(1))
+    except Exception as e:
+        logger.debug(f"[Route Collector] Failed to collect VRFs from {dev.get('hostname')}: {e}")
+        
+    return vrfs
+
+
 def run_route_collector():
     """
     后台路由事实库同步任务：
@@ -2301,23 +2473,44 @@ def run_route_collector():
     all_routes_to_save = []
 
     def collect_device_routes(dev: dict) -> list[dict]:
-        platform = str(dev.get('platform') or 'cisco_ios').lower()
-        if platform in ('huawei_vrp', 'h3c_comware'):
-            cmd = "display ip routing-table"
-        elif platform in ('juniper_junos',):
-            cmd = "show route"
-        else:
-            cmd = "show ip route"
-
-        try:
-            output = _send_command(dev, cmd)
-            parsed = parse_routing_table(output, platform)
-            for r in parsed:
-                r['device_id'] = dev['id']
-            return parsed
-        except Exception as e:
-            logger.debug(f"[Route Collector] Failed to collect routes from {dev.get('hostname') or dev.get('ip_address')}: {e}")
+        ip = dev.get('ip_address')
+        port = int(dev.get('port') or 22)
+        from drivers.ssh_compat import is_ssh_port_open
+        if not is_ssh_port_open(ip, port):
+            logger.warning("[Route Collector] SSH port %s is closed/unreachable for %s", port, dev.get('hostname') or ip)
             return []
+
+        platform = str(dev.get('platform') or 'cisco_ios').lower()
+        vrfs = _collect_device_vrfs(dev)
+        all_device_routes = []
+        
+        for vrf in vrfs:
+            if vrf == 'default':
+                if platform in ('huawei_vrp', 'h3c_comware'):
+                    cmd = "display ip routing-table"
+                elif platform in ('juniper_junos',):
+                    cmd = "show route"
+                else:
+                    cmd = "show ip route"
+            else:
+                if platform in ('huawei_vrp', 'h3c_comware'):
+                    cmd = f"display ip routing-table vpn-instance {vrf}"
+                elif platform in ('juniper_junos',):
+                    cmd = f"show route table {vrf}.inet.0"
+                else:
+                    cmd = f"show ip route vrf {vrf}"
+                    
+            try:
+                output = _send_command(dev, cmd)
+                parsed = parse_routing_table(output, platform)
+                for r in parsed:
+                    r['device_id'] = dev['id']
+                    r['vrf_name'] = vrf
+                all_device_routes.extend(parsed)
+            except Exception as e:
+                logger.debug(f"[Route Collector] Failed to collect routes for VRF {vrf} from {dev.get('hostname') or dev.get('ip_address')}: {e}")
+                
+        return all_device_routes
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_map = {executor.submit(collect_device_routes, dev): dev for dev in route_devices}
@@ -2337,11 +2530,12 @@ def run_route_collector():
                 conn.execute("DELETE FROM route_table")
                 last_update = _beijing_now_iso()
                 for r in all_routes_to_save:
-                    rid = f"{r['device_id']}_{r['prefix']}_{r['mask']}_{r['next_hop']}_{r['interface']}"
+                    vrf_val = r.get('vrf_name') or 'default'
+                    rid = f"{r['device_id']}_{vrf_val}_{r['prefix']}_{r['mask']}_{r['next_hop']}_{r['interface']}"
                     conn.execute(
-                        '''INSERT INTO route_cache (id, device_id, prefix, mask, next_hop, protocol, interface, metric, last_update)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                        (rid, r['device_id'], r['prefix'], r['mask'], r['next_hop'], r['protocol'], r['interface'], r['metric'], last_update)
+                        '''INSERT INTO route_cache (id, device_id, vrf_name, prefix, mask, next_hop, protocol, interface, metric, last_update)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                        (rid, r['device_id'], vrf_val, r['prefix'], r['mask'], r['next_hop'], r['protocol'], r['interface'], r['metric'], last_update)
                     )
                     
                     dest = r['prefix'] or ''
@@ -2371,9 +2565,9 @@ def run_route_collector():
 
                     conn.execute(
                         '''INSERT INTO route_table (
-                            id, device_id, destination, next_hop, outgoing_interface, protocol, metric, preference, last_updated, active
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)''',
-                        (rid, r['device_id'], dest, r['next_hop'], r['interface'], r['protocol'], r['metric'], pref_val, last_update)
+                            id, device_id, vrf_name, destination, next_hop, outgoing_interface, protocol, metric, preference, last_updated, active
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)''',
+                        (rid, r['device_id'], vrf_val, dest, r['next_hop'], r['interface'], r['protocol'], r['metric'], pref_val, last_update)
                     )
                 conn.commit()
                 logger.info(f"[Route Collector] Successfully synced {len(all_routes_to_save)} routes to route_cache and route_table.")

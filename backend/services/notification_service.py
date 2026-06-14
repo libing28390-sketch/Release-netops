@@ -143,7 +143,8 @@ def _feishu_card(alert: dict) -> dict:
     title     = alert.get('title', 'Alert Notification' if is_en else '告警通知')
     obj       = alert.get('object_name', '-')
     ip        = alert.get('ip_address', '-')
-    status    = _status_label(alert.get('status', 'active'), lang)
+    status_raw = (alert.get('status') or 'active').lower()
+    status    = _status_label(status_raw, lang)
     msg       = alert.get('message', '-')
     first_ts  = alert.get('first_occurrence', _now_str())
     last_ts   = alert.get('last_occurrence', first_ts)
@@ -154,9 +155,16 @@ def _feishu_card(alert: dict) -> dict:
     alert_cnt = alert.get('alert_count')
     dur_str   = _fmt_duration(dur_secs, is_en) if dur_secs is not None else None
 
-    emoji = _SEVERITY_EMOJI.get(severity, '⚪')
-    color = _FEISHU_HEADER_COLOR.get(severity, 'blue')
-    sev_label = (_SEVERITY_LABEL_EN if is_en else _SEVERITY_LABEL_ZH).get(severity, severity.upper())
+    if status_raw == 'resolved':
+        emoji = '🟢'
+        color = 'green'
+        sev_label = 'Clear' if is_en else '恢复/正常'
+        title_text = "NetOps Network Alert Recovery" if is_en else "NetOps 网络告警恢复通知"
+    else:
+        emoji = _SEVERITY_EMOJI.get(severity, '⚪')
+        color = _FEISHU_HEADER_COLOR.get(severity, 'blue')
+        sev_label = (_SEVERITY_LABEL_EN if is_en else _SEVERITY_LABEL_ZH).get(severity, severity.upper())
+        title_text = f"NetOps Network Alert" if is_en else f"NetOps 网络告警通知"
 
     if is_en:
         fields = [
@@ -227,7 +235,7 @@ def _feishu_card(alert: dict) -> dict:
         "card": {
             "config": {"wide_screen_mode": True},
             "header": {
-                "title": {"tag": "plain_text", "content": f"{emoji} NetOps Network Alert" if is_en else f"{emoji} NetOps 网络告警通知"},
+                "title": {"tag": "plain_text", "content": f"{emoji} {title_text}"},
                 "template": color,
             },
             "elements": elements,
@@ -343,7 +351,8 @@ def _dingtalk_markdown(alert: dict) -> dict:
     title     = alert.get('title', 'Alert' if is_en else '告警通知')
     obj       = alert.get('object_name', '-')
     ip        = alert.get('ip_address', '-')
-    status    = _status_label(alert.get('status', 'active'), lang)
+    status_raw = (alert.get('status') or 'active').lower()
+    status    = _status_label(status_raw, lang)
     msg       = alert.get('message', '-')
     first_ts  = alert.get('first_occurrence', _now_str())
     last_ts   = alert.get('last_occurrence', first_ts)
@@ -354,8 +363,15 @@ def _dingtalk_markdown(alert: dict) -> dict:
     alert_cnt = alert.get('alert_count')
     dur_str   = _fmt_duration(dur_secs, is_en) if dur_secs is not None else None
 
-    emoji = _SEVERITY_EMOJI.get(severity, '⚪')
-    sev_label = (_SEVERITY_LABEL_EN if is_en else _SEVERITY_LABEL_ZH).get(severity, severity.upper())
+    if status_raw == 'resolved':
+        emoji = '🟢'
+        sev_label = 'Clear' if is_en else '恢复/正常'
+        title_text = "Alert Recovery Notification" if is_en else "网络告警恢复通知"
+    else:
+        emoji = _SEVERITY_EMOJI.get(severity, '⚪')
+        sev_label = (_SEVERITY_LABEL_EN if is_en else _SEVERITY_LABEL_ZH).get(severity, severity.upper())
+        title_text = title
+
     if is_en:
         extra_rows = ""
         if imp_win:
@@ -366,7 +382,7 @@ def _dingtalk_markdown(alert: dict) -> dict:
             extra_rows += f"| Alert Count | {alert_cnt} |\n"
         sys_name = _get_system_name()
         md_text = (
-            f"## {emoji} [{sev_label}] {title}\n\n"
+            f"## {emoji} [{sev_label}] {title_text}\n\n"
             f"| Field | Value |\n"
             f"|-------|-------|\n"
             f"| Alert Name | {title} |\n"
@@ -390,7 +406,7 @@ def _dingtalk_markdown(alert: dict) -> dict:
             extra_rows += f"| 告警次数 | {alert_cnt} |\n"
         sys_name = _get_system_name()
         md_text = (
-            f"## {emoji} [{sev_label}] {title}\n\n"
+            f"## {emoji} [{sev_label}] {title_text}\n\n"
             f"| 字段 | 内容 |\n"
             f"|------|------|\n"
             f"| 告警名称 | {title} |\n"
@@ -406,7 +422,7 @@ def _dingtalk_markdown(alert: dict) -> dict:
         )
     return {
         "msgtype": "markdown",
-        "markdown": {"title": f"{emoji} [{sev_label}] {title}", "text": md_text},
+        "markdown": {"title": f"{emoji} [{sev_label}] {title_text}", "text": md_text},
         "at": {"isAtAll": severity == 'critical'},
     }
 
@@ -446,7 +462,8 @@ def _wechat_markdown(alert: dict) -> dict:
     title     = alert.get('title', 'Alert' if is_en else '告警通知')
     obj       = alert.get('object_name', '-')
     ip        = alert.get('ip_address', '-')
-    status    = _status_label(alert.get('status', 'active'), lang)
+    status_raw = (alert.get('status') or 'active').lower()
+    status    = _status_label(status_raw, lang)
     msg       = alert.get('message', '-')
     first_ts  = alert.get('first_occurrence', _now_str())
     last_ts   = alert.get('last_occurrence', first_ts)
@@ -457,9 +474,17 @@ def _wechat_markdown(alert: dict) -> dict:
     alert_cnt = alert.get('alert_count')
     dur_str   = _fmt_duration(dur_secs, is_en) if dur_secs is not None else None
 
-    emoji = _SEVERITY_EMOJI.get(severity, '⚪')
-    color = _WECHAT_FONT_COLOR.get(severity, 'comment')
-    sev_label = (_SEVERITY_LABEL_EN if is_en else _SEVERITY_LABEL_ZH).get(severity, severity.upper())
+    if status_raw == 'resolved':
+        emoji = '🟢'
+        color = 'info'
+        sev_label = 'Clear' if is_en else '恢复/正常'
+        title_text = "Alert Recovery Notification" if is_en else "网络告警恢复通知"
+    else:
+        emoji = _SEVERITY_EMOJI.get(severity, '⚪')
+        color = _WECHAT_FONT_COLOR.get(severity, 'comment')
+        sev_label = (_SEVERITY_LABEL_EN if is_en else _SEVERITY_LABEL_ZH).get(severity, severity.upper())
+        title_text = title
+
     if is_en:
         extra_lines = ""
         if imp_win:
@@ -470,7 +495,7 @@ def _wechat_markdown(alert: dict) -> dict:
             extra_lines += f"> **Alert Count**: {alert_cnt}\n"
         sys_name = _get_system_name()
         content = (
-            f"# {emoji} <font color=\"{color}\">[{sev_label}]</font> {title}\n"
+            f"# {emoji} <font color=\"{color}\">[{sev_label}]</font> {title_text}\n"
             f"> **Alert Name**: {title}\n"
             f"> **Object**: {obj}\n"
             f"> **IP**: {ip}\n"
@@ -492,7 +517,7 @@ def _wechat_markdown(alert: dict) -> dict:
             extra_lines += f"> **告警次数**：{alert_cnt}\n"
         sys_name = _get_system_name()
         content = (
-            f"# {emoji} <font color=\"{color}\">[{sev_label}]</font> {title}\n"
+            f"# {emoji} <font color=\"{color}\">[{sev_label}]</font> {title_text}\n"
             f"> **告警名称**：{title}\n"
             f"> **告警对象**：{obj}\n"
             f"> **告警 IP**：{ip}\n"

@@ -58,7 +58,6 @@ export const navConfig: NavGroup[] = [
       { id: 'nsot',          label: '网络事实库',      labelEn: 'Network Facts (NSOT)', path: '/assets/nsot',     icon: 'Database' },
       { id: 'ip-locator', label: 'IP 工具箱',   labelEn: 'IP Toolbox',      path: '/assets/toolbox',     icon: 'MapPin' },
       { id: 'tags',       label: '标签管理',    labelEn: 'Tags',            path: '/assets/tags',        icon: 'Tag' },
-      { id: 'racks',      label: '机柜管理',    labelEn: 'Rack Layout',     path: '/assets/racks',       icon: 'Columns3' },
     ],
   },
   {
@@ -68,6 +67,7 @@ export const navConfig: NavGroup[] = [
     icon: 'Database',
     children: [
       { id: 'cmdb-credentials', label: '凭据中心', labelEn: 'Credentials', path: '/cmdb/credentials', icon: 'Key', requiredRole: 'Operator' },
+      { id: 'cmdb-racks',       label: '机柜管理', labelEn: 'Rack Layout',   path: '/cmdb/racks',       icon: 'Columns3', requiredRole: 'Operator' },
       { id: 'cmdb-sites',       label: '站点管理', labelEn: 'Sites',       path: '/cmdb/sites',       icon: 'Building2', requiredRole: 'Operator' },
       { id: 'cmdb-vrfs',        label: 'VRF管理',  labelEn: 'VRFs',        path: '/cmdb/vrfs',        icon: 'Network', requiredRole: 'Operator' },
       { id: 'cmdb-vlans',       label: 'VLAN管理', labelEn: 'VLANs',       path: '/cmdb/vlans',       icon: 'Layers', requiredRole: 'Operator' },

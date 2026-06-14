@@ -8,6 +8,7 @@ interface UsePageTitleArgs {
   inventorySubPage: string;
   changeOrderPage: string;
   ipamPage: string;
+  cmdbPage?: string;
   language: Language;
   t: (key: string) => string;
 }
@@ -23,6 +24,7 @@ export const usePageTitle = ({
   inventorySubPage,
   changeOrderPage,
   ipamPage,
+  cmdbPage,
   language,
   t,
 }: UsePageTitleArgs): string => {
@@ -80,6 +82,17 @@ export const usePageTitle = ({
       };
       return map[ipamPage] || (language === 'zh' ? 'IPAM管理' : 'IPAM Management');
     }
+    if (activeTab === 'cmdb') {
+      const map: Record<string, string> = {
+        credentials: language === 'zh' ? '凭据中心' : 'Credentials',
+        racks: language === 'zh' ? '机柜管理' : 'Rack Management',
+        sites: language === 'zh' ? '站点管理' : 'Sites',
+        vrfs: language === 'zh' ? 'VRF管理' : 'VRFs',
+        vlans: language === 'zh' ? 'VLAN管理' : 'VLANs',
+        tenants: language === 'zh' ? '租户管理' : 'Tenants',
+      };
+      return map[cmdbPage || ''] || (language === 'zh' ? 'CMDB 基础数据' : 'CMDB Core Data');
+    }
     if (activeTab === 'ip-locator') return language === 'zh' ? 'IP 定位' : 'IP Locator';
     if (activeTab === 'assets') return language === 'zh' ? '资产管理' : 'Asset Management';
     if (activeTab === 'tags') return language === 'zh' ? '标签管理' : 'Tag Management';
@@ -102,5 +115,5 @@ export const usePageTitle = ({
     if (activeTab === 'pam-audit') return language === 'zh' ? 'PAM 受控审计' : 'PAM Session Audit';
     if (activeTab === 'topology') return language === 'zh' ? '网络拓扑' : 'Topology';
     return t('dashboard');
-  }, [activeTab, automationPage, configPage, inventorySubPage, changeOrderPage, language, t]);
+  }, [activeTab, automationPage, configPage, inventorySubPage, changeOrderPage, ipamPage, cmdbPage, language, t]);
 };

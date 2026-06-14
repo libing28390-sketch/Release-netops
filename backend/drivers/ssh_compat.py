@@ -234,3 +234,19 @@ def build_ssh_error_guidance(error_text: str) -> str:
     if error_code == SSH_TRANSPORT_ERROR_CODE:
         return build_ssh_transport_guidance(error_text)
     return error_text
+
+
+def is_ssh_port_open(ip: str, port: int = 22, timeout: float = 1.0) -> bool:
+    """快速检查设备的 SSH 端口（通常是22端口）是否处于开放/监听状态。
+    
+    使用轻量级 TCP socket 连接，在 1 秒内超时失败，避免 Paramiko 的超长重试阻塞。
+    """
+    import socket
+    if not ip or ip == '0.0.0.0':
+        return False
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            return True
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        return False
+

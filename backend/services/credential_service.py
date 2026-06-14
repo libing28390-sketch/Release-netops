@@ -56,7 +56,12 @@ def list_credentials(conn) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM credentials ORDER BY credential_name"
     ).fetchall()
-    return [_to_safe_view(r) for r in rows]
+    res = []
+    for r in rows:
+        view = _to_safe_view(r)
+        view["devices"] = list_devices_using(conn, view["id"])
+        res.append(view)
+    return res
 
 
 def get_credential(conn, cred_id: str) -> dict:

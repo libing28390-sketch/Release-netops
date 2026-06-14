@@ -47,13 +47,26 @@ def get_rack(conn, rack_id: str) -> dict:
 
 def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
                 row: str = '', total_u: int = 42, description: str = '',
-                status: str = 'active', power_capacity_watts: int = 0) -> dict:
+                status: str = 'active', power_capacity_watts: int = 0,
+                site_id: str = 'site-default', rack_code: str = '') -> dict:
     rack_id = str(uuid.uuid4())
+    if not rack_code:
+        rack_code = f"RACK_{uuid.uuid4().hex[:12].upper()}"
+    
+    # Synchronize old and new fields
+    rack_name = name
+    room_name = room
+    row_name = row
+    remarks = description
+    power_capacity_w = power_capacity_watts or 5000
+    used_u = 0
+    available_u = total_u
+    
     now = _utc_now()
     conn.execute(
-        """INSERT INTO racks (id, name, datacenter, room, row, total_u, description, status, power_capacity_watts, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (rack_id, name, datacenter, room, row, total_u, description, status, power_capacity_watts, now, now)
+        """INSERT INTO racks (id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name, total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (rack_id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name, total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description, now, now)
     )
     conn.commit()
     logger.info(f"[RackService] Created rack '{name}' in {datacenter or '(no DC)'}")
@@ -64,15 +77,53 @@ def update_rack(conn, rack_id: str, **fields) -> dict:
     existing = get_rack(conn, rack_id)
     updates = []
     params = []
-    for key in ('name', 'datacenter', 'room', 'row', 'total_u', 'description', 'status', 'power_capacity_watts'):
+    
+    # We should support updating both sets of fields
+    supported_keys = (
+        'name', 'datacenter', 'room', 'row', 'total_u', 'description', 'status', 'power_capacity_watts',
+        'site_id', 'rack_code', 'rack_name', 'room_name', 'row_name', 'used_u', 'available_u',
+        'power_capacity_w', 'current_power_w', 'power_utilization', 'max_weight_kg', 'current_weight_kg',
+        'cooling_zone', 'remarks'
+    )
+    
+    # Align values if one of the duplicates is modified
+    if 'name' in fields and 'rack_name' not in fields:
+        fields['rack_name'] = fields['name']
+    elif 'rack_name' in fields and 'name' not in fields:
+        fields['name'] = fields['rack_name']
+        
+    if 'room' in fields and 'room_name' not in fields:
+        fields['room_name'] = fields['room']
+    elif 'room_name' in fields and 'room' not in fields:
+        fields['room'] = fields['room_name']
+        
+    if 'row' in fields and 'row_name' not in fields:
+        fields['row_name'] = fields['row']
+    elif 'row_name' in fields and 'row' not in fields:
+        fields['row'] = fields['row_name']
+        
+    if 'description' in fields and 'remarks' not in fields:
+        fields['remarks'] = fields['description']
+    elif 'remarks' in fields and 'description' not in fields:
+        fields['description'] = fields['remarks']
+        
+    if 'power_capacity_watts' in fields and 'power_capacity_w' not in fields:
+        fields['power_capacity_w'] = fields['power_capacity_watts']
+    elif 'power_capacity_w' in fields and 'power_capacity_watts' not in fields:
+        fields['power_capacity_watts'] = fields['power_capacity_w']
+        
+    for key in supported_keys:
         if key in fields and fields[key] is not None:
             updates.append(f"{key} = ?")
             params.append(fields[key])
+            
     if not updates:
         return existing
+        
     updates.append("updated_at = ?")
     params.append(_utc_now())
     params.append(rack_id)
+    
     conn.execute(f"UPDATE racks SET {', '.join(updates)} WHERE id = ?", params)
     conn.commit()
     return get_rack(conn, rack_id)

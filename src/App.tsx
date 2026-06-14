@@ -436,7 +436,8 @@ const App: React.FC = () => {
       '/path-diagnose': '/assets/diagnose',
       '/nsot': '/assets/nsot',
       '/tags': '/assets/tags',
-      '/racks': '/assets/racks',
+      '/racks': '/cmdb/racks',
+      '/assets/racks': '/cmdb/racks',
       '/audit': '/management/audit',
       '/users': '/management/users',
       '/credentials': '/management/credentials',
@@ -473,6 +474,7 @@ const App: React.FC = () => {
     inventorySubPage,
     changeOrderPage,
     ipamPage,
+    cmdbPage,
     language,
     t,
   });

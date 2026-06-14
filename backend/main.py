@@ -149,6 +149,12 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(run_endpoint_collector, 'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='arp_cache_sweep', replace_existing=True)
     scheduler.add_job(run_route_collector, 'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='route_cache_sweep', replace_existing=True)
     
+    from services.scheduler_service import sync_topology_and_interfaces_job, poll_endpoints_job, sync_routing_neighbors_job, sync_bgp_routes_job
+    scheduler.add_job(sync_topology_and_interfaces_job, 'interval', minutes=5, id='topology_interface_sync', replace_existing=True)
+    scheduler.add_job(poll_endpoints_job, 'interval', minutes=5, id='poll_endpoints', replace_existing=True)
+    scheduler.add_job(sync_routing_neighbors_job, 'interval', minutes=5, id='routing_neighbors_sync', replace_existing=True)
+    scheduler.add_job(sync_bgp_routes_job, 'interval', minutes=5, id='bgp_routes_sync', replace_existing=True)
+    
     from services.inspection_service import run_scheduled_inspections
     scheduler.add_job(run_scheduled_inspections, CronTrigger(minute='0,30'), id='inspection_scheduler', replace_existing=True)
     

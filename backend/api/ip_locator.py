@@ -6,7 +6,17 @@ import logging
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from schemas.schemas import IPLocateRequest, ConnectivityProbeRequest, PathDiagnoseRequest
 from core.rbac import require_role
-from services.ip_locator_service import locate_ip_async_with_options, get_arp_table_async, run_arp_sweep_async, get_mac_changes_async, get_network_endpoints_async, get_ip_inventory_async, get_route_cache_async
+from services.ip_locator_service import (
+    locate_ip_async_with_options,
+    get_arp_table_async,
+    run_arp_sweep_async,
+    get_mac_changes_async,
+    get_network_endpoints_async,
+    get_ip_inventory_async,
+    get_route_cache_async,
+    get_routing_neighbors_async,
+    get_bgp_routes_async
+)
 from services.connectivity_service import run_probe_async
 from services.diagnose_service import run_diagnose_async
 from services.audit_service import log_audit_event
@@ -59,10 +69,13 @@ async def api_trigger_arp_sweep(user=require_role("Operator")):
 
 @router.post('/ip-locator/nsot-sweep')
 async def api_trigger_nsot_sweep(background_tasks: BackgroundTasks, user=require_role("Operator")):
-    """手动触发全量网络事实库同步任务（包括 ARP Sweep、交换机 MAC 采集与路由表采集）。"""
+    """手动触发全量网络事实库同步任务（包括 ARP Sweep、交换机 MAC 采集、普通路由表采集、BGP 协议路由与邻居同步）。"""
     from services.ip_locator_service import run_endpoint_collector, run_route_collector
+    from services.scheduler_service import sync_routing_neighbors_job, sync_bgp_routes_job
     background_tasks.add_task(run_endpoint_collector)
     background_tasks.add_task(run_route_collector)
+    background_tasks.add_task(sync_routing_neighbors_job)
+    background_tasks.add_task(sync_bgp_routes_job)
     return {'success': True, 'message': '数据采集任务已在后台启动，同步过程可能需要 1~2 分钟，请稍后刷新查看。'}
 
 
@@ -148,3 +161,15 @@ async def api_get_ip_inventory(user=require_role("Viewer")):
 async def api_get_route_cache(user=require_role("Viewer")):
     """查询路由缓存表 (route_cache)。"""
     return await get_route_cache_async()
+
+
+@router.get('/ip-locator/routing-neighbors')
+async def api_get_routing_neighbors(user=require_role("Viewer")):
+    """查询路由协议邻居事实库 (routing_neighbors)。"""
+    return await get_routing_neighbors_async()
+
+
+@router.get('/ip-locator/bgp-routes')
+async def api_get_bgp_routes(user=require_role("Viewer")):
+    """查询 BGP 专属路由表事实库 (bgp_route_table)。"""
+    return await get_bgp_routes_async()

@@ -54,10 +54,10 @@ DISCOVERY_COMMANDS = {
         ('lldp', 'show lldp neighbors detail'),
         ('cdp', 'show cdp neighbors detail'),
     ],
-    'juniper_junos': [('lldp', 'show lldp neighbors')],
+    'juniper_junos': [('lldp', 'show lldp neighbors detail')],
     'arista_eos': [('lldp', 'show lldp neighbors detail')],
-    'huawei_vrp': [('lldp', 'display lldp neighbor')],
-    'h3c_comware': [('lldp', 'display lldp neighbor-information list')],
+    'huawei_vrp': [('lldp', 'display lldp neighbor verbose')],
+    'h3c_comware': [('lldp', 'display lldp neighbor-information verbose')],
     'ruijie_rgos': [('lldp', 'show lldp neighbors detail')],
 }
 
@@ -138,20 +138,28 @@ def _safe_json(value: Any) -> str:
 
 
 def _regex_parse_lldp_detail(raw_text: str) -> list[dict[str, str]]:
-    """Regex fallback for 'show lldp neighbors detail' when no TextFSM template exists (e.g. Ruijie)."""
+    """Regex fallback for 'show lldp neighbors detail' when no TextFSM template exists (e.g. Ruijie, Juniper, H3C)."""
     entries: list[dict[str, str]] = []
-    # Split by common LLDP detail block separator (20+ dashes or 'LLDP neighbor-information')
-    blocks = re.split(r'-{20,}|(?=LLDP neighbor-information of port)', raw_text)
+    # Split by common LLDP detail block separator (20+ dashes, 'LLDP neighbor-information of port', 'Local Interface: ', 'Index ')
+    blocks = re.split(r'-{20,}|(?=LLDP neighbor-information of port)|(?=Local Interface:)', raw_text)
     for block in blocks:
         if not block.strip():
             continue
         entry: dict[str, str] = {}
-        # Local interface (Cisco/Ruijie: "Local Intf: Gi0/1", Huawei: "LLDP neighbor-information of port GE0/0/1:")
+        # Local interface (Cisco/Ruijie: "Local Intf: Gi0/1", Huawei: "LLDP neighbor-information of port GE0/0/1:", Juniper: "Local Interface: ge-0/0/0")
         m = re.search(r'(?:Local\s+Int(?:f|erface)\s*:\s*(.+?)$|of port\s+(\S+?)\s*:)', block, re.IGNORECASE | re.MULTILINE)
         if m:
             entry['local_interface'] = (m.group(1) or m.group(2) or '').strip()
+        
+        # Clean local interface if it has H3C style index[port], e.g., 1[GigabitEthernet1/0/1]
+        if 'local_interface' in entry:
+            val = entry['local_interface']
+            idx_m = re.match(r'\d+\[([^\]]+)\]', val)
+            if idx_m:
+                entry['local_interface'] = idx_m.group(1)
+
         # System Name
-        m = re.search(r'System\s*Name\s*[:\-]\s*(.+?)$', block, re.IGNORECASE | re.MULTILINE)
+        m = re.search(r'System\s*(?:Name|name)\s*[:\-]\s*(.+?)$', block, re.IGNORECASE | re.MULTILINE)
         if m:
             entry['neighbor_name'] = m.group(1).strip()
         # Chassis ID
@@ -170,6 +178,12 @@ def _regex_parse_lldp_detail(raw_text: str) -> list[dict[str, str]]:
         m = re.search(r'Device\s+ID\s*:\s*(.+?)$', block, re.IGNORECASE | re.MULTILINE)
         if m and 'neighbor_name' not in entry:
             entry['neighbor_name'] = m.group(1).strip()
+            
+        # Clean chassis_id, neighbor_interface, and neighbor_name from extra comments in parenthesis
+        for field in ('chassis_id', 'neighbor_interface', 'neighbor_name'):
+            if field in entry:
+                entry[field] = re.sub(r'\s*\([^)]*\)', '', entry[field]).strip()
+
         if entry.get('local_interface') and (entry.get('neighbor_name') or entry.get('chassis_id')):
             entries.append(entry)
     return entries
@@ -399,6 +413,13 @@ async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list
 
 
 async def _collect_device_observations(device: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+    ip = device.get('ip_address')
+    port = int(device.get('management_port') or device.get('port') or 22)
+    from drivers.ssh_compat import is_ssh_port_open
+    if not is_ssh_port_open(ip, port):
+        logger.warning('Skip topology discovery for %s: SSH port %s is closed/unreachable', device.get('hostname'), port)
+        raise RuntimeError(f"SSH port {port} is closed/unreachable")
+
     commands = DISCOVERY_COMMANDS.get(device.get('platform', 'cisco_ios'), [('lldp', 'show lldp neighbors')])
     last_error: Exception | None = None
 
@@ -718,6 +739,8 @@ async def discover_device_neighbors(device_id: str, run_id: str | None = None) -
     device = _get_device(device_id)
     if not device:
         raise RuntimeError('device_not_found')
+    if device.get('status') == 'offline':
+        raise RuntimeError('device_is_offline')
     if not device.get('ip_address') or not device.get('username') or not device.get('password'):
         raise RuntimeError('device_credentials_incomplete')
 
@@ -770,7 +793,8 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
             )
         except Exception as exc:  # noqa: BLE001
             failed_devices += 1
-            logger.exception('Topology discovery failed for device %s in run %s', device_id, run_id)
+            logger.warning('Topology discovery failed for device %s in run %s: %s', device_id, run_id, exc)
+            logger.debug('Detailed traceback for topology discovery failure:', exc_info=True)
             _update_run_device(
                 run_id,
                 device_id,

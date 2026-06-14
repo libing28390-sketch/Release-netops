@@ -133,6 +133,24 @@ _SYSTEM_JOB_CATALOG = {
         'action_type': 'password_rotation',
         'deep_link': '/credentials',
     },
+    'topology_interface_sync': {
+        'name_zh': '接口与拓扑同步',
+        'name_en': 'Interface & Topology Sync',
+        'description_zh': '自动从所有在线网络设备同步物理接口和 LLDP/CDP 邻居。',
+        'description_en': 'Automatically sync physical interfaces and LLDP/CDP neighbors from all online network devices.',
+        'category': 'collection',
+        'action_type': 'topology_sync',
+        'deep_link': '/cmdb/racks',
+    },
+    'poll_endpoints': {
+        'name_zh': '终端位置同步',
+        'name_en': 'Endpoint Location Sync',
+        'description_zh': '定期轮询 ARP/MAC 表并基于 LLDP/CDP 路径计算终端精准接入端口。',
+        'description_en': 'Periodically poll ARP/MAC tables and trace LLDP/CDP paths to locate endpoints.',
+        'category': 'collection',
+        'action_type': 'endpoint_poll',
+        'deep_link': '/ip-locator',
+    },
 }
 
 
@@ -202,7 +220,7 @@ def list_system_scheduled_jobs(_user=require_role("Viewer")):
             'next_run_at': next_run,
         })
     # Stable order: daily_backup / inspection first, then the rest alphabetically
-    _priority = ['daily_backup', 'inspection_scheduler', 'arp_cache_sweep',
+    _priority = ['daily_backup', 'inspection_scheduler', 'topology_interface_sync', 'poll_endpoints', 'arp_cache_sweep',
                  'device_health_sampler', 'host_resource_sampler',
                  'password_rotation_sweep']
     def _sort_key(item: dict):
