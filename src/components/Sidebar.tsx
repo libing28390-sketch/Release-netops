@@ -724,17 +724,17 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => {
                   const next = !managementGroupOpen;
                   setManagementGroupOpen(next);
-                  if (next && !['audit', 'users', 'license'].includes(activeTab)) {
+                  if (next && !['audit', 'users'].includes(activeTab)) {
                     setActiveTab('audit');
                   }
                 }}
                 className={`${navButtonGroupClass} ${
-                  ['audit', 'users', 'license'].includes(activeTab)
+                  ['audit', 'users'].includes(activeTab)
                     ? activePrimaryNavClass
                     : inactivePrimaryNavClass
                 }`}
               >
-                <Settings size={17} className={['audit', 'users', 'license'].includes(activeTab) ? 'text-[#5fe6ff]' : 'text-white/72'} />
+                <Settings size={17} className={['audit', 'users'].includes(activeTab) ? 'text-[#5fe6ff]' : 'text-white/72'} />
                 <span className={navLabelClass}>{language === 'zh' ? '平台管理' : 'Management'}</span>
                 <ChevronRight size={groupChevronIconSize} className={`${plainChevronClass} ${managementGroupOpen ? 'rotate-90 text-white/55' : ''}`} />
               </button>
@@ -743,7 +743,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                   {([
                     isFeatureEnabled('audit_logs') && { id: 'audit', icon: History, label: t('auditLogs') },
                     isFeatureEnabled('user_management') && { id: 'users', icon: User, label: t('userManagement') },
-                    { id: 'license', icon: Shield, label: language === 'zh' ? '授权管理' : 'License' },
                     isFeatureEnabled('password_rotation') && { id: 'credentials', icon: Lock, label: language === 'zh' ? '凭据轮换' : 'Password Rotation' },
                   ].filter(Boolean) as any[]).map((item) => {
                     const isActive = activeTab === item.id || (item.id === 'audit' && activeTab === 'history');

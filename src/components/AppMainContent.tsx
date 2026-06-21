@@ -49,7 +49,6 @@ const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
 const CmdbManagementTab = lazy(() => import('../pages/CmdbManagementTab'));
 const TagManagementTab = lazy(() => import('../pages/TagManagementTab'));
-const LicenseAdminTab = lazy(() => import('../pages/LicenseAdminTab'));
 const ScriptManagementTab = lazy(() => import('../pages/ScriptManagementTab'));
 const ConfigScheduleTab = lazy(() => import('../pages/ConfigScheduleTab'));
 const AccessCenterTab = lazy(() => import('../pages/AccessCenterTab'));
@@ -1186,11 +1185,6 @@ const AppMainContent: React.FC = () => {
         </Suspense>
       )}
 
-      {activeTab === 'license' && (
-        <Suspense fallback={lazyPanelFallback}>
-          <LicenseAdminTab language={language} t={t} onLicenseUpdate={checkLicenseStatus} />
-        </Suspense>
-      )}
     </main>
   );
 };

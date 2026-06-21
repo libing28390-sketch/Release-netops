@@ -90,133 +90,29 @@ def _get_required_feature(path: str):
 
 class LicenseMiddleware:
     """
-    Stable ASGI middleware for license enforcement.
-    Avoids BaseHTTPMiddleware deadlocks on Windows/Proactor.
+    Dummy license middleware that allows all requests to pass.
     """
     def __init__(self, app):
         self.app = app
-        self.EXEMPT_PATHS = _EXEMPT_PREFIXES
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "lifespan":
-            return await self.app(scope, receive, send)
-            
-        if scope["type"] != "http":
-            return await self.app(scope, receive, send)
-
-        path = scope.get("path", "")
-        method = scope.get("method", "GET")
-
-        # 1. Always allow exempt paths (Fast-path, no logging)
-        if any(path.startswith(prefix) for prefix in _EXEMPT_PREFIXES):
-            return await self.app(scope, receive, send)
-
-        # 2. Allow non-API paths (static files)
-        if not path.startswith("/api/"):
-            return await self.app(scope, receive, send)
-
-        logger.info(f"[LicenseMiddleware] CHECK: {method} {path}")
-
-        # 3. Validate license
-        verifier = get_license_verifier()
-        lic_status = verifier.validate()
-
-        if lic_status.valid:
-            # 4. License valid — check feature gate
-            required_feature = _get_required_feature(path)
-            if required_feature and required_feature not in lic_status.features:
-                logger.warning(f"[License] FEATURE BLOCKED: {path} requires '{required_feature}'")
-                response = JSONResponse(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    content={
-                        "detail": f"Feature '{required_feature}' is not included in your license.",
-                        "code": "FEATURE_NOT_LICENSED",
-                        "feature": required_feature,
-                        "licensed_features": lic_status.features,
-                    }
-                )
-                return await response(scope, receive, send)
-            return await self.app(scope, receive, send)
-
-        # 5. Invalid license — logic for expiry vs hard block
-        error_msg = lic_status.error or "License invalid"
-        is_expired = "expired" in error_msg.lower()
-
-        # Allow GET for expired (read-only)
-        if is_expired and method in _READONLY_METHODS:
-            return await self.app(scope, receive, send)
-
-        # Otherwise block
-        logger.warning(f"[License] BLOCKED: {path} - {error_msg}")
-        response = JSONResponse(
-            status_code=status.HTTP_403_FORBIDDEN,
-            content={
-                "detail": f"License Error: {error_msg}",
-                "code": "LICENSE_EXPIRED" if is_expired else "LICENSE_INVALID",
-                "machine_id": get_machine_id()
-            }
-        )
-        return await response(scope, receive, send)
+        return await self.app(scope, receive, send)
 
 
 # ── Route-level Dependencies ─────────────────────────────────────────
 
 def require_feature(feature_name: str):
     """
-    FastAPI Dependency factory: checks for a specific licensed feature.
-    
-    Usage:
-        @router.post("/api/rbac/roles", dependencies=[Depends(require_feature("rbac"))])
-        async def create_role(...):
-    
-    If the feature is not in the license, raises 403.
+    FastAPI Dependency factory: returns a dummy dependency that always allows access.
     """
     def _dependency():
-        verifier = get_license_verifier()
-        lic_status = verifier.validate()
-
-        if not lic_status.valid:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "message": "A valid license is required",
-                    "license_error": lic_status.error,
-                    "code": "LICENSE_REQUIRED",
-                },
-            )
-
-        if feature_name not in lic_status.features:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "message": f"Feature '{feature_name}' is not included in your license. "
-                               f"Please upgrade to access this functionality.",
-                    "code": "FEATURE_NOT_LICENSED",
-                    "feature": feature_name,
-                    "licensed_features": lic_status.features,
-                },
-            )
-
+        pass
     return _dependency
 
 
 def require_license():
     """
-    FastAPI Dependency: ensures a valid license for critical endpoints.
-    
-    Usage:
-        @router.post("/api/tasks/run", dependencies=[Depends(require_license)])
-        async def run_task(...):
+    FastAPI Dependency: dummy dependency that always allows access.
     """
-    verifier = get_license_verifier()
-    lic_status = verifier.validate()
+    pass
 
-    if not lic_status.valid:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "message": "A valid license is required for this operation",
-                "license_error": lic_status.error,
-                "code": "LICENSE_REQUIRED",
-            },
-        )

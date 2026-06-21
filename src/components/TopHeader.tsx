@@ -421,10 +421,6 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
                   
                   {currentUser.role === 'Administrator' && (
                     <>
-                      <button onClick={() => onNavigate && onNavigate('/license')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
-                        <ShieldCheck size={16} className="flex-shrink-0 opacity-70 text-emerald-500" />
-                        {language === 'zh' ? '授权管理' : 'License Management'}
-                      </button>
                       <button onClick={() => onNavigate && onNavigate('/users')} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
                         <SlidersHorizontal size={16} className="flex-shrink-0 opacity-70 text-indigo-500" />
                         {language === 'zh' ? '用户管理' : 'User Management'}

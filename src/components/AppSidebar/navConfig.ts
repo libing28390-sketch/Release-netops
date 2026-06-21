@@ -153,7 +153,6 @@ export const navConfig: NavGroup[] = [
       { id: 'audit',        label: '审计日志', labelEn: 'Audit Logs',        icon: 'Clock',  path: '/management/audit',       requiredRole: 'Administrator' },
       { id: 'users',        label: '用户管理', labelEn: 'Users',             icon: 'User',   path: '/management/users',       requiredRole: 'Administrator' },
       { id: 'credentials',  label: '凭据轮换', labelEn: 'Password Rotation', icon: 'Key',    path: '/management/credentials', requiredRole: 'Administrator' },
-      { id: 'license',      label: '授权管理', labelEn: 'License',           icon: 'Shield', path: '/management/license',     requiredRole: 'Administrator' },
     ],
   },
 ];

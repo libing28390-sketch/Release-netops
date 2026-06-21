@@ -123,14 +123,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[PAM] Stale session recovery failed: {e}")
 
-    # License validation at startup
-    _lic = get_license_verifier()
-    _lic.load()
-    _lic_status = _lic.validate(force=True)
-    if _lic_status.valid:
-        logger.info(f"[License] [OK] Valid - {_lic_status.company} ({_lic_status.license_type}), "
-                     f"expires in {_lic_status.days_remaining}d, "
-                     f"devices: {_lic_status.device_limit}")
+
     
     # Start core components immediately
     schedule_cfg = _get_schedule_from_db()
@@ -256,51 +249,37 @@ app.include_router(system_router,        prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(tags_router,          prefix="/api")
 
-# ── 需要 License 但不限定具体 feature 的路由（设备基础操作）──
-from fastapi import Depends
-from license_auth.middleware import require_license
-_lic = [Depends(require_license)]
+# ── 业务路由 ──
+app.include_router(devices_router,       prefix="/api")
+app.include_router(jobs_router,          prefix="/api")
+app.include_router(templates_router,     prefix="/api")
+app.include_router(assets_router,        prefix="/api")
+app.include_router(racks_router,         prefix="/api")
+app.include_router(credentials_router,   prefix="/api")
+app.include_router(cmdb_router,          prefix="/api")
+app.include_router(ip_locator_router,    prefix="/api")
+app.include_router(device_health_router, prefix="/api")
+app.include_router(access_router,        prefix="/api")
 
-app.include_router(devices_router,       prefix="/api", dependencies=_lic)
-app.include_router(jobs_router,          prefix="/api", dependencies=_lic)
-app.include_router(templates_router,     prefix="/api", dependencies=_lic)
-app.include_router(assets_router,        prefix="/api", dependencies=_lic)
-app.include_router(racks_router,         prefix="/api", dependencies=_lic)
-app.include_router(credentials_router,   prefix="/api", dependencies=_lic)
-app.include_router(cmdb_router,          prefix="/api", dependencies=_lic)
-app.include_router(ip_locator_router,    prefix="/api", dependencies=_lic)
-app.include_router(device_health_router, prefix="/api", dependencies=_lic)
-app.include_router(access_router,        prefix="/api", dependencies=_lic)
-
-# ── Feature-gated 路由：每个路由绑定对应的 License feature ──
-from license_auth.middleware import require_feature
-
-app.include_router(automation_router,     prefix="/api", dependencies=[Depends(require_feature("automation"))])
-app.include_router(playbooks_router,      prefix="/api", dependencies=[Depends(require_feature("automation"))])
-app.include_router(scheduled_jobs_router, prefix="/api", dependencies=[Depends(require_feature("scheduled_jobs"))])
-app.include_router(configs_router,        prefix="/api", dependencies=[Depends(require_feature("config_management"))])
-app.include_router(config_drift_router,   prefix="/api", dependencies=[Depends(require_feature("config_management"))])
-app.include_router(monitoring_router,     prefix="/api", dependencies=[Depends(require_feature("monitoring"))])
-app.include_router(alerts_router,         prefix="/api", dependencies=[Depends(require_feature("alerting"))])
-app.include_router(topology_router,       prefix="/api", dependencies=[Depends(require_feature("topology"))])
-app.include_router(ipam_router,           prefix="/api", dependencies=[Depends(require_feature("ipam"))])
-app.include_router(capacity_router,       prefix="/api", dependencies=[Depends(require_feature("capacity"))])
-app.include_router(reports_router,        prefix="/api", dependencies=[Depends(require_feature("reports"))])
-app.include_router(compliance_router,     prefix="/api", dependencies=[Depends(require_feature("compliance"))])
-app.include_router(inspections_router,    prefix="/api", dependencies=[Depends(require_feature("inspections"))])
-app.include_router(textfsm_templates_router, prefix="/api", dependencies=[Depends(require_feature("inspections"))])
-app.include_router(change_orders_router,  prefix="/api", dependencies=[Depends(require_feature("change_orders"))])
-app.include_router(pam_router,            prefix="/api", dependencies=[Depends(require_feature("access_center"))])
-app.include_router(audit_router,          prefix="/api", dependencies=[Depends(require_feature("rbac"))])
-# PAM WebSocket 单独注册，不带 feature 依赖（token 本身即凭证）
+app.include_router(automation_router,     prefix="/api")
+app.include_router(playbooks_router,      prefix="/api")
+app.include_router(scheduled_jobs_router, prefix="/api")
+app.include_router(configs_router,        prefix="/api")
+app.include_router(config_drift_router,   prefix="/api")
+app.include_router(monitoring_router,     prefix="/api")
+app.include_router(alerts_router,         prefix="/api")
+app.include_router(topology_router,       prefix="/api")
+app.include_router(ipam_router,           prefix="/api")
+app.include_router(capacity_router,       prefix="/api")
+app.include_router(reports_router,        prefix="/api")
+app.include_router(compliance_router,     prefix="/api")
+app.include_router(inspections_router,    prefix="/api")
+app.include_router(textfsm_templates_router, prefix="/api")
+app.include_router(change_orders_router,  prefix="/api")
+app.include_router(pam_router,            prefix="/api")
+app.include_router(audit_router,          prefix="/api")
+# PAM WebSocket 单独注册
 app.include_router(pam_ws_router,         prefix="/api")
-
-# ── License Middleware (after CORS) ──────────────
-# bootstrap_license_protection() 在编译后的 .so 内部强制注册中间件并建立完整性基线。
-# 即使此行被删除，.so 内部的逻辑仍会在 import 时触发保护。
-import os as _os
-_PROJECT_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-bootstrap_license_protection(app, project_root=_PROJECT_ROOT)
 
 # ── APScheduler ──────────────────────────────────────────────────────
 # scheduler is now imported from core.scheduler_manager

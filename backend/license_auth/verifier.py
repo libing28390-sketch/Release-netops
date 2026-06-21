@@ -64,12 +64,7 @@ if not _DEFAULT_PUBLIC_KEY_PATH.exists():
 
 class LicenseVerifier:
     """
-    Singleton license validation engine.
-    
-    Usage:
-        verifier = LicenseVerifier.get_instance()
-        verifier.load()
-        status = verifier.validate()
+    Singleton license validation engine (Unrestricted/Bypassed).
     """
 
     _instance: Optional["LicenseVerifier"] = None
@@ -86,14 +81,12 @@ class LicenseVerifier:
         self._public_key_path = Path(public_key_path or os.environ.get(
             "LICENSE_PUBLIC_KEY_PATH", str(_DEFAULT_PUBLIC_KEY_PATH)
         ))
-
-        # In-memory state
-        self._license: Optional[LicenseFile] = None
-        self._payload: Optional[LicensePayload] = None
-        self._file_hash: Optional[str] = None       # SHA-256 of the raw file
-        self._last_validated: float = 0.0
-        self._cached_status: Optional[LicenseStatus] = None
-        self._public_key_pem: Optional[bytes] = None
+        self._license = None
+        self._payload = None
+        self._file_hash = None
+        self._last_validated = 0.0
+        self._cached_status = None
+        self._public_key_pem = None
 
     @classmethod
     def get_instance(cls, **kwargs) -> "LicenseVerifier":
@@ -106,423 +99,82 @@ class LicenseVerifier:
 
     @classmethod
     def reset_instance(cls):
-        """Reset the singleton (for testing or hot-reload)."""
+        """Reset the singleton."""
         with cls._lock:
             cls._instance = None
 
-    # ── Loading ───────────────────────────────────────────────────────
-
     def load(self) -> bool:
-        """
-        Load the license file and public key from disk.
-        Returns True if loaded successfully (does NOT validate yet).
-        """
-        # Load public key
-        abs_key_path = self._public_key_path.resolve()
-        if not self._public_key_path.exists():
-            logger.error(f"[License] Public key NOT FOUND at: {abs_key_path} (relative: {self._public_key_path})")
-            self._cached_status = LicenseStatus(valid=False, error=f"Public key not found at {abs_key_path}")
-            return False
-        logger.info(f"[License] Loading public key from: {abs_key_path}")
-        self._public_key_pem = load_public_key_from_file(str(self._public_key_path))
-
-        # Load license file
-        if not self._license_path.exists():
-            logger.warning(f"[License] License file not found: {self._license_path}")
-            self._cached_status = LicenseStatus(valid=False, error="License file not found")
-            return False
-
-        try:
-            raw = self._license_path.read_text(encoding="utf-8")
-            self._file_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-            data = json.loads(raw)
-            self._license = LicenseFile(**data)
-            self._payload = self._license.payload
-            logger.info(f"[License] Loaded license {self._payload.license_id} for {self._payload.company}")
-            return True
-        except json.JSONDecodeError as e:
-            logger.error(f"[License] Corrupted license file: {e}")
-            self._cached_status = LicenseStatus(valid=False, error="License file is corrupted (invalid JSON)")
-            return False
-        except Exception as e:
-            logger.error(f"[License] Failed to load license: {e}")
-            self._cached_status = LicenseStatus(valid=False, error=f"License load error: {e}")
-            return False
+        return True
 
     def load_from_bytes(self, content: bytes) -> bool:
-        """Load license from raw bytes (for API upload)."""
-        try:
-            raw = content.decode("utf-8")
-            self._file_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-            data = json.loads(raw)
-            self._license = LicenseFile(**data)
-            self._payload = self._license.payload
-            return True
-        except Exception as e:
-            logger.error(f"[License] Failed to parse uploaded license: {e}")
-            return False
-
-    # ── Tamper Detection ──────────────────────────────────────────────
+        return True
 
     def _check_file_integrity(self) -> bool:
-        """
-        Verify that the on-disk file has not been modified since last load.
-        If modified, force a reload + re-validate.
-        """
-        if not self._license_path.exists():
-            return False
-        try:
-            raw = self._license_path.read_text(encoding="utf-8")
-            current_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-            if current_hash != self._file_hash:
-                logger.warning("[License] File hash mismatch — file was modified on disk, reloading")
-                self.load()
-                self._cached_status = None  # force re-validation
-                return True
-            return True
-        except Exception:
-            return False
-
-    # ── Core Validation ───────────────────────────────────────────────
+        return True
 
     def validate(self, force: bool = False) -> LicenseStatus:
-        """
-        Full license validation with caching.
-        Re-validates every 60 seconds or when forced.
-        
-        Checks:
-          1. License loaded
-          2. File integrity (hash)
-          3. RSA signature
-          4. Expiry date
-          5. Warning period (7 days)
-        """
-        now = time.time()
-
-        # Return cached result if recent enough
-        if not force and self._cached_status and (now - self._last_validated) < 60:
-            return self._cached_status
-
-        # Pre-flight
-        if self._license is None or self._payload is None:
-            if not self.load():
-                return self._cached_status or LicenseStatus(valid=False, error="No license loaded")
-
-        # Integrity check (file tamper detection)
-        self._check_file_integrity()
-
-        # Runtime file integrity check (every 5 minutes)
-        if (now - self._last_validated) > 300:
-            from . import verifier as _self_module
-            import os as _os
-            _root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
-            if not _self_module.check_file_integrity(_root):
-                status = LicenseStatus(
-                    valid=False,
-                    error="Platform integrity check failed — critical files have been modified.",
-                )
-                self._cached_status = status
-                self._last_validated = now
-                return status
-
-        warnings: List[str] = []
-        payload = self._payload
-        assert payload is not None
-
-        # 1. Signature verification
-        # Use exclude_unset=True to only dump fields that were actually present in the license file.
-        # This prevents new fields with defaults (like max_version) from breaking the signature.
-        payload_dict = payload.model_dump(mode="json", exclude_unset=True)
-        
-        if not verify_signature(payload_dict, self._license.signature, self._public_key_pem):
-            status = LicenseStatus(
-                valid=False,
-                license_id=payload.license_id,
-                company=payload.company,
-                error="Invalid license signature — file may have been tampered with",
-            )
-            self._cached_status = status
-            self._last_validated = now
-            logger.error(f"[License] SIGNATURE INVALID for {payload.license_id}")
-            return status
-
-        # 2. Expiry check
-        try:
-            expire_dt = datetime.fromisoformat(payload.expire_at)
-            if expire_dt.tzinfo is None:
-                expire_dt = expire_dt.replace(tzinfo=timezone.utc)
-            now_dt = datetime.now(timezone.utc)
-            delta = expire_dt - now_dt
-            days_remaining = delta.days
-
-            if days_remaining < 0:
-                status = LicenseStatus(
-                    valid=False,
-                    license_id=payload.license_id,
-                    company=payload.company,
-                    license_type=payload.license_type.value,
-                    issued_at=payload.issued_at,
-                    expire_at=payload.expire_at,
-                    days_remaining=days_remaining,
-                    device_limit=payload.device_limit,
-                    server_limit=payload.server_limit,
-                    features=payload.features,
-                    error=f"License expired {abs(days_remaining)} days ago",
-                )
-                self._cached_status = status
-                self._last_validated = now
-                logger.warning(f"[License] EXPIRED: {payload.license_id}, expired {abs(days_remaining)} days ago")
-                return status
-
-            if days_remaining <= _WARN_DAYS:
-                warn_msg = f"License expires in {days_remaining} day(s) — please renew soon"
-                warnings.append(warn_msg)
-                logger.warning(f"[License] {warn_msg}")
-
-        except Exception as e:
-            status = LicenseStatus(valid=False, error=f"Invalid expiry date format: {e}")
-            self._cached_status = status
-            self._last_validated = now
-            return status
-
-        # 3. Machine ID Binding Check — ALL license types must be bound to a machine
-        # Trial licenses are no exception: an unbound trial can be copied and shared freely.
-        if not payload.machine_id:
-            status = LicenseStatus(
-                valid=False,
-                license_id=payload.license_id,
-                company=payload.company,
-                license_type=payload.license_type.value,
-                issued_at=payload.issued_at,
-                expire_at=payload.expire_at,
-                days_remaining=days_remaining,
-                device_limit=payload.device_limit,
-                server_limit=payload.server_limit,
-                features=payload.features,
-                error="License must be locked to a specific Machine ID. "
-                      "Please contact the vendor to reissue a license bound to this machine.",
-            )
-            self._cached_status = status
-            self._last_validated = now
-            logger.error(f"[License] REUSE BLOCKED: License {payload.license_id} "
-                         f"(type={payload.license_type.value}) lacks machine_id")
-            return status
-
-        current_machine_id = get_machine_id()
-        if payload.machine_id != current_machine_id:
-            status = LicenseStatus(
-                valid=False,
-                license_id=payload.license_id,
-                company=payload.company,
-                license_type=payload.license_type.value,
-                issued_at=payload.issued_at,
-                expire_at=payload.expire_at,
-                days_remaining=days_remaining,
-                device_limit=payload.device_limit,
-                server_limit=payload.server_limit,
-                features=payload.features,
-                error=f"License is bound to machine '{payload.machine_id}', "
-                      f"but current machine is '{current_machine_id}'. "
-                      f"If this is a new deployment, set MACHINE_ID_OVERRIDE in .env.",
-            )
-            self._cached_status = status
-            self._last_validated = now
-            logger.error(f"[License] MACHINE ID MISMATCH for {payload.license_id}: "
-                         f"expected={payload.machine_id}, got={current_machine_id}")
-            return status
-        
-        # 4. Version Check
-        from packaging import version
-        try:
-            current_v = version.parse(VERSION)
-            max_v = version.parse(payload.max_version or "99.9.9")
-            if current_v > max_v:
-                warn_msg = f"Platform version {VERSION} exceeds license authorized version {payload.max_version}"
-                warnings.append(warn_msg)
-                logger.warning(f"[License] {warn_msg}")
-        except Exception as e:
-            logger.warning(f"[License] Version check failed: {e}")
-
-        # 5. Build success status
-        status = LicenseStatus(
+        self._cached_status = LicenseStatus(
             valid=True,
-            license_id=payload.license_id,
-            company=payload.company,
-            license_type=payload.license_type.value,
-            issued_at=payload.issued_at,
-            expire_at=payload.expire_at,
-            days_remaining=days_remaining,
-            device_limit=payload.device_limit,
-            server_limit=payload.server_limit,
-            features=payload.features,
-            max_version=payload.max_version,
+            license_id="perpetual-enterprise",
+            company="Nexora Enterprise User",
+            license_type="enterprise",
+            issued_at="2026-01-01T00:00:00+00:00",
+            expire_at="2099-12-31T23:59:59+00:00",
+            days_remaining=99999,
+            max_version="99.9.9",
             current_version=VERSION,
-            warnings=warnings,
+            device_limit=999999,
+            device_current=0,
+            server_limit=999999,
+            server_current=0,
+            features=[
+                "rbac", "automation", "config_management", "change_orders",
+                "inspections", "topology", "monitoring", "alerting", "ipam",
+                "capacity", "compliance", "reports", "api_access",
+                "scheduled_jobs", "password_rotation", "access_center"
+            ],
+            warnings=[]
         )
-        self._cached_status = status
-        self._last_validated = now
-
-        logger.debug(
-            f"[License] Validated OK: {payload.license_id}, "
-            f"company={payload.company}, "
-            f"expires_in={days_remaining}d, "
-            f"devices={payload.device_limit}, "
-            f"features={payload.features}"
-        )
-        return status
-
-    # ── Feature & Device Checks ───────────────────────────────────────
+        return self._cached_status
 
     def check_feature(self, feature_name: str) -> bool:
-        """Check if a specific feature is enabled in the license."""
-        status = self.validate()
-        if not status.valid:
-            return False
-        return feature_name in status.features
+        return True
 
     def check_device_limit(self, current_count: int) -> bool:
-        """
-        Check if the current device count is within the licensed limit.
-        Returns True if within limit, False if exceeded.
-        """
-        status = self.validate()
-        if not status.valid:
-            return False
-        return current_count <= (status.device_limit or 0)
+        return True
 
     def get_device_limit(self) -> int:
-        """Return the device limit from the license."""
-        status = self.validate()
-        return status.device_limit or 0
+        return 999999
 
     def check_server_limit(self, current_count: int) -> bool:
-        """
-        Check if the current server count is within the licensed limit.
-        Returns True if within limit, False if exceeded.
-        """
-        status = self.validate()
-        if not status.valid:
-            return False
-        return current_count <= (status.server_limit or 0)
+        return True
 
     def get_server_limit(self) -> int:
-        """Return the server limit from the license."""
-        status = self.validate()
-        return status.server_limit or 0
+        return 999999
 
     def is_expired(self) -> bool:
-        """Quick check: is the license expired?"""
-        status = self.validate()
-        return not status.valid and "expired" in (status.error or "").lower()
+        return False
 
     def is_expiring_soon(self) -> bool:
-        """Quick check: is the license expiring within the warning window?"""
-        status = self.validate()
-        return status.valid and len(status.warnings) > 0
+        return False
 
     @property
-    def payload(self) -> Optional[LicensePayload]:
-        return self._payload
+    def payload(self) -> Optional[any]:
+        return None
 
     @property
     def status(self) -> LicenseStatus:
         return self.validate()
 
 
-# ── Module-level convenience ──────────────────────────────────────────
-
 def get_license_verifier(**kwargs) -> LicenseVerifier:
-    """Get the global LicenseVerifier singleton."""
     return LicenseVerifier.get_instance(**kwargs)
 
 
-# ── Tamper-resistant bootstrap ────────────────────────────────────────
-# 以下函数编译进 .so 后，main.py 无法绕过。
-# 即使攻击者删除 main.py 里的 add_middleware 调用，
-# bootstrap_license_protection() 仍会强制注册中间件。
-
-_WATCHED_FILES = (
-    "backend/main.py",
-    "backend/license_auth/__init__.py",
-)
-
-# 首次调用时记录被监控文件的 hash，后续定期比对
-_file_hashes = {}  # type: dict
-_tamper_detected = False
-
-
-def _compute_file_hash(path: str) -> str:
-    try:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    except Exception:
-        return ""
-
-
-def _record_baseline(project_root: str):
-    """记录启动时各关键文件的 hash 基线。"""
-    global _file_hashes
-    for rel in _WATCHED_FILES:
-        full = os.path.join(project_root, rel)
-        _file_hashes[rel] = _compute_file_hash(full)
-
-
 def check_file_integrity(project_root: str) -> bool:
-    """
-    检查关键文件是否被篡改。
-    返回 True 表示完整，False 表示检测到篡改。
-    在 LicenseVerifier.validate() 中定期调用。
-    """
-    global _tamper_detected
-    if not _file_hashes:
-        return True  # 基线未建立，跳过
-    for rel, baseline in _file_hashes.items():
-        if not baseline:
-            continue
-        full = os.path.join(project_root, rel)
-        current = _compute_file_hash(full)
-        if current and current != baseline:
-            logger.error(
-                f"[License] INTEGRITY VIOLATION: {rel} has been modified since startup. "
-                f"Possible tampering detected."
-            )
-            _tamper_detected = True
-            return False
     return True
 
 
 def bootstrap_license_protection(app, project_root=None):
-    # type: (object, Optional[str]) -> LicenseVerifier
-    """
-    在 .so 内部强制注册 LicenseMiddleware，并建立文件完整性基线。
+    return get_license_verifier()
 
-    main.py 应在 app = FastAPI(...) 之后立即调用此函数：
-        from license_auth.verifier import bootstrap_license_protection
-        bootstrap_license_protection(app, project_root=PROJECT_ROOT)
-
-    即使 main.py 里的 app.add_middleware(LicenseMiddleware) 被删除，
-    此函数仍会确保中间件被注册。
-    """
-    from .middleware import LicenseMiddleware
-
-    # 强制注册中间件（幂等，重复注册无害）
-    app.add_middleware(LicenseMiddleware)
-    logger.info("[License] LicenseMiddleware registered via bootstrap (tamper-resistant)")
-
-    # 建立文件完整性基线
-    if project_root:
-        _record_baseline(project_root)
-        logger.info(f"[License] File integrity baseline recorded for {len(_WATCHED_FILES)} files")
-
-    # 启动时立即做一次 License 验证
-    verifier = get_license_verifier()
-    verifier.load()
-    status = verifier.validate(force=True)
-    if status.valid:
-        logger.info(
-            f"[License] Bootstrap OK — {status.company} ({status.license_type}), "
-            f"expires in {status.days_remaining}d, features={status.features}"
-        )
-    else:
-        logger.warning(f"[License] Bootstrap — License invalid: {status.error}")
-
-    return verifier
