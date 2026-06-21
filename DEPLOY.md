@@ -688,3 +688,76 @@ sudo systemctl restart netops
 git pull
 docker compose up -d --build
 ```
+
+---
+
+### Windows Deployment & Desktop Integration
+
+You can run the application directly on Windows as a zero-configuration local server with a system tray controller.
+
+#### 1. Setup Environment & Dependencies
+1. **Prepare Python & Node.js**: Ensure Python 3.10+ and Node.js are installed on your machine.
+2. **Setup Virtualenv & Requirements**:
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -r backend/requirements.txt
+   ```
+3. **Build Frontend**:
+   ```powershell
+   npm install
+   npm run build
+   ```
+4. **Configure Database (SQLite)**: By default, if the `DATABASE_URL` environment variable is not defined or commented out in your `.env` file, the platform automatically initializes and uses a local SQLite database at `data/netops.db` (zero configuration needed).
+
+#### 2. Run & Integrate (Two Modes)
+
+##### Option A: Interactive Command Prompt (Foreground Mode)
+1. Double-click `start.bat` in the root folder.
+2. Select **[1] 启动 NetOps (在前台控制台运行)**.
+3. The server starts in the terminal and your default browser opens to `http://127.0.0.1:9010`. Keep the terminal window open to keep the service running.
+
+##### Option B: System Tray & Background Mode (Recommended Desktop Experience)
+1. Double-click `start.bat` in the root folder.
+2. Select **[2] 创建桌面快捷方式 (后台无窗口运行)**. This will:
+   - Install desktop tray dependencies (`pystray`).
+   - Create a desktop shortcut named **NetOps 运维平台** with a custom network topology icon.
+3. Double-click the new desktop shortcut. The server starts silently in the background (no console windows). A network topology icon appears in your Windows system tray, and your browser opens to `http://127.0.0.1:9010`.
+4. To stop the service, right-click the system tray icon and choose **退出 (Exit)**.
+
+---
+
+### Windows 本地部署与桌面集成指南
+
+您可以在 Windows 系统上直接将项目作为本地服务运行，并利用 Windows 系统托盘在后台进行静默管理。
+
+#### 1. 初始化依赖环境
+1. **安装环境要求**：确保本地已安装 Python 3.10+ 和 Node.js。
+2. **创建虚拟环境并安装 Python 依赖**：
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -r backend/requirements.txt
+   ```
+3. **构建前端静态资源**（只需构建一次，后续后端会自动托管）：
+   ```powershell
+   npm install
+   npm run build
+   ```
+4. **配置数据库（SQLite 零配置）**：默认情况下，如果 `.env` 配置文件中的 `DATABASE_URL` 被注释或未配置，系统会自动切换为轻量级 SQLite 数据库（存储于 `data/netops.db`），无需安装和运行 PostgreSQL。
+
+#### 2. 启动与管理（两种运行模式）
+
+##### 方式 A：前台命令行模式
+1. 双击运行根目录下的 `start.bat`。
+2. 输入选项 `1` 选择 **[1] 启动 NetOps (在前台控制台运行)**。
+3. 系统会在黑窗口中启动服务，并自动打开默认浏览器访问 `http://127.0.0.1:9010`。此命令行窗口必须保持开启，服务才会运行。
+
+##### 方式 B：后台系统托盘模式（推荐桌面体验）
+1. 双击运行根目录下的 `start.bat`。
+2. 输入选项 `2` 选择 **[2] 创建桌面快捷方式 (后台无窗口运行)**。该步骤将：
+   - 自动检测并安装托盘管理包（`pystray`）。
+   - 在您的 Windows 桌面上生成一个名为 **NetOps 运维平台** 的快捷方式，并绑定专属网络拓扑图标。
+3. 双击运行桌面上的 **NetOps 运维平台** 快捷方式。系统将以静默模式在后台启动（不弹出任何黑色控制台），并在右下角系统托盘生成专属图标，随后自动调起默认浏览器打开 `http://127.0.0.1:9010`。
+4. 若需停止服务，只需在系统托盘右键该图标并点击 **退出 (Exit)** 即可。
+

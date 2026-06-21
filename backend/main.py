@@ -223,8 +223,8 @@ async def validation_exception_handler(request, exc):
 
 # CORS - restrict to known origins in production; permissive in dev
 _cors_origins = ["*"] if os.environ.get("NODE_ENV") == "development" else [
-    f"http://localhost:{os.environ.get('PORT', '9010')}",
-    f"http://127.0.0.1:{os.environ.get('PORT', '9010')}",
+    f"http://localhost:{os.environ.get('PORT', '5010')}",
+    f"http://127.0.0.1:{os.environ.get('PORT', '5010')}",
 ]
 # In production, set CORS_ORIGINS env var to a comma-separated list of allowed origins
 _env_origins = os.environ.get("CORS_ORIGINS", "").strip()
@@ -532,7 +532,7 @@ if __name__ == "__main__":
         import asyncio
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-    port = int(os.environ.get("PORT", "9010"))
+    port = int(os.environ.get("PORT", "5010"))
     workers = int(os.environ.get("WORKERS", "1"))
     is_dev = os.environ.get("NODE_ENV") == "development"
 
