@@ -80,8 +80,9 @@ Shortcut.Save()
 """
     
     try:
-        # Write VBScript in GBK/ANSI encoding so Windows Script Host handles Chinese characters correctly
-        with open(vbs_path, "w", encoding="gbk") as f:
+        # Write VBScript in UTF-16 (with BOM) to guarantee perfect Unicode support in Windows Script Host
+        vbs_encoding = "utf-16"
+        with open(vbs_path, "w", encoding=vbs_encoding) as f:
             f.write(vbs_content)
             
         result = subprocess.run(
@@ -97,14 +98,15 @@ Shortcut.Save()
             
         if result.returncode == 0:
             print(f"[OK] Desktop Shortcut successfully created at: {shortcut_path}")
-            # Clean up old corrupted shortcut if it exists
-            corrupted_shortcut = os.path.join(desktop_path, "NetOps άƽ̨.lnk")
-            if os.path.exists(corrupted_shortcut):
-                try:
-                    os.remove(corrupted_shortcut)
-                    print("[Cleaned] Removed old corrupted shortcut.")
-                except Exception:
-                    pass
+            # Clean up old corrupted shortcuts if they exist
+            try:
+                for filename in os.listdir(desktop_path):
+                    if filename.endswith(".lnk") and "NetOps" in filename:
+                        if filename != "NetOps 运维平台.lnk":
+                            os.remove(os.path.join(desktop_path, filename))
+                            print(f"[Cleaned] Removed corrupted shortcut: {filename}")
+            except Exception:
+                pass
             return True
         else:
             print(f"[Error] VBScript failed: {result.stderr}")
