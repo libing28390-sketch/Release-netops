@@ -244,8 +244,8 @@ const HomePage: React.FC<HomePageProps> = ({
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.2, delay: 0.06 + 0.025 * idx }}
                 onClick={() => navigate(app.path)}
-                className="group flex items-center gap-3 rounded-lg px-3.5 py-3 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/30 transition-all duration-150 text-left"
-                style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+                className="group flex items-center gap-3 rounded-xl px-3.5 py-3 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 transition-all duration-150 text-left"
+                style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor = app.accent + '60'; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--card-border)'; }}
               >
@@ -282,9 +282,9 @@ const HomePage: React.FC<HomePageProps> = ({
                 key={i}
                 className="relative rounded-xl px-4 py-4 overflow-hidden"
                 style={{
-                  background: `linear-gradient(135deg, ${s.accent}0d 0%, var(--card-bg) 55%)`,
-                  border: `1px solid ${s.accent}22`,
-                  boxShadow: `0 1px 2px ${s.accent}0f`,
+                  background: 'var(--card-bg)',
+                  border: '1px solid var(--card-border)',
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)',
                 }}
               >
                 {/* Accent left bar */}
@@ -329,8 +329,8 @@ const HomePage: React.FC<HomePageProps> = ({
         >
           {/* ── Left: Recent Activity (2/3) ── */}
           <div
-            className="md:col-span-2 rounded-lg px-4 py-3.5"
-            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+            className="md:col-span-2 rounded-xl px-4 py-3.5"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)' }}
           >
             <div className="flex items-center justify-between mb-3">
               <span className="text-[13px] font-semibold" style={{ color: 'var(--heading-text)' }}>
@@ -382,8 +382,8 @@ const HomePage: React.FC<HomePageProps> = ({
 
           {/* ── Right: Quick Actions (1/3) ── */}
           <div
-            className="rounded-lg px-4 py-3.5"
-            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+            className="rounded-xl px-4 py-3.5"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)' }}
           >
             <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
               {zh ? '快捷操作' : 'Quick Actions'}
@@ -395,7 +395,7 @@ const HomePage: React.FC<HomePageProps> = ({
                   <button
                     key={i}
                     onClick={() => navigate(a.path)}
-                    className="w-full flex items-center gap-3 rounded-md px-3 py-2.5 text-left cursor-pointer transition-colors duration-150"
+                    className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left cursor-pointer transition-colors duration-150"
                     style={{ background: 'transparent' }}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--app-hover-bg)'; }}
                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
@@ -424,8 +424,8 @@ const HomePage: React.FC<HomePageProps> = ({
         >
           {/* ── Left: Device Status Overview ── */}
           <div
-            className="rounded-lg px-4 py-3.5"
-            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+            className="rounded-xl px-4 py-3.5"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)' }}
           >
             <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
               {zh ? '设备状态' : 'Device Status'}
@@ -472,8 +472,8 @@ const HomePage: React.FC<HomePageProps> = ({
 
           {/* ── Middle: Host Resources ── */}
           <div
-            className="rounded-lg px-4 py-3.5"
-            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+            className="rounded-xl px-4 py-3.5"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)' }}
           >
             <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
               {zh ? '主机资源' : 'Host Resources'}
@@ -534,8 +534,8 @@ const HomePage: React.FC<HomePageProps> = ({
 
           {/* ── Right: Platform Distribution ── */}
           <div
-            className="rounded-lg px-4 py-3.5"
-            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}
+            className="rounded-xl px-4 py-3.5"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)' }}
           >
             <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
               {zh ? '平台分布' : 'Platform Distribution'}
@@ -555,7 +555,7 @@ const HomePage: React.FC<HomePageProps> = ({
                         className="h-full rounded-full transition-all duration-500"
                         style={{
                           width: `${(count / stats.total) * 100}%`,
-                          background: '#0891b2',
+                          background: '#0078d4',
                         }}
                       />
                     </div>

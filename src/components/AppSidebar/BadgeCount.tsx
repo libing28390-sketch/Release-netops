@@ -14,8 +14,10 @@ const BadgeCount: React.FC<BadgeProps> = ({ count, critical = false }) => {
   return (
     <span
       className={cn(
-        'inline-flex items-center justify-center rounded-full text-xs font-medium tabular-nums leading-none px-2 py-0.5',
-        critical ? 'bg-red-500/20 text-red-400' : 'bg-slate-700 text-slate-300'
+        'inline-flex items-center justify-center rounded-full text-[10px] font-semibold font-mono leading-none px-1.5 py-0.5',
+        critical
+          ? 'bg-red-500/15 text-red-600 dark:bg-red-500/20 dark:text-red-400'
+          : 'bg-[var(--app-hover-bg)] text-[var(--muted-text)] border border-[var(--card-border)]'
       )}
       aria-label={`${count} items`}
     >

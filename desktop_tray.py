@@ -111,38 +111,38 @@ def set_dark_title_bar(window_handle, enabled):
 
 # Helper function to generate clean colored dot icons in memory
 def create_status_icon(color_name):
-    pixmap = QPixmap(32, 32)
-    pixmap.fill(Qt.transparent)
+    # Load netops.ico if it exists, otherwise fallback to empty transparent pixmap
+    ico_path = os.path.join(PROJECT_ROOT, "netops.ico")
+    if os.path.exists(ico_path):
+        pixmap = QIcon(ico_path).pixmap(32, 32)
+    else:
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(Qt.transparent)
+        
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
     
+    # Draw status dot in the bottom right corner
     if color_name == "green":
         # Green dot
         painter.setBrush(QBrush(QColor("#10B981")))
-        painter.setPen(QPen(Qt.NoPen))
-        painter.drawEllipse(6, 6, 20, 20)
     elif color_name == "red":
         # Red dot
         painter.setBrush(QBrush(QColor("#EF4444")))
-        painter.setPen(QPen(Qt.NoPen))
-        painter.drawEllipse(6, 6, 20, 20)
     elif color_name == "yellow":
-        # Yellow triangle for error
+        # Yellow dot for warning/error
         painter.setBrush(QBrush(QColor("#F59E0B")))
-        painter.setPen(QPen(Qt.NoPen))
-        points = [QPoint(16, 4), QPoint(4, 28), QPoint(28, 28)]
-        painter.drawPolygon(QPolygon(points))
     elif color_name == "blue":
-        # Blue circle for upgrading/starting
+        # Blue dot for starting
         painter.setBrush(QBrush(QColor("#3B82F6")))
-        painter.setPen(QPen(Qt.NoPen))
-        painter.drawEllipse(6, 6, 20, 20)
     else:
         # Grey dot for unknown
         painter.setBrush(QBrush(QColor("#64748B")))
-        painter.setPen(QPen(Qt.NoPen))
-        painter.drawEllipse(6, 6, 20, 20)
         
+    # Draw status dot at (19, 19) with size 11x11, and a dark outline for high visibility
+    painter.setPen(QPen(QColor("#0B0F19"), 1.5))
+    painter.drawEllipse(19, 19, 11, 11)
+    
     painter.end()
     return QIcon(pixmap)
 
@@ -1712,12 +1712,28 @@ class NetOpsAgentUI(QMainWindow):
                     "--log-level", "warning"
                 ]
                 env = os.environ.copy()
+                env.pop("_MEIPASS", None)
+                env.pop("PYTHONHOME", None)
+                env.pop("PYTHONPATH", None)
+                
+                keys_to_pop = []
+                for k, v in env.items():
+                    if k.upper() == "PATH":
+                        continue
+                    if "_mei" in k.lower() or "_mei" in v.lower():
+                        keys_to_pop.append(k)
+                for k in keys_to_pop:
+                    env.pop(k, None)
+                    
+                path = env.get("PATH", "")
+                if path:
+                    paths = path.split(os.pathsep)
+                    cleaned_paths = [p for p in paths if "_mei" not in p.lower()]
+                    env["PATH"] = os.pathsep.join(cleaned_paths)
+
                 env["PYTHONUNBUFFERED"] = "1"
                 backend_dir = os.path.join(PROJECT_ROOT, "backend")
-                if "PYTHONPATH" in env:
-                    env["PYTHONPATH"] = backend_dir + os.pathsep + env["PYTHONPATH"]
-                else:
-                    env["PYTHONPATH"] = backend_dir
+                env["PYTHONPATH"] = backend_dir
                     
                 creationflags = 0
                 if sys.platform == 'win32':
@@ -1738,6 +1754,7 @@ class NetOpsAgentUI(QMainWindow):
                     stdout=backend_log_file,
                     stderr=backend_log_file,
                     env=env,
+                    close_fds=True,
                     creationflags=creationflags
                 )
                 
@@ -2100,8 +2117,8 @@ class NetOpsAgentUI(QMainWindow):
 
     # Tray notifications
     def show_tray_notification(self, message, title="NetOps"):
-        if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
-            self.tray_icon.showMessage(title, message, QSystemTrayIcon.Information, 3000)
+        # Disabled as requested by the user to avoid startup, stop, and minimization popups
+        pass
 
 @atexit.register
 def cleanup():
@@ -2126,6 +2143,12 @@ def cleanup():
 
 def main():
     logger.info("Initializing Enterprise PySide6 NetOps Agent Manager GUI")
+    
+    # Add Qt library path to ensure image formats (like ICO) can be loaded
+    from PySide6.QtCore import QCoreApplication
+    plugins_path = os.path.join(PROJECT_ROOT, ".venv", "Lib", "site-packages", "PySide6", "plugins")
+    if os.path.exists(plugins_path):
+        QCoreApplication.addLibraryPath(plugins_path)
     
     if sys.platform == 'win32':
         try:

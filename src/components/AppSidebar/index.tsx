@@ -193,7 +193,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
         mini
         onClick={() => handleNav('/dashboard')}
       />
-      <div className="border-t border-slate-800/50 my-2" />
+      <div className="border-t border-[var(--header-border)] my-2" />
       {navConfig.map((group, gi) => {
         const GIcon = group.icon ? iconMap[group.icon] : undefined;
         const visibleChildren = filterByRole(group.children);
@@ -203,7 +203,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
 
         return (
           <React.Fragment key={group.id}>
-            {gi > 0 && <div className="border-t border-slate-800/50 my-2" />}
+            {gi > 0 && <div className="border-t border-[var(--header-border)] my-2" />}
 
             {group.section ? (
               /* Section group: individual child icons */
@@ -329,10 +329,10 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
 
       <aside
         className={cn(
-          'flex flex-col flex-shrink-0 bg-[#0c1929] transition-all duration-300 overflow-hidden',
+          'flex flex-col flex-shrink-0 bg-[var(--sidebar-bg)] border-r border-[var(--header-border)] transition-all duration-300 overflow-hidden',
           isMobile
             ? cn(
-                'fixed inset-y-0 left-0 z-30 shadow-2xl shadow-black/40 w-[260px]',
+                'fixed inset-y-0 left-0 z-30 shadow-2xl w-[260px]',
                 showDrawer ? 'translate-x-0' : '-translate-x-full'
               )
             : effectiveMini
@@ -346,18 +346,18 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
         {/* ── Logo header ── */}
         <div
           className={cn(
-            'flex items-center border-b border-slate-800/60 flex-shrink-0',
+            'flex items-center border-b border-[var(--header-border)] flex-shrink-0',
             effectiveMini ? 'justify-center px-2 py-3.5' : 'justify-between px-4 py-3'
           )}
         >
           {!effectiveMini && (
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500/15 to-cyan-600/5 border border-cyan-500/10 flex items-center justify-center flex-shrink-0">
-                <Activity size={16} className="text-cyan-400" />
+              <div className="w-8 h-8 rounded-lg bg-[rgba(0,120,212,0.08)] border border-[rgba(0,120,212,0.15)] flex items-center justify-center flex-shrink-0">
+                <Activity size={16} className="text-[#0078d4]" />
               </div>
               <div className="min-w-0">
-                <h1 className="text-base font-bold text-white tracking-tight leading-none">{systemInfo?.system_name || 'Nexora'}</h1>
-                <p className="text-xs text-slate-500 mt-0.5 leading-none">
+                <h1 className="text-base font-bold text-[var(--heading-text)] tracking-tight leading-none">{systemInfo?.system_name || 'Nexora'}</h1>
+                <p className="text-xs text-[var(--dim-text)] mt-0.5 leading-none">
                   {zh ? '智能网络中枢' : 'SMART NET HUB'}
                 </p>
               </div>
@@ -365,8 +365,8 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
           )}
 
           {effectiveMini && (
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500/15 to-cyan-600/5 border border-cyan-500/10 flex items-center justify-center">
-              <Activity size={16} className="text-cyan-400" />
+            <div className="w-8 h-8 rounded-lg bg-[rgba(0,120,212,0.08)] border border-[rgba(0,120,212,0.15)] flex items-center justify-center">
+              <Activity size={16} className="text-[#0078d4]" />
             </div>
           )}
 
@@ -374,7 +374,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
           {!isMobile && (
             <button
               onClick={toggleMini}
-              className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors flex-shrink-0"
+              className="p-1.5 rounded-md text-[var(--muted-text)] hover:text-[var(--app-text)] hover:bg-[var(--app-hover-bg)] transition-colors flex-shrink-0"
               aria-label={effectiveMini ? 'Expand sidebar' : 'Collapse sidebar'}
             >
               {effectiveMini ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
@@ -385,7 +385,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
           {isMobile && (
             <button
               onClick={onMobileClose}
-              className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-white/5"
+              className="p-1.5 rounded-md text-[var(--muted-text)] hover:text-[var(--app-text)] hover:bg-[var(--app-hover-bg)]"
               aria-label="Close sidebar"
             >
               <X size={16} />
@@ -397,12 +397,12 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
         {!effectiveMini && (
           <div className="mx-3 my-3">
             <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-text)] pointer-events-none" />
               <input
                 ref={searchRef}
                 type="text"
                 placeholder={zh ? '搜索或跳转...' : 'Search or jump...'}
-                className="w-full pl-8 pr-10 py-2 rounded-lg bg-slate-800/60 border border-slate-700/80 text-[13px] text-slate-300 placeholder:text-slate-500 focus:outline-none focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/30 transition-colors"
+                className="w-full pl-8 pr-10 py-2 rounded-lg bg-[var(--search-bg)] border border-[var(--card-border)] text-[13px] text-[var(--app-text)] placeholder:text-[var(--dim-text)] focus:outline-none focus:border-[#0078d4] focus:ring-1 focus:ring-[#0078d4]/30 transition-colors"
                 onFocus={() => {
                   if (onOpenSearch) {
                     onOpenSearch();
@@ -412,7 +412,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                 readOnly={!!onOpenSearch}
                 aria-label={zh ? '搜索导航' : 'Search navigation'}
               />
-              <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] border border-slate-600 rounded px-1.5 py-0.5 text-slate-500 font-mono leading-none">
+              <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] border border-[var(--card-border)] rounded px-1.5 py-0.5 text-[var(--dim-text)] font-mono leading-none">
                 /
               </kbd>
             </div>
@@ -423,7 +423,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
           <div className="flex justify-center my-3">
             <button
               onClick={() => onOpenSearch?.()}
-              className="relative p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors group/search"
+              className="relative p-2 rounded-lg text-[var(--muted-text)] hover:text-[var(--app-text)] hover:bg-[var(--app-hover-bg)] transition-colors group/search"
               aria-label={zh ? '搜索' : 'Search'}
             >
               <Search size={18} />
@@ -431,9 +431,9 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                 className="absolute left-full top-1/2 -translate-y-1/2 ml-3
                   pointer-events-none opacity-0 group-hover/search:opacity-100
                   transition-opacity duration-150 z-50
-                  bg-slate-800 text-slate-100 text-[12px] font-medium
-                  py-1.5 px-3 rounded-lg shadow-lg shadow-black/40 whitespace-nowrap
-                  border border-slate-700"
+                  bg-[var(--card-bg)] text-[var(--app-text)] text-[12px] font-medium
+                  py-1.5 px-3 rounded-lg shadow-lg whitespace-nowrap
+                  border border-[var(--card-border)]"
                 role="tooltip"
               >
                 {zh ? '搜索 (/)' : 'Search (/)'}
@@ -447,22 +447,22 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
 
         {/* ── Version Footer ── */}
         {!effectiveMini && (
-          <div className="mt-auto px-4 py-4 border-t border-slate-800/60 bg-black/10 flex flex-col gap-1.5 flex-shrink-0">
+          <div className="mt-auto px-4 py-4 border-t border-[var(--header-border)] bg-[var(--app-hover-bg)] flex flex-col gap-1.5 flex-shrink-0">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">
+              <span className="text-[10px] font-bold text-[var(--dim-text)] tracking-wider uppercase">
                 {zh ? '当前版本' : 'VERSION'}
               </span>
-              <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 text-[10px] font-mono font-bold border border-cyan-500/20 shadow-[0_0_8px_rgba(34,211,238,0.1)]">
+              <span className="px-1.5 py-0.5 rounded bg-[rgba(0,120,212,0.08)] text-[#0078d4] text-[10px] font-mono font-bold border border-[rgba(0,120,212,0.15)]">
                 v{systemInfo?.version || '0.1.0'}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">
+              <span className="text-[10px] font-bold text-[var(--dim-text)] tracking-wider uppercase">
                 {zh ? '授权版本' : 'EDITION'}
               </span>
               <span className={cn("text-[10px] font-bold", 
-                systemInfo?.edition === 'Enterprise' ? 'text-amber-400' : 
-                systemInfo?.edition === 'Professional' ? 'text-indigo-400' : 'text-slate-400'
+                systemInfo?.edition === 'Enterprise' ? 'text-amber-600 dark:text-amber-400' : 
+                systemInfo?.edition === 'Professional' ? 'text-indigo-600 dark:text-indigo-400' : 'text-[var(--muted-text)]'
               )}>
                 {systemInfo?.edition || 'Standard'}
               </span>

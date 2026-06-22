@@ -46,6 +46,8 @@ const NavItem: React.FC<NavItemProps> = ({
   badgeDotCritical = false,
   onClick,
 }) => {
+  const ACCENT = '#0078d4';
+
   if (mini) {
     return (
       <div className="relative group/navitem flex justify-center">
@@ -54,8 +56,8 @@ const NavItem: React.FC<NavItemProps> = ({
           className={cn(
             'relative flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-150',
             active
-              ? 'bg-cyan-500/[0.08] text-cyan-400'
-              : 'text-slate-500 hover:bg-white/5 hover:text-slate-300'
+              ? 'bg-[rgba(0,120,212,0.08)] text-[#0078d4]'
+              : 'text-[var(--muted-text)] hover:bg-[var(--app-hover-bg)] hover:text-[var(--app-text)]'
           )}
           aria-label={label}
           aria-current={active ? 'page' : undefined}
@@ -64,8 +66,8 @@ const NavItem: React.FC<NavItemProps> = ({
           {badgeDot && (
             <span
               className={cn(
-                'absolute top-1 right-1 h-2 w-2 rounded-full ring-2 ring-[#0d1117]',
-                badgeDotCritical ? 'bg-red-500' : 'bg-cyan-500'
+                'absolute top-1 right-1 h-2 w-2 rounded-full ring-2 ring-[var(--sidebar-bg)]',
+                badgeDotCritical ? 'bg-red-500' : 'bg-[#0078d4]'
               )}
             />
           )}
@@ -75,9 +77,9 @@ const NavItem: React.FC<NavItemProps> = ({
           className="absolute left-full top-1/2 -translate-y-1/2 ml-3
             pointer-events-none opacity-0 group-hover/navitem:opacity-100
             transition-opacity duration-150 z-50
-            bg-slate-800 text-slate-100 text-[12px] font-medium
-            py-1.5 px-3 rounded-lg shadow-lg shadow-black/40 whitespace-nowrap
-            border border-slate-700"
+            bg-[var(--card-bg)] text-[var(--app-text)] text-[12px] font-medium
+            py-1.5 px-3 rounded-lg shadow-lg whitespace-nowrap
+            border border-[var(--card-border)]"
           role="tooltip"
         >
           {label}
@@ -93,18 +95,23 @@ const NavItem: React.FC<NavItemProps> = ({
         'w-full flex items-center gap-2.5 transition-all duration-150 border-l-[3px]',
         indent ? 'pl-9 pr-3 py-[7px]' : 'pl-3 pr-3 py-2',
         active
-          ? 'border-l-cyan-400 bg-cyan-500/[0.08] text-white font-medium rounded-r-lg'
-          : 'border-l-transparent text-slate-400 hover:bg-white/5 hover:text-slate-200 rounded-lg'
+          ? 'border-l-[#0078d4] bg-[rgba(0,120,212,0.08)] text-[#0078d4] font-semibold rounded-r-lg'
+          : 'border-l-transparent text-[var(--body-text)] hover:bg-[var(--app-hover-bg)] hover:text-[var(--app-text)] rounded-lg'
       )}
+      style={{
+        color: active ? '#0078d4' : undefined,
+      }}
       aria-current={active ? 'page' : undefined}
     >
       {Icon && (
         <Icon
           size={indent ? 14 : 16}
           className={cn(
-            'flex-shrink-0 transition-colors duration-150',
-            active ? 'text-cyan-400' : 'text-slate-500'
+            'flex-shrink-0 transition-colors duration-150'
           )}
+          style={{
+            color: active ? '#0078d4' : 'var(--muted-text)',
+          }}
         />
       )}
       <span

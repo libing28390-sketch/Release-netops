@@ -78,7 +78,7 @@ const iconMap: Record<string, React.ElementType> = {
   User, UserCheck, Users, Wrench, Zap,
 };
 
-const ACCENT = '#06b6d4';
+const ACCENT = '#0078d4';
 
 const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, currentUser }) => {
   const { systemInfo } = useSystem();
@@ -179,10 +179,10 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
 
   return (
     <aside
-      className="flex-shrink-0 flex flex-col h-full border-r transition-all duration-200 select-none"
+      className="flex-shrink-0 flex flex-col h-full border-r transition-all duration-200 select-none animate-[fadeIn_0.2s_ease-out]"
       style={{
         width: collapsed ? 48 : 200,
-        background: 'var(--header-bg)',
+        background: 'var(--sidebar-bg)',
         borderColor: 'var(--header-border)',
       }}
     >
@@ -235,7 +235,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
                 style={{
                   height: 36,
                   color: active ? ACCENT : 'var(--body-text)',
-                  background: active ? 'rgba(6,182,212,0.08)' : 'transparent',
+                  background: active ? 'rgba(0,120,212,0.08)' : 'transparent',
                 }}
                 onMouseEnter={e => {
                   if (!active) e.currentTarget.style.background = 'var(--app-hover-bg)';
@@ -269,7 +269,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
               className="group relative w-full flex items-center gap-2.5 pl-3 pr-2.5 py-2 rounded-lg text-[13px] transition-all mb-0.5"
               style={{
                 color: active ? ACCENT : 'var(--body-text)',
-                background: active ? 'rgba(6,182,212,0.08)' : 'transparent',
+                background: active ? 'rgba(0,120,212,0.08)' : 'transparent',
                 fontWeight: active ? 600 : 400,
               }}
               onMouseEnter={e => {

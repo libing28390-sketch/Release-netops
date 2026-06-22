@@ -74,7 +74,7 @@ echo [提示] 正在激活 Python 虚拟环境...
 call .venv\Scripts\activate.bat
 echo [提示] 正在启动系统，并在浏览器中打开 http://127.0.0.1:5010...
 start "" "http://127.0.0.1:5010"
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 5010
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 5010
 pause
 goto menu
 

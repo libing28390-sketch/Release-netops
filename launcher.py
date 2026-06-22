@@ -329,13 +329,35 @@ class SetupWorker(QObject):
             tray_script = os.path.join(PROJECT_ROOT, "desktop_tray.py")
             pythonw_exe = os.path.join(venv_path, "Scripts", "pythonw.exe")
             if os.path.exists(pythonw_exe) and os.path.exists(tray_script):
+                # 清理环境变量，防止子进程继承并锁定 PyInstaller 的临时目录 _MEIxxxxx
+                clean_env = dict(os.environ)
+                clean_env.pop("_MEIPASS", None)
+                clean_env.pop("PYTHONHOME", None)
+                clean_env.pop("PYTHONPATH", None)
+                
+                keys_to_pop = []
+                for k, v in clean_env.items():
+                    if k.upper() == "PATH":
+                        continue
+                    if "_mei" in k.lower() or "_mei" in v.lower():
+                        keys_to_pop.append(k)
+                for k in keys_to_pop:
+                    clean_env.pop(k, None)
+                    
+                path = clean_env.get("PATH", "")
+                if path:
+                    paths = path.split(os.pathsep)
+                    cleaned_paths = [p for p in paths if "_mei" not in p.lower()]
+                    clean_env["PATH"] = os.pathsep.join(cleaned_paths)
+
                 subprocess.Popen(
                     [pythonw_exe, "desktop_tray.py"],
                     cwd=PROJECT_ROOT,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     close_fds=True,
-                    creationflags=0x08000000
+                    creationflags=0x08000000,
+                    env=clean_env
                 )
                 log_message("NetOps desktop tray process launched.")
             else:
@@ -497,6 +519,10 @@ class LauncherUI(QMainWindow):
 
 def main():
     log_message("=== NetOps PySide6 Launcher Session Started ===")
+    from PySide6.QtCore import QCoreApplication
+    plugins_path = os.path.join(PROJECT_ROOT, ".venv", "Lib", "site-packages", "PySide6", "plugins")
+    if os.path.exists(plugins_path):
+        QCoreApplication.addLibraryPath(plugins_path)
     app = QApplication(sys.argv)
     window = LauncherUI()
     window.show()

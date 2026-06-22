@@ -160,7 +160,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           <div className="flex-1 overflow-hidden flex flex-col min-h-0">{children}</div>
         </div>
 
-        <footer className={`h-10 px-8 border-t flex items-center justify-between text-[11px] ${resolvedTheme === 'dark' ? 'border-white/10 text-white/45 bg-[#0b1320]' : 'border-black/8 text-black/45 bg-white/70'}`}>
+        <footer className="h-10 px-8 border-t flex items-center justify-between text-[11px] border-[var(--header-border)] text-[var(--muted-text)] bg-[var(--sidebar-bg)]">
           <span>Copyright (c) {new Date().getFullYear()} {systemInfo?.system_name || 'Nexora'}. All rights reserved.</span>
           <span className="font-mono">{systemInfo?.version || 'v0.1.0'}</span>
         </footer>

@@ -58,7 +58,7 @@ const NavSection: React.FC<NavSectionProps> = ({
       {/* Section header */}
       <button
         onClick={handleToggle}
-        className="w-full flex items-center gap-2 px-3 py-1.5 group/section"
+        className="w-full flex items-center gap-2 px-3 py-1.5 group/section hover:bg-[var(--app-hover-bg)] rounded-lg transition-colors"
         aria-expanded={isOpen}
         aria-label={label}
       >
@@ -66,16 +66,20 @@ const NavSection: React.FC<NavSectionProps> = ({
           <Icon
             size={12}
             className={cn(
-              'flex-shrink-0 transition-colors',
-              hasActiveChild ? 'text-cyan-400' : 'text-slate-500 group-hover/section:text-slate-400'
+              'flex-shrink-0 transition-colors'
             )}
+            style={{
+              color: hasActiveChild ? '#0078d4' : 'var(--dim-text)',
+            }}
           />
         )}
         <span
           className={cn(
-            'flex-1 text-left text-[13px] font-semibold tracking-wide select-none transition-colors',
-            hasActiveChild ? 'text-slate-400' : 'text-slate-500 group-hover/section:text-slate-400'
+            'flex-1 text-left text-[13px] font-semibold tracking-wide select-none transition-colors'
           )}
+          style={{
+            color: hasActiveChild ? '#0078d4' : 'var(--muted-text)',
+          }}
         >
           {label}
         </span>
@@ -83,9 +87,12 @@ const NavSection: React.FC<NavSectionProps> = ({
         <ChevronRight
           size={12}
           className={cn(
-            'flex-shrink-0 text-slate-600 transition-transform duration-200',
+            'flex-shrink-0 transition-transform duration-200',
             isOpen ? 'rotate-90' : 'rotate-0'
           )}
+          style={{
+            color: 'var(--dim-text)',
+          }}
         />
       </button>
 

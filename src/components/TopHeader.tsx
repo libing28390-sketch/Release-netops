@@ -112,12 +112,12 @@ const TopHeader: React.FC<TopHeaderProps> = ({
 const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, Viewer: 1 };
 
   const appEntries = useMemo(() => [
-    { id: 'dashboard',  label: '首页',       labelEn: 'Dashboard',    icon: LayoutDashboard, path: '/dashboard',          accent: '#06b6d4', minRole: 'Viewer' },
+    { id: 'dashboard',  label: '首页',       labelEn: 'Dashboard',    icon: LayoutDashboard, path: '/dashboard',          accent: '#0078d4', minRole: 'Viewer' },
     { id: 'access',     label: '操作工作台', labelEn: 'Operation Workspace', icon: Globe,           path: '/access/workspace',    accent: '#13c2c2', minRole: 'Viewer' },
     { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   icon: Activity,          path: '/monitor/overview',   accent: '#1677ff', minRole: 'Viewer' },
     { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       icon: Bell,              path: '/alerts/desk',        accent: '#fa8c16', minRole: 'Viewer' },
     { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       icon: Server,            path: '/assets/dashboard',   accent: '#1677ff', minRole: 'Viewer' },
-    { id: 'ipam',       label: 'IPAM地址管理', labelEn: 'IPAM',        icon: Globe,             path: '/ipam/prefixes',      accent: '#06b6d4', minRole: 'Viewer' },
+    { id: 'ipam',       label: 'IPAM地址管理', labelEn: 'IPAM',        icon: Globe,             path: '/ipam/prefixes',      accent: '#0078d4', minRole: 'Viewer' },
     { id: 'cmdb',       label: 'CMDB基础数据', labelEn: 'CMDB Core',    icon: Database,          path: '/cmdb/credentials',   accent: '#6366f1', minRole: 'Operator' },
     { id: 'config',     label: '配置管理',   labelEn: 'Config',       icon: FileCode2,         path: '/config/backup',      accent: '#722ed1', minRole: 'Viewer' },
     { id: 'automation', label: '自动化',     labelEn: 'Automation',   icon: Zap,               path: '/automation/tasks',   accent: '#0891b2', minRole: 'Viewer' },
@@ -173,9 +173,9 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
           <div className="flex items-center gap-3">
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-              style={{ background: 'rgba(6,182,212,0.12)' }}
+              style={{ background: 'rgba(0,120,212,0.08)' }}
             >
-              <Grid3X3 size={19} strokeWidth={1.8} style={{ color: '#06b6d4' }} />
+              <Grid3X3 size={19} strokeWidth={1.8} style={{ color: '#0078d4' }} />
             </div>
             <div>
               <h2 style={{ color: 'var(--heading-text)' }} className="text-base md:text-lg font-bold tracking-tight leading-none">
@@ -192,7 +192,7 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
             <button
               onClick={onOpenDashboard}
               title={language === 'zh' ? '返回功能中心' : 'Back to Home'}
-              className={`p-2 rounded-lg transition-all ${resolvedTheme === 'dark' ? 'text-cyan-400 hover:bg-white/10' : 'text-cyan-600 hover:bg-cyan-50'}`}
+              className={`p-2 rounded-lg transition-all ${resolvedTheme === 'dark' ? 'text-blue-400 hover:bg-white/10' : 'text-blue-600 hover:bg-blue-50/50'}`}
             >
               <Grid3X3 size={18} strokeWidth={1.8} />
             </button>
@@ -288,7 +288,7 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
           >
             <Bell size={20} />
             {unreadNotificationCount > 0 && (
-              <span className={`absolute top-1.5 right-1.5 min-w-2 h-2 px-0.5 bg-red-500 rounded-full border-2 text-[9px] leading-none flex items-center justify-center text-white ${resolvedTheme === 'dark' ? 'border-[#0f1828]' : 'border-white'}`} />
+              <span className={`absolute top-1.5 right-1.5 min-w-2 h-2 px-0.5 bg-red-500 rounded-full border-2 text-[9px] leading-none flex items-center justify-center text-white ${resolvedTheme === 'dark' ? 'border-[#2b2b2b]' : 'border-white'}`} />
             )}
           </button>
 
@@ -297,13 +297,13 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
               initial={{ opacity: 0, y: -6, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               transition={{ duration: 0.16, ease: 'easeOut' }}
-              className={`absolute top-12 right-0 w-[calc(100vw-2rem)] sm:w-80 max-w-80 rounded-xl shadow-2xl z-50 overflow-hidden ${resolvedTheme === 'dark' ? 'bg-[#121c2d] border border-white/10' : 'bg-white border border-black/10'}`}
+              className={`absolute top-12 right-0 w-[calc(100vw-2rem)] sm:w-80 max-w-80 rounded-xl shadow-2xl z-50 overflow-hidden ${resolvedTheme === 'dark' ? 'bg-[#2d2d2d] border border-white/10' : 'bg-white border border-black/10'}`}
             >
               <div className={`px-4 py-3 border-b flex items-center justify-between ${resolvedTheme === 'dark' ? 'border-white/10 bg-white/5' : 'border-black/5 bg-black/[0.02]'}`}>
                 <p className={`text-sm font-semibold ${resolvedTheme === 'dark' ? 'text-white/90' : 'text-black/80'}`}>Notifications</p>
                 <button
                   onClick={onMarkAllNotificationsRead}
-                  className={`text-[11px] font-semibold ${resolvedTheme === 'dark' ? 'text-[#00bceb] hover:text-[#40d6f6]' : 'text-[#008bb0] hover:text-[#006c8a]'}`}
+                  className={`text-[11px] font-semibold ${resolvedTheme === 'dark' ? 'text-[#0078d4] hover:text-[#106ebe]' : 'text-[#008bb0] hover:text-[#006c8a]'}`}
                 >
                   Mark all read
                 </button>
@@ -319,7 +319,7 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
                     className={`w-full text-left px-4 py-3 border-b transition-all ${resolvedTheme === 'dark' ? 'border-white/5 hover:bg-white/5' : 'border-black/5 hover:bg-black/[0.02]'}`}
                   >
                     <div className="flex items-start gap-3">
-                      <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${item.read ? 'bg-transparent border border-transparent' : 'bg-[#00bceb]'}`} />
+                      <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${item.read ? 'bg-transparent border border-transparent' : 'bg-[#0078d4]'}`} />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] ${
@@ -388,7 +388,7 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
             initial={{ opacity: 0, y: -6, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ duration: 0.16, ease: 'easeOut' }}
-            className={`absolute top-14 right-0 w-[calc(100vw-2rem)] sm:w-[300px] max-w-[300px] rounded-xl shadow-2xl z-50 overflow-hidden ${resolvedTheme === 'dark' ? 'bg-[#161b22] border border-white/[0.12]' : 'bg-white border border-black/[0.12] shadow-lg'}`}
+            className={`absolute top-14 right-0 w-[calc(100vw-2rem)] sm:w-[300px] max-w-[300px] rounded-xl shadow-2xl z-50 overflow-hidden ${resolvedTheme === 'dark' ? 'bg-[#2d2d2d] border border-white/[0.12]' : 'bg-white border border-black/[0.12] shadow-lg'}`}
           >
             {menuView === 'main' ? (
               <>
@@ -415,7 +415,7 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
 
                 <div className={`py-1 border-b ${resolvedTheme === 'dark' ? 'border-white/[0.08]' : 'border-black/[0.06]'}`}>
                   <button onClick={onOpenProfile} className={`w-full flex items-center gap-3 px-4 py-[7px] text-[13px] transition-colors ${resolvedTheme === 'dark' ? 'text-white/80 hover:bg-white/[0.06]' : 'text-black/70 hover:bg-black/[0.03]'}`}>
-                    <User size={16} className="flex-shrink-0 opacity-70 text-cyan-500" />
+                    <User size={16} className="flex-shrink-0 opacity-70 text-blue-500" />
                     {language === 'zh' ? '个人设置' : 'Account Settings'}
                   </button>
                   
@@ -488,10 +488,10 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
                   <span>{language === 'zh' ? '外观' : 'Appearance'}</span>
                 </div>
                 <div className={`flex items-center rounded-md border p-0.5 ${resolvedTheme === 'dark' ? 'border-white/10 bg-white/5' : 'border-black/10 bg-black/[0.03]'}`}>
-                  <button onClick={() => onThemeModeChange('light')} title="Light" className={`p-1 rounded transition-all ${themeMode === 'light' ? 'bg-[#00bceb]/15 text-[#00bceb]' : (resolvedTheme === 'dark' ? 'text-white/45 hover:text-white' : 'text-black/40 hover:text-black')}`}>
+                  <button onClick={() => onThemeModeChange('light')} title="Light" className={`p-1 rounded transition-all ${themeMode === 'light' ? 'bg-[#0078d4]/15 text-[#0078d4]' : (resolvedTheme === 'dark' ? 'text-white/45 hover:text-white' : 'text-black/40 hover:text-black')}`}>
                     <Sun size={13} />
                   </button>
-                  <button onClick={() => onThemeModeChange('dark')} title="Dark" className={`p-1 rounded transition-all ${themeMode === 'dark' ? 'bg-[#00bceb]/15 text-[#00bceb]' : (resolvedTheme === 'dark' ? 'text-white/45 hover:text-white' : 'text-black/40 hover:text-black')}`}>
+                  <button onClick={() => onThemeModeChange('dark')} title="Dark" className={`p-1 rounded transition-all ${themeMode === 'dark' ? 'bg-[#0078d4]/15 text-[#0078d4]' : (resolvedTheme === 'dark' ? 'text-white/45 hover:text-white' : 'text-black/40 hover:text-black')}`}>
                     <Moon size={13} />
                   </button>
                 </div>
@@ -502,10 +502,10 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
                   <span>{language === 'zh' ? '语言' : 'Language'}</span>
                 </div>
                 <div className={`flex items-center rounded-md border p-0.5 ${resolvedTheme === 'dark' ? 'border-white/10 bg-white/5' : 'border-black/10 bg-black/[0.03]'}`}>
-                  <button onClick={() => onLanguageChange('en')} className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all ${language === 'en' ? 'bg-[#00bceb]/15 text-[#00bceb]' : (resolvedTheme === 'dark' ? 'text-white/45 hover:text-white' : 'text-black/40 hover:text-black')}`}>
+                  <button onClick={() => onLanguageChange('en')} className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all ${language === 'en' ? 'bg-[#0078d4]/15 text-[#0078d4]' : (resolvedTheme === 'dark' ? 'text-white/45 hover:text-white' : 'text-black/40 hover:text-black')}`}>
                     EN
                   </button>
-                  <button onClick={() => onLanguageChange('zh')} className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all ${language === 'zh' ? 'bg-[#00bceb]/15 text-[#00bceb]' : (resolvedTheme === 'dark' ? 'text-white/45 hover:text-white' : 'text-black/40 hover:text-black')}`}>
+                  <button onClick={() => onLanguageChange('zh')} className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all ${language === 'zh' ? 'bg-[#0078d4]/15 text-[#0078d4]' : (resolvedTheme === 'dark' ? 'text-white/45 hover:text-white' : 'text-black/40 hover:text-black')}`}>
                     中文
                   </button>
                 </div>

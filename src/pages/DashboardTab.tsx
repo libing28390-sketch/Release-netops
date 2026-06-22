@@ -177,12 +177,12 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
       <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4">
         {/* Total Assets */}
-        <div onClick={() => navigate('/assets/devices')} className="bg-white/80 dark:bg-[#0d1527]/90 px-5 py-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/5 flex items-center justify-between group hover:shadow-lg hover:-translate-y-1 hover:border-[#005073]/30 dark:hover:border-[#005073]/50 hover:shadow-[#005073]/10 dark:hover:shadow-[#005073]/20 transition-all duration-300 cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
+        <div onClick={() => navigate('/assets/devices')} className="bg-white dark:bg-[#2d2d2d] px-5 py-4 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-[#e5e5e5] dark:border-white/5 flex items-center justify-between group hover:shadow-md transition-all duration-200 cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30 mb-1">{t('totalAssets')}</p>
-            <p className="text-3xl font-bold monitoring-data text-[#005073] dark:text-[#00bceb]">{assetsTotal}</p>
+            <p className="text-3xl font-bold monitoring-data text-[#0078d4] dark:text-[#0078d4]">{assetsTotal}</p>
           </div>
-          <div className="p-3 rounded-xl bg-[#005073]/5 dark:bg-[#005073]/20 text-[#005073] dark:text-[#00bceb] group-hover:scale-110 transition-transform">
+          <div className="p-3 rounded-xl bg-[#0078d4]/5 dark:bg-[#0078d4]/20 text-[#0078d4] group-hover:scale-105 transition-transform">
             <Server size={24} />
           </div>
         </div>
@@ -197,7 +197,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               navigate('/inventory/devices');
             }
           }}
-          className={`bg-white/80 dark:bg-[#0d1527]/90 px-5 py-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/5 group hover:shadow-lg hover:-translate-y-1 hover:border-emerald-200 dark:hover:border-emerald-500/50 hover:shadow-emerald-500/10 dark:hover:shadow-emerald-500/20 transition-all duration-300 cursor-pointer ${
+          className={`bg-white dark:bg-[#2d2d2d] px-5 py-4 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-[#e5e5e5] dark:border-white/5 group hover:shadow-md transition-all duration-200 cursor-pointer ${
             hasDevices ? (onlinePct < 30 ? 'border-l-[3px] border-l-red-500' : onlinePct < 60 ? 'border-l-[3px] border-l-orange-400' : '') : ''
           }`}
         >
@@ -206,7 +206,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30 mb-1">{t('onlineNodes')}</p>
               <div className="flex items-baseline gap-1.5">
                 <span className={`text-3xl font-bold monitoring-data ${
-                  hasDevices ? (onlinePct < 30 ? 'text-red-600 dark:text-red-400' : onlinePct < 60 ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-[#005073] dark:text-[#00bceb]'
+                  hasDevices ? (onlinePct < 30 ? 'text-red-600 dark:text-red-400' : onlinePct < 60 ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-[#0078d4] dark:text-[#0078d4]'
                 }`}>{onlineCount}</span>
                 <span className="text-sm text-black/30 dark:text-white/30 font-medium">/ {devices.length}</span>
               </div>
@@ -215,14 +215,14 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               hasDevices 
                 ? (onlinePct < 30 ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : onlinePct < 60 ? 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400' : 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400')
                 : 'bg-slate-50 dark:bg-slate-900 text-slate-500'
-            } group-hover:scale-110 transition-transform`}>
+            } group-hover:scale-105 transition-transform`}>
               <Activity size={24} />
             </div>
           </div>
           {/* Micro progress bar */}
           <div className="mt-2 w-full h-1.5 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden relative">
             <div className={`h-full rounded-full transition-all duration-700 relative overflow-hidden ${
-              hasDevices ? (onlinePct < 30 ? 'bg-red-500 animate-pulse' : onlinePct < 60 ? 'bg-orange-400' : 'bg-emerald-500') : 'bg-slate-300 dark:bg-slate-700'
+              hasDevices ? (onlinePct < 30 ? 'bg-red-500' : onlinePct < 60 ? 'bg-orange-400' : 'bg-emerald-500') : 'bg-slate-300 dark:bg-slate-700'
             }`} style={{ width: `${hasDevices ? onlinePct : 0}%` }}>
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-[shimmer_2.5s_infinite] -translate-x-full" />
             </div>
@@ -235,26 +235,26 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
 
         {/* Compliance */}
-        <div onClick={() => navigate('/compliance')} className={`bg-white/80 dark:bg-[#0d1527]/90 px-5 py-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/5 flex items-center justify-between group hover:shadow-lg hover:-translate-y-1 hover:border-[#00bceb]/30 dark:hover:border-[#00bceb]/50 hover:shadow-[#00bceb]/10 dark:hover:shadow-[#00bceb]/20 transition-all duration-300 cursor-pointer ${
+        <div onClick={() => navigate('/compliance')} className={`bg-white dark:bg-[#2d2d2d] px-5 py-4 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-[#e5e5e5] dark:border-white/5 flex items-center justify-between group hover:shadow-md transition-all duration-200 cursor-pointer ${
           hasDevices ? (compPct === 0 ? 'border-l-[3px] border-l-red-500' : compPct < 50 ? 'border-l-[3px] border-l-orange-400' : '') : ''
         }`}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30 mb-1">{t('complianceRate')}</p>
             <p className={`text-3xl font-bold monitoring-data ${
-              hasDevices ? (compPct === 0 ? 'text-red-600 dark:text-red-400' : compPct < 50 ? 'text-orange-600 dark:text-orange-400' : 'text-[#00bceb] dark:text-[#00bceb]') : 'text-[#005073] dark:text-[#00bceb]'
+              hasDevices ? (compPct === 0 ? 'text-red-600 dark:text-red-400' : compPct < 50 ? 'text-orange-600 dark:text-orange-400' : 'text-[#0078d4] dark:text-[#0078d4]') : 'text-[#0078d4] dark:text-[#0078d4]'
             }`}>{hasDevices ? `${compPct}%` : '--'}</p>
           </div>
           <div className={`p-3 rounded-xl ${
             hasDevices 
-              ? (compPct === 0 ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : compPct < 50 ? 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400' : 'bg-[#00bceb]/5 dark:bg-[#00bceb]/20 text-[#00bceb] dark:text-[#00bceb]')
+              ? (compPct === 0 ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : compPct < 50 ? 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400' : 'bg-[#0078d4]/5 dark:bg-[#0078d4]/20 text-[#0078d4] dark:text-[#0078d4]')
               : 'bg-slate-50 dark:bg-slate-900 text-slate-500'
-          } group-hover:scale-110 transition-transform`}>
+          } group-hover:scale-105 transition-transform`}>
             <ShieldCheck size={24} />
           </div>
         </div>
 
         {/* Failed Tasks (24h) */}
-        <div onClick={() => navigate('/automation/history')} className={`bg-white/80 dark:bg-[#0d1527]/90 px-5 py-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/5 flex items-center justify-between group hover:shadow-lg hover:-translate-y-1 hover:border-red-200 dark:hover:border-red-500/50 hover:shadow-red-500/10 dark:hover:shadow-red-500/20 transition-all duration-300 cursor-pointer ${failedCount24h > 0 ? 'border-l-[3px] border-l-red-500 animate-[breathe-glow_3s_infinite_ease-in-out]' : ''}`}>
+        <div onClick={() => navigate('/automation/history')} className={`bg-white dark:bg-[#2d2d2d] px-5 py-4 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-[#e5e5e5] dark:border-white/5 flex items-center justify-between group hover:shadow-md transition-all duration-200 cursor-pointer ${failedCount24h > 0 ? 'border-l-[3px] border-l-red-500' : ''}`}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30 mb-1">{t('failedTasks')}</p>
             <div className="flex items-baseline gap-1.5">
@@ -262,16 +262,16 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               <span className="text-[10px] text-black/25 dark:text-white/40 font-bold">24h</span>
             </div>
           </div>
-          <div className={`p-3 rounded-xl ${failedCount24h > 0 ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : 'bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40'} group-hover:scale-110 transition-transform`}>
+          <div className={`p-3 rounded-xl ${failedCount24h > 0 ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : 'bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40'} group-hover:scale-105 transition-transform`}>
             <AlertCircle size={24} />
           </div>
         </div>
 
         {/* Platform Host — expanded with circular SVG gauge charts */}
-        <div onClick={() => navigate('/monitor/telemetry')} className={`col-span-2 md:col-span-1 bg-white/80 dark:bg-[#0d1527]/90 px-5 py-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/5 group hover:shadow-lg hover:-translate-y-1 hover:border-[#00bceb]/30 dark:hover:border-[#00bceb]/50 hover:shadow-[#00bceb]/10 dark:hover:shadow-[#00bceb]/20 transition-all duration-300 cursor-pointer ${hostResources?.status === 'critical' ? 'border-l-[3px] border-l-red-500' : hostResources?.status === 'degraded' ? 'border-l-[3px] border-l-orange-400' : ''}`}>
+        <div onClick={() => navigate('/monitor/telemetry')} className={`col-span-2 md:col-span-1 bg-white dark:bg-[#2d2d2d] px-5 py-4 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-[#e5e5e5] dark:border-white/5 group hover:shadow-md transition-all duration-200 cursor-pointer ${hostResources?.status === 'critical' ? 'border-l-[3px] border-l-red-500' : hostResources?.status === 'degraded' ? 'border-l-[3px] border-l-orange-400' : ''}`}>
           <div className="flex items-center justify-between mb-1.5">
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30">{language === 'zh' ? '平台宿主机' : 'Platform Host'}</p>
-            <div className={`p-2 rounded-lg ${hostResources?.status === 'critical' ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : hostResources?.status === 'degraded' ? 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400' : 'bg-[#005073]/5 dark:bg-[#005073]/20 text-[#005073] dark:text-[#00bceb]'} group-hover:scale-110 transition-transform`}>
+            <div className={`p-2 rounded-lg ${hostResources?.status === 'critical' ? 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : hostResources?.status === 'degraded' ? 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400' : 'bg-[#0078d4]/5 dark:bg-[#0078d4]/20 text-[#0078d4] dark:text-[#0078d4]'} group-hover:scale-105 transition-transform`}>
               <MonitorSmartphone size={16} />
             </div>
           </div>
@@ -285,22 +285,22 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 const radius = 14;
                 const circ = 2 * Math.PI * radius;
                 const strokePct = circ * (1 - res.value / 100);
-                const strokeColor = res.value > 80 ? 'stroke-red-500' : res.value > 65 ? 'stroke-orange-400' : 'stroke-[#00bceb]';
-                const textTone = res.value > 80 ? 'text-red-500 font-extrabold' : res.value > 65 ? 'text-orange-500 font-bold' : 'text-[#005073] dark:text-[#00bceb] font-bold';
+                const strokeColor = res.value > 80 ? 'stroke-red-500' : res.value > 65 ? 'stroke-orange-400' : 'stroke-[#0078d4]';
+                const textTone = res.value > 80 ? 'text-red-500 font-extrabold' : res.value > 65 ? 'text-orange-500 font-bold' : 'text-[#0078d4] dark:text-[#0078d4] font-bold';
                 return (
                   <div key={res.label} className="flex flex-col items-center">
                     <div className="relative w-10 h-10 flex items-center justify-center">
                       <svg className="w-10 h-10 transform -rotate-90">
                         <circle cx="20" cy="20" r={radius} className="stroke-black/5 dark:stroke-white/5 fill-transparent" strokeWidth="2.5" />
                         <circle 
-                          cx="20" 
-                          cy="20" 
-                          r={radius} 
-                          className={`fill-transparent ${strokeColor} transition-all duration-700`} 
-                          strokeWidth="2.5" 
-                          strokeDasharray={circ} 
-                          strokeDashoffset={strokePct}
-                          strokeLinecap="round"
+                           cx="20" 
+                           cy="20" 
+                           r={radius} 
+                           className={`fill-transparent ${strokeColor} transition-all duration-700`} 
+                           strokeWidth="2.5" 
+                           strokeDasharray={circ} 
+                           strokeDashoffset={strokePct}
+                           strokeLinecap="round"
                         />
                       </svg>
                       <span className={`absolute text-[8px] tracking-tighter ${textTone}`}>{Math.round(res.value)}%</span>
@@ -320,9 +320,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
       {unreadNotificationCount > 0 && (
         <div 
           onClick={() => navigate('/alerts/desk')} 
-          className={`bg-white/80 dark:bg-[#0d1527]/90 rounded-2xl border border-black/5 dark:border-white/5 shadow-sm px-6 py-4 flex items-center justify-between cursor-pointer hover:shadow-lg transition-all group duration-300 ${
-            criticalAlerts > 0 ? 'animate-[breathe-glow_3s_infinite_ease-in-out]' : ''
-          }`}
+          className="bg-white dark:bg-[#2d2d2d] rounded-xl border border-[#e5e5e5] dark:border-white/5 shadow-[0_4px_16px_rgba(0,0,0,0.04)] px-6 py-4 flex items-center justify-between cursor-pointer hover:shadow-md transition-all group duration-200"
         >
           <div className="flex items-center gap-4 flex-1 min-w-0">
             <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 group-hover:scale-110 transition-transform">
@@ -364,11 +362,11 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
       )}
 
       <div className="grid grid-cols-12 gap-3 md:gap-4">
-        <div className="col-span-12 lg:col-span-8 bg-white/80 dark:bg-[#0d1527]/85 backdrop-blur-md rounded-2xl border border-black/5 dark:border-white/5 p-4 md:p-6 shadow-sm">
+        <div className="col-span-12 lg:col-span-8 bg-white dark:bg-[#2d2d2d] rounded-xl border border-[#e5e5e5] dark:border-white/5 p-4 md:p-6 shadow-[0_4px_16px_rgba(0,0,0,0.04)]">
           <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
             <div>
               <h3 className="text-sm font-bold text-[#00172D] dark:text-white flex items-center gap-2">
-                <TrendingUp size={18} className="text-[#00bceb]" />
+                <TrendingUp size={18} className="text-[#0078d4]" />
                 {t('complianceTrend')}
               </h3>
               <p className="text-xs text-black/40 dark:text-white/40 mt-0.5">{t('complianceTrendSub')}</p>
@@ -379,7 +377,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 className={`flex items-center gap-1.5 mr-2 px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-all select-none ${showComplianceLine ? '' : 'opacity-40'}`}
                 title={language === 'zh' ? '点击显示/隐藏合规率' : 'Click to Toggle Compliance Rate'}
               >
-                <span className="w-3.5 h-0.5 bg-[#00bceb] rounded-full block" />
+                <span className="w-3.5 h-0.5 bg-[#0078d4] rounded-full block" />
                 <span className="text-[9px] font-bold text-black/50 dark:text-white/50">{ language === 'zh' ? '合规率' : 'Compliance' }</span>
               </button>
               <button 
@@ -387,7 +385,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 className={`flex items-center gap-1.5 mr-3 px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-all select-none ${showJobSuccessLine ? '' : 'opacity-40'}`}
                 title={language === 'zh' ? '点击显示/隐藏作业成功率' : 'Click to Toggle Job Success Rate'}
               >
-                <span className="w-3.5 h-0.5 bg-emerald-500 rounded-full block animate-[pulse_2s_infinite]" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #10b981, #10b981 3px, transparent 3px, transparent 6px)' }} />
+                <span className="w-3.5 h-0.5 bg-emerald-500 rounded-full block" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #10b981, #10b981 3px, transparent 3px, transparent 6px)' }} />
                 <span className="text-[9px] font-bold text-black/50 dark:text-white/50">{ language === 'zh' ? '作业成功率' : 'Job Success' }</span>
               </button>
               <button onClick={() => setTrendDays(7)} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${trendDays === 7 ? 'bg-black/10 dark:bg-white/10 text-black/75 dark:text-white/80' : 'text-black/40 dark:text-white/40 hover:bg-black/5 dark:hover:bg-white/5'}`}>{t('days7')}</button>
@@ -399,8 +397,8 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               <AreaChart data={jobSuccessTrend}>
                 <defs>
                   <linearGradient id="colorRate" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#00bceb" stopOpacity={0.2}/>
-                    <stop offset="95%" stopColor="#00bceb" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#0078d4" stopOpacity={0.2}/>
+                    <stop offset="95%" stopColor="#0078d4" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ct.grid} />
@@ -427,14 +425,14 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 />
                 {/* Average reference line */}
                 <ReferenceLine y={trendAvg} stroke={ct.reference} strokeDasharray="6 4" strokeWidth={1} label={{ value: `${language === 'zh' ? '均值' : 'Avg'} ${trendAvg}%`, position: 'insideTopRight', fill: ct.reference, fontSize: 10 }} />
-                {showComplianceLine && <Area type="monotone" dataKey="rate" stroke="#00bceb" strokeWidth={3} fillOpacity={1} fill="url(#colorRate)" name="rate" />}
+                {showComplianceLine && <Area type="monotone" dataKey="rate" stroke="#0078d4" strokeWidth={3} fillOpacity={1} fill="url(#colorRate)" name="rate" />}
                 {showJobSuccessLine && <Area type="monotone" dataKey="jobRate" stroke="#10b981" strokeWidth={2} strokeDasharray="5 3" fillOpacity={0} dot={false} connectNulls name="jobRate" />}
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        <div className="col-span-12 lg:col-span-4 bg-white/80 dark:bg-[#0d1527]/85 backdrop-blur-md rounded-2xl border border-black/5 dark:border-white/5 p-4 md:p-6 shadow-sm">
+        <div className="col-span-12 lg:col-span-4 bg-white dark:bg-[#2d2d2d] rounded-xl border border-[#e5e5e5] dark:border-white/5 p-4 md:p-6 shadow-[0_4px_16px_rgba(0,0,0,0.04)]">
           <h3 className="text-sm font-bold text-[#00172D] dark:text-white mb-6 flex items-center gap-2">
             <PieChartIcon size={18} className="text-emerald-500" />
             {t('platformDistribution')}
@@ -473,9 +471,9 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               >
                 <div className="flex items-center gap-3">
                   <div className="w-2.5 h-2.5 rounded-full group-hover:scale-110 transition-transform duration-300" style={{backgroundColor: item.color}} />
-                  <span className="text-xs font-semibold text-black/60 dark:text-white/70 group-hover:text-[#00bceb] transition-colors">{item.name}</span>
+                  <span className="text-xs font-semibold text-black/60 dark:text-white/70 group-hover:text-[#0078d4] transition-colors">{item.name}</span>
                 </div>
-                <span className="text-xs font-bold text-[#00172D] dark:text-[#00bceb] group-hover:scale-105 transition-transform">{item.value}%</span>
+                <span className="text-xs font-bold text-[#00172D] dark:text-[#0078d4] group-hover:scale-105 transition-transform">{item.value}%</span>
               </div>
             ))}
           </div>
@@ -483,7 +481,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
       </div>
 
       <div className="grid grid-cols-12 gap-3 md:gap-4">
-        <div className="col-span-12 lg:col-span-7 bg-white/80 dark:bg-[#0d1527]/85 backdrop-blur-md rounded-2xl border border-black/5 dark:border-white/5 p-4 md:p-6 shadow-sm">
+        <div className="col-span-12 lg:col-span-7 bg-white dark:bg-[#2d2d2d] rounded-xl border border-[#e5e5e5] dark:border-white/5 p-4 md:p-6 shadow-[0_4px_16px_rgba(0,0,0,0.04)]">
           <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
             <div>
               <h3 className="text-sm font-bold text-[#00172D] dark:text-white flex items-center gap-2">
@@ -492,7 +490,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               </h3>
               <p className="text-xs text-black/40 dark:text-white/40 mt-1">{t('recentActivitySub')}</p>
             </div>
-            <button className="text-[10px] font-bold uppercase text-[#00bceb] hover:underline" onClick={() => navigate('/automation/history')}>
+            <button className="text-[10px] font-bold uppercase text-[#0078d4] hover:underline" onClick={() => navigate('/automation/history')}>
               {t('viewFullJobHistory')}
             </button>
           </div>
@@ -507,12 +505,12 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 <div className="flex items-center gap-4">
                   <div className={`p-2.5 rounded-xl transition-colors ${
                     job.status === 'success' ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400' :
-                    job.status === 'failed' ? 'bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400' : 'bg-[#00bceb]/10 dark:bg-[#00bceb]/20 text-[#00bceb] dark:text-[#00bceb]'
+                    job.status === 'failed' ? 'bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400' : 'bg-[#0078d4]/10 dark:bg-[#0078d4]/20 text-[#0078d4] dark:text-[#0078d4]'
                   }`}>
                     <Zap size={18} className="group-hover/item:scale-110 transition-transform duration-300" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-[#00172D] dark:text-white group-hover/item:text-[#00bceb] transition-colors">{job.task_name}</p>
+                    <p className="text-sm font-bold text-[#00172D] dark:text-white group-hover/item:text-[#0078d4] transition-colors">{job.task_name}</p>
                     <p className="text-[10px] text-black/40 dark:text-white/40 font-medium uppercase tracking-wider">{new Date(job.created_at).toLocaleString()}</p>
                   </div>
                 </div>
@@ -530,11 +528,11 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             ))}
             {jobs.length === 0 && (
               <div className="text-center py-5">
-                <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-[#00bceb]/5 mb-2">
-                  <Zap size={18} className="text-[#00bceb]/40" />
+                <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-[#0078d4]/5 mb-2">
+                  <Zap size={18} className="text-[#0078d4]/40" />
                 </div>
                 <p className="text-xs text-black/45 font-medium">{language === 'zh' ? '一切正常，暂无新任务' : 'All clear — no recent tasks'}</p>
-                <button onClick={() => navigate('/automation/tasks')} className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-[#00bceb]/10 text-[#008db1] hover:bg-[#00bceb]/20 transition-all">
+                <button onClick={() => navigate('/automation/tasks')} className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-[#0078d4]/10 text-[#0078d4] hover:bg-[#0078d4]/20 transition-all">
                   <Play size={10} />
                   {language === 'zh' ? '执行任务' : 'Run a Task'}
                 </button>
@@ -543,7 +541,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           </div>
         </div>
 
-        <div className="col-span-12 lg:col-span-5 bg-white/80 dark:bg-[#0d1527]/85 backdrop-blur-md rounded-2xl border border-black/5 dark:border-white/5 p-4 md:p-6 shadow-sm">
+        <div className="col-span-12 lg:col-span-5 bg-white dark:bg-[#2d2d2d] rounded-xl border border-[#e5e5e5] dark:border-white/5 p-4 md:p-6 shadow-[0_4px_16px_rgba(0,0,0,0.04)]">
           <h3 className="text-sm font-bold text-[#00172D] dark:text-white mb-6 flex items-center gap-2">
             <Clock size={18} className="text-orange-500" />
             {t('upcomingTasks')}
@@ -565,7 +563,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 ? (language === 'zh' ? '周期' : 'Recurring')
                 : (language === 'zh' ? '一次性' : 'Once');
               return (
-                <div key={task.id} className="flex items-center justify-between p-4 bg-[#F0F2F5] dark:bg-[#0d1527]/40 rounded-2xl border border-black/5 dark:border-white/5 group hover:bg-white dark:hover:bg-[#0d1527] hover:shadow-md transition-all">
+                <div key={task.id} className="flex items-center justify-between p-4 bg-[#F9F9F9] dark:bg-[#202020] rounded-xl border border-[#e5e5e5] dark:border-white/5 group hover:bg-white dark:hover:bg-[#2d2d2d] hover:shadow-md transition-all">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 bg-white dark:bg-slate-900 rounded-xl shadow-sm flex items-center justify-center text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all">
                       <Clock size={18} />
@@ -576,7 +574,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-[10px] font-bold uppercase text-[#005073] dark:text-[#00bceb] bg-[#005073]/10 dark:bg-[#00bceb]/20 px-2.5 py-1 rounded-lg">{typeLabel}</p>
+                    <p className="text-[10px] font-bold uppercase text-[#0078d4] dark:text-[#0078d4] bg-[#0078d4]/10 dark:bg-[#0078d4]/20 px-2.5 py-1 rounded-lg">{typeLabel}</p>
                   </div>
                 </div>
               );
