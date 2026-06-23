@@ -180,7 +180,7 @@ TRANSLATIONS = {
         "nav_service": "服务管理 (Service)",
         "nav_logs": "实时日志 (Logs)",
         "nav_settings": "偏好设置 (Settings)",
-        "nav_about": "关于微店 (About)",
+        "nav_about": "关于 (About)",
         "btn_copy": "复制",
         "btn_copied": "已复制!",
         
@@ -437,6 +437,7 @@ QPushButton.nav_btn {
     background-color: transparent;
     border: none;
     border-radius: 8px;
+    outline: none;
 }
 QPushButton.nav_btn:hover {
     color: #F8FAFC;
@@ -725,6 +726,7 @@ QPushButton.nav_btn {
     background-color: transparent;
     border: none;
     border-radius: 8px;
+    outline: none;
 }
 QPushButton.nav_btn:hover {
     color: #0F172A;
@@ -1431,6 +1433,7 @@ class NetOpsAgentUI(QMainWindow):
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
             btn.setCursor(Qt.PointingHandCursor)
+            btn.setFocusPolicy(Qt.NoFocus)
             btn.clicked.connect(self.on_nav_clicked)
             
             btn_layout = QHBoxLayout(btn)
