@@ -229,6 +229,7 @@ TRANSLATIONS = {
         
         "settings_card_title": "基础参数配置 (General Settings)",
         "chk_boot_start": "开机自动运行 Agent 管理器",
+        "chk_auto_start": "启动管理器时自动运行后台服务",
         "chk_minimize_close": "点击关闭按钮时最小化到系统托盘",
         "chk_auto_update": "自动检查更新 (Auto Updates)",
         "lbl_lang": "语言 (Language):",
@@ -321,6 +322,7 @@ TRANSLATIONS = {
         
         "settings_card_title": "General Settings",
         "chk_boot_start": "Start Agent Manager on Windows boot",
+        "chk_auto_start": "Auto-start backend service on manager launch",
         "chk_minimize_close": "Minimize to system tray on window close",
         "chk_auto_update": "Auto-check updates",
         "lbl_lang": "Language:",
@@ -1601,17 +1603,22 @@ class NetOpsAgentUI(QMainWindow):
         self.lbl_settings_card_title.setObjectName("lbl_card_title")
         prefs_layout.addWidget(self.lbl_settings_card_title)
         
-        self.chk_boot_start = QCheckBox("开机自动运行 Agent 管理器", self)
+        self.chk_boot_start = QCheckBox(self)
         self.chk_boot_start.setChecked(self.boot_start)
         self.chk_boot_start.stateChanged.connect(self.save_settings)
         prefs_layout.addWidget(self.chk_boot_start)
         
-        self.chk_minimize_close = QCheckBox("点击关闭按钮时最小化到系统托盘", self)
+        self.chk_auto_start = QCheckBox(self)
+        self.chk_auto_start.setChecked(self.auto_start_service)
+        self.chk_auto_start.stateChanged.connect(self.save_settings)
+        prefs_layout.addWidget(self.chk_auto_start)
+        
+        self.chk_minimize_close = QCheckBox(self)
         self.chk_minimize_close.setChecked(self.minimize_to_tray)
         self.chk_minimize_close.stateChanged.connect(self.save_settings)
         prefs_layout.addWidget(self.chk_minimize_close)
         
-        self.chk_auto_update = QCheckBox("自动检查更新 (Auto Updates)", self)
+        self.chk_auto_update = QCheckBox(self)
         self.chk_auto_update.setChecked(self.auto_updates)
         self.chk_auto_update.stateChanged.connect(self.save_settings)
         prefs_layout.addWidget(self.chk_auto_update)
@@ -1924,6 +1931,7 @@ class NetOpsAgentUI(QMainWindow):
         # Page 4: Settings
         self.lbl_settings_card_title.setText(tr["settings_card_title"])
         self.chk_boot_start.setText(tr["chk_boot_start"])
+        self.chk_auto_start.setText(tr["chk_auto_start"])
         self.chk_minimize_close.setText(tr["chk_minimize_close"])
         self.chk_auto_update.setText(tr["chk_auto_update"])
         self.lbl_lang_settings.setText(tr["lbl_lang"])
