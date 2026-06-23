@@ -157,8 +157,8 @@ def create_status_icon(color_name):
         # Yellow dot for warning/error
         painter.setBrush(QBrush(QColor("#F59E0B")))
     elif color_name == "blue":
-        # Blue dot for starting
-        painter.setBrush(QBrush(QColor("#3B82F6")))
+        # Blue dot for starting (changed to brand cyan)
+        painter.setBrush(QBrush(QColor("#06B6D4")))
     else:
         # Grey dot for unknown
         painter.setBrush(QBrush(QColor("#64748B")))
@@ -180,6 +180,8 @@ TRANSLATIONS = {
         "nav_logs": " 📝  实时日志 (Logs)",
         "nav_settings": " 🛠️  偏好设置 (Settings)",
         "nav_about": " ℹ️  关于我们 (About)",
+        "btn_copy": "复制",
+        "btn_copied": "已复制!",
         
         "agent_title": "NetOps Agent Enterprise",
         "agent_ver": "版本: v1.0.1",
@@ -270,6 +272,8 @@ TRANSLATIONS = {
         "nav_logs": " 📝  Logs",
         "nav_settings": " 🛠️  Settings",
         "nav_about": " ℹ️  About",
+        "btn_copy": "Copy",
+        "btn_copied": "Copied!",
         
         "agent_title": "NetOps Agent Enterprise",
         "agent_ver": "Version: v1.0.1",
@@ -396,7 +400,7 @@ QPushButton.nav_btn:hover {
 QPushButton.nav_btn:checked {
     color: #FFFFFF;
     background-color: #0B0F19;
-    border-left: 4px solid #3B82F6;
+    border-left: 4px solid #06B6D4;
 }
 /* Right content areas */
 QStackedWidget#content_pane {
@@ -426,7 +430,7 @@ QLabel#lbl_field_name {
 }
 /* Buttons styles */
 QPushButton#btn_primary {
-    background-color: #2563EB;
+    background-color: #06B6D4;
     color: #FFFFFF;
     border-radius: 6px;
     padding: 6px 14px;
@@ -434,10 +438,10 @@ QPushButton#btn_primary {
     border: none;
 }
 QPushButton#btn_primary:hover {
-    background-color: #1D4ED8;
+    background-color: #0891B2;
 }
 QPushButton#btn_primary:pressed {
-    background-color: #1E40AF;
+    background-color: #0E7490;
 }
 QPushButton#btn_primary:disabled {
     background-color: #1E293B;
@@ -508,7 +512,7 @@ QComboBox::drop-down {
 QComboBox QAbstractItemView {
     background-color: #0F172A;
     border: 1px solid #1E293B;
-    selection-background-color: #2563EB;
+    selection-background-color: #0891B2;
     selection-color: #FFFFFF;
 }
 
@@ -538,7 +542,7 @@ QMenu::item {
     color: #F3F4F6;
 }
 QMenu::item:selected {
-    background-color: #2563EB;
+    background-color: #0891B2;
     color: #FFFFFF;
 }
 QMenu::separator {
@@ -587,9 +591,9 @@ QPushButton.nav_btn:hover {
     background-color: #F3F4F6;
 }
 QPushButton.nav_btn:checked {
-    color: #2563EB;
+    color: #0891B2;
     background-color: #F3F4F6;
-    border-left: 4px solid #2563EB;
+    border-left: 4px solid #0891B2;
 }
 /* Right content areas */
 QStackedWidget#content_pane {
@@ -619,7 +623,7 @@ QLabel#lbl_field_name {
 }
 /* Buttons styles */
 QPushButton#btn_primary {
-    background-color: #2563EB;
+    background-color: #0891B2;
     color: #FFFFFF;
     border-radius: 6px;
     padding: 6px 14px;
@@ -627,10 +631,10 @@ QPushButton#btn_primary {
     border: none;
 }
 QPushButton#btn_primary:hover {
-    background-color: #1D4ED8;
+    background-color: #06B6D4;
 }
 QPushButton#btn_primary:pressed {
-    background-color: #1E40AF;
+    background-color: #0E7490;
 }
 QPushButton#btn_primary:disabled {
     background-color: #E5E7EB;
@@ -701,7 +705,7 @@ QComboBox::drop-down {
 QComboBox QAbstractItemView {
     background-color: #FFFFFF;
     border: 1px solid #CBD5E1;
-    selection-background-color: #2563EB;
+    selection-background-color: #0891B2;
     selection-color: #FFFFFF;
 }
 
@@ -731,7 +735,7 @@ QMenu::item {
     color: #0F172A;
 }
 QMenu::item:selected {
-    background-color: #2563EB;
+    background-color: #0891B2;
     color: #FFFFFF;
 }
 QMenu::separator {
@@ -1411,6 +1415,7 @@ class NetOpsAgentUI(QMainWindow):
         ]
         
         self.meta_labels = {}
+        self.meta_copy_buttons = {}
         for row, (key, value) in enumerate(self.meta_fields):
             lbl_name = QLabel(key, self)
             lbl_name.setObjectName("lbl_field_name")
@@ -1420,7 +1425,7 @@ class NetOpsAgentUI(QMainWindow):
             lbl_val.setObjectName("lbl_field_val")
             lbl_val.setStyleSheet("background-color: transparent; border: none; padding: 0px;")
             
-            btn_copy = QPushButton("Copy", self)
+            btn_copy = QPushButton(self)
             btn_copy.setObjectName("btn_copy")
             btn_copy.setCursor(Qt.PointingHandCursor)
             btn_copy.clicked.connect(lambda checked=False, v=value, b=btn_copy: self.copy_to_clipboard(v, b))
@@ -1429,6 +1434,7 @@ class NetOpsAgentUI(QMainWindow):
             meta_grid.addWidget(lbl_val, row, 1, 1, 3)
             meta_grid.addWidget(btn_copy, row, 4, Qt.AlignRight)
             self.meta_labels[key] = lbl_name
+            self.meta_copy_buttons[key] = btn_copy
             
         meta_layout.addLayout(meta_grid)
         layout.addWidget(card_meta)
@@ -1438,10 +1444,10 @@ class NetOpsAgentUI(QMainWindow):
 
     def copy_to_clipboard(self, val, button):
         QApplication.clipboard().setText(val)
-        orig_text = button.text()
-        button.setText("Copied!")
+        tr = TRANSLATIONS[self.lang]
+        button.setText(tr["btn_copied"])
         button.setEnabled(False)
-        QTimer.singleShot(1500, lambda: [button.setText(orig_text), button.setEnabled(True)])
+        QTimer.singleShot(1500, lambda: [button.setText(tr["btn_copy"]), button.setEnabled(True)])
 
     # PAGE 3: Logs Streamer
     def init_logs_page(self):
@@ -1780,7 +1786,7 @@ class NetOpsAgentUI(QMainWindow):
         about_layout.addWidget(self.lbl_about_logo, 0, Qt.AlignCenter)
         
         self.lbl_about_name = QLabel("NetOps 智能自动化网络运维平台", self)
-        self.lbl_about_name.setStyleSheet("font-size: 18px; font-weight: bold; color: #3B82F6;")
+        self.lbl_about_name.setStyleSheet("font-size: 18px; font-weight: bold; color: #06B6D4;")
         about_layout.addWidget(self.lbl_about_name, 0, Qt.AlignCenter)
         
         self.lbl_about_desc = QLabel(self)
@@ -1812,7 +1818,7 @@ class NetOpsAgentUI(QMainWindow):
         self.lbl_about_site_name.setObjectName("lbl_field_name")
         self.lbl_about_site_val = QPushButton("https://netops.example.com", self)
         self.lbl_about_site_val.setCursor(Qt.PointingHandCursor)
-        self.lbl_about_site_val.setStyleSheet("color: #3B82F6; border: none; background: transparent; text-align: left; font-weight: bold;")
+        self.lbl_about_site_val.setStyleSheet("color: #06B6D4; border: none; background: transparent; text-align: left; font-weight: bold;")
         self.lbl_about_site_val.clicked.connect(lambda: webbrowser.open("https://netops.example.com"))
         
         self.lbl_about_support_name = QLabel("Technical Support:", self)
@@ -1905,6 +1911,8 @@ class NetOpsAgentUI(QMainWindow):
         self.meta_labels["meta_dir"].setText(tr["meta_dir"])
         self.meta_labels["meta_cfg"].setText(tr["meta_cfg"])
         self.meta_labels["meta_log"].setText(tr["meta_log"])
+        for key, btn in self.meta_copy_buttons.items():
+            btn.setText(tr["btn_copy"])
         
         # Page 3: Logs
         self.lbl_log_source.setText(tr["log_select_label"])

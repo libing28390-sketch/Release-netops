@@ -116,7 +116,7 @@ QFrame#db_card {
     border-radius: 10px;
 }
 QFrame#db_card:hover {
-    border: 1px solid #3B82F6;
+    border: 1px solid #06B6D4;
     background-color: #1E293B;
 }
 QRadioButton {
@@ -132,10 +132,10 @@ QLineEdit {
     color: #F8FAFC;
 }
 QLineEdit:focus {
-    border: 1px solid #2563EB;
+    border: 1px solid #06B6D4;
 }
 QPushButton#btn_primary {
-    background-color: #2563EB;
+    background-color: #0891B2;
     color: #FFFFFF;
     border-radius: 8px;
     padding: 10px 24px;
@@ -144,10 +144,10 @@ QPushButton#btn_primary {
     border: none;
 }
 QPushButton#btn_primary:hover {
-    background-color: #1D4ED8;
+    background-color: #06B6D4;
 }
 QPushButton#btn_primary:pressed {
-    background-color: #1E40AF;
+    background-color: #0E7490;
 }
 QPushButton#btn_secondary {
     background-color: #1F2937;
@@ -177,7 +177,7 @@ QProgressBar {
     text-align: center;
 }
 QProgressBar::chunk {
-    background-color: #2563EB;
+    background-color: #06B6D4;
     border-radius: 6px;
 }
 """
@@ -776,7 +776,7 @@ class LauncherUI(QMainWindow):
         accent_bar = QFrame(self)
         accent_bar.setFixedWidth(4)
         accent_bar.setFixedHeight(45)
-        accent_bar.setStyleSheet("background-color: #2563EB; border-radius: 2px;")
+        accent_bar.setStyleSheet("background-color: #06B6D4; border-radius: 2px;")
         header_layout.addWidget(accent_bar)
         
         title_vbox = QVBoxLayout()
