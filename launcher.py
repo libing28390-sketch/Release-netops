@@ -134,6 +134,7 @@ class SetupWorker(QObject):
         time.sleep(0.5)
         
         system_python = "python"
+        has_python = False
         try:
             r = subprocess.run(
                 [system_python, "--version"],
@@ -141,11 +142,50 @@ class SetupWorker(QObject):
                 text=True,
                 creationflags=0x08000000
             )
-            if r.returncode != 0:
-                raise FileNotFoundError()
+            if r.returncode == 0:
+                has_python = True
         except (FileNotFoundError, Exception):
-            self.error_signal.emit("系统未检测到有效 Python。请先安装 Python 3.10+，并确保勾选 'Add Python to PATH'。")
-            return
+            pass
+
+        if not has_python:
+            log_message("System python not found. Starting automatic installer wizard...")
+            self.progress_signal.emit("正在下载运行环境...", "正在下载 Python 3.11 安装包...", 0.12)
+            try:
+                import urllib.request
+                import winreg
+                py_installer_url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
+                py_installer_path = os.path.join(PROJECT_ROOT, "python-installer.exe")
+                urllib.request.urlretrieve(py_installer_url, py_installer_path)
+                
+                self.progress_signal.emit("正在安装运行环境...", "正在执行 Python 3.11 静默安装...", 0.18)
+                r_inst = subprocess.run(
+                    [py_installer_path, "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_test=0", "Include_doc=0"],
+                    creationflags=0x08000000
+                )
+                try: os.remove(py_installer_path)
+                except: pass
+                
+                if r_inst.returncode != 0:
+                    raise Exception(f"Python installer exited with code {r_inst.returncode}")
+                
+                # Refresh PATH env
+                new_path = ""
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
+                        new_path += winreg.QueryValueEx(key, "Path")[0] + ";"
+                except Exception:
+                    pass
+                try:
+                    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment") as key:
+                        new_path += winreg.QueryValueEx(key, "Path")[0]
+                except Exception:
+                    pass
+                if new_path:
+                    os.environ["PATH"] = new_path
+                    log_message("Python installed and environment PATH refreshed.")
+            except Exception as py_err:
+                self.error_signal.emit(f"自动安装 Python 失败！请前往官网手动安装 Python 3.10+ 并添加到 PATH。\n\n具体报错: {py_err}")
+                return
 
         # Step 2: Verify or recreate Virtual Environment (.venv)
         self.progress_signal.emit("正在检查虚拟环境...", "验证 .venv 虚拟环境可用性...", 0.25)
@@ -246,9 +286,10 @@ class SetupWorker(QObject):
             log_message("No static directory 'dist' found. Attempting to build frontend...")
             
             npm_available = False
+            npm_cmd = "npm"
             try:
                 r = subprocess.run(
-                    ["npm", "--version"],
+                    [npm_cmd, "--version"],
                     capture_output=True,
                     text=True,
                     shell=True,
@@ -259,11 +300,55 @@ class SetupWorker(QObject):
             except Exception:
                 pass
                 
+            # If system npm is not available, check for local portable Node
+            local_node_dir = os.path.join(PROJECT_ROOT, "tools", "node")
+            local_npm_path = os.path.join(local_node_dir, "npm.cmd")
+            if not npm_available and os.path.exists(local_npm_path):
+                npm_available = True
+                npm_cmd = local_npm_path
+
+            if not npm_available:
+                log_message("System node/npm not found. Downloading portable Node.js v20...")
+                self.progress_signal.emit("正在下载前端工具...", "正在下载便携版 Node.js (免安装)...", 0.86)
+                try:
+                    import urllib.request
+                    import zipfile
+                    node_zip_url = "https://nodejs.org/dist/v20.12.2/node-v20.12.2-win-x64.zip"
+                    node_zip_path = os.path.join(PROJECT_ROOT, "node.zip")
+                    urllib.request.urlretrieve(node_zip_url, node_zip_path)
+                    
+                    self.progress_signal.emit("正在解压前端工具...", "正在配置 Node.js 绿色运行环境...", 0.88)
+                    tools_dir = os.path.join(PROJECT_ROOT, "tools")
+                    os.makedirs(tools_dir, exist_ok=True)
+                    
+                    with zipfile.ZipFile(node_zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(tools_dir)
+                    try: os.remove(node_zip_path)
+                    except: pass
+                    
+                    # Rename extracted folder to 'node'
+                    for name in os.listdir(tools_dir):
+                        if name.startswith("node-v"):
+                            src = os.path.join(tools_dir, name)
+                            dst = local_node_dir
+                            if os.path.exists(dst):
+                                shutil.rmtree(dst)
+                            os.rename(src, dst)
+                            break
+                            
+                    if os.path.exists(local_npm_path):
+                        npm_available = True
+                        npm_cmd = local_npm_path
+                        log_message("Portable Node.js set up successfully.")
+                except Exception as node_err:
+                    self.error_signal.emit(f"自动下载便携版 Node.js 失败！请确保网络正常或手动安装 Node.js。\n\n具体报错: {node_err}")
+                    return
+
             if npm_available:
-                self.progress_signal.emit("正在下载前端依赖...", "首次构建前端，执行 npm install...", 0.88)
+                self.progress_signal.emit("正在下载前端依赖...", "首次构建前端，执行 npm install...", 0.89)
                 try:
                     subprocess.run(
-                        ["npm", "install"],
+                        [npm_cmd, "install"],
                         cwd=PROJECT_ROOT,
                         shell=True,
                         capture_output=True,
@@ -272,7 +357,7 @@ class SetupWorker(QObject):
                     
                     self.progress_signal.emit("正在编译静态界面...", "执行 npm run build...", 0.92)
                     r = subprocess.run(
-                        ["npm", "run", "build"],
+                        [npm_cmd, "run", "build"],
                         cwd=PROJECT_ROOT,
                         shell=True,
                         capture_output=True,
@@ -305,6 +390,73 @@ class SetupWorker(QObject):
                     log_message("Default .env file generated from template.")
                 except Exception as e:
                     log_message(f"Failed to copy .env template: {e}")
+
+        # Step 5.5: Check and install PostgreSQL database if needed
+        need_pg = False
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line_stripped = line.strip()
+                        if line_stripped.startswith("DATABASE_URL") and ("postgresql://" in line_stripped.lower() or "postgres://" in line_stripped.lower()):
+                            need_pg = True
+                            break
+            except Exception as e:
+                log_message(f"Failed to parse .env file: {e}")
+
+        if need_pg:
+            pg_running = False
+            import socket
+            try:
+                # Check if port 5432 is open locally
+                with socket.create_connection(("127.0.0.1", 5432), timeout=2.0) as s:
+                    pg_running = True
+            except Exception:
+                pass
+
+            if not pg_running:
+                log_message("PostgreSQL port 5432 is closed. Prompting user for auto-installation...")
+                import ctypes
+                # MB_YESNO = 4, MB_ICONINFORMATION = 0x40
+                # Return IDYES = 6
+                res = ctypes.windll.user32.MessageBoxW(
+                    0, 
+                    "检测到配置了 PostgreSQL，但本地 5432 端口未开启。\n\n是否现在自动下载并静默安装 PostgreSQL 16？\n(需要管理员权限且可能会弹出 UAC 提权确认)", 
+                    "PostgreSQL 数据库检测", 
+                    4 | 0x40
+                )
+                if res == 6:
+                    self.progress_signal.emit("正在下载数据库...", "正在从官方获取 PostgreSQL 16 安装包，请稍候...", 0.96)
+                    try:
+                        import urllib.request
+                        pg_installer_path = os.path.join(PROJECT_ROOT, "postgresql-installer.exe")
+                        urllib.request.urlretrieve("https://get.enterprisedb.com/postgresql/postgresql-16.3-1-windows-x64.exe", pg_installer_path)
+                        
+                        self.progress_signal.emit("正在安装数据库...", "正在执行静默安装 (请在弹出的 UAC 窗口中允许运行)...", 0.97)
+                        powershell_cmd = f"Start-Process '{pg_installer_path}' -ArgumentList '--mode unattended --unattendedmodeui none --superpassword netops --serverport 5432' -Verb RunAs -Wait"
+                        subprocess.run(["powershell", "-Command", powershell_cmd], creationflags=0x08000000)
+                        
+                        try:
+                            os.remove(pg_installer_path)
+                        except Exception:
+                            pass
+                        
+                        # Verify if port 5432 is now open
+                        pg_installed = False
+                        try:
+                            with socket.create_connection(("127.0.0.1", 5432), timeout=2.0) as s:
+                                pg_installed = True
+                        except Exception:
+                            pass
+                        
+                        if pg_installed:
+                            log_message("PostgreSQL auto-installation and startup completed successfully.")
+                        else:
+                            log_message("PostgreSQL installer finished, but port 5432 is still not responding.")
+                    except Exception as pg_err:
+                        log_message(f"PostgreSQL installation error: {pg_err}")
+                else:
+                    log_message("User declined PostgreSQL auto-installation.")
 
         # Step 6: Create/Update Shortcut
         self.progress_signal.emit("正在生成快捷入口...", "在桌面配置快捷方式...", 0.98)

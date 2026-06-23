@@ -18,9 +18,29 @@ import platform
 import shutil
 import zipfile
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(PROJECT_ROOT, "desktop_tray.log")
+
+def rotate_log_file(filepath, max_backups=10):
+    try:
+        for i in range(max_backups - 1, 0, -1):
+            s = f"{filepath}.{i}"
+            d = f"{filepath}.{i+1}"
+            if os.path.exists(s):
+                if os.path.exists(d):
+                    try: os.remove(d)
+                    except: pass
+                try: os.rename(s, d)
+                except: pass
+        d = f"{filepath}.1"
+        if os.path.exists(d):
+            try: os.remove(d)
+            except: pass
+        os.rename(filepath, d)
+    except Exception:
+        pass
 
 # Stream redirector to log stdout/stderr to file
 class LogFileWriter:
@@ -35,6 +55,8 @@ class LogFileWriter:
             line, self.buffer = self.buffer.split("\n", 1)
             if line.strip():
                 try:
+                    if os.path.exists(self.filename) and os.path.getsize(self.filename) > 500 * 1024 * 1024:
+                        rotate_log_file(self.filename, 10)
                     with open(self.filename, "a", encoding="utf-8") as f:
                         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{self.prefix}] {line.rstrip()}\n")
                 except Exception:
@@ -44,6 +66,8 @@ class LogFileWriter:
     def flush(self):
         if self.buffer.strip():
             try:
+                if os.path.exists(self.filename) and os.path.getsize(self.filename) > 500 * 1024 * 1024:
+                    rotate_log_file(self.filename, 10)
                 with open(self.filename, "a", encoding="utf-8") as f:
                     f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{self.prefix}] {self.buffer.rstrip()}\n")
             except Exception:
@@ -60,7 +84,7 @@ import logging
 logger = logging.getLogger("desktop_tray")
 logger.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+file_handler = RotatingFileHandler(LOG_FILE, maxBytes=500*1024*1024, backupCount=10, encoding="utf-8")
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
@@ -388,9 +412,9 @@ QLabel#lbl_status_large {
     font-weight: bold;
 }
 QLabel#lbl_field_name {
-    color: #64748B;
+    color: #94A3B8;
 }
-QLabel#lbl_field_val {
+#lbl_field_val {
     color: #F3F4F6;
     font-weight: bold;
 }
@@ -497,6 +521,25 @@ QCheckBox {
 QCheckBox:hover {
     color: #F3F4F6;
 }
+QMenu {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    padding: 4px;
+}
+QMenu::item {
+    background-color: transparent;
+    padding: 6px 24px;
+    color: #F3F4F6;
+}
+QMenu::item:selected {
+    background-color: #2563EB;
+    color: #FFFFFF;
+}
+QMenu::separator {
+    height: 1px;
+    background-color: #334155;
+    margin: 4px 0px;
+}
 """
 
 LIGHT_STYLE = """
@@ -564,7 +607,7 @@ QLabel#lbl_status_large {
 QLabel#lbl_field_name {
     color: #64748B;
 }
-QLabel#lbl_field_val {
+#lbl_field_val {
     color: #0F172A;
     font-weight: bold;
 }
@@ -670,6 +713,25 @@ QCheckBox {
 }
 QCheckBox:hover {
     color: #0F172A;
+}
+QMenu {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    padding: 4px;
+}
+QMenu::item {
+    background-color: transparent;
+    padding: 6px 24px;
+    color: #0F172A;
+}
+QMenu::item:selected {
+    background-color: #2563EB;
+    color: #FFFFFF;
+}
+QMenu::separator {
+    height: 1px;
+    background-color: #E5E7EB;
+    margin: 4px 0px;
 }
 """
 
@@ -1184,7 +1246,8 @@ class NetOpsAgentUI(QMainWindow):
             
             lbl_val = QLineEdit(value, self)
             lbl_val.setReadOnly(True)
-            lbl_val.setStyleSheet("background-color: transparent; border: none; font-weight: bold; color: inherit; padding: 0px;")
+            lbl_val.setObjectName("lbl_field_val")
+            lbl_val.setStyleSheet("background-color: transparent; border: none; padding: 0px;")
             
             btn_copy = QPushButton("Copy", self)
             btn_copy.setObjectName("btn_copy")
@@ -1741,6 +1804,11 @@ class NetOpsAgentUI(QMainWindow):
                 
                 backend_log_path = os.path.join(PROJECT_ROOT, "backend_server.log")
                 try:
+                    if os.path.exists(backend_log_path) and os.path.getsize(backend_log_path) > 500 * 1024 * 1024:
+                        rotate_log_file(backend_log_path, 10)
+                except Exception as rot_err:
+                    logger.error("Failed to rotate backend log: %s", rot_err)
+                try:
                     backend_log_file = open(backend_log_path, "a", encoding="utf-8")
                     backend_log_file.write(f"\n--- FastAPI Backend Server Started at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
                     backend_log_file.flush()
@@ -1770,7 +1838,10 @@ class NetOpsAgentUI(QMainWindow):
                     TRANSLATIONS[self.lang]["notify_started"],
                     TRANSLATIONS[self.lang]["notify_title"]
                 )
-                QTimer.singleShot(1500, self.open_console_browser)
+                self.browser_open_attempts = 0
+                self.browser_timer = QTimer(self)
+                self.browser_timer.timeout.connect(self.check_server_ready_and_open_browser)
+                self.browser_timer.start(200) # Check every 200ms
             except Exception as e:
                 logger.exception("Failed to start FastAPI server:")
                 
@@ -1827,6 +1898,16 @@ class NetOpsAgentUI(QMainWindow):
     def restart_backend_server(self):
         self.stop_backend_server()
         QTimer.singleShot(1000, self.start_backend_server)
+
+    def check_server_ready_and_open_browser(self):
+        self.browser_open_attempts += 1
+        if self.is_port_occupied_fast("127.0.0.1", 5010):
+            self.browser_timer.stop()
+            self.open_console_browser()
+        elif self.browser_open_attempts >= 50:
+            self.browser_timer.stop()
+            logger.warning("Timeout waiting for backend server to start. Opening browser anyway.")
+            self.open_console_browser()
 
     def open_console_browser(self):
         logger.info("Opening console browser: %s", APP_URL)

@@ -65,9 +65,33 @@ _POOL_SIZE = int(os.environ.get('DB_POOL_SIZE', '16'))
 if _USE_PG:
     _pg_pool: psycopg2.pool.ThreadedConnectionPool | None = None
 
+    def _ensure_database_exists():
+        from urllib.parse import urlparse, urlunparse
+        try:
+            parsed = urlparse(_DATABASE_URL)
+            db_name = parsed.path.lstrip('/')
+            if not db_name or db_name.lower() == 'postgres':
+                return
+            
+            # Connect to 'postgres' database to check / create the target database
+            postgres_parsed = parsed._replace(path='/postgres')
+            postgres_url = urlunparse(postgres_parsed)
+            
+            conn = psycopg2.connect(dsn=postgres_url)
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,))
+                if not cur.fetchone():
+                    logger.info("Database '%s' does not exist, creating it now...", db_name)
+                    cur.execute(f'CREATE DATABASE "{db_name}"')
+            conn.close()
+        except Exception as e:
+            logger.error("Failed to ensure database exists: %s", e, exc_info=True)
+
     def _ensure_pg_pool():
         global _pg_pool
         if _pg_pool is None:
+            _ensure_database_exists()
             _pg_pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=2, maxconn=_POOL_SIZE, dsn=_DATABASE_URL,
                 keepalives=1,
