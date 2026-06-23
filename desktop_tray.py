@@ -572,21 +572,21 @@ QComboBox::drop-down {
     width: 24px;
     border-left-width: 0px;
 }
-QListView {
+QComboBox QAbstractItemView, QListView {
     background-color: #1E293B;
     border: 1px solid #334155;
     padding: 4px;
     color: #E2E8F0;
     outline: none;
 }
-QListView::item {
+QComboBox QAbstractItemView::item, QListView::item {
     padding: 6px 12px;
     min-height: 26px;
     border-radius: 4px;
     color: #E2E8F0;
     background-color: transparent;
 }
-QListView::item:hover, QListView::item:selected {
+QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected, QListView::item:hover, QListView::item:selected {
     background-color: #334155;
     color: #FFFFFF;
 }
@@ -860,21 +860,21 @@ QComboBox::drop-down {
     width: 24px;
     border-left-width: 0px;
 }
-QListView {
+QComboBox QAbstractItemView, QListView {
     background-color: #FFFFFF;
     border: 1px solid #E2E8F0;
     padding: 4px;
     color: #334155;
     outline: none;
 }
-QListView::item {
+QComboBox QAbstractItemView::item, QListView::item {
     padding: 6px 12px;
     min-height: 26px;
     border-radius: 4px;
     color: #334155;
     background-color: transparent;
 }
-QListView::item:hover, QListView::item:selected {
+QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected, QListView::item:hover, QListView::item:selected {
     background-color: #F1F5F9;
     color: #0F172A;
 }
@@ -1108,7 +1108,7 @@ class NetOpsAgentUI(QMainWindow):
         # Main Window configuration
         self.setWindowTitle("NetOps Agent Enterprise Manager")
         self.setMinimumSize(900, 620)
-        self.resize(900, 620)
+        self.resize(1000, 620)
         
         # Setup modern shadows
         self.shadow_status = QGraphicsDropShadowEffect(self)
