@@ -227,17 +227,38 @@ TRANSLATIONS = {
         "btn_clear": "清空视图",
         "btn_export": "导出日志",
         
-        "settings_card_title": "基础参数配置 (General Settings)",
-        "chk_boot_start": "开机自动运行 Agent 管理器",
-        "chk_auto_start": "启动管理器时自动运行后台服务",
-        "chk_minimize_close": "点击关闭按钮时最小化到系统托盘",
-        "chk_auto_update": "自动检查更新 (Auto Updates)",
-        "lbl_lang": "语言 (Language):",
-        "lbl_theme": "界面主题 (Theme):",
-        "lbl_ctrl_ip": "控制器 IP (Controller IP):",
-        "btn_reconfig_db": "修改数据库及环境配置",
-        "btn_reset_config": "恢复初始配置",
-        "btn_clear_db": "清除并重置数据库",
+        "settings_card_title": "常规首选项 (General Preferences)",
+        "setting_boot_title": "随系统自动启动",
+        "setting_boot_desc": "在 Windows 启动时后台自动运行 Agent 管理器",
+        "setting_service_title": "自动运行后台服务",
+        "setting_service_desc": "启动管理器后自动检测并运行 FastAPI 后台服务",
+        "setting_minimize_title": "关闭窗口时最小化",
+        "setting_minimize_desc": "点击窗口关闭按钮时最小化至系统托盘，而非完全退出",
+        "setting_update_title": "自动检查可用更新",
+        "setting_update_desc": "开启后，每次启动客户端自动检查最新的 exe 版本并提示",
+        
+        "setting_lang_title": "界面显示语言",
+        "setting_lang_desc": "设置管理器客户端的用户界面显示语言",
+        "setting_theme_title": "深浅主题风格",
+        "setting_theme_desc": "调整主面板明亮或暗黑的系统主题样式",
+        "setting_ip_title": "控制器 IP 地址",
+        "setting_ip_desc": "本地代理所指向的控制器服务网络通信 IP",
+        
+        "settings_adv_title": "高级系统维护与重置",
+        "setting_reconfig_title": "修改环境配置向导",
+        "setting_reconfig_desc": "重新运行向导以修改数据库及平台控制器连接参数",
+        "btn_reconfig_db": "启动向导",
+        
+        "setting_reset_title": "重置代理客户端",
+        "setting_reset_desc": "恢复当前 Agent 为初始未配置状态并清除本地环境参数",
+        "btn_reset_config": "恢复初始",
+        
+        "setting_clear_title": "危险操作！彻底清除数据库",
+        "setting_clear_desc": "擦除变更工单、CMDB 设备等本地全部数据，不可逆！",
+        "btn_clear_db": "清理数据",
+        
+        "sys_ip_copy": "复制",
+        "sys_ip_copied": "已复制!",
         
         "sys_card_title": "本机系统硬件信息 (System Specifications)",
         "sys_hostname": "主机名称 (Hostname)",
@@ -320,17 +341,38 @@ TRANSLATIONS = {
         "btn_clear": "Clear View",
         "btn_export": "Export Logs",
         
-        "settings_card_title": "General Settings",
-        "chk_boot_start": "Start Agent Manager on Windows boot",
-        "chk_auto_start": "Auto-start backend service on manager launch",
-        "chk_minimize_close": "Minimize to system tray on window close",
-        "chk_auto_update": "Auto-check updates",
-        "lbl_lang": "Language:",
-        "lbl_theme": "Theme:",
-        "lbl_ctrl_ip": "Controller IP:",
-        "btn_reconfig_db": "Modify DB & Env Config",
-        "btn_reset_config": "Restore Initial Config",
-        "btn_clear_db": "Clear & Reset Database",
+        "settings_card_title": "General Preferences",
+        "setting_boot_title": "Start on System Boot",
+        "setting_boot_desc": "Launch Agent Manager automatically when Windows starts",
+        "setting_service_title": "Auto-Start Service",
+        "setting_service_desc": "Detect and spin up backend FastAPI service automatically on launch",
+        "setting_minimize_title": "Minimize on Close",
+        "setting_minimize_desc": "Minimize window to system tray instead of exiting when closed",
+        "setting_update_title": "Auto Check Updates",
+        "setting_update_desc": "Check for updates and notify when manager starts up",
+        
+        "setting_lang_title": "Interface Language",
+        "setting_lang_desc": "Select display language for the client user interface",
+        "setting_theme_title": "Color Theme Style",
+        "setting_theme_desc": "Toggle main control panel light/dark visual theme skins",
+        "setting_ip_title": "Controller IP Address",
+        "setting_ip_desc": "The network IP address pointing to the central controller server",
+        
+        "settings_adv_title": "System Maintenance & Actions",
+        "setting_reconfig_title": "Re-run Configuration Wizard",
+        "setting_reconfig_desc": "Run setup wizard again to modify DB credentials & Controller IP",
+        "btn_reconfig_db": "Configure",
+        
+        "setting_reset_title": "Reset Agent Manager",
+        "setting_reset_desc": "Delete local environment variables and revert to unconfigured status",
+        "btn_reset_config": "Reset",
+        
+        "setting_clear_title": "Destructive Action! Erase Database",
+        "setting_clear_desc": "Completely wipe out all CMDB devices and tickets local data",
+        "btn_clear_db": "Erase Data",
+        
+        "sys_ip_copy": "Copy",
+        "sys_ip_copied": "Copied!",
         
         "sys_card_title": "System Specifications",
         "sys_hostname": "Hostname",
@@ -451,18 +493,20 @@ QPushButton#btn_primary:disabled {
 }
 
 QPushButton#btn_danger {
-    background-color: #EF4444;
-    color: #FFFFFF;
+    background-color: transparent;
+    color: #F87171;
+    border: 1px solid #991B1B;
     border-radius: 6px;
     padding: 6px 14px;
     font-weight: bold;
-    border: none;
 }
 QPushButton#btn_danger:hover {
-    background-color: #DC2626;
+    background-color: #991B1B;
+    color: #FFFFFF;
 }
 QPushButton#btn_danger:pressed {
-    background-color: #B91C1C;
+    background-color: #7F1D1D;
+    color: #FFFFFF;
 }
 QPushButton#btn_danger:disabled {
     background-color: #1E293B;
@@ -528,10 +572,31 @@ QPlainTextEdit#log_viewer {
 }
 
 QCheckBox {
-    color: #94A3B8;
+    spacing: 0px;
+    background-color: transparent;
 }
-QCheckBox:hover {
-    color: #F3F4F6;
+QCheckBox::indicator {
+    width: 38px;
+    height: 20px;
+}
+QCheckBox::indicator:unchecked {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='20' viewBox='0 0 38 20'><rect width='38' height='20' rx='10' fill='%231E293B' stroke='%23334155' stroke-width='1.5'/><circle cx='10' cy='10' r='6' fill='%2364748B'/></svg>");
+}
+QCheckBox::indicator:unchecked:hover {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='20' viewBox='0 0 38 20'><rect width='38' height='20' rx='10' fill='%23334155' stroke='%23475569' stroke-width='1.5'/><circle cx='10' cy='10' r='6' fill='%2394A3B8'/></svg>");
+}
+QCheckBox::indicator:checked {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='20' viewBox='0 0 38 20'><rect width='38' height='20' rx='10' fill='%2306B6D4'/><circle cx='28' cy='10' r='6' fill='white'/></svg>");
+}
+QCheckBox::indicator:checked:hover {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='20' viewBox='0 0 38 20'><rect width='38' height='20' rx='10' fill='%230891B2'/><circle cx='28' cy='10' r='6' fill='white'/></svg>");
+}
+QWidget.setting_row_widget {
+    border-bottom: 1px solid #1E293B;
+}
+QWidget.setting_row_widget:hover {
+    background-color: #1E293B;
+    border-radius: 6px;
 }
 QMenu {
     background-color: #1E293B;
@@ -644,18 +709,22 @@ QPushButton#btn_primary:disabled {
 }
 
 QPushButton#btn_danger {
-    background-color: #EF4444;
-    color: #FFFFFF;
+    background-color: transparent;
+    color: #DC2626;
+    border: 1px solid #FCA5A5;
     border-radius: 6px;
     padding: 6px 14px;
     font-weight: bold;
-    border: none;
 }
 QPushButton#btn_danger:hover {
     background-color: #DC2626;
+    color: #FFFFFF;
+    border-color: #DC2626;
 }
 QPushButton#btn_danger:pressed {
-    background-color: #B91C1C;
+    background-color: #991B1B;
+    color: #FFFFFF;
+    border-color: #991B1B;
 }
 QPushButton#btn_danger:disabled {
     background-color: #E5E7EB;
@@ -721,10 +790,31 @@ QPlainTextEdit#log_viewer {
 }
 
 QCheckBox {
-    color: #64748B;
+    spacing: 0px;
+    background-color: transparent;
 }
-QCheckBox:hover {
-    color: #0F172A;
+QCheckBox::indicator {
+    width: 38px;
+    height: 20px;
+}
+QCheckBox::indicator:unchecked {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='20' viewBox='0 0 38 20'><rect width='38' height='20' rx='10' fill='%23E2E8F0' stroke='%23CBD5E1' stroke-width='1.5'/><circle cx='10' cy='10' r='6' fill='%2394A3B8'/></svg>");
+}
+QCheckBox::indicator:unchecked:hover {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='20' viewBox='0 0 38 20'><rect width='38' height='20' rx='10' fill='%23CBD5E1' stroke='%2394A3B8' stroke-width='1.5'/><circle cx='10' cy='10' r='6' fill='%2364748B'/></svg>");
+}
+QCheckBox::indicator:checked {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='20' viewBox='0 0 38 20'><rect width='38' height='20' rx='10' fill='%230891B2'/><circle cx='28' cy='10' r='6' fill='white'/></svg>");
+}
+QCheckBox::indicator:checked:hover {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='20' viewBox='0 0 38 20'><rect width='38' height='20' rx='10' fill='%2306B6D4'/><circle cx='28' cy='10' r='6' fill='white'/></svg>");
+}
+QWidget.setting_row_widget {
+    border-bottom: 1px solid #F1F5F9;
+}
+QWidget.setting_row_widget:hover {
+    background-color: #F8FAFC;
+    border-radius: 6px;
 }
 QMenu {
     background-color: #FFFFFF;
@@ -1585,6 +1675,70 @@ class NetOpsAgentUI(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Export logs", f"Export failed: {e}")
 
+    def create_setting_row(self, key, control, is_last=False):
+        row = QWidget(self)
+        row.setObjectName("setting_row_" + key)
+        row.setProperty("class", "setting_row_widget")
+        
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 10, 12, 10)
+        row_layout.setSpacing(12)
+        
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+        
+        lbl_title = QLabel(self)
+        lbl_title.setObjectName("lbl_setting_title_" + key)
+        lbl_title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        
+        lbl_desc = QLabel(self)
+        lbl_desc.setObjectName("lbl_setting_desc_" + key)
+        lbl_desc.setStyleSheet("color: #64748B; font-size: 11px;")
+        lbl_desc.setWordWrap(True)
+        
+        text_layout.addWidget(lbl_title)
+        text_layout.addWidget(lbl_desc)
+        
+        row_layout.addLayout(text_layout, 1)
+        row_layout.addWidget(control, 0, Qt.AlignRight | Qt.AlignVCenter)
+        
+        if not hasattr(self, "settings_ui_elements"):
+            self.settings_ui_elements = {}
+        self.settings_ui_elements[key] = (lbl_title, lbl_desc)
+        
+        return row
+
+    def create_spec_row(self, key, widget):
+        row = QWidget(self)
+        row.setObjectName("spec_row_" + key)
+        row.setProperty("class", "setting_row_widget")
+        
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 10, 12, 10)
+        row_layout.setSpacing(12)
+        
+        lbl_name = QLabel(self)
+        lbl_name.setObjectName("lbl_spec_name_" + key)
+        lbl_name.setStyleSheet("font-weight: bold; font-size: 12px;")
+        
+        row_layout.addWidget(lbl_name, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        row_layout.addWidget(widget, 1, Qt.AlignRight | Qt.AlignVCenter)
+        
+        if not hasattr(self, "spec_ui_elements"):
+            self.spec_ui_elements = {}
+        self.spec_ui_elements[key] = lbl_name
+        
+        return row
+
+    def copy_ip_to_clipboard(self):
+        ip = self.combo_ips.currentText()
+        if ip:
+            QApplication.clipboard().setText(ip)
+            tr = TRANSLATIONS[self.lang]
+            self.btn_copy_ip.setText(tr["sys_ip_copied"])
+            self.btn_copy_ip.setEnabled(False)
+            QTimer.singleShot(1500, lambda: [self.btn_copy_ip.setText(tr["sys_ip_copy"]), self.btn_copy_ip.setEnabled(True)])
+
     # PAGE 4: Settings & System info
     def init_settings_page(self):
         page = QWidget(self)
@@ -1592,140 +1746,179 @@ class NetOpsAgentUI(QMainWindow):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(16)
         
-        # Left Column: General Preferences Card
+        # Left Scroll Area for Preferences
+        scroll_prefs = QScrollArea(self)
+        scroll_prefs.setWidgetResizable(True)
+        scroll_prefs.setFrameShape(QFrame.NoFrame)
+        scroll_prefs.setStyleSheet("background-color: transparent;")
+        
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background-color: transparent;")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(16)
+        
+        # Prefs Card 1: General Options
         card_prefs = QFrame(self)
         card_prefs.setProperty("class", "card")
         prefs_layout = QVBoxLayout(card_prefs)
-        prefs_layout.setContentsMargins(18, 16, 18, 16)
-        prefs_layout.setSpacing(12)
+        prefs_layout.setContentsMargins(8, 12, 8, 12)
+        prefs_layout.setSpacing(0)
         
-        self.lbl_settings_card_title = QLabel("基础参数配置 (General Settings)", self)
+        self.lbl_settings_card_title = QLabel(self)
         self.lbl_settings_card_title.setObjectName("lbl_card_title")
+        self.lbl_settings_card_title.setStyleSheet("margin: 8px 12px 12px 12px;")
         prefs_layout.addWidget(self.lbl_settings_card_title)
+        
+        self.settings_ui_elements = {}
         
         self.chk_boot_start = QCheckBox(self)
         self.chk_boot_start.setChecked(self.boot_start)
         self.chk_boot_start.stateChanged.connect(self.save_settings)
-        prefs_layout.addWidget(self.chk_boot_start)
+        prefs_layout.addWidget(self.create_setting_row("boot", self.chk_boot_start))
         
         self.chk_auto_start = QCheckBox(self)
         self.chk_auto_start.setChecked(self.auto_start_service)
         self.chk_auto_start.stateChanged.connect(self.save_settings)
-        prefs_layout.addWidget(self.chk_auto_start)
+        prefs_layout.addWidget(self.create_setting_row("service", self.chk_auto_start))
         
         self.chk_minimize_close = QCheckBox(self)
         self.chk_minimize_close.setChecked(self.minimize_to_tray)
         self.chk_minimize_close.stateChanged.connect(self.save_settings)
-        prefs_layout.addWidget(self.chk_minimize_close)
+        prefs_layout.addWidget(self.create_setting_row("minimize", self.chk_minimize_close))
         
         self.chk_auto_update = QCheckBox(self)
         self.chk_auto_update.setChecked(self.auto_updates)
         self.chk_auto_update.stateChanged.connect(self.save_settings)
-        prefs_layout.addWidget(self.chk_auto_update)
+        prefs_layout.addWidget(self.create_setting_row("update", self.chk_auto_update))
         
-        form_grid = QGridLayout()
-        form_grid.setSpacing(10)
-        
-        self.lbl_lang_settings = QLabel("语言 (Language):", self)
-        self.lbl_lang_settings.setObjectName("lbl_field_name")
         self.combo_lang_settings = QComboBox(self)
         self.combo_lang_settings.addItems(["中文 (Chinese)", "English"])
         self.combo_lang_settings.setCurrentIndex(0 if self.lang == "zh" else 1)
         self.combo_lang_settings.currentIndexChanged.connect(self.on_lang_settings_changed)
+        self.combo_lang_settings.setFixedWidth(140)
+        prefs_layout.addWidget(self.create_setting_row("lang", self.combo_lang_settings))
         
-        self.lbl_theme_settings = QLabel("界面主题 (Theme):", self)
-        self.lbl_theme_settings.setObjectName("lbl_field_name")
         self.combo_theme = QComboBox(self)
         self.combo_theme.addItems(["Dark Mode (暗色)", "Light Mode (明亮)"])
         self.combo_theme.setCurrentIndex(0 if self.dark_mode else 1)
         self.combo_theme.currentIndexChanged.connect(self.on_theme_settings_changed)
+        self.combo_theme.setFixedWidth(140)
+        prefs_layout.addWidget(self.create_setting_row("theme", self.combo_theme))
         
-        self.lbl_ctrl_ip_settings = QLabel("控制器 IP (Controller IP):", self)
-        self.lbl_ctrl_ip_settings.setObjectName("lbl_field_name")
         self.txt_controller_ip = QLineEdit(self.controller_ip, self)
         self.txt_controller_ip.textChanged.connect(self.save_settings)
+        self.txt_controller_ip.setFixedWidth(140)
+        prefs_layout.addWidget(self.create_setting_row("ip", self.txt_controller_ip))
         
-        form_grid.addWidget(self.lbl_lang_settings, 0, 0)
-        form_grid.addWidget(self.combo_lang_settings, 0, 1)
-        form_grid.addWidget(self.lbl_theme_settings, 1, 0)
-        form_grid.addWidget(self.combo_theme, 1, 1)
-        form_grid.addWidget(self.lbl_ctrl_ip_settings, 2, 0)
-        form_grid.addWidget(self.txt_controller_ip, 2, 1)
+        scroll_layout.addWidget(card_prefs)
         
-        prefs_layout.addLayout(form_grid)
+        # Prefs Card 2: Advanced Maintenance Options
+        card_adv = QFrame(self)
+        card_adv.setProperty("class", "card")
+        adv_layout = QVBoxLayout(card_adv)
+        adv_layout.setContentsMargins(8, 12, 8, 12)
+        adv_layout.setSpacing(0)
         
-        # Reconfig database button
-        prefs_layout.addSpacing(15)
-        self.btn_reconfig_db = QPushButton("修改数据库及环境配置 (Modify DB & Env Config)", self)
+        self.lbl_settings_adv_title = QLabel(self)
+        self.lbl_settings_adv_title.setObjectName("lbl_card_title")
+        self.lbl_settings_adv_title.setStyleSheet("margin: 8px 12px 12px 12px;")
+        adv_layout.addWidget(self.lbl_settings_adv_title)
+        
+        self.btn_reconfig_db = QPushButton(self)
         self.btn_reconfig_db.setObjectName("btn_secondary")
         self.btn_reconfig_db.setCursor(Qt.PointingHandCursor)
         self.btn_reconfig_db.clicked.connect(lambda: self.launch_reconfig_wizard(True))
-        prefs_layout.addWidget(self.btn_reconfig_db)
+        self.btn_reconfig_db.setFixedWidth(100)
+        adv_layout.addWidget(self.create_setting_row("reconfig", self.btn_reconfig_db))
         
-        # Reset configuration button
-        prefs_layout.addSpacing(8)
-        self.btn_reset_config = QPushButton("恢复初始配置 (Restore Initial Config)", self)
+        self.btn_reset_config = QPushButton(self)
         self.btn_reset_config.setObjectName("btn_secondary")
         self.btn_reset_config.setCursor(Qt.PointingHandCursor)
         self.btn_reset_config.clicked.connect(self.reset_initial_config)
-        prefs_layout.addWidget(self.btn_reset_config)
+        self.btn_reset_config.setFixedWidth(100)
+        adv_layout.addWidget(self.create_setting_row("reset", self.btn_reset_config))
         
-        # Clear database button
-        prefs_layout.addSpacing(8)
-        self.btn_clear_db = QPushButton("清除并重置数据库 (Clear & Reset Database)", self)
+        self.btn_clear_db = QPushButton(self)
         self.btn_clear_db.setObjectName("btn_danger")
         self.btn_clear_db.setCursor(Qt.PointingHandCursor)
         self.btn_clear_db.clicked.connect(self.clear_and_reset_database)
-        prefs_layout.addWidget(self.btn_clear_db)
+        self.btn_clear_db.setFixedWidth(100)
+        adv_layout.addWidget(self.create_setting_row("clear", self.btn_clear_db))
         
-        prefs_layout.addStretch()
-        layout.addWidget(card_prefs, 1)
+        scroll_layout.addWidget(card_adv)
+        scroll_layout.addStretch()
+        
+        scroll_prefs.setWidget(scroll_content)
+        layout.addWidget(scroll_prefs, 11)
         
         # Right Column: System Specs Card
         card_sys = QFrame(self)
         card_sys.setProperty("class", "card")
         sys_layout = QVBoxLayout(card_sys)
-        sys_layout.setContentsMargins(18, 16, 18, 16)
-        sys_layout.setSpacing(12)
+        sys_layout.setContentsMargins(8, 12, 8, 12)
+        sys_layout.setSpacing(0)
         
-        self.lbl_sys_card_title = QLabel("本机系统硬件信息 (System Specifications)", self)
+        self.lbl_sys_card_title = QLabel(self)
         self.lbl_sys_card_title.setObjectName("lbl_card_title")
+        self.lbl_sys_card_title.setStyleSheet("margin: 8px 12px 12px 12px;")
         sys_layout.addWidget(self.lbl_sys_card_title)
         
-        sys_grid = QGridLayout()
-        sys_grid.setSpacing(12)
-        
-        # Query local specs
+        # Query specs
         hostname = socket.gethostname()
         os_info = f"{platform.system()} {platform.release()}"
         cpu_info = platform.processor() or "AMD/Intel Processor"
         mem_info = self.get_total_memory()
         ip_info = self.get_local_ip_addresses()
         
-        self.sys_specs = [
-            ("sys_hostname", hostname),
-            ("sys_os", os_info),
-            ("sys_cpu", cpu_info),
-            ("sys_mem", mem_info),
-            ("sys_ip", ip_info)
-        ]
+        self.spec_ui_elements = {}
         
-        self.sys_labels = {}
-        for row, (key, val) in enumerate(self.sys_specs):
-            lbl_name = QLabel(key, self)
-            lbl_name.setObjectName("lbl_field_name")
-            
-            lbl_val = QLabel(val, self)
-            lbl_val.setObjectName("lbl_field_val")
-            lbl_val.setWordWrap(True)
-            
-            sys_grid.addWidget(lbl_name, row, 0, Qt.AlignTop)
-            sys_grid.addWidget(lbl_val, row, 1, Qt.AlignTop)
-            self.sys_labels[key] = lbl_name
-            
-        sys_layout.addLayout(sys_grid)
+        lbl_host_val = QLabel(hostname, self)
+        lbl_host_val.setObjectName("lbl_field_val")
+        lbl_host_val.setStyleSheet("color: #64748B; font-weight: bold;")
+        sys_layout.addWidget(self.create_spec_row("sys_hostname", lbl_host_val))
+        
+        lbl_os_val = QLabel(os_info, self)
+        lbl_os_val.setObjectName("lbl_field_val")
+        lbl_os_val.setStyleSheet("color: #64748B; font-weight: bold;")
+        sys_layout.addWidget(self.create_spec_row("sys_os", lbl_os_val))
+        
+        lbl_cpu_val = QLabel(cpu_info, self)
+        lbl_cpu_val.setObjectName("lbl_field_val")
+        lbl_cpu_val.setWordWrap(True)
+        lbl_cpu_val.setStyleSheet("color: #64748B; font-weight: bold; font-size: 11px;")
+        lbl_cpu_val.setMaximumWidth(220)
+        lbl_cpu_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        sys_layout.addWidget(self.create_spec_row("sys_cpu", lbl_cpu_val))
+        
+        lbl_mem_val = QLabel(mem_info, self)
+        lbl_mem_val.setObjectName("lbl_field_val")
+        lbl_mem_val.setStyleSheet("color: #64748B; font-weight: bold;")
+        sys_layout.addWidget(self.create_spec_row("sys_mem", lbl_mem_val))
+        
+        # IP Dropdown + Copy
+        ip_widget = QWidget(self)
+        ip_row_layout = QHBoxLayout(ip_widget)
+        ip_row_layout.setContentsMargins(0, 0, 0, 0)
+        ip_row_layout.setSpacing(6)
+        
+        self.combo_ips = QComboBox(self)
+        self.combo_ips.setFixedWidth(130)
+        ip_list = [ip.strip() for ip in ip_info.split(",") if ip.strip()]
+        self.combo_ips.addItems(ip_list if ip_list else ["127.0.0.1"])
+        
+        self.btn_copy_ip = QPushButton(self)
+        self.btn_copy_ip.setObjectName("btn_copy")
+        self.btn_copy_ip.setCursor(Qt.PointingHandCursor)
+        self.btn_copy_ip.clicked.connect(self.copy_ip_to_clipboard)
+        
+        ip_row_layout.addWidget(self.combo_ips)
+        ip_row_layout.addWidget(self.btn_copy_ip)
+        
+        sys_layout.addWidget(self.create_spec_row("sys_ip", ip_widget))
         sys_layout.addStretch()
-        layout.addWidget(card_sys, 1)
+        
+        layout.addWidget(card_sys, 9)
         
         self.content_pane.addWidget(page)
 
@@ -1930,23 +2123,21 @@ class NetOpsAgentUI(QMainWindow):
         
         # Page 4: Settings
         self.lbl_settings_card_title.setText(tr["settings_card_title"])
-        self.chk_boot_start.setText(tr["chk_boot_start"])
-        self.chk_auto_start.setText(tr["chk_auto_start"])
-        self.chk_minimize_close.setText(tr["chk_minimize_close"])
-        self.chk_auto_update.setText(tr["chk_auto_update"])
-        self.lbl_lang_settings.setText(tr["lbl_lang"])
-        self.lbl_theme_settings.setText(tr["lbl_theme"])
-        self.lbl_ctrl_ip_settings.setText(tr["lbl_ctrl_ip"])
+        self.lbl_settings_adv_title.setText(tr["settings_adv_title"])
+        self.lbl_sys_card_title.setText(tr["sys_card_title"])
+        
+        for key, (lbl_title, lbl_desc) in self.settings_ui_elements.items():
+            lbl_title.setText(tr["setting_" + key + "_title"])
+            lbl_desc.setText(tr["setting_" + key + "_desc"])
+            
         self.btn_reconfig_db.setText(tr["btn_reconfig_db"])
         self.btn_reset_config.setText(tr["btn_reset_config"])
         self.btn_clear_db.setText(tr["btn_clear_db"])
-        self.lbl_sys_card_title.setText(tr["sys_card_title"])
         
-        self.sys_labels["sys_hostname"].setText(tr["sys_hostname"])
-        self.sys_labels["sys_os"].setText(tr["sys_os"])
-        self.sys_labels["sys_cpu"].setText(tr["sys_cpu"])
-        self.sys_labels["sys_mem"].setText(tr["sys_mem"])
-        self.sys_labels["sys_ip"].setText(tr["sys_ip"])
+        for key, lbl in self.spec_ui_elements.items():
+            lbl.setText(tr[key])
+            
+        self.btn_copy_ip.setText(tr["sys_ip_copy"])
         
         # Page 5: About
         self.lbl_about_name.setText(tr["about_name"])
