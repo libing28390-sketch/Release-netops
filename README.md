@@ -365,6 +365,10 @@ docker compose restart netops    # Restart backend
 
 **Prerequisites:** Node.js 18+, Python 3.10+, PostgreSQL 17
 
+> [!NOTE]
+> For Windows native deployment, it is highly recommended to clone the Windows-specific branch to get Windows-specific tray control tools (e.g. `NetOps.exe`):
+> `git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation`
+
 ```bash
 git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
 cd netops-automation
@@ -682,6 +686,10 @@ docker compose restart netops    # 重启后端
 #### 方式三 — 手动部署
 
 **前置条件**：Node.js 18+、Python 3.10+、PostgreSQL 17
+
+> [!NOTE]
+> 对于 Windows 本地部署，强烈建议克隆 Windows 专属分支以获取桌面托盘管理程序（如 `NetOps.exe`）：
+> `git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation`
 
 ```bash
 git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation

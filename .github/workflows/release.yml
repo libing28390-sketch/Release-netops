@@ -7,13 +7,14 @@ on:
   workflow_dispatch: # 允许在网页上点击按钮手动触发
 
 jobs:
-  release:
+  release-ubuntu:
+    name: Release Ubuntu / Linux (main branch)
     runs-on: ubuntu-latest
     steps:
       - name: 1. 拉取开发库代码
         uses: actions/checkout@v4
 
-      - name: 2. 彻底清理敏感文件与原始源码
+      - name: 2. 彻底清理敏感文件、开发源码与 Windows 专属文件
         run: |
           # ── License 核心：保留 verifier.py / crypto.py / middleware.py，删除 generator.py ──
           rm -f backend/license_auth/generator.py
@@ -63,7 +64,7 @@ jobs:
           # ── 本地数据库文件（客户应使用自己的 PostgreSQL）──
           rm -f netops.db backend/netops.db backend/netsops.db
 
-          # ── 本地 license 数据（不能把开发测试 license 带过去）──
+          # ── 本地 license 数据（不能把开发测试 license带过去）──
           rm -f data/license*.json
 
           # ── AI 助手 / IDE 残留文件 ──
@@ -71,10 +72,13 @@ jobs:
           rm -f .clinerules .cursorrules .geminirules mcp-config.json
           rm -f -- "--version"
 
+          # ── Windows 专属文件清理（只发给 Ubuntu/Linux 用户） ──
+          rm -f NetOps.exe NetOps.spec desktop_tray.py launcher.py create_shortcut.py start.bat netops.ico desktop_settings.ini
+
           # ── GitHub Actions 配置（发布仓库不需要 CI）──
           rm -rf .github/
           
-      - name: 3. 将处理后的安全代码推送到对外发布仓库
+      - name: 3. 将处理后的安全代码推送到对外发布仓库 main 分支
         run: |
           # 配置自动化机器人的 Git 身份
           git config --global user.name "GitHub Action Bot"
@@ -84,9 +88,98 @@ jobs:
           rm -rf .git
           git init
           git add .
-          git commit -m "🚀 Release build: Production ready stable release"
+          git commit -m "🚀 Release build: Production ready stable Ubuntu release"
           
-          # 推送到客户专门用的发布库 Release-netops
+          # 推送到客户专门用的发布库 Release-netops 的 main 分支
           git branch -M main
           git remote add origin https://${{ secrets.RELEASE_REPO_TOKEN }}@github.com/libing28390-sketch/Release-netops.git
           git push -u origin main --force
+
+  release-windows:
+    name: Release Windows (windows branch)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. 拉取开发库代码
+        uses: actions/checkout@v4
+
+      - name: 2. 彻底清理敏感文件、开发源码与 Linux/Docker 专属文件
+        run: |
+          # ── License 核心：保留 verifier.py / crypto.py / middleware.py，删除 generator.py ──
+          rm -f backend/license_auth/generator.py
+
+          # ── 私钥：绝对不能发给客户 ──
+          rm -f backend/license_auth/keys/private.pem
+
+          # ── 开发者专用工具 ──
+          rm -rf tools/
+
+          # ── 编译脚本及 Windows 客户端工具（客户不需要）──
+          rm -rf scripts/
+
+          # ── 开发者内部文档 / 笔记 ──
+          rm -f bug_fix_memory.md
+          rm -f PAM_Audit_Restoration_Report.md
+          rm -rf docs/
+          rm -rf brain/
+          rm -rf skills/
+          rm -rf .github/skills/
+
+          # ── 测试 / 调试脚本与自动化单元测试用例（商用脱敏，不暴露给客户） ──
+          rm -rf scratch/
+          rm -rf backend/scratch/
+          rm -rf backend/tests/
+          rm -f pytest.ini
+          rm -f backend/_check_audit.py
+          rm -f backend/check_executions.py
+          rm -f backend/check_results.py
+          rm -f backend/debug_device.py
+          rm -f backend/find_target.py
+          rm -f _purge_bogus_backups.py
+          # 任何在仓库根目录残留 of _xxx.py 临时排障脚本一律剔除
+          find . -maxdepth 2 -type f -name '_*.py' -not -path './.git/*' -delete || true
+
+          # ── 临时部署补丁 / 排障脚本（开发期使用，正式发布不需要） ──
+          rm -f patch-vmware.sh
+          rm -f patch-*.sh
+          rm -f hotfix-*.sh
+
+          # ── 历史任务进度 / 开发期 todo（绝对不能发给客户） ──
+          rm -f task.md task_progress.md
+          rm -f task-*.md task_*.md
+          rm -f implementation_plan.md walkthrough.md
+          rm -f refactor.cjs refactor2.cjs
+
+          # ── 本地数据库文件（客户应使用自己的 PostgreSQL）──
+          rm -f netops.db backend/netops.db backend/netsops.db
+
+          # ── 本地 license 数据（不能把开发测试 license带过去）──
+          rm -f data/license*.json
+
+          # ── AI 助手 / IDE 残留文件 ──
+          rm -rf .codex/ .cursor/ .playwright-mcp/ .vscode/
+          rm -f .clinerules .cursorrules .geminirules mcp-config.json
+          rm -f -- "--version"
+
+          # ── Linux/Docker 专属文件清理（只发给 Windows 用户） ──
+          rm -f deploy-ubuntu.sh deploy-ubuntu.gitee.sh Dockerfile docker-compose.yml .dockerignore
+          rm -rf nginx/
+
+          # ── GitHub Actions 配置（发布仓库不需要 CI）──
+          rm -rf .github/
+          
+      - name: 3. 将处理后的安全代码推送到对外发布仓库 windows 分支
+        run: |
+          # 配置自动化机器人的 Git 身份
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          
+          # 抹除之前在开发库里的所有 Commit 历史记录（防止客户从历史里翻到源码）
+          rm -rf .git
+          git init
+          git add .
+          git commit -m "🚀 Release build: Production ready stable Windows release"
+          
+          # 推送到客户专门用的发布库 Release-netops 的 windows 分支
+          git branch -M windows
+          git remote add origin https://${{ secrets.RELEASE_REPO_TOKEN }}@github.com/libing28390-sketch/Release-netops.git
+          git push -u origin windows --force

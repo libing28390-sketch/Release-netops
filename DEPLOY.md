@@ -695,6 +695,13 @@ docker compose up -d --build
 
 You can run the application directly on Windows as a zero-configuration local server with a system tray controller.
 
+#### 0. Get the Windows Release Code
+Before starting, clone the **Windows-specific release branch** (`windows`) to avoid downloading unnecessary Linux/Docker dependencies:
+```powershell
+git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation
+cd netops-automation
+```
+
 #### 1. Setup Environment & Dependencies
 1. **Prepare Python & Node.js**: Ensure Python 3.10+ and Node.js are installed on your machine.
 2. **Setup Virtualenv & Requirements**:
@@ -730,6 +737,13 @@ You can run the application directly on Windows as a zero-configuration local se
 ### Windows 本地部署与桌面集成指南
 
 您可以在 Windows 系统上直接将项目作为本地服务运行，并利用 Windows 系统托盘在后台进行静默管理。
+
+#### 0. 获取 Windows 专属发布代码
+开始之前，请克隆 **Windows 专属发布分支** (`windows`)，以避免下载冗余的 Linux/Docker 依赖：
+```powershell
+git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation
+cd netops-automation
+```
 
 #### 1. 初始化依赖环境
 1. **安装环境要求**：确保本地已安装 Python 3.10+ 和 Node.js。
