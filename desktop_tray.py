@@ -234,6 +234,7 @@ TRANSLATIONS = {
         "lbl_ctrl_ip": "控制器 IP (Controller IP):",
         "btn_reconfig_db": "修改数据库及环境配置",
         "btn_reset_config": "恢复初始配置",
+        "btn_clear_db": "清除并重置数据库",
         
         "sys_card_title": "本机系统硬件信息 (System Specifications)",
         "sys_hostname": "主机名称 (Hostname)",
@@ -323,6 +324,7 @@ TRANSLATIONS = {
         "lbl_ctrl_ip": "Controller IP:",
         "btn_reconfig_db": "Modify DB & Env Config",
         "btn_reset_config": "Restore Initial Config",
+        "btn_clear_db": "Clear & Reset Database",
         
         "sys_card_title": "System Specifications",
         "sys_hostname": "Hostname",
@@ -983,6 +985,107 @@ class NetOpsAgentUI(QMainWindow):
             
             self.launch_reconfig_wizard(force_reconfig=False)
 
+    def clear_and_reset_database(self):
+        title = "清除并重置数据库" if self.lang == "zh" else "Clear & Reset Database"
+        msg = (
+            "确定要彻底清除并重置数据库吗？\n\n"
+            "🔴 注意：此操作将清除所有录入的设备、配置快照、变更工单等所有业务数据，"
+            "并将 Web 管理员密码重置为默认值 'admin'。\n\n"
+            "此操作无法撤销！请确认是否继续？"
+            if self.lang == "zh"
+            else (
+                "Are you sure you want to completely clear and reset the database?\n\n"
+                "🔴 WARNING: This will delete all devices, configuration snapshots, change orders, "
+                "and reset the Web administrator password to the default 'admin'.\n\n"
+                "This action CANNOT be undone! Do you wish to continue?"
+            )
+        )
+        
+        reply = QMessageBox.warning(
+            self,
+            title,
+            msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Stop the backend server process first
+            self.stop_backend_server()
+            
+            # Show a temporary messagebox during deletion
+            progress_msg = QMessageBox(self)
+            progress_msg.setIcon(QMessageBox.Information)
+            progress_msg.setWindowTitle(title)
+            progress_msg.setText("正在停止服务并清理数据库，请稍候..." if self.lang == "zh" else "Stopping service and cleaning database, please wait...")
+            progress_msg.setStandardButtons(QMessageBox.NoButton)
+            progress_msg.show()
+            QApplication.processEvents()
+            
+            # Run python inline script to delete DB tables/files
+            python_exe = get_python_executable()
+            inline_code = (
+                "import sys, os\n"
+                "sys.path.insert(0, 'backend')\n"
+                "try:\n"
+                "    from database import get_db_connection, _USE_PG, DB_PATH\n"
+                "    if _USE_PG:\n"
+                "        conn = get_db_connection()\n"
+                "        conn.autocommit = True\n"
+                "        cursor = conn.cursor()\n"
+                "        cursor.execute('DROP SCHEMA public CASCADE;')\n"
+                "        cursor.execute('CREATE SCHEMA public;')\n"
+                "        cursor.execute('GRANT ALL ON SCHEMA public TO public;')\n"
+                "        conn.close()\n"
+                "        print('SUCCESS_PG')\n"
+                "    else:\n"
+                "        for suffix in ('', '-wal', '-shm'):\n"
+                "            path = DB_PATH + suffix\n"
+                "            if os.path.exists(path):\n"
+                "                os.remove(path)\n"
+                "        print('SUCCESS_SQLITE')\n"
+                "except Exception as e:\n"
+                "    print(f'ERROR: {e}')"
+            )
+            
+            try:
+                # Run the process synchronously
+                res = subprocess.run(
+                    [python_exe, "-c", inline_code],
+                    cwd=PROJECT_ROOT,
+                    capture_output=True,
+                    text=True,
+                    creationflags=0x08000000,
+                    timeout=15
+                )
+                output = res.stdout.strip()
+                progress_msg.close()
+                
+                if "SUCCESS" in output:
+                    QMessageBox.information(
+                        self,
+                        title,
+                        "数据库已成功清空并重置！\n管理员账户已重置为：admin / admin\n服务重新启动时将自动生成空表结构。"
+                        if self.lang == "zh"
+                        else "Database has been successfully cleared and reset!\nAdministrator account reset to: admin / admin\nEmpty table structures will be automatically generated upon next startup."
+                    )
+                else:
+                    err_detail = output or res.stderr.strip()
+                    QMessageBox.critical(
+                        self,
+                        "重置失败" if self.lang == "zh" else "Reset Failed",
+                        f"清理数据库时遭遇错误：\n{err_detail}" if self.lang == "zh" else f"Error clearing database:\n{err_detail}"
+                    )
+            except Exception as ex:
+                progress_msg.close()
+                QMessageBox.critical(
+                    self,
+                    "重置失败" if self.lang == "zh" else "Reset Failed",
+                    f"执行清理程序时发生异常：\n{ex}" if self.lang == "zh" else f"Exception running cleanup program:\n{ex}"
+                )
+            
+            self.update_runtime_state()
+
     def save_settings(self):
         self.auto_start_service = self.chk_auto_start.isChecked()
         self.minimize_to_tray = self.chk_minimize_close.isChecked()
@@ -1553,6 +1656,15 @@ class NetOpsAgentUI(QMainWindow):
         self.btn_reset_config.setCursor(Qt.PointingHandCursor)
         self.btn_reset_config.clicked.connect(self.reset_initial_config)
         prefs_layout.addWidget(self.btn_reset_config)
+        
+        # Clear database button
+        prefs_layout.addSpacing(8)
+        self.btn_clear_db = QPushButton("清除并重置数据库 (Clear & Reset Database)", self)
+        self.btn_clear_db.setObjectName("btn_danger")
+        self.btn_clear_db.setCursor(Qt.PointingHandCursor)
+        self.btn_clear_db.clicked.connect(self.clear_and_reset_database)
+        prefs_layout.addWidget(self.btn_clear_db)
+        
         prefs_layout.addStretch()
         layout.addWidget(card_prefs, 1)
         
@@ -1811,6 +1923,7 @@ class NetOpsAgentUI(QMainWindow):
         self.lbl_ctrl_ip_settings.setText(tr["lbl_ctrl_ip"])
         self.btn_reconfig_db.setText(tr["btn_reconfig_db"])
         self.btn_reset_config.setText(tr["btn_reset_config"])
+        self.btn_clear_db.setText(tr["btn_clear_db"])
         self.lbl_sys_card_title.setText(tr["sys_card_title"])
         
         self.sys_labels["sys_hostname"].setText(tr["sys_hostname"])
