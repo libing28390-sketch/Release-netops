@@ -577,6 +577,8 @@ QComboBox QAbstractItemView, QListView {
     border: 1px solid #334155;
     padding: 4px;
     color: #E2E8F0;
+    selection-background-color: #0891B2;
+    selection-color: #FFFFFF;
     outline: none;
 }
 QComboBox QAbstractItemView::item, QListView::item {
@@ -586,8 +588,8 @@ QComboBox QAbstractItemView::item, QListView::item {
     color: #E2E8F0;
     background-color: transparent;
 }
-QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected, QListView::item:hover, QListView::item:selected {
-    background-color: #334155;
+QComboBox QAbstractItemView::item:selected, QListView::item:selected {
+    background-color: #0891B2;
     color: #FFFFFF;
 }
 QScrollBar:vertical {
@@ -865,6 +867,8 @@ QComboBox QAbstractItemView, QListView {
     border: 1px solid #E2E8F0;
     padding: 4px;
     color: #334155;
+    selection-background-color: #0891B2;
+    selection-color: #FFFFFF;
     outline: none;
 }
 QComboBox QAbstractItemView::item, QListView::item {
@@ -874,9 +878,9 @@ QComboBox QAbstractItemView::item, QListView::item {
     color: #334155;
     background-color: transparent;
 }
-QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected, QListView::item:hover, QListView::item:selected {
-    background-color: #F1F5F9;
-    color: #0F172A;
+QComboBox QAbstractItemView::item:selected, QListView::item:selected {
+    background-color: #0891B2;
+    color: #FFFFFF;
 }
 QScrollBar:vertical {
     border: none;
