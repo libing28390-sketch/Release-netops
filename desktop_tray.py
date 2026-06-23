@@ -99,7 +99,7 @@ try:
         QLabel, QPushButton, QComboBox, QFrame, QGraphicsDropShadowEffect, 
         QSystemTrayIcon, QMenu, QCheckBox, QStackedWidget, QLineEdit, 
         QPlainTextEdit, QFileDialog, QMessageBox, QGridLayout, QScrollArea,
-        QListView
+        QListView, QStyledItemDelegate
     )
     from PySide6.QtCore import Qt, QSize, Signal, Slot, QTimer, QSettings, QPoint
     from PySide6.QtGui import QIcon, QFont, QColor, QAction, QCursor, QPainter, QBrush, QPen, QPixmap, QPolygon
@@ -577,7 +577,7 @@ QComboBox QAbstractItemView, QListView {
     border: 1px solid #334155;
     padding: 4px;
     color: #E2E8F0;
-    selection-background-color: #0891B2;
+    selection-background-color: #334155;
     selection-color: #FFFFFF;
     outline: none;
 }
@@ -586,10 +586,10 @@ QComboBox QAbstractItemView::item, QListView::item {
     min-height: 26px;
     border-radius: 4px;
     color: #E2E8F0;
-    background-color: transparent;
+    background-color: #1E293B;
 }
 QComboBox QAbstractItemView::item:selected, QListView::item:selected {
-    background-color: #0891B2;
+    background-color: #334155;
     color: #FFFFFF;
 }
 QScrollBar:vertical {
@@ -867,8 +867,8 @@ QComboBox QAbstractItemView, QListView {
     border: 1px solid #E2E8F0;
     padding: 4px;
     color: #334155;
-    selection-background-color: #0891B2;
-    selection-color: #FFFFFF;
+    selection-background-color: #F1F5F9;
+    selection-color: #0F172A;
     outline: none;
 }
 QComboBox QAbstractItemView::item, QListView::item {
@@ -876,11 +876,11 @@ QComboBox QAbstractItemView::item, QListView::item {
     min-height: 26px;
     border-radius: 4px;
     color: #334155;
-    background-color: transparent;
+    background-color: #FFFFFF;
 }
 QComboBox QAbstractItemView::item:selected, QListView::item:selected {
-    background-color: #0891B2;
-    color: #FFFFFF;
+    background-color: #F1F5F9;
+    color: #0F172A;
 }
 QScrollBar:vertical {
     border: none;
@@ -1330,11 +1330,15 @@ class NetOpsAgentUI(QMainWindow):
     def save_settings(self):
         self.auto_start_service = self.chk_auto_start.isChecked()
         self.minimize_to_tray = self.chk_minimize_close.isChecked()
-        self.boot_start = self.chk_boot_start.isChecked()
         self.auto_updates = self.chk_auto_update.isChecked()
         self.lang = "zh" if self.combo_lang_settings.currentIndex() == 0 else "en"
         self.dark_mode = (self.combo_theme.currentIndex() == 0)
         self.controller_ip = self.txt_controller_ip.text().strip()
+        
+        # Only update registry if boot_start value has actually changed to avoid lag
+        new_boot_start = self.chk_boot_start.isChecked()
+        boot_start_changed = (new_boot_start != self.boot_start)
+        self.boot_start = new_boot_start
         
         self.settings.setValue("auto_start_service", self.auto_start_service)
         self.settings.setValue("minimize_to_tray", self.minimize_to_tray)
@@ -1345,8 +1349,9 @@ class NetOpsAgentUI(QMainWindow):
         self.settings.setValue("controller_ip", self.controller_ip)
         self.settings.sync()
         
-        # Registry integration
-        set_autostart_registry(self.boot_start)
+        # Registry integration (only update on real changes to prevent lag)
+        if boot_start_changed:
+            set_autostart_registry(self.boot_start)
 
     def setup_ui(self):
         central = QWidget(self)
@@ -2264,7 +2269,68 @@ class NetOpsAgentUI(QMainWindow):
 
     def apply_theme(self):
         style = DARK_STYLE if self.dark_mode else LIGHT_STYLE
-        QApplication.instance().setStyleSheet(style)
+        self.setStyleSheet(style)
+        
+        # Specific sub-style for dropdown views to avoid massive QSS parsing lag
+        view_bg = "#1E293B" if self.dark_mode else "#FFFFFF"
+        view_border = "#334155" if self.dark_mode else "#CBD5E1"
+        item_color = "#E2E8F0" if self.dark_mode else "#0F172A"
+        item_sel_bg = "#334155" if self.dark_mode else "#F1F5F9"
+        item_sel_color = "#FFFFFF" if self.dark_mode else "#0F172A"
+        scrollbar_handle = "#334155" if self.dark_mode else "#CBD5E1"
+        scrollbar_hover = "#475569" if self.dark_mode else "#94A3B8"
+        
+        view_style = f"""
+            QListView {{
+                background-color: {view_bg};
+                border: 1px solid {view_border};
+                border-radius: 6px;
+                padding: 4px;
+                outline: none;
+            }}
+            QListView::item {{
+                padding: 6px 12px;
+                min-height: 26px;
+                border-radius: 4px;
+                color: {item_color};
+                background-color: {view_bg};
+            }}
+            QListView::item:selected, QListView::item:hover {{
+                background-color: {item_sel_bg};
+                color: {item_sel_color};
+            }}
+            QScrollBar:vertical {{
+                border: none;
+                background-color: transparent;
+                width: 6px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {scrollbar_handle};
+                min-height: 20px;
+                border-radius: 3px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {scrollbar_hover};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+                background: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """
+        
+        # Style the views directly to avoid global QApplication style recalculation lag
+        for combo in [self.combo_lang_settings, self.combo_theme, self.combo_ips, self.combo_log_source]:
+            # Force using QStyledItemDelegate so custom item backgrounds and highlights are respected
+            if not isinstance(combo.itemDelegate(), QStyledItemDelegate):
+                combo.setItemDelegate(QStyledItemDelegate(combo))
+            view = combo.view()
+            if view:
+                view.setStyleSheet(view_style)
+                
         set_dark_title_bar(self.winId(), self.dark_mode)
 
     def update_translations(self):
