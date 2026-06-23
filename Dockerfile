@@ -42,33 +42,9 @@ RUN pip install --no-cache-dir --upgrade pip -i https://mirrors.aliyun.com/pypi/
 # Copy backend source
 COPY backend/ /app/backend/
 
-# Compile license modules using Cython during container build to match Python runtime version
-# If Python source files are present (development environment), compile them.
-# If they are absent (release repository), skip compiling and use precompiled .so files.
-RUN if [ -f /app/backend/license_auth/verifier.py ]; then \
-        echo "[INFO] verifier.py found. Compiling license modules using Cython..." && \
-        pip install --no-cache-dir cython -i https://mirrors.aliyun.com/pypi/simple/ && \
-        echo 'from setuptools import setup, Extension' > /app/compile.py && \
-        echo 'from Cython.Build import cythonize' >> /app/compile.py && \
-        echo 'extensions = [' >> /app/compile.py && \
-        echo '    Extension("backend.license_auth.verifier", ["backend/license_auth/verifier.py"]),' >> /app/compile.py && \
-        echo '    Extension("backend.license_auth.crypto", ["backend/license_auth/crypto.py"]),' >> /app/compile.py && \
-        echo '    Extension("backend.license_auth.middleware", ["backend/license_auth/middleware.py"]),' >> /app/compile.py && \
-        echo ']' >> /app/compile.py && \
-        echo 'setup(ext_modules=cythonize(extensions, compiler_directives={"language_level": "3", "always_allow_keywords": True}), script_args=["build_ext", "--inplace"])' >> /app/compile.py && \
-        python /app/compile.py && \
-        rm -f /app/compile.py && \
-        rm -f /app/backend/license_auth/verifier.py /app/backend/license_auth/crypto.py /app/backend/license_auth/middleware.py && \
-        rm -f /app/backend/license_auth/*.c && \
-        rm -rf /app/build && \
-        pip uninstall -y cython; \
-    else \
-        echo "[INFO] verifier.py not found. Skipping Cython compilation, using pre-compiled .so files."; \
-    fi
-
-# Verify the compiled modules can be imported
-RUN python -c "import sys; sys.path.insert(0, '/app/backend'); from license_auth.verifier import get_license_verifier, bootstrap_license_protection; print('[OK] license_auth compiled modules loaded successfully')" || \
-    (echo '[FAIL] license_auth compiled modules are not compatible or import failed.' && exit 1)
+# Verify the license_auth modules can be imported successfully
+RUN python -c "import sys; sys.path.insert(0, '/app/backend'); from license_auth.verifier import get_license_verifier, bootstrap_license_protection; print('[OK] license_auth modules loaded successfully')" || \
+    (echo '[FAIL] license_auth modules import failed.' && exit 1)
 
 # Copy environment template
 COPY .env.example /app/.env.example
