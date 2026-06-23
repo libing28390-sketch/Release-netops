@@ -1356,19 +1356,19 @@ class NetOpsAgentUI(QMainWindow):
             "about": ("\uE946", "ℹ️")
         }
         
-        self.brand_icon = QLabel(self)
+        self.brand_icon = QLabel(self.sidebar)
         if self.use_emoji_fallback:
             self.brand_icon.setText(ICON_MAP["brand"][1])
-            self.brand_icon.setStyleSheet("font-size: 24px;")
+            self.brand_icon.setStyleSheet("font-size: 24px; background: transparent; border: none;")
         else:
             self.brand_icon.setText(ICON_MAP["brand"][0])
             self.brand_icon.setFont(QFont(self.icon_font_family, 22))
-            self.brand_icon.setStyleSheet("color: #06B6D4;")
+            self.brand_icon.setStyleSheet("color: #06B6D4; background: transparent; border: none;")
             
         brand_text_vbox = QVBoxLayout()
-        self.lbl_sidebar_title = QLabel("NetOps Agent", self)
+        self.lbl_sidebar_title = QLabel("NetOps Agent", self.sidebar)
         self.lbl_sidebar_title.setObjectName("lbl_sidebar_title")
-        self.lbl_sidebar_ver = QLabel("Enterprise Edition", self)
+        self.lbl_sidebar_ver = QLabel("Enterprise Edition", self.sidebar)
         self.lbl_sidebar_ver.setObjectName("lbl_sidebar_ver")
         
         brand_text_vbox.addWidget(self.lbl_sidebar_title)
@@ -1390,7 +1390,7 @@ class NetOpsAgentUI(QMainWindow):
         ]
         
         for name, key, icon_key in self.nav_items:
-            btn = QPushButton(self)
+            btn = QPushButton(self.sidebar)
             btn.setObjectName("nav_btn_" + name.lower())
             btn.setProperty("class", "nav_btn")
             btn.setCheckable(True)
@@ -1402,19 +1402,19 @@ class NetOpsAgentUI(QMainWindow):
             btn_layout.setContentsMargins(16, 0, 16, 0)
             btn_layout.setSpacing(12)
             
-            lbl_icon = QLabel(self)
+            lbl_icon = QLabel(btn)
             lbl_icon.setAttribute(Qt.WA_TransparentForMouseEvents)
             if self.use_emoji_fallback:
                 lbl_icon.setText(ICON_MAP[icon_key][1])
-                lbl_icon.setStyleSheet("font-size: 14px; background: transparent;")
+                lbl_icon.setStyleSheet("font-size: 14px; background: transparent; border: none;")
             else:
                 lbl_icon.setText(ICON_MAP[icon_key][0])
                 lbl_icon.setFont(QFont(self.icon_font_family, 12))
-                lbl_icon.setStyleSheet("background: transparent; color: inherit;")
+                lbl_icon.setStyleSheet("background: transparent; border: none;")
                 
-            lbl_text = QLabel(self)
+            lbl_text = QLabel(btn)
             lbl_text.setAttribute(Qt.WA_TransparentForMouseEvents)
-            lbl_text.setStyleSheet("background: transparent; color: inherit; font-weight: bold; font-size: 12px;")
+            lbl_text.setStyleSheet("background: transparent; border: none; font-weight: bold; font-size: 12px;")
             
             btn_layout.addWidget(lbl_icon)
             btn_layout.addWidget(lbl_text)
@@ -1841,7 +1841,7 @@ class NetOpsAgentUI(QMainWindow):
                 QMessageBox.critical(self, "Export logs", f"Export failed: {e}")
 
     def create_setting_row(self, key, control, is_last=False):
-        row = QWidget(self)
+        row = QWidget()
         row.setObjectName("setting_row_" + key)
         row.setProperty("class", "setting_row_widget")
         
@@ -1852,13 +1852,13 @@ class NetOpsAgentUI(QMainWindow):
         text_layout = QVBoxLayout()
         text_layout.setSpacing(2)
         
-        lbl_title = QLabel(self)
+        lbl_title = QLabel(row)
         lbl_title.setObjectName("lbl_setting_title_" + key)
-        lbl_title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        lbl_title.setStyleSheet("font-weight: bold; font-size: 13px; background: transparent;")
         
-        lbl_desc = QLabel(self)
+        lbl_desc = QLabel(row)
         lbl_desc.setObjectName("lbl_setting_desc_" + key)
-        lbl_desc.setStyleSheet("color: #64748B; font-size: 11px;")
+        lbl_desc.setStyleSheet("color: #64748B; font-size: 11px; background: transparent;")
         lbl_desc.setWordWrap(True)
         
         text_layout.addWidget(lbl_title)
@@ -1874,7 +1874,7 @@ class NetOpsAgentUI(QMainWindow):
         return row
 
     def create_spec_row(self, key, widget):
-        row = QWidget(self)
+        row = QWidget()
         row.setObjectName("spec_row_" + key)
         row.setProperty("class", "setting_row_widget")
         
@@ -1882,9 +1882,9 @@ class NetOpsAgentUI(QMainWindow):
         row_layout.setContentsMargins(12, 10, 12, 10)
         row_layout.setSpacing(12)
         
-        lbl_name = QLabel(self)
+        lbl_name = QLabel(row)
         lbl_name.setObjectName("lbl_spec_name_" + key)
-        lbl_name.setStyleSheet("font-weight: bold; font-size: 12px;")
+        lbl_name.setStyleSheet("font-weight: bold; font-size: 12px; background: transparent;")
         
         row_layout.addWidget(lbl_name, 0, Qt.AlignLeft | Qt.AlignVCenter)
         row_layout.addWidget(widget, 1, Qt.AlignRight | Qt.AlignVCenter)
@@ -1912,52 +1912,53 @@ class NetOpsAgentUI(QMainWindow):
         layout.setSpacing(16)
         
         # Left Scroll Area for Preferences
-        scroll_prefs = QScrollArea(self)
+        scroll_prefs = QScrollArea(page)
         scroll_prefs.setWidgetResizable(True)
         scroll_prefs.setFrameShape(QFrame.NoFrame)
+        scroll_prefs.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_prefs.setStyleSheet("background-color: transparent;")
         
-        scroll_content = QWidget()
+        scroll_content = QWidget(scroll_prefs)
         scroll_content.setStyleSheet("background-color: transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(16)
         
         # Prefs Card 1: General Options
-        card_prefs = QFrame(self)
+        card_prefs = QFrame(scroll_content)
         card_prefs.setProperty("class", "card")
         prefs_layout = QVBoxLayout(card_prefs)
         prefs_layout.setContentsMargins(8, 12, 8, 12)
         prefs_layout.setSpacing(0)
         
-        self.lbl_settings_card_title = QLabel(self)
+        self.lbl_settings_card_title = QLabel(card_prefs)
         self.lbl_settings_card_title.setObjectName("lbl_card_title")
         self.lbl_settings_card_title.setStyleSheet("margin: 8px 12px 12px 12px;")
         prefs_layout.addWidget(self.lbl_settings_card_title)
         
         self.settings_ui_elements = {}
         
-        self.chk_boot_start = QCheckBox(self)
+        self.chk_boot_start = QCheckBox(card_prefs)
         self.chk_boot_start.setChecked(self.boot_start)
         self.chk_boot_start.stateChanged.connect(self.save_settings)
         prefs_layout.addWidget(self.create_setting_row("boot", self.chk_boot_start))
         
-        self.chk_auto_start = QCheckBox(self)
+        self.chk_auto_start = QCheckBox(card_prefs)
         self.chk_auto_start.setChecked(self.auto_start_service)
         self.chk_auto_start.stateChanged.connect(self.save_settings)
         prefs_layout.addWidget(self.create_setting_row("service", self.chk_auto_start))
         
-        self.chk_minimize_close = QCheckBox(self)
+        self.chk_minimize_close = QCheckBox(card_prefs)
         self.chk_minimize_close.setChecked(self.minimize_to_tray)
         self.chk_minimize_close.stateChanged.connect(self.save_settings)
         prefs_layout.addWidget(self.create_setting_row("minimize", self.chk_minimize_close))
         
-        self.chk_auto_update = QCheckBox(self)
+        self.chk_auto_update = QCheckBox(card_prefs)
         self.chk_auto_update.setChecked(self.auto_updates)
         self.chk_auto_update.stateChanged.connect(self.save_settings)
         prefs_layout.addWidget(self.create_setting_row("update", self.chk_auto_update))
         
-        self.combo_lang_settings = QComboBox(self)
+        self.combo_lang_settings = QComboBox(card_prefs)
         self.combo_lang_settings.setView(QListView())
         self.combo_lang_settings.addItems(["中文 (Chinese)", "English"])
         self.combo_lang_settings.setCurrentIndex(0 if self.lang == "zh" else 1)
@@ -1965,7 +1966,7 @@ class NetOpsAgentUI(QMainWindow):
         self.combo_lang_settings.setFixedWidth(140)
         prefs_layout.addWidget(self.create_setting_row("lang", self.combo_lang_settings))
         
-        self.combo_theme = QComboBox(self)
+        self.combo_theme = QComboBox(card_prefs)
         self.combo_theme.setView(QListView())
         self.combo_theme.addItems(["Dark Mode (暗色)", "Light Mode (明亮)"])
         self.combo_theme.setCurrentIndex(0 if self.dark_mode else 1)
@@ -1973,7 +1974,7 @@ class NetOpsAgentUI(QMainWindow):
         self.combo_theme.setFixedWidth(140)
         prefs_layout.addWidget(self.create_setting_row("theme", self.combo_theme))
         
-        self.txt_controller_ip = QLineEdit(self.controller_ip, self)
+        self.txt_controller_ip = QLineEdit(self.controller_ip, card_prefs)
         self.txt_controller_ip.textChanged.connect(self.save_settings)
         self.txt_controller_ip.setFixedWidth(140)
         prefs_layout.addWidget(self.create_setting_row("ip", self.txt_controller_ip))
@@ -1981,32 +1982,32 @@ class NetOpsAgentUI(QMainWindow):
         scroll_layout.addWidget(card_prefs)
         
         # Prefs Card 2: Advanced Maintenance Options
-        card_adv = QFrame(self)
+        card_adv = QFrame(scroll_content)
         card_adv.setProperty("class", "card")
         adv_layout = QVBoxLayout(card_adv)
         adv_layout.setContentsMargins(8, 12, 8, 12)
         adv_layout.setSpacing(0)
         
-        self.lbl_settings_adv_title = QLabel(self)
+        self.lbl_settings_adv_title = QLabel(card_adv)
         self.lbl_settings_adv_title.setObjectName("lbl_card_title")
         self.lbl_settings_adv_title.setStyleSheet("margin: 8px 12px 12px 12px;")
         adv_layout.addWidget(self.lbl_settings_adv_title)
         
-        self.btn_reconfig_db = QPushButton(self)
+        self.btn_reconfig_db = QPushButton(card_adv)
         self.btn_reconfig_db.setObjectName("btn_secondary")
         self.btn_reconfig_db.setCursor(Qt.PointingHandCursor)
         self.btn_reconfig_db.clicked.connect(lambda: self.launch_reconfig_wizard(True))
         self.btn_reconfig_db.setFixedWidth(100)
         adv_layout.addWidget(self.create_setting_row("reconfig", self.btn_reconfig_db))
         
-        self.btn_reset_config = QPushButton(self)
+        self.btn_reset_config = QPushButton(card_adv)
         self.btn_reset_config.setObjectName("btn_secondary")
         self.btn_reset_config.setCursor(Qt.PointingHandCursor)
         self.btn_reset_config.clicked.connect(self.reset_initial_config)
         self.btn_reset_config.setFixedWidth(100)
         adv_layout.addWidget(self.create_setting_row("reset", self.btn_reset_config))
         
-        self.btn_clear_db = QPushButton(self)
+        self.btn_clear_db = QPushButton(card_adv)
         self.btn_clear_db.setObjectName("btn_danger")
         self.btn_clear_db.setCursor(Qt.PointingHandCursor)
         self.btn_clear_db.clicked.connect(self.clear_and_reset_database)
@@ -2017,16 +2018,16 @@ class NetOpsAgentUI(QMainWindow):
         scroll_layout.addStretch()
         
         scroll_prefs.setWidget(scroll_content)
-        layout.addWidget(scroll_prefs, 11)
+        layout.addWidget(scroll_prefs, 13)
         
         # Right Column: System Specs Card
-        card_sys = QFrame(self)
+        card_sys = QFrame(page)
         card_sys.setProperty("class", "card")
         sys_layout = QVBoxLayout(card_sys)
         sys_layout.setContentsMargins(8, 12, 8, 12)
         sys_layout.setSpacing(0)
         
-        self.lbl_sys_card_title = QLabel(self)
+        self.lbl_sys_card_title = QLabel(card_sys)
         self.lbl_sys_card_title.setObjectName("lbl_card_title")
         self.lbl_sys_card_title.setStyleSheet("margin: 8px 12px 12px 12px;")
         sys_layout.addWidget(self.lbl_sys_card_title)
@@ -2040,42 +2041,43 @@ class NetOpsAgentUI(QMainWindow):
         
         self.spec_ui_elements = {}
         
-        lbl_host_val = QLabel(hostname, self)
+        lbl_host_val = QLabel(hostname, card_sys)
         lbl_host_val.setObjectName("lbl_field_val")
-        lbl_host_val.setStyleSheet("color: #64748B; font-weight: bold;")
+        lbl_host_val.setStyleSheet("color: #64748B; font-weight: bold; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_hostname", lbl_host_val))
         
-        lbl_os_val = QLabel(os_info, self)
+        lbl_os_val = QLabel(os_info, card_sys)
         lbl_os_val.setObjectName("lbl_field_val")
-        lbl_os_val.setStyleSheet("color: #64748B; font-weight: bold;")
+        lbl_os_val.setStyleSheet("color: #64748B; font-weight: bold; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_os", lbl_os_val))
         
-        lbl_cpu_val = QLabel(cpu_info, self)
+        lbl_cpu_val = QLabel(cpu_info, card_sys)
         lbl_cpu_val.setObjectName("lbl_field_val")
         lbl_cpu_val.setWordWrap(True)
-        lbl_cpu_val.setStyleSheet("color: #64748B; font-weight: bold; font-size: 11px;")
-        lbl_cpu_val.setMaximumWidth(220)
+        lbl_cpu_val.setStyleSheet("color: #64748B; font-weight: bold; font-size: 11px; background: transparent;")
+        lbl_cpu_val.setMaximumWidth(160)
         lbl_cpu_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         sys_layout.addWidget(self.create_spec_row("sys_cpu", lbl_cpu_val))
         
-        lbl_mem_val = QLabel(mem_info, self)
+        lbl_mem_val = QLabel(mem_info, card_sys)
         lbl_mem_val.setObjectName("lbl_field_val")
-        lbl_mem_val.setStyleSheet("color: #64748B; font-weight: bold;")
+        lbl_mem_val.setStyleSheet("color: #64748B; font-weight: bold; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_mem", lbl_mem_val))
         
         # IP Dropdown + Copy
-        ip_widget = QWidget(self)
+        ip_widget = QWidget(card_sys)
+        ip_widget.setStyleSheet("background: transparent;")
         ip_row_layout = QHBoxLayout(ip_widget)
         ip_row_layout.setContentsMargins(0, 0, 0, 0)
         ip_row_layout.setSpacing(6)
         
-        self.combo_ips = QComboBox(self)
+        self.combo_ips = QComboBox(ip_widget)
         self.combo_ips.setView(QListView())
         self.combo_ips.setFixedWidth(130)
         ip_list = [ip.strip() for ip in ip_info.split(",") if ip.strip()]
         self.combo_ips.addItems(ip_list if ip_list else ["127.0.0.1"])
         
-        self.btn_copy_ip = QPushButton(self)
+        self.btn_copy_ip = QPushButton(ip_widget)
         self.btn_copy_ip.setObjectName("btn_copy")
         self.btn_copy_ip.setCursor(Qt.PointingHandCursor)
         self.btn_copy_ip.clicked.connect(self.copy_ip_to_clipboard)
@@ -2086,7 +2088,7 @@ class NetOpsAgentUI(QMainWindow):
         sys_layout.addWidget(self.create_spec_row("sys_ip", ip_widget))
         sys_layout.addStretch()
         
-        layout.addWidget(card_sys, 9)
+        layout.addWidget(card_sys, 7)
         
         self.content_pane.addWidget(page)
 
@@ -2231,12 +2233,9 @@ class NetOpsAgentUI(QMainWindow):
         self.activateWindow()
 
     def apply_theme(self):
-        if self.dark_mode:
-            self.setStyleSheet(DARK_STYLE)
-            set_dark_title_bar(self.winId(), True)
-        else:
-            self.setStyleSheet(LIGHT_STYLE)
-            set_dark_title_bar(self.winId(), False)
+        style = DARK_STYLE if self.dark_mode else LIGHT_STYLE
+        QApplication.instance().setStyleSheet(style)
+        set_dark_title_bar(self.winId(), self.dark_mode)
 
     def update_translations(self):
         tr = TRANSLATIONS[self.lang]
