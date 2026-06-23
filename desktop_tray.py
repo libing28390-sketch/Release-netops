@@ -575,7 +575,6 @@ QComboBox::drop-down {
 QListView {
     background-color: #1E293B;
     border: 1px solid #334155;
-    border-radius: 8px;
     padding: 4px;
     color: #E2E8F0;
     outline: none;
@@ -864,7 +863,6 @@ QComboBox::drop-down {
 QListView {
     background-color: #FFFFFF;
     border: 1px solid #E2E8F0;
-    border-radius: 8px;
     padding: 4px;
     color: #334155;
     outline: none;
