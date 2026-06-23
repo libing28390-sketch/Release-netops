@@ -565,17 +565,21 @@ QComboBox::drop-down {
     width: 20px;
     border-left-width: 0px;
 }
-QComboBox QAbstractItemView {
+QListView {
     background-color: #0F172A;
     border: 1px solid #1E293B;
-    selection-background-color: #0891B2;
-    selection-color: #FFFFFF;
     color: #F3F4F6;
     outline: none;
 }
-QComboBox QAbstractItemView::item {
+QListView::item {
     padding: 6px 10px;
     min-height: 24px;
+    color: #F3F4F6;
+    background-color: #0F172A;
+}
+QListView::item:hover, QListView::item:selected {
+    background-color: #0891B2;
+    color: #FFFFFF;
 }
 QScrollBar:vertical {
     border: none;
@@ -840,17 +844,21 @@ QComboBox::drop-down {
     width: 20px;
     border-left-width: 0px;
 }
-QComboBox QAbstractItemView {
+QListView {
     background-color: #FFFFFF;
     border: 1px solid #CBD5E1;
-    selection-background-color: #0891B2;
-    selection-color: #FFFFFF;
     color: #0F172A;
     outline: none;
 }
-QComboBox QAbstractItemView::item {
+QListView::item {
     padding: 6px 10px;
     min-height: 24px;
+    color: #0F172A;
+    background-color: #FFFFFF;
+}
+QListView::item:hover, QListView::item:selected {
+    background-color: #0891B2;
+    color: #FFFFFF;
 }
 QScrollBar:vertical {
     border: none;
