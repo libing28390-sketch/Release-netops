@@ -92,3 +92,7 @@ deploy-ubuntu.gitee.sh
 # Local session links and codex-bridge cache
 artifacts_symlink/
 ~/
+
+# Large executables and installers
+postgresql-installer.exe
+NetOps.exe

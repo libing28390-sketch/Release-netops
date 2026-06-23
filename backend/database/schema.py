@@ -63,6 +63,7 @@ def init_db():
             try: conn.rollback()
             except: pass
         logger.error(f"CRITICAL: Database initialization failed: {e}", exc_info=True)
+        raise e
     finally:
         try:
             conn.close()
@@ -203,8 +204,8 @@ def _init_db_logic(conn):
     if _USE_PG:
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS racks (
-            id UUID PRIMARY KEY,
-            site_id UUID NOT NULL,
+            id VARCHAR(50) PRIMARY KEY,
+            site_id VARCHAR(50) NOT NULL,
             rack_code VARCHAR(50) NOT NULL UNIQUE,
             rack_name VARCHAR(100) NOT NULL,
             name VARCHAR(100) DEFAULT '',
@@ -265,7 +266,7 @@ def _init_db_logic(conn):
         )
         ''')
 
-    ensure_column('racks', 'site_id', "UUID" if _USE_PG else "TEXT DEFAULT ''")
+    ensure_column('racks', 'site_id', "VARCHAR(50)" if _USE_PG else "TEXT DEFAULT ''")
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_racks_site_id ON racks(site_id)')
     ensure_column('racks', 'rack_code', "VARCHAR(50)" if _USE_PG else "TEXT DEFAULT ''")
     ensure_column('racks', 'rack_name', "VARCHAR(100)" if _USE_PG else "TEXT DEFAULT ''")

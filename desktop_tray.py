@@ -232,6 +232,8 @@ TRANSLATIONS = {
         "lbl_lang": "语言 (Language):",
         "lbl_theme": "界面主题 (Theme):",
         "lbl_ctrl_ip": "控制器 IP (Controller IP):",
+        "btn_reconfig_db": "修改数据库及环境配置",
+        "btn_reset_config": "恢复初始配置",
         
         "sys_card_title": "本机系统硬件信息 (System Specifications)",
         "sys_hostname": "主机名称 (Hostname)",
@@ -319,6 +321,8 @@ TRANSLATIONS = {
         "lbl_lang": "Language:",
         "lbl_theme": "Theme:",
         "lbl_ctrl_ip": "Controller IP:",
+        "btn_reconfig_db": "Modify DB & Env Config",
+        "btn_reset_config": "Restore Initial Config",
         
         "sys_card_title": "System Specifications",
         "sys_hostname": "Hostname",
@@ -849,6 +853,7 @@ class NetOpsAgentUI(QMainWindow):
         
         # Connection status fields
         self.backend_active = False
+        self.backend_starting = False
         self.backend_pid = None
         self.controller_connected = False
         self.last_sync_time = "-"
@@ -863,7 +868,8 @@ class NetOpsAgentUI(QMainWindow):
         
         # Main Window configuration
         self.setWindowTitle("NetOps Agent Enterprise Manager")
-        self.setFixedSize(900, 620)
+        self.setMinimumSize(900, 620)
+        self.resize(900, 620)
         
         # Setup modern shadows
         self.shadow_status = QGraphicsDropShadowEffect(self)
@@ -914,6 +920,68 @@ class NetOpsAgentUI(QMainWindow):
         self.lang = self.settings.value("lang", "zh", type=str)
         self.dark_mode = self.settings.value("dark_mode", True, type=bool)
         self.controller_ip = self.settings.value("controller_ip", "10.1.1.10", type=str)
+
+    def launch_reconfig_wizard(self, force_reconfig=True):
+        # Stop backend server first to release port 5010 and files
+        self.stop_backend_server()
+        
+        # Locate NetOps.exe or launcher.py
+        exe_path = os.path.join(PROJECT_ROOT, "NetOps.exe")
+        if not os.path.exists(exe_path):
+            launcher_script = os.path.join(PROJECT_ROOT, "launcher.py")
+            pythonw_exe = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "pythonw.exe")
+            if os.path.exists(pythonw_exe) and os.path.exists(launcher_script):
+                cmd = [pythonw_exe, launcher_script]
+            else:
+                cmd = [sys.executable, os.path.join(PROJECT_ROOT, "launcher.py")]
+        else:
+            cmd = [exe_path]
+
+        if force_reconfig:
+            cmd.append("--reconfig")
+
+        # Clean environment to avoid PyInstaller variable conflicts
+        clean_env = dict(os.environ)
+        keys_to_pop = []
+        for k in clean_env.keys():
+            if k.startswith("_PYI_") or k == "_MEIPASS" or k == "PYTHONHOME" or k == "PYTHONPATH":
+                keys_to_pop.append(k)
+        for k in keys_to_pop:
+            clean_env.pop(k, None)
+
+        try:
+            subprocess.Popen(cmd, cwd=PROJECT_ROOT, creationflags=0x08000000, env=clean_env)
+            logger.info("Launched configuration wizard. Exiting tray...")
+            self.tray_icon.hide()
+            QApplication.quit()
+        except Exception as e:
+            logger.error("Failed to launch configuration wizard: %s", e)
+            QMessageBox.critical(self, "启动失败", f"无法启动配置向导：{e}")
+
+    def reset_initial_config(self):
+        title = "恢复初始配置" if self.lang == "zh" else "Restore Initial Config"
+        msg = "确定要恢复初始配置吗？这将清除当前的环境配置和数据库连接设置，并重新启动配置向导。" if self.lang == "zh" else "Are you sure you want to restore the initial configuration? This will delete the current environment settings and database connection credentials, and restart the configuration wizard."
+        
+        reply = QMessageBox.question(
+            self,
+            title,
+            msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            env_path = os.path.join(PROJECT_ROOT, ".env")
+            try:
+                if os.path.exists(env_path):
+                    os.remove(env_path)
+                logger.info("Deleted .env file for initial reset configuration.")
+            except Exception as e:
+                logger.error("Failed to delete .env file: %s", e)
+                QMessageBox.critical(self, "重置失败" if self.lang == "zh" else "Reset Failed", f"无法删除环境配置文件：{e}")
+                return
+            
+            self.launch_reconfig_wizard(force_reconfig=False)
 
     def save_settings(self):
         self.auto_start_service = self.chk_auto_start.isChecked()
@@ -1469,6 +1537,22 @@ class NetOpsAgentUI(QMainWindow):
         form_grid.addWidget(self.txt_controller_ip, 2, 1)
         
         prefs_layout.addLayout(form_grid)
+        
+        # Reconfig database button
+        prefs_layout.addSpacing(15)
+        self.btn_reconfig_db = QPushButton("修改数据库及环境配置 (Modify DB & Env Config)", self)
+        self.btn_reconfig_db.setObjectName("btn_secondary")
+        self.btn_reconfig_db.setCursor(Qt.PointingHandCursor)
+        self.btn_reconfig_db.clicked.connect(lambda: self.launch_reconfig_wizard(True))
+        prefs_layout.addWidget(self.btn_reconfig_db)
+        
+        # Reset configuration button
+        prefs_layout.addSpacing(8)
+        self.btn_reset_config = QPushButton("恢复初始配置 (Restore Initial Config)", self)
+        self.btn_reset_config.setObjectName("btn_secondary")
+        self.btn_reset_config.setCursor(Qt.PointingHandCursor)
+        self.btn_reset_config.clicked.connect(self.reset_initial_config)
+        prefs_layout.addWidget(self.btn_reset_config)
         prefs_layout.addStretch()
         layout.addWidget(card_prefs, 1)
         
@@ -1725,6 +1809,8 @@ class NetOpsAgentUI(QMainWindow):
         self.lbl_lang_settings.setText(tr["lbl_lang"])
         self.lbl_theme_settings.setText(tr["lbl_theme"])
         self.lbl_ctrl_ip_settings.setText(tr["lbl_ctrl_ip"])
+        self.btn_reconfig_db.setText(tr["btn_reconfig_db"])
+        self.btn_reset_config.setText(tr["btn_reset_config"])
         self.lbl_sys_card_title.setText(tr["sys_card_title"])
         
         self.sys_labels["sys_hostname"].setText(tr["sys_hostname"])
@@ -1758,6 +1844,7 @@ class NetOpsAgentUI(QMainWindow):
 
     def start_backend_server(self):
         global backend_process
+        self.backend_starting = True
         with process_lock:
             existing_pid = get_pid_occupying_port(5010)
             if existing_pid is not None or (backend_process is not None and backend_process.poll() is None):
@@ -1920,6 +2007,7 @@ class NetOpsAgentUI(QMainWindow):
         
         # 1. Update service cards
         if active:
+            self.backend_starting = False
             self.lbl_status_large.setText(tr["status_running"])
             self.lbl_status_large.setStyleSheet("color: #10B981; font-weight: bold;")
             self.lbl_dash_pid_val.setText(str(self.backend_pid) if self.backend_pid else "-")
@@ -1953,20 +2041,36 @@ class NetOpsAgentUI(QMainWindow):
             if hasattr(self, 'tray_icon'):
                 self.tray_icon.setIcon(create_status_icon("green"))
         else:
-            self.lbl_status_large.setText(tr["status_stopped"])
-            self.lbl_status_large.setStyleSheet("color: #EF4444; font-weight: bold;")
-            self.lbl_dash_pid_val.setText("-")
-            self.lbl_dash_uptime_val.setText("0s")
-            self.lbl_dash_health_val.setText(tr["health_unhealthy"])
-            self.lbl_dash_health_val.setStyleSheet("color: #EF4444; font-weight: bold;")
-            
-            self.btn_start.setEnabled(True)
-            self.btn_stop.setEnabled(False)
-            self.btn_restart.setEnabled(False)
-            
-            # Set dynamic red tray icon
-            if hasattr(self, 'tray_icon'):
-                self.tray_icon.setIcon(create_status_icon("red"))
+            if getattr(self, "backend_starting", False):
+                self.lbl_status_large.setText(tr["status_starting"])
+                self.lbl_status_large.setStyleSheet("color: #F59E0B; font-weight: bold;")
+                self.lbl_dash_pid_val.setText("-")
+                self.lbl_dash_uptime_val.setText("0s")
+                self.lbl_dash_health_val.setText(tr["health_unhealthy"])
+                self.lbl_dash_health_val.setStyleSheet("color: #EF4444; font-weight: bold;")
+                
+                self.btn_start.setEnabled(False)
+                self.btn_stop.setEnabled(True)
+                self.btn_restart.setEnabled(False)
+                
+                # Set dynamic orange/yellow tray icon
+                if hasattr(self, 'tray_icon'):
+                    self.tray_icon.setIcon(create_status_icon("yellow"))
+            else:
+                self.lbl_status_large.setText(tr["status_stopped"])
+                self.lbl_status_large.setStyleSheet("color: #EF4444; font-weight: bold;")
+                self.lbl_dash_pid_val.setText("-")
+                self.lbl_dash_uptime_val.setText("0s")
+                self.lbl_dash_health_val.setText(tr["health_unhealthy"])
+                self.lbl_dash_health_val.setStyleSheet("color: #EF4444; font-weight: bold;")
+                
+                self.btn_start.setEnabled(True)
+                self.btn_stop.setEnabled(False)
+                self.btn_restart.setEnabled(False)
+                
+                # Set dynamic red tray icon
+                if hasattr(self, 'tray_icon'):
+                    self.tray_icon.setIcon(create_status_icon("red"))
                 
         # 2. Update platform cards
         if self.controller_connected:

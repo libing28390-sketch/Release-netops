@@ -1,6 +1,9 @@
 import sys
 import os
 
+# Add backend directory to sys.path to resolve core, api, services, etc.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 # --- CRITICAL WINDOWS FIX ---
 # This MUST happen before ANY other imports (especially fastapi/uvicorn)
 if sys.platform == 'win32':

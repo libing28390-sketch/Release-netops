@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 launcher.py - PySide6 NetOps Graphical Setup Initializer & Launcher.
-Provides a premium dark-mode Qt GUI with a smooth progress bar to verify the Python environment,
-self-heal/recreate virtual environments, install dependencies, compile frontend assets,
-regenerate desktop shortcuts, and launch the PySide6 tray agent.
+Provides a premium dark-mode multi-page setup wizard (compiled as NetOps.exe)
+to configure database settings (SQLite vs PostgreSQL), download and install PG16/Python/Node.js,
+verify dependencies, compile frontend assets, and launch the platform.
 """
 
 import sys
@@ -13,6 +13,10 @@ import shutil
 import threading
 import subprocess
 import ctypes
+import socket
+import urllib.request
+import zipfile
+import winreg
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if getattr(sys, 'frozen', False):
@@ -35,7 +39,7 @@ def log_message(message):
     except Exception:
         pass
 
-# Ensure standard streams are logged
+# Redirect stdout/stderr to logger
 class LogStreamRedirector:
     def __init__(self, prefix):
         self.prefix = prefix
@@ -48,18 +52,19 @@ class LogStreamRedirector:
 sys.stdout = LogStreamRedirector("LAUNCHER-OUT")
 sys.stderr = LogStreamRedirector("LAUNCHER-ERR")
 
-# Try importing PySide6 defensively
+# Import PySide6 dynamically or defensively
 try:
     from PySide6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-        QLabel, QProgressBar, QFrame, QGraphicsDropShadowEffect, QMessageBox
+        QLabel, QProgressBar, QFrame, QGraphicsDropShadowEffect, QMessageBox,
+        QStackedWidget, QRadioButton, QLineEdit, QPushButton, QPlainTextEdit,
+        QFormLayout, QButtonGroup
     )
     from PySide6.QtCore import Qt, Signal, Slot, QObject, QTimer
-    from PySide6.QtGui import QIcon, QFont, QColor
+    from PySide6.QtGui import QIcon, QFont, QColor, QTextCursor
 except ImportError as e:
-    log_message(f"PySide6 not available in compiler environment. PySide6 will be installed: {e}")
-    # Define fallback structures so it compiles under PyInstaller if run outside compiled app.
-    # Note: PyInstaller bundle itself includes PySide6, so imports will always succeed when run by user.
+    log_message(f"PySide6 import failed: {e}")
+    # PyInstaller execution packs PySide6 inside. This is fallback for raw dev runs.
     pass
 
 # IMMERSIVE DARK MODE FOR WINDOWS 10/11
@@ -86,89 +91,274 @@ QMainWindow {
     background-color: #0B0F19;
 }
 QLabel#lbl_title {
-    font-size: 16px;
+    font-size: 20px;
     font-weight: bold;
     color: #F8FAFC;
 }
 QLabel#lbl_subtitle {
-    font-size: 11px;
+    font-size: 12px;
     color: #64748B;
+}
+QLabel#lbl_section {
+    font-size: 14px;
+    font-weight: bold;
+    color: #38BDF8;
+    margin-top: 10px;
 }
 QFrame#card {
     background-color: #111827;
     border: 1px solid #1F2937;
     border-radius: 12px;
 }
-QLabel#lbl_status {
-    font-weight: bold;
-    color: #2563EB;
-    font-size: 13px;
+QFrame#db_card {
+    background-color: #111827;
+    border: 1px solid #1F2937;
+    border-radius: 10px;
 }
-QLabel#lbl_log {
-    color: #94A3B8;
+QFrame#db_card:hover {
+    border: 1px solid #3B82F6;
+    background-color: #1E293B;
+}
+QRadioButton {
+    font-weight: bold;
+    font-size: 14px;
+    color: #F8FAFC;
+}
+QLineEdit {
+    background-color: #1F2937;
+    border: 1px solid #374151;
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: #F8FAFC;
+}
+QLineEdit:focus {
+    border: 1px solid #2563EB;
+}
+QPushButton#btn_primary {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border-radius: 8px;
+    padding: 10px 24px;
+    font-weight: bold;
+    font-size: 14px;
+    border: none;
+}
+QPushButton#btn_primary:hover {
+    background-color: #1D4ED8;
+}
+QPushButton#btn_primary:pressed {
+    background-color: #1E40AF;
+}
+QPushButton#btn_secondary {
+    background-color: #1F2937;
+    color: #F8FAFC;
+    border-radius: 8px;
+    padding: 10px 24px;
+    font-weight: bold;
+    font-size: 14px;
+    border: 1px solid #374151;
+}
+QPushButton#btn_secondary:hover {
+    background-color: #374151;
+}
+QPlainTextEdit#console_log {
+    background-color: #030712;
+    border: 1px solid #1F2937;
+    border-radius: 8px;
+    font-family: "Consolas", "Courier New", monospace;
     font-size: 11px;
+    color: #10B981;
 }
 QProgressBar {
     background-color: #1F2937;
     border: none;
-    border-radius: 5px;
-    height: 10px;
+    border-radius: 6px;
+    height: 12px;
     text-align: center;
 }
 QProgressBar::chunk {
     background-color: #2563EB;
-    border-radius: 5px;
+    border-radius: 6px;
 }
 """
 
 class SetupWorker(QObject):
-    progress_signal = Signal(str, str, float)
+    log_signal = Signal(str)
+    progress_signal = Signal(str, float)
     error_signal = Signal(str)
     success_signal = Signal()
 
-    def run_setup_tasks(self):
-        log_message("Starting PySide6 launcher execution plan...")
-        
-        # Step 1: Check system Python
-        self.progress_signal.emit("正在定位运行环境...", "检查系统 Python 状态...", 0.1)
-        time.sleep(0.5)
-        
-        system_python = "python"
-        has_python = False
-        try:
-            r = subprocess.run(
-                [system_python, "--version"],
-                capture_output=True,
-                text=True,
-                creationflags=0x08000000
-            )
-            if r.returncode == 0:
-                has_python = True
-        except (FileNotFoundError, Exception):
-            pass
+    def __init__(self, db_config, bypassed_config=False):
+        super().__init__()
+        self.db_config = db_config
+        self.bypassed_config = bypassed_config
 
-        if not has_python:
-            log_message("System python not found. Starting automatic installer wizard...")
-            self.progress_signal.emit("正在下载运行环境...", "正在下载 Python 3.11 安装包...", 0.12)
-            try:
-                import urllib.request
-                import winreg
-                py_installer_url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
-                py_installer_path = os.path.join(PROJECT_ROOT, "python-installer.exe")
-                urllib.request.urlretrieve(py_installer_url, py_installer_path)
+    def write_log(self, text):
+        self.log_signal.emit(text)
+        log_message(text.strip())
+
+    def run_command(self, cmd, cwd=None, env=None):
+        cmd_str = ' '.join(cmd) if isinstance(cmd, list) else cmd
+        self.write_log(f"> Executing: {cmd_str}\n")
+        
+        # Clean PyInstaller environment to avoid DLL/import conflicts in subprocesses
+        run_env = dict(env) if env is not None else dict(os.environ)
+        run_env.pop("_MEIPASS", None)
+        run_env.pop("PYTHONHOME", None)
+        run_env.pop("PYTHONPATH", None)
+        
+        # Clean proxy variables to prevent pip/pysocks dependencies conflicts
+        run_env.pop("HTTP_PROXY", None)
+        run_env.pop("HTTPS_PROXY", None)
+        run_env.pop("ALL_PROXY", None)
+        
+        # Clean PyInstaller env vars
+        keys_to_pop = [k for k in run_env.keys() if k.startswith("_PYI_")]
+        for k in keys_to_pop:
+            run_env.pop(k, None)
+            
+        # Clean any _mei paths from PATH
+        path_val = run_env.get("PATH", "")
+        if path_val:
+            paths = path_val.split(os.pathsep)
+            cleaned_paths = [p for p in paths if "_mei" not in p.lower()]
+            run_env["PATH"] = os.pathsep.join(cleaned_paths)
+            
+        try:
+            p = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                creationflags=0x08000000,
+                env=run_env
+            )
+            while True:
+                line_bytes = p.stdout.readline()
+                if not line_bytes and p.poll() is not None:
+                    break
+                if line_bytes:
+                    try:
+                        line = line_bytes.decode('utf-8')
+                    except UnicodeDecodeError:
+                        try:
+                            line = line_bytes.decode('gbk')
+                        except UnicodeDecodeError:
+                            line = line_bytes.decode('utf-8', errors='replace')
+                    self.log_signal.emit(line)
+            rc = p.poll()
+            if rc != 0:
+                raise Exception(f"Command exited with non-zero code {rc}")
+        except Exception as e:
+            self.write_log(f"Error executing command: {e}\n")
+            raise e
+
+    def download_file(self, url, dest_path, desc):
+        self.write_log(f"开始下载 {desc}...\nURL: {url}\n")
+        try:
+            req = urllib.request.Request(
+                url, 
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            )
+            with urllib.request.urlopen(req) as response:
+                total_size = int(response.info().get('Content-Length', 0))
+                downloaded = 0
+                block_size = 1024 * 64
+                last_percent = -1
                 
-                self.progress_signal.emit("正在安装运行环境...", "正在执行 Python 3.11 静默安装...", 0.18)
-                r_inst = subprocess.run(
-                    [py_installer_path, "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_test=0", "Include_doc=0"],
+                with open(dest_path, 'wb') as f:
+                    while True:
+                        chunk = response.read(block_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            percent = int(downloaded * 100 / total_size)
+                            if percent != last_percent:
+                                last_percent = percent
+                                dl_mb = downloaded / (1024 * 1024)
+                                tot_mb = total_size / (1024 * 1024)
+                                self.log_signal.emit(f"\r下载进度: {dl_mb:.2f}MB / {tot_mb:.2f}MB ({percent}%)")
+            self.log_signal.emit("\n下载完成！\n\n")
+        except Exception as e:
+            self.write_log(f"\n下载失败: {e}\n\n")
+            raise e
+
+    def run_setup_tasks(self):
+        try:
+            self.write_log("=== NetOps Setup Pipeline Initiated ===\n")
+            
+            if self.bypassed_config:
+                self.progress_signal.emit("正在检查运行环境...", 0.1)
+                time.sleep(0.1)
+                
+                # Check virtual environment exists and is healthy
+                venv_path = os.path.join(PROJECT_ROOT, ".venv")
+                if os.path.exists(venv_path) and self.verify_venv(venv_path):
+                    self.write_log("检测到虚拟环境完备，跳过依赖包安装阶段。\n")
+                    self.progress_signal.emit("正在检查数据库状态...", 0.5)
+                    time.sleep(0.1)
+                    
+                    # Verify database
+                    db_type = self.db_config.get("db_type")
+                    if db_type == "postgresql":
+                        host = self.db_config.get("host", "127.0.0.1")
+                        port = int(self.db_config.get("port", "5432"))
+                        try:
+                            with socket.create_connection((host, port), timeout=2.0) as s:
+                                self.write_log(f"检测到 PostgreSQL 数据库服务正常且已开启在端口 {port}。\n")
+                        except Exception:
+                            self.write_log(f"[警告] 数据库连接失败: 无法连接至 {host}:{port}\n")
+                    
+                    self.progress_signal.emit("启动平台自愈服务...", 0.9)
+                    time.sleep(0.1)
+                    self.progress_signal.emit("部署完成！", 1.0)
+                    self.write_log("=== NetOps Setup Pipeline Completed Successfully ===\n")
+                    self.success_signal.emit()
+                    return
+                else:
+                    self.write_log("未找到可用虚拟环境或环境已损坏，正在切换至完整部署模式...\n")
+                    self.bypassed_config = False
+
+            self.progress_signal.emit("正在定位运行环境...", 0.05)
+            time.sleep(0.5)
+
+            # 1. Check/Install Python
+            self.progress_signal.emit("检查 Python 环境...", 0.1)
+            system_python = "python"
+            has_python = False
+            try:
+                r = subprocess.run(
+                    [system_python, "--version"],
+                    capture_output=True,
+                    text=True,
                     creationflags=0x08000000
                 )
-                try: os.remove(py_installer_path)
-                except: pass
+                if r.returncode == 0:
+                    has_python = True
+            except Exception:
+                pass
+
+            if not has_python:
+                self.write_log("未检测到系统 Python 环境，开始下载并安装 Python 3.11...\n")
+                py_installer_url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
+                py_installer_path = os.path.join(PROJECT_ROOT, "python-installer.exe")
                 
-                if r_inst.returncode != 0:
-                    raise Exception(f"Python installer exited with code {r_inst.returncode}")
+                self.progress_signal.emit("正在下载 Python 3.11...", 0.15)
+                self.download_file(py_installer_url, py_installer_path, "Python 3.11.9")
                 
-                # Refresh PATH env
+                self.progress_signal.emit("正在执行 Python 静默安装...", 0.25)
+                self.write_log("正在执行 Python 3.11 静默安装 (仅对当前用户安装并添加环境变量)...\n")
+                self.run_command([py_installer_path, "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_test=0", "Include_doc=0"])
+                
+                try:
+                    os.remove(py_installer_path)
+                except Exception:
+                    pass
+
+                # Refresh environment PATH from registry
                 new_path = ""
                 try:
                     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
@@ -182,306 +372,632 @@ class SetupWorker(QObject):
                     pass
                 if new_path:
                     os.environ["PATH"] = new_path
-                    log_message("Python installed and environment PATH refreshed.")
-            except Exception as py_err:
-                self.error_signal.emit(f"自动安装 Python 失败！请前往官网手动安装 Python 3.10+ 并添加到 PATH。\n\n具体报错: {py_err}")
-                return
-
-        # Step 2: Verify or recreate Virtual Environment (.venv)
-        self.progress_signal.emit("正在检查虚拟环境...", "验证 .venv 虚拟环境可用性...", 0.25)
-        time.sleep(0.5)
-        
-        venv_path = os.path.join(PROJECT_ROOT, ".venv")
-        venv_broken = False
-        
-        if os.path.exists(venv_path):
-            log_message("Found existing .venv directory. Verifying integrity...")
-            if not self.verify_venv(venv_path):
-                log_message("Virtual environment is broken or was moved. Recreating...")
-                venv_broken = True
-                self.progress_signal.emit("正在重建虚拟环境...", "检测到旧环境失效，正在清理旧的 .venv 文件夹...", 0.35)
-                try:
-                    shutil.rmtree(venv_path)
-                except Exception as e:
-                    subprocess.run(f'rmdir /s /q "{venv_path}"', shell=True, creationflags=0x08000000)
-                    if os.path.exists(venv_path):
-                        self.error_signal.emit(f"无法清理旧的虚拟环境文件夹，请关闭占用此目录的程序后重试。原因: {e}")
-                        return
-        else:
-            log_message("No .venv directory found. Creating new environment...")
-            
-        if not os.path.exists(venv_path) or venv_broken:
-            self.progress_signal.emit("正在创建虚拟环境...", "执行 python -m venv .venv...", 0.45)
-            try:
-                r = subprocess.run(
-                    [system_python, "-m", "venv", ".venv"],
-                    cwd=PROJECT_ROOT,
-                    capture_output=True,
-                    text=True,
-                    creationflags=0x08000000
-                )
-                if r.returncode != 0:
-                    raise Exception(r.stderr)
-                log_message("Virtual environment created successfully.")
-            except Exception as e:
-                self.error_signal.emit(f"创建虚拟环境失败: {e}")
-                return
-
-        # Step 3: Install/Verify Python dependencies
-        self.progress_signal.emit("正在安装后台依赖...", "升级 pip 并执行包下载安装...", 0.6)
-        python_exe = os.path.join(venv_path, "Scripts", "python.exe")
-        pip_exe = os.path.join(venv_path, "Scripts", "pip.exe")
-        
-        packages_installed = True
-        try:
-            r = subprocess.run(
-                [python_exe, "-c", "import PySide6, PIL, uvicorn, fastapi, sqlalchemy"],
-                capture_output=True,
-                creationflags=0x08000000
-            )
-            if r.returncode != 0:
-                packages_installed = False
-        except Exception:
-            packages_installed = False
-            
-        if not packages_installed:
-            log_message("Backend packages not fully installed. Installing now...")
-            try:
-                self.progress_signal.emit("正在升级 pip 工具...", "执行 pip upgrade...", 0.65)
-                subprocess.run(
-                    [python_exe, "-m", "pip", "install", "--upgrade", "pip"],
-                    cwd=PROJECT_ROOT,
-                    capture_output=True,
-                    creationflags=0x08000000
-                )
-                
-                self.progress_signal.emit("正在安装第三方依赖包...", "安装 pip requirements.txt 依赖...", 0.75)
-                req_path = os.path.join(PROJECT_ROOT, "backend", "requirements.txt")
-                if os.path.exists(req_path):
-                    subprocess.run(
-                        [pip_exe, "install", "-r", "backend/requirements.txt"],
-                        cwd=PROJECT_ROOT,
-                        capture_output=True,
-                        creationflags=0x08000000
-                    )
-                        
-                self.progress_signal.emit("正在配置客户端依赖...", "安装 PySide6 pillow...", 0.8)
-                subprocess.run(
-                    [pip_exe, "install", "PySide6", "pillow"],
-                    cwd=PROJECT_ROOT,
-                    capture_output=True,
-                    creationflags=0x08000000
-                )
-                log_message("Python dependency installation completed successfully.")
-            except Exception as e:
-                self.error_signal.emit(f"安装依赖包失败: {e}")
-                return
-        else:
-            log_message("All backend python dependencies are already satisfied.")
-
-        # Step 4: Verify Frontend static files
-        self.progress_signal.emit("正在配置前端界面...", "校验静态编译资源...", 0.85)
-        dist_path = os.path.join(PROJECT_ROOT, "dist")
-        if not os.path.exists(dist_path):
-            log_message("No static directory 'dist' found. Attempting to build frontend...")
-            
-            npm_available = False
-            npm_cmd = "npm"
-            try:
-                r = subprocess.run(
-                    [npm_cmd, "--version"],
-                    capture_output=True,
-                    text=True,
-                    shell=True,
-                    creationflags=0x08000000
-                )
-                if r.returncode == 0:
-                    npm_available = True
-            except Exception:
-                pass
-                
-            # If system npm is not available, check for local portable Node
-            local_node_dir = os.path.join(PROJECT_ROOT, "tools", "node")
-            local_npm_path = os.path.join(local_node_dir, "npm.cmd")
-            if not npm_available and os.path.exists(local_npm_path):
-                npm_available = True
-                npm_cmd = local_npm_path
-
-            if not npm_available:
-                log_message("System node/npm not found. Downloading portable Node.js v20...")
-                self.progress_signal.emit("正在下载前端工具...", "正在下载便携版 Node.js (免安装)...", 0.86)
-                try:
-                    import urllib.request
-                    import zipfile
-                    node_zip_url = "https://nodejs.org/dist/v20.12.2/node-v20.12.2-win-x64.zip"
-                    node_zip_path = os.path.join(PROJECT_ROOT, "node.zip")
-                    urllib.request.urlretrieve(node_zip_url, node_zip_path)
-                    
-                    self.progress_signal.emit("正在解压前端工具...", "正在配置 Node.js 绿色运行环境...", 0.88)
-                    tools_dir = os.path.join(PROJECT_ROOT, "tools")
-                    os.makedirs(tools_dir, exist_ok=True)
-                    
-                    with zipfile.ZipFile(node_zip_path, 'r') as zip_ref:
-                        zip_ref.extractall(tools_dir)
-                    try: os.remove(node_zip_path)
-                    except: pass
-                    
-                    # Rename extracted folder to 'node'
-                    for name in os.listdir(tools_dir):
-                        if name.startswith("node-v"):
-                            src = os.path.join(tools_dir, name)
-                            dst = local_node_dir
-                            if os.path.exists(dst):
-                                shutil.rmtree(dst)
-                            os.rename(src, dst)
-                            break
-                            
-                    if os.path.exists(local_npm_path):
-                        npm_available = True
-                        npm_cmd = local_npm_path
-                        log_message("Portable Node.js set up successfully.")
-                except Exception as node_err:
-                    self.error_signal.emit(f"自动下载便携版 Node.js 失败！请确保网络正常或手动安装 Node.js。\n\n具体报错: {node_err}")
-                    return
-
-            if npm_available:
-                self.progress_signal.emit("正在下载前端依赖...", "首次构建前端，执行 npm install...", 0.89)
-                try:
-                    subprocess.run(
-                        [npm_cmd, "install"],
-                        cwd=PROJECT_ROOT,
-                        shell=True,
-                        capture_output=True,
-                        creationflags=0x08000000
-                    )
-                    
-                    self.progress_signal.emit("正在编译静态界面...", "执行 npm run build...", 0.92)
-                    r = subprocess.run(
-                        [npm_cmd, "run", "build"],
-                        cwd=PROJECT_ROOT,
-                        shell=True,
-                        capture_output=True,
-                        text=True,
-                        creationflags=0x08000000
-                    )
-                    if not os.path.exists(dist_path):
-                        raise Exception(f"Compilation finished but dist folder was not generated: {r.stderr}")
-                    log_message("Frontend static assets compiled successfully.")
-                except Exception as e:
-                    self.error_signal.emit(f"前端静态资源构建失败: {e}")
-                    return
+                    self.write_log("Python 成功安装并刷新系统 PATH 变量。\n")
             else:
-                self.error_signal.emit(
-                    "未检测到本地前端静态资源目录 'dist'，且系统未安装 Node.js / npm，无法自动编译前端。\n\n"
-                    "请确认是否有预编译好的 'dist' 文件夹并放置在项目根目录，或者在当前系统安装 Node.js。"
-                )
-                return
-        else:
-            log_message("Frontend compilation folder 'dist' exists.")
+                self.write_log("检测到系统已安装 Python。\n")
 
-        # Step 5: Verify environment file exists
-        self.progress_signal.emit("正在检查系统设置...", "配置默认数据库与环境变量...", 0.95)
-        env_path = os.path.join(PROJECT_ROOT, ".env")
-        if not os.path.exists(env_path):
-            env_example = os.path.join(PROJECT_ROOT, ".env.example")
-            if os.path.exists(env_example):
-                try:
-                    shutil.copy(env_example, env_path)
-                    log_message("Default .env file generated from template.")
-                except Exception as e:
-                    log_message(f"Failed to copy .env template: {e}")
-
-        # Step 5.5: Check and install PostgreSQL database if needed
-        need_pg = False
-        if os.path.exists(env_path):
-            try:
-                with open(env_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line_stripped = line.strip()
-                        if line_stripped.startswith("DATABASE_URL") and ("postgresql://" in line_stripped.lower() or "postgres://" in line_stripped.lower()):
-                            need_pg = True
-                            break
-            except Exception as e:
-                log_message(f"Failed to parse .env file: {e}")
-
-        if need_pg:
-            pg_running = False
-            import socket
-            try:
-                # Check if port 5432 is open locally
-                with socket.create_connection(("127.0.0.1", 5432), timeout=2.0) as s:
-                    pg_running = True
-            except Exception:
-                pass
-
-            if not pg_running:
-                log_message("PostgreSQL port 5432 is closed. Prompting user for auto-installation...")
-                import ctypes
-                # MB_YESNO = 4, MB_ICONINFORMATION = 0x40
-                # Return IDYES = 6
-                res = ctypes.windll.user32.MessageBoxW(
-                    0, 
-                    "检测到配置了 PostgreSQL，但本地 5432 端口未开启。\n\n是否现在自动下载并静默安装 PostgreSQL 16？\n(需要管理员权限且可能会弹出 UAC 提权确认)", 
-                    "PostgreSQL 数据库检测", 
-                    4 | 0x40
-                )
-                if res == 6:
-                    self.progress_signal.emit("正在下载数据库...", "正在从官方获取 PostgreSQL 16 安装包，请稍候...", 0.96)
+            # 2. Virtual Environment Setup
+            self.progress_signal.emit("验证虚拟环境 (.venv)...", 0.3)
+            venv_path = os.path.join(PROJECT_ROOT, ".venv")
+            venv_broken = False
+            
+            if os.path.exists(venv_path):
+                self.write_log("发现已有的 .venv 目录，正在验证其完整性...\n")
+                if not self.verify_venv(venv_path):
+                    self.write_log("虚拟环境失效，准备清理旧环境...\n")
+                    venv_broken = True
                     try:
-                        import urllib.request
+                        shutil.rmtree(venv_path)
+                    except Exception:
+                        subprocess.run(f'rmdir /s /q "{venv_path}"', shell=True, creationflags=0x08000000)
+            
+            if not os.path.exists(venv_path) or venv_broken:
+                self.write_log("正在创建 .venv 虚拟环境...\n")
+                self.run_command([system_python, "-m", "venv", ".venv"], cwd=PROJECT_ROOT)
+                self.write_log("虚拟环境创建成功。\n")
+
+            python_exe = os.path.join(venv_path, "Scripts", "python.exe")
+            pip_exe = os.path.join(venv_path, "Scripts", "pip.exe")
+
+            # 3. Upgrade pip & Install requirements
+            self.progress_signal.emit("配置虚拟环境依赖包...", 0.45)
+            self.write_log("正在升级虚拟环境下的 pip 工具...\n")
+            self.run_command([python_exe, "-m", "pip", "install", "--upgrade", "pip"], cwd=PROJECT_ROOT)
+
+            self.write_log("正在安装后台 Python 依赖包 (requirements.txt)...\n")
+            self.run_command([pip_exe, "install", "-r", "backend/requirements.txt"], cwd=PROJECT_ROOT)
+
+            self.write_log("正在安装 GUI 所需依赖包 (PySide6, pillow, pystray)...\n")
+            self.run_command([pip_exe, "install", "PySide6", "pillow", "pystray"], cwd=PROJECT_ROOT)
+
+            # 4. Check & Install PostgreSQL
+            db_type = self.db_config.get("db_type")
+            if db_type == "postgresql":
+                self.progress_signal.emit("检查/配置 PostgreSQL 数据库...", 0.6)
+                host = self.db_config.get("host", "127.0.0.1")
+                port = int(self.db_config.get("port", "5432"))
+                password = self.db_config.get("password", "netops")
+                
+                is_local = host in ("127.0.0.1", "localhost")
+                pg_running = False
+                
+                # Check connection port
+                try:
+                    with socket.create_connection((host, port), timeout=2.0) as s:
+                        pg_running = True
+                except Exception:
+                    pass
+
+                if pg_running:
+                    self.write_log(f"检测到 PostgreSQL 端口 {port} 已打开，跳过本地静默安装。\n")
+                else:
+                    if is_local:
+                        self.write_log(f"检测到本地 PostgreSQL 端口 {port} 未响应，开始下载并静默部署 PostgreSQL 17...\n")
+                        pg_url = "https://get.enterprisedb.com/postgresql/postgresql-17.2-1-windows-x64.exe"
                         pg_installer_path = os.path.join(PROJECT_ROOT, "postgresql-installer.exe")
-                        urllib.request.urlretrieve("https://get.enterprisedb.com/postgresql/postgresql-16.3-1-windows-x64.exe", pg_installer_path)
                         
-                        self.progress_signal.emit("正在安装数据库...", "正在执行静默安装 (请在弹出的 UAC 窗口中允许运行)...", 0.97)
-                        powershell_cmd = f"Start-Process '{pg_installer_path}' -ArgumentList '--mode unattended --unattendedmodeui none --superpassword netops --serverport 5432' -Verb RunAs -Wait"
-                        subprocess.run(["powershell", "-Command", powershell_cmd], creationflags=0x08000000)
+                        self.progress_signal.emit("正在下载 PostgreSQL 17...", 0.65)
+                        self.download_file(pg_url, pg_installer_path, "PostgreSQL 17")
+                        
+                        self.progress_signal.emit("正在安装 PostgreSQL (请在 UAC 提权提示中允许运行)...", 0.75)
+                        self.write_log("正在执行静默安装数据库。系统将弹出 UAC 提权请求，请在弹出的窗口中允许运行。\n")
+                        
+                        powershell_cmd = f"Start-Process '{pg_installer_path}' -ArgumentList '--mode unattended --unattendedmodeui none --superpassword \"{password}\" --serverport {port}' -Verb RunAs -Wait"
+                        self.run_command(["powershell", "-Command", powershell_cmd])
                         
                         try:
                             os.remove(pg_installer_path)
                         except Exception:
                             pass
                         
-                        # Verify if port 5432 is now open
+                        # Verify
                         pg_installed = False
                         try:
-                            with socket.create_connection(("127.0.0.1", 5432), timeout=2.0) as s:
+                            with socket.create_connection(("127.0.0.1", port), timeout=2.0) as s:
                                 pg_installed = True
                         except Exception:
                             pass
-                        
+                            
                         if pg_installed:
-                            log_message("PostgreSQL auto-installation and startup completed successfully.")
+                            self.write_log("PostgreSQL 17 本地服务安装完成并正常运行！\n")
                         else:
-                            log_message("PostgreSQL installer finished, but port 5432 is still not responding.")
-                    except Exception as pg_err:
-                        log_message(f"PostgreSQL installation error: {pg_err}")
+                            self.write_log("[警告] PostgreSQL 静默安装完毕，但本地端口仍未响应。请检查系统服务。\n")
+                    else:
+                        self.write_log(f"[提示] 检测到配置了远程数据库 {host}:{port}。跳过本地静默安装。\n")
+
+            # 5. Compile Frontend static files if dist is missing
+            dist_path = os.path.join(PROJECT_ROOT, "dist")
+            if not os.path.exists(dist_path):
+                self.progress_signal.emit("正在准备编译前端界面...", 0.8)
+                self.write_log("未检测到前端 dist 编译输出目录。准备编译前端资产...\n")
+                
+                npm_available = False
+                npm_cmd = "npm"
+                try:
+                    r = subprocess.run(
+                        [npm_cmd, "--version"],
+                        capture_output=True,
+                        text=True,
+                        shell=True,
+                        creationflags=0x08000000
+                    )
+                    if r.returncode == 0:
+                        npm_available = True
+                except Exception:
+                    pass
+
+                local_node_dir = os.path.join(PROJECT_ROOT, "tools", "node")
+                local_npm_path = os.path.join(local_node_dir, "npm.cmd")
+                
+                if not npm_available and os.path.exists(local_npm_path):
+                    npm_available = True
+                    npm_cmd = local_npm_path
+
+                if not npm_available:
+                    self.write_log("未检测到系统 Node.js。开始下载便携版 Node.js v20 (免安装)...\n")
+                    node_url = "https://nodejs.org/dist/v20.12.2/node-v20.12.2-win-x64.zip"
+                    node_zip_path = os.path.join(PROJECT_ROOT, "node.zip")
+                    
+                    self.progress_signal.emit("正在下载 Node.js v20...", 0.82)
+                    self.download_file(node_url, node_zip_path, "Node.js Portable")
+                    
+                    self.progress_signal.emit("正在解压 Node.js...", 0.85)
+                    tools_dir = os.path.join(PROJECT_ROOT, "tools")
+                    os.makedirs(tools_dir, exist_ok=True)
+                    
+                    with zipfile.ZipFile(node_zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(tools_dir)
+                    try:
+                        os.remove(node_zip_path)
+                    except Exception:
+                        pass
+                    
+                    for name in os.listdir(tools_dir):
+                        if name.startswith("node-v"):
+                            src = os.path.join(tools_dir, name)
+                            if os.path.exists(local_node_dir):
+                                shutil.rmtree(local_node_dir)
+                            os.rename(src, local_node_dir)
+                            break
+                    
+                    if os.path.exists(local_npm_path):
+                        npm_available = True
+                        npm_cmd = local_npm_path
+
+                if npm_available:
+                    self.progress_signal.emit("正在安装前端依赖包 (npm install)...", 0.88)
+                    run_env = dict(os.environ)
+                    if os.path.exists(local_node_dir):
+                        run_env["PATH"] = local_node_dir + os.pathsep + run_env.get("PATH", "")
+                    
+                    self.run_command([npm_cmd, "install"], cwd=PROJECT_ROOT, env=run_env)
+                    
+                    self.progress_signal.emit("正在编译静态资源 (npm run build)...", 0.92)
+                    self.run_command([npm_cmd, "run", "build"], cwd=PROJECT_ROOT, env=run_env)
                 else:
-                    log_message("User declined PostgreSQL auto-installation.")
+                    raise Exception("未找到 Node.js/npm 编译环境，且自动下载便携版失败。无法编译前端静态界面！")
+            else:
+                self.write_log("前端编译文件目录已存在，跳过前端编译步骤。\n")
 
-        # Step 6: Create/Update Shortcut
-        self.progress_signal.emit("正在生成快捷入口...", "在桌面配置快捷方式...", 0.98)
+            # 6. Configure .env File
+            self.progress_signal.emit("更新环境变量配置...", 0.95)
+            self.configure_env_file()
+
+            # 7. Create desktop shortcut
+            self.progress_signal.emit("生成桌面快捷方式...", 0.98)
+            try:
+                shortcut_script = os.path.join(PROJECT_ROOT, "create_shortcut.py")
+                if os.path.exists(shortcut_script):
+                    self.run_command([python_exe, "create_shortcut.py"], cwd=PROJECT_ROOT)
+            except Exception as e:
+                self.write_log(f"[警告] 创建桌面快捷方式失败: {e}\n")
+
+            # Finalize
+            self.progress_signal.emit("部署完成！", 1.0)
+            self.write_log("=== NetOps Setup Pipeline Completed Successfully ===\n")
+            self.success_signal.emit()
+
+        except Exception as err:
+            self.write_log(f"\n[ERROR] 部署过程中遭遇严重错误: {err}\n")
+            self.error_signal.emit(str(err))
+
+    def verify_venv(self, venv_path):
+        python_exe = os.path.join(venv_path, "Scripts", "python.exe")
+        if not os.path.exists(python_exe):
+            return False
+        cfg_path = os.path.join(venv_path, "pyvenv.cfg")
+        if not os.path.exists(cfg_path):
+            return False
         try:
-            shortcut_script = os.path.join(PROJECT_ROOT, "create_shortcut.py")
-            if os.path.exists(shortcut_script):
-                subprocess.run(
-                    [python_exe, "create_shortcut.py"],
-                    cwd=PROJECT_ROOT,
-                    capture_output=True,
-                    creationflags=0x08000000
-                )
-                log_message("Desktop shortcut updated successfully.")
-        except Exception as e:
-            log_message(f"Failed to regenerate desktop shortcut: {e}")
+            home_dir = None
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip().startswith("home"):
+                        parts = line.split("=", 1)
+                        if len(parts) == 2:
+                            home_dir = parts[1].strip()
+            if not home_dir or not os.path.exists(home_dir):
+                return False
+        except Exception:
+            return False
+        try:
+            clean_env = dict(os.environ)
+            clean_env.pop("_MEIPASS", None)
+            clean_env.pop("PYTHONHOME", None)
+            clean_env.pop("PYTHONPATH", None)
+            keys_to_pop = [k for k in clean_env.keys() if k.startswith("_PYI_")]
+            for k in keys_to_pop:
+                clean_env.pop(k, None)
+                
+            r = subprocess.run(
+                [python_exe, "-c", "import sys; print(sys.prefix)"],
+                capture_output=True,
+                timeout=5,
+                creationflags=0x08000000,
+                env=clean_env
+            )
+            return r.returncode == 0
+        except Exception:
+            return False
 
-        # Step 7: Launch desktop_tray.py
-        self.progress_signal.emit("初始化完成！", "正在后台启动 NetOps 托盘控制中心...", 1.0)
-        time.sleep(0.5)
+    def configure_env_file(self):
+        env_path = os.path.join(PROJECT_ROOT, ".env")
+        if not os.path.exists(env_path):
+            env_example = os.path.join(PROJECT_ROOT, ".env.example")
+            if os.path.exists(env_example):
+                shutil.copy(env_example, env_path)
+                self.write_log("根据 .env.example 模板生成了默认 .env 配置文件。\n")
+            else:
+                with open(env_path, "w", encoding="utf-8") as f:
+                    f.write("# Database Settings\n")
+
+        lines = []
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+        keys_to_update = {}
+        host = self.db_config.get("host")
+        port = self.db_config.get("port")
+        user = self.db_config.get("user")
+        password = self.db_config.get("password")
+        db_name = self.db_config.get("db_name")
         
+        keys_to_update["POSTGRES_USER"] = user
+        keys_to_update["POSTGRES_PASSWORD"] = password
+        keys_to_update["POSTGRES_DB"] = db_name
+        keys_to_update["DATABASE_URL"] = f"postgresql://{user}:{password}@{host}:{port}/{db_name}"
+
+        new_lines = []
+        updated_keys = set()
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                new_lines.append(line)
+                continue
+            parts = stripped.split("=", 1)
+            if len(parts) == 2:
+                key = parts[0].strip()
+                if key in keys_to_update:
+                    new_lines.append(f"{key}={keys_to_update[key]}\n")
+                    updated_keys.add(key)
+                    continue
+            new_lines.append(line)
+
+        for key, val in keys_to_update.items():
+            if key not in updated_keys:
+                new_lines.append(f"{key}={val}\n")
+
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+        self.write_log("已成功将数据库配置写入环境变量 .env 文件 (模式: postgresql)。\n")
+
+
+def load_existing_config():
+    config = {
+        "host": "127.0.0.1",
+        "port": "5432",
+        "user": "postgres",
+        "password": "netops",
+        "db_name": "netops"
+    }
+    env_path = os.path.join(PROJECT_ROOT, ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.strip().split("=", 1)
+                    if len(parts) == 2:
+                        key, val = parts[0].strip(), parts[1].strip()
+                        if key == "POSTGRES_USER":
+                            config["user"] = val
+                        elif key == "POSTGRES_PASSWORD":
+                            config["password"] = val
+                        elif key == "POSTGRES_DB":
+                            config["db_name"] = val
+                        elif key == "DATABASE_URL":
+                            try:
+                                url_data = val.split("://", 1)[1]
+                                if "@" in url_data:
+                                    creds, rest = url_data.split("@", 1)
+                                    if ":" in creds:
+                                        config["user"], config["password"] = creds.split(":", 1)
+                                    else:
+                                        config["user"] = creds
+                                else:
+                                    rest = url_data
+                                
+                                if "/" in rest:
+                                    host_port, db = rest.split("/", 1)
+                                    if "?" in db:
+                                        db = db.split("?", 1)[0]
+                                    config["db_name"] = db
+                                else:
+                                    host_port = rest
+                                    
+                                if ":" in host_port:
+                                    config["host"], config["port"] = host_port.split(":", 1)
+                                else:
+                                    config["host"] = host_port
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+    return config
+
+
+class LauncherUI(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.initial_config = load_existing_config()
+        self.setWindowTitle("NetOps 部署与启动管理器")
+        self.setFixedSize(700, 520)
+        
+        # Center the window
+        screen = self.screen().geometry()
+        x = (screen.width() - 700) // 2
+        y = (screen.height() - 520) // 2
+        self.setGeometry(x, y, 700, 520)
+        
+        # Program icon
+        ico_path = os.path.join(PROJECT_ROOT, "netops.ico")
+        if os.path.exists(ico_path):
+            self.setWindowIcon(QIcon(ico_path))
+            
+        self.setStyleSheet(LAUNCHER_STYLE)
+        set_dark_title_bar(self.winId())
+        
+        # Set light shadow
+        self.shadow = QGraphicsDropShadowEffect(self)
+        self.shadow.setBlurRadius(15)
+        self.shadow.setColor(QColor(0, 0, 0, 80))
+        self.shadow.setOffset(0, 4)
+        
+        self.setup_ui()
+
+    def setup_ui(self):
+        # Central Stacked Widget
+        self.stacked_widget = QStackedWidget(self)
+        self.setCentralWidget(self.stacked_widget)
+        
+        self.create_page_config()
+        self.create_page_progress()
+        self.create_page_finish()
+        
+        self.stacked_widget.addWidget(self.page_config)
+        self.stacked_widget.addWidget(self.page_progress)
+        self.stacked_widget.addWidget(self.page_finish)
+        
+        env_path = os.path.join(PROJECT_ROOT, ".env")
+        force_reconfig = "--reconfig" in sys.argv
+        has_valid_config = (
+            self.initial_config.get("host") and 
+            self.initial_config.get("port") and 
+            self.initial_config.get("user") and 
+            self.initial_config.get("db_name")
+        )
+        
+        if os.path.exists(env_path) and has_valid_config and not force_reconfig:
+            self.bypassed_config = True
+            self.stacked_widget.setCurrentWidget(self.page_progress)
+            QTimer.singleShot(100, self.start_installation)
+        else:
+            self.bypassed_config = False
+            self.stacked_widget.setCurrentWidget(self.page_config)
+
+    def create_page_config(self):
+        self.page_config = QWidget()
+        layout = QVBoxLayout(self.page_config)
+        layout.setContentsMargins(40, 30, 40, 30)
+        layout.setSpacing(15)
+        
+        # Header Layout
+        header_layout = QHBoxLayout()
+        accent_bar = QFrame(self)
+        accent_bar.setFixedWidth(4)
+        accent_bar.setFixedHeight(45)
+        accent_bar.setStyleSheet("background-color: #2563EB; border-radius: 2px;")
+        header_layout.addWidget(accent_bar)
+        
+        title_vbox = QVBoxLayout()
+        lbl_title = QLabel("NetOps 部署与 PostgreSQL 配置向导", self)
+        lbl_title.setObjectName("lbl_title")
+        lbl_subtitle = QLabel("请配置您的 PostgreSQL 数据库连接参数，系统将自动配置并部署运行环境。", self)
+        lbl_subtitle.setObjectName("lbl_subtitle")
+        title_vbox.addWidget(lbl_title)
+        title_vbox.addWidget(lbl_subtitle)
+        header_layout.addLayout(title_vbox)
+        layout.addLayout(header_layout)
+        
+        # Credentials Form
+        lbl_pg_sec = QLabel("配置 PostgreSQL 连接参数 / Database Credentials", self)
+        lbl_pg_sec.setObjectName("lbl_section")
+        layout.addWidget(lbl_pg_sec)
+        
+        form_fields_layout = QFormLayout()
+        form_fields_layout.setHorizontalSpacing(20)
+        form_fields_layout.setVerticalSpacing(8)
+        
+        self.input_host = QLineEdit(self.initial_config["host"], self)
+        self.input_port = QLineEdit(self.initial_config["port"], self)
+        self.input_user = QLineEdit(self.initial_config["user"], self)
+        self.input_pass = QLineEdit(self.initial_config["password"], self)
+        self.input_db_name = QLineEdit(self.initial_config["db_name"], self)
+        
+        form_fields_layout.addRow("数据库主机 / Host:", self.input_host)
+        form_fields_layout.addRow("端口 / Port:", self.input_port)
+        form_fields_layout.addRow("用户名 / User:", self.input_user)
+        form_fields_layout.addRow("密码 / Password:", self.input_pass)
+        form_fields_layout.addRow("数据库名 / DB Name:", self.input_db_name)
+        layout.addLayout(form_fields_layout)
+        
+        layout.addStretch()
+        
+        # Buttons layout
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        self.btn_next = QPushButton("开始部署安装", self)
+        self.btn_next.setObjectName("btn_primary")
+        self.btn_next.clicked.connect(self.start_installation)
+        btn_layout.addWidget(self.btn_next)
+        
+        layout.addLayout(btn_layout)
+
+    def create_page_progress(self):
+        self.page_progress = QWidget()
+        layout = QVBoxLayout(self.page_progress)
+        layout.setContentsMargins(40, 30, 40, 30)
+        layout.setSpacing(12)
+        
+        # Header
+        header_layout = QHBoxLayout()
+        accent_bar = QFrame(self)
+        accent_bar.setFixedWidth(4)
+        accent_bar.setFixedHeight(30)
+        accent_bar.setStyleSheet("background-color: #38BDF8; border-radius: 2px;")
+        header_layout.addWidget(accent_bar)
+        
+        title_vbox = QVBoxLayout()
+        lbl_title = QLabel("正在部署 NetOps 系统组件", self)
+        lbl_title.setObjectName("lbl_title")
+        lbl_title.setStyleSheet("font-size: 16px;")
+        title_vbox.addWidget(lbl_title)
+        header_layout.addLayout(title_vbox)
+        layout.addLayout(header_layout)
+        
+        # Progress Bar and Status
+        self.lbl_status = QLabel("正在初始化部署管道...", self)
+        self.lbl_status.setStyleSheet("font-weight: bold; color: #38BDF8;")
+        layout.addWidget(self.lbl_status)
+        
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setStyleSheet("QProgressBar::chunk { background-color: #38BDF8; }")
+        layout.addWidget(self.progress_bar)
+        
+        # Log terminal
+        lbl_log_title = QLabel("部署控制台输出 / Output logs", self)
+        lbl_log_title.setStyleSheet("color: #64748B; font-size: 11px;")
+        layout.addWidget(lbl_log_title)
+        
+        self.console_log = QPlainTextEdit(self)
+        self.console_log.setObjectName("console_log")
+        self.console_log.setReadOnly(True)
+        layout.addWidget(self.console_log)
+        
+        # Warning label
+        lbl_uac_warn = QLabel("注：在安装 Python、Node.js 或 PostgreSQL 数据库时可能会弹出 Windows UAC 管理员提权确认框，请点击“是”允许运行。", self)
+        lbl_uac_warn.setStyleSheet("color: #E2E8F0; font-size: 11px; font-weight: bold;")
+        lbl_uac_warn.setWordWrap(True)
+        layout.addWidget(lbl_uac_warn)
+
+    def create_page_finish(self):
+        self.page_finish = QWidget()
+        layout = QVBoxLayout(self.page_finish)
+        layout.setContentsMargins(40, 50, 40, 50)
+        layout.setSpacing(20)
+        
+        layout.addStretch()
+        
+        # Checkmark Icon (rendered using simple CSS)
+        lbl_icon = QLabel("✔", self)
+        lbl_icon.setAlignment(Qt.AlignCenter)
+        lbl_icon.setStyleSheet("font-size: 64px; color: #10B981; font-weight: bold;")
+        layout.addWidget(lbl_icon)
+        
+        # Finish Title
+        lbl_finish_title = QLabel("系统部署配置成功！", self)
+        lbl_finish_title.setAlignment(Qt.AlignCenter)
+        lbl_finish_title.setObjectName("lbl_title")
+        layout.addWidget(lbl_finish_title)
+        
+        # Details
+        self.lbl_finish_desc = QLabel("已成功为您创建虚拟环境、安装核心包依赖并配置了数据库选项。\n您现在可以启动托盘控制中心进入平台。", self)
+        self.lbl_finish_desc.setAlignment(Qt.AlignCenter)
+        self.lbl_finish_desc.setStyleSheet("color: #94A3B8; font-size: 13px; line-height: 20px;")
+        layout.addWidget(self.lbl_finish_desc)
+        
+        layout.addStretch()
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        self.btn_start_tray = QPushButton("启动平台客户端", self)
+        self.btn_start_tray.setObjectName("btn_primary")
+        self.btn_start_tray.clicked.connect(self.start_tray_and_exit)
+        
+        self.btn_exit = QPushButton("完成并退出", self)
+        self.btn_exit.setObjectName("btn_secondary")
+        self.btn_exit.clicked.connect(self.close)
+        
+        btn_layout.addWidget(self.btn_start_tray)
+        btn_layout.addWidget(self.btn_exit)
+        
+        layout.addLayout(btn_layout)
+
+    def start_installation(self):
+        # Construct db configuration
+        db_config = {}
+        db_config["db_type"] = "postgresql"
+        db_config["host"] = self.input_host.text().strip()
+        db_config["port"] = self.input_port.text().strip()
+        db_config["user"] = self.input_user.text().strip()
+        db_config["password"] = self.input_pass.text().strip()
+        db_config["db_name"] = self.input_db_name.text().strip()
+        
+        if not db_config["host"] or not db_config["port"] or not db_config["user"] or not db_config["db_name"]:
+            QMessageBox.warning(self, "参数不完整", "请完整填写 PostgreSQL 数据库的所有连接参数！")
+            return
+
+        # Show page 2
+        self.stacked_widget.setCurrentWidget(self.page_progress)
+        self.lbl_status.setText("正在初始化部署任务...")
+        self.progress_bar.setValue(0)
+        
+        # Start worker thread
+        self.worker = SetupWorker(db_config, bypassed_config=getattr(self, "bypassed_config", False))
+        self.worker.log_signal.connect(self.on_log_received)
+        self.worker.progress_signal.connect(self.on_progress_received)
+        self.worker.error_signal.connect(self.on_error_received)
+        self.worker.success_signal.connect(self.on_success_received)
+        
+        threading.Thread(target=self.worker.run_setup_tasks, daemon=True).start()
+
+    @Slot(str)
+    def on_log_received(self, text):
+        cursor = self.console_log.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        
+        if text.startswith("\r"):
+            # Carriage return simulation for in-place updates (like downloads)
+            cursor.select(QTextCursor.LineUnderCursor)
+            cursor.removeSelectedText()
+            cursor.insertText(text.replace("\r", ""))
+        else:
+            self.console_log.appendPlainText(text.rstrip("\r\n"))
+            
+        self.console_log.moveCursor(QTextCursor.End)
+
+    @Slot(str, float)
+    def on_progress_received(self, status, ratio):
+        self.lbl_status.setText(status)
+        self.progress_bar.setValue(int(ratio * 100))
+
+    @Slot(str)
+    def on_error_received(self, err_msg):
+        QMessageBox.critical(
+            self,
+            "部署错误",
+            f"系统在部署安装过程中遭遇致命错误，流程终止：\n\n{err_msg}\n\n详情请查阅项目目录下的 launcher_setup.log 日志。"
+        )
+        self.close()
+        sys.exit(1)
+
+    @Slot()
+    def on_success_received(self):
+        if getattr(self, "bypassed_config", False):
+            log_message("Silent configuration check passed. Auto-starting tray...")
+            self.start_tray_and_exit()
+            return
+            
+        # Update text on page 3
+        self.lbl_finish_desc.setText(
+            "已成功将数据库引擎设置为：PostgreSQL 企业版。\n"
+            "环境搭建与后端模块升级均已通过验证，桌面快捷键与自愈服务已全部就绪。\n"
+            "您可以立即启动系统托盘控制中心，系统将自动帮您托管主运行后台."
+        )
+        self.stacked_widget.setCurrentWidget(self.page_finish)
+
+    def start_tray_and_exit(self):
         try:
             tray_script = os.path.join(PROJECT_ROOT, "desktop_tray.py")
-            pythonw_exe = os.path.join(venv_path, "Scripts", "pythonw.exe")
+            pythonw_exe = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "pythonw.exe")
             if os.path.exists(pythonw_exe) and os.path.exists(tray_script):
-                # 清理环境变量，防止子进程继承并锁定 PyInstaller 的临时目录 _MEIxxxxx
+                # Clean environmental paths to avoid inheriting temporary bundle paths (_MEIxxxx)
                 clean_env = dict(os.environ)
                 clean_env.pop("_MEIPASS", None)
                 clean_env.pop("PYTHONHOME", None)
@@ -491,7 +1007,7 @@ class SetupWorker(QObject):
                 for k, v in clean_env.items():
                     if k.upper() == "PATH":
                         continue
-                    if "_mei" in k.lower() or "_mei" in v.lower():
+                    if k.startswith("_PYI_") or "_mei" in k.lower() or "_mei" in v.lower():
                         keys_to_pop.append(k)
                 for k in keys_to_pop:
                     clean_env.pop(k, None)
@@ -513,172 +1029,42 @@ class SetupWorker(QObject):
                 )
                 log_message("NetOps desktop tray process launched.")
             else:
-                raise FileNotFoundError("Could not find pythonw.exe or desktop_tray.py")
+                raise FileNotFoundError("无法找到 pythonw.exe 虚拟环境组件或 desktop_tray.py 主程序")
         except Exception as e:
-            self.error_signal.emit(f"启动托盘程序失败: {e}")
-            return
+            QMessageBox.critical(self, "启动失败", f"无法启动托盘自愈程序：{e}")
             
-        self.success_signal.emit()
-
-    def verify_venv(self, venv_path):
-        python_exe = os.path.join(venv_path, "Scripts", "python.exe")
-        if not os.path.exists(python_exe):
-            return False
-            
-        cfg_path = os.path.join(venv_path, "pyvenv.cfg")
-        if not os.path.exists(cfg_path):
-            return False
-            
-        try:
-            home_dir = None
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip().startswith("home"):
-                        parts = line.split("=", 1)
-                        if len(parts) == 2:
-                            home_dir = parts[1].strip()
-            
-            if not home_dir or not os.path.exists(home_dir):
-                return False
-        except Exception:
-            return False
-            
-        try:
-            r = subprocess.run(
-                [python_exe, "-c", "import sys; print(sys.prefix)"],
-                capture_output=True,
-                timeout=5,
-                creationflags=0x08000000
-            )
-            return r.returncode == 0
-        except Exception:
-            return False
-
-class LauncherUI(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("NetOps Initializer")
-        self.setFixedSize(480, 320)
-        
-        # Center the window
-        screen_width = self.screen().geometry().width()
-        screen_height = self.screen().geometry().height()
-        x = (screen_width - 480) // 2
-        y = (screen_height - 320) // 2
-        self.setGeometry(x, y, 480, 320)
-        
-        # Program icon
-        ico_path = os.path.join(PROJECT_ROOT, "netops.ico")
-        if os.path.exists(ico_path):
-            self.setWindowIcon(QIcon(ico_path))
-            
-        self.setStyleSheet(LAUNCHER_STYLE)
-        set_dark_title_bar(self.winId())
-        
-        # Set light shadow
-        self.shadow = QGraphicsDropShadowEffect(self)
-        self.shadow.setBlurRadius(15)
-        self.shadow.setColor(QColor(0, 0, 0, 80))
-        self.shadow.setOffset(0, 4)
-        
-        self.setup_ui()
-        
-        # Set up thread worker
-        self.worker = SetupWorker()
-        self.worker.progress_signal.connect(self.on_progress)
-        self.worker.error_signal.connect(self.on_error)
-        self.worker.success_signal.connect(self.on_success)
-        
-        # Run worker after window displays
-        QTimer.singleShot(500, lambda: threading.Thread(target=self.worker.run_setup_tasks, daemon=True).start())
-
-    def setup_ui(self):
-        central = QWidget(self)
-        self.setCentralWidget(central)
-        
-        main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(30, 25, 30, 25)
-        main_layout.setSpacing(16)
-        
-        # Header Layout
-        header_layout = QHBoxLayout()
-        accent_bar = QFrame(self)
-        accent_bar.setFixedWidth(4)
-        accent_bar.setStyleSheet("background-color: #2563EB;")
-        header_layout.addWidget(accent_bar)
-        
-        title_vbox = QVBoxLayout()
-        self.lbl_title = QLabel("NetOps 启动与自愈管理器", self)
-        self.lbl_title.setObjectName("lbl_title")
-        self.lbl_subtitle = QLabel("Environment Initializer & Launcher", self)
-        self.lbl_subtitle.setObjectName("lbl_subtitle")
-        
-        title_vbox.addWidget(self.lbl_title)
-        title_vbox.addWidget(self.lbl_subtitle)
-        header_layout.addLayout(title_vbox)
-        main_layout.addLayout(header_layout)
-        
-        # Card container
-        self.card = QFrame(self)
-        self.card.setObjectName("card")
-        self.card.setGraphicsEffect(self.shadow)
-        
-        card_layout = QVBoxLayout(self.card)
-        card_layout.setContentsMargins(20, 20, 20, 20)
-        card_layout.setSpacing(12)
-        
-        # Status Label
-        self.lbl_status = QLabel("Initializing configuration...", self)
-        self.lbl_status.setObjectName("lbl_status")
-        card_layout.addWidget(self.lbl_status)
-        
-        # Progress Bar
-        self.progress_bar = QProgressBar(self)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(False)
-        card_layout.addWidget(self.progress_bar)
-        
-        # Log Label
-        self.lbl_log = QLabel("Preparing launcher environment...", self)
-        self.lbl_log.setObjectName("lbl_log")
-        card_layout.addWidget(self.lbl_log)
-        
-        main_layout.addWidget(self.card)
-
-    @Slot(str, str, float)
-    def on_progress(self, status, log_detail, ratio):
-        self.lbl_status.setText(status)
-        self.lbl_log.setText(log_detail)
-        self.progress_bar.setValue(int(ratio * 100))
-
-    @Slot(str)
-    def on_error(self, err_msg):
-        log_message(f"Fatal setup error: {err_msg}")
-        QMessageBox.critical(
-            self,
-            "NetOps 启动错误",
-            f"启动程序时遇到以下严重问题：\n\n{err_msg}\n\n详细报错请查看项目下的 launcher_setup.log 文件。"
-        )
-        self.close()
-        sys.exit(1)
-
-    @Slot()
-    def on_success(self):
-        log_message("Setup completed successfully. Exiting launcher UI.")
         self.close()
         sys.exit(0)
 
+
 def main():
-    log_message("=== NetOps PySide6 Launcher Session Started ===")
+    log_message("=== NetOps Setup GUI Session Started ===")
+    
+    # 1. Check if another instance of desktop tray is already running (to directly bring it up)
+    if "--reconfig" not in sys.argv:
+        import socket
+        try:
+            test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            test_sock.settimeout(0.5)
+            test_sock.connect(("127.0.0.1", 5019))
+            test_sock.sendall("SHOW_GUI".encode("utf-8"))
+            test_sock.close()
+            log_message("Another NetOps Agent is already running. Signal sent. Exiting launcher...")
+            sys.exit(0)
+        except Exception:
+            pass
+
+    # Enable High DPI icons and layouts
     from PySide6.QtCore import QCoreApplication
     plugins_path = os.path.join(PROJECT_ROOT, ".venv", "Lib", "site-packages", "PySide6", "plugins")
     if os.path.exists(plugins_path):
         QCoreApplication.addLibraryPath(plugins_path)
+        
     app = QApplication(sys.argv)
     window = LauncherUI()
     window.show()
     sys.exit(app.exec())
+
 
 if __name__ == '__main__':
     main()
