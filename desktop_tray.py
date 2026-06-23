@@ -98,7 +98,8 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
         QLabel, QPushButton, QComboBox, QFrame, QGraphicsDropShadowEffect, 
         QSystemTrayIcon, QMenu, QCheckBox, QStackedWidget, QLineEdit, 
-        QPlainTextEdit, QFileDialog, QMessageBox, QGridLayout, QScrollArea
+        QPlainTextEdit, QFileDialog, QMessageBox, QGridLayout, QScrollArea,
+        QListView
     )
     from PySide6.QtCore import Qt, QSize, Signal, Slot, QTimer, QSettings, QPoint
     from PySide6.QtGui import QIcon, QFont, QColor, QAction, QCursor, QPainter, QBrush, QPen, QPixmap, QPolygon
@@ -175,11 +176,11 @@ TRANSLATIONS = {
     "zh": {
         "title": "NetOps Agent",
         "subtitle": "企业版 Enterprise",
-        "nav_dashboard": " 📊  仪表盘 (Dashboard)",
-        "nav_service": " ⚙️  服务管理 (Service)",
-        "nav_logs": " 📝  实时日志 (Logs)",
-        "nav_settings": " 🛠️  偏好设置 (Settings)",
-        "nav_about": " ℹ️  关于我们 (About)",
+        "nav_dashboard": "仪表盘 (Dashboard)",
+        "nav_service": "服务管理 (Service)",
+        "nav_logs": "实时日志 (Logs)",
+        "nav_settings": "偏好设置 (Settings)",
+        "nav_about": "关于微店 (About)",
         "btn_copy": "复制",
         "btn_copied": "已复制!",
         
@@ -289,11 +290,11 @@ TRANSLATIONS = {
     "en": {
         "title": "NetOps Agent",
         "subtitle": "Enterprise",
-        "nav_dashboard": " 📊  Dashboard",
-        "nav_service": " ⚙️  Service",
-        "nav_logs": " 📝  Logs",
-        "nav_settings": " 🛠️  Settings",
-        "nav_about": " ℹ️  About",
+        "nav_dashboard": "Dashboard",
+        "nav_service": "Service",
+        "nav_logs": "Logs",
+        "nav_settings": "Settings",
+        "nav_about": "About",
         "btn_copy": "Copy",
         "btn_copied": "Copied!",
         
@@ -446,6 +447,15 @@ QPushButton.nav_btn:checked {
     background-color: #0B0F19;
     border-left: 4px solid #06B6D4;
 }
+QPushButton.nav_btn QLabel {
+    color: #94A3B8;
+}
+QPushButton.nav_btn:hover QLabel {
+    color: #F8FAFC;
+}
+QPushButton.nav_btn:checked QLabel {
+    color: #FFFFFF;
+}
 /* Right content areas */
 QStackedWidget#content_pane {
     background-color: #0B0F19;
@@ -560,6 +570,54 @@ QComboBox QAbstractItemView {
     border: 1px solid #1E293B;
     selection-background-color: #0891B2;
     selection-color: #FFFFFF;
+    color: #F3F4F6;
+    outline: none;
+}
+QComboBox QAbstractItemView::item {
+    padding: 6px 10px;
+    min-height: 24px;
+}
+QScrollBar:vertical {
+    border: none;
+    background-color: #0F172A;
+    width: 6px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background-color: #334155;
+    min-height: 20px;
+    border-radius: 3px;
+}
+QScrollBar::handle:vertical:hover {
+    background-color: #475569;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: none;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+QScrollBar:horizontal {
+    border: none;
+    background-color: #0F172A;
+    height: 6px;
+    margin: 0px;
+}
+QScrollBar::handle:horizontal {
+    background-color: #334155;
+    min-width: 20px;
+    border-radius: 3px;
+}
+QScrollBar::handle:horizontal:hover {
+    background-color: #475569;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: none;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: none;
 }
 
 QPlainTextEdit#log_viewer {
@@ -661,6 +719,15 @@ QPushButton.nav_btn:checked {
     color: #0891B2;
     background-color: #F3F4F6;
     border-left: 4px solid #0891B2;
+}
+QPushButton.nav_btn QLabel {
+    color: #4B5563;
+}
+QPushButton.nav_btn:hover QLabel {
+    color: #111827;
+}
+QPushButton.nav_btn:checked QLabel {
+    color: #0891B2;
 }
 /* Right content areas */
 QStackedWidget#content_pane {
@@ -778,6 +845,54 @@ QComboBox QAbstractItemView {
     border: 1px solid #CBD5E1;
     selection-background-color: #0891B2;
     selection-color: #FFFFFF;
+    color: #0F172A;
+    outline: none;
+}
+QComboBox QAbstractItemView::item {
+    padding: 6px 10px;
+    min-height: 24px;
+}
+QScrollBar:vertical {
+    border: none;
+    background-color: #F1F5F9;
+    width: 6px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background-color: #CBD5E1;
+    min-height: 20px;
+    border-radius: 3px;
+}
+QScrollBar::handle:vertical:hover {
+    background-color: #94A3B8;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: none;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+QScrollBar:horizontal {
+    border: none;
+    background-color: #F1F5F9;
+    height: 6px;
+    margin: 0px;
+}
+QScrollBar::handle:horizontal {
+    background-color: #CBD5E1;
+    min-width: 20px;
+    border-radius: 3px;
+}
+QScrollBar::handle:horizontal:hover {
+    background-color: #94A3B8;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: none;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: none;
 }
 
 QPlainTextEdit#log_viewer {
@@ -1225,10 +1340,32 @@ class NetOpsAgentUI(QMainWindow):
         brand_layout = QHBoxLayout()
         brand_layout.setContentsMargins(20, 0, 20, 10)
         
-        self.brand_icon = QLabel("📡", self)
-        self.brand_icon.setStyleSheet("font-size: 24px;")
-        brand_text_vbox = QVBoxLayout()
+        # Select best icon font
+        from PySide6.QtGui import QFontDatabase
+        has_mdl2 = "Segoe MDL2 Assets" in QFontDatabase.families()
+        self.icon_font_family = "Segoe MDL2 Assets" if has_mdl2 else "Segoe UI Symbol"
+        import platform
+        self.use_emoji_fallback = not has_mdl2 and platform.system() != "Windows"
         
+        ICON_MAP = {
+            "brand": ("\uEC05", "📡"),
+            "dashboard": ("\uE9F9", "📊"),
+            "service": ("\uF550", "⚙️"),
+            "logs": ("\uE8A5", "📝"),
+            "settings": ("\uE713", "🛠️"),
+            "about": ("\uE946", "ℹ️")
+        }
+        
+        self.brand_icon = QLabel(self)
+        if self.use_emoji_fallback:
+            self.brand_icon.setText(ICON_MAP["brand"][1])
+            self.brand_icon.setStyleSheet("font-size: 24px;")
+        else:
+            self.brand_icon.setText(ICON_MAP["brand"][0])
+            self.brand_icon.setFont(QFont(self.icon_font_family, 22))
+            self.brand_icon.setStyleSheet("color: #06B6D4;")
+            
+        brand_text_vbox = QVBoxLayout()
         self.lbl_sidebar_title = QLabel("NetOps Agent", self)
         self.lbl_sidebar_title.setObjectName("lbl_sidebar_title")
         self.lbl_sidebar_ver = QLabel("Enterprise Edition", self)
@@ -1242,24 +1379,51 @@ class NetOpsAgentUI(QMainWindow):
         
         # Sidebar Navigation buttons
         self.nav_group = []
+        self.nav_labels = {}
+        self.nav_icons = {}
         self.nav_items = [
-            ("Dashboard", "nav_dashboard"),
-            ("Service", "nav_service"),
-            ("Logs", "nav_logs"),
-            ("Settings", "nav_settings"),
-            ("About", "nav_about")
+            ("Dashboard", "nav_dashboard", "dashboard"),
+            ("Service", "nav_service", "service"),
+            ("Logs", "nav_logs", "logs"),
+            ("Settings", "nav_settings", "settings"),
+            ("About", "nav_about", "about")
         ]
         
-        for name, key in self.nav_items:
-            btn = QPushButton(name, self)
+        for name, key, icon_key in self.nav_items:
+            btn = QPushButton(self)
             btn.setObjectName("nav_btn_" + name.lower())
             btn.setProperty("class", "nav_btn")
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(self.on_nav_clicked)
+            
+            btn_layout = QHBoxLayout(btn)
+            btn_layout.setContentsMargins(16, 0, 16, 0)
+            btn_layout.setSpacing(12)
+            
+            lbl_icon = QLabel(self)
+            lbl_icon.setAttribute(Qt.WA_TransparentForMouseEvents)
+            if self.use_emoji_fallback:
+                lbl_icon.setText(ICON_MAP[icon_key][1])
+                lbl_icon.setStyleSheet("font-size: 14px; background: transparent;")
+            else:
+                lbl_icon.setText(ICON_MAP[icon_key][0])
+                lbl_icon.setFont(QFont(self.icon_font_family, 12))
+                lbl_icon.setStyleSheet("background: transparent; color: inherit;")
+                
+            lbl_text = QLabel(self)
+            lbl_text.setAttribute(Qt.WA_TransparentForMouseEvents)
+            lbl_text.setStyleSheet("background: transparent; color: inherit; font-weight: bold; font-size: 12px;")
+            
+            btn_layout.addWidget(lbl_icon)
+            btn_layout.addWidget(lbl_text)
+            btn_layout.addStretch()
+            
             sidebar_layout.addWidget(btn)
             self.nav_group.append(btn)
+            self.nav_labels[key] = lbl_text
+            self.nav_icons[key] = lbl_icon
             
         self.nav_group[0].setChecked(True)
         sidebar_layout.addStretch()
@@ -1556,6 +1720,7 @@ class NetOpsAgentUI(QMainWindow):
         self.lbl_log_source.setObjectName("lbl_field_name")
         
         self.combo_log_source = QComboBox(self)
+        self.combo_log_source.setView(QListView())
         self.combo_log_source.addItems(["FastAPI Server (backend_server.log)", "Tray Agent (desktop_tray.log)"])
         self.combo_log_source.currentIndexChanged.connect(self.on_log_source_changed)
         
@@ -1793,6 +1958,7 @@ class NetOpsAgentUI(QMainWindow):
         prefs_layout.addWidget(self.create_setting_row("update", self.chk_auto_update))
         
         self.combo_lang_settings = QComboBox(self)
+        self.combo_lang_settings.setView(QListView())
         self.combo_lang_settings.addItems(["中文 (Chinese)", "English"])
         self.combo_lang_settings.setCurrentIndex(0 if self.lang == "zh" else 1)
         self.combo_lang_settings.currentIndexChanged.connect(self.on_lang_settings_changed)
@@ -1800,6 +1966,7 @@ class NetOpsAgentUI(QMainWindow):
         prefs_layout.addWidget(self.create_setting_row("lang", self.combo_lang_settings))
         
         self.combo_theme = QComboBox(self)
+        self.combo_theme.setView(QListView())
         self.combo_theme.addItems(["Dark Mode (暗色)", "Light Mode (明亮)"])
         self.combo_theme.setCurrentIndex(0 if self.dark_mode else 1)
         self.combo_theme.currentIndexChanged.connect(self.on_theme_settings_changed)
@@ -1903,6 +2070,7 @@ class NetOpsAgentUI(QMainWindow):
         ip_row_layout.setSpacing(6)
         
         self.combo_ips = QComboBox(self)
+        self.combo_ips.setView(QListView())
         self.combo_ips.setFixedWidth(130)
         ip_list = [ip.strip() for ip in ip_info.split(",") if ip.strip()]
         self.combo_ips.addItems(ip_list if ip_list else ["127.0.0.1"])
@@ -2076,11 +2244,11 @@ class NetOpsAgentUI(QMainWindow):
         self.lbl_sidebar_ver.setText(tr["subtitle"])
         
         # Navigation
-        self.nav_group[0].setText(tr["nav_dashboard"])
-        self.nav_group[1].setText(tr["nav_service"])
-        self.nav_group[2].setText(tr["nav_logs"])
-        self.nav_group[3].setText(tr["nav_settings"])
-        self.nav_group[4].setText(tr["nav_about"])
+        self.nav_labels["nav_dashboard"].setText(tr["nav_dashboard"])
+        self.nav_labels["nav_service"].setText(tr["nav_service"])
+        self.nav_labels["nav_logs"].setText(tr["nav_logs"])
+        self.nav_labels["nav_settings"].setText(tr["nav_settings"])
+        self.nav_labels["nav_about"].setText(tr["nav_about"])
         
         # Page 1: Dashboard
         self.lbl_greet_title.setText(tr["agent_title"])
