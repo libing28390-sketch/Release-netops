@@ -376,6 +376,12 @@ sudo systemctl restart netops
 # Docker
 git pull
 docker compose up -d --build
+
+# Windows (GUI)
+# 1. Right-click the system tray icon and click "Exit" to stop the running service.
+# 2. Run the following command in the project root to fetch the latest changes (and NetOps.exe):
+git pull
+# 3. Double-click `start.bat` again. The graphical manager will automatically update dependencies and boot.
 ```
 
 ---
@@ -687,6 +693,12 @@ sudo systemctl restart netops
 # Docker 部署
 git pull
 docker compose up -d --build
+
+# Windows 本地部署 (GUI)
+# 1. 右键系统托盘图标，点击“退出 (Exit)”以完全关闭运行中的服务。
+# 2. 在项目根目录执行以下命令拉取最新代码（会自动下载最新 NetOps.exe）：
+git pull
+# 3. 重新双击运行根目录下的 `start.bat` 即可，图形化向导会自动处理后续的环境校验与启动。
 ```
 
 ---

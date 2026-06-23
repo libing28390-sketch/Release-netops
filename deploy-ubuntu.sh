@@ -332,18 +332,6 @@ PY_OK=$($PYTHON_BIN -c "import sys; print(1 if sys.version_info >= (3,10) else 0
 [ "$PY_OK" != "1" ] && fail "Python 版本 $PY_VER 过低，需要 >= $PYTHON_MIN"
 ok "Python $PY_VER"
 
-# 检查 license_auth .so 是否与当前 Python 版本兼容
-PY_MINOR=$($PYTHON_BIN -c "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')")
-SO_MATCH=$(ls "$PROJECT_DIR"/backend/license_auth/verifier.cpython-${PY_MINOR}-*.so 2>/dev/null | head -1 || true)
-if [ -z "$SO_MATCH" ]; then
-    # 列出实际存在的 .so 版本供参考
-    AVAILABLE_SO=$(ls "$PROJECT_DIR"/backend/license_auth/verifier.cpython-*.so 2>/dev/null | \
-        grep -oP 'cpython-\K[0-9]+' | sort -u | sed 's/\(.\)\(.\)/\1.\2/' | tr '\n' ' ' || echo "none")
-    fail "Python 版本不兼容：当前 Python ${PY_VER}，但 license_auth 没有对应的 .so 文件。
-  可用版本: ${AVAILABLE_SO}
-  请联系发行方获取支持 Python ${PY_VER} 的版本包。"
-fi
-ok "license_auth .so 版本兼容 (Python ${PY_VER} → $(basename $SO_MATCH))"
 
 # ============================================================
 # 3. Node.js 安装 / 检查
@@ -399,10 +387,7 @@ from license_auth.middleware import LicenseMiddleware
 " 2>/dev/null; then
     ok "license_auth 模块验证通过"
 else
-    fail "license_auth 模块加载失败，请检查 Python 版本兼容性。
-  当前 Python: ${PY_VER}
-  可用 .so 文件: $(ls backend/license_auth/*.so 2>/dev/null | xargs -I{} basename {} | tr '\n' ' ' || echo '无')
-  请联系发行方获取支持 Python ${PY_VER} 的版本包。"
+    fail "license_auth 模块加载失败，请检查依赖环境与 Python 版本。"
 fi
 
 # ============================================================

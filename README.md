@@ -28,7 +28,7 @@ Nexora 是一个面向网络运维场景的全栈平台，覆盖设备资产管�
 | Docker (any host OS) | Engine 20.10+ | x86_64 | ✅ Supported / 支持 |
 | **CentOS** | **7.x** | x86_64 | ❌ Not supported / 不支持 |
 | ARM64 / aarch64 | any | arm64 | ❌ Not supported / 不支持 |
-| Windows (native) | any | — | ❌ Not supported / 不支持 |
+| Windows (native) | 10 / 11 / Server | x86_64 | ✅ Supported / 一键图形部署 (GUI) |
 | macOS (native) | any | — | ❌ Not supported / 不支持 |
 
 > **Why CentOS 7 is not supported:** The compiled `.so` files require glibc ≥ 2.28. CentOS 7 ships glibc 2.17 and reached End-of-Life in June 2024. Migrate to Rocky Linux 8+ or AlmaLinux 8+.
@@ -48,10 +48,6 @@ Nexora 是一个面向网络运维场景的全栈平台，覆盖设备资产管�
 | glibc | 2.28 | 2.35+ | Determines OS compatibility |
 | Docker Engine | 20.10 | 26.x | Docker deployment only |
 | Docker Compose | v2.0 | v2.27+ | Docker deployment only |
-
-> **Python version note:** The release package includes pre-compiled `.so` files for Python 3.10, 3.11, and 3.12. The runtime automatically loads the matching version. Do not use Python 3.9 or below.
->
-> **Python 版本说明：** 发布包包含 Python 3.10、3.11、3.12 三个版本的预编译 `.so` 文件，运行时自动加载匹配版本。不支持 Python 3.9 及以下。
 
 ---
 
@@ -215,7 +211,6 @@ The platform is organised into **9 modules** that mirror the left-side navigatio
 | Audit Logs (`/management/audit`) | Full operational audit trail — login, config change, automation execution, PAM session, deletion |
 | Users (`/management/users`) | User CRUD, role assignment (Administrator / Operator / Viewer), group membership, MFA seed |
 | Password Rotation (`/management/credentials`) | Vault-style scheduled password rotation for managed devices |
-| License (`/management/license`) | Upload / inspect license file, view feature gating and device-count limits |
 
 ### Technology Stack
 
@@ -223,19 +218,7 @@ The platform is organised into **9 modules** that mirror the left-side navigatio
 - **Backend**: Python 3.10+, FastAPI, Uvicorn
 - **Database**: PostgreSQL 17 (production) / SQLite (fallback)
 - **Network Automation**: Netmiko, Scrapli, SNMP telemetry
-- **License**: RSA-signed license file with feature gating and device limits
 
-### License Activation
-
-Nexora uses a signed license file for feature and device limit control.
-
-1. Contact us to obtain a `license.json` file for your deployment
-2. Place it at `data/license.json` (Ubuntu/Docker) or upload via **Settings → License** in the UI
-3. The platform validates the license on startup and enforces feature access accordingly
-
-Trial licenses are available — reach out to get started.
-
----
 
 ### Production Pre-flight Checklist
 
@@ -263,7 +246,22 @@ The checklist itself:
 
 ### Deployment
 
-#### Option 1 — Ubuntu One-Click (Recommended)
+#### Option 1 — Windows One-Click GUI Deploy (Recommended for Windows)
+
+You can deploy and run Nexora on Windows using the graphical manager:
+
+1. Clone the **Windows-specific release branch** (`windows`) of the repository:
+   ```powershell
+   git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation
+   cd netops-automation
+   ```
+2. Double-click `start.bat` in the root folder.
+3. The graphical setup wizard (`NetOps.exe`) will launch. It automatically detects, downloads, and silently installs all required runtimes (Python, Node.js, PostgreSQL/SQLite, and Python/Node packages) and compiles/runs the platform.
+4. Once completed, your browser will open to `http://127.0.0.1:9010`. You can monitor and control the application using the network topology system tray icon in the taskbar.
+
+---
+
+#### Option 2 — Ubuntu One-Click (Recommended for Linux)
 
 Supports Ubuntu 20.04 / 22.04 / 24.04, GitHub Codespaces, and Docker containers.
 The script auto-detects the environment and uses `systemd` or `service` accordingly.
@@ -314,7 +312,7 @@ Default credentials: `admin / admin` — **change immediately after first login.
 
 ---
 
-#### Option 2 — Docker Compose
+#### Option 3 — Docker Compose
 
 Requires Docker and Docker Compose. Includes PostgreSQL, backend, and Nginx in one stack.
 
@@ -330,7 +328,6 @@ cp .env.example .env
 Open `.env` and configure:
 - Custom PostgreSQL passwords/usernames.
 - Security keys (`SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`).
-- **Leave `MACHINE_ID_OVERRIDE` blank** for now.
 
 ##### Step 2: Start the containers
 ```bash
@@ -338,16 +335,6 @@ Open `.env` and configure:
 docker compose up -d --build
 ```
 Access the application at `http://localhost`.
-
-##### Step 3: Retrieve Machine ID and bind License (For non-trial licenses)
-If you are using a licensed edition (Standard/Professional/Enterprise):
-1. Visit `http://localhost/api/license/machine-id` (or run `curl http://localhost/api/license/machine-id`) to retrieve your unique Machine ID.
-2. Edit `.env` and set `MACHINE_ID_OVERRIDE=YOUR-COPIED-MACHINE-ID`.
-3. Restart/recreate the containers to apply the configuration:
-   ```bash
-   docker compose up -d
-   ```
-4. Place your `license.json` file in `data/license.json` or upload it in the UI under **Settings → License**.
 
 **Common Docker commands:**
 
@@ -361,7 +348,7 @@ docker compose restart netops    # Restart backend
 
 ---
 
-#### Option 3 — Manual Setup
+#### Option 4 — Manual Setup
 
 **Prerequisites:** Node.js 18+, Python 3.10+, PostgreSQL 17
 
@@ -535,7 +522,6 @@ netops-automation/
 | 审计日志（`/management/audit`） | 全量运维操作留痕 — 登录、配置变更、自动化执行、PAM 会话、删除操作 |
 | 用户管理（`/management/users`） | 用户增删改查，角色（Administrator / Operator / Viewer）与组管理，MFA 种子 |
 | 凭据轮换（`/management/credentials`） | 类 Vault 的设备口令周期性轮换 |
-| 授权管理（`/management/license`） | 上传 / 查看 license 文件，查看功能门控与设备数量限制 |
 
 ### 技术栈
 
@@ -543,19 +529,7 @@ netops-automation/
 - **后端**：Python 3.10+、FastAPI、Uvicorn
 - **数据库**：PostgreSQL 17（生产）/ SQLite（回退）
 - **网络自动化**：Netmiko、Scrapli、SNMP 遥测采集
-- **授权**：RSA 签名 License 文件，支持功能门控与设备数量限制
 
-### License 激活
-
-Nexora 使用签名 License 文件控制功能权限和设备数量上限。
-
-1. 联系我们获取适合你部署环境的 `license.json` 文件
-2. 将文件放置到 `data/license.json`（Ubuntu/Docker 部署），或通过界面 **设置 → License** 上传
-3. 平台启动时自动验证 License，并按授权范围控制功能访问
-
-可申请试用 License，欢迎联系我们。
-
----
 
 ### 上线前自检清单
 
@@ -585,7 +559,22 @@ bash scripts/preflight-check.sh
 > **中国大陆部署建议 / Network Optimization for China Mainland:**
 > 由于国内网络限制，在部署过程中可能会遇到 APT、npm、pip 或 Docker 镜像拉取超时。本项目已在 Docker 构建阶段默认内置了国内镜像源（USTC/Aliyun/npmmirror）。若在宿主机上手动部署或遇到 Docker 镜像拉取超时（`context deadline exceeded`），请务必参考 [DEPLOY.md 中的中国大陆网络优化说明](DEPLOY.md#network-optimizations-for-mainland-china---中国大陆部署网络优化) 配置国内镜像加速器。
 
-#### 方式一 — Ubuntu 一键部署（推荐）
+#### 方式一 — Windows 一键图形化部署（Windows 推荐）
+
+您可以在 Windows 系统上通过专属的图形化部署管理器一键完成安装和运行：
+
+1. 克隆发布库的 **Windows 专属发布分支** (`windows`)：
+   ```powershell
+   git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation
+   cd netops-automation
+   ```
+2. 双击运行根目录下的 `start.bat`。
+3. 系统会自动调起图形部署向导（`NetOps.exe`），自动检测并静默下载、安装全部所需环境（Python、Node.js、PostgreSQL/SQLite 数据库及各端依赖包），并自动完成前端编译与平台启动。
+4. 部署完成后，系统会自动打开默认浏览器并访问 `http://127.0.0.1:9010`。后续您可以通过系统右下角托盘图标进行日常控制与退出。
+
+---
+
+#### 方式二 — Ubuntu 一键部署（Linux 推荐）
 
 支持 Ubuntu 20.04 / 22.04 / 24.04、GitHub Codespaces 及 Docker 容器环境。
 脚本自动检测运行环境，在标准系统中使用 `systemd`，在容器中使用 `service` + 后台进程。
@@ -636,7 +625,7 @@ chmod +x deploy-ubuntu.sh
 
 ---
 
-#### 方式二 — Docker Compose 部署
+#### 方式三 — Docker Compose 部署
 
 包含 PostgreSQL、后端、Nginx 三个容器，无需安装 Node.js/npm/Python 等环境，一条命令启动完整环境。
 
@@ -652,7 +641,6 @@ cp .env.example .env
 打开 `.env` 文件，配置如下参数：
 - 数据库连接信息 (`POSTGRES_USER`, `POSTGRES_PASSWORD` 等)
 - 安全密钥 (`SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`)
-- **此时先保持 `MACHINE_ID_OVERRIDE` 为空**。
 
 ##### 第二步：启动所有容器
 ```bash
@@ -660,16 +648,6 @@ cp .env.example .env
 docker compose up -d --build
 ```
 启动后，可通过浏览器访问 `http://localhost`。
-
-##### 第三步：获取机器 ID 并绑定 License（非试用版必填）
-如果您使用的是商业授权版本（标准版/专业版/企业版）：
-1. 访问 `http://localhost/api/license/machine-id`（或在宿主机运行 `curl http://localhost/api/license/machine-id`）来获取这台机器的唯一机器码。
-2. 编辑 `.env` 文件，将获取到的机器码填入 `MACHINE_ID_OVERRIDE=你的机器码`。
-3. 运行以下命令应用并重启后端容器：
-   ```bash
-   docker compose up -d
-   ```
-4. 将厂商提供的 `license.json` 文件放置到 `data/license.json`（或登录系统后，在 **设置 → License** 界面上传）。
 
 **常用 Docker 命令：**
 
@@ -683,7 +661,7 @@ docker compose restart netops    # 重启后端
 
 ---
 
-#### 方式三 — 手动部署
+#### 方式四 — 手动部署
 
 **前置条件**：Node.js 18+、Python 3.10+、PostgreSQL 17
 
@@ -776,10 +754,6 @@ netops-automation/
 - 容器/Codespaces：`tail -f data/netops.log`
 - Docker：`docker compose logs -f netops`
 
-**Q: 非试用版 License 提示机器 ID 不匹配？**
-
-访问 `http://<服务器>/api/license/machine-id` 获取当前机器 ID，联系我们重新签发绑定该 ID 的 License。Docker 部署时在 `.env` 中设置 `MACHINE_ID_OVERRIDE` 为签发时使用的 ID。
-
 **Q: 如何升级到新版本？**
 
 ```bash
@@ -793,4 +767,10 @@ sudo systemctl restart netops
 # Docker 部署
 git pull
 docker compose up -d --build
+
+# Windows 本地部署 (GUI)
+# 1. 右键系统托盘图标，点击“退出 (Exit)”以完全关闭运行中的服务。
+# 2. 在项目根目录执行以下命令拉取最新代码（会自动下载最新 NetOps.exe）：
+git pull
+# 3. 重新双击运行根目录下的 `start.bat` 即可，图形化向导会自动处理后续的环境校验与启动。
 ```
