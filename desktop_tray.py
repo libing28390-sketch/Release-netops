@@ -483,6 +483,9 @@ QLabel#lbl_field_name {
     font-weight: bold;
 }
 /* Buttons styles */
+QPushButton, QCheckBox {
+    outline: none;
+}
 QPushButton#btn_primary {
     background-color: #06B6D4;
     color: #FFFFFF;
@@ -772,6 +775,9 @@ QLabel#lbl_field_name {
     font-weight: bold;
 }
 /* Buttons styles */
+QPushButton, QCheckBox {
+    outline: none;
+}
 QPushButton#btn_primary {
     background-color: #0891B2;
     color: #FFFFFF;
