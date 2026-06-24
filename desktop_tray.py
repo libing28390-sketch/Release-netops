@@ -101,7 +101,7 @@ try:
         QPlainTextEdit, QFileDialog, QMessageBox, QGridLayout, QScrollArea,
         QListView, QStyledItemDelegate
     )
-    from PySide6.QtCore import Qt, QSize, Signal, Slot, QTimer, QSettings, QPoint
+    from PySide6.QtCore import Qt, QSize, Signal, Slot, QTimer, QSettings, QPoint, QPropertyAnimation, QEasingCurve, Property, QRectF
     from PySide6.QtGui import QIcon, QFont, QColor, QAction, QCursor, QPainter, QBrush, QPen, QPixmap, QPolygon
 except ImportError as e:
     error_msg = f"Failed to import PySide6: {e}\n\nPlease run 'NetOps.exe' to verify and repair the installation environment."
@@ -244,6 +244,8 @@ TRANSLATIONS = {
         "setting_theme_desc": "调整主面板明亮或暗黑的系统主题样式",
         "setting_ip_title": "控制器 IP 地址",
         "setting_ip_desc": "本地代理所指向的控制器服务网络通信 IP",
+        "btn_test_controller": "测试",
+        "btn_test_controller_testing": "测试中...",
         
         "settings_adv_title": "高级系统维护与重置",
         "setting_reconfig_title": "修改环境配置向导",
@@ -358,6 +360,8 @@ TRANSLATIONS = {
         "setting_theme_desc": "Toggle main control panel light/dark visual theme skins",
         "setting_ip_title": "Controller IP Address",
         "setting_ip_desc": "The network IP address pointing to the central controller server",
+        "btn_test_controller": "Test",
+        "btn_test_controller_testing": "Testing...",
         
         "settings_adv_title": "System Maintenance & Actions",
         "setting_reconfig_title": "Re-run Configuration Wizard",
@@ -990,6 +994,79 @@ QMenu::separator {
 }
 """
 
+class ToggleSwitch(QCheckBox):
+    """自绘的 iOS 风格开关。
+
+    取代原先依赖 QSS `image: url(data:image/svg+xml...)` 的 QCheckBox 指示器——
+    Qt 对内联 SVG data-uri 的渲染在不同构建上并不可靠（截图里开关不可见即源于此）。
+    这里完全用 QPainter 绘制轨道 + 滑块，并带轻量的滑动动画，确保在明/暗主题下都稳定可见。
+    """
+
+    TRACK_ON = "#06B6D4"
+
+    def __init__(self, parent=None, dark=True):
+        super().__init__(parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(46, 26)
+        self.setText("")
+        self._dark = dark
+        self._offset = 1.0 if self.isChecked() else 0.0
+        self._anim = QPropertyAnimation(self, b"offset", self)
+        self._anim.setDuration(150)
+        self._anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self.toggled.connect(self._animate_to_state)
+
+    def _animate_to_state(self, _checked):
+        self._anim.stop()
+        self._anim.setStartValue(self._offset)
+        self._anim.setEndValue(1.0 if self.isChecked() else 0.0)
+        self._anim.start()
+
+    def get_offset(self):
+        return self._offset
+
+    def set_offset(self, value):
+        self._offset = value
+        self.update()
+
+    offset = Property(float, get_offset, set_offset)
+
+    def apply_palette(self, dark):
+        self._dark = dark
+        # 不经过动画，直接对齐当前勾选态，避免主题切换时滑块跳动
+        self._offset = 1.0 if self.isChecked() else 0.0
+        self.update()
+
+    @staticmethod
+    def _blend(c1, c2, t):
+        return QColor(
+            int(c1.red() + (c2.red() - c1.red()) * t),
+            int(c1.green() + (c2.green() - c1.green()) * t),
+            int(c1.blue() + (c2.blue() - c1.blue()) * t),
+        )
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        w, h = self.width(), self.height()
+        radius = h / 2.0
+
+        track_off = QColor("#334155" if self._dark else "#CBD5E1")
+        track_on = QColor(self.TRACK_ON)
+        track = self._blend(track_off, track_on, self._offset)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(track))
+        painter.drawRoundedRect(QRectF(0, 0, w, h), radius, radius)
+
+        margin = 3.0
+        knob_d = h - margin * 2
+        x = margin + (w - knob_d - margin * 2) * self._offset
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        painter.drawEllipse(QRectF(x, margin, knob_d, knob_d))
+        painter.end()
+
+
 def get_python_executable():
     venv_python = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "python.exe")
     if os.path.exists(venv_python):
@@ -1095,6 +1172,7 @@ class NetOpsAgentUI(QMainWindow):
     show_window_signal = Signal()
     diagnostic_log_signal = Signal(str)
     diagnostics_finished_signal = Signal(bool, str)
+    controller_test_result_signal = Signal(bool)
 
     def __init__(self):
         super().__init__()
@@ -1116,6 +1194,7 @@ class NetOpsAgentUI(QMainWindow):
         self.show_window_signal.connect(self.show_window)
         self.diagnostic_log_signal.connect(self.append_diagnose_log)
         self.diagnostics_finished_signal.connect(self.on_diagnostics_finished)
+        self.controller_test_result_signal.connect(self.on_controller_test_result)
         
         # Main Window configuration
         self.setWindowTitle("NetOps Agent Enterprise Manager")
@@ -1341,7 +1420,7 @@ class NetOpsAgentUI(QMainWindow):
         self.auto_updates = self.chk_auto_update.isChecked()
         self.lang = "zh" if self.combo_lang_settings.currentIndex() == 0 else "en"
         self.dark_mode = (self.combo_theme.currentIndex() == 0)
-        self.controller_ip = self.txt_controller_ip.text().strip()
+        self.controller_ip = self.combo_controller_ip.currentText().strip()
         
         # Only update registry if boot_start value has actually changed to avoid lag
         new_boot_start = self.chk_boot_start.isChecked()
@@ -1364,6 +1443,9 @@ class NetOpsAgentUI(QMainWindow):
     def setup_ui(self):
         central = QWidget(self)
         self.setCentralWidget(central)
+
+        # 自绘开关集合（在任何页面构建前初始化，供 logs/settings 页共同登记，apply_theme 统一刷新配色）
+        self.toggle_switches = []
         
         # Left-Right main layout
         main_layout = QHBoxLayout(central)
@@ -1488,6 +1570,7 @@ class NetOpsAgentUI(QMainWindow):
         
         # Set default active title
         self.update_translations()
+        self._refresh_nav_styles()
 
     def on_nav_clicked(self):
         sender = self.sender()
@@ -1501,6 +1584,28 @@ class NetOpsAgentUI(QMainWindow):
             self.content_pane.setCurrentIndex(3)
         elif sender == self.nav_group[4]:
             self.content_pane.setCurrentIndex(4)
+        self._refresh_nav_styles()
+
+    def _refresh_nav_styles(self):
+        """显式管理导航文字/图标颜色：未选中=中性灰，选中=主题青。
+
+        不依赖 QSS 后代 `:checked QLabel` 级联（在部分 Qt 构建上不稳定），
+        保证「灰 → 青 + pill 背景」的层级在明/暗主题下都确定生效。
+        """
+        active = "#06B6D4" if self.dark_mode else "#0891B2"
+        inactive = "#94A3B8" if self.dark_mode else "#64748B"
+        for i, btn in enumerate(self.nav_group):
+            key = self.nav_items[i][1]
+            color = active if btn.isChecked() else inactive
+            lbl = self.nav_labels.get(key)
+            if lbl:
+                lbl.setStyleSheet(
+                    f"background: transparent; border: none; font-weight: bold; "
+                    f"font-size: 12px; color: {color};"
+                )
+            icon = self.nav_icons.get(key)
+            if icon and not self.use_emoji_fallback:
+                icon.setStyleSheet(f"background: transparent; border: none; color: {color};")
 
     # PAGE 1: Dashboard
     def init_dashboard_page(self):
@@ -1772,8 +1877,22 @@ class NetOpsAgentUI(QMainWindow):
         self.txt_log_search.setObjectName("txt_log_search")
         self.txt_log_search.textChanged.connect(self.trigger_log_filter)
         
-        self.chk_pause_scroll = QCheckBox("暂停滚动", self)
-        self.chk_pause_scroll.setObjectName("chk_pause_scroll")
+        self.chk_pause_scroll = ToggleSwitch(self, dark=self.dark_mode)
+        self.toggle_switches.append(self.chk_pause_scroll)
+        self.lbl_pause_scroll = QLabel("暂停滚动", self)
+        self.lbl_pause_scroll.setObjectName("lbl_field_name")
+        self.lbl_pause_scroll.setStyleSheet("background: transparent; font-weight: bold;")
+        self.lbl_pause_scroll.setCursor(Qt.PointingHandCursor)
+        # 点击文字也能切换开关
+        self.lbl_pause_scroll.mousePressEvent = lambda _e: self.chk_pause_scroll.toggle()
+
+        pause_widget = QWidget(self)
+        pause_widget.setStyleSheet("background: transparent;")
+        pause_layout = QHBoxLayout(pause_widget)
+        pause_layout.setContentsMargins(0, 0, 0, 0)
+        pause_layout.setSpacing(8)
+        pause_layout.addWidget(self.chk_pause_scroll)
+        pause_layout.addWidget(self.lbl_pause_scroll)
         
         self.btn_clear_logs = QPushButton("清空视图", self)
         self.btn_clear_logs.setObjectName("btn_secondary")
@@ -1788,7 +1907,7 @@ class NetOpsAgentUI(QMainWindow):
         filters_hbox.addWidget(self.lbl_log_source)
         filters_hbox.addWidget(self.combo_log_source)
         filters_hbox.addWidget(self.txt_log_search, 1)
-        filters_hbox.addWidget(self.chk_pause_scroll)
+        filters_hbox.addWidget(pause_widget)
         filters_hbox.addWidget(self.btn_clear_logs)
         filters_hbox.addWidget(self.btn_export_logs)
         layout.addLayout(filters_hbox)
@@ -1981,25 +2100,29 @@ class NetOpsAgentUI(QMainWindow):
         prefs_layout.addWidget(self.lbl_settings_card_title)
         
         self.settings_ui_elements = {}
-        
-        self.chk_boot_start = QCheckBox(card_prefs)
+
+        self.chk_boot_start = ToggleSwitch(card_prefs, dark=self.dark_mode)
         self.chk_boot_start.setChecked(self.boot_start)
         self.chk_boot_start.stateChanged.connect(self.save_settings)
+        self.toggle_switches.append(self.chk_boot_start)
         prefs_layout.addWidget(self.create_setting_row("boot", self.chk_boot_start))
         
-        self.chk_auto_start = QCheckBox(card_prefs)
+        self.chk_auto_start = ToggleSwitch(card_prefs, dark=self.dark_mode)
         self.chk_auto_start.setChecked(self.auto_start_service)
         self.chk_auto_start.stateChanged.connect(self.save_settings)
+        self.toggle_switches.append(self.chk_auto_start)
         prefs_layout.addWidget(self.create_setting_row("service", self.chk_auto_start))
         
-        self.chk_minimize_close = QCheckBox(card_prefs)
+        self.chk_minimize_close = ToggleSwitch(card_prefs, dark=self.dark_mode)
         self.chk_minimize_close.setChecked(self.minimize_to_tray)
         self.chk_minimize_close.stateChanged.connect(self.save_settings)
+        self.toggle_switches.append(self.chk_minimize_close)
         prefs_layout.addWidget(self.create_setting_row("minimize", self.chk_minimize_close))
         
-        self.chk_auto_update = QCheckBox(card_prefs)
+        self.chk_auto_update = ToggleSwitch(card_prefs, dark=self.dark_mode)
         self.chk_auto_update.setChecked(self.auto_updates)
         self.chk_auto_update.stateChanged.connect(self.save_settings)
+        self.toggle_switches.append(self.chk_auto_update)
         prefs_layout.addWidget(self.create_setting_row("update", self.chk_auto_update))
         
         self.combo_lang_settings = QComboBox(card_prefs)
@@ -2018,10 +2141,40 @@ class NetOpsAgentUI(QMainWindow):
         self.combo_theme.setFixedWidth(140)
         prefs_layout.addWidget(self.create_setting_row("theme", self.combo_theme))
         
-        self.txt_controller_ip = QLineEdit(self.controller_ip, card_prefs)
-        self.txt_controller_ip.textChanged.connect(self.save_settings)
-        self.txt_controller_ip.setFixedWidth(140)
-        prefs_layout.addWidget(self.create_setting_row("ip", self.txt_controller_ip))
+        # 控制器 IP：可编辑下拉(本机非环回 IP) + 实时校验 + 连通性测试 + 状态点
+        ip_ctrl_widget = QWidget(card_prefs)
+        ip_ctrl_widget.setStyleSheet("background: transparent;")
+        ip_ctrl_layout = QHBoxLayout(ip_ctrl_widget)
+        ip_ctrl_layout.setContentsMargins(0, 0, 0, 0)
+        ip_ctrl_layout.setSpacing(6)
+
+        self.lbl_ip_status_dot = QLabel(ip_ctrl_widget)
+        self.lbl_ip_status_dot.setFixedSize(10, 10)
+        self.lbl_ip_status_dot.setStyleSheet("background: transparent;")
+
+        self.combo_controller_ip = QComboBox(ip_ctrl_widget)
+        self.combo_controller_ip.setEditable(True)
+        self.combo_controller_ip.setView(QListView())
+        self.combo_controller_ip.setFixedWidth(132)
+        self.combo_controller_ip.addItems(self._get_non_loopback_ips())
+        # 先回填当前值，再连接信号，避免初始化期间触发多余保存
+        if self.controller_ip:
+            self.combo_controller_ip.setCurrentText(self.controller_ip)
+        self.combo_controller_ip.currentTextChanged.connect(self.on_controller_ip_changed)
+
+        self.btn_test_controller = QPushButton(ip_ctrl_widget)
+        self.btn_test_controller.setObjectName("btn_secondary")
+        self.btn_test_controller.setCursor(Qt.PointingHandCursor)
+        self.btn_test_controller.clicked.connect(self.test_controller_connectivity)
+        self.btn_test_controller.setFixedHeight(30)
+
+        ip_ctrl_layout.addWidget(self.lbl_ip_status_dot, 0, Qt.AlignVCenter)
+        ip_ctrl_layout.addWidget(self.combo_controller_ip)
+        ip_ctrl_layout.addWidget(self.btn_test_controller)
+
+        prefs_layout.addWidget(self.create_setting_row("ip", ip_ctrl_widget))
+        # 初始化一次校验状态
+        self._validate_controller_ip(self.controller_ip)
         
         scroll_layout.addWidget(card_prefs)
         
@@ -2067,6 +2220,7 @@ class NetOpsAgentUI(QMainWindow):
         # Right Column: System Specs Card
         card_sys = QFrame(page)
         card_sys.setProperty("class", "card")
+        card_sys.setMinimumWidth(300)
         sys_layout = QVBoxLayout(card_sys)
         sys_layout.setContentsMargins(8, 12, 8, 12)
         sys_layout.setSpacing(0)
@@ -2087,25 +2241,26 @@ class NetOpsAgentUI(QMainWindow):
         
         lbl_host_val = QLabel(hostname, card_sys)
         lbl_host_val.setObjectName("lbl_field_val")
-        lbl_host_val.setStyleSheet("color: #64748B; font-weight: bold; background: transparent;")
+        lbl_host_val.setStyleSheet("font-weight: bold; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_hostname", lbl_host_val))
         
         lbl_os_val = QLabel(os_info, card_sys)
         lbl_os_val.setObjectName("lbl_field_val")
-        lbl_os_val.setStyleSheet("color: #64748B; font-weight: bold; background: transparent;")
+        lbl_os_val.setStyleSheet("font-weight: bold; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_os", lbl_os_val))
         
         lbl_cpu_val = QLabel(cpu_info, card_sys)
         lbl_cpu_val.setObjectName("lbl_field_val")
         lbl_cpu_val.setWordWrap(True)
-        lbl_cpu_val.setStyleSheet("color: #64748B; font-weight: bold; font-size: 11px; background: transparent;")
-        lbl_cpu_val.setMaximumWidth(160)
+        lbl_cpu_val.setStyleSheet("font-weight: bold; font-size: 11px; background: transparent;")
+        lbl_cpu_val.setMaximumWidth(180)
+        lbl_cpu_val.setMinimumWidth(150)
         lbl_cpu_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         sys_layout.addWidget(self.create_spec_row("sys_cpu", lbl_cpu_val))
         
         lbl_mem_val = QLabel(mem_info, card_sys)
         lbl_mem_val.setObjectName("lbl_field_val")
-        lbl_mem_val.setStyleSheet("color: #64748B; font-weight: bold; background: transparent;")
+        lbl_mem_val.setStyleSheet("font-weight: bold; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_mem", lbl_mem_val))
         
         # IP Dropdown + Copy
@@ -2181,6 +2336,102 @@ class NetOpsAgentUI(QMainWindow):
         self.dark_mode = (idx == 0)
         self.apply_theme()
         self.save_settings()
+
+    # ── 控制器 IP 校验与连通性测试 ──
+    def _get_non_loopback_ips(self):
+        """返回本机所有非环回 IP（去除 127.* 与 localhost）。"""
+        raw = self.get_local_ip_addresses() or ""
+        ips = []
+        for ip in raw.split(","):
+            ip = ip.strip()
+            if not ip:
+                continue
+            if ip.startswith("127.") or ip.lower() == "localhost":
+                continue
+            if ip not in ips:
+                ips.append(ip)
+        return ips
+
+    @staticmethod
+    def _is_valid_host(text):
+        """合法性校验：标准 IPv4 或合理的主机名 (含 localhost)。"""
+        text = (text or "").strip()
+        if not text:
+            return False
+        # IPv4：四段，每段 0-255，无多余前导零
+        parts = text.split(".")
+        if len(parts) == 4 and all(p.isdigit() for p in parts):
+            ok = True
+            for p in parts:
+                if not (0 <= int(p) <= 255):
+                    ok = False
+                    break
+                if len(p) > 1 and p[0] == "0":  # 拒绝 01 / 007 之类
+                    ok = False
+                    break
+            if ok:
+                return True
+        # 主机名：字母/数字/连字符/点，整体不超过 253，且至少含一个字母
+        import re as _re
+        if len(text) <= 253 and _re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9\-\.]{0,251}[A-Za-z0-9])?", text):
+            if any(c.isalpha() for c in text):
+                return True
+        return False
+
+    def _validate_controller_ip(self, text):
+        """根据校验结果更新下拉框边框、状态点与测试按钮可用性。返回是否合法。
+
+        控制器 IP 不允许使用环回口 / localhost（按需求排除）。
+        """
+        text = (text or "").strip()
+        is_loopback = text.startswith("127.") or text.lower() == "localhost"
+        valid = self._is_valid_host(text) and not is_loopback
+        if valid:
+            self.combo_controller_ip.setStyleSheet("")
+            # 中性状态点（未测试）
+            self.lbl_ip_status_dot.setStyleSheet("background-color: #94A3B8; border-radius: 5px;")
+            if hasattr(self, "btn_test_controller"):
+                self.btn_test_controller.setEnabled(True)
+        else:
+            self.combo_controller_ip.setStyleSheet("QComboBox { border: 1px solid #EF4444; }")
+            self.lbl_ip_status_dot.setStyleSheet("background-color: #EF4444; border-radius: 5px;")
+            if hasattr(self, "btn_test_controller"):
+                self.btn_test_controller.setEnabled(False)
+        return valid
+
+    def on_controller_ip_changed(self, text):
+        valid = self._validate_controller_ip(text)
+        # 仅在合法时写入设置，避免把无效地址持久化
+        if valid:
+            self.save_settings()
+
+    def test_controller_connectivity(self):
+        ip = self.combo_controller_ip.currentText().strip()
+        if not self._validate_controller_ip(ip):
+            return
+        tr = TRANSLATIONS[self.lang]
+        self.btn_test_controller.setEnabled(False)
+        self.btn_test_controller.setText(tr["btn_test_controller_testing"])
+        self.lbl_ip_status_dot.setStyleSheet("background-color: #F59E0B; border-radius: 5px;")
+
+        def worker():
+            ok = False
+            for port in (5010, 443, 80, 22):
+                if self.is_port_occupied_fast(ip, port):
+                    ok = True
+                    break
+            self.controller_test_result_signal.emit(ok)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_controller_test_result(self, success):
+        tr = TRANSLATIONS[self.lang]
+        self.btn_test_controller.setEnabled(True)
+        self.btn_test_controller.setText(tr["btn_test_controller"])
+        if success:
+            self.lbl_ip_status_dot.setStyleSheet("background-color: #10B981; border-radius: 5px;")
+        else:
+            self.lbl_ip_status_dot.setStyleSheet("background-color: #EF4444; border-radius: 5px;")
 
     # PAGE 5: About us
     def init_about_page(self):
@@ -2332,7 +2583,7 @@ class NetOpsAgentUI(QMainWindow):
         """
         
         # Style the views directly to avoid global QApplication style recalculation lag
-        for combo in [self.combo_lang_settings, self.combo_theme, self.combo_ips, self.combo_log_source]:
+        for combo in [self.combo_lang_settings, self.combo_theme, self.combo_ips, self.combo_log_source, self.combo_controller_ip]:
             # Force using QStyledItemDelegate so custom item backgrounds and highlights are respected
             if not isinstance(combo.itemDelegate(), QStyledItemDelegate):
                 combo.setItemDelegate(QStyledItemDelegate(combo))
@@ -2341,6 +2592,14 @@ class NetOpsAgentUI(QMainWindow):
                 view.setStyleSheet(view_style)
                 
         set_dark_title_bar(self.winId(), self.dark_mode)
+
+        # 同步自绘开关的明/暗配色
+        for toggle in getattr(self, "toggle_switches", []):
+            toggle.apply_palette(self.dark_mode)
+
+        # 同步导航文字/图标颜色（主题切换时）
+        if hasattr(self, "nav_group"):
+            self._refresh_nav_styles()
 
     def update_translations(self):
         tr = TRANSLATIONS[self.lang]
@@ -2389,7 +2648,7 @@ class NetOpsAgentUI(QMainWindow):
         # Page 3: Logs
         self.lbl_log_source.setText(tr["log_select_label"])
         self.txt_log_search.setPlaceholderText(tr["log_search_placeholder"])
-        self.chk_pause_scroll.setText(tr["chk_pause_scroll"])
+        self.lbl_pause_scroll.setText(tr["chk_pause_scroll"])
         self.btn_clear_logs.setText(tr["btn_clear"])
         self.btn_export_logs.setText(tr["btn_export"])
         
@@ -2397,6 +2656,10 @@ class NetOpsAgentUI(QMainWindow):
         self.lbl_settings_card_title.setText(tr["settings_card_title"])
         self.lbl_settings_adv_title.setText(tr["settings_adv_title"])
         self.lbl_sys_card_title.setText(tr["sys_card_title"])
+        if hasattr(self, "btn_test_controller"):
+            # 保留"测试中"状态文案，避免切换语言时打断进行中的测试
+            if self.btn_test_controller.isEnabled():
+                self.btn_test_controller.setText(tr["btn_test_controller"])
         
         for key, (lbl_title, lbl_desc) in self.settings_ui_elements.items():
             lbl_title.setText(tr["setting_" + key + "_title"])
