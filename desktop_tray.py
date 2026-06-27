@@ -175,7 +175,7 @@ def create_status_icon(color_name):
 TRANSLATIONS = {
     "zh": {
         "title": "NetOps Agent",
-        "subtitle": "企业版 Enterprise",
+        "subtitle": "开源社区版 Community",
         "nav_dashboard": "仪表盘 (Dashboard)",
         "nav_service": "服务管理 (Service)",
         "nav_logs": "实时日志 (Logs)",
@@ -184,9 +184,9 @@ TRANSLATIONS = {
         "btn_copy": "复制",
         "btn_copied": "已复制!",
         
-        "agent_title": "NetOps Agent Enterprise",
+        "agent_title": "NetOps Agent Community",
         "agent_ver": "版本: v1.0.1",
-        "agent_license": "许可: 商业授权版",
+        "agent_license": "许可: 免费开源版 (Free & Open Source)",
         
         "status_card_title": "后台服务状态 (Service Status)",
         "status_running": "🟢 运行中 (RUNNING)",
@@ -210,9 +210,9 @@ TRANSLATIONS = {
         "diag_failed": "诊断失败: %s",
         
         "control_card_title": "服务生命周期控制 (Service Controls)",
-        "btn_start": "启动服务 (Start)",
-        "btn_stop": "停止服务 (Stop)",
-        "btn_restart": "重启服务 (Restart)",
+        "btn_start": "▶ 启动服务 (Start)",
+        "btn_stop": "■ 停止服务 (Stop)",
+        "btn_restart": "↻ 重启服务 (Restart)",
         
         "meta_card_title": "运行环境变量 (Service Metadata)",
         "meta_addr": "监听地址",
@@ -233,6 +233,9 @@ TRANSLATIONS = {
         "setting_boot_desc": "在 Windows 启动时后台自动运行 Agent 管理器",
         "setting_service_title": "自动运行后台服务",
         "setting_service_desc": "启动管理器后自动检测并运行 FastAPI 后台服务",
+        "setting_open_browser_title": "启动服务时打开浏览器",
+        "setting_open_browser_desc": "当后台服务成功启动后，自动在默认浏览器中弹出 Web 管理端",
+        "btn_start_loading": "▶  正在启动...",
         "setting_minimize_title": "关闭窗口时最小化",
         "setting_minimize_desc": "点击窗口关闭按钮时最小化至系统托盘，而非完全退出",
         "setting_update_title": "自动检查可用更新",
@@ -267,11 +270,15 @@ TRANSLATIONS = {
         "sys_hostname": "主机名称 (Hostname)",
         "sys_os": "操作系统 (OS)",
         "sys_cpu": "处理器 (CPU)",
+        "sys_cpu_cores": "处理器核心数",
         "sys_mem": "内存容量 (RAM)",
+        "sys_disk": "系统磁盘空间",
+        "sys_mac": "网卡物理地址 (MAC)",
+        "sys_python": "Python 运行环境",
         "sys_ip": "网络地址 (IP Address)",
         
         "about_name": "NetOps 智能自动化网络运维平台",
-        "about_desc": "NetOps Agent Enterprise 是一款轻量级、企业级的网络设备监测与自动化管理客户端，支持后台自愈和多端同步调度。",
+        "about_desc": "NetOps Agent 是一款轻量级、开源社区版的网络设备监测与自动化管理客户端，支持后台自愈和多端同步调度。",
         "about_build": "构建编号: 20260622.1082",
         "about_site": "官方网站: ",
         "about_support": "技术支持: ",
@@ -291,7 +298,7 @@ TRANSLATIONS = {
     },
     "en": {
         "title": "NetOps Agent",
-        "subtitle": "Enterprise",
+        "subtitle": "Community",
         "nav_dashboard": "Dashboard",
         "nav_service": "Service",
         "nav_logs": "Logs",
@@ -300,9 +307,9 @@ TRANSLATIONS = {
         "btn_copy": "Copy",
         "btn_copied": "Copied!",
         
-        "agent_title": "NetOps Agent Enterprise",
+        "agent_title": "NetOps Agent Community",
         "agent_ver": "Version: v1.0.1",
-        "agent_license": "License: Commercial Enterprise",
+        "agent_license": "License: Free & Open Source",
         
         "status_card_title": "Backend Service Status",
         "status_running": "🟢 RUNNING",
@@ -326,9 +333,9 @@ TRANSLATIONS = {
         "diag_failed": "Diagnostics failed: %s",
         
         "control_card_title": "Service Controls",
-        "btn_start": "Start Service",
-        "btn_stop": "Stop Service",
-        "btn_restart": "Restart Service",
+        "btn_start": "▶ Start Service",
+        "btn_stop": "■ Stop Service",
+        "btn_restart": "↻ Restart Service",
         
         "meta_card_title": "Service Metadata",
         "meta_addr": "Listen Address",
@@ -349,6 +356,9 @@ TRANSLATIONS = {
         "setting_boot_desc": "Launch Agent Manager automatically when Windows starts",
         "setting_service_title": "Auto-Start Service",
         "setting_service_desc": "Detect and spin up backend FastAPI service automatically on launch",
+        "setting_open_browser_title": "Auto-Open Browser",
+        "setting_open_browser_desc": "Automatically launch Web UI in default browser once the backend is ready",
+        "btn_start_loading": "▶  Starting...",
         "setting_minimize_title": "Minimize on Close",
         "setting_minimize_desc": "Minimize window to system tray instead of exiting when closed",
         "setting_update_title": "Auto Check Updates",
@@ -383,11 +393,15 @@ TRANSLATIONS = {
         "sys_hostname": "Hostname",
         "sys_os": "Operating System (OS)",
         "sys_cpu": "Processor (CPU)",
+        "sys_cpu_cores": "CPU Cores",
         "sys_mem": "Physical Memory (RAM)",
+        "sys_disk": "System Disk Space",
+        "sys_mac": "MAC Address",
+        "sys_python": "Python Version",
         "sys_ip": "Local IP Address",
         
         "about_name": "NetOps Intelligent Network Automation Platform",
-        "about_desc": "NetOps Agent Enterprise is a lightweight, industrial-grade device monitoring and orchestration client, supporting background healing and central remote scheduling.",
+        "about_desc": "NetOps Agent is a lightweight, open-source community device monitoring and orchestration client, supporting background healing and central remote scheduling.",
         "about_build": "Build Number: 20260622.1082",
         "about_site": "Official Website: ",
         "about_support": "Technical Support: ",
@@ -410,7 +424,7 @@ TRANSLATIONS = {
 # Fluent QSS Styling
 DARK_STYLE = """
 QWidget {
-    font-family: "Segoe UI", "Microsoft YaHei UI";
+    font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", -apple-system, sans-serif;
     color: #F3F4F6;
     font-size: 12px;
 }
@@ -545,6 +559,63 @@ QPushButton#btn_secondary:pressed {
     background-color: #0F172A;
 }
 
+QPushButton#btn_start {
+    background-color: #10B981;
+    color: #FFFFFF;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-weight: bold;
+    border: none;
+}
+QPushButton#btn_start:hover {
+    background-color: #059669;
+}
+QPushButton#btn_start:pressed {
+    background-color: #047857;
+}
+QPushButton#btn_start:disabled {
+    background-color: #1E293B;
+    color: #475569;
+}
+
+QPushButton#btn_stop {
+    background-color: #EF4444;
+    color: #FFFFFF;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-weight: bold;
+    border: none;
+}
+QPushButton#btn_stop:hover {
+    background-color: #DC2626;
+}
+QPushButton#btn_stop:pressed {
+    background-color: #B91C1C;
+}
+QPushButton#btn_stop:disabled {
+    background-color: #1E293B;
+    color: #475569;
+}
+
+QPushButton#btn_restart {
+    background-color: #3B82F6;
+    color: #FFFFFF;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-weight: bold;
+    border: none;
+}
+QPushButton#btn_restart:hover {
+    background-color: #2563EB;
+}
+QPushButton#btn_restart:pressed {
+    background-color: #1D4ED8;
+}
+QPushButton#btn_restart:disabled {
+    background-color: #1E293B;
+    color: #475569;
+}
+
 QPushButton#btn_copy {
     background-color: #1E293B;
     color: #94A3B8;
@@ -580,24 +651,31 @@ QComboBox::drop-down {
     width: 24px;
     border-left-width: 0px;
 }
+QComboBox::down-arrow {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%2394A3B8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+QComboBox::down-arrow:hover {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23F3F4F6' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
 QComboBox QAbstractItemView, QListView {
-    background-color: #1E293B;
-    border: 1px solid #334155;
-    padding: 4px;
-    color: #E2E8F0;
-    selection-background-color: #334155;
+    background-color: #1F2937;
+    border: 1px solid #4B5563;
+    padding: 0px;
+    color: #F3F4F6;
+    selection-background-color: #0891B2;
     selection-color: #FFFFFF;
     outline: none;
 }
 QComboBox QAbstractItemView::item, QListView::item {
     padding: 6px 12px;
     min-height: 26px;
-    border-radius: 4px;
-    color: #E2E8F0;
-    background-color: #1E293B;
+    border-radius: 0px;
+    border: none;
+    color: #F3F4F6;
+    background-color: #1F2937;
 }
 QComboBox QAbstractItemView::item:selected, QListView::item:selected {
-    background-color: #334155;
+    background-color: #0891B2;
     color: #FFFFFF;
 }
 QScrollBar:vertical {
@@ -702,7 +780,7 @@ QMenu::separator {
 
 LIGHT_STYLE = """
 QWidget {
-    font-family: "Segoe UI", "Microsoft YaHei UI";
+    font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", -apple-system, sans-serif;
     color: #0F172A;
     font-size: 12px;
 }
@@ -839,6 +917,63 @@ QPushButton#btn_secondary:pressed {
     background-color: #E2E8F0;
 }
 
+QPushButton#btn_start {
+    background-color: #10B981;
+    color: #FFFFFF;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-weight: bold;
+    border: none;
+}
+QPushButton#btn_start:hover {
+    background-color: #059669;
+}
+QPushButton#btn_start:pressed {
+    background-color: #047857;
+}
+QPushButton#btn_start:disabled {
+    background-color: #E5E7EB;
+    color: #94A3B8;
+}
+
+QPushButton#btn_stop {
+    background-color: #EF4444;
+    color: #FFFFFF;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-weight: bold;
+    border: none;
+}
+QPushButton#btn_stop:hover {
+    background-color: #DC2626;
+}
+QPushButton#btn_stop:pressed {
+    background-color: #B91C1C;
+}
+QPushButton#btn_stop:disabled {
+    background-color: #E5E7EB;
+    color: #94A3B8;
+}
+
+QPushButton#btn_restart {
+    background-color: #3B82F6;
+    color: #FFFFFF;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-weight: bold;
+    border: none;
+}
+QPushButton#btn_restart:hover {
+    background-color: #2563EB;
+}
+QPushButton#btn_restart:pressed {
+    background-color: #1D4ED8;
+}
+QPushButton#btn_restart:disabled {
+    background-color: #E5E7EB;
+    color: #94A3B8;
+}
+
 QPushButton#btn_copy {
     background-color: #F8FAFC;
     color: #64748B;
@@ -874,25 +1009,32 @@ QComboBox::drop-down {
     width: 24px;
     border-left-width: 0px;
 }
+QComboBox::down-arrow {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%2364748B' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+QComboBox::down-arrow:hover {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%230F172A' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
 QComboBox QAbstractItemView, QListView {
     background-color: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    padding: 4px;
-    color: #334155;
-    selection-background-color: #F1F5F9;
-    selection-color: #0F172A;
+    border: 1px solid #CBD5E1;
+    padding: 0px;
+    color: #1F2937;
+    selection-background-color: #E0F2FE;
+    selection-color: #0369A1;
     outline: none;
 }
 QComboBox QAbstractItemView::item, QListView::item {
     padding: 6px 12px;
     min-height: 26px;
-    border-radius: 4px;
-    color: #334155;
+    border-radius: 0px;
+    border: none;
+    color: #1F2937;
     background-color: #FFFFFF;
 }
 QComboBox QAbstractItemView::item:selected, QListView::item:selected {
-    background-color: #F1F5F9;
-    color: #0F172A;
+    background-color: #E0F2FE;
+    color: #0369A1;
 }
 QScrollBar:vertical {
     border: none;
@@ -1197,7 +1339,7 @@ class NetOpsAgentUI(QMainWindow):
         self.controller_test_result_signal.connect(self.on_controller_test_result)
         
         # Main Window configuration
-        self.setWindowTitle("NetOps Agent Enterprise Manager")
+        self.setWindowTitle("NetOps Agent Manager")
         self.setMinimumSize(900, 620)
         self.resize(1000, 620)
         
@@ -1250,6 +1392,7 @@ class NetOpsAgentUI(QMainWindow):
         self.lang = self.settings.value("lang", "zh", type=str)
         self.dark_mode = self.settings.value("dark_mode", True, type=bool)
         self.controller_ip = self.settings.value("controller_ip", "10.1.1.10", type=str)
+        self.auto_open_browser = self.settings.value("auto_open_browser", True, type=bool)
 
     def launch_reconfig_wizard(self, force_reconfig=True):
         # Stop backend server first to release port 5010 and files
@@ -1421,6 +1564,7 @@ class NetOpsAgentUI(QMainWindow):
         self.lang = "zh" if self.combo_lang_settings.currentIndex() == 0 else "en"
         self.dark_mode = (self.combo_theme.currentIndex() == 0)
         self.controller_ip = self.combo_controller_ip.currentText().strip()
+        self.auto_open_browser = self.chk_open_browser.isChecked()
         
         # Only update registry if boot_start value has actually changed to avoid lag
         new_boot_start = self.chk_boot_start.isChecked()
@@ -1434,6 +1578,7 @@ class NetOpsAgentUI(QMainWindow):
         self.settings.setValue("lang", self.lang)
         self.settings.setValue("dark_mode", self.dark_mode)
         self.settings.setValue("controller_ip", self.controller_ip)
+        self.settings.setValue("auto_open_browser", self.auto_open_browser)
         self.settings.sync()
         
         # Registry integration (only update on real changes to prevent lag)
@@ -1774,17 +1919,17 @@ class NetOpsAgentUI(QMainWindow):
         btn_layout.setSpacing(12)
         
         self.btn_start = QPushButton("启动服务", self)
-        self.btn_start.setObjectName("btn_primary")
+        self.btn_start.setObjectName("btn_start")
         self.btn_start.setCursor(Qt.PointingHandCursor)
         self.btn_start.clicked.connect(self.start_backend_server)
         
         self.btn_stop = QPushButton("停止服务", self)
-        self.btn_stop.setObjectName("btn_danger")
+        self.btn_stop.setObjectName("btn_stop")
         self.btn_stop.setCursor(Qt.PointingHandCursor)
         self.btn_stop.clicked.connect(self.stop_backend_server)
         
         self.btn_restart = QPushButton("重启服务", self)
-        self.btn_restart.setObjectName("btn_secondary")
+        self.btn_restart.setObjectName("btn_restart")
         self.btn_restart.setCursor(Qt.PointingHandCursor)
         self.btn_restart.clicked.connect(self.restart_backend_server)
         
@@ -1827,6 +1972,7 @@ class NetOpsAgentUI(QMainWindow):
             
             lbl_val = QLineEdit(value, self)
             lbl_val.setReadOnly(True)
+            lbl_val.setFocusPolicy(Qt.ClickFocus)
             lbl_val.setObjectName("lbl_field_val")
             lbl_val.setStyleSheet("background-color: transparent; border: none; padding: 0px;")
             
@@ -2048,6 +2194,7 @@ class NetOpsAgentUI(QMainWindow):
         lbl_name = QLabel(row)
         lbl_name.setObjectName("lbl_spec_name_" + key)
         lbl_name.setStyleSheet("font-weight: bold; font-size: 12px; background: transparent;")
+        lbl_name.setFixedWidth(140)
         
         row_layout.addWidget(lbl_name, 0, Qt.AlignLeft | Qt.AlignVCenter)
         row_layout.addWidget(widget, 1, Qt.AlignRight | Qt.AlignVCenter)
@@ -2066,6 +2213,12 @@ class NetOpsAgentUI(QMainWindow):
             self.btn_copy_ip.setText(tr["sys_ip_copied"])
             self.btn_copy_ip.setEnabled(False)
             QTimer.singleShot(1500, lambda: [self.btn_copy_ip.setText(tr["sys_ip_copy"]), self.btn_copy_ip.setEnabled(True)])
+
+    def sync_local_ip_to_controller(self, selected_ip):
+        selected_ip = selected_ip.strip()
+        if selected_ip:
+            self.combo_controller_ip.setCurrentText(selected_ip)
+            self.on_controller_ip_changed(selected_ip)
 
     # PAGE 4: Settings & System info
     def init_settings_page(self):
@@ -2124,6 +2277,12 @@ class NetOpsAgentUI(QMainWindow):
         self.chk_auto_update.stateChanged.connect(self.save_settings)
         self.toggle_switches.append(self.chk_auto_update)
         prefs_layout.addWidget(self.create_setting_row("update", self.chk_auto_update))
+        
+        self.chk_open_browser = ToggleSwitch(card_prefs, dark=self.dark_mode)
+        self.chk_open_browser.setChecked(self.auto_open_browser)
+        self.chk_open_browser.stateChanged.connect(self.save_settings)
+        self.toggle_switches.append(self.chk_open_browser)
+        prefs_layout.addWidget(self.create_setting_row("open_browser", self.chk_open_browser))
         
         self.combo_lang_settings = QComboBox(card_prefs)
         self.combo_lang_settings.setView(QListView())
@@ -2220,7 +2379,7 @@ class NetOpsAgentUI(QMainWindow):
         # Right Column: System Specs Card
         card_sys = QFrame(page)
         card_sys.setProperty("class", "card")
-        card_sys.setMinimumWidth(300)
+        card_sys.setFixedWidth(320)
         sys_layout = QVBoxLayout(card_sys)
         sys_layout.setContentsMargins(8, 12, 8, 12)
         sys_layout.setSpacing(0)
@@ -2263,6 +2422,46 @@ class NetOpsAgentUI(QMainWindow):
         lbl_mem_val.setStyleSheet("font-weight: bold; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_mem", lbl_mem_val))
         
+        # CPU Cores
+        cores = os.cpu_count()
+        cores_info = f"{cores} Cores" if cores else "Unknown"
+        lbl_cores_val = QLabel(cores_info, card_sys)
+        lbl_cores_val.setObjectName("lbl_field_val")
+        lbl_cores_val.setStyleSheet("font-weight: bold; background: transparent;")
+        sys_layout.addWidget(self.create_spec_row("sys_cpu_cores", lbl_cores_val))
+
+        # Disk space
+        try:
+            usage = shutil.disk_usage("C:\\")
+            total_gb = usage.total / (1024**3)
+            used_gb = usage.used / (1024**3)
+            disk_info = f"C: {used_gb:.1f} GB / {total_gb:.1f} GB"
+        except Exception:
+            disk_info = "Unknown"
+        lbl_disk_val = QLabel(disk_info, card_sys)
+        lbl_disk_val.setObjectName("lbl_field_val")
+        lbl_disk_val.setStyleSheet("font-weight: bold; background: transparent;")
+        sys_layout.addWidget(self.create_spec_row("sys_disk", lbl_disk_val))
+
+        # MAC Address
+        import uuid
+        try:
+            mac_int = uuid.getnode()
+            mac_str = ':'.join(['{:02x}'.format((mac_int >> ele) & 0xff) for ele in range(0,8*6,8)][::-1]).upper()
+        except Exception:
+            mac_str = "Unknown"
+        lbl_mac_val = QLabel(mac_str, card_sys)
+        lbl_mac_val.setObjectName("lbl_field_val")
+        lbl_mac_val.setStyleSheet("font-weight: bold; background: transparent;")
+        sys_layout.addWidget(self.create_spec_row("sys_mac", lbl_mac_val))
+
+        # Python Version
+        python_ver = f"Python {sys.version.split()[0]}"
+        lbl_py_val = QLabel(python_ver, card_sys)
+        lbl_py_val.setObjectName("lbl_field_val")
+        lbl_py_val.setStyleSheet("font-weight: bold; background: transparent;")
+        sys_layout.addWidget(self.create_spec_row("sys_python", lbl_py_val))
+        
         # IP Dropdown + Copy
         ip_widget = QWidget(card_sys)
         ip_widget.setStyleSheet("background: transparent;")
@@ -2275,6 +2474,7 @@ class NetOpsAgentUI(QMainWindow):
         self.combo_ips.setFixedWidth(130)
         ip_list = [ip.strip() for ip in ip_info.split(",") if ip.strip()]
         self.combo_ips.addItems(ip_list if ip_list else ["127.0.0.1"])
+        self.combo_ips.currentTextChanged.connect(self.sync_local_ip_to_controller)
         
         self.btn_copy_ip = QPushButton(ip_widget)
         self.btn_copy_ip.setObjectName("btn_copy")
@@ -2442,54 +2642,77 @@ class NetOpsAgentUI(QMainWindow):
         
         card_about = QFrame(self)
         card_about.setProperty("class", "card")
-        about_layout = QVBoxLayout(card_about)
+        about_layout = QHBoxLayout(card_about)
         about_layout.setContentsMargins(30, 24, 30, 24)
-        about_layout.setSpacing(14)
+        about_layout.setSpacing(30)
         
-        self.lbl_about_logo = QLabel("📡", self)
-        self.lbl_about_logo.setStyleSheet("font-size: 40px;")
-        about_layout.addWidget(self.lbl_about_logo, 0, Qt.AlignCenter)
+        # Left side: specs and details
+        left_widget = QWidget(self)
+        left_widget.setStyleSheet("background: transparent;")
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(14)
+        
+        self.lbl_about_logo = QLabel(self)
+        logo_path = os.path.join(PROJECT_ROOT, "netops_logo.png")
+        if os.path.exists(logo_path):
+            from PySide6.QtGui import QPixmap
+            pixmap = QPixmap(logo_path)
+            self.lbl_about_logo.setPixmap(pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.lbl_about_logo.setText("📡")
+            self.lbl_about_logo.setStyleSheet("font-size: 40px;")
+        left_layout.addWidget(self.lbl_about_logo, 0, Qt.AlignLeft)
         
         self.lbl_about_name = QLabel("NetOps 智能自动化网络运维平台", self)
         self.lbl_about_name.setStyleSheet("font-size: 18px; font-weight: bold; color: #06B6D4;")
-        about_layout.addWidget(self.lbl_about_name, 0, Qt.AlignCenter)
+        left_layout.addWidget(self.lbl_about_name, 0, Qt.AlignLeft)
         
         self.lbl_about_desc = QLabel(self)
         self.lbl_about_desc.setStyleSheet("color: #64748B; font-size: 12px; line-height: 1.6;")
         self.lbl_about_desc.setWordWrap(True)
-        self.lbl_about_desc.setAlignment(Qt.AlignCenter)
-        about_layout.addWidget(self.lbl_about_desc)
+        self.lbl_about_desc.setAlignment(Qt.AlignLeft)
+        left_layout.addWidget(self.lbl_about_desc)
         
         divider = QFrame(self)
         divider.setFrameShape(QFrame.HLine)
         divider.setFrameShadow(QFrame.Sunken)
         divider.setStyleSheet("background-color: #1E293B;")
-        about_layout.addWidget(divider)
+        left_layout.addWidget(divider)
         
         details_grid = QGridLayout()
         details_grid.setSpacing(10)
+        repo_url = "https://github.com/libing28390-sketch/Release-netops"
         
-        self.lbl_about_ver_name = QLabel("Version:", self)
+        self.lbl_about_ver_name = QLabel(self)
         self.lbl_about_ver_name.setObjectName("lbl_field_name")
-        self.lbl_about_ver_val = QLabel("v1.0.1 Enterprise Edition", self)
+        self.lbl_about_ver_val = QLabel("v1.0.1 Community Edition", self)
         self.lbl_about_ver_val.setObjectName("lbl_field_val")
         
-        self.lbl_about_build_name = QLabel("Build Number:", self)
+        self.lbl_about_build_name = QLabel(self)
         self.lbl_about_build_name.setObjectName("lbl_field_name")
         self.lbl_about_build_val = QLabel("20260622.1082", self)
         self.lbl_about_build_val.setObjectName("lbl_field_val")
         
-        self.lbl_about_site_name = QLabel("Official Website:", self)
+        self.lbl_about_site_name = QLabel(self)
         self.lbl_about_site_name.setObjectName("lbl_field_name")
-        self.lbl_about_site_val = QPushButton("https://netops.example.com", self)
+        self.lbl_about_site_val = QPushButton(repo_url, self)
         self.lbl_about_site_val.setCursor(Qt.PointingHandCursor)
         self.lbl_about_site_val.setStyleSheet("color: #06B6D4; border: none; background: transparent; text-align: left; font-weight: bold;")
-        self.lbl_about_site_val.clicked.connect(lambda: webbrowser.open("https://netops.example.com"))
+        self.lbl_about_site_val.clicked.connect(lambda: webbrowser.open(repo_url))
         
-        self.lbl_about_support_name = QLabel("Technical Support:", self)
+        self.lbl_about_support_name = QLabel(self)
         self.lbl_about_support_name.setObjectName("lbl_field_name")
-        self.lbl_about_support_val = QLabel("support@netops.example.com", self)
-        self.lbl_about_support_val.setObjectName("lbl_field_val")
+        self.lbl_about_support_val = QPushButton(repo_url, self)
+        self.lbl_about_support_val.setCursor(Qt.PointingHandCursor)
+        self.lbl_about_support_val.setStyleSheet("color: #06B6D4; border: none; background: transparent; text-align: left; font-weight: bold;")
+        self.lbl_about_support_val.clicked.connect(lambda: webbrowser.open(repo_url))
+        
+        self.lbl_about_wechat_name = QLabel(self)
+        self.lbl_about_wechat_name.setObjectName("lbl_field_name")
+        self.lbl_about_wechat_val = QLabel("小网工爱运维", self)
+        self.lbl_about_wechat_val.setObjectName("lbl_field_val")
+        self.lbl_about_wechat_val.setStyleSheet("font-weight: bold; color: #10B981;")
         
         details_grid.addWidget(self.lbl_about_ver_name, 0, 0)
         details_grid.addWidget(self.lbl_about_ver_val, 0, 1)
@@ -2499,8 +2722,40 @@ class NetOpsAgentUI(QMainWindow):
         details_grid.addWidget(self.lbl_about_site_val, 2, 1)
         details_grid.addWidget(self.lbl_about_support_name, 3, 0)
         details_grid.addWidget(self.lbl_about_support_val, 3, 1)
+        details_grid.addWidget(self.lbl_about_wechat_name, 4, 0)
+        details_grid.addWidget(self.lbl_about_wechat_val, 4, 1)
         
-        about_layout.addLayout(details_grid)
+        left_layout.addLayout(details_grid)
+        about_layout.addWidget(left_widget, 5)
+        
+        # Right side: WeChat QR Code card
+        right_widget = QWidget(self)
+        right_widget.setStyleSheet("background: transparent;")
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(10, 0, 10, 0)
+        right_layout.setSpacing(10)
+        right_layout.setAlignment(Qt.AlignCenter)
+        
+        self.lbl_qr_code = QLabel(self)
+        qr_path = os.path.join(PROJECT_ROOT, "公众号.jpg")
+        if os.path.exists(qr_path):
+            from PySide6.QtGui import QPixmap
+            pixmap = QPixmap(qr_path)
+            self.lbl_qr_code.setPixmap(pixmap.scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.lbl_qr_code.setStyleSheet("border: 1px solid #CBD5E1; border-radius: 8px; padding: 6px; background-color: #FFFFFF;")
+        else:
+            self.lbl_qr_code.setText("[QR Code]")
+            self.lbl_qr_code.setStyleSheet("color: #64748B; font-size: 12px;")
+            
+        self.lbl_qr_desc = QLabel(self)
+        self.lbl_qr_desc.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: bold; margin-top: 4px;")
+        self.lbl_qr_desc.setAlignment(Qt.AlignCenter)
+        
+        right_layout.addWidget(self.lbl_qr_code, 0, Qt.AlignCenter)
+        right_layout.addWidget(self.lbl_qr_desc, 0, Qt.AlignCenter)
+        
+        about_layout.addWidget(right_widget, 3)
+        
         layout.addWidget(card_about)
         layout.addStretch()
         
@@ -2531,65 +2786,10 @@ class NetOpsAgentUI(QMainWindow):
         style = DARK_STYLE if self.dark_mode else LIGHT_STYLE
         self.setStyleSheet(style)
         
-        # Specific sub-style for dropdown views to avoid massive QSS parsing lag
-        view_bg = "#1E293B" if self.dark_mode else "#FFFFFF"
-        view_border = "#334155" if self.dark_mode else "#CBD5E1"
-        item_color = "#E2E8F0" if self.dark_mode else "#0F172A"
-        item_sel_bg = "#334155" if self.dark_mode else "#F1F5F9"
-        item_sel_color = "#FFFFFF" if self.dark_mode else "#0F172A"
-        scrollbar_handle = "#334155" if self.dark_mode else "#CBD5E1"
-        scrollbar_hover = "#475569" if self.dark_mode else "#94A3B8"
-        
-        view_style = f"""
-            QListView {{
-                background-color: {view_bg};
-                border: 1px solid {view_border};
-                border-radius: 6px;
-                padding: 4px;
-                outline: none;
-            }}
-            QListView::item {{
-                padding: 6px 12px;
-                min-height: 26px;
-                border-radius: 4px;
-                color: {item_color};
-                background-color: {view_bg};
-            }}
-            QListView::item:selected, QListView::item:hover {{
-                background-color: {item_sel_bg};
-                color: {item_sel_color};
-            }}
-            QScrollBar:vertical {{
-                border: none;
-                background-color: transparent;
-                width: 6px;
-                margin: 0px;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: {scrollbar_handle};
-                min-height: 20px;
-                border-radius: 3px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background-color: {scrollbar_hover};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-                background: none;
-            }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-                background: none;
-            }}
-        """
-        
-        # Style the views directly to avoid global QApplication style recalculation lag
         for combo in [self.combo_lang_settings, self.combo_theme, self.combo_ips, self.combo_log_source, self.combo_controller_ip]:
             # Force using QStyledItemDelegate so custom item backgrounds and highlights are respected
             if not isinstance(combo.itemDelegate(), QStyledItemDelegate):
                 combo.setItemDelegate(QStyledItemDelegate(combo))
-            view = combo.view()
-            if view:
-                view.setStyleSheet(view_style)
                 
         set_dark_title_bar(self.winId(), self.dark_mode)
 
@@ -2677,10 +2877,12 @@ class NetOpsAgentUI(QMainWindow):
         # Page 5: About
         self.lbl_about_name.setText(tr["about_name"])
         self.lbl_about_desc.setText(tr["about_desc"])
-        self.lbl_about_ver_name.setText(tr["agent_ver"] if False else "Version:")
-        self.lbl_about_build_name.setText(tr["about_build"] if False else "Build Number:")
-        self.lbl_about_site_name.setText(tr["about_site"] if False else "Official Website:")
-        self.lbl_about_support_name.setText(tr["about_support"] if False else "Technical Support:")
+        self.lbl_about_ver_name.setText("版本 (Version):" if self.lang == "zh" else "Version:")
+        self.lbl_about_build_name.setText("构建编号 (Build):" if self.lang == "zh" else "Build Number:")
+        self.lbl_about_site_name.setText("官方网站 (Website):" if self.lang == "zh" else "Official Website:")
+        self.lbl_about_support_name.setText("技术支持 (Support):" if self.lang == "zh" else "Technical Support:")
+        self.lbl_about_wechat_name.setText("微信公众号 (WeChat):" if self.lang == "zh" else "WeChat Account:")
+        self.lbl_qr_desc.setText("扫码关注微信公众号" if self.lang == "zh" else "Scan to Follow WeChat")
         
         # System Tray Menu Actions
         if hasattr(self, 'tray_menu_actions'):
@@ -2700,6 +2902,7 @@ class NetOpsAgentUI(QMainWindow):
     def start_backend_server(self):
         global backend_process
         self.backend_starting = True
+        self.btn_start.setText(TRANSLATIONS[self.lang]["btn_start_loading"])
         with process_lock:
             existing_pid = get_pid_occupying_port(5010)
             if existing_pid is not None or (backend_process is not None and backend_process.poll() is None):
@@ -2845,11 +3048,13 @@ class NetOpsAgentUI(QMainWindow):
         self.browser_open_attempts += 1
         if self.is_port_occupied_fast("127.0.0.1", 5010):
             self.browser_timer.stop()
-            self.open_console_browser()
+            if getattr(self, "auto_open_browser", True):
+                self.open_console_browser()
         elif self.browser_open_attempts >= 50:
             self.browser_timer.stop()
             logger.warning("Timeout waiting for backend server to start. Opening browser anyway.")
-            self.open_console_browser()
+            if getattr(self, "auto_open_browser", True):
+                self.open_console_browser()
 
     def open_console_browser(self):
         logger.info("Opening console browser: %s", APP_URL)

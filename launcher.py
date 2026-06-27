@@ -1054,6 +1054,50 @@ def main():
         except Exception:
             pass
 
+        # Fast-start bypass check (no-GUI mode for daily starts)
+        env_path = os.path.join(PROJECT_ROOT, ".env")
+        venv_path = os.path.join(PROJECT_ROOT, ".venv")
+        pythonw_exe = os.path.join(venv_path, "Scripts", "pythonw.exe")
+        tray_script = os.path.join(PROJECT_ROOT, "desktop_tray.py")
+        
+        if os.path.exists(env_path) and os.path.exists(pythonw_exe) and os.path.exists(tray_script):
+            if os.path.exists(os.path.join(venv_path, "pyvenv.cfg")):
+                try:
+                    import subprocess
+                    clean_env = dict(os.environ)
+                    clean_env.pop("_MEIPASS", None)
+                    clean_env.pop("PYTHONHOME", None)
+                    clean_env.pop("PYTHONPATH", None)
+                    
+                    keys_to_pop = []
+                    for k, v in clean_env.items():
+                        if k.upper() == "PATH":
+                            continue
+                        if k.startswith("_PYI_") or "_mei" in k.lower() or "_mei" in v.lower():
+                            keys_to_pop.append(k)
+                    for k in keys_to_pop:
+                        clean_env.pop(k, None)
+                        
+                    path = clean_env.get("PATH", "")
+                    if path:
+                        paths = path.split(os.pathsep)
+                        cleaned_paths = [p for p in paths if "_mei" not in p.lower()]
+                        clean_env["PATH"] = os.pathsep.join(cleaned_paths)
+                        
+                    subprocess.Popen(
+                        [pythonw_exe, "desktop_tray.py"],
+                        cwd=PROJECT_ROOT,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        close_fds=True,
+                        creationflags=0x08000000,
+                        env=clean_env
+                    )
+                    log_message("Fast-start: NetOps desktop tray process launched directly.")
+                    sys.exit(0)
+                except Exception as e:
+                    log_message(f"Fast-start failed: {e}")
+
     # Enable High DPI icons and layouts
     from PySide6.QtCore import QCoreApplication
     plugins_path = os.path.join(PROJECT_ROOT, ".venv", "Lib", "site-packages", "PySide6", "plugins")

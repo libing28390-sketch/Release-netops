@@ -734,14 +734,14 @@ cd netops-automation
 ##### Option A: Interactive Command Prompt (Foreground Mode)
 1. Double-click `start.bat` in the root folder.
 2. Select **[1] 启动 NetOps (在前台控制台运行)**.
-3. The server starts in the terminal and your default browser opens to `http://127.0.0.1:9010`. Keep the terminal window open to keep the service running.
+3. The server starts in the terminal and your default browser opens to `http://127.0.0.1:5010`. Keep the terminal window open to keep the service running.
 
 ##### Option B: System Tray & Background Mode (Recommended Desktop Experience)
 1. Double-click `start.bat` in the root folder.
 2. Select **[2] 创建桌面快捷方式 (后台无窗口运行)**. This will:
    - Install desktop tray dependencies (`pystray`).
    - Create a desktop shortcut named **NetOps 运维平台** with a custom network topology icon.
-3. Double-click the new desktop shortcut. The server starts silently in the background (no console windows). A network topology icon appears in your Windows system tray, and your browser opens to `http://127.0.0.1:9010`.
+3. Double-click the new desktop shortcut. The server starts silently in the background (no console windows). A network topology icon appears in your Windows system tray, and your browser opens to `http://127.0.0.1:5010`.
 4. To stop the service, right-click the system tray icon and choose **退出 (Exit)**.
 
 ---
@@ -777,13 +777,13 @@ cd netops-automation
 ##### 方式 A：前台命令行模式
 1. 双击运行根目录下的 `start.bat`。
 2. 输入选项 `1` 选择 **[1] 启动 NetOps (在前台控制台运行)**。
-3. 系统会在黑窗口中启动服务，并自动打开默认浏览器访问 `http://127.0.0.1:9010`。此命令行窗口必须保持开启，服务才会运行。
+3. 系统会在黑窗口中启动服务，并自动打开默认浏览器访问 `http://127.0.0.1:5010`。此命令行窗口必须保持开启，服务才会运行。
 
 ##### 方式 B：后台系统托盘模式（推荐桌面体验）
 1. 双击运行根目录下的 `start.bat`。
 2. 输入选项 `2` 选择 **[2] 创建桌面快捷方式 (后台无窗口运行)**。该步骤将：
    - 自动检测并安装托盘管理包（`pystray`）。
    - 在您的 Windows 桌面上生成一个名为 **NetOps 运维平台** 的快捷方式，并绑定专属网络拓扑图标。
-3. 双击运行桌面上的 **NetOps 运维平台** 快捷方式。系统将以静默模式在后台启动（不弹出任何黑色控制台），并在右下角系统托盘生成专属图标，随后自动调起默认浏览器打开 `http://127.0.0.1:9010`。
+3. 双击运行桌面上的 **NetOps 运维平台** 快捷方式。系统将以静默模式在后台启动（不弹出任何黑色控制台），并在右下角系统托盘生成专属图标，随后自动调起默认浏览器打开 `http://127.0.0.1:5010`。
 4. 若需停止服务，只需在系统托盘右键该图标并点击 **退出 (Exit)** 即可。
 
