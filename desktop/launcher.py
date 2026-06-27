@@ -18,9 +18,14 @@ import urllib.request
 import zipfile
 import winreg
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if getattr(sys, 'frozen', False):
+    # Running as the bundled NetOps.exe, which lives at the repo root.
     PROJECT_ROOT = os.path.dirname(os.path.abspath(sys.executable))
+    DESKTOP_DIR = os.path.join(PROJECT_ROOT, "desktop")
+else:
+    # Running as desktop/launcher.py during development.
+    DESKTOP_DIR = os.path.dirname(os.path.abspath(__file__))
+    PROJECT_ROOT = os.path.dirname(DESKTOP_DIR)
 
 LOG_FILE = os.path.join(PROJECT_ROOT, "launcher_setup.log")
 
@@ -546,9 +551,9 @@ class SetupWorker(QObject):
             # 7. Create desktop shortcut
             self.progress_signal.emit("生成桌面快捷方式...", 0.98)
             try:
-                shortcut_script = os.path.join(PROJECT_ROOT, "create_shortcut.py")
+                shortcut_script = os.path.join(DESKTOP_DIR, "create_shortcut.py")
                 if os.path.exists(shortcut_script):
-                    self.run_command([python_exe, "create_shortcut.py"], cwd=PROJECT_ROOT)
+                    self.run_command([python_exe, shortcut_script], cwd=PROJECT_ROOT)
             except Exception as e:
                 self.write_log(f"[警告] 创建桌面快捷方式失败: {e}\n")
 
@@ -720,7 +725,7 @@ class LauncherUI(QMainWindow):
         self.setGeometry(x, y, 700, 520)
         
         # Program icon
-        ico_path = os.path.join(PROJECT_ROOT, "netops.ico")
+        ico_path = os.path.join(DESKTOP_DIR, "netops.ico")
         if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
             
@@ -994,7 +999,7 @@ class LauncherUI(QMainWindow):
 
     def start_tray_and_exit(self):
         try:
-            tray_script = os.path.join(PROJECT_ROOT, "desktop_tray.py")
+            tray_script = os.path.join(DESKTOP_DIR, "desktop_tray.py")
             pythonw_exe = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "pythonw.exe")
             if os.path.exists(pythonw_exe) and os.path.exists(tray_script):
                 # Clean environmental paths to avoid inheriting temporary bundle paths (_MEIxxxx)
@@ -1019,7 +1024,7 @@ class LauncherUI(QMainWindow):
                     clean_env["PATH"] = os.pathsep.join(cleaned_paths)
 
                 subprocess.Popen(
-                    [pythonw_exe, "desktop_tray.py"],
+                    [pythonw_exe, tray_script],
                     cwd=PROJECT_ROOT,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -1058,7 +1063,7 @@ def main():
         env_path = os.path.join(PROJECT_ROOT, ".env")
         venv_path = os.path.join(PROJECT_ROOT, ".venv")
         pythonw_exe = os.path.join(venv_path, "Scripts", "pythonw.exe")
-        tray_script = os.path.join(PROJECT_ROOT, "desktop_tray.py")
+        tray_script = os.path.join(DESKTOP_DIR, "desktop_tray.py")
         
         if os.path.exists(env_path) and os.path.exists(pythonw_exe) and os.path.exists(tray_script):
             if os.path.exists(os.path.join(venv_path, "pyvenv.cfg")):
@@ -1085,7 +1090,7 @@ def main():
                         clean_env["PATH"] = os.pathsep.join(cleaned_paths)
                         
                     subprocess.Popen(
-                        [pythonw_exe, "desktop_tray.py"],
+                        [pythonw_exe, tray_script],
                         cwd=PROJECT_ROOT,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,

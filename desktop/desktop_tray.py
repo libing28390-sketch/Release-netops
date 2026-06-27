@@ -20,7 +20,8 @@ import zipfile
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DESKTOP_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(DESKTOP_DIR)
 LOG_FILE = os.path.join(PROJECT_ROOT, "desktop_tray.log")
 
 def rotate_log_file(filepath, max_backups=10):
@@ -137,7 +138,7 @@ def set_dark_title_bar(window_handle, enabled):
 # Helper function to generate clean colored dot icons in memory
 def create_status_icon(color_name):
     # Load netops.ico if it exists, otherwise fallback to empty transparent pixmap
-    ico_path = os.path.join(PROJECT_ROOT, "netops.ico")
+    ico_path = os.path.join(DESKTOP_DIR, "netops.ico")
     if os.path.exists(ico_path):
         pixmap = QIcon(ico_path).pixmap(32, 32)
     else:
@@ -1288,7 +1289,7 @@ def set_autostart_registry(enabled):
     if getattr(sys, 'frozen', False):
         app_path = f'"{sys.executable}"'
     else:
-        launcher_path = os.path.join(PROJECT_ROOT, "launcher.py")
+        launcher_path = os.path.join(DESKTOP_DIR, "launcher.py")
         venv_pythonw = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "pythonw.exe")
         if os.path.exists(venv_pythonw) and os.path.exists(launcher_path):
             app_path = f'"{venv_pythonw}" "{launcher_path}"'
@@ -1383,7 +1384,7 @@ class NetOpsAgentUI(QMainWindow):
             QTimer.singleShot(500, self.start_backend_server)
 
     def load_settings(self):
-        settings_path = os.path.join(PROJECT_ROOT, "desktop_settings.ini")
+        settings_path = os.path.join(DESKTOP_DIR, "desktop_settings.ini")
         self.settings = QSettings(settings_path, QSettings.IniFormat)
         self.auto_start_service = self.settings.value("auto_start_service", False, type=bool)
         self.minimize_to_tray = self.settings.value("minimize_to_tray", True, type=bool)
@@ -1401,12 +1402,12 @@ class NetOpsAgentUI(QMainWindow):
         # Locate NetOps.exe or launcher.py
         exe_path = os.path.join(PROJECT_ROOT, "NetOps.exe")
         if not os.path.exists(exe_path):
-            launcher_script = os.path.join(PROJECT_ROOT, "launcher.py")
+            launcher_script = os.path.join(DESKTOP_DIR, "launcher.py")
             pythonw_exe = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "pythonw.exe")
             if os.path.exists(pythonw_exe) and os.path.exists(launcher_script):
                 cmd = [pythonw_exe, launcher_script]
             else:
-                cmd = [sys.executable, os.path.join(PROJECT_ROOT, "launcher.py")]
+                cmd = [sys.executable, os.path.join(DESKTOP_DIR, "launcher.py")]
         else:
             cmd = [exe_path]
 
@@ -1960,7 +1961,7 @@ class NetOpsAgentUI(QMainWindow):
             ("meta_addr", "127.0.0.1:5010"),
             ("meta_port", "5010"),
             ("meta_dir", PROJECT_ROOT),
-            ("meta_cfg", os.path.join(PROJECT_ROOT, "desktop_settings.ini")),
+            ("meta_cfg", os.path.join(DESKTOP_DIR, "desktop_settings.ini")),
             ("meta_log", os.path.join(PROJECT_ROOT, "backend_server.log"))
         ]
         
@@ -2654,7 +2655,7 @@ class NetOpsAgentUI(QMainWindow):
         left_layout.setSpacing(14)
         
         self.lbl_about_logo = QLabel(self)
-        logo_path = os.path.join(PROJECT_ROOT, "netops_logo.png")
+        logo_path = os.path.join(DESKTOP_DIR, "netops_logo.png")
         if os.path.exists(logo_path):
             from PySide6.QtGui import QPixmap
             pixmap = QPixmap(logo_path)
@@ -2737,7 +2738,7 @@ class NetOpsAgentUI(QMainWindow):
         right_layout.setAlignment(Qt.AlignCenter)
         
         self.lbl_qr_code = QLabel(self)
-        qr_path = os.path.join(PROJECT_ROOT, "公众号.jpg")
+        qr_path = os.path.join(DESKTOP_DIR, "公众号.jpg")
         if os.path.exists(qr_path):
             from PySide6.QtGui import QPixmap
             pixmap = QPixmap(qr_path)
@@ -3322,7 +3323,7 @@ class NetOpsAgentUI(QMainWindow):
                 zipf.write(summary_path, "summary.txt")
                 
                 # Write settings configuration
-                cfg_path = os.path.join(PROJECT_ROOT, "desktop_settings.ini")
+                cfg_path = os.path.join(DESKTOP_DIR, "desktop_settings.ini")
                 if os.path.exists(cfg_path):
                     zipf.write(cfg_path, "desktop_settings.ini")
                     
@@ -3416,7 +3417,7 @@ def main():
     window.tray_icon = tray_icon
     
     tray_icon.setIcon(create_status_icon("red"))
-    ico_path = os.path.join(PROJECT_ROOT, "netops.ico")
+    ico_path = os.path.join(DESKTOP_DIR, "netops.ico")
     if os.path.exists(ico_path):
         window.setWindowIcon(QIcon(ico_path))
         

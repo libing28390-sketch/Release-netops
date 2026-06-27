@@ -246,6 +246,8 @@ The checklist itself:
 
 ### Deployment
 
+> 📁 **Per-method deployment guides** are organized under [`docs/deploy/`](docs/deploy/README.md): [Windows](docs/deploy/windows.md) · [Docker](docs/deploy/docker.md) · [Ubuntu](docs/deploy/ubuntu.md). The sections below remain the canonical reference.
+
 #### Option 1 — Windows One-Click GUI Deploy (Recommended for Windows)
 
 You can deploy and run NetOps on Windows using the graphical manager:
@@ -554,6 +556,8 @@ bash scripts/preflight-check.sh
 ---
 
 ### 部署方式
+
+> 📁 **按部署方式拆分的导航指南**见 [`docs/deploy/`](docs/deploy/README.md)：[Windows](docs/deploy/windows.md) · [Docker](docs/deploy/docker.md) · [Ubuntu](docs/deploy/ubuntu.md)。下方各小节仍是权威说明。
 
 > [!IMPORTANT]
 > **中国大陆部署建议 / Network Optimization for China Mainland:**

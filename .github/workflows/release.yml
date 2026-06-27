@@ -73,7 +73,8 @@ jobs:
           rm -f -- "--version"
 
           # ── Windows 专属文件清理（只发给 Ubuntu/Linux 用户） ──
-          rm -f NetOps.exe NetOps.spec desktop_tray.py launcher.py create_shortcut.py start.bat netops.ico desktop_settings.ini
+          rm -rf desktop/
+          rm -f NetOps.exe NetOps.spec start.bat netops_logo.png
 
           # ── GitHub Actions 配置（发布仓库不需要 CI）──
           rm -rf .github/

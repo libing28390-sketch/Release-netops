@@ -9,9 +9,10 @@ import sys
 import subprocess
 from PIL import Image, ImageDraw
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-ICO_PATH = os.path.join(PROJECT_ROOT, "netops.ico")
-TRAY_SCRIPT = os.path.join(PROJECT_ROOT, "desktop_tray.py")
+DESKTOP_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(DESKTOP_DIR)
+ICO_PATH = os.path.join(DESKTOP_DIR, "netops.ico")
+TRAY_SCRIPT = os.path.join(DESKTOP_DIR, "desktop_tray.py")
 PYTHONW_PATH = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "pythonw.exe")
 
 def generate_ico_file():
