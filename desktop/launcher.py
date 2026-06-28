@@ -29,6 +29,16 @@ else:
 
 LOG_FILE = os.path.join(PROJECT_ROOT, "launcher_setup.log")
 
+# ── Supported runtime version ranges ────────────────────────────────
+# The project is validated against these ranges (see README). The goal is to
+# REUSE an already-installed, compatible runtime instead of forcing a single
+# version. We only download/install a pinned fallback when nothing compatible
+# is found on the machine.
+SUPPORTED_PY_MIN = (3, 10)          # inclusive
+SUPPORTED_PY_MAX = (3, 12)          # inclusive
+PY_FALLBACK_VERSION = "3.11.9"      # installed only when no compatible Python exists
+NODE_MIN_MAJOR = 18                 # Node.js 18+ (any newer is fine)
+
 # Setup logging
 def log_message(message):
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
@@ -330,32 +340,29 @@ class SetupWorker(QObject):
             self.progress_signal.emit("正在定位运行环境...", 0.05)
             time.sleep(0.5)
 
-            # 1. Check/Install Python
-            self.progress_signal.emit("检查 Python 环境...", 0.1)
-            system_python = "python"
-            has_python = False
-            try:
-                r = subprocess.run(
-                    [system_python, "--version"],
-                    capture_output=True,
-                    text=True,
-                    creationflags=0x08000000
-                )
-                if r.returncode == 0:
-                    has_python = True
-            except Exception:
-                pass
+            # 1. Check/Install a COMPATIBLE Python (range-based, reuse-first).
+            #    Any installed 3.10/3.11/3.12 is reused as-is; we only download
+            #    and install the pinned fallback when nothing compatible exists.
+            self.progress_signal.emit("检查 Python 运行环境 (兼容 3.10-3.12)...", 0.1)
+            system_python = self.find_compatible_python()
 
-            if not has_python:
-                self.write_log("未检测到系统 Python 环境，开始下载并安装 Python 3.11...\n")
-                py_installer_url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
+            if system_python:
+                ver = self._python_version(system_python)
+                ver_str = f"{ver[0]}.{ver[1]}" if ver else "?"
+                self.write_log(f"检测到兼容的 Python {ver_str} 解释器，直接复用: {system_python}\n")
+            else:
+                self.write_log(
+                    f"未检测到兼容的 Python (需要 {SUPPORTED_PY_MIN[0]}.{SUPPORTED_PY_MIN[1]}-"
+                    f"{SUPPORTED_PY_MAX[0]}.{SUPPORTED_PY_MAX[1]})，开始下载并安装 Python {PY_FALLBACK_VERSION}...\n"
+                )
+                py_installer_url = f"https://www.python.org/ftp/python/{PY_FALLBACK_VERSION}/python-{PY_FALLBACK_VERSION}-amd64.exe"
                 py_installer_path = os.path.join(PROJECT_ROOT, "python-installer.exe")
                 
-                self.progress_signal.emit("正在下载 Python 3.11...", 0.15)
-                self.download_file(py_installer_url, py_installer_path, "Python 3.11.9")
+                self.progress_signal.emit(f"正在下载 Python {PY_FALLBACK_VERSION}...", 0.15)
+                self.download_file(py_installer_url, py_installer_path, f"Python {PY_FALLBACK_VERSION}")
                 
                 self.progress_signal.emit("正在执行 Python 静默安装...", 0.25)
-                self.write_log("正在执行 Python 3.11 静默安装 (仅对当前用户安装并添加环境变量)...\n")
+                self.write_log("正在执行 Python 静默安装 (仅对当前用户安装并添加环境变量)...\n")
                 self.run_command([py_installer_path, "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_test=0", "Include_doc=0"])
                 
                 try:
@@ -377,9 +384,17 @@ class SetupWorker(QObject):
                     pass
                 if new_path:
                     os.environ["PATH"] = new_path
-                    self.write_log("Python 成功安装并刷新系统 PATH 变量。\n")
-            else:
-                self.write_log("检测到系统已安装 Python。\n")
+
+                # Re-locate the freshly installed interpreter and use its
+                # absolute path so venv creation never falls back to an
+                # incompatible Python on PATH (e.g. a Microsoft Store stub).
+                system_python = self.find_compatible_python()
+                if not system_python:
+                    raise RuntimeError(
+                        f"Python {PY_FALLBACK_VERSION} 安装后仍未能定位到兼容解释器，"
+                        "请手动安装 Python 3.10-3.12 后重试。"
+                    )
+                self.write_log(f"Python 安装完成: {system_python}\n")
 
             # 2. Virtual Environment Setup
             self.progress_signal.emit("验证虚拟环境 (.venv)...", 0.3)
@@ -478,16 +493,33 @@ class SetupWorker(QObject):
                 
                 npm_available = False
                 npm_cmd = "npm"
+                # Reuse a system Node.js only when it meets the minimum major
+                # version (Node 18+). An older system Node falls back to the
+                # bundled/portable Node so the frontend build stays reliable.
                 try:
-                    r = subprocess.run(
-                        [npm_cmd, "--version"],
-                        capture_output=True,
-                        text=True,
-                        shell=True,
+                    rn = subprocess.run(
+                        ["node", "--version"],
+                        capture_output=True, text=True, shell=True,
                         creationflags=0x08000000
                     )
-                    if r.returncode == 0:
-                        npm_available = True
+                    if rn.returncode == 0:
+                        try:
+                            node_major = int(rn.stdout.strip().lstrip("vV").split(".")[0])
+                        except Exception:
+                            node_major = 0
+                        if node_major >= NODE_MIN_MAJOR:
+                            r = subprocess.run(
+                                [npm_cmd, "--version"],
+                                capture_output=True, text=True, shell=True,
+                                creationflags=0x08000000
+                            )
+                            if r.returncode == 0:
+                                npm_available = True
+                                self.write_log(f"检测到兼容的 Node.js {rn.stdout.strip()}，直接复用。\n")
+                        else:
+                            self.write_log(
+                                f"系统 Node.js {rn.stdout.strip()} 低于最低要求 v{NODE_MIN_MAJOR}，将改用便携版。\n"
+                            )
                 except Exception:
                     pass
 
@@ -566,6 +598,81 @@ class SetupWorker(QObject):
             self.write_log(f"\n[ERROR] 部署过程中遭遇严重错误: {err}\n")
             self.error_signal.emit(str(err))
 
+    def _python_version(self, exe):
+        """Return (major, minor) for a python executable, or None on failure."""
+        try:
+            r = subprocess.run(
+                [exe, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+                capture_output=True, text=True, timeout=8,
+                creationflags=0x08000000
+            )
+            if r.returncode != 0:
+                return None
+            major, minor = r.stdout.strip().split(".")[:2]
+            return (int(major), int(minor))
+        except Exception:
+            return None
+
+    def _python_in_range(self, exe):
+        """True if the executable's version is within the supported range."""
+        ver = self._python_version(exe)
+        return ver is not None and SUPPORTED_PY_MIN <= ver <= SUPPORTED_PY_MAX
+
+    def find_compatible_python(self):
+        """Locate a Python interpreter within the supported range (3.10-3.12).
+
+        Reuses an already-installed, compatible interpreter instead of forcing a
+        single version. Probe order favours what the user already has: PATH
+        ``python``, the ``py`` launcher (highest supported minor first), the
+        registry-registered installs, and the standard install directories.
+        Returns an absolute python.exe path (or the literal ``python``), or None
+        when nothing compatible is present.
+        """
+        # 1. Whatever ``python`` resolves to on PATH, if it is in range.
+        if self._python_in_range("python"):
+            return "python"
+
+        # 2. The Windows ``py`` launcher, preferring the highest supported minor.
+        for minor in range(SUPPORTED_PY_MAX[1], SUPPORTED_PY_MIN[1] - 1, -1):
+            try:
+                r = subprocess.run(
+                    ["py", f"-3.{minor}", "-c", "import sys; print(sys.executable)"],
+                    capture_output=True, text=True, timeout=8,
+                    creationflags=0x08000000
+                )
+                if r.returncode == 0:
+                    exe = r.stdout.strip()
+                    if exe and os.path.exists(exe) and self._python_in_range(exe):
+                        return exe
+            except Exception:
+                pass
+
+        # 3. Registry-registered installs + standard install directories,
+        #    again preferring the highest supported minor version.
+        candidates = []
+        local = os.environ.get("LOCALAPPDATA", "")
+        for minor in range(SUPPORTED_PY_MAX[1], SUPPORTED_PY_MIN[1] - 1, -1):
+            ver = f"3.{minor}"
+            short = f"Python3{minor}"
+            for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                try:
+                    with winreg.OpenKey(hive, rf"SOFTWARE\Python\PythonCore\{ver}\InstallPath") as key:
+                        install_dir = winreg.QueryValueEx(key, None)[0]
+                        if install_dir:
+                            candidates.append(os.path.join(install_dir, "python.exe"))
+                except Exception:
+                    pass
+            if local:
+                candidates.append(os.path.join(local, "Programs", "Python", short, "python.exe"))
+            candidates.append(rf"C:\Program Files\{short}\python.exe")
+            candidates.append(rf"C:\{short}\python.exe")
+
+        for exe in candidates:
+            if exe and os.path.exists(exe) and self._python_in_range(exe):
+                return exe
+
+        return None
+
     def verify_venv(self, venv_path):
         python_exe = os.path.join(venv_path, "Scripts", "python.exe")
         if not os.path.exists(python_exe):
@@ -595,13 +702,25 @@ class SetupWorker(QObject):
                 clean_env.pop(k, None)
                 
             r = subprocess.run(
-                [python_exe, "-c", "import sys; print(sys.prefix)"],
+                [python_exe, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
                 capture_output=True,
+                text=True,
                 timeout=5,
                 creationflags=0x08000000,
                 env=clean_env
             )
-            return r.returncode == 0
+            if r.returncode != 0:
+                return False
+            # The venv must be a SUPPORTED Python (3.10-3.12). If it is some
+            # other version (e.g. a stale 3.13 environment) treat it as broken
+            # so it gets rebuilt with a compatible interpreter; any in-range
+            # version is accepted as-is and left untouched.
+            try:
+                major, minor = r.stdout.strip().split(".")[:2]
+                ver = (int(major), int(minor))
+            except Exception:
+                return False
+            return SUPPORTED_PY_MIN <= ver <= SUPPORTED_PY_MAX
         except Exception:
             return False
 

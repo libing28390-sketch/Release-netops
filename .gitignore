@@ -97,3 +97,6 @@ artifacts_symlink/
 postgresql-installer.exe
 diagnostic_report.zip
 公众号.jpg
+
+# Portable/bundled Node.js downloaded by the launcher (large, regenerable)
+tools/node/

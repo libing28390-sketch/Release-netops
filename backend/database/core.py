@@ -65,6 +65,42 @@ _POOL_SIZE = int(os.environ.get('DB_POOL_SIZE', '16'))
 if _USE_PG:
     _pg_pool: psycopg2.pool.ThreadedConnectionPool | None = None
 
+    def _decode_pg_error(exc: BaseException) -> str:
+        """Recover a readable message from a psycopg2 error that failed UTF-8 decode.
+
+        On Windows with a non-UTF-8 (e.g. Chinese GBK) PostgreSQL locale, libpq
+        returns connection-failure messages encoded in the OS locale. psycopg2
+        decodes them as UTF-8 and raises UnicodeDecodeError, masking the real
+        cause (bad password, missing database, server down). We recover the raw
+        bytes and decode them with locale-aware fallbacks.
+        """
+        if isinstance(exc, UnicodeDecodeError) and isinstance(exc.object, (bytes, bytearray)):
+            raw = bytes(exc.object)
+            for enc in ('gbk', 'mbcs', 'latin-1'):
+                try:
+                    return raw.decode(enc).strip()
+                except (LookupError, UnicodeDecodeError):
+                    continue
+            return raw.decode('utf-8', 'replace').strip()
+        return str(exc)
+
+    def _pg_connect(**kwargs):
+        """psycopg2.connect forced to UTF-8 client encoding, with readable errors.
+
+        ``client_encoding='UTF8'`` makes the server encode runtime messages as
+        UTF-8 for this session. Connection-time failures happen before encoding
+        negotiation, so any UnicodeDecodeError is converted into a readable
+        OperationalError instead of the original cryptic byte-decode traceback.
+        """
+        kwargs.setdefault('client_encoding', 'UTF8')
+        try:
+            return psycopg2.connect(**kwargs)
+        except UnicodeDecodeError as e:
+            raise psycopg2.OperationalError(
+                "无法连接 PostgreSQL（数据库返回非 UTF-8 错误消息，已转码）："
+                + _decode_pg_error(e)
+            ) from None
+
     def _ensure_database_exists():
         from urllib.parse import urlparse, urlunparse
         try:
@@ -77,7 +113,7 @@ if _USE_PG:
             postgres_parsed = parsed._replace(path='/postgres')
             postgres_url = urlunparse(postgres_parsed)
             
-            conn = psycopg2.connect(dsn=postgres_url)
+            conn = _pg_connect(dsn=postgres_url)
             conn.autocommit = True
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,))
@@ -92,13 +128,22 @@ if _USE_PG:
         global _pg_pool
         if _pg_pool is None:
             _ensure_database_exists()
-            _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=2, maxconn=_POOL_SIZE, dsn=_DATABASE_URL,
-                keepalives=1,
-                keepalives_idle=30,
-                keepalives_interval=10,
-                keepalives_count=5
-            )
+            try:
+                _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=2, maxconn=_POOL_SIZE, dsn=_DATABASE_URL,
+                    client_encoding='UTF8',
+                    keepalives=1,
+                    keepalives_idle=30,
+                    keepalives_interval=10,
+                    keepalives_count=5
+                )
+            except UnicodeDecodeError as e:
+                # Surface the real cause (e.g. password/auth failure) instead of
+                # the misleading byte-decode error from a GBK-locale server.
+                raise psycopg2.OperationalError(
+                    "无法初始化 PostgreSQL 连接池（数据库返回非 UTF-8 错误消息，已转码）："
+                    + _decode_pg_error(e)
+                ) from None
 
     _LIKE_RE = re.compile(r'\bLIKE\b', re.IGNORECASE)
 
@@ -278,7 +323,7 @@ def _make_raw_connection():
             logger.warning(
                 "PG pool exhausted (max=%d). Creating overflow connection.", _POOL_SIZE
             )
-            raw = psycopg2.connect(dsn=_DATABASE_URL, **_pg_kwargs)
+            raw = _pg_connect(dsn=_DATABASE_URL, **_pg_kwargs)
             overflow = True
 
         try:
@@ -295,12 +340,12 @@ def _make_raw_connection():
             except Exception:
                 pass
             if overflow:
-                raw = psycopg2.connect(dsn=_DATABASE_URL, **_pg_kwargs)
+                raw = _pg_connect(dsn=_DATABASE_URL, **_pg_kwargs)
             else:
                 try:
                     raw = _pg_pool.getconn()
                 except psycopg2.pool.PoolError:
-                    raw = psycopg2.connect(dsn=_DATABASE_URL, **_pg_kwargs)
+                    raw = _pg_connect(dsn=_DATABASE_URL, **_pg_kwargs)
                     overflow = True
         return _PgPooledConnection(_PgRawConnection(raw), raw, overflow)
     else:
