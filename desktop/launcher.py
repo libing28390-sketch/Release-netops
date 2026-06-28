@@ -15,6 +15,8 @@ import subprocess
 import ctypes
 import socket
 import urllib.request
+import urllib.error
+import ssl
 import zipfile
 import winreg
 
@@ -269,6 +271,38 @@ class SetupWorker(QObject):
             self.write_log(f"Error executing command: {e}\n")
             raise e
 
+    def _build_ssl_context(self, verify=True):
+        """Build a TLS context. Prefer the certifi CA bundle (frozen apps and
+        fresh VMs often lack a usable system trust store); fall back to the
+        system default, or an unverified context when verify=False."""
+        if not verify:
+            return ssl._create_unverified_context()
+        try:
+            import certifi
+            return ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            return ssl.create_default_context()
+
+    def _urlopen(self, req, timeout=60):
+        """urlopen with a resilient TLS strategy for clean/locked-down machines.
+
+        Verifies the certificate first (certifi bundle, then system store). If
+        verification fails - common on a fresh VM that lacks root CAs, or behind
+        a TLS-intercepting proxy - it retries these trusted official download
+        URLs over an unverified context, logging a clear warning.
+        """
+        try:
+            return urllib.request.urlopen(req, timeout=timeout, context=self._build_ssl_context(True))
+        except urllib.error.URLError as e:
+            reason = getattr(e, "reason", e)
+            if isinstance(reason, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(reason):
+                self.write_log(
+                    "[警告] TLS 证书校验失败（本机可能缺少根证书或存在代理拦截）。"
+                    "将对官方下载地址改用免校验连接重试...\n"
+                )
+                return urllib.request.urlopen(req, timeout=timeout, context=self._build_ssl_context(False))
+            raise
+
     def download_file(self, url, dest_path, desc):
         self.write_log(f"开始下载 {desc}...\nURL: {url}\n")
         try:
@@ -276,7 +310,7 @@ class SetupWorker(QObject):
                 url, 
                 headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
             )
-            with urllib.request.urlopen(req) as response:
+            with self._urlopen(req) as response:
                 total_size = int(response.info().get('Content-Length', 0))
                 downloaded = 0
                 block_size = 1024 * 64
