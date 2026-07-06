@@ -1,0 +1,14 @@
+Value CPU_5_SEC (\d+)
+Value CPU_1_MIN (\d+)
+Value CPU_5_MIN (\d+)
+Value SLOT (\d+)
+
+Start
+  # Slot 0 CPU 0 CPU usage:
+  ^Slot\s+${SLOT}\s+CPU\s+\d+\s+CPU\s+usage
+  # 5 seconds: 12%  1 minute: 10%  5 minutes: 8%
+  ^\s*${CPU_5_SEC}%\s+in\s+last\s+5\s+seconds
+  ^\s*${CPU_1_MIN}%\s+in\s+last\s+1\s+minute
+  ^\s*${CPU_5_MIN}%\s+in\s+last\s+5\s+minutes -> Record
+  # 兼容老格式: 5 seconds: 12%  1 minute: 10%  5 minutes: 8%
+  ^\s*5\s+seconds:\s+${CPU_5_SEC}%\s+1\s+minute:\s+${CPU_1_MIN}%\s+5\s+minutes:\s+${CPU_5_MIN}% -> Record

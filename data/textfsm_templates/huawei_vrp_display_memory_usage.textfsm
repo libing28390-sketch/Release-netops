@@ -1,0 +1,11 @@
+Value SYSTEM_TOTAL_MEMORY (\d+)
+Value TOTAL_MEMORY_USED (\d+)
+Value MEMORY_USING_PCT (\d+)
+
+Start
+  # System Total Memory Is: 3959422976 bytes
+  ^\s*System\s+Total\s+Memory\s+Is:\s+${SYSTEM_TOTAL_MEMORY}\s+bytes
+  # Total Memory Used Is: 39678804 bytes
+  ^\s*Total\s+Memory\s+Used\s+Is:\s+${TOTAL_MEMORY_USED}\s+bytes
+  # Memory Using Percentage Is: 21%
+  ^\s*Memory\s+Using\s+Percentage\s+Is:\s+${MEMORY_USING_PCT}% -> Record
