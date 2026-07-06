@@ -1,0 +1,21 @@
+Value SLOT (\d+)
+Value TOTAL_KB (\d+)
+Value USED_KB (\d+)
+Value FREE_KB (\d+)
+Value SHARED_KB (\d+)
+Value BUFFERS_KB (\d+)
+Value CACHED_KB (\d+)
+Value USER_FREE_KB (\d+)
+
+Start
+  # Slot 0:
+  ^Slot\s+${SLOT}:
+  # Total(kB): 1048576
+  ^\s*Total\s*\(kB\):\s+${TOTAL_KB}
+  ^\s*Used\s*\(kB\):\s+${USED_KB}
+  ^\s*Free\s*\(kB\):\s+${FREE_KB}
+  ^\s*Shared\s*\(kB\):\s+${SHARED_KB}
+  ^\s*Buffers\s*\(kB\):\s+${BUFFERS_KB}
+  ^\s*Cached\s*\(kB\):\s+${CACHED_KB}
+  ^\s*UserFree\s*\(kB\):\s+${USER_FREE_KB} -> Record
+  # 兼容老格式（Comware V5 有不同格式，这里主要支持 V7/V9）
