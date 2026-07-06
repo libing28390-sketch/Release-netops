@@ -1,0 +1,25 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M10 8H49L58 17V55H10V8Z" fill="#0A9AD9"/>
+  <path d="M49 8L58 17H49V8Z" fill="#6ED3FF"/>
+  <path d="M10 8H49L58 17" stroke="#C8F2FF" stroke-width="1.5"/>
+  <path d="M10 55V8" stroke="#0679AE" stroke-width="2"/>
+  <path d="M58 17V55" stroke="#0679AE" stroke-width="2"/>
+  <path d="M10 55H58" stroke="#0679AE" stroke-width="2"/>
+  <circle cx="32" cy="31" r="6.5" fill="#E84362"/>
+  <path d="M32 14V23" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <path d="M32 39V48" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <path d="M15 31H24" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <path d="M40 31H49" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <path d="M20 19L25.5 24.5" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <path d="M38.5 37.5L44 43" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <path d="M20 43L25.5 37.5" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <path d="M38.5 24.5L44 19" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <path d="M32 14L28.5 18H35.5L32 14Z" fill="white"/>
+  <path d="M32 48L28.5 44H35.5L32 48Z" fill="white"/>
+  <path d="M15 31L19 27.5V34.5L15 31Z" fill="white"/>
+  <path d="M49 31L45 27.5V34.5L49 31Z" fill="white"/>
+  <path d="M20 19L20 24.2L24.2 24.2" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M44 43L43.8 37.8L38.6 37.8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M20 43L24.2 43L24.2 38.8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M44 19L38.8 19L38.8 24.2" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
