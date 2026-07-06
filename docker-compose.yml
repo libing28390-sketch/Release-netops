@@ -1,0 +1,70 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: netops-db
+    environment:
+      # These variables can be overridden in the .env file
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-netops}
+    volumes:
+      - netops-pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  netops:
+    build: .
+    container_name: netops-automation
+    expose:
+      - "8003"
+    environment:
+      - NODE_ENV=production
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-netops}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-change-me-to-a-random-secret}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+    volumes:
+      - netops-data:/app/data
+      - netops-backup:/app/backup
+      - netops-dist:/app/dist
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: netops-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - netops-dist:/usr/share/nginx/html:ro
+      # SSL volume mounted to /etc/nginx/ssl
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      netops:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  netops-data:
+  netops-backup:
+  netops-pgdata:
+  netops-dist:

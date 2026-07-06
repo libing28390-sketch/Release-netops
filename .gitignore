@@ -1,0 +1,102 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+Thumbs.db
+*.log
+.env*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+# Database and session data
+data/netops.db
+data/netops.db-shm
+data/netops.db-wal
+backend/data/*.db
+data/pam_recordings/
+data/pam_audit/
+data/change_order_attachments/
+*.cast
+
+# License files
+data/license*.json
+tools/license_issuer/issued/
+tools/license_issuer/credentials.json
+
+# Scratch and temporary files
+scratch/
+backup/
+data/logs/
+.vscode/
+zhihu*.md
+_out/
+backend/tests/_out/
+
+# Local DBs
+*.db
+*.db-shm
+*.db-wal
+
+# Root license
+license.json
+backend/tests/test_pbt_p8_migration_idempotency.py
+tools/license_issuer/issued/registry.json
+
+# Video Presentation & TTS Generation
+azure_presentation/
+video_presentation/
+scripts/generate_azure_speech.py
+scripts/generate_video_audio.py
+test_dragon.mp3
+
+# Cython intermediate files
+backend/license_auth/*.c
+tools/license_issuer/issued/registry.json
+
+# Agent / IDE Artifacts
+task.md
+task_progress.md
+task-progress-*.md
+docs/task-progress-*.md
+implementation_plan.md
+walkthrough.md
+refactor.cjs
+refactor2.cjs
+test_dragon.mp3
+patch-vmware.sh
+patch-*.sh
+hotfix-*.sh
+_check_*.py
+_regen_*.py
+
+# Keys — private key must never be committed; public key IS required for deployment
+*.pem
+!backend/license_auth/keys/public.pem
+docs/cleanup_docker.md
+docs/cleanup_script.md
+docs/tts_scripts/录音.md
+docs/tts_scripts/device_onboarding_and_rotation_20260524.srt
+docs/tts_scripts/device_onboarding_and_rotation.md
+docs/tts_scripts/device_onboarding_and_rotation.wav
+docs/tts_scripts/device_onboarding_and_rotation.mp3
+docs/tts_scripts/device_onboarding_and_rotation_20260524.wav
+docs/tts_scripts/device_onboarding_and_rotation_20260524.mp3
+docs/tts_scripts/device_onboarding_and_rotation.srt
+docs/tts_scripts/test_concat.mp3
+scripts/generate_device_onboarding_audio.py
+README.gitee.md
+deploy-ubuntu.gitee.sh
+
+# Local session links and codex-bridge cache
+artifacts_symlink/
+~/
+
+# Large executables and installers
+postgresql-installer.exe
+diagnostic_report.zip
+公众号.jpg
+
+# Portable/bundled Node.js downloaded by the launcher (large, regenerable)
+tools/node/
