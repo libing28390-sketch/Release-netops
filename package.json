@@ -18,7 +18,10 @@
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "tsc --noEmit",
     "dev:internal": "concurrently \"npm run dev:backend\" \"npm run wait:backend && npm run dev:frontend\"",
-    "start:internal": "node -e \"const p=process.platform==='win32'?'.venv/Scripts/python.exe':'.venv/bin/python';require('child_process').execSync('cross-env NODE_ENV=production '+p+' backend/main.py',{stdio:'inherit'})\""
+    "start:internal": "node -e \"const p=process.platform==='win32'?'.venv/Scripts/python.exe':'.venv/bin/python';require('child_process').execSync('cross-env NODE_ENV=production '+p+' backend/main.py',{stdio:'inherit'})\"",
+    "release:patch": "npm version patch && git push origin main --tags",
+    "release:minor": "npm version minor && git push origin main --tags",
+    "release:major": "npm version major && git push origin main --tags"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
