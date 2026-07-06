@@ -2,8 +2,8 @@ name: Build and Sync to Release Repo
 
 on:
   push:
-    branches:
-      - main  # 只有推送到 main 分支时才会触发
+    tags:
+      - 'v*'  # 当推送形如 v1.0.0 的标签时触发
   workflow_dispatch: # 允许在网页上点击按钮手动触发
 
 jobs:
@@ -86,6 +86,39 @@ jobs:
           git branch -M main
           git remote add origin https://${{ secrets.RELEASE_REPO_TOKEN }}@github.com/libing28390-sketch/Release-netops.git
           git push -u origin main --force
+          
+          # 针对生成的提交创建 Tag 并强制推送
+          git tag ${{ github.ref_name }}
+          git push origin ${{ github.ref_name }} --force
+
+      - name: 4. 从开发库获取自动生成的 Release 日志
+        id: get_notes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const tag = context.payload.ref.replace('refs/tags/', '');
+              const response = await github.rest.repos.generateReleaseNotes({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag
+              });
+              core.setOutput('body', response.data.body);
+            } catch (err) {
+              core.warning('无法生成 Release 日志: ' + err.message);
+              core.setOutput('body', '🚀 Release build: Production ready stable Ubuntu release');
+            }
+
+      - name: 5. 在对外发布仓库创建 Release 并挂载日志
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.RELEASE_REPO_TOKEN }}
+          repository: libing28390-sketch/Release-netops
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: ${{ steps.get_notes.outputs.body }}
+          draft: false
+          prerelease: false
 
   release-windows:
     name: Release Windows (windows branch)
@@ -166,3 +199,7 @@ jobs:
           git branch -M windows
           git remote add origin https://${{ secrets.RELEASE_REPO_TOKEN }}@github.com/libing28390-sketch/Release-netops.git
           git push -u origin windows --force
+          
+          # 针对 Windows 分支的提交创建独特的 Tag 并强制推送
+          git tag "${{ github.ref_name }}-windows"
+          git push origin "${{ github.ref_name }}-windows" --force
