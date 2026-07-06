@@ -88,7 +88,6 @@ export const useCommandPalette = ({ language, t }: UseCommandPaletteArgs): UseCo
       { path: '/reports', label: zh ? '报表中心' : 'Reports', group: zh ? '分析报告' : 'Analytics' },
       { path: '/audit', label: t('auditLogs'), group: zh ? '平台管理' : 'Management' },
       { path: '/users', label: t('userManagement'), group: zh ? '平台管理' : 'Management' },
-      { path: '/license', label: zh ? '授权管理' : 'License Management', group: zh ? '平台管理' : 'Management' },
       { path: '/change-orders/all', label: zh ? '全部工单' : 'All Orders', group: zh ? '工单管理' : 'Tickets' },
       { path: '/change-orders/group-todo', label: zh ? '组内待办' : 'Group Todo', group: zh ? '工单管理' : 'Tickets' },
       { path: '/change-orders/my-todo', label: zh ? '个人待办' : 'My Todo', group: zh ? '工单管理' : 'Tickets' },

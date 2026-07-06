@@ -58,58 +58,7 @@ interface CapacityPlanningTabProps {
   t: (key: string) => string;
 }
 
-/* ───────── Mock data for demo ───────── */
 
-const MOCK_RISKS: RiskItem[] = [
-  {
-    id: 'core-sw-a', hostname: '核心交换机-A区', resource: 'ARP 表项', resourceEn: 'ARP Table',
-    usage: 88, daysLeft: 7, severity: 'critical',
-    trend: [72, 75, 78, 80, 83, 85, 88],
-  },
-  {
-    id: 'fw-01', hostname: '边界防火墙-01', resource: 'IPsec VPN 隧道', resourceEn: 'IPsec VPN Tunnels',
-    usage: 75, daysLeft: 22, severity: 'warning',
-    trend: [60, 63, 65, 68, 70, 73, 75],
-  },
-  {
-    id: 'db-cluster', hostname: 'DB-Server-集群', resource: 'IOPS', resourceEn: 'IOPS',
-    usage: 60, daysLeft: null, severity: 'normal',
-    trend: [55, 56, 57, 58, 58, 59, 60],
-  },
-  {
-    id: 'core-rt-b', hostname: '核心路由器-B栋', resource: '路由表容量', resourceEn: 'Route Table',
-    usage: 82, daysLeft: 14, severity: 'warning',
-    trend: [68, 70, 73, 75, 78, 80, 82],
-  },
-  {
-    id: 'access-sw-3f', hostname: '接入交换机-3F', resource: 'MAC 表项', resourceEn: 'MAC Table',
-    usage: 91, daysLeft: 4, severity: 'critical',
-    trend: [78, 81, 84, 86, 88, 90, 91],
-  },
-];
-
-function generateChartData(zh: boolean) {
-  const today = new Date();
-  const data: { date: string; actual: number | null; predicted: number | null }[] = [];
-  // Past 30 days
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const label = `${d.getMonth() + 1}/${d.getDate()}`;
-    const base = 62 + (30 - i) * 0.7 + Math.sin(i * 0.5) * 4;
-    data.push({ date: label, actual: Math.round(base * 10) / 10, predicted: null });
-  }
-  // Future 30 days
-  const lastActual = data[data.length - 1].actual!;
-  for (let i = 1; i <= 30; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + i);
-    const label = `${d.getMonth() + 1}/${d.getDate()}`;
-    const val = lastActual + i * 0.55 + Math.sin(i * 0.3) * 2;
-    data.push({ date: label, actual: null, predicted: Math.round(Math.min(val, 100) * 10) / 10 });
-  }
-  return data;
-}
 
 /* ───────── Helpers ───────── */
 
@@ -255,13 +204,17 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
     }
 
     const merged = [...apiRisks, ...healthyDevices];
-    
-    // If no real devices exist in the DB, fallback to MOCK data
-    if (merged.length === 0) {
-      return MOCK_RISKS;
-    }
     return merged;
   }, [apiWarnings, overview]);
+
+  // Default to selecting the first risk item if none selected
+  useEffect(() => {
+    if (riskItems.length > 0 && !selectedRisk) {
+      setSelectedRisk(riskItems[0]);
+    } else if (riskItems.length === 0 && selectedRisk) {
+      setSelectedRisk(null);
+    }
+  }, [riskItems, selectedRisk]);
 
   const filteredRisks = useMemo(() => {
     let items = riskItems;
@@ -290,16 +243,7 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
   const chartData = useMemo(() => {
     // If there is no interface telemetry data
     if (!activeIntf) {
-      // Check if it's a real device (not a mock device)
-      const isMock = selectedRisk && (
-        selectedRisk.id === 'core-sw-a' || 
-        selectedRisk.id === 'fw-01' || 
-        selectedRisk.id === 'db-cluster' || 
-        selectedRisk.id === 'core-rt-b' || 
-        selectedRisk.id === 'access-sw-3f'
-      );
-      
-      if (selectedRisk && !isMock) {
+      if (selectedRisk) {
         // Real device but no telemetry data yet: Draw a flat 0% baseline
         const today = new Date();
         const emptyData = [];
@@ -315,7 +259,7 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
         }
         return emptyData;
       }
-      return generateChartData(zh);
+      return [];
     }
     const data: any[] = [];
     // 1. Fill 30 days of actual historical metrics

@@ -148,8 +148,6 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'users';
     } else if (second === 'credentials') {
       activeTab = 'credentials';
-    } else if (second === 'license') {
-      activeTab = 'license';
     } else {
       activeTab = 'audit';
     }
@@ -219,7 +217,6 @@ export function getRouteContext(pathname: string): RouteContext {
     else if (first === 'audit') activeTab = 'audit';
     else if (first === 'users') activeTab = 'users';
     else if (first === 'credentials') activeTab = 'credentials';
-    else if (first === 'license') activeTab = 'license';
     else if (first === 'reports') activeTab = 'reports';
   }
 

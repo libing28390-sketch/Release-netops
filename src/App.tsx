@@ -66,7 +66,6 @@ import { getRouteContext } from './utils/routeContext';
 import { avatarPresets, renderAvatarContent } from './utils/avatarPresets';
 import { usePageTitle } from './hooks/usePageTitle';
 import { useCommandPalette } from './hooks/useCommandPalette';
-import { useLicense } from './hooks/useLicense';
 import { useUserProfile } from './hooks/useUserProfile';
 import { useScenarioDraft } from './hooks/useScenarioDraft';
 import { useTopology } from './hooks/useTopology';
@@ -178,15 +177,7 @@ const App: React.FC = () => {
   const routeContext = useMemo(() => getRouteContext(location.pathname), [location.pathname]);
   const { activeTab, configPage, automationPage, inventorySubPage, changeOrderPage, ipamPage, cmdbPage } = routeContext;
 
-  // ── License Management ──
-  const { isLicenseValid, licenseError, licenseFeatures, checkLicenseStatus } = useLicense({
-    isAuthenticated,
-    activeTab,
-    language,
-    navigate,
-    location,
-    showToast,
-  });
+
 
   const deviceFetchMode = useMemo<'light' | 'full'>(() => {
     if (activeTab === 'inventory') return 'full';
@@ -441,7 +432,6 @@ const App: React.FC = () => {
       '/audit': '/management/audit',
       '/users': '/management/users',
       '/credentials': '/management/credentials',
-      '/license': '/management/license',
     };
     if (p === '/ipam') {
       navigate('/ipam/prefixes', { replace: true });
@@ -1580,7 +1570,6 @@ const App: React.FC = () => {
   };
 
   const managementValue = {
-    isLicenseValid, licenseError, licenseFeatures, checkLicenseStatus,
     showAddUserModal, setShowAddUserModal, showEditUserModal, setShowEditUserModal, editingUser, setEditingUser,
     newUserForm, setNewUserForm, editUserForm, setEditUserForm,
     showNewUserPwd, setShowNewUserPwd, showEditUserPwd, setShowEditUserPwd,

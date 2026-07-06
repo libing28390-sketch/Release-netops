@@ -26,8 +26,6 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-netops}
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-change-me-to-a-random-secret}
-      - MACHINE_ID_OVERRIDE=${MACHINE_ID_OVERRIDE:-}
-      - LICENSE_FILE_PATH=/app/data/license.json
       - CORS_ORIGINS=${CORS_ORIGINS:-}
     volumes:
       - netops-data:/app/data

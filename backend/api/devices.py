@@ -598,7 +598,7 @@ def create_device(device: dict = Body(...)):
 def delete_device(device_id: str):
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT hostname, asset_id FROM devices WHERE id = ?', (device_id,)).fetchone()
+        row = conn.execute('SELECT hostname, asset_id, credential_id FROM devices WHERE id = ?', (device_id,)).fetchone()
         # Plan-A: cascade-delete linked asset
         if row and row['asset_id']:
             # PAM: archive (don't delete) sessions and access requests so the
@@ -618,6 +618,10 @@ def delete_device(device_id: str):
             conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (row['asset_id'],))
             conn.execute('DELETE FROM physical_assets WHERE id = ?', (row['asset_id'],))
         conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
+        if row and row['credential_id']:
+            other = conn.execute('SELECT 1 FROM devices WHERE credential_id = ?', (row['credential_id'],)).fetchone()
+            if not other:
+                conn.execute('DELETE FROM credentials WHERE id = ?', (row['credential_id'],))
         conn.commit()
         log_audit_event(
             event_type='DEVICE_DELETE',

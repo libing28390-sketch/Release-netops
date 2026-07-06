@@ -56,11 +56,11 @@ from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
 from api.credentials import router as credentials_router
 from api.cmdb import router as cmdb_router
-from license_auth.api import router as license_router
+from api.interfaces import router as interfaces_router
+from api.discovery import router as discovery_router
+from api.graph import router as graph_router
 from api.system import router as system_router
 from api.access import router as access_router
-from license_auth.middleware import LicenseMiddleware
-from license_auth.verifier import get_license_verifier, bootstrap_license_protection
 from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
 from engine.orchestrator import get_telemetry_orchestrator
 import logging
@@ -247,7 +247,6 @@ app.add_middleware(
 app.include_router(health_router,        prefix="/api")
 app.include_router(users_router,         prefix="/api")
 app.include_router(setup_router,         prefix="/api")
-app.include_router(license_router,       prefix="/api")
 app.include_router(system_router,        prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(tags_router,          prefix="/api")
@@ -274,6 +273,9 @@ app.include_router(alerts_router,         prefix="/api")
 app.include_router(topology_router,       prefix="/api")
 app.include_router(ipam_router,           prefix="/api")
 app.include_router(capacity_router,       prefix="/api")
+app.include_router(interfaces_router,     prefix="/api")
+app.include_router(discovery_router,      prefix="/api")
+app.include_router(graph_router,          prefix="/api")
 app.include_router(reports_router,        prefix="/api")
 app.include_router(compliance_router,     prefix="/api")
 app.include_router(inspections_router,    prefix="/api")

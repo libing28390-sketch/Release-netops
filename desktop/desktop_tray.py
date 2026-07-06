@@ -100,7 +100,7 @@ try:
         QLabel, QPushButton, QComboBox, QFrame, QGraphicsDropShadowEffect, 
         QSystemTrayIcon, QMenu, QCheckBox, QStackedWidget, QLineEdit, 
         QPlainTextEdit, QFileDialog, QMessageBox, QGridLayout, QScrollArea,
-        QListView, QStyledItemDelegate
+        QListView, QStyledItemDelegate, QDialog
     )
     from PySide6.QtCore import Qt, QSize, Signal, Slot, QTimer, QSettings, QPoint, QPropertyAnimation, QEasingCurve, Property, QRectF
     from PySide6.QtGui import QIcon, QFont, QColor, QAction, QCursor, QPainter, QBrush, QPen, QPixmap, QPolygon
@@ -1210,6 +1210,191 @@ class ToggleSwitch(QCheckBox):
         painter.end()
 
 
+class ProgressSpinner(QWidget):
+    """自绘制的 Fluent 风格旋转进度条 (Smooth 60FPS spinner)."""
+    def __init__(self, parent=None, color="#06B6D4"):
+        super().__init__(parent)
+        self.color = QColor(color)
+        self.angle = 0
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.rotate)
+        self.timer.start(16)  # 60 FPS
+        self.setFixedSize(40, 40)
+
+    def rotate(self):
+        self.angle = (self.angle + 6) % 360
+        self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        pen = QPen(self.color, 4, Qt.SolidLine, Qt.RoundCap)
+        painter.setPen(pen)
+        rect = QRectF(4, 4, self.width() - 8, self.height() - 8)
+        painter.drawArc(rect, -self.angle * 16, 270 * 16)
+        painter.end()
+
+
+class StatusIcon(QWidget):
+    """自绘制的成功/失败状态图标 (Success checkmark / Failure X)."""
+    def __init__(self, parent=None, is_success=True):
+        super().__init__(parent)
+        self.is_success = is_success
+        self.setFixedSize(40, 40)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        if self.is_success:
+            pen = QPen(QColor("#10B981"), 4, Qt.SolidLine, Qt.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(10, 20, 18, 28)
+            painter.drawLine(18, 28, 30, 12)
+        else:
+            pen = QPen(QColor("#EF4444"), 4, Qt.SolidLine, Qt.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(12, 12, 28, 28)
+            painter.drawLine(28, 12, 12, 28)
+        painter.end()
+
+
+class FluentProgressDialog(QDialog):
+    """仿 Win11/Fluent 设计的无边框圆角模态进度对话框。"""
+    def __init__(self, parent=None, title="", dark_mode=True, lang="zh"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setWindowFlags(self.windowFlags() | Qt.CustomizeWindowHint)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        if sys.platform == "win32":
+            self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+            self.setAttribute(Qt.WA_TranslucentBackground, True)
+        
+        self.dark_mode = dark_mode
+        self.lang = lang
+        self.setup_ui()
+
+    def setup_ui(self):
+        # 主边框容器
+        self.container = QFrame(self)
+        self.container.setObjectName("dialog_container")
+        
+        # 配色定义
+        bg_color = "#1E293B" if self.dark_mode else "#FFFFFF"
+        border_color = "#334155" if self.dark_mode else "#E2E8F0"
+        text_color = "#F3F4F6" if self.dark_mode else "#0F172A"
+        desc_color = "#94A3B8" if self.dark_mode else "#64748B"
+        
+        self.container.setStyleSheet(f"""
+            QFrame#dialog_container {{
+                background-color: {bg_color};
+                border: 1px solid {border_color};
+                border-radius: 12px;
+            }}
+            QLabel {{
+                color: {text_color};
+                font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+                font-size: 13px;
+                border: none;
+                background: transparent;
+            }}
+            QLabel#title_label {{
+                font-size: 16px;
+                font-weight: bold;
+            }}
+            QLabel#status_label {{
+                color: {desc_color};
+                font-size: 12px;
+            }}
+            QPushButton#btn_close {{
+                background-color: #06B6D4;
+                color: #FFFFFF;
+                border-radius: 6px;
+                padding: 6px 20px;
+                font-weight: bold;
+                border: none;
+                font-size: 12px;
+                outline: none;
+            }}
+            QPushButton#btn_close:hover {{
+                background-color: #0891B2;
+            }}
+            QPushButton#btn_close:pressed {{
+                background-color: #0E7490;
+            }}
+            QPushButton#btn_close:disabled {{
+                background-color: #475569;
+                color: #94A3B8;
+                border: none;
+            }}
+        """)
+        
+        # 阴影效果
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0, 0, 0, 80 if self.dark_mode else 40))
+        shadow.setOffset(0, 4)
+        self.container.setGraphicsEffect(shadow)
+        
+        # 全局透明布局
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.addWidget(self.container)
+        
+        # 容器内布局
+        container_layout = QVBoxLayout(self.container)
+        container_layout.setContentsMargins(24, 24, 24, 24)
+        container_layout.setSpacing(16)
+        
+        self.lbl_title = QLabel(self.windowTitle(), self.container)
+        self.lbl_title.setObjectName("title_label")
+        container_layout.addWidget(self.lbl_title, 0, Qt.AlignLeft)
+        
+        # 进度指示布局
+        self.progress_layout = QHBoxLayout()
+        self.progress_layout.setSpacing(16)
+        
+        # 初始化 spinner 并放置在固定大小容器中
+        self.icon_container = QWidget(self.container)
+        self.icon_container.setFixedSize(40, 40)
+        self.icon_layout = QVBoxLayout(self.icon_container)
+        self.icon_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.spinner = ProgressSpinner(self.icon_container, color="#06B6D4")
+        self.icon_layout.addWidget(self.spinner)
+        self.progress_layout.addWidget(self.icon_container)
+        
+        self.lbl_status = QLabel(
+            "正在停止服务并清理数据库，请稍候..." if self.lang == "zh" else "Stopping service and cleaning database, please wait...",
+            self.container
+        )
+        self.lbl_status.setObjectName("status_label")
+        self.lbl_status.setWordWrap(True)
+        self.progress_layout.addWidget(self.lbl_status, 1)
+        
+        container_layout.addLayout(self.progress_layout)
+        
+        # 关闭/确认按钮
+        self.btn_close = QPushButton("确定" if self.lang == "zh" else "OK", self.container)
+        self.btn_close.setObjectName("btn_close")
+        self.btn_close.setEnabled(False)
+        self.btn_close.clicked.connect(self.accept)
+        container_layout.addWidget(self.btn_close, 0, Qt.AlignRight)
+        
+        self.setFixedSize(420, 190)
+
+    # 允许拖拽无边框窗口
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+            event.accept()
+
+
 def get_python_executable():
     venv_python = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "python.exe")
     if os.path.exists(venv_python):
@@ -1316,6 +1501,7 @@ class NetOpsAgentUI(QMainWindow):
     diagnostic_log_signal = Signal(str)
     diagnostics_finished_signal = Signal(bool, str)
     controller_test_result_signal = Signal(bool)
+    db_reset_finished_signal = Signal(bool, str)
 
     def __init__(self):
         super().__init__()
@@ -1338,6 +1524,7 @@ class NetOpsAgentUI(QMainWindow):
         self.diagnostic_log_signal.connect(self.append_diagnose_log)
         self.diagnostics_finished_signal.connect(self.on_diagnostics_finished)
         self.controller_test_result_signal.connect(self.on_controller_test_result)
+        self.db_reset_finished_signal.connect(self.on_db_reset_finished)
         
         # Main Window configuration
         self.setWindowTitle("NetOps Agent Manager")
@@ -1473,90 +1660,144 @@ class NetOpsAgentUI(QMainWindow):
             )
         )
         
-        reply = QMessageBox.warning(
-            self,
-            title,
-            msg,
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+        # 美化警告确认框
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(msg)
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.No)
+        
+        bg_color = "#1E293B" if self.dark_mode else "#FFFFFF"
+        border_color = "#334155" if self.dark_mode else "#E2E8F0"
+        text_color = "#F3F4F6" if self.dark_mode else "#0F172A"
+        button_bg = "#334155" if self.dark_mode else "#E2E8F0"
+        button_hover = "#475569" if self.dark_mode else "#CBD5E1"
+        
+        msg_box.setStyleSheet(f"""
+            QMessageBox {{
+                background-color: {bg_color};
+                border: 1px solid {border_color};
+                border-radius: 10px;
+            }}
+            QLabel {{
+                color: {text_color};
+                font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+                font-size: 13px;
+            }}
+            QPushButton {{
+                background-color: {button_bg};
+                color: {text_color};
+                border: 1px solid {border_color};
+                border-radius: 6px;
+                padding: 6px 18px;
+                font-weight: bold;
+                font-size: 12px;
+                min-width: 65px;
+            }}
+            QPushButton:hover {{
+                background-color: {button_hover};
+            }}
+            QPushButton:default {{
+                background-color: #06B6D4;
+                color: #FFFFFF;
+                border: none;
+            }}
+            QPushButton:default:hover {{
+                background-color: #0891B2;
+            }}
+        """)
+        
+        reply = msg_box.exec()
         
         if reply == QMessageBox.Yes:
-            # Stop the backend server process first
-            self.stop_backend_server()
+            # 弹出仿 Fluent 的美化进度框
+            self.db_reset_dialog = FluentProgressDialog(self, title, self.dark_mode, self.lang)
             
-            # Show a temporary messagebox during deletion
-            progress_msg = QMessageBox(self)
-            progress_msg.setIcon(QMessageBox.Information)
-            progress_msg.setWindowTitle(title)
-            progress_msg.setText("正在停止服务并清理数据库，请稍候..." if self.lang == "zh" else "Stopping service and cleaning database, please wait...")
-            progress_msg.setStandardButtons(QMessageBox.NoButton)
-            progress_msg.show()
-            QApplication.processEvents()
+            # 创建并启动后台重置线程，避免主 UI 线程卡死
+            def reset_worker():
+                try:
+                    # 1. 停止后端服务
+                    self.stop_backend_server()
+                    
+                    # 2. 运行 Python 内联脚本执行表级清理/SQLite物理文件移除
+                    python_exe = get_python_executable()
+                    inline_code = (
+                        "import sys, os\n"
+                        "sys.path.insert(0, 'backend')\n"
+                        "try:\n"
+                        "    from database import get_db_connection, _USE_PG, DB_PATH\n"
+                        "    if _USE_PG:\n"
+                        "        conn = get_db_connection()\n"
+                        "        conn.autocommit = True\n"
+                        "        cursor = conn.cursor()\n"
+                        "        # 强制终止 PostgreSQL 上的所有其他并发连接，防止锁冲突挂起\n"
+                        "        try:\n"
+                        "            cursor.execute(\"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'netops' AND pid <> pg_backend_pid();\")\n"
+                        "        except Exception:\n"
+                        "            pass\n"
+                        "        cursor.execute('DROP SCHEMA public CASCADE;')\n"
+                        "        cursor.execute('CREATE SCHEMA public;')\n"
+                        "        cursor.execute('GRANT ALL ON SCHEMA public TO public;')\n"
+                        "        conn.close()\n"
+                        "        print('SUCCESS_PG')\n"
+                        "    else:\n"
+                        "        for suffix in ('', '-wal', '-shm'):\n"
+                        "            path = DB_PATH + suffix\n"
+                        "            if os.path.exists(path):\n"
+                        "                os.remove(path)\n"
+                        "        print('SUCCESS_SQLITE')\n"
+                        "except Exception as e:\n"
+                        "    print(f'ERROR: {e}')"
+                    )
+                    
+                    res = subprocess.run(
+                        [python_exe, "-c", inline_code],
+                        cwd=PROJECT_ROOT,
+                        capture_output=True,
+                        text=True,
+                        creationflags=0x08000000,
+                        timeout=20
+                    )
+                    output = res.stdout.strip()
+                    if "SUCCESS" in output:
+                        self.db_reset_finished_signal.emit(True, "")
+                    else:
+                        err_detail = output or res.stderr.strip()
+                        self.db_reset_finished_signal.emit(False, err_detail)
+                except Exception as ex:
+                    self.db_reset_finished_signal.emit(False, str(ex))
             
-            # Run python inline script to delete DB tables/files
-            python_exe = get_python_executable()
-            inline_code = (
-                "import sys, os\n"
-                "sys.path.insert(0, 'backend')\n"
-                "try:\n"
-                "    from database import get_db_connection, _USE_PG, DB_PATH\n"
-                "    if _USE_PG:\n"
-                "        conn = get_db_connection()\n"
-                "        conn.autocommit = True\n"
-                "        cursor = conn.cursor()\n"
-                "        cursor.execute('DROP SCHEMA public CASCADE;')\n"
-                "        cursor.execute('CREATE SCHEMA public;')\n"
-                "        cursor.execute('GRANT ALL ON SCHEMA public TO public;')\n"
-                "        conn.close()\n"
-                "        print('SUCCESS_PG')\n"
-                "    else:\n"
-                "        for suffix in ('', '-wal', '-shm'):\n"
-                "            path = DB_PATH + suffix\n"
-                "            if os.path.exists(path):\n"
-                "                os.remove(path)\n"
-                "        print('SUCCESS_SQLITE')\n"
-                "except Exception as e:\n"
-                "    print(f'ERROR: {e}')"
+            threading.Thread(target=reset_worker, daemon=True).start()
+            self.db_reset_dialog.exec()
+
+    def on_db_reset_finished(self, success, message):
+        if not hasattr(self, "db_reset_dialog") or self.db_reset_dialog is None:
+            return
+        
+        # 移除 Spinner 动画
+        self.db_reset_dialog.spinner.hide()
+        self.db_reset_dialog.icon_layout.removeWidget(self.db_reset_dialog.spinner)
+        
+        # 添加对应状态图标
+        status_icon = StatusIcon(self.db_reset_dialog.icon_container, is_success=success)
+        self.db_reset_dialog.icon_layout.addWidget(status_icon)
+        
+        # 更新状态文字
+        if success:
+            success_msg = (
+                "数据库已成功清空并重置！\n管理员账户已重置为：admin / admin\n服务重新启动时将自动生成空表结构。"
+                if self.lang == "zh"
+                else "Database has been successfully cleared and reset!\nAdministrator account reset to: admin / admin\nEmpty table structures will be automatically generated upon next startup."
             )
+            self.db_reset_dialog.lbl_status.setText(success_msg)
+        else:
+            fail_prefix = "清理数据库时遭遇错误：\n" if self.lang == "zh" else "Error clearing database:\n"
+            self.db_reset_dialog.lbl_status.setText(f"{fail_prefix}{message}")
             
-            try:
-                # Run the process synchronously
-                res = subprocess.run(
-                    [python_exe, "-c", inline_code],
-                    cwd=PROJECT_ROOT,
-                    capture_output=True,
-                    text=True,
-                    creationflags=0x08000000,
-                    timeout=15
-                )
-                output = res.stdout.strip()
-                progress_msg.close()
-                
-                if "SUCCESS" in output:
-                    QMessageBox.information(
-                        self,
-                        title,
-                        "数据库已成功清空并重置！\n管理员账户已重置为：admin / admin\n服务重新启动时将自动生成空表结构。"
-                        if self.lang == "zh"
-                        else "Database has been successfully cleared and reset!\nAdministrator account reset to: admin / admin\nEmpty table structures will be automatically generated upon next startup."
-                    )
-                else:
-                    err_detail = output or res.stderr.strip()
-                    QMessageBox.critical(
-                        self,
-                        "重置失败" if self.lang == "zh" else "Reset Failed",
-                        f"清理数据库时遭遇错误：\n{err_detail}" if self.lang == "zh" else f"Error clearing database:\n{err_detail}"
-                    )
-            except Exception as ex:
-                progress_msg.close()
-                QMessageBox.critical(
-                    self,
-                    "重置失败" if self.lang == "zh" else "Reset Failed",
-                    f"执行清理程序时发生异常：\n{ex}" if self.lang == "zh" else f"Exception running cleanup program:\n{ex}"
-                )
-            
-            self.update_runtime_state()
+        # 启用确定按钮
+        self.db_reset_dialog.btn_close.setEnabled(True)
+        self.update_runtime_state()
 
     def save_settings(self):
         self.auto_start_service = self.chk_auto_start.isChecked()
@@ -2727,6 +2968,11 @@ class NetOpsAgentUI(QMainWindow):
         details_grid.addWidget(self.lbl_about_wechat_val, 4, 1)
         
         left_layout.addLayout(details_grid)
+        
+        self.lbl_about_copyright = QLabel(self)
+        self.lbl_about_copyright.setStyleSheet("color: #64748B; font-size: 11px; margin-top: 12px;")
+        left_layout.addWidget(self.lbl_about_copyright)
+        
         about_layout.addWidget(left_widget, 5)
         
         # Right side: WeChat QR Code card
@@ -2884,6 +3130,7 @@ class NetOpsAgentUI(QMainWindow):
         self.lbl_about_support_name.setText("技术支持 (Support):" if self.lang == "zh" else "Technical Support:")
         self.lbl_about_wechat_name.setText("微信公众号 (WeChat):" if self.lang == "zh" else "WeChat Account:")
         self.lbl_qr_desc.setText("扫码关注微信公众号" if self.lang == "zh" else "Scan to Follow WeChat")
+        self.lbl_about_copyright.setText("版权所有 © 2026 NetOps 社区。保留所有权利。" if self.lang == "zh" else "Copyright © 2026 NetOps Community. All rights reserved.")
         
         # System Tray Menu Actions
         if hasattr(self, 'tray_menu_actions'):

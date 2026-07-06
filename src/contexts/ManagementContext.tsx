@@ -2,12 +2,6 @@ import React, { createContext, useContext, ReactNode } from 'react';
 import type { User as UserType } from '../types';
 
 interface ManagementContextValue {
-  // license
-  isLicenseValid: boolean;
-  licenseError: string | null;
-  licenseFeatures: string[];
-  checkLicenseStatus: () => Promise<void>;
-  
   // user management
   showAddUserModal: boolean;
   setShowAddUserModal: (show: boolean) => void;

@@ -280,10 +280,6 @@ const AppMainContent: React.FC = () => {
   } = config;
   
   const {
-    isLicenseValid,
-    licenseError,
-    licenseFeatures,
-    checkLicenseStatus,
     showAddUserModal,
     setShowAddUserModal,
     showEditUserModal,

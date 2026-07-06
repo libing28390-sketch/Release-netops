@@ -16,12 +16,6 @@ jobs:
 
       - name: 2. 彻底清理敏感文件、开发源码与 Windows 专属文件
         run: |
-          # ── License 核心：保留 verifier.py / crypto.py / middleware.py，删除 generator.py ──
-          rm -f backend/license_auth/generator.py
-
-          # ── 私钥：绝对不能发给客户 ──
-          rm -f backend/license_auth/keys/private.pem
-
           # ── 开发者专用工具 ──
           rm -rf tools/
 
@@ -63,9 +57,6 @@ jobs:
 
           # ── 本地数据库文件（客户应使用自己的 PostgreSQL）──
           rm -f netops.db backend/netops.db backend/netsops.db
-
-          # ── 本地 license 数据（不能把开发测试 license带过去）──
-          rm -f data/license*.json
 
           # ── AI 助手 / IDE 残留文件 ──
           rm -rf .codex/ .cursor/ .playwright-mcp/ .vscode/
@@ -105,12 +96,6 @@ jobs:
 
       - name: 2. 彻底清理敏感文件、开发源码与 Linux/Docker 专属文件
         run: |
-          # ── License 核心：保留 verifier.py / crypto.py / middleware.py，删除 generator.py ──
-          rm -f backend/license_auth/generator.py
-
-          # ── 私钥：绝对不能发给客户 ──
-          rm -f backend/license_auth/keys/private.pem
-
           # ── 开发者专用工具 ──
           rm -rf tools/
 
@@ -152,9 +137,6 @@ jobs:
 
           # ── 本地数据库文件（客户应使用自己的 PostgreSQL）──
           rm -f netops.db backend/netops.db backend/netsops.db
-
-          # ── 本地 license 数据（不能把开发测试 license带过去）──
-          rm -f data/license*.json
 
           # ── AI 助手 / IDE 残留文件 ──
           rm -rf .codex/ .cursor/ .playwright-mcp/ .vscode/
