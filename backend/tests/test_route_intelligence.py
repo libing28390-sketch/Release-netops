@@ -228,3 +228,45 @@ def test_get_bgp_routes_database(isolated_db):
     finally:
         conn.close()
 
+
+def test_parse_interface_counters_multi_vendor():
+    from services.diagnose_service import parse_interface_counters
+    
+    # Test Cisco
+    cisco_out = """
+    GigabitEthernet0/1 is up, line protocol is up
+      Input queue: 0/75/0/0 (size/max/drops/flushes); Total output drops: 15
+      23 input errors, 12 CRC, 0 frame, 0 overrun, 0 ignored
+      0 output errors, 0 collisions, 0 interface resets
+    """
+    res_cisco = parse_interface_counters(cisco_out, 'cisco_ios')
+    assert res_cisco['input_errors'] == 23
+    assert res_cisco['crc'] == 12
+    assert res_cisco['output_drops'] == 15
+
+    # Test Huawei/H3C
+    huawei_out = """
+    GigabitEthernet0/1 current state: UP
+    Last 300 seconds input utility rate: 0.01%
+    Input: 45 errors, 0 discarded, 0 frame errors, 8 CRC
+    Output: 0 errors, 19 discarded, 0 buffer failures
+    """
+    res_hw = parse_interface_counters(huawei_out, 'huawei_vrp')
+    assert res_hw['input_errors'] == 45
+    assert res_hw['crc'] == 8
+    assert res_hw['output_drops'] == 19
+
+    # Test Juniper
+    juniper_out = """
+    Physical interface: ge-0/0/0, Enabled, Physical link is Up
+      Input packets: 12345, Output packets: 54321
+      Input errors:
+        Errors: 7, Drops: 0, Framing errors: 0, Runts: 0, Policed discards: 0, L3 incompletes: 0, L2 channel errors: 0, L2 mismatch timeouts: 0, FIFO errors: 0, Resource errors: 0
+      Output errors:
+        Carrier transitions: 0, Errors: 0, Drops: 31, Collisions: 0, Aged packets: 0, FIFO errors: 0, HS link FO errors: 0, MTU errors: 0, Resource errors: 0
+    """
+    res_juni = parse_interface_counters(juniper_out, 'juniper_junos')
+    assert res_juni['input_errors'] == 7
+    assert res_juni['output_drops'] == 31
+
+

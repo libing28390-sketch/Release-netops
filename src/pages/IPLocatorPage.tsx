@@ -322,6 +322,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
 
   // ── Hop popover state ──
   const [activeHopIdx, setActiveHopIdx] = useState<number | null>(null);
+  const [activeSubHopIdx, setActiveSubHopIdx] = useState<number>(0);
   const [viewMode, setViewMode] = useState<'topology' | 'sequence'>('topology');
   const [cmdbFilterQuery, setCmdbFilterQuery] = useState('');
   const hopPopoverRef = useRef<HTMLDivElement>(null);
@@ -2945,6 +2946,10 @@ ${rep.repair_commands}
                   stroke-dashoffset: 0;
                 }
               }
+              .ecmp-flow-line {
+                stroke-dasharray: 6, 4;
+                animation: strokeFlow 1.5s linear infinite;
+              }
             `}</style>
             
             {/* SVG Markers Defs */}
@@ -2997,87 +3002,179 @@ ${rep.repair_commands}
             </div>
 
             {viewMode === 'topology' ? (
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-6 pb-4 overflow-x-auto">
-                {/* Source Node */}
-                <div className="flex flex-col items-center flex-shrink-0 bg-white dark:bg-zinc-900 border border-violet-200 dark:border-violet-500/20 rounded-2xl p-4 w-36 shadow-sm">
-                  <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mb-2">
-                    <Monitor className="text-violet-500" size={18} />
-                  </div>
-                  <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '源主机' : 'Source Host'}</span>
-                  <span className="text-[10px] text-black/35 font-mono mt-0.5">{diagResult.source_ip}</span>
-                </div>
-
-                {/* Path hops */}
-                {diagResult.hops.map((hop: any, idx: number) => {
-                  const isBlocked = hop.status === 'blocked';
-                  const isTimeout = hop.status === 'timeout';
-                  const cmdbDevice = findDeviceByIp(hop.ip);
-                  const isActive = activeHopIdx === idx;
-
+              (() => {
+                const renderEcmpConnector = (prevHop: any, currentHop: any) => {
+                  const prevIsEcmp = !!(prevHop && prevHop.is_ecmp);
+                  const currentIsEcmp = !!(currentHop && currentHop.is_ecmp);
+                  
+                  const isBlocked = (prevHop && prevHop.status === 'blocked') || (currentHop && currentHop.status === 'blocked');
+                  const isTimeout = (prevHop && prevHop.status === 'timeout') || (currentHop && currentHop.status === 'timeout');
+                  
+                  let strokeColor = 'stroke-emerald-400 dark:stroke-emerald-500';
+                  let markerId = 'arrow-green';
+                  if (isBlocked) {
+                    strokeColor = 'stroke-rose-400 dark:stroke-rose-500';
+                    markerId = 'arrow-red';
+                  } else if (isTimeout) {
+                    strokeColor = 'stroke-neutral-300 dark:stroke-neutral-600';
+                    markerId = 'arrow-gray';
+                  }
+                  
                   return (
-                    <React.Fragment key={idx}>
-                      {/* Arrow connector */}
-                      <div className="flex items-center justify-center flex-shrink-0 w-8">
-                        <div className={`h-0.5 flex-1 ${
-                          isBlocked || isTimeout ? "border-t-2 border-dashed border-rose-400" : "border-t-2 border-emerald-400"
-                        }`} />
-                        <ArrowRight size={14} className={isBlocked || isTimeout ? "text-rose-400" : "text-emerald-400"} />
-                      </div>
-
-                      {/* Device Node (Interactive) */}
-                      <div className="relative flex-shrink-0">
-                        <button
-                          onClick={() => setActiveHopIdx(isActive ? null : idx)}
-                          className={`flex flex-col items-center bg-white dark:bg-zinc-900 border rounded-2xl p-4 w-36 shadow-sm transition-all cursor-pointer hover:shadow-md hover:scale-[1.03] ${
-                            isBlocked ? "border-rose-400 dark:border-rose-500/30 ring-2 ring-rose-500/20 animate-pulse" :
-                            isTimeout ? "border-neutral-200 dark:border-neutral-800 opacity-60" :
-                            isActive ? "border-[#06b6d4] dark:border-[#06b6d4]/40 ring-2 ring-[#06b6d4]/25 shadow-lg" :
-                            "border-[#06b6d4]/20 dark:border-[#06b6d4]/10"
-                          }`}
-                        >
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${
-                            isBlocked ? "bg-rose-100 dark:bg-rose-950/40 text-rose-500" :
-                            isTimeout ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-400" :
-                            "bg-cyan-50 dark:bg-cyan-950/40 text-[#0891b2]"
-                          }`}>
-                            {isBlocked ? <ShieldAlert size={18} className="animate-bounce" /> :
-                             hop.device_type === 'firewall' ? <ShieldAlert size={18} /> :
-                             <Server size={18} />}
-                          </div>
-                          <span className={`text-xs font-bold truncate w-full text-center ${
-                            isBlocked ? "text-rose-600 dark:text-rose-400 font-bold" :
-                            isTimeout ? "text-neutral-400" : "text-[#164e63] dark:text-[var(--app-text)]"
-                          }`} title={hop.device_name}>{hop.device_name}</span>
-                          <span className="text-[10px] text-black/35 font-mono mt-0.5">{hop.ip}</span>
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full mt-1.5 font-mono font-medium ${
-                            isBlocked ? "bg-rose-50 dark:bg-rose-950/30 text-rose-600" :
-                            isTimeout ? "bg-neutral-50 dark:bg-neutral-950/30 text-neutral-400" :
-                            "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600"
-                          }`}>{hop.detail || (isBlocked ? (zh ? "阻断" : "Blocked") : (zh ? "正常" : "Active"))}</span>
-                          {cmdbDevice && <Eye size={10} className="absolute top-2 right-2 text-black/20 dark:text-white/20" />}
-                        </button>
-                      </div>
-                    </React.Fragment>
+                    <div className="flex items-center justify-center flex-shrink-0 w-8 h-[192px] overflow-visible relative">
+                      <svg className="w-8 h-[192px] overflow-visible absolute inset-0">
+                        {prevIsEcmp && currentIsEcmp ? (
+                          <>
+                            <path d="M 0 44 L 32 44" className={`fill-none stroke-2 ${strokeColor} ecmp-flow-line`} markerEnd={`url(#${markerId})`} />
+                            <path d="M 0 148 L 32 148" className={`fill-none stroke-2 ${strokeColor} ecmp-flow-line`} markerEnd={`url(#${markerId})`} />
+                          </>
+                        ) : prevIsEcmp ? (
+                          <>
+                            <path d="M 0 44 C 16 44, 16 96, 32 96" className={`fill-none stroke-2 ${strokeColor} ecmp-flow-line`} />
+                            <path d="M 0 148 C 16 148, 16 96, 32 96" className={`fill-none stroke-2 ${strokeColor} ecmp-flow-line`} markerEnd={`url(#${markerId})`} />
+                          </>
+                        ) : currentIsEcmp ? (
+                          <>
+                            <path d="M 0 96 C 16 96, 16 44, 32 44" className={`fill-none stroke-2 ${strokeColor} ecmp-flow-line`} markerEnd={`url(#${markerId})`} />
+                            <path d="M 0 96 C 16 96, 16 148, 32 148" className={`fill-none stroke-2 ${strokeColor} ecmp-flow-line`} markerEnd={`url(#${markerId})`} />
+                          </>
+                        ) : (
+                          <path d="M 0 96 L 32 96" className={`fill-none stroke-2 ${strokeColor} ecmp-flow-line`} markerEnd={`url(#${markerId})`} />
+                        )}
+                      </svg>
+                    </div>
                   );
-                })}
+                };
 
-                {/* Target Node */}
-                {diagResult.report.conclusion === 'reachable' && (
-                  <>
-                    <div className="flex items-center justify-center flex-shrink-0 w-8">
-                      <div className="h-0.5 flex-1 border-t-2 border-emerald-400" />
-                      <ArrowRight size={14} className="text-emerald-400" />
-                    </div>
-                    <div className="flex flex-col items-center flex-shrink-0 bg-white dark:bg-zinc-900 border border-emerald-200 dark:border-emerald-500/20 rounded-2xl p-4 w-36 shadow-sm">
-                      <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
-                        <Globe className="text-emerald-500" size={18} />
+                return (
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-6 pb-4 overflow-x-auto min-h-[220px]">
+                    {/* Source Node */}
+                    <div className="h-[192px] flex items-center justify-center flex-shrink-0">
+                      <div className="flex flex-col items-center bg-white dark:bg-zinc-900 border border-violet-200 dark:border-violet-500/20 rounded-2xl p-4 w-36 shadow-sm">
+                        <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mb-2">
+                          <Monitor className="text-violet-500" size={18} />
+                        </div>
+                        <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '源主机' : 'Source Host'}</span>
+                        <span className="text-[10px] text-black/35 font-mono mt-0.5">{diagResult.source_ip}</span>
                       </div>
-                      <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '目标主机' : 'Target Host'}</span>
-                      <span className="text-[10px] text-black/35 font-mono mt-0.5">{diagResult.target_ip}</span>
                     </div>
-                  </>
-                )}
-              </div>
+
+                    {/* Path hops */}
+                    {diagResult.hops.map((hop: any, idx: number) => {
+                      const prevHop = idx > 0 ? diagResult.hops[idx - 1] : null;
+                      const isBlocked = hop.status === 'blocked';
+                      const isTimeout = hop.status === 'timeout';
+                      const cmdbDevice = findDeviceByIp(hop.ip);
+                      const isActive = activeHopIdx === idx;
+                      
+                      return (
+                        <React.Fragment key={idx}>
+                          {/* Arrow connector */}
+                          {renderEcmpConnector(prevHop, hop)}
+
+                          {/* Device Node(s) */}
+                          {hop.is_ecmp ? (
+                            <div className="h-[192px] flex flex-col justify-center gap-4 flex-shrink-0">
+                              {hop.paths.map((subHop: any, subIdx: number) => {
+                                const isSubBlocked = subHop.status === 'blocked';
+                                const isSubTimeout = subHop.status === 'timeout';
+                                const subCmdbDevice = findDeviceByIp(subHop.ip);
+                                const isSubActive = activeHopIdx === idx && activeSubHopIdx === subIdx;
+                                
+                                return (
+                                  <button
+                                    key={subIdx}
+                                    onClick={() => {
+                                      setActiveHopIdx(idx);
+                                      setActiveSubHopIdx(subIdx);
+                                    }}
+                                    className={`relative flex flex-col items-center bg-white dark:bg-zinc-900 border rounded-2xl p-3 w-36 shadow-sm transition-all cursor-pointer hover:shadow-md hover:scale-[1.03] ${
+                                      isSubBlocked ? "border-rose-400 dark:border-rose-500/30 ring-2 ring-rose-500/20" :
+                                      isSubTimeout ? "border-neutral-200 dark:border-neutral-800 opacity-60" :
+                                      isSubActive ? "border-[#06b6d4] dark:border-[#06b6d4]/40 ring-2 ring-[#06b6d4]/25 shadow-lg" :
+                                      "border-[#06b6d4]/20 dark:border-[#06b6d4]/10"
+                                    }`}
+                                  >
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-1.5 ${
+                                      isSubBlocked ? "bg-rose-100 dark:bg-rose-950/40 text-rose-500" :
+                                      isSubTimeout ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-400" :
+                                      "bg-cyan-50 dark:bg-cyan-950/40 text-[#0891b2]"
+                                    }`}>
+                                      {isSubBlocked ? <ShieldAlert size={14} /> :
+                                       subHop.device_type === 'firewall' ? <ShieldAlert size={14} /> :
+                                       <Server size={14} />}
+                                    </div>
+                                    <span className={`text-[11px] font-bold truncate w-full text-center ${
+                                      isSubBlocked ? "text-rose-600 dark:text-rose-400" :
+                                      isSubTimeout ? "text-neutral-400" : "text-[#164e63] dark:text-[var(--app-text)]"
+                                    }`} title={subHop.device_name}>{subHop.device_name}</span>
+                                    <span className="text-[9px] text-black/35 font-mono mt-0.5 truncate w-full">{subHop.ip}</span>
+                                    <span className={`text-[8px] px-1.5 py-0.5 rounded-full mt-1 font-mono font-medium ${
+                                      isSubBlocked ? "bg-rose-50 dark:bg-rose-950/30 text-rose-600" :
+                                      isSubTimeout ? "bg-neutral-50 dark:bg-neutral-950/30 text-neutral-400" :
+                                      "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600"
+                                    }`}>{subHop.detail || (isSubBlocked ? (zh ? "阻断" : "Blocked") : (zh ? "正常" : "Active"))}</span>
+                                    {subCmdbDevice && <Eye size={9} className="absolute top-2 right-2 text-black/20 dark:text-white/20" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="h-[192px] flex items-center justify-center flex-shrink-0">
+                              <button
+                                onClick={() => setActiveHopIdx(isActive ? null : idx)}
+                                className={`relative flex flex-col items-center bg-white dark:bg-zinc-900 border rounded-2xl p-4 w-36 shadow-sm transition-all cursor-pointer hover:shadow-md hover:scale-[1.03] ${
+                                  isBlocked ? "border-rose-400 dark:border-rose-500/30 ring-2 ring-rose-500/20 animate-pulse" :
+                                  isTimeout ? "border-neutral-200 dark:border-neutral-800 opacity-60" :
+                                  isActive ? "border-[#06b6d4] dark:border-[#06b6d4]/40 ring-2 ring-[#06b6d4]/25 shadow-lg" :
+                                  "border-[#06b6d4]/20 dark:border-[#06b6d4]/10"
+                                }`}
+                              >
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${
+                                  isBlocked ? "bg-rose-100 dark:bg-rose-950/40 text-rose-500" :
+                                  isTimeout ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-400" :
+                                  "bg-cyan-50 dark:bg-cyan-950/40 text-[#0891b2]"
+                                }`}>
+                                  {isBlocked ? <ShieldAlert size={18} className="animate-bounce" /> :
+                                   hop.device_type === 'firewall' ? <ShieldAlert size={18} /> :
+                                   <Server size={18} />}
+                                </div>
+                                <span className={`text-xs font-bold truncate w-full text-center ${
+                                  isBlocked ? "text-rose-600 dark:text-rose-400 font-bold" :
+                                  isTimeout ? "text-neutral-400" : "text-[#164e63] dark:text-[var(--app-text)]"
+                                }`} title={hop.device_name}>{hop.device_name}</span>
+                                <span className="text-[10px] text-black/35 font-mono mt-0.5">{hop.ip}</span>
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded-full mt-1.5 font-mono font-medium ${
+                                  isBlocked ? "bg-rose-50 dark:bg-rose-950/30 text-rose-600" :
+                                  isTimeout ? "bg-neutral-50 dark:bg-neutral-950/30 text-neutral-400" :
+                                  "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600"
+                                }`}>{hop.detail || (isBlocked ? (zh ? "阻断" : "Blocked") : (zh ? "正常" : "Active"))}</span>
+                                {cmdbDevice && <Eye size={10} className="absolute top-2 right-2 text-black/20 dark:text-white/20" />}
+                              </button>
+                            </div>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+
+                    {/* Target Node */}
+                    {diagResult.report.conclusion === 'reachable' && (
+                      <>
+                        {renderEcmpConnector(diagResult.hops[diagResult.hops.length - 1], null)}
+                        <div className="h-[192px] flex items-center justify-center flex-shrink-0">
+                          <div className="flex flex-col items-center bg-white dark:bg-zinc-900 border border-emerald-200 dark:border-emerald-500/20 rounded-2xl p-4 w-36 shadow-sm">
+                            <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
+                              <Globe className="text-emerald-500" size={18} />
+                            </div>
+                            <span className="text-xs font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '目标主机' : 'Target Host'}</span>
+                            <span className="text-[10px] text-black/35 font-mono mt-0.5">{diagResult.target_ip}</span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()
             ) : (
               /* New Sequence Flow View rendering */
               <div className="space-y-4 pt-4">
@@ -3585,7 +3682,8 @@ ${rep.repair_commands}
       {diagResult && diagResult.hops && activeHopIdx !== null && (() => {
         const activeHop = diagResult.hops[activeHopIdx];
         if (!activeHop) return null;
-        const cmdbDevice = findDeviceByIp(activeHop.ip);
+        const currentHop = activeHop.is_ecmp ? (activeHop.paths[activeSubHopIdx] || activeHop.paths[0] || activeHop) : activeHop;
+        const cmdbDevice = findDeviceByIp(currentHop.ip);
         const isSrv = cmdbDevice ? isServerPlatform(cmdbDevice.platform || '') : false;
         return (
           <div 
@@ -3603,8 +3701,8 @@ ${rep.repair_commands}
                     {cmdbDevice ? (isSrv ? <Monitor size={16} className="text-violet-500" /> : <Router size={16} className="text-[#0891b2]" />) : <Server size={16} className="text-neutral-400" />}
                   </div>
                   <div>
-                    <div className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)]">{activeHop.device_name}</div>
-                    <div className="text-xs text-black/45 dark:text-white/45 font-mono">{activeHop.ip}</div>
+                    <div className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)]">{currentHop.device_name}</div>
+                    <div className="text-xs text-black/45 dark:text-white/45 font-mono">{currentHop.ip}</div>
                   </div>
                 </div>
                 <button 
@@ -3614,6 +3712,25 @@ ${rep.repair_commands}
                   <X size={15} />
                 </button>
               </div>
+
+              {/* ECMP Sub-hops Selector Tab */}
+              {activeHop.is_ecmp && (
+                <div className="flex border-b border-black/5 dark:border-white/5 bg-black/[0.01] dark:bg-white/[0.01] px-5 py-2 gap-2">
+                  {activeHop.paths.map((p: any, idx: number) => (
+                    <button
+                      key={idx}
+                      onClick={() => setActiveSubHopIdx(idx)}
+                      className={`text-xs font-semibold px-2.5 py-1 rounded-lg transition-all ${
+                        activeSubHopIdx === idx 
+                          ? 'bg-[#0891b2] text-white shadow-sm' 
+                          : 'text-black/50 dark:text-white/50 hover:bg-black/5 dark:hover:bg-white/5'
+                      }`}
+                    >
+                      {p.device_name || `Path ${idx + 1}`}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Modal Body */}
               <div className="px-5 py-4 space-y-4">

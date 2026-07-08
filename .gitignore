@@ -100,3 +100,19 @@ diagnostic_report.zip
 
 # Portable/bundled Node.js downloaded by the launcher (large, regenerable)
 tools/node/
+
+# Ignore all markdown files except README files, deploy files, agent configuration files, and task logs
+**/*.md
+!**/README.md
+!**/README_*.md
+!**/README.*.md
+!**/readme.md
+!**/README_gitee.md
+!**/DEPLOY.md
+!**/*DEPLOY*.md
+!**/deploy/**/*.md
+!**/*.github/**/*.md
+!.github/**/*.md
+!**/.agents/AGENTS.md
+!**/docs/plans/plan_*.md
+!**/docs/walkthrough_*.md

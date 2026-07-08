@@ -182,26 +182,64 @@ def parse_neighbors_output(output: str, local_intf: str, platform: str) -> str:
 
 def parse_interface_counters(output: str, platform: str) -> dict:
     counters = {"input_errors": 0, "crc": 0, "input_drops": 0, "output_drops": 0}
-    m_errs = re.search(r'(\d+)\s+input errors,\s*(\d+)\s+CRC', output)
-    if m_errs:
-        counters["input_errors"] = int(m_errs.group(1))
-        counters["crc"] = int(m_errs.group(2))
     
+    # 1. Input errors
+    # Juniper: "Input errors:\n        Errors: 7"
+    m_err = re.search(r'Input errors:\s*Errors:\s*(\d+)', output, re.I)
+    if not m_err:
+        m_err = re.search(r'(\d+)[^\S\r\n]+(?:input errors|errors\b)', output, re.I)
+    if not m_err:
+        m_err = re.search(r'Input errors:\s*(\d+)', output, re.I)
+    if m_err:
+        counters["input_errors"] = int(m_err.group(1))
+        
+    # 2. CRC errors
+    m_crc = re.search(r'(\d+)[^\S\r\n]+CRC', output, re.I)
+    if m_crc:
+        counters["crc"] = int(m_crc.group(1))
+        
+    # 3. Input drops
+    # Cisco: "Input queue: 0/75/0/0 (size/max/drops/flushes)"
     m_drops1 = re.search(r'Input queue:.*?(\d+)/(\d+)/(\d+)/(\d+)\s*\(size/max/drops/flushes\)', output)
     if m_drops1:
         counters["input_drops"] = int(m_drops1.group(3))
-        
-    m_drops2 = re.search(r'Total output drops:\s*(\d+)', output)
+    else:
+        # Juniper: "Input errors:\n        Errors: 7, Drops: 0"
+        m_drops_j = re.search(r'Input errors:.*?\bDrops:\s*(\d+)', output, re.S | re.I)
+        if not m_drops_j:
+            m_drops_j = re.search(r'Input drops:\s*(\d+)', output, re.I)
+        if m_drops_j:
+            counters["input_drops"] = int(m_drops_j.group(1))
+
+    # 4. Output drops
+    # Cisco: "Total output drops: 0"
+    m_drops2 = re.search(r'Total output drops:\s*(\d+)', output, re.I)
+    if not m_drops2:
+        # Juniper: "Output errors:\n        Carrier transitions: 0, Errors: 0, Drops: 31"
+        m_drops2 = re.search(r'Output errors:.*?\bDrops:\s*(\d+)', output, re.S | re.I)
+    if not m_drops2:
+        # Search specifically inside the "Output:" section if it exists (H3C/Huawei format)
+        out_match = re.search(r'\bOutput:\s*(.*)', output, re.S | re.I)
+        if out_match:
+            m_drops2 = re.search(r'(\d+)[^\S\r\n]+discarded', out_match.group(1), re.I)
+            if not m_drops2:
+                m_drops2 = re.search(r'discarded:\s*(\d+)', out_match.group(1), re.I)
+    if not m_drops2:
+        # Juniper: "Output drops: 0"
+        m_drops2 = re.search(r'Output drops:\s*(\d+)', output, re.I)
+    if not m_drops2:
+        m_drops2 = re.search(r'(\d+)[^\S\r\n]+discarded', output, re.I)
+    if not m_drops2:
+        m_drops2 = re.search(r'discarded:\s*(\d+)', output, re.I)
     if m_drops2:
         counters["output_drops"] = int(m_drops2.group(1))
-        
-    m_hw_errs = re.search(r'Input:\s*\d+\s+packets,\s*\d+\s+bytes,\s*\d+\s+buffers,\s*(\d+)\s+errors', output, re.I)
-    if m_hw_errs:
-         counters["input_errors"] = int(m_hw_errs.group(1))
-    m_hw_crc = re.search(r'(\d+)\s+CRC', output, re.I)
-    if m_hw_crc:
-         counters["crc"] = int(m_hw_crc.group(1))
-         
+
+    # Fallback for Cisco hardware packet output line
+    if counters["input_errors"] == 0:
+        m_hw_errs = re.search(r'Input:\s*\d+\s+packets,\s*\d+\s+bytes,\s*\d+\s+buffers,\s*(\d+)\s+errors', output, re.I)
+        if m_hw_errs:
+             counters["input_errors"] = int(m_hw_errs.group(1))
+
     return counters
 
 def parse_cpu_utilization(output: str) -> int:
@@ -335,7 +373,9 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                         "device_id": None,
                         "device_type": ha["device_type"] if ha["device_type"] == hb["device_type"] else "router",
                         "status": status,
-                        "detail": f"Path 1: {ha['detail']} || Path 2: {hb['detail']}"
+                        "detail": f"Path 1: {ha['detail']} || Path 2: {hb['detail']}",
+                        "is_ecmp": True,
+                        "paths": [ha, hb]
                     })
             elif i < len(hops_a):
                 merged.append(hops_a[i])
@@ -661,41 +701,59 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 route_source = "EIGRP"
             diag_context["route_sources"].append({"device": dev_label, "source": route_source})
 
-            if current_vrf and current_vrf != 'default':
-                if platform_lower in ('huawei_vrp', 'h3c_comware'):
-                    cmd_cef = f"display fib vpn-instance {current_vrf} {target_ip}"
-                elif platform_lower in ('juniper_junos',):
-                    cmd_cef = f"show route forwarding-table destination {target_ip} table {current_vrf}"
-                else:
-                    cmd_cef = f"show ip cef vrf {current_vrf} {target_ip}"
+            cmd_cef = None
+            if platform_lower == 'ruijie_rgos':
+                diag_context["cef_logs"] += f"[{dev_label}]# (CEF check skipped on Ruijie RGOS)\n"
             else:
-                if platform_lower in ('huawei_vrp', 'h3c_comware'):
-                    cmd_cef = f"display fib {target_ip}"
-                elif platform_lower in ('juniper_junos',):
-                    cmd_cef = f"show route forwarding-table destination {target_ip}"
+                if current_vrf and current_vrf != 'default':
+                    if platform_lower in ('huawei_vrp', 'h3c_comware'):
+                        cmd_cef = f"display fib vpn-instance {current_vrf} {target_ip}"
+                    elif platform_lower in ('juniper_junos',):
+                        cmd_cef = f"show route forwarding-table destination {target_ip} table {current_vrf}"
+                    else:
+                        cmd_cef = f"show ip cef vrf {current_vrf} {target_ip}"
                 else:
-                    cmd_cef = f"show ip cef {target_ip}"
+                    if platform_lower in ('huawei_vrp', 'h3c_comware'):
+                        cmd_cef = f"display fib {target_ip}"
+                    elif platform_lower in ('juniper_junos',):
+                        cmd_cef = f"show route forwarding-table destination {target_ip}"
+                    else:
+                        cmd_cef = f"show ip cef {target_ip}"
 
-            diag_context["cef_logs"] += f"[{dev_label}]# {cmd_cef}\n"
-            try:
-                cef_out = await run_cmd(cmd_cef)
-                diag_context["cef_logs"] += cef_out + "\n"
-                cef_l = cef_out.lower()
-                if "no route" in cef_l or "not found" in cef_l or "drop" in cef_l or "not in table" in cef_l or (len(cef_out.strip()) < 10 and "0.0.0.0" not in target_ip):
-                    diag_context["cef_verified"] = False
-            except Exception as e:
-                diag_context["cef_logs"] += f"Error: {e}\n"
+            if cmd_cef:
+                diag_context["cef_logs"] += f"[{dev_label}]# {cmd_cef}\n"
+                try:
+                    cef_out = await run_cmd(cmd_cef)
+                    diag_context["cef_logs"] += cef_out + "\n"
+                    cef_l = cef_out.lower()
+                    if "no route" in cef_l or "not found" in cef_l or "drop" in cef_l or "not in table" in cef_l or (len(cef_out.strip()) < 10 and "0.0.0.0" not in target_ip):
+                        diag_context["cef_verified"] = False
+                except Exception as e:
+                    diag_context["cef_logs"] += f"Error: {e}\n"
 
             if route_source == "BGP":
-                if current_vrf and current_vrf != 'default':
-                    cmd_bgp = f"show ip bgp vrf {current_vrf} {target_ip}"
+                if platform_lower in ('huawei_vrp', 'h3c_comware'):
+                    if current_vrf and current_vrf != 'default':
+                        cmd_bgp = f"display bgp ipv4 unicast vpn-instance {current_vrf} routing-table {target_ip}"
+                    else:
+                        cmd_bgp = f"display bgp ipv4 unicast routing-table {target_ip}"
+                elif platform_lower in ('juniper_junos',):
+                    if current_vrf and current_vrf != 'default':
+                        cmd_bgp = f"show route table {current_vrf} protocol bgp {target_ip}"
+                    else:
+                        cmd_bgp = f"show route protocol bgp {target_ip}"
                 else:
-                    cmd_bgp = f"show ip bgp {target_ip}"
+                    if current_vrf and current_vrf != 'default':
+                        cmd_bgp = f"show ip bgp vrf {current_vrf} {target_ip}"
+                    else:
+                        cmd_bgp = f"show ip bgp {target_ip}"
+
                 diag_context["bgp_logs"] += f"[{dev_label}]# {cmd_bgp}\n"
                 try:
                     bgp_out = await run_cmd(cmd_bgp)
                     diag_context["bgp_logs"] += bgp_out + "\n"
-                    if "not in table" in bgp_out.lower() or "not active" in bgp_out.lower():
+                    bgp_l = bgp_out.lower()
+                    if any(term in bgp_l for term in ("not in table", "not active", "not found", "no such", "inactive")):
                         diag_context["bgp_verified"] = False
                 except Exception as e:
                     diag_context["bgp_logs"] += f"Error: {e}\n"
@@ -704,6 +762,8 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 cmd_ha = "display vrrp brief"
             elif platform_lower in ('juniper_junos',):
                 cmd_ha = "show vrrp summary"
+            elif platform_lower == 'ruijie_rgos':
+                cmd_ha = "show vrrp brief"
             else:
                 cmd_ha = "show standby brief"
             diag_context["ha_logs"] += f"[{dev_label}]# {cmd_ha}\n"
@@ -761,6 +821,8 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
 
                     if platform_lower in ('huawei_vrp', 'h3c_comware'):
                         cmd_acl = f"display traffic-policy applied interface {egress_intf}"
+                    elif platform_lower in ('juniper_junos',):
+                        cmd_acl = f"show configuration interfaces {egress_intf}"
                     else:
                         cmd_acl = f"show ip interface {egress_intf} | include access-list"
                     diag_context["acl_logs"] += f"[{dev_label}]# {cmd_acl}\n"
@@ -1193,11 +1255,30 @@ def _generate_mock_diagnose(source_ip: str, target_ip: str, port: int, protocol:
         },
         {
             "hop": 2,
-            "ip": "10.254.1.2",
-            "device_name": "FW-Core-01",
+            "is_ecmp": True,
+            "paths": [
+                {
+                    "hop": 2,
+                    "ip": "10.254.1.2",
+                    "device_name": "FW-Core-01A",
+                    "device_type": "firewall",
+                    "status": "active",
+                    "detail": "2.18 ms (Active)"
+                },
+                {
+                    "hop": 2,
+                    "ip": "10.254.1.3",
+                    "device_name": "FW-Core-01B",
+                    "device_type": "firewall",
+                    "status": "blocked",
+                    "detail": "阻断 (Standby/Backup)"
+                }
+            ],
+            "ip": "10.254.1.2 | 10.254.1.3",
+            "device_name": "FW-Core-01A | FW-Core-01B",
             "device_type": "firewall",
             "status": "blocked",
-            "detail": "2.18 ms (安全策略 ACL 3001 命中拦截)"
+            "detail": "路径 A 正常 / 路径 B 阻断"
         },
         {
             "hop": 3,
