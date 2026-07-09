@@ -129,6 +129,7 @@ jobs:
 
   release-windows:
     name: Release Windows (windows branch)
+    needs: release-ubuntu
     runs-on: ubuntu-latest
     steps:
       - name: 1. 拉取开发库代码
