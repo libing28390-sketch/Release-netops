@@ -23,6 +23,7 @@ import { statusMeta, typeMeta, severityOf } from './helpers';
 
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { BatchTagModal } from './components/BatchTagModal';
+import { AssetImportValidationModal, MissingRackInfo, RackResolution } from './components/AssetImportValidationModal';
 import { TerminalAccessModal } from './components/TerminalAccessModal';
 import { AssetDetailDrawer } from './components/AssetDetailDrawer';
 import { AssetModal } from './components/AssetModal';
@@ -107,6 +108,31 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [rotatingAssetId, setRotatingAssetId] = useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const rotationPollRef = React.useRef<any>(null);
+
+  const [allRacks, setAllRacks] = useState<any[]>([]);
+  const [showValidationModal, setShowValidationModal] = useState(false);
+  const [missingRacks, setMissingRacks] = useState<MissingRackInfo[]>([]);
+  const [pendingImportPayload, setPendingImportPayload] = useState<any[]>([]);
+  const [validationModalSaving, setValidationModalSaving] = useState(false);
+
+  const fetchAllRacks = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('netops_token');
+      const res = await fetch('/api/racks', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.data)) {
+        setAllRacks(data.data);
+      }
+    } catch (err) {
+      console.error('Failed to load racks in AssetManagement:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAllRacks();
+  }, [fetchAllRacks]);
 
   useEffect(() => () => { if (rotationPollRef.current) clearInterval(rotationPollRef.current); }, []);
 
@@ -533,8 +559,104 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       XLSX.utils.book_append_sheet(wb, ws, 'Assets');
       const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
       XLSX.writeFile(wb, `assets_${ts}.xlsx`);
-    } catch (error) {
-      console.error('Failed to export assets:', error);
+    } catch {
+      setFeedbackMsg({ type: 'error', text: zh ? '导出失败' : 'Export failed' });
+    }
+  };
+
+  const doImport = async (payload: any[]) => {
+    try {
+      const r = await fetch('/api/assets/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (r.ok) {
+        const res = await r.json();
+        setFeedbackMsg({
+          type: 'success',
+          text: zh ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条` : `Import done: ${res.created} created, ${res.skipped} skipped`,
+        });
+        fetchAssets();
+        fetchSummary();
+        fetchAllRacks();
+      } else {
+        setFeedbackMsg({ type: 'error', text: zh ? '导入失败' : 'Import failed' });
+      }
+    } catch {
+      setFeedbackMsg({ type: 'error', text: zh ? '连接失败，导入未完成' : 'Connection failed, import incomplete' });
+    }
+  };
+
+  const handleValidationConfirm = async (resolutions: Record<string, RackResolution>) => {
+    setValidationModalSaving(true);
+    try {
+      let finalPayload = [...pendingImportPayload];
+      const skipKeys = new Set<string>();
+      const mapConfig: Record<string, string> = {};
+      const autoCreateList: { name: string; datacenter: string; total_u: number }[] = [];
+      const createdKeys = new Set<string>();
+
+      Object.entries(resolutions).forEach(([key, res]) => {
+        const [dc, rk] = key.split('|');
+        if (res.action === 'skip') {
+          skipKeys.add(key);
+        } else if (res.action === 'map' && res.targetRack) {
+          mapConfig[key] = res.targetRack;
+        } else if (res.action === 'create') {
+          if (!createdKeys.has(key)) {
+            autoCreateList.push({ name: rk, datacenter: dc, total_u: 42 });
+            createdKeys.add(key);
+          }
+        }
+      });
+
+      if (autoCreateList.length > 0) {
+        const token = localStorage.getItem('netops_token');
+        const r = await fetch('/api/racks/batch', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(autoCreateList),
+        });
+        if (!r.ok) {
+          const errData = await r.json().catch(() => ({}));
+          throw new Error(errData.detail || (zh ? '自动新建机柜失败' : 'Failed to auto-create racks'));
+        }
+      }
+
+      finalPayload = finalPayload.filter(row => {
+        const dc = row.datacenter || '';
+        const rk = row.rack || '';
+        const key = `${dc}|${rk}`;
+        if (skipKeys.has(key)) {
+          return false;
+        }
+        if (mapConfig[key]) {
+          row.rack = mapConfig[key];
+        }
+        return true;
+      });
+
+      if (finalPayload.length > 0) {
+        await doImport(finalPayload);
+      } else {
+        setFeedbackMsg({
+          type: 'info',
+          text: zh ? '所有异常行已被跳过，未导入任何数据' : 'All exception rows were skipped, no data imported',
+        });
+      }
+      
+      setShowValidationModal(false);
+    } catch (err: any) {
+      setFeedbackMsg({
+        type: 'error',
+        text: err.message || (zh ? '处理异常失败' : 'Failed to process import validation'),
+      });
+    } finally {
+      setValidationModalSaving(false);
     }
   };
 
@@ -571,13 +693,30 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           }
         }
         if (!mapped.length) { setFeedbackMsg({ type: 'error', text: zh ? '未找到有效 data 行' : 'No valid rows found' }); return; }
-        const r = await fetch('/api/assets/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mapped) });
-        if (r.ok) {
-          const res = await r.json();
-          setFeedbackMsg({ type: 'success', text: zh ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条` : `Import done: ${res.created} created, ${res.skipped} skipped` });
-          fetchAssets(); fetchSummary();
+        
+        // Scan for missing racks
+        const missingMap: Record<string, { datacenter: string; rack: string; rowCount: number }> = {};
+        mapped.forEach(row => {
+          if (row.rack) {
+            const dcName = row.datacenter || '';
+            const exists = allRacks.some(r => r.name === row.rack && (r.datacenter || '') === dcName);
+            if (!exists) {
+              const key = `${dcName}|${row.rack}`;
+              if (!missingMap[key]) {
+                missingMap[key] = { datacenter: dcName, rack: row.rack, rowCount: 0 };
+              }
+              missingMap[key].rowCount += 1;
+            }
+          }
+        });
+
+        const missingList = Object.values(missingMap);
+        if (missingList.length > 0) {
+          setPendingImportPayload(mapped);
+          setMissingRacks(missingList);
+          setShowValidationModal(true);
         } else {
-          setFeedbackMsg({ type: 'error', text: zh ? '导入失败' : 'Import failed' });
+          await doImport(mapped);
         }
       } catch { setFeedbackMsg({ type: 'error', text: zh ? '文件解析失败' : 'Failed to parse' }); }
     };
@@ -1199,6 +1338,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         doSave={doSave}
         language={language}
         setFeedbackMsg={setFeedbackMsg}
+      />
+
+      {/* Asset Import Validation Modal */}
+      <AssetImportValidationModal
+        isOpen={showValidationModal}
+        onClose={() => setShowValidationModal(false)}
+        language={language}
+        missingRacks={missingRacks}
+        existingRacks={allRacks}
+        onConfirm={handleValidationConfirm}
+        saving={validationModalSaving}
       />
     </div>
   );

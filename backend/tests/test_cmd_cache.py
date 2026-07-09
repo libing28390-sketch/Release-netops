@@ -39,13 +39,20 @@ def test_command_caching_and_expiration():
     # Initially not in cache
     assert get_cached_command(device_ip, command) is None
 
-    # Set cache with 1s TTL
-    set_cached_command(device_ip, command, output, ttl=1)
-    assert get_cached_command(device_ip, command) == output
+    # Use patch to mock the system time passage deterministically
+    with patch("time.time") as mock_time:
+        mock_time.return_value = 1000.0
+        
+        # Set cache with 1s TTL (expires at 1001.0)
+        set_cached_command(device_ip, command, output, ttl=1)
+        
+        # 0.5s later: should still be in cache
+        mock_time.return_value = 1000.5
+        assert get_cached_command(device_ip, command) == output
 
-    # Wait for expiration
-    time.sleep(1.1)
-    assert get_cached_command(device_ip, command) is None
+        # 1.5s later: should have expired
+        mock_time.return_value = 1001.5
+        assert get_cached_command(device_ip, command) is None
 
 @patch("services.ip_locator_service.ConnectHandler")
 def test_send_command_caching_integration(mock_connect):

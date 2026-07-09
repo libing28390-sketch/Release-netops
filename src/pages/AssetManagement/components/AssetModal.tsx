@@ -46,6 +46,45 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 }) => {
   const zh = language === 'zh';
 
+  const [racks, setRacks] = React.useState<any[]>([]);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      const token = localStorage.getItem('netops_token');
+      fetch('/api/racks', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.success && Array.isArray(data.data)) {
+          setRacks(data.data);
+        }
+      })
+      .catch(err => console.error('Failed to load racks:', err));
+    }
+  }, [isOpen]);
+
+  const uniqueDatacenters = React.useMemo(() => {
+    const set = new Set<string>();
+    racks.forEach(r => {
+      if (r.datacenter) {
+        set.add(r.datacenter);
+      }
+    });
+    return Array.from(set).sort();
+  }, [racks]);
+
+  const filteredRacks = React.useMemo(() => {
+    if (!form.datacenter) {
+      return Array.from(new Set(racks.map(r => r.name))).filter(Boolean).sort();
+    }
+    return racks
+      .filter(r => r.datacenter === form.datacenter)
+      .map(r => r.name)
+      .filter(Boolean)
+      .sort();
+  }, [racks, form.datacenter]);
+
   if (!isOpen) return null;
 
   return (
@@ -373,8 +412,40 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">{zh ? '位置 & 资产' : 'Location & Asset'}</span>
             </div>
             <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
-              <Field label={zh ? '数据中心' : 'DC'} value={form.datacenter} onChange={v => setForm(f => ({ ...f, datacenter: v }))} placeholder="BJ-DC1" />
-              <Field label={zh ? '机柜' : 'Rack'} value={form.rack} onChange={v => setForm(f => ({ ...f, rack: v }))} placeholder="A-01" />
+              <div>
+                <Field
+                  label={zh ? '数据中心' : 'DC'}
+                  value={form.datacenter}
+                  onChange={v => setForm(f => ({ ...f, datacenter: v }))}
+                  placeholder="BJ-DC1"
+                  list="dc-options"
+                />
+                <datalist id="dc-options">
+                  {uniqueDatacenters.map(dc => (
+                    <option key={dc} value={dc} />
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <Field
+                  label={zh ? '机柜' : 'Rack'}
+                  value={form.rack}
+                  onChange={v => {
+                    setForm(f => {
+                      const matched = racks.find(r => r.name === v);
+                      const newDc = !f.datacenter && matched?.datacenter ? matched.datacenter : f.datacenter;
+                      return { ...f, rack: v, datacenter: newDc };
+                    });
+                  }}
+                  placeholder="A-01"
+                  list="rack-options"
+                />
+                <datalist id="rack-options">
+                  {filteredRacks.map(rk => (
+                    <option key={rk} value={rk} />
+                  ))}
+                </datalist>
+              </div>
               <Field type="number" label={zh ? '设备高度(U)' : 'Height (U)'} value={form.u_height} onChange={v => setForm(f => ({ ...f, u_height: v }))} placeholder="1" />
               <Field type="number" label={zh ? '计划起始U(选填)' : 'Planned start U'} value={form.planned_start_u} onChange={v => setForm(f => ({ ...f, planned_start_u: v }))} placeholder="" />
               <Field label={zh ? '机位备注(选填)' : 'Location note'} value={form.rack_unit} onChange={v => setForm(f => ({ ...f, rack_unit: v }))} placeholder={zh ? '文本备注' : 'Optional note'} />
@@ -459,8 +530,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 };
 
 /* --- Form field --- */
-function Field({ label, value, onChange, placeholder, type = 'text' }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
+function Field({ label, value, onChange, placeholder, type = 'text', list }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; list?: string;
 }) {
   return (
     <div>
@@ -470,6 +541,7 @@ function Field({ label, value, onChange, placeholder, type = 'text' }: {
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
+        list={list}
         className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 placeholder:text-black/12 focus:outline-none focus:border-[#00bceb]/25"
       />
     </div>
