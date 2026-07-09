@@ -165,6 +165,9 @@ const App: React.FC = () => {
     setRememberMe,
     showLoginPwd,
     setShowLoginPwd,
+    mfaRequired,
+    setMfaRequired,
+    handleMfaVerify,
   } = useAuth({
     language,
     setLanguage,
@@ -1349,6 +1352,12 @@ const App: React.FC = () => {
         showLoginPwd={showLoginPwd}
         rememberMe={rememberMe}
         isAuthenticating={isAuthenticating}
+        mfaRequired={mfaRequired}
+        onMfaSubmit={handleMfaVerify}
+        onCancelMfa={() => {
+          setMfaRequired(false);
+          setLoginError(null);
+        }}
         onUsernameChange={(value) => {
           setLoginForm({ ...loginForm, username: value });
           setLoginError(null);
@@ -1829,7 +1838,7 @@ const App: React.FC = () => {
           showProfilePwd, notificationChannels, notifyTestLoading, renderAvatarContent,
           setShowProfileModal, handleSaveProfile, handleProfileAvatarChange,
           setProfileAvatarPreview, setProfileForm, setShowProfilePwd, setNotificationChannels,
-          setNotifyTestLoading, showToast,
+          setNotifyTestLoading, showToast, setCurrentUser,
           showTestResult, isTestingConnection, connectionTestMode, connectionTestDevice,
           selectedDevice, testResult, setShowTestResult, handleTestConnection,
           showImportModal, t, setShowImportModal,

@@ -247,6 +247,47 @@ def _clear_login_failures(username: str):
 def _create_token() -> str:
     return hmac.new(os.urandom(32), str(time.time()).encode(), hashlib.sha256).hexdigest()
 
+# --- MFA (Multi-Factor Authentication) Pure Python TOTP Implementation ---
+import base64
+import struct
+
+def generate_totp_secret() -> str:
+    import secrets
+    raw = secrets.token_bytes(10)
+    return base64.b32encode(raw).decode('utf-8').replace('=', '')
+
+def verify_totp(secret: str, code: str, window: int = 1) -> bool:
+    try:
+        secret = secret.strip().replace(" ", "")
+        missing_padding = len(secret) % 8
+        if missing_padding:
+            secret += '=' * (8 - missing_padding)
+        key = base64.b32decode(secret, casefold=True)
+    except Exception:
+        return False
+
+    try:
+        val_code = int(code.strip())
+    except ValueError:
+        return False
+
+    time_step = int(time.time() / 30)
+
+    for t in range(time_step - window, time_step + window + 1):
+        msg = struct.pack(">Q", t)
+        hmac_hash = hmac.new(key, msg, hashlib.sha1).digest()
+        offset = hmac_hash[-1] & 0x0f
+        truncated = struct.unpack(">I", hmac_hash[offset:offset+4])[0] & 0x7fffffff
+        computed_code = truncated % 1000000
+        if computed_code == val_code:
+            return True
+            
+    return False
+
+# In-memory session store for temporary MFA tickets: temp_token -> { user_id, username, expires_at }
+_temp_mfa_tokens: dict[str, dict] = {}
+
+
 def _clean_sessions():
     """Remove expired sessions from DB."""
     cutoff = time.time() - _SESSION_TTL
@@ -314,7 +355,7 @@ def read_users():
     conn = get_db_connection()
     try:
         users = conn.execute(
-            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email FROM users'
+            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users'
         ).fetchall()
         # Fetch the (small) shared notification-channel templates once and
         # reuse for every row — was previously per-row (N+1 query and
@@ -492,6 +533,21 @@ async def login(request: Request, payload: dict = Body(...)):
 
             user_dict = dict(user)
             _clear_login_failures(safe_username)
+            
+            # --- MFA Check ---
+            if user['mfa_enabled']:
+                temp_token = _create_token()
+                _temp_mfa_tokens[temp_token] = {
+                    "user_id": user_dict['id'],
+                    "username": user_dict['username'],
+                    "expires_at": time.time() + 300
+                }
+                return {
+                    "success": True,
+                    "mfa_required": True,
+                    "temp_token": temp_token
+                }
+
             log_audit_event(
                 event_type='LOGIN_SUCCESS',
                 category='identity',
@@ -510,7 +566,7 @@ async def login(request: Request, payload: dict = Body(...)):
             token = _create_token()
             _store_session(token, user_dict)
             profile_row = conn.execute(
-                'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
+                'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, mfa_enabled FROM users WHERE id = ?',
                 (user_dict['id'],),
             ).fetchone()
             profile = _hydrate_user_row(profile_row)
@@ -844,7 +900,7 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
             )
         conn.commit()
         result = conn.execute(
-            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email FROM users WHERE id = ?',
+            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users WHERE id = ?',
             (user_id,)
         ).fetchone()
         log_audit_event(
@@ -880,7 +936,7 @@ def check_session(request: Request):
     conn = get_db_connection()
     try:
         user = conn.execute(
-            'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email FROM users WHERE id = ?',
+            'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users WHERE id = ?',
             (sess['user_id'],)
         ).fetchone()
         if not user:
@@ -981,3 +1037,142 @@ def test_notification_channel(user_id: str, request: Request, payload: dict = Bo
         return {"success": True, "platform": platform, "message": "Test message sent successfully"}
     else:
         raise HTTPException(status_code=502, detail=f"Send failed: {msg[:300]}")
+
+
+# --- MFA SETUP & VERIFICATION ENDPOINTS ---
+
+def _get_session_user(request: Request) -> dict:
+    auth = request.headers.get('Authorization', '')
+    token = auth.replace('Bearer ', '') if auth.startswith('Bearer ') else ''
+    sess = validate_session_token(token)
+    if not sess:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return sess
+
+@router.post("/mfa/setup")
+def mfa_setup(request: Request):
+    sess = _get_session_user(request)
+    conn = get_db_connection()
+    try:
+        user = conn.execute('SELECT username, mfa_secret FROM users WHERE id = ?', (sess['user_id'],)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Use existing secret if already configured, otherwise generate new one
+        secret = user['mfa_secret'] or generate_totp_secret()
+        sys_name = _get_system_name()
+        qr_code_uri = f"otpauth://totp/{sys_name}:{user['username']}?secret={secret}&issuer={sys_name}"
+        return {
+            "success": True,
+            "secret": secret,
+            "qr_code_uri": qr_code_uri
+        }
+    finally:
+        conn.close()
+
+@router.post("/mfa/enable")
+def mfa_enable(request: Request, payload: dict = Body(...)):
+    sess = _get_session_user(request)
+    code = payload.get('code')
+    secret = payload.get('secret')
+    if not code or not secret:
+        raise HTTPException(status_code=400, detail="code and secret are required")
+
+    if not verify_totp(secret, code, window=1):
+        raise HTTPException(status_code=400, detail="验证码错误，请重新输入")
+
+    conn = get_db_connection()
+    try:
+        conn.execute('UPDATE users SET mfa_secret = ?, mfa_enabled = 1 WHERE id = ?', (secret, sess['user_id']))
+        conn.commit()
+        return {"success": True, "message": "MFA 开启成功"}
+    finally:
+        conn.close()
+
+@router.post("/mfa/disable")
+async def mfa_disable(request: Request, payload: dict = Body(...)):
+    sess = _get_session_user(request)
+    password = payload.get('password')
+    if not password:
+        raise HTTPException(status_code=400, detail="password is required")
+
+    conn = get_db_connection()
+    try:
+        user = conn.execute('SELECT password FROM users WHERE id = ?', (sess['user_id'],)).fetchone()
+        if not user or not await _verify_password(password, user['password']):
+            raise HTTPException(status_code=400, detail="当前密码错误，无法关闭 MFA")
+
+        conn.execute('UPDATE users SET mfa_secret = "", mfa_enabled = 0 WHERE id = ?', (sess['user_id'],))
+        conn.commit()
+        return {"success": True, "message": "MFA 关闭成功"}
+    finally:
+        conn.close()
+
+@router.post("/mfa/verify")
+async def mfa_verify(request: Request, payload: dict = Body(...)):
+    temp_token = payload.get('temp_token')
+    code = payload.get('code')
+    
+    # Clean up expired temp tokens first
+    now_ts = time.time()
+    for k in list(_temp_mfa_tokens.keys()):
+        if _temp_mfa_tokens[k]["expires_at"] < now_ts:
+            _temp_mfa_tokens.pop(k, None)
+
+    if not temp_token or not code:
+        raise HTTPException(status_code=400, detail="temp_token and code are required")
+
+    token_info = _temp_mfa_tokens.get(temp_token)
+    if not token_info:
+        raise HTTPException(status_code=400, detail="验证链接已失效或已过期，请重新登录")
+
+    username = token_info["username"]
+    conn = get_db_connection()
+    try:
+        user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+        if not user or not user['mfa_enabled'] or not user['mfa_secret']:
+            raise HTTPException(status_code=400, detail="未启用 MFA 二次认证或用户不存在")
+
+        if not verify_totp(user['mfa_secret'], code, window=1):
+            raise HTTPException(status_code=401, detail="二次验证码错误")
+
+        # Success!
+        _temp_mfa_tokens.pop(temp_token, None) # consume temp token
+        user_dict = dict(user)
+        last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute('UPDATE users SET last_login = ? WHERE id = ?', (last_login, user['id']))
+        conn.commit()
+
+        _clear_login_failures(username)
+        log_audit_event(
+            event_type='LOGIN_SUCCESS_MFA',
+            category='identity',
+            severity='low',
+            status='success',
+            summary=f"User {username} logged in via MFA",
+            actor_id=str(user_dict['id']),
+            actor_username=user_dict['username'],
+            actor_role=user_dict['role'],
+            source_ip=request.client.host if request and request.client else None,
+            target_type='session',
+            target_id=str(user_dict['id']),
+            target_name=user_dict['username'],
+        )
+
+        _clean_sessions()
+        token = _create_token()
+        _store_session(token, user_dict)
+        profile_row = conn.execute(
+            'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, mfa_enabled FROM users WHERE id = ?',
+            (user_dict['id'],),
+        ).fetchone()
+        profile = _hydrate_user_row(profile_row)
+        profile['lastLogin'] = last_login
+
+        return {
+            "success": True,
+            "token": token,
+            "user": profile,
+        }
+    finally:
+        conn.close()

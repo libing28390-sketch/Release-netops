@@ -26,7 +26,7 @@ export const AppModals: React.FC<any> = (props) => {
     showProfilePwd, notificationChannels, notifyTestLoading, renderAvatarContent,
     setShowProfileModal, handleSaveProfile, handleProfileAvatarChange,
     setProfileAvatarPreview, setProfileForm, setShowProfilePwd, setNotificationChannels,
-    setNotifyTestLoading, showToast,
+    setNotifyTestLoading, showToast, setCurrentUser,
     // TestConnectionResultModal
     showTestResult, isTestingConnection, connectionTestMode, connectionTestDevice,
     selectedDevice, testResult, setShowTestResult, handleTestConnection,
@@ -94,6 +94,12 @@ export const AppModals: React.FC<any> = (props) => {
         onSelectAvatarPreset={setProfileAvatarPreview}
         onProfileFormChange={setProfileForm}
         onToggleProfilePassword={() => setShowProfilePwd((value) => !value)}
+        mfaEnabled={!!(currentUser?.mfa_enabled || currentUserRecord?.mfa_enabled)}
+        onMfaStatusChange={(enabled) => {
+          if (setCurrentUser) {
+            setCurrentUser((prev: any) => ({ ...prev, mfa_enabled: enabled }));
+          }
+        }}
         onNotificationChannelToggle={(channel) => setNotificationChannels((prev) => ({ ...prev, [channel]: { ...prev[channel], enabled: !prev[channel].enabled } }))}
         onNotificationWebhookChange={(channel, value) => setNotificationChannels((prev) => ({ ...prev, [channel]: { ...prev[channel], webhook_url: value } }))}
         onNotificationSecretChange={(value) => setNotificationChannels((prev) => ({ ...prev, dingtalk: { ...prev.dingtalk, secret: value } }))}

@@ -15,6 +15,9 @@ interface LoginScreenProps {
   showLoginPwd: boolean;
   rememberMe: boolean;
   isAuthenticating: boolean;
+  mfaRequired?: boolean;
+  onMfaSubmit?: (code: string) => void;
+  onCancelMfa?: () => void;
   onUsernameChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
   onTogglePassword: () => void;
@@ -40,6 +43,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   showLoginPwd,
   rememberMe,
   isAuthenticating,
+  mfaRequired = false,
+  onMfaSubmit,
+  onCancelMfa,
   onUsernameChange,
   onPasswordChange,
   onTogglePassword,
@@ -47,6 +53,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   onSubmit,
 }) => {
   const clock = useClock();
+  const [mfaCode, setMfaCode] = useState('');
   const timeStr = clock.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const dateStr = clock.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' });
 
@@ -247,171 +254,257 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                 transition={{ delay: 0.15 }}
                 className="mb-8"
               >
-                <h2 className="text-xl font-bold text-white/90 tracking-tight">{t('welcomeBack')}</h2>
-                <p className="text-[13px] mt-1 text-white/30">{t('loginSubtitle')}</p>
+                <h2 className="text-xl font-bold text-white/90 tracking-tight">
+                  {mfaRequired ? '双因子二次验证 (MFA)' : t('welcomeBack')}
+                </h2>
+                <p className="text-[13px] mt-1 text-white/30">
+                  {mfaRequired
+                    ? '您的账户已启用二次认证，请输入手机身份验证器中显示的 6 位动态验证码。'
+                    : t('loginSubtitle')}
+                </p>
               </motion.div>
 
               {/* form */}
-              <form
-                onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
-                className="space-y-5"
-                autoComplete="on"
-              >
-              <motion.div
-                animate={loginError ? { x: [-8, 8, -6, 6, 0] } : {}}
-                transition={{ duration: 0.32 }}
-                className="space-y-5"
-              >
-                {/* username */}
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-                  <label htmlFor="login-username" className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">{t('username')}</label>
-                  <div className="relative group">
-                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-[#06b6d4]/70 transition-colors">
-                      <User size={16} />
-                    </div>
-                    <input
-                      id="login-username"
-                      name="username"
-                      type="text"
-                      placeholder="admin"
-                      autoComplete="username"
-                      autoFocus
-                      value={loginForm.username}
-                      onChange={(event) => onUsernameChange(event.target.value)}
-                      className={`w-full rounded-xl border py-3 pl-11 pr-4 text-sm text-white placeholder-white/15 outline-none transition-all bg-white/[0.04] focus:bg-white/[0.07] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)] ${
-                        loginError
-                          ? 'border-red-500/50'
-                          : 'border-white/[0.08] focus:border-[#06b6d4]/50'
-                      }`}
-                    />
-                  </div>
-                </motion.div>
+              {mfaRequired ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    onMfaSubmit && onMfaSubmit(mfaCode);
+                  }}
+                  className="space-y-5"
+                >
+                  <motion.div
+                    animate={loginError ? { x: [-8, 8, -6, 6, 0] } : {}}
+                    transition={{ duration: 0.32 }}
+                    className="space-y-5"
+                  >
+                    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+                      <label htmlFor="login-mfa-code" className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">动态验证码</label>
+                      <div className="relative group">
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-[#06b6d4]/70 transition-colors">
+                          <Shield size={16} />
+                        </div>
+                        <input
+                          id="login-mfa-code"
+                          type="text"
+                          maxLength={6}
+                          placeholder="000000"
+                          autoFocus
+                          value={mfaCode}
+                          onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                          className={`w-full rounded-xl border py-3 pl-11 pr-4 text-sm text-white placeholder-white/15 outline-none transition-all bg-white/[0.04] focus:bg-white/[0.07] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)] ${
+                            loginError ? 'border-red-500/50' : 'border-white/[0.08] focus:border-[#06b6d4]/50'
+                          }`}
+                          style={{ letterSpacing: '0.25em' }}
+                        />
+                      </div>
+                    </motion.div>
 
-                {/* password */}
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
-                  <label htmlFor="login-password" className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">{t('password')}</label>
-                  <div className="relative group">
-                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-[#06b6d4]/70 transition-colors">
-                      <Lock size={16} />
+                    {/* error */}
+                    <AnimatePresence>
+                      {loginError && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4, height: 0 }}
+                          animate={{ opacity: 1, y: 0, height: 'auto' }}
+                          exit={{ opacity: 0, y: -4, height: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <p className="text-xs font-medium text-red-400 flex items-center gap-1.5 py-1">
+                            <XCircle size={13} />{loginError}
+                          </p>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* submit */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3 }}
+                      className="pt-2 flex gap-3"
+                    >
+                      <button
+                        type="button"
+                        onClick={onCancelMfa}
+                        className="flex-1 py-3 rounded-xl border border-white/10 text-xs font-semibold text-white/70 hover:bg-white/5 transition-colors"
+                      >
+                        返回密码登录
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isAuthenticating || mfaCode.length < 6}
+                        className="flex-1 py-3 rounded-xl bg-gradient-to-r from-[#0e7490] via-[#06b6d4] to-[#22d3ee] hover:shadow-[0_0_48px_rgba(6,182,212,0.3)] disabled:opacity-50 disabled:cursor-not-allowed text-xs font-semibold text-white transition-all flex items-center justify-center gap-1.5"
+                      >
+                        {isAuthenticating ? (
+                          <><RotateCcw className="animate-spin" size={14} />验证中...</>
+                        ) : (
+                          <>验证并登录 <ArrowRight size={14} /></>
+                        )}
+                      </button>
+                    </motion.div>
+                  </motion.div>
+                </form>
+              ) : (
+                <form
+                  onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
+                  className="space-y-5"
+                  autoComplete="on"
+                >
+                <motion.div
+                  animate={loginError ? { x: [-8, 8, -6, 6, 0] } : {}}
+                  transition={{ duration: 0.32 }}
+                  className="space-y-5"
+                >
+                  {/* username */}
+                  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+                    <label htmlFor="login-username" className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">{t('username')}</label>
+                    <div className="relative group">
+                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-[#06b6d4]/70 transition-colors">
+                        <User size={16} />
+                      </div>
+                      <input
+                        id="login-username"
+                        name="username"
+                        type="text"
+                        placeholder="admin"
+                        autoComplete="username"
+                        autoFocus
+                        value={loginForm.username}
+                        onChange={(event) => onUsernameChange(event.target.value)}
+                        className={`w-full rounded-xl border py-3 pl-11 pr-4 text-sm text-white placeholder-white/15 outline-none transition-all bg-white/[0.04] focus:bg-white/[0.07] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)] ${
+                          loginError
+                            ? 'border-red-500/50'
+                            : 'border-white/[0.08] focus:border-[#06b6d4]/50'
+                        }`}
+                      />
                     </div>
-                    <input
-                      id="login-password"
-                      name="password"
-                      type={showLoginPwd ? 'text' : 'password'}
-                      autoComplete="current-password"
-                      placeholder="••••••••"
-                      value={loginForm.password}
-                      onChange={(event) => onPasswordChange(event.target.value)}
-                      className={`w-full rounded-xl border py-3 pl-11 pr-12 text-sm text-white placeholder-white/15 outline-none transition-all bg-white/[0.04] focus:bg-white/[0.07] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)] ${
-                        loginError
-                          ? 'border-red-500/50'
-                          : 'border-white/[0.08] focus:border-[#06b6d4]/50'
-                      }`}
-                    />
+                  </motion.div>
+
+                  {/* password */}
+                  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
+                    <label htmlFor="login-password" className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">{t('password')}</label>
+                    <div className="relative group">
+                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-[#06b6d4]/70 transition-colors">
+                        <Lock size={16} />
+                      </div>
+                      <input
+                        id="login-password"
+                        name="password"
+                        type={showLoginPwd ? 'text' : 'password'}
+                        autoComplete="current-password"
+                        placeholder="••••••••"
+                        value={loginForm.password}
+                        onChange={(event) => onPasswordChange(event.target.value)}
+                        className={`w-full rounded-xl border py-3 pl-11 pr-12 text-sm text-white placeholder-white/15 outline-none transition-all bg-white/[0.04] focus:bg-white/[0.07] focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)] ${
+                          loginError
+                            ? 'border-red-500/50'
+                            : 'border-white/[0.08] focus:border-[#06b6d4]/50'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={onTogglePassword}
+                        aria-label={showLoginPwd ? 'Hide password' : 'Show password'}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-white/20 hover:text-white/50 transition-colors"
+                      >
+                        {showLoginPwd ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                    </div>
+                  </motion.div>
+
+                  {/* error */}
+                  <AnimatePresence>
+                    {loginError && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -4, height: 0 }}
+                        animate={{ opacity: 1, y: 0, height: 'auto' }}
+                        exit={{ opacity: 0, y: -4, height: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <p className="text-xs font-medium text-red-400 flex items-center gap-1.5 py-1">
+                          <XCircle size={13} />{loginError}
+                        </p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* remember me */}
+                  <motion.label
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.3 }}
+                    className="flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <div className="relative">
+                      <input
+                        id="login-remember-me"
+                        type="checkbox"
+                        checked={rememberMe}
+                        onChange={(event) => onRememberMeChange(event.target.checked)}
+                        className="peer sr-only"
+                      />
+                      <div className={`w-4 h-4 rounded border transition-all flex items-center justify-center ${
+                        rememberMe
+                          ? 'bg-[#06b6d4] border-[#06b6d4] shadow-[0_0_8px_rgba(6,182,212,0.3)]'
+                          : 'border-white/15 bg-white/[0.04]'
+                      }`}>
+                        {rememberMe && (
+                          <svg width="10" height="8" viewBox="0 0 10 8" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-xs text-white/30">{t('rememberMe')}</span>
+                  </motion.label>
+
+                  {/* forgot password hint */}
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.32 }}
+                    className="flex items-center justify-end"
+                  >
                     <button
                       type="button"
-                      onClick={onTogglePassword}
-                      aria-label={showLoginPwd ? 'Hide password' : 'Show password'}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 text-white/20 hover:text-white/50 transition-colors"
+                      onClick={() => setShowForgotPwd(true)}
+                      className="text-[11px] text-white/20 hover:text-[#06b6d4]/70 flex items-center gap-1 transition-colors"
                     >
-                      {showLoginPwd ? <EyeOff size={15} /> : <Eye size={15} />}
+                      <HelpCircle size={11} />{t('forgotPassword')}
                     </button>
-                  </div>
-                </motion.div>
+                  </motion.div>
 
-                {/* error */}
-                <AnimatePresence>
-                  {loginError && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -4, height: 0 }}
-                      animate={{ opacity: 1, y: 0, height: 'auto' }}
-                      exit={{ opacity: 0, y: -4, height: 0 }}
-                      className="overflow-hidden"
+                  {/* submit */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.35 }}
+                    className="pt-1"
+                  >
+                    <button
+                      type="submit"
+                      disabled={isAuthenticating}
+                      className={`group relative flex w-full items-center justify-center gap-2.5 rounded-xl py-3.5 text-[13px] font-bold tracking-wide text-white transition-all duration-200 disabled:opacity-50 hover:shadow-[0_0_48px_rgba(6,182,212,0.3)] active:scale-[0.98] overflow-hidden ${
+                        loginError
+                          ? 'bg-red-500/70 shadow-[0_0_20px_rgba(239,68,68,0.25)]'
+                          : 'bg-gradient-to-r from-[#0e7490] via-[#06b6d4] to-[#22d3ee] shadow-[0_4px_24px_rgba(6,182,212,0.3)]'
+                      }`}
                     >
-                      <p className="text-xs font-medium text-red-400 flex items-center gap-1.5 py-1">
-                        <XCircle size={13} />{loginError}
-                      </p>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {/* remember me */}
-                <motion.label
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.3 }}
-                  className="flex items-center gap-2.5 cursor-pointer"
-                >
-                  <div className="relative">
-                    <input
-                      id="login-remember-me"
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={(event) => onRememberMeChange(event.target.checked)}
-                      className="peer sr-only"
-                    />
-                    <div className={`w-4 h-4 rounded border transition-all flex items-center justify-center ${
-                      rememberMe
-                        ? 'bg-[#06b6d4] border-[#06b6d4] shadow-[0_0_8px_rgba(6,182,212,0.3)]'
-                        : 'border-white/15 bg-white/[0.04]'
-                    }`}>
-                      {rememberMe && (
-                        <svg width="10" height="8" viewBox="0 0 10 8" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
+                      {!loginError && !isAuthenticating && (
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.08] to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
                       )}
-                    </div>
-                  </div>
-                  <span className="text-xs text-white/30">{t('rememberMe')}</span>
-                </motion.label>
-
-                {/* forgot password hint */}
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.32 }}
-                  className="flex items-center justify-end"
-                >
-                  <button
-                    type="button"
-                    onClick={() => setShowForgotPwd(true)}
-                    className="text-[11px] text-white/20 hover:text-[#06b6d4]/70 flex items-center gap-1 transition-colors"
-                  >
-                    <HelpCircle size={11} />{t('forgotPassword')}
-                  </button>
+                      <span className="relative z-10 flex items-center gap-2">
+                        {isAuthenticating ? (
+                          <><RotateCcw className="animate-spin" size={15} />{t('authenticating')}</>
+                        ) : (
+                          <>{t('login')}<ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" /></>
+                        )}
+                      </span>
+                    </button>
+                  </motion.div>
                 </motion.div>
-
-                {/* submit */}
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.35 }}
-                  className="pt-1"
-                >
-                  <button
-                    type="submit"
-                    disabled={isAuthenticating}
-                    className={`group relative flex w-full items-center justify-center gap-2.5 rounded-xl py-3.5 text-[13px] font-bold tracking-wide text-white transition-all duration-200 disabled:opacity-50 hover:shadow-[0_0_48px_rgba(6,182,212,0.3)] active:scale-[0.98] overflow-hidden ${
-                      loginError
-                        ? 'bg-red-500/70 shadow-[0_0_20px_rgba(239,68,68,0.25)]'
-                        : 'bg-gradient-to-r from-[#0e7490] via-[#06b6d4] to-[#22d3ee] shadow-[0_4px_24px_rgba(6,182,212,0.3)]'
-                    }`}
-                  >
-                    {/* shimmer effect */}
-                    {!loginError && !isAuthenticating && (
-                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.08] to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
-                    )}
-                    <span className="relative z-10 flex items-center gap-2">
-                      {isAuthenticating ? (
-                        <><RotateCcw className="animate-spin" size={15} />{t('authenticating')}</>
-                      ) : (
-                        <>{t('login')}<ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" /></>
-                      )}
-                    </span>
-                  </button>
-                </motion.div>
-              </motion.div>
-              </form>
+                </form>
+              )}
 
               {/* footer */}
               <motion.div

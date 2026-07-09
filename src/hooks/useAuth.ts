@@ -35,6 +35,8 @@ export const useAuth = ({
   const [loginError, setLoginError] = useState<string | null>(null);
   const [rememberMe, setRememberMe] = useState(() => localStorage.getItem('netops_remember') === 'true');
   const [showLoginPwd, setShowLoginPwd] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [tempMfaToken, setTempMfaToken] = useState('');
 
   const [loginForm, setLoginForm] = useState(() => {
     const saved = localStorage.getItem('netops_user');
@@ -118,6 +120,12 @@ export const useAuth = ({
         return;
       }
 
+      if (data.mfa_required) {
+        setMfaRequired(true);
+        setTempMfaToken(data.temp_token);
+        return;
+      }
+
       localStorage.setItem('netops_token', data.token);
       if (rememberMe) {
         localStorage.setItem('netops_user', data.user?.username || loginForm.username.trim());
@@ -146,6 +154,73 @@ export const useAuth = ({
     } catch (error: any) {
       if (error?.name === 'AbortError') {
         setLoginError(language === 'zh' ? '登录超时，请检查后端状态后重试' : 'Login timed out. Please verify backend status and retry');
+      } else {
+        setLoginError(language === 'zh' ? '连接失败，请稍后重试' : 'Connection failed, please try again later');
+      }
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  const handleMfaVerify = async (code: string) => {
+    if (!code.trim()) {
+      setLoginError(language === 'zh' ? '请输入动态验证码' : 'Enter verification code');
+      return;
+    }
+
+    setIsAuthenticating(true);
+    setLoginError(null);
+
+    try {
+      const response = await fetchWithTimeout(
+        '/api/mfa/verify',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            temp_token: tempMfaToken,
+            code: code.trim(),
+          }),
+        },
+        12000
+      );
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setLoginError(data.detail || (language === 'zh' ? '验证失败' : 'Verification failed'));
+        return;
+      }
+
+      localStorage.setItem('netops_token', data.token);
+      if (rememberMe) {
+        localStorage.setItem('netops_user', data.user?.username || loginForm.username.trim());
+        localStorage.setItem('netops_remember', 'true');
+      } else {
+        localStorage.removeItem('netops_user');
+        localStorage.setItem('netops_remember', 'false');
+      }
+
+      setCurrentUser(data.user || { username: loginForm.username.trim() });
+      setIsAuthenticated(true);
+      setLoginForm((prev) => ({ ...prev, password: '' }));
+      setMfaRequired(false);
+      setTempMfaToken('');
+      showToast(language === 'zh' ? '登录成功' : 'Login successful', 'success');
+
+      try {
+        const sr = await fetchWithTimeout('/api/setup/status', { headers: { Authorization: `Bearer ${data.token}` } }, 8000);
+        if (sr.ok) {
+          const sd = await sr.json();
+          if (!sd.setup_completed && data.user?.role === 'Administrator') {
+            setShowSetupWizard(true);
+          }
+        }
+      } catch {
+        // ignore setup-status errors
+      }
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        setLoginError(language === 'zh' ? '验证超时，请重试' : 'Verification timed out. Please retry');
       } else {
         setLoginError(language === 'zh' ? '连接失败，请稍后重试' : 'Connection failed, please try again later');
       }
@@ -213,5 +288,8 @@ export const useAuth = ({
     handleSwitchUser,
     showLoginPwd,
     setShowLoginPwd,
+    mfaRequired,
+    setMfaRequired,
+    handleMfaVerify,
   };
 };

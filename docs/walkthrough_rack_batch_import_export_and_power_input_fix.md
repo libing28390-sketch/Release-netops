@@ -56,3 +56,11 @@ backend\tests\test_racks_new_fields.py ....                              [100%]
 ```
 ======================= 349 passed in 164.52s (0:02:44) =======================
 ```
+
+### 前端 TypeScript 编译校验修复 (TypeScript compilation fix)
+在推送后，GitHub Actions 的 `frontend-build-check` 执行 `tsc --noEmit` 时报错：
+* `Property 'power_capacity_watts' does not exist on type 'Rack'`
+* `Property 'remarks' does not exist on type 'Rack'`
+
+**修复方案**：
+在 [types.ts](file:///e:/data/netsops/src/pages/RackManagement/types.ts) 中，将这些新同步的数据库属性字段加入到了前端的 `Rack` 接口定义中。重新运行 `npx tsc --noEmit` 校验，无任何报错，构建成功通过。

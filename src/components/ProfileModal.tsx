@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock, Info } from 'lucide-react';
 import type { ThemeMode } from '../types';
 import { useSystem } from '../hooks/useSystem';
+import QRCode from 'react-qr-code';
 
 interface AvatarPreset {
   id: string;
@@ -52,6 +53,9 @@ interface ProfileModalProps {
   onNotificationWebhookChange: (channel: keyof NotificationChannelsState, value: string) => void;
   onNotificationSecretChange: (value: string) => void;
   onTestNotificationChannel: (channel: keyof NotificationChannelsState) => void;
+
+  mfaEnabled: boolean;
+  onMfaStatusChange: (enabled: boolean) => void;
 }
 
 const ProfileModal: React.FC<ProfileModalProps> = ({
@@ -78,8 +82,122 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   onNotificationWebhookChange,
   onNotificationSecretChange,
   onTestNotificationChannel,
+  mfaEnabled,
+  onMfaStatusChange,
 }) => {
   const { systemInfo } = useSystem();
+  
+  // MFA local states
+  const [mfaActive, setMfaActive] = React.useState(mfaEnabled);
+  const [setupMode, setSetupMode] = React.useState(false);
+  const [mfaSecret, setMfaSecret] = React.useState('');
+  const [mfaQrUri, setMfaQrUri] = React.useState('');
+  const [mfaCodeInput, setMfaCodeInput] = React.useState('');
+  const [disablePasswordInput, setDisablePasswordInput] = React.useState('');
+  const [disableMode, setDisableMode] = React.useState(false);
+  const [mfaErrorMsg, setMfaErrorMsg] = React.useState('');
+  const [mfaLoading, setMfaLoading] = React.useState(false);
+
+  // Sync state when prop changes
+  React.useEffect(() => {
+    setMfaActive(mfaEnabled);
+  }, [mfaEnabled]);
+
+  const handleStartSetup = async () => {
+    setMfaErrorMsg('');
+    setMfaLoading(true);
+    try {
+      const token = localStorage.getItem('netops_token');
+      const res = await fetch('/api/mfa/setup', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMfaSecret(data.secret);
+        setMfaQrUri(data.qr_code_uri);
+        setSetupMode(true);
+      } else {
+        setMfaErrorMsg(data.detail || '初始化 MFA 失败');
+      }
+    } catch (err: any) {
+      setMfaErrorMsg('网络连接错误，请稍后重试');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleEnableMfa = async () => {
+    if (mfaCodeInput.length < 6) return;
+    setMfaErrorMsg('');
+    setMfaLoading(true);
+    try {
+      const token = localStorage.getItem('netops_token');
+      const res = await fetch('/api/mfa/enable', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          code: mfaCodeInput,
+          secret: mfaSecret
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMfaActive(true);
+        setSetupMode(false);
+        setMfaCodeInput('');
+        onMfaStatusChange(true);
+        alert(language === 'zh' ? '双因子二次认证开启成功！' : 'MFA enabled successfully!');
+      } else {
+        setMfaErrorMsg(data.detail || '验证码错误或校验失败');
+      }
+    } catch (err) {
+      setMfaErrorMsg('网络错误，启用失败');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleDisableMfa = async () => {
+    if (!disablePasswordInput) {
+      setMfaErrorMsg('请输入密码以确认关闭');
+      return;
+    }
+    setMfaErrorMsg('');
+    setMfaLoading(true);
+    try {
+      const token = localStorage.getItem('netops_token');
+      const res = await fetch('/api/mfa/disable', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          password: disablePasswordInput
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMfaActive(false);
+        setDisableMode(false);
+        setDisablePasswordInput('');
+        onMfaStatusChange(false);
+        alert(language === 'zh' ? '双因子二次认证已成功关闭！' : 'MFA disabled successfully!');
+      } else {
+        setMfaErrorMsg(data.detail || '密码不正确');
+      }
+    } catch (err) {
+      setMfaErrorMsg('网络错误，关闭失败');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
   const [localTerminalPath, setLocalTerminalPath] = React.useState(() => localStorage.getItem('local_terminal_path') || '');
   const [terminalApp, setTerminalApp] = React.useState(() => localStorage.getItem('terminal_app') || 'xshell');
   const [showFixedPin, setShowFixedPin] = React.useState(false);
@@ -341,6 +459,143 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
               </p>
             </div>
           )}
+
+          {/* MFA (Multi-Factor Authentication) optional card */}
+          <div className={`p-4 rounded-xl border ${isDark ? 'bg-cyan-500/5 border-cyan-500/20' : 'bg-cyan-50 border-cyan-200'}`}>
+            <div className="flex items-center gap-2 mb-3">
+              <Shield size={16} className={isDark ? 'text-cyan-400' : 'text-cyan-600'} />
+              <span className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-cyan-400' : 'text-cyan-700'}`}>
+                {language === 'zh' ? 'MFA 双因子二次身份认证' : 'MFA Multi-Factor Authentication'}
+              </span>
+            </div>
+            
+            {!mfaActive ? (
+              // MFA not enabled
+              !setupMode ? (
+                <div>
+                  <p className={`text-[11px] mb-3 leading-relaxed ${isDark ? 'text-white/50' : 'text-black/60'}`}>
+                    开启二次认证后，登录系统时不仅需要输入密码，还需要输入手机身份验证器生成的 6 位动态验证码，极大地保护账号安全免受密码泄露威胁。
+                  </p>
+                  <button
+                    type="button"
+                    disabled={mfaLoading}
+                    onClick={handleStartSetup}
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors shadow-sm"
+                  >
+                    {mfaLoading ? '初始化中...' : '配置并启用二次认证'}
+                  </button>
+                  {mfaErrorMsg && <p className="mt-2 text-xs text-red-500">{mfaErrorMsg}</p>}
+                </div>
+              ) : (
+                // Setup MFA (Scan QR Code)
+                <div className="space-y-4">
+                  <p className={`text-[11px] leading-relaxed ${isDark ? 'text-white/60' : 'text-black/70'}`}>
+                    1. 请使用手机下载并打开 <strong>谷歌身份验证器 (Google Authenticator)</strong> 或其他支持 TOTP 算法的认证 App。<br />
+                    2. 扫描下方二维码，或手动输入下面的密钥添加账户。
+                  </p>
+                  
+                  <div className="flex flex-col sm:flex-row items-center gap-4 py-2">
+                    <div className="p-3 bg-white rounded-xl shadow-inner flex items-center justify-center border border-black/5">
+                      <QRCode value={mfaQrUri} size={130} />
+                    </div>
+                    <div className="flex-1 space-y-2 text-center sm:text-left">
+                      <div>
+                        <span className={`text-[10px] uppercase font-bold tracking-wider block ${isDark ? 'text-white/40' : 'text-black/40'}`}>密钥 (Secret Key)</span>
+                        <code className={`text-xs font-mono font-bold block px-2.5 py-1 rounded bg-black/10 select-all border ${isDark ? 'border-white/5 text-cyan-300' : 'border-black/5 text-cyan-700'}`}>{mfaSecret}</code>
+                      </div>
+                      <p className={`text-[10px] ${isDark ? 'text-white/30' : 'text-black/40'}`}>请妥善保管此密钥，一旦丢失将无法找回账户。</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 border-t pt-3" style={{ borderColor: 'var(--card-border)' }}>
+                    <label className={`block text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-white/60' : 'text-black/60'}`}>
+                      3. 输入手机上显示的 6 位动态验证码进行验证：
+                    </label>
+                    <div className="flex gap-3">
+                      <input
+                        type="text"
+                        maxLength={6}
+                        placeholder="000000"
+                        value={mfaCodeInput}
+                        onChange={(e) => setMfaCodeInput(e.target.value.replace(/\D/g, ''))}
+                        className={`w-32 rounded-lg px-3 py-2 text-sm font-bold tracking-[0.2em] outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/20 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40'}`}
+                      />
+                      <button
+                        type="button"
+                        disabled={mfaLoading || mfaCodeInput.length < 6}
+                        onClick={handleEnableMfa}
+                        className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {mfaLoading ? '验证中...' : '绑定并开启'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setSetupMode(false); setMfaCodeInput(''); setMfaErrorMsg(''); }}
+                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors ${isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-black/[0.05] text-black/70 hover:bg-black/[0.08]'}`}
+                      >
+                        取消
+                      </button>
+                    </div>
+                    {mfaErrorMsg && <p className="text-xs text-red-500 mt-1">{mfaErrorMsg}</p>}
+                  </div>
+                </div>
+              )
+            ) : (
+              // MFA enabled
+              !disableMode ? (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-emerald-500 font-bold text-xs">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                      二次认证 (MFA) 已启用保护中
+                    </div>
+                    <p className={`text-[10px] mt-1 ${isDark ? 'text-white/30' : 'text-black/40'}`}>
+                      每次登录系统均需输入手机身份验证器生成的动态验证码。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setDisableMode(true); setMfaErrorMsg(''); }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isDark ? 'bg-red-500/15 text-red-300 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`}
+                  >
+                    关闭二次认证
+                  </button>
+                </div>
+              ) : (
+                // Confirm Disable MFA (Verify Password)
+                <div className="space-y-3">
+                  <label className={`block text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-white/60' : 'text-black/60'}`}>
+                    请输入当前登录密码确认关闭二次身份验证：
+                  </label>
+                  <div className="flex gap-3">
+                    <input
+                      type="password"
+                      placeholder="您的登录密码"
+                      value={disablePasswordInput}
+                      onChange={(e) => setDisablePasswordInput(e.target.value)}
+                      className={`flex-1 rounded-lg px-3 py-2 text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/20 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40'}`}
+                    />
+                    <button
+                      type="button"
+                      disabled={mfaLoading || !disablePasswordInput}
+                      onClick={handleDisableMfa}
+                      className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {mfaLoading ? '验证中...' : '确认关闭'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setDisableMode(false); setDisablePasswordInput(''); setMfaErrorMsg(''); }}
+                      className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors ${isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-black/[0.05] text-black/70 hover:bg-black/[0.08]'}`}
+                    >
+                      取消
+                    </button>
+                  </div>
+                  {mfaErrorMsg && <p className="text-xs text-red-500">{mfaErrorMsg}</p>}
+                </div>
+              )
+            )}
+          </div>
 
           <div className={`pt-3 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
             <div className="flex items-center gap-2 mb-1">

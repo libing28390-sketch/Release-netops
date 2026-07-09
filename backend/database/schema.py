@@ -570,6 +570,8 @@ def _init_db_logic(conn):
     ensure_column('users', 'email', "TEXT DEFAULT ''")
     ensure_column('users', 'role_id', "TEXT DEFAULT ''")
     ensure_column('users', 'tenant_id', "TEXT DEFAULT ''")
+    ensure_column('users', 'mfa_secret', "TEXT DEFAULT ''")
+    ensure_column('users', 'mfa_enabled', "INTEGER DEFAULT 0")
 
     # Store user-defined scenario templates for playbooks
     cursor.execute('''
