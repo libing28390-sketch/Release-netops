@@ -1102,7 +1102,7 @@ async def mfa_disable(request: Request, payload: dict = Body(...)):
         if not user or not await _verify_password(password, user['password']):
             raise HTTPException(status_code=400, detail="当前密码错误，无法关闭 MFA")
 
-        conn.execute('UPDATE users SET mfa_secret = "", mfa_enabled = 0 WHERE id = ?', (sess['user_id'],))
+        conn.execute('UPDATE users SET mfa_secret = ?, mfa_enabled = 0 WHERE id = ?', ('', sess['user_id']))
         conn.commit()
         return {"success": True, "message": "MFA 关闭成功"}
     finally:

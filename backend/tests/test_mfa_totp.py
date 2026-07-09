@@ -135,3 +135,46 @@ async def test_mfa_setup_enable_login_and_disable_flow(isolated_db):
     assert response.status_code == 200
     assert "token" in response.json()
     assert "mfa_required" not in response.json()
+
+def test_pam_verify_mfa_smart_compatibility(isolated_db):
+    from api.pam import _verify_mfa, mfa_store
+    import bcrypt
+    import time
+    
+    # 1. Create two test users: static and dynamic
+    conn = get_db_connection()
+    hashed_static = bcrypt.hashpw(b"123456", bcrypt.gensalt()).decode('utf-8')
+    
+    conn.execute(
+        "INSERT INTO users (id, username, password, role, status, mfa_enabled, mfa_secret, fixed_pin) VALUES (?, ?, ?, ?, ?, 0, '', ?)",
+        ("user-static-id", "staticuser", "dummy", "Operator", "active", hashed_static)
+    )
+    
+    secret = generate_totp_secret()
+    conn.execute(
+        "INSERT INTO users (id, username, password, role, status, mfa_enabled, mfa_secret, fixed_pin) VALUES (?, ?, ?, ?, ?, 1, ?, '')",
+        ("user-dynamic-id", "dynamicuser", "dummy", "Operator", "active", secret)
+    )
+    conn.commit()
+    conn.close()
+    
+    # 2. Verify Static User
+    mfa_store["staticuser"] = {"code": "888888", "expire": time.time() + 60, "nonce": None}
+    success, err = _verify_mfa("staticuser", "123456", "888888")
+    assert success is True
+    
+    mfa_store["staticuser"] = {"code": "888888", "expire": time.time() + 60, "nonce": None}
+    success, err = _verify_mfa("staticuser", "111111", "888888")
+    assert success is False
+    assert "固定密码验证失败" in err
+    
+    # 3. Verify Dynamic User
+    mfa_store["dynamicuser"] = {"code": "888888", "expire": time.time() + 60, "nonce": None}
+    correct_totp = generate_totp_code(secret)
+    success, err = _verify_mfa("dynamicuser", correct_totp, "888888")
+    assert success is True
+    
+    mfa_store["dynamicuser"] = {"code": "888888", "expire": time.time() + 60, "nonce": None}
+    success, err = _verify_mfa("dynamicuser", "000000", "888888")
+    assert success is False
+    assert "动态身份验证码验证失败" in err

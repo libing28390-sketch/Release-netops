@@ -456,6 +456,11 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
               </div>
               <p className={`text-[10px] mt-2 leading-relaxed ${isDark ? 'text-orange-300/60' : 'text-orange-800/70'}`}>
                 该密码用于特权终端登录的 MFA 二步验证。由于采取加密存储，仅在发起验证时比对。请妥善保管。
+                {mfaActive && (
+                  <span className="block mt-1 text-[#06b6d4] font-semibold">
+                    提示：由于您已开启“MFA 双因子二次身份认证”，在特权登录或双人审批时，固定安全码将自动升级为使用您的手机 App 动态验证码进行验证。
+                  </span>
+                )}
               </p>
             </div>
           )}

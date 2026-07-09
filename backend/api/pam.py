@@ -174,18 +174,23 @@ def _verify_mfa(username: str, fixed_pin: str, mfa_code: str, mfa_nonce: Optiona
     conn = get_db_connection()
     try:
         user_row = conn.execute(
-            "SELECT fixed_pin FROM users WHERE username = ?",
+            "SELECT fixed_pin, mfa_enabled, mfa_secret FROM users WHERE username = ?",
             (username,)
         ).fetchone()
         if not user_row:
             return False, '用户不存在'
 
-        stored_hash = user_row['fixed_pin']
-        if not stored_hash:
-            return False, '您尚未在个人设置中配置 6 位固定密码'
+        if user_row['mfa_enabled'] == 1 and user_row['mfa_secret']:
+            from api.users import verify_totp
+            if not verify_totp(user_row['mfa_secret'], str(fixed_pin)):
+                return False, '动态身份验证码验证失败'
+        else:
+            stored_hash = user_row['fixed_pin']
+            if not stored_hash:
+                return False, '您尚未在个人设置中配置 6 位固定密码'
 
-        if not bcrypt.checkpw(str(fixed_pin).encode('utf-8'), stored_hash.encode('utf-8')):
-            return False, '固定密码验证失败'
+            if not bcrypt.checkpw(str(fixed_pin).encode('utf-8'), stored_hash.encode('utf-8')):
+                return False, '固定密码验证失败'
     finally:
         conn.close()
 

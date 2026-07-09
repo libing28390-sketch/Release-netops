@@ -24,14 +24,16 @@
 - 在 [users.py](file:///e:/data/netsops/backend/api/users.py) 中实现：
   * `POST /api/mfa/setup`：拉取或生成临时密钥，派发 `otpauth://` 协议字符串。
   * `POST /api/mfa/enable`：校验验证码，校验成功则正式入库密钥并置起开启状态。
-  * `POST /api/mfa/disable`：通过当前密码校验，并清空用户的密钥及开启标记。
+  * `POST /api/mfa/disable`：通过当前密码校验，并清空用户的密钥及开启标记。**修正了在 PostgreSQL 下使用双引号 `""` 代替单引号 `''` 产生 `SyntaxError` 的问题。**
   * `POST /api/mfa/verify`：接受临时令牌和 6 位动态验证码，验证成功后签发正式的 JWT Session 令牌与用户信息。
   * 修改了 SQL 查询（`SELECT ..., mfa_enabled FROM users`），将 MFA 状态同步注入登录态 profile 字典。
+- 在 [pam.py](file:///e:/data/netsops/backend/api/pam.py) 中实现：
+  * **特权登录/双人审批智能升级**：升级 `_verify_mfa` 校验函数。若审批者开启了 Google Authenticator MFA，系统会自动将原本静态的“固定安全码 (Fixed PIN)”校验方式升级为使用“手机 App 动态验证码 (TOTP)”校验；若未开启，则平滑降级使用原本静态的 Fixed PIN 校验，兼顾极高安全度与向后兼容性。
 
 ### 前端模块
 - **授权逻辑**：在 [useAuth.ts](file:///e:/data/netsops/src/hooks/useAuth.ts) 中增加 `mfaRequired` 状态和 `handleMfaVerify` 方法，在密码验证成功但被要求 MFA 时阻断并引导至验证码输入界面。
 - **登录卡片**：在 [LoginScreen.tsx](file:///e:/data/netsops/src/components/LoginScreen.tsx) 中新增对 `mfaRequired` 的条件渲染，界面平滑过渡至专门的动态验证码输写形态。
-- **个人设置控制**：在 [ProfileModal.tsx](file:///e:/data/netsops/src/components/ProfileModal.tsx) 中整合了配置卡片。支持未开启时的一键配置扫码流程、安全绑定步骤，以及已开启状态下的密码验证关闭操作。
+- **个人设置控制**：在 [ProfileModal.tsx](file:///e:/data/netsops/src/components/ProfileModal.tsx) 中整合了配置卡片。支持未开启时的一键配置扫码流程、安全绑定步骤，以及已开启状态下的密码验证关闭操作。**同时在 Fixed PIN 面板下方追加了动态提示，指引用户在开启 MFA 时 Fixed PIN 自动升级为 TOTP 的智能替换逻辑。**
 
 ---
 
@@ -44,6 +46,7 @@
 3. **启用验证**：防范错误动态验证码越权启用；正确验证码绑定开启。
 4. **登录二次拦截与验证**：常规密码登录产生临时令牌、临时令牌过期判定、非法验证码拒绝、正确验证码通过校验并颁发 JWT Token。
 5. **解绑流程**：拒绝错误密码关闭操作；确认密码正确关闭。
+6. **双人审批智能兼容性测试**：模拟已开通/未开通 MFA 用户发起双人特权授权，验证静态 PIN 验证与动态 TOTP 码验证的独立拦截效果。
 
 **运行测试结果**：
 ```powershell
@@ -51,8 +54,8 @@
 ```
 **输出**：
 ```
-backend\tests\test_mfa_totp.py ..                                        [100%]
-======================== 2 passed, 1 warning in 5.80s =========================
+backend\tests\test_mfa_totp.py ...                                       [100%]
+======================== 3 passed, 1 warning in 7.22s =========================
 ```
 
 此外，我们执行了完整的后端单元测试，没有引发任何功能回归：
