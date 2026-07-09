@@ -9,6 +9,22 @@ export interface Rack {
   status: string;
   created_at: string;
   updated_at: string;
+  
+  site_id?: string;
+  rack_code?: string;
+  rack_name?: string;
+  room_name?: string;
+  row_name?: string;
+  used_u?: number;
+  available_u?: number;
+  power_capacity_w?: number;
+  power_capacity_watts?: number;
+  current_power_w?: number;
+  power_utilization?: number;
+  max_weight_kg?: number | null;
+  current_weight_kg?: number;
+  cooling_zone?: string;
+  remarks?: string;
 }
 
 export interface DeviceType {
