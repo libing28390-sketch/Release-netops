@@ -52,7 +52,7 @@
 ## 3. 描述物理世界：防物理重叠的“机柜与 U 位模型”
 
 现实中的设备不是漂浮在空中的，它一定存放在物理空间的某个格子里。因此，Nexora 最先建立的，并不是设备，而是物理空间：
-$$\text{Region（区域）} \longrightarrow \text{Datacenter（数据中心）} \longrightarrow \text{Room（机房）} \longrightarrow \text{Row（排）} \longrightarrow \text{Rack（机柜）} \longrightarrow \text{Rack Unit（U位）}$$
+> **空间层级链：** 区域（Region） ──> 数据中心（Datacenter） ──> 机房（Room） ──> 排（Row） ──> 机柜（Rack） ──> U位（Rack Unit）
 
 在这个链条里，核心难点是：**如何让数据库遵守现实世界的物理规则？**
 
@@ -110,14 +110,14 @@ WHERE rd.rack_id = ? AND rd.position = ?
 ## 4. 描述网络连接：真正连接网络的，从来不是设备
 
 项目做到第二层设计时，我们遇到了最大的架构转折。最开始，关系非常简单：
-$$\text{Core-SW1 (Device)} \longleftrightarrow \text{Access-SW3 (Device)}$$
+> **起初设计：** Core-SW1 (Device) <──────> Access-SW3 (Device)
 但这个模型回答不了任何细节问题：
 * Core-SW1 到底是哪个接口连接 Access-SW3？
 * 连线是光纤还是网线？聚合口还是物理单口？
 * 两端接口的双工模式、速率、MTU 是否一致？是否有 CRC 错误包？
 
 因为**真正连接网络、承载链路状态的，从来不是设备本身，而是物理接口。** 于是我们重构了整个模型：
-$$\text{Device} \longrightarrow \text{Interface} \longleftrightarrow \text{Link} \longleftrightarrow \text{Interface} \longleftarrow \text{Device}$$
+> **重构后关系：** Device ──> Interface <──> Link <──> Interface <── Device
 网络里的所有关系，全部围绕 Interface 建立。这为我们日后支持 LLDP/CDP 拓扑自发现奠定了完美的基础。
 
 ---
@@ -197,7 +197,7 @@ mapped.forEach(row => {
 因为拓扑只是数据在某一瞬间的**呈现结果**，它不应当被做成数据库。
 
 只要把设备、接口、LLDP 邻居和路由数据采集准确，网络拓扑图的画出只是顺理成章的静态渲染（View）。一旦有物理连线被拔掉：
-$$\text{接口 Oper Status Down} \longrightarrow \text{LLDP 邻居失效} \longrightarrow \text{Link 表自动删除} \longrightarrow \text{前端拓扑实时连线变红/断开}$$
+> **自动链路更新：** 接口 Oper Status Down ──> LLDP 邻居失效 ──> Link 表自动删除 ──> 前端拓扑实时连线变红/断开
 整个过程中**不需要任何人工修改拓扑的操作**，它真实映射了网络世界的物理孪生。
 
 ---
