@@ -29,6 +29,7 @@ jobs:
           rm -rf brain/
           rm -rf skills/
           rm -rf .github/skills/
+          rm -rf .agents/
 
           # ── 测试 / 调试脚本与自动化单元测试用例（商用脱敏，不暴露给客户） ──
           rm -rf scratch/
@@ -142,6 +143,7 @@ jobs:
           rm -rf brain/
           rm -rf skills/
           rm -rf .github/skills/
+          rm -rf .agents/
 
           # ── 测试 / 调试脚本与自动化单元测试用例（商用脱敏，不暴露给客户） ──
           rm -rf scratch/
