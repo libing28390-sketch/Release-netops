@@ -19,8 +19,11 @@ import {
   PanelRightClose,
   ChevronsUpDown,
   AlertTriangle,
-  Maximize2
+  Maximize2,
+  FileText,
+  Upload
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { AssetReadonlyDetailInner, normalizeAssetApiRow } from '../../components/AssetReadonlyDetail';
 import PageHero from '../../components/PageHero';
 import { Rack, DeviceType, RackDevice, RackLayout, RackStats, Props } from './types';
@@ -79,6 +82,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [drawerAssetDetail, setDrawerAssetDetail] = useState<ReturnType<typeof normalizeAssetApiRow> | null>(null);
   const [drawerAssetLoading, setDrawerAssetLoading] = useState(false);
   const rackScrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [confirmDeleteRack, setConfirmDeleteRack] = useState<{ rackId: string; rackName: string } | null>(null);
   const [blockedDeleteRack, setBlockedDeleteRack] = useState<{ rackName: string; deviceCount: number } | null>(null);
@@ -316,6 +320,136 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [drawerVisible]);
 
+  const COL_MAP: Record<string, string> = {
+    '机柜名称*': 'name',
+    '数据中心': 'datacenter',
+    '机房': 'room',
+    '列': 'row',
+    '总U位': 'total_u',
+    '最大功率(W)': 'power_capacity_watts',
+    '最大功率': 'power_capacity_watts',
+    '散热区域': 'cooling_zone',
+    '备注': 'remarks',
+    'Name*': 'name',
+    'Name': 'name',
+    'Datacenter': 'datacenter',
+    'Room': 'room',
+    'Row': 'row',
+    'Total U': 'total_u',
+    'Max Power(W)': 'power_capacity_watts',
+    'Max Power': 'power_capacity_watts',
+    'Cooling Zone': 'cooling_zone',
+    'Notes': 'remarks',
+    'Description': 'remarks',
+    'Remarks': 'remarks'
+  };
+
+  const handleDownloadTemplate = () => {
+    const wb = XLSX.utils.book_new();
+    const headers = zh
+      ? ['机柜名称*', '数据中心', '机房', '列', '总U位', '最大功率(W)', '散热区域', '备注']
+      : ['Name*', 'Datacenter', 'Room', 'Row', 'Total U', 'Max Power(W)', 'Cooling Zone', 'Notes'];
+    const example = zh
+      ? ['A-01', '北京第一数据中心', '302机房', 'A列', 42, 6000, '冷通道A区', '测试机柜']
+      : ['A-01', 'Beijing DC 1', 'Room 302', 'Row A', 42, 6000, 'Zone A', 'Test rack'];
+    
+    const ws = XLSX.utils.aoa_to_sheet([headers, example]);
+    ws['!cols'] = headers.map(() => ({ wch: 15 }));
+    XLSX.utils.book_append_sheet(wb, ws, zh ? '机柜模板' : 'Rack Template');
+    XLSX.writeFile(wb, zh ? '机柜导入模板.xlsx' : 'rack_import_template.xlsx');
+  };
+
+  const handleExport = () => {
+    try {
+      const rows = filteredRacks.map(r => {
+        const ly = allLayouts.find(l => l.id === r.id);
+        return {
+          [zh ? '机柜名称' : 'Name']: r.name,
+          [zh ? '数据中心' : 'Datacenter']: r.datacenter || '',
+          [zh ? '机房' : 'Room']: r.room || '',
+          [zh ? '列' : 'Row']: r.row || '',
+          [zh ? '总U位' : 'Total U']: r.total_u,
+          [zh ? '最大功率(W)' : 'Max Power(W)']: r.power_capacity_watts || (r as any).power_capacity_w || 0,
+          [zh ? '已用U位' : 'Used U']: ly?.total_used ?? 0,
+          [zh ? '可用U位' : 'Available U']: ly?.available_u ?? r.total_u,
+          [zh ? '散热区域' : 'Cooling Zone']: (r as any).cooling_zone || '',
+          [zh ? '状态' : 'Status']: r.status || 'active',
+          [zh ? '备注' : 'Remarks']: r.remarks || r.description || ''
+        };
+      });
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Racks');
+      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+      XLSX.writeFile(wb, `racks_${ts}.xlsx`);
+    } catch (err: any) {
+      setError(zh ? `导出失败: ${err.message}` : `Export failed: ${err.message}`);
+    }
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const data = new Uint8Array(ev.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: 'array' });
+        const mapped: any[] = [];
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const raw = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' });
+        
+        for (const row of raw) {
+          const obj: any = {};
+          for (const [col, val] of Object.entries(row)) {
+            const key = COL_MAP[col.trim()];
+            if (key) {
+              let mappedVal: any = String(val).trim();
+              if (key === 'total_u') {
+                mappedVal = parseInt(mappedVal) || 42;
+              } else if (key === 'power_capacity_watts') {
+                mappedVal = parseInt(mappedVal) || 0;
+              }
+              obj[key] = mappedVal;
+            }
+          }
+          if (obj.name) {
+            if (!obj.total_u) obj.total_u = 42;
+            if (!obj.power_capacity_watts) obj.power_capacity_watts = 0;
+            mapped.push(obj);
+          }
+        }
+
+        if (!mapped.length) {
+          setError(zh ? '未找到有效的机柜数据' : 'No valid rack data found');
+          return;
+        }
+
+        const r = await fetch(`${API}/racks/batch`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...authHeaders()
+          },
+          body: JSON.stringify(mapped)
+        });
+        
+        if (r.ok) {
+          refresh();
+          alert(zh ? `导入完成：成功导入 ${mapped.length} 个机柜` : `Import done: ${mapped.length} racks successfully imported`);
+        } else {
+          const errData = await r.json();
+          setError(zh ? `导入失败: ${errData.detail || ''}` : `Import failed: ${errData.detail || ''}`);
+        }
+      } catch (err: any) {
+        setError(zh ? `文件解析失败: ${err.message}` : `Failed to parse file: ${err.message}`);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  };
+
   /* -- Rack CRUD -- */
 
   const openNewRack = () => {
@@ -332,11 +466,16 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const saveRack = async () => {
     setFormError('');
+    const payload = {
+      ...rackForm,
+      total_u: parseInt(String(rackForm.total_u)) || 42,
+      power_capacity_watts: parseInt(String(rackForm.power_capacity_watts)) || 0,
+    };
     try {
       if (editingRack) {
-        await putJson(`${API}/racks/${editingRack.id}`, rackForm);
+        await putJson(`${API}/racks/${editingRack.id}`, payload);
       } else {
-        const created = await postJson<Rack>(`${API}/racks`, rackForm);
+        const created = await postJson<Rack>(`${API}/racks`, payload);
         setSelectedRackId(created.id);
       }
       setShowRackModal(false); refresh();
@@ -740,6 +879,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
       <PageHero
         icon={Columns3}
         title={zh ? '机柜管理' : 'Rack Management'}
@@ -775,6 +915,15 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
             </button>
             <button onClick={openNewRack} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors">
               <Plus size={14} /> {zh ? '新建机柜' : 'New Rack'}
+            </button>
+            <button onClick={handleDownloadTemplate} className="p-1.5 rounded-lg transition-colors hover:bg-black/5 hover:text-cyan-600" style={{ color: 'var(--muted-text)' }} title={zh ? '下载导入模板' : 'Template'}>
+              <FileText size={16} />
+            </button>
+            <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded-lg transition-colors hover:bg-black/5 hover:text-cyan-600" style={{ color: 'var(--muted-text)' }} title={zh ? '导入机柜' : 'Import'}>
+              <Upload size={16} />
+            </button>
+            <button onClick={handleExport} className="p-1.5 rounded-lg transition-colors hover:bg-black/5 hover:text-cyan-600" style={{ color: 'var(--muted-text)' }} title={zh ? '导出机柜' : 'Export'}>
+              <Download size={16} />
             </button>
             <button onClick={refresh} className="p-1.5 rounded-lg transition-colors" style={{ color: 'var(--muted-text)' }} title={zh ? '刷新' : 'Refresh'}>
               <RefreshCw size={16} />
@@ -1309,11 +1458,17 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   </div>
                   <div>
                     <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '总U位' : 'Total U'}</label>
-                    <input type="number" min={1} max={60} value={rackForm.total_u} onChange={e => setRackForm({ ...rackForm, total_u: parseInt(e.target.value) || 42 })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
+                    <input type="number" min={1} max={60} value={rackForm.total_u ?? ''} onChange={e => {
+                      const val = e.target.value;
+                      setRackForm({ ...rackForm, total_u: val === '' ? '' as any : (parseInt(val) || 0) });
+                    }} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
                   </div>
                   <div>
                     <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '最大功率 (W)' : 'Max Power (W)'}</label>
-                    <input type="number" min={0} value={rackForm.power_capacity_watts} onChange={e => setRackForm({ ...rackForm, power_capacity_watts: parseInt(e.target.value) || 0 })} placeholder="e.g. 6000" className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
+                    <input type="number" min={0} value={rackForm.power_capacity_watts ?? ''} onChange={e => {
+                      const val = e.target.value;
+                      setRackForm({ ...rackForm, power_capacity_watts: val === '' ? '' as any : (parseInt(val) || 0) });
+                    }} placeholder="e.g. 6000" className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
                     <p className="text-[10px] mt-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '机柜 PDU 最大承载功率，0 表示不限制' : 'PDU capacity, 0 = unlimited'}</p>
                   </div>
                 </div>

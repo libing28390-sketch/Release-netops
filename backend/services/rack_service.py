@@ -48,25 +48,43 @@ def get_rack(conn, rack_id: str) -> dict:
 def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
                 row: str = '', total_u: int = 42, description: str = '',
                 status: str = 'active', power_capacity_watts: int = 0,
-                site_id: str = 'site-default', rack_code: str = '') -> dict:
+                site_id: str = 'site-default', rack_code: str = '', **kwargs) -> dict:
     rack_id = str(uuid.uuid4())
     if not rack_code:
         rack_code = f"RACK_{uuid.uuid4().hex[:12].upper()}"
     
     # Synchronize old and new fields
-    rack_name = name
-    room_name = room
-    row_name = row
-    remarks = description
-    power_capacity_w = power_capacity_watts or 5000
-    used_u = 0
-    available_u = total_u
+    rack_name = kwargs.get('rack_name') or name
+    room_name = kwargs.get('room_name') or room
+    row_name = kwargs.get('row_name') or row
+    remarks = kwargs.get('remarks') or description
+    power_capacity_w = kwargs.get('power_capacity_w') or power_capacity_watts or 5000
+    used_u = kwargs.get('used_u', 0)
+    available_u = kwargs.get('available_u')
+    if available_u is None:
+        available_u = total_u - used_u
+        
+    current_power_w = kwargs.get('current_power_w', 0)
+    power_utilization = kwargs.get('power_utilization', 0.0)
+    max_weight_kg = kwargs.get('max_weight_kg', None)
+    current_weight_kg = kwargs.get('current_weight_kg', 0)
+    cooling_zone = kwargs.get('cooling_zone', '')
     
     now = _utc_now()
     conn.execute(
-        """INSERT INTO racks (id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name, total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (rack_id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name, total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description, now, now)
+        """INSERT INTO racks (
+            id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name,
+            total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
+            current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
+            created_at, updated_at
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            rack_id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name,
+            total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
+            current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
+            now, now
+        )
     )
     conn.commit()
     logger.info(f"[RackService] Created rack '{name}' in {datacenter or '(no DC)'}")

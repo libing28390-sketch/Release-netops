@@ -5,7 +5,7 @@ Provides REST endpoints for managing racks, device types, and rack device instal
 """
 
 import logging
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from database import get_db_connection
 from core.rbac import require_role
@@ -76,6 +76,26 @@ def api_create_rack(body: RackCreate, user=require_role("Operator")):
         rack = rack_service.create_rack(conn, **body.model_dump())
         return {"success": True, "data": rack, "message": "Rack created"}
     except (ValueError, Exception) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.post("/racks/batch")
+def api_batch_create_racks(body: List[RackCreate], user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        created_racks = []
+        for i, rack_data in enumerate(body):
+            try:
+                rack = rack_service.create_rack(conn, **rack_data.model_dump())
+                created_racks.append(rack)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"导入第 {i+1} 行机柜数据失败: {str(e)}")
+        return {"success": True, "data": created_racks, "message": f"成功导入 {len(created_racks)} 个机柜"}
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         conn.close()
