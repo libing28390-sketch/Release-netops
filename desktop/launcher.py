@@ -242,6 +242,7 @@ class SetupWorker(QObject):
             run_env["PATH"] = os.pathsep.join(cleaned_paths)
             
         try:
+            use_shell = sys.platform == "win32"
             p = subprocess.Popen(
                 cmd,
                 cwd=cwd,
@@ -249,7 +250,8 @@ class SetupWorker(QObject):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 creationflags=0x08000000,
-                env=run_env
+                env=run_env,
+                shell=use_shell
             )
             while True:
                 line_bytes = p.stdout.readline()
