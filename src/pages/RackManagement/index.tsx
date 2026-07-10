@@ -87,13 +87,14 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [confirmDeleteRack, setConfirmDeleteRack] = useState<{ rackId: string; rackName: string } | null>(null);
   const [blockedDeleteRack, setBlockedDeleteRack] = useState<{ rackName: string; deviceCount: number } | null>(null);
   const [confirmRemoveDevice, setConfirmRemoveDevice] = useState<{ deviceId: string; deviceName: string } | null>(null);
+  const [confirmMoveDevice, setConfirmMoveDevice] = useState<{ deviceId: string; deviceName: string; oldU: number; newU: number; uHeight: number } | null>(null);
 
   const [showRackModal, setShowRackModal] = useState(false);
   const [editingRack, setEditingRack] = useState<Rack | null>(null);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showDeviceTypeModal, setShowDeviceTypeModal] = useState(false);
 
-  const [rackForm, setRackForm] = useState({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '', power_capacity_watts: 0 });
+  const [rackForm, setRackForm] = useState({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '', power_capacity_watts: 0, placement_strategy: 'bottom_first' });
   const [deviceForm, setDeviceForm] = useState({ name: '', device_type_id: '', start_u: 1, position: 'front' as string, status: 'active', serial_number: '', asset_id: '' });
   const [dtForm, setDtForm] = useState({ model: '', vendor: '', u_height: 1, device_role: 'switch', description: '', power_watts: 0 });
   const [formError, setFormError] = useState('');
@@ -454,13 +455,13 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const openNewRack = () => {
     setEditingRack(null);
-    setRackForm({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '', power_capacity_watts: 0 });
+    setRackForm({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '', power_capacity_watts: 0, placement_strategy: 'bottom_first' });
     setFormError(''); setShowRackModal(true);
   };
   
   const openEditRack = (rack: Rack) => {
     setEditingRack(rack);
-    setRackForm({ name: rack.name, datacenter: rack.datacenter, room: rack.room, row: rack.row, total_u: rack.total_u, description: rack.description, power_capacity_watts: (rack as any).power_capacity_watts ?? 0 });
+    setRackForm({ name: rack.name, datacenter: rack.datacenter, room: rack.room, row: rack.row, total_u: rack.total_u, description: rack.description, power_capacity_watts: (rack as any).power_capacity_watts ?? 0, placement_strategy: rack.placement_strategy || 'bottom_first' });
     setFormError(''); setShowRackModal(true);
   };
 
@@ -541,7 +542,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       return pickStartUForAsset(layout, position, uH, selectedAsset);
     }
     const sideDevices = layout.devices.filter(d => d.position === position);
-    return findFirstFreeStartU(layout.total_u, uH, sideDevices) ?? 1;
+    return findFirstFreeStartU(layout.total_u, uH, sideDevices, layout.placement_strategy) ?? 1;
   };
 
   const handleAssetSelect = (asset: Asset) => {
@@ -583,7 +584,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     if (layout) {
       const sideDevices = layout.devices.filter(d => d.position === deviceForm.position);
       if (hasConflict(deviceForm.start_u, uH, layout.total_u, sideDevices)) {
-        const sugg = findFirstFreeStartU(layout.total_u, uH, sideDevices);
+        const sugg = findFirstFreeStartU(layout.total_u, uH, sideDevices, layout.placement_strategy);
         setFormError(
           zh
             ? `当前${deviceForm.position === 'front' ? '前' : '后'}面板 U${deviceForm.start_u} 已被占用或与现有设备重叠。${sugg != null ? `可尝试起始 U${sugg}。` : '无足够连续空位。'}`
@@ -646,15 +647,32 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   /* -- Drag-to-move -- */
 
-  const handleDeviceMove = useCallback(async (deviceId: string, newStartU: number) => {
+  const handleDeviceMove = useCallback((deviceId: string, newStartU: number) => {
+    // Find the device info from layout to show in confirmation
+    const dev = layout?.devices.find(d => d.id === deviceId);
+    if (!dev) return;
+    if (dev.start_u === newStartU) return; // no change
+    setConfirmMoveDevice({
+      deviceId,
+      deviceName: dev.name || deviceId,
+      oldU: dev.start_u,
+      newU: newStartU,
+      uHeight: dev.u_height || 1,
+    });
+  }, [layout]);
+
+  const confirmMoveDeviceAction = useCallback(async () => {
+    if (!confirmMoveDevice) return;
+    const { deviceId, newU } = confirmMoveDevice;
     try {
-      await putJson(`${API}/rack-devices/${deviceId}`, { start_u: newStartU });
+      await putJson(`${API}/rack-devices/${deviceId}`, { start_u: newU });
       loadLayout(selectedRackId);
     } catch (e: any) {
       setError(e.message);
       loadLayout(selectedRackId);
     }
-  }, [selectedRackId, loadLayout]);
+    setConfirmMoveDevice(null);
+  }, [confirmMoveDevice, selectedRackId, loadLayout]);
 
   /* -- Fit-to-screen zoom -- */
   const handleFitToScreen = useCallback(() => {
@@ -1426,6 +1444,32 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
             </motion.div>
           </motion.div>
         )}
+
+        {confirmMoveDevice && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setConfirmMoveDevice(null)}>
+            <motion.div initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.97, opacity: 0 }} transition={{ duration: 0.15 }} className="w-full max-w-lg rounded-3xl bg-white shadow-2xl border border-black/5 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start gap-3 p-5 border-b border-black/5 bg-blue-50">
+                <div className="rounded-2xl bg-blue-100 p-3 text-blue-700"><ChevronsUpDown size={22} /></div>
+                <div>
+                  <h3 className="text-lg font-semibold text-blue-900">{zh ? '确认调整U位' : 'Confirm U-Position Move'}</h3>
+                  <p className="mt-2 text-sm text-black/70">
+                    {zh
+                      ? `确认将设备 "${confirmMoveDevice.deviceName}" 从 U${confirmMoveDevice.oldU}-U${confirmMoveDevice.oldU + confirmMoveDevice.uHeight - 1} 移动至 U${confirmMoveDevice.newU}-U${confirmMoveDevice.newU + confirmMoveDevice.uHeight - 1}？调整后将自动同步更新资产管理中的起始U位信息。`
+                      : `Move "${confirmMoveDevice.deviceName}" from U${confirmMoveDevice.oldU}-U${confirmMoveDevice.oldU + confirmMoveDevice.uHeight - 1} to U${confirmMoveDevice.newU}-U${confirmMoveDevice.newU + confirmMoveDevice.uHeight - 1}? The asset record will be updated automatically.`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 p-5 bg-black/[0.02]">
+                <button onClick={() => setConfirmMoveDevice(null)} className="px-4 py-2 rounded-xl border border-black/10 text-sm font-medium text-black/70 hover:bg-black/5 transition-all">
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button onClick={confirmMoveDeviceAction} className="px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] transition-all shadow-sm">
+                  {zh ? '确认调整' : 'Confirm Move'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* ========== MODAL: Create/Edit Rack ========== */}
@@ -1470,6 +1514,19 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       setRackForm({ ...rackForm, power_capacity_watts: val === '' ? '' as any : (parseInt(val) || 0) });
                     }} placeholder="e.g. 6000" className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
                     <p className="text-[10px] mt-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '机柜 PDU 最大承载功率，0 表示不限制' : 'PDU capacity, 0 = unlimited'}</p>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '上架安装策略' : 'Placement Strategy'}</label>
+                    <select
+                      value={rackForm.placement_strategy || 'bottom_first'}
+                      onChange={e => setRackForm({ ...rackForm, placement_strategy: e.target.value })}
+                      className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
+                      style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                    >
+                      <option value="bottom_first">{zh ? '底部优先 (Bottom First)' : 'Bottom First'}</option>
+                      <option value="top_first">{zh ? '顶部优先 (Top First)' : 'Top First'}</option>
+                    </select>
+                    <p className="text-[10px] mt-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '推荐空闲U位时的搜索方向' : 'Recommendation search direction'}</p>
                   </div>
                 </div>
                 <div>

@@ -44,6 +44,61 @@ def api_rack_stats(_user=require_role("Viewer")):
         conn.close()
 
 
+@router.get("/racks/validate-u")
+def api_validate_u_position(
+    rack: str = Query(..., description="Rack name or rack_code"),
+    start_u: int = Query(..., description="Start U position"),
+    u_height: int = Query(..., description="U height"),
+    exclude_asset_id: str = Query('', description="Asset ID to exclude"),
+    _user=require_role("Viewer")
+):
+    conn = get_db_connection()
+    try:
+        rack_row = conn.execute("SELECT id, total_u FROM racks WHERE name = ? OR rack_name = ?", (rack, rack)).fetchone()
+        if not rack_row:
+            return {"success": False, "reason": f"机柜 '{rack}' 不存在"}
+
+        rack_id = rack_row['id']
+        total_u = rack_row['total_u']
+        end_u = start_u + u_height - 1
+
+        if start_u < 1:
+            return {"success": False, "reason": f"起始 U 位必须大于或等于 1 (当前: {start_u})"}
+        if end_u > total_u:
+            return {"success": False, "reason": f"设备超出机柜高度范围：占用 U{start_u}-U{end_u}，但机柜总高度仅有 {total_u}U"}
+
+        exclude_device_id = ''
+        if exclude_asset_id:
+            rd_row = conn.execute("SELECT id FROM rack_devices WHERE asset_id = ?", (exclude_asset_id,)).fetchone()
+            if rd_row:
+                exclude_device_id = rd_row['id']
+
+        query = """
+            SELECT rd.name, rd.start_u, dt.u_height
+            FROM rack_devices rd
+            JOIN device_types dt ON rd.device_type_id = dt.id
+            WHERE rd.rack_id = ? AND rd.position = 'front'
+        """
+        params = [rack_id]
+        if exclude_device_id:
+            query += " AND rd.id != ?"
+            params.append(exclude_device_id)
+
+        existing = conn.execute(query, params).fetchall()
+        for dev in existing:
+            existing_start = dev['start_u']
+            existing_end = existing_start + dev['u_height'] - 1
+            if start_u <= existing_end and end_u >= existing_start:
+                return {
+                    "success": False,
+                    "reason": f"U位冲突：U{start_u}-U{end_u} 与已上架设备 '{dev['name']}' (U{existing_start}-U{existing_end}) 空间重叠。"
+                }
+
+        return {"success": True, "reason": ""}
+    finally:
+        conn.close()
+
+
 @router.get("/racks/{rack_id}")
 def api_get_rack(rack_id: str, _user=require_role("Viewer")):
     conn = get_db_connection()

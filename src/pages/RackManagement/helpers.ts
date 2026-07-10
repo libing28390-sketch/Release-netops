@@ -171,10 +171,17 @@ export function findFirstFreeStartU(
   totalU: number,
   uHeight: number,
   onSideDevices: RackDevice[],
+  strategy?: 'bottom_first' | 'top_first',
 ): number | null {
   if (uHeight < 1 || totalU < 1) return null;
-  for (let u = 1; u <= totalU - uHeight + 1; u++) {
-    if (!hasConflict(u, uHeight, totalU, onSideDevices)) return u;
+  if (strategy === 'top_first') {
+    for (let u = totalU - uHeight + 1; u >= 1; u--) {
+      if (!hasConflict(u, uHeight, totalU, onSideDevices)) return u;
+    }
+  } else {
+    for (let u = 1; u <= totalU - uHeight + 1; u++) {
+      if (!hasConflict(u, uHeight, totalU, onSideDevices)) return u;
+    }
   }
   return null;
 }
@@ -199,5 +206,6 @@ export function pickStartUForAsset(
   if (candidate != null && !hasConflict(candidate, uH, layout.total_u, side)) {
     return candidate;
   }
-  return findFirstFreeStartU(layout.total_u, uH, side) ?? 1;
+  return findFirstFreeStartU(layout.total_u, uH, side, layout.placement_strategy) ?? 1;
 }
+

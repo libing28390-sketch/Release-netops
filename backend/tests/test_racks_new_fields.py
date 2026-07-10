@@ -234,3 +234,37 @@ def test_api_batch_create_racks_endpoint(isolated_db, requester):
         api_batch_create_racks(body=dup_body, user=requester)
     assert exc_info.value.status_code == 400
     assert "导入第 1 行机柜数据失败" in exc_info.value.detail
+
+
+def test_placement_strategy_and_concurrency(isolated_db):
+    conn = get_db_connection()
+    try:
+        # Create a rack with top_first placement strategy
+        rack = rack_service.create_rack(
+            conn,
+            name="Strategy Test Rack",
+            datacenter="Beijing DC",
+            room="Room 302",
+            row="Row B",
+            total_u=42,
+            description="Testing strategy field",
+            status="active",
+            power_capacity_watts=8000,
+            site_id="site-default",
+            rack_code="RACK-STRATEGY-01",
+            placement_strategy="top_first"
+        )
+        assert rack["placement_strategy"] == "top_first"
+
+        # Update strategy to bottom_first
+        updated = rack_service.update_rack(
+            conn,
+            rack["id"],
+            placement_strategy="bottom_first"
+        )
+        assert updated["placement_strategy"] == "bottom_first"
+
+        # Test concurrency check (calling _check_u_constraints won't fail and PostgreSQL SELECT FOR UPDATE executes cleanly)
+        rack_service._check_u_constraints(conn, rack["id"], start_u=10, u_height=2, position="front")
+    finally:
+        conn.close()

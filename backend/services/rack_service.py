@@ -48,7 +48,8 @@ def get_rack(conn, rack_id: str) -> dict:
 def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
                 row: str = '', total_u: int = 42, description: str = '',
                 status: str = 'active', power_capacity_watts: int = 0,
-                site_id: str = 'site-default', rack_code: str = '', **kwargs) -> dict:
+                site_id: str = 'site-default', rack_code: str = '',
+                placement_strategy: str = 'bottom_first', **kwargs) -> dict:
     rack_id = str(uuid.uuid4())
     if not rack_code:
         rack_code = f"RACK_{uuid.uuid4().hex[:12].upper()}"
@@ -76,14 +77,14 @@ def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
             id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name,
             total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
             current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
-            created_at, updated_at
+            placement_strategy, created_at, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             rack_id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name,
             total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
             current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
-            now, now
+            placement_strategy, now, now
         )
     )
     conn.commit()
@@ -101,7 +102,7 @@ def update_rack(conn, rack_id: str, **fields) -> dict:
         'name', 'datacenter', 'room', 'row', 'total_u', 'description', 'status', 'power_capacity_watts',
         'site_id', 'rack_code', 'rack_name', 'room_name', 'row_name', 'used_u', 'available_u',
         'power_capacity_w', 'current_power_w', 'power_utilization', 'max_weight_kg', 'current_weight_kg',
-        'cooling_zone', 'remarks'
+        'cooling_zone', 'remarks', 'placement_strategy'
     )
     
     # Align values if one of the duplicates is modified
@@ -232,15 +233,20 @@ def delete_device_type(conn, dt_id: str) -> None:
 def _check_u_constraints(conn, rack_id: str, start_u: int, u_height: int,
                          position: str, exclude_device_id: str = ''):
     """Enforce: start_u >= 1, end_u <= total_u, no overlap with existing devices."""
+    from database import _USE_PG
+    if _USE_PG:
+        # Row-level lock on parent rack row to prevent race conditions during concurrent inserts
+        conn.execute("SELECT 1 FROM racks WHERE id = ? FOR UPDATE", (rack_id,))
+
     rack = get_rack(conn, rack_id)
     total_u = rack['total_u']
     end_u = start_u + u_height - 1
 
     if start_u < 1:
-        raise ValueError(f"start_u must be >= 1 (got {start_u})")
+        raise ValueError(f"起始 U 位必须大于或等于 1 (当前: {start_u})")
     if end_u > total_u:
         raise ValueError(
-            f"Device exceeds rack capacity: U{start_u}-U{end_u} but rack only has {total_u}U"
+            f"设备超出机柜高度范围：占用 U{start_u}-U{end_u}，但机柜总高度仅有 {total_u}U"
         )
 
     # Check overlap with other devices on the same position (front/rear)
@@ -262,8 +268,7 @@ def _check_u_constraints(conn, rack_id: str, start_u: int, u_height: int,
         existing_end = existing_start + d['u_height'] - 1
         if start_u <= existing_end and end_u >= existing_start:
             raise ValueError(
-                f"U-position conflict: U{start_u}-U{end_u} overlaps with "
-                f"'{d['name']}' at U{existing_start}-U{existing_end}"
+                f"U位冲突：U{start_u}-U{end_u} 与已上架设备 '{d['name']}' (U{existing_start}-U{existing_end}) 空间重叠。"
             )
 
 
@@ -339,6 +344,17 @@ def update_rack_device(conn, device_id: str, **fields) -> dict:
     params.append(_utc_now())
     params.append(device_id)
     conn.execute(f"UPDATE rack_devices SET {', '.join(updates)} WHERE id = ?", params)
+
+    # Reverse-sync: if start_u changed and device is linked to an asset, update physical_assets
+    if 'start_u' in fields and fields['start_u'] is not None:
+        asset_id = existing.get('asset_id')
+        if asset_id:
+            conn.execute(
+                "UPDATE physical_assets SET planned_start_u = ?, updated_at = ? WHERE id = ?",
+                (fields['start_u'], _utc_now(), asset_id)
+            )
+            logger.info(f"[RackService] Reverse-synced planned_start_u={fields['start_u']} to asset {asset_id}")
+
     conn.commit()
     return get_rack_device(conn, device_id)
 

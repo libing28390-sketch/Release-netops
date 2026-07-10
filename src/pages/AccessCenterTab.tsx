@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Search, Terminal, Monitor, Lock, Info, 
   Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight,
-  Database, Server, Cpu, Key, Globe, X, Send, ChevronDown, UserCheck
+  Database, Server, Cpu, Key, Globe, X, Send, ChevronDown, UserCheck, Eye, EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TerminalWindow from '../components/access/TerminalWindow';
@@ -52,6 +52,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   // --- MFA Logic ---
   const [showMFAModal, setShowMFAModal] = useState(false);
   const [fixedPassword, setFixedPassword] = useState('');
+  const [showFixedPassword, setShowFixedPassword] = useState(false);
   const [dynamicCode, setDynamicCode] = useState('');
   const [mfaNonce, setMfaNonce] = useState('');
   const [mfaTarget, setMfaTarget] = useState<{device: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged'} | null>(null);
@@ -135,6 +136,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   // Reset all MFA-related state to a clean slate (but keep approver selection).
   const resetMFAState = () => {
     setFixedPassword('');
+    setShowFixedPassword(false);
     setDynamicCode('');
     setMfaNonce('');
     setCountdown(0);
@@ -582,13 +584,20 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
                        <Key className="w-4 h-4" />
                     </div>
                     <input 
-                      type="password"
+                      type={showFixedPassword ? 'text' : 'password'}
                       maxLength={6}
                       value={fixedPassword}
                       onChange={(e) => setFixedPassword(e.target.value.replace(/\D/g, ''))}
-                      className="w-full pl-14 pr-4 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl outline-none focus:border-[#00bceb] focus:bg-white focus:ring-4 focus:ring-[#00bceb]/5 transition-all text-2xl font-black tracking-[0.5em] text-slate-800 placeholder:text-slate-200"
+                      className="w-full pl-14 pr-12 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl outline-none focus:border-[#00bceb] focus:bg-white focus:ring-4 focus:ring-[#00bceb]/5 transition-all text-2xl font-black tracking-[0.5em] text-slate-800 placeholder:text-slate-200"
                       placeholder="••••••"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowFixedPassword(!showFixedPassword)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 focus:outline-none"
+                    >
+                      {showFixedPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
                   </div>
                 </div>
 

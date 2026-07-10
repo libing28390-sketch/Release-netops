@@ -225,6 +225,7 @@ def _init_db_logic(conn):
             current_weight_kg INTEGER DEFAULT 0,
             cooling_zone VARCHAR(50),
             status VARCHAR(20) DEFAULT 'active',
+            placement_strategy VARCHAR(20) DEFAULT 'bottom_first',
             remarks TEXT,
             description TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -257,6 +258,7 @@ def _init_db_logic(conn):
             current_weight_kg INTEGER DEFAULT 0,
             cooling_zone TEXT,
             status TEXT DEFAULT 'active',
+            placement_strategy TEXT DEFAULT 'bottom_first',
             remarks TEXT,
             description TEXT DEFAULT '',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -287,8 +289,10 @@ def _init_db_logic(conn):
     ensure_column('racks', 'current_weight_kg', "INTEGER DEFAULT 0" if _USE_PG else "INTEGER DEFAULT 0")
     ensure_column('racks', 'cooling_zone', "VARCHAR(50)" if _USE_PG else "TEXT")
     ensure_column('racks', 'status', "VARCHAR(20) DEFAULT 'active'" if _USE_PG else "TEXT DEFAULT 'active'")
+    ensure_column('racks', 'placement_strategy', "VARCHAR(20) DEFAULT 'bottom_first'" if _USE_PG else "TEXT DEFAULT 'bottom_first'")
     ensure_column('racks', 'remarks', "TEXT" if _USE_PG else "TEXT")
     ensure_column('racks', 'description', "TEXT DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
+
     ensure_column('racks', 'created_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if _USE_PG else "TEXT")
     ensure_column('racks', 'updated_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if _USE_PG else "TEXT")
 

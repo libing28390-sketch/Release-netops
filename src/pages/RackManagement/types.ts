@@ -25,6 +25,7 @@ export interface Rack {
   current_weight_kg?: number;
   cooling_zone?: string;
   remarks?: string;
+  placement_strategy?: 'bottom_first' | 'top_first';
 }
 
 export interface DeviceType {
@@ -64,6 +65,7 @@ export interface RackLayout {
   total_u: number;
   description: string;
   status: string;
+  placement_strategy?: 'bottom_first' | 'top_first';
   devices: RackDevice[];
   front_used: number;
   rear_used: number;

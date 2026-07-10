@@ -357,6 +357,7 @@ class RackCreate(BaseModel):
     description: str = ''
     status: str = 'active'
     power_capacity_watts: int = 0
+    placement_strategy: str = 'bottom_first'
 
     site_id: Optional[str] = 'site-default'
     rack_code: Optional[str] = ''
@@ -395,6 +396,13 @@ class RackCreate(BaseModel):
             raise ValueError(f'status must be one of {_RACK_STATUSES}')
         return v
 
+    @field_validator('placement_strategy')
+    @classmethod
+    def validate_placement_strategy(cls, v: str) -> str:
+        if v not in ('bottom_first', 'top_first'):
+            raise ValueError("placement_strategy must be either 'bottom_first' or 'top_first'")
+        return v
+
 
 class RackUpdate(BaseModel):
     name: Optional[str] = None
@@ -405,6 +413,7 @@ class RackUpdate(BaseModel):
     description: Optional[str] = None
     status: Optional[str] = None
     power_capacity_watts: Optional[int] = None
+    placement_strategy: Optional[str] = None
 
     site_id: Optional[str] = None
     rack_code: Optional[str] = None
@@ -420,6 +429,14 @@ class RackUpdate(BaseModel):
     current_weight_kg: Optional[int] = None
     cooling_zone: Optional[str] = None
     remarks: Optional[str] = None
+
+    @field_validator('placement_strategy')
+    @classmethod
+    def validate_placement_strategy(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ('bottom_first', 'top_first'):
+            raise ValueError("placement_strategy must be either 'bottom_first' or 'top_first'")
+        return v
+
 
 
 class DeviceTypeCreate(BaseModel):

@@ -72,10 +72,21 @@ def _sync_device_type_power(conn, vendor: str, model: str, power_watts: int, dev
     v = (vendor or '').strip()
     m = model.strip()
     p = power_watts or 0
-    row = conn.execute('SELECT id, power_watts FROM device_types WHERE model = ? AND vendor = ?', (m, v)).fetchone()
+    row = conn.execute('SELECT id, u_height, power_watts FROM device_types WHERE model = ? AND vendor = ?', (m, v)).fetchone()
     if row:
+        updates = []
+        params = []
         if p > 0 and row['power_watts'] != p:
-            conn.execute('UPDATE device_types SET power_watts = ?, updated_at = ? WHERE id = ?', (p, _utc_now(), row['id']))
+            updates.append("power_watts = ?")
+            params.append(p)
+        if u_height > 0 and row['u_height'] != u_height:
+            updates.append("u_height = ?")
+            params.append(u_height)
+        if updates:
+            updates.append("updated_at = ?")
+            params.append(_utc_now())
+            params.append(row['id'])
+            conn.execute(f"UPDATE device_types SET {', '.join(updates)} WHERE id = ?", params)
     else:
         dt_id = str(uuid.uuid4())
         now = _utc_now()
@@ -258,6 +269,87 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
     if set_parts:
         params.append(row['id'])
         conn.execute(f"UPDATE devices SET {', '.join(set_parts)} WHERE id = ?", params)
+
+
+
+def _sync_rack_device_from_asset(conn, asset_id: str, obj) -> None:
+    # obj can be a dict, DictRow, or a Pydantic model
+    def get_val(key, default=None):
+        if hasattr(obj, key):
+            val = getattr(obj, key)
+            if val is not None:
+                return val
+        try:
+            val = obj[key]
+            if val is not None:
+                return val
+        except (KeyError, TypeError, IndexError):
+            pass
+        return default
+
+    hostname = get_val('hostname')
+    rack = get_val('rack')
+    u_height = get_val('u_height', 1)
+    planned_start_u = get_val('planned_start_u')
+    serial_number = get_val('serial_number', '')
+    vendor = get_val('vendor', '')
+    model = get_val('model', '')
+    power_watts = get_val('power_watts', 0)
+    device_role = get_val('device_role', 'switch')
+
+    if planned_start_u in (None, '', 'null'):
+        planned_start_u = None
+    else:
+        try:
+            planned_start_u = int(planned_start_u)
+        except (ValueError, TypeError):
+            planned_start_u = None
+
+    try:
+        u_height = int(u_height)
+    except (ValueError, TypeError):
+        u_height = 1
+
+    existing = conn.execute("SELECT id FROM rack_devices WHERE asset_id = ?", (asset_id,)).fetchone()
+
+    if not rack or planned_start_u is None:
+        if existing:
+            from services import rack_service
+            rack_service.delete_rack_device(conn, existing['id'])
+        return
+
+    rack_row = conn.execute("SELECT id, total_u FROM racks WHERE name = ? OR rack_name = ?", (rack, rack)).fetchone()
+    if not rack_row:
+        raise ValueError(f"Rack '{rack}' does not exist")
+
+    _sync_device_type_power(conn, vendor, model, power_watts, device_role, u_height)
+    dt_row = conn.execute("SELECT id FROM device_types WHERE model = ? AND vendor = ?", (model, vendor)).fetchone()
+    if not dt_row:
+        raise ValueError(f"Failed to resolve device type for vendor '{vendor}' model '{model}'")
+    device_type_id = dt_row['id']
+
+    from services import rack_service
+    if existing:
+        rack_service.update_rack_device(
+            conn,
+            existing['id'],
+            name=hostname,
+            rack_id=rack_row['id'],
+            device_type_id=device_type_id,
+            start_u=planned_start_u,
+            serial_number=serial_number,
+            asset_id=asset_id
+        )
+    else:
+        rack_service.create_rack_device(
+            conn,
+            name=hostname,
+            rack_id=rack_row['id'],
+            device_type_id=device_type_id,
+            start_u=planned_start_u,
+            serial_number=serial_number,
+            asset_id=asset_id
+        )
 
 
 
@@ -654,6 +746,12 @@ def create_asset(body: AssetCreate):
             device_id = _create_linked_device(conn, asset_id, body)
             logger.info('Auto-created device %s for asset %s (%s)', device_id, asset_id, body.asset_type)
 
+        try:
+            _sync_rack_device_from_asset(conn, asset_id, body)
+        except ValueError as e:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail=str(e))
+
         _sync_device_type_power(conn, body.vendor, body.model, body.power_watts, body.device_role, body.u_height)
 
         conn.commit()
@@ -781,6 +879,14 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
             params.append(_utc_now())
             params.append(asset_id)
             conn.execute(f"UPDATE physical_assets SET {', '.join(updates)} WHERE id = ?", tuple(params))
+
+            # Sync and validate rack device placement
+            updated_row = conn.execute("SELECT * FROM physical_assets WHERE id = ?", (asset_id,)).fetchone()
+            try:
+                _sync_rack_device_from_asset(conn, asset_id, updated_row)
+            except ValueError as e:
+                conn.rollback()
+                raise HTTPException(status_code=400, detail=str(e))
 
             # Plan-A: sync basic info to linked device
             current_type = body.asset_type if body.asset_type is not None else row['asset_type']
@@ -914,6 +1020,9 @@ def delete_asset(asset_id: str):
         # Plan-A: cascade-delete linked device first
         _delete_linked_device(conn, asset_id)
 
+        # Cascade-delete linked rack device if exists
+        conn.execute('DELETE FROM rack_devices WHERE asset_id = ?', (asset_id,))
+
         # PAM: archive (don't delete) sessions and access requests so the audit
         # trail survives asset removal. We mark `archived = 1` here; the FK on
         # asset_id is configured ON DELETE SET NULL (PG) so the column itself
@@ -1011,6 +1120,12 @@ def import_assets(items: list[AssetCreate]):
             # Plan-A: auto-create linked device for managed assets
             if body.asset_type in ('network_device', 'server'):
                 _create_linked_device(conn, asset_id, body)
+            
+            try:
+                _sync_rack_device_from_asset(conn, asset_id, body)
+            except ValueError as e:
+                logger.warning("Failed to sync rack device during import for asset %s: %s", asset_id, e)
+
             created += 1
         conn.commit()
         return {'created': created, 'skipped': skipped}

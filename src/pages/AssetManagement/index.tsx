@@ -314,10 +314,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         } else if (data?.rotation_detail) {
           setFeedbackMsg({ type: 'warning', text: zh ? `已投产，但口令自动轮换失败: ${data.rotation_detail}` : `Marked as production, but auto-rotation failed: ${data.rotation_detail}` });
         }
-      } else if (r.status === 422) {
+      } else if (r.status === 422 || r.status === 400) {
         const err = await r.json().catch(() => null);
         setShowProductionConfirm(false);
-        setModalError(zh ? (err?.detail || '前置校验未通过') : (err?.detail || 'Pre-flight check failed'));
+        setModalError(zh ? (err?.detail || '保存校验失败') : (err?.detail || 'Validation failed'));
       } else {
         const err = await r.json().catch(() => null);
         setFeedbackMsg({ type: 'error', text: zh ? `保存失败: ${err?.detail || r.statusText}` : `Save failed: ${err?.detail || r.statusText}` });

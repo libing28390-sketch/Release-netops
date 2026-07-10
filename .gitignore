@@ -116,5 +116,6 @@ tools/node/
 !**/.agents/AGENTS.md
 !**/docs/plans/plan_*.md
 !**/docs/walkthrough_*.md
+!**/docs/walkthrough/**/*.md
 !**/docs/introduction.md
 !**/docs/cmdb_development.md

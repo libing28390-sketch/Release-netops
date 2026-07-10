@@ -94,6 +94,8 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   const [mfaQrUri, setMfaQrUri] = React.useState('');
   const [mfaCodeInput, setMfaCodeInput] = React.useState('');
   const [disablePasswordInput, setDisablePasswordInput] = React.useState('');
+  const [showDisablePassword, setShowDisablePassword] = React.useState(false);
+  const [showDingtalkSecret, setShowDingtalkSecret] = React.useState(false);
   const [disableMode, setDisableMode] = React.useState(false);
   const [mfaErrorMsg, setMfaErrorMsg] = React.useState('');
   const [mfaLoading, setMfaLoading] = React.useState(false);
@@ -572,14 +574,23 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   <label className={`block text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-white/60' : 'text-black/60'}`}>
                     请输入当前登录密码确认关闭二次身份验证：
                   </label>
-                  <div className="flex gap-3">
-                    <input
-                      type="password"
-                      placeholder="您的登录密码"
-                      value={disablePasswordInput}
-                      onChange={(e) => setDisablePasswordInput(e.target.value)}
-                      className={`flex-1 rounded-lg px-3 py-2 text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/20 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40'}`}
-                    />
+                  <div className="flex gap-3 items-center">
+                    <div className="relative flex-1">
+                      <input
+                        type={showDisablePassword ? 'text' : 'password'}
+                        placeholder="您的登录密码"
+                        value={disablePasswordInput}
+                        onChange={(e) => setDisablePasswordInput(e.target.value)}
+                        className={`w-full rounded-lg px-3 py-2 pr-9 text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/20 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40'}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowDisablePassword(!showDisablePassword)}
+                        className={`absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 focus:outline-none ${isDark ? 'text-white/25 hover:text-white/50' : 'text-black/25 hover:text-black/50'}`}
+                      >
+                        {showDisablePassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
                     <button
                       type="button"
                       disabled={mfaLoading || !disablePasswordInput}
@@ -590,7 +601,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setDisableMode(false); setDisablePasswordInput(''); setMfaErrorMsg(''); }}
+                      onClick={() => { setDisableMode(false); setDisablePasswordInput(''); setShowDisablePassword(false); setMfaErrorMsg(''); }}
                       className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors ${isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-black/[0.05] text-black/70 hover:bg-black/[0.08]'}`}
                     >
                       取消
@@ -681,15 +692,26 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     )}
                     {hasSecret && (
                       <>
-                        <input
-                          type="password"
-                          disabled={!isCreator}
-                          value={notificationChannels.dingtalk.secret}
-                          onChange={(event) => onNotificationSecretChange(event.target.value)}
-                          title={`${label} Secret`}
-                          placeholder="加签 Secret（可选，留空则不验签）"
-                          className={`w-full rounded-lg px-2.5 py-2 text-[11px] outline-none border transition-all font-mono ${!isCreator ? (isDark ? 'bg-black/40 text-white/30 cursor-not-allowed border-white/5' : 'bg-black/[0.04] text-black/30 cursor-not-allowed border-black/5') : (isDark ? 'bg-black/20 border-white/10 text-white/80 placeholder-white/20 focus:border-[#00bceb]/50' : 'bg-white/60 border-black/8 text-[#0b2a3c] placeholder-black/20 focus:border-[#00bceb]/40')}`}
-                        />
+                        <div className="relative">
+                          <input
+                            type={showDingtalkSecret ? 'text' : 'password'}
+                            disabled={!isCreator}
+                            value={notificationChannels.dingtalk.secret}
+                            onChange={(event) => onNotificationSecretChange(event.target.value)}
+                            title={`${label} Secret`}
+                            placeholder="加签 Secret（可选，留空则不验签）"
+                            className={`w-full rounded-lg px-2.5 py-2 pr-8 text-[11px] outline-none border transition-all font-mono ${!isCreator ? (isDark ? 'bg-black/40 text-white/30 cursor-not-allowed border-white/5' : 'bg-black/[0.04] text-black/30 cursor-not-allowed border-black/5') : (isDark ? 'bg-black/20 border-white/10 text-white/80 placeholder-white/20 focus:border-[#00bceb]/50' : 'bg-white/60 border-black/8 text-[#0b2a3c] placeholder-black/20 focus:border-[#00bceb]/40')}`}
+                          />
+                          {isCreator && (
+                            <button
+                              type="button"
+                              onClick={() => setShowDingtalkSecret(!showDingtalkSecret)}
+                              className={`absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 focus:outline-none ${isDark ? 'text-white/25 hover:text-white/50' : 'text-black/25 hover:text-black/50'}`}
+                            >
+                              {showDingtalkSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                          )}
+                        </div>
                         {isCreator && notificationChannels.dingtalk.secret === '***' && (
                           <p className={`text-[9px] font-sans ${isDark ? 'text-[#00bceb]/70' : 'text-[#007fa3]'}`}>
                             ℹ 密钥已加密。如需更换，请直接输入新密钥。

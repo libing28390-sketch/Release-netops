@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit2, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert } from 'lucide-react';
+import { Plus, Edit2, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff } from 'lucide-react';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 
@@ -108,6 +108,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const [error, setError] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
+  const [visiblePasswordFields, setVisiblePasswordFields] = useState<Record<string, boolean>>({});
   const [form, setForm] = useState<Record<string, any>>({});
   const [confirmDelete, setConfirmDelete] = useState<any | null>(null);
   const [search, setSearch] = useState('');
@@ -208,6 +209,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     setForm(defaults);
     setEditing(null);
     setError('');
+    setVisiblePasswordFields({});
     setModalOpen(true);
   };
 
@@ -221,6 +223,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     setForm(f);
     setEditing(row);
     setError('');
+    setVisiblePasswordFields({});
     setModalOpen(true);
   };
 
@@ -595,12 +598,31 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
                       >
                         {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
+                    ) : fd.type === 'password' ? (
+                      <div className="relative">
+                        <input
+                          type={visiblePasswordFields[fd.key] ? 'text' : 'password'}
+                          value={form[fd.key] ?? ''}
+                          placeholder={fd.placeholder}
+                          autoComplete="new-password"
+                          onChange={e => setForm({ ...form, [fd.key]: e.target.value })}
+                          className="w-full px-3 py-2 pr-10 rounded-xl text-sm border border-black/10 bg-white text-[#164e63] outline-none focus:border-[#06b6d4]/45 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setVisiblePasswordFields(prev => ({ ...prev, [fd.key]: !prev[fd.key] }))}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60 focus:outline-none"
+                          title={visiblePasswordFields[fd.key] ? (zh ? '隐藏密码' : 'Hide Password') : (zh ? '显示密码' : 'Show Password')}
+                        >
+                          {visiblePasswordFields[fd.key] ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                      </div>
                     ) : (
                       <input
-                        type={fd.type === 'password' ? 'password' : fd.type === 'number' ? 'number' : 'text'}
+                        type={fd.type === 'number' ? 'number' : 'text'}
                         value={form[fd.key] ?? ''}
                         placeholder={fd.placeholder}
-                        autoComplete={fd.type === 'password' ? 'new-password' : 'off'}
+                        autoComplete="off"
                         onChange={e => setForm({ ...form, [fd.key]: e.target.value })}
                         className="w-full px-3 py-2 rounded-xl text-sm border border-black/10 bg-white text-[#164e63] outline-none focus:border-[#06b6d4]/45 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
                       />

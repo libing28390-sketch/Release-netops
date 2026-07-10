@@ -47,6 +47,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const zh = language === 'zh';
 
   const [racks, setRacks] = React.useState<any[]>([]);
+  const [uValidationError, setUValidationError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -84,6 +85,40 @@ export const AssetModal: React.FC<AssetModalProps> = ({
       .filter(Boolean)
       .sort();
   }, [racks, form.datacenter]);
+
+  // Real-time U-position validation
+  React.useEffect(() => {
+    const rack = form.rack;
+    const startU = parseInt(String(form.planned_start_u), 10);
+    const height = parseInt(String(form.u_height), 10);
+
+    if (!rack || Number.isNaN(startU) || startU < 1 || Number.isNaN(height) || height < 1) {
+      setUValidationError(null);
+      return;
+    }
+
+    const validate = async () => {
+      try {
+        const token = localStorage.getItem('netops_token');
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        const url = `/api/racks/validate-u?rack=${encodeURIComponent(rack)}&start_u=${startU}&u_height=${height}&exclude_asset_id=${editingAsset?.id || ''}`;
+        const res = await fetch(url, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.success) {
+            setUValidationError(data.reason);
+          } else {
+            setUValidationError(null);
+          }
+        }
+      } catch (err) {
+        console.error("U validation failed", err);
+      }
+    };
+
+    const timer = setTimeout(validate, 300);
+    return () => clearTimeout(timer);
+  }, [form.rack, form.planned_start_u, form.u_height, editingAsset]);
 
   if (!isOpen) return null;
 
@@ -467,18 +502,18 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 
           {/* Sticky footer */}
           <div className="shrink-0 border-t border-black/5 bg-white rounded-b-2xl px-5 py-3">
-            {modalError && (
+            {(modalError || uValidationError) && (
               <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700">
                 <AlertCircle size={13} className="shrink-0 text-red-500" />
-                <span className="text-xs font-medium flex-1">{modalError}</span>
-                <button onClick={() => setModalError(null)} title="Dismiss" className="p-0.5 text-red-400 hover:text-red-600 shrink-0"><X size={12} /></button>
+                <span className="text-xs font-medium flex-1">{modalError || uValidationError}</span>
+                <button onClick={() => { setModalError(null); setUValidationError(null); }} title="Dismiss" className="p-0.5 text-red-400 hover:text-red-600 shrink-0"><X size={12} /></button>
               </div>
             )}
             <div className="flex justify-end gap-2">
               <button onClick={onClose} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
               <button
                 onClick={handleSave}
-                disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim())}
+                disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError}
                 className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20"
               >
                 {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
