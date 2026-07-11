@@ -245,7 +245,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
                 {pagedDevices.map((device) => {
                   const isSelected = batchMode ? batchDeviceIds.includes(device.id) : selectedDevice?.id === device.id;
-                  const vendor = getVendor(device.platform);
+                  const vendor = getVendor(device);
                   const isOffline = device.status !== 'online';
                   return (
                     <motion.button
@@ -343,7 +343,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                   <tbody>
                     {pagedDevices.map((device) => {
                       const isSelected = batchDeviceIds.includes(device.id);
-                      const vendor = getVendor(device.platform);
+                      const vendor = getVendor(device);
                       const isOffline = device.status !== 'online';
                       return (
                         <tr

@@ -244,7 +244,8 @@ const App: React.FC = () => {
     saveQuickQueryModalOpen, setSaveQuickQueryModalOpen, quickQuerySaveLabel, setQuickQuerySaveLabel,
     handleSaveQuickQuery,
     savedQueries,
-    handleRerun
+    handleRerun,
+    handleClearSelection
   } = useAutomation({ currentUser, language, showToast, navigate, setSelectedDevice, devices, selectedDevice, activeTab, automationPage });
 
   const {
@@ -1554,7 +1555,7 @@ const App: React.FC = () => {
     handleRefreshHistory, setPlaybookHistoryScenarioSearch, setPlaybookHistoryPage, setPlaybookHistoryStatusFilter,
     handleSelectExecution, handleDeleteExecution, handleExecDevicesStatusFilterChange, handleExecDevicesPageChange, handleSelectExecDevice,
     findMatchingPlatform, handleRerun, selectedJob, setSelectedJob,
-    selectedDevice,
+    selectedDevice, handleClearSelection,
   };
 
   const configValue = {

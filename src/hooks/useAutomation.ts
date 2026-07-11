@@ -224,6 +224,11 @@ export const useAutomation = ({
     setQuickRiskConfirmed(false);
   }, []);
 
+  const handleClearSelection = useCallback(() => {
+    setSelectedDevice(null);
+    setBatchDeviceIds([]);
+  }, [setSelectedDevice, setBatchDeviceIds]);
+
   const handleResetQuickExecutionState = useCallback(() => {
     setWsMessages([]);
     setDeviceStatusMap({});
@@ -1050,6 +1055,7 @@ export const useAutomation = ({
 
         let combinedRecords: any[] = [];
         let combinedOutput = '';
+        let backendCmds: string[] = [];
 
         results.forEach((res) => {
           if (!res.ok) {
@@ -1057,18 +1063,27 @@ export const useAutomation = ({
             return;
           }
           const firstCat = Array.isArray(res.data?.categories) ? res.data.categories[0] : null;
-          if (firstCat && Array.isArray(firstCat.records)) {
-            const recordsWithHost = firstCat.records.map((rec: any) => ({
-              'Hostname': res.device.hostname,
-              'IP Address': res.device.ip_address,
-              ...rec,
-            }));
-            combinedRecords = [...combinedRecords, ...recordsWithHost];
+          if (firstCat) {
+            if (Array.isArray(firstCat.commands) && firstCat.commands.length > 0) {
+              backendCmds = [...backendCmds, ...firstCat.commands];
+            }
+            if (Array.isArray(firstCat.records)) {
+              const recordsWithHost = firstCat.records.map((rec: any) => ({
+                'Hostname': res.device.hostname,
+                'IP Address': res.device.ip_address,
+                ...rec,
+              }));
+              combinedRecords = [...combinedRecords, ...recordsWithHost];
+            }
           }
           if (res.data) {
             combinedOutput += `--- ${res.device.hostname} ---\n${formatQuickQueryRawOutput(res.data)}\n\n`;
           }
         });
+
+        if (backendCmds.length > 0) {
+          setQuickQueryCommands([...new Set(backendCmds)]);
+        }
 
         const hasStructuredRecords = combinedRecords.length > 0;
         const mockStructured = {
@@ -1231,7 +1246,7 @@ export const useAutomation = ({
     quickMissingRequiredFields, automationSearch, setAutomationSearch, handleAutomationSearch, scenarioSearch, setScenarioSearch, handleScenarioSearch,
     filteredScenarios, loadScenarios, loadPlaybookHistory, loadJobs, loadUpcomingTasks, runPlaybook, openQuickPlaybookModal,
     loadQuickPlaybookPreview, previewPlaybook, resetAutomationSubmenuState, executePlaybook,
-    runQuickPlaybook,
+    runQuickPlaybook, handleClearSelection,
     playbookHistoryPageSize, setPlaybookHistoryPageSize,
     extractVars, splitLines,
     saveQuickQueryModalOpen, setSaveQuickQueryModalOpen, quickQuerySaveLabel, setQuickQuerySaveLabel,

@@ -2,7 +2,12 @@ import type { Device } from '../../types';
 import type { ScenarioVariable } from './types';
 import { VENDOR_MAP } from './constants';
 
-export const getVendor = (p: string) => VENDOR_MAP[p] || 'Other';
+export const getVendor = (d: Device | string) => {
+  if (typeof d === 'string') {
+    return VENDOR_MAP[d] || 'Other';
+  }
+  return d.vendor || VENDOR_MAP[d.platform || ''] || 'Other';
+};
 
 export const getDeviceCategory = (d: Device): 'network' | 'server' => {
   const p = (d.platform || '').toLowerCase();

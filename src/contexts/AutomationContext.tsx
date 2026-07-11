@@ -45,6 +45,7 @@ interface AutomationContextValue {
   handleToggleBatchMode: () => void;
   handleToggleBatchDevice: (deviceId: string) => void;
   handleSelectAutomationDevice: (device: Device) => void;
+  handleClearSelection: () => void;
   batchMode: boolean;
   batchDeviceIds: string[];
   automationSearch: string;

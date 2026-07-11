@@ -201,6 +201,7 @@ const AppMainContent: React.FC = () => {
     selectedJob,
     setSelectedJob,
     findMatchingPlatform,
+    handleClearSelection,
   } = automation;
   
   const {
@@ -723,6 +724,7 @@ const AppMainContent: React.FC = () => {
             onToggleBatchMode={handleToggleBatchMode}
             onToggleBatchDevice={handleToggleBatchDevice}
             onSelectDevice={handleSelectAutomationDevice}
+            handleClearSelection={handleClearSelection}
             onOpenCustomCommandModal={() => setShowCustomCommandModal(true)}
             onOpenScenario={openQuickPlaybookModal}
             onClearScenario={handleClearQuickScenario}

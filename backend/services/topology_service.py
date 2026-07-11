@@ -28,7 +28,11 @@ PLATFORM_MAP = {
     'arista_eos': 'arista_eos',
     'fortinet_fortios': 'fortinet',
     'huawei_vrp': 'huawei_vrp',
+    'huawei': 'huawei_vrp',
+    '\u534e\u4e3avrp': 'huawei_vrp',
     'h3c_comware': 'hp_comware',
+    'comware': 'hp_comware',
+    'hp_comware': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
 }
 

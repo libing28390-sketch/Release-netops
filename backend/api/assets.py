@@ -355,10 +355,11 @@ def _sync_rack_device_from_asset(conn, asset_id: str, obj) -> None:
 
 def _delete_linked_device(conn, asset_id: str) -> None:
     """Cascade-delete the devices row linked to the asset, cleaning up all FK references first."""
-    row = conn.execute('SELECT id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+    row = conn.execute('SELECT id, credential_id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
     if not row:
         return
     device_id = row['id'] if isinstance(row, dict) else row[0]
+    credential_id = row['credential_id'] if isinstance(row, dict) else row[1]
 
     # Delete from all tables that reference devices(id)
     conn.execute('DELETE FROM jobs WHERE device_id = ?', (device_id,))
@@ -373,6 +374,10 @@ def _delete_linked_device(conn, asset_id: str) -> None:
     conn.execute('DELETE FROM inspection_results WHERE device_id = ?', (device_id,))
 
     conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
+    if credential_id:
+        other = conn.execute('SELECT 1 FROM devices WHERE credential_id = ?', (credential_id,)).fetchone()
+        if not other:
+            conn.execute('DELETE FROM credentials WHERE id = ?', (credential_id,))
 
 
 # ── Pydantic Models ──────────────────────────────────────────────────
@@ -785,7 +790,8 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
         if transitioning_to_production and row['asset_type'] in ('network_device', 'server'):
             device_row = conn.execute(
                 'SELECT id, onboarding_status, username, password, ip_address, '
-                'normal_username, normal_password, admin_username, admin_password, auth_model '
+                'normal_username, normal_password, admin_username, admin_password, auth_model, '
+                'credential_source, credential_id, vault_path '
                 'FROM devices WHERE asset_id = ?',
                 (asset_id,)
             ).fetchone()
@@ -804,7 +810,8 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                     )
                 # Also check credentials exist - merge values from request body
                 # (body may carry new username/password that hasn't been persisted yet)
-                from core.crypto import decrypt_credential
+                from services.vault_service import resolve_device_credentials
+                creds = resolve_device_credentials(device_row)
                 
                 auth_model = getattr(body, 'auth_model', None) or device_row.get('auth_model', 'single')
                 
@@ -816,19 +823,20 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
 
                 if auth_model == 'dual':
                     # For dual mode: body password fields take priority; if left blank (edit mode),
-                    # fall back to existing DB values. Also accept legacy 'password' field as fallback
-                    # for normal_password so old single-mode records don't block production transition.
-                    n_uname = (getattr(body, 'normal_username', None) or device_row.get('normal_username', '') or '').strip()
+                    # fall back to existing DB values. Also accept legacy/resolved 'password' field as fallback
+                    # for both normal and admin passwords so old single-mode records don't block production transition.
+                    n_uname = (getattr(body, 'normal_username', None) or creds.get('normal_username') or creds.get('username') or '').strip()
                     n_pwd_body = getattr(body, 'normal_password', None)
                     n_pwd = (n_pwd_body if n_pwd_body else None) or \
-                            decrypt_credential(device_row.get('normal_password')) or \
-                            decrypt_credential(device_row.get('password')) or ''
+                            creds.get('normal_password') or \
+                            creds.get('password') or ''
                     n_pwd = n_pwd.strip()
 
-                    a_uname = (getattr(body, 'admin_username', None) or device_row.get('admin_username', '') or '').strip()
+                    a_uname = (getattr(body, 'admin_username', None) or creds.get('admin_username') or creds.get('username') or '').strip()
                     a_pwd_body = getattr(body, 'admin_password', None)
                     a_pwd = (a_pwd_body if a_pwd_body else None) or \
-                            decrypt_credential(device_row.get('admin_password')) or ''
+                            creds.get('admin_password') or \
+                            creds.get('password') or ''
                     a_pwd = a_pwd.strip()
 
                     if not n_uname: missing.append('普通用户名')
@@ -836,10 +844,10 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                     if not a_uname: missing.append('特权用户名')
                     if not a_pwd:   missing.append('特权密码')
                 else:
-                    uname = (getattr(body, 'username', None) or device_row.get('username', '') or '').strip()
+                    uname = (getattr(body, 'username', None) or creds.get('username') or '').strip()
                     pwd_body = getattr(body, 'password', None)
                     pwd = (pwd_body if pwd_body else None) or \
-                          decrypt_credential(device_row.get('password')) or ''
+                          creds.get('password') or ''
                     pwd = pwd.strip()
                     if not uname: missing.append('用户名')
                     if not pwd:   missing.append('密码')
@@ -941,34 +949,34 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                             hostname = dev_state['hostname'] if dev_state else dev_id
                             
                             # Scheme A: Start atomic takeover
+                            logger.info(f"[Takeover] Starting Admin role for {hostname}")
+                            admin_result = rotate_password(dev_id, role='admin')
+                            if not admin_result or not admin_result.get('success'):
+                                raise Exception(f"特权账号改密失败: {admin_result.get('message') if admin_result else '连接超时'}")
+                            logger.info(f"[Takeover] Admin role success for {hostname}")
+
                             if auth_model == 'dual':
                                 logger.info(f"[Takeover] Starting Normal role for {hostname}")
                                 normal_result = rotate_password(dev_id, role='normal')
-                                if not normal_result.get('success'):
-                                    raise Exception(f"普通账号改密失败: {normal_result.get('message')}")
+                                if not normal_result or not normal_result.get('success'):
+                                    raise Exception(f"普通账号改密失败: {normal_result.get('message') if normal_result else '连接超时'}")
                                 logger.info(f"[Takeover] Normal role success for {hostname}")
 
-                            logger.info(f"[Takeover] Starting Admin role for {hostname}")
-                            admin_result = rotate_password(dev_id, role='admin')
-                            
-                            if admin_result and admin_result.get('success'):
-                                logger.info(f"[Takeover] Admin role success for {hostname}. Transitioning to production.")
-                                # SUCCESS: Commit lifecycle change and clear errors
-                                bg_conn = get_db_connection()
-                                try:
-                                    bg_conn.execute(
-                                        "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
-                                        (dev_id,)
-                                    )
-                                    bg_conn.execute(
-                                        "UPDATE physical_assets SET is_managed = 1, takeover_error = '' WHERE id = ?",
-                                        (a_id,)
-                                    )
-                                    bg_conn.commit()
-                                finally:
-                                    bg_conn.close()
-                            else:
-                                raise Exception(f"特权账号改密失败: {admin_result.get('message') if admin_result else '连接超时'}")
+                            logger.info(f"[Takeover] Takeover success for {hostname}. Transitioning to production.")
+                            # SUCCESS: Commit lifecycle change and clear errors
+                            bg_conn = get_db_connection()
+                            try:
+                                bg_conn.execute(
+                                    "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
+                                    (dev_id,)
+                                )
+                                bg_conn.execute(
+                                    "UPDATE physical_assets SET is_managed = 1, takeover_error = '' WHERE id = ?",
+                                    (a_id,)
+                                )
+                                bg_conn.commit()
+                            finally:
+                                bg_conn.close()
 
                         except Exception as e:
                             err_msg = str(e)
@@ -1310,35 +1318,35 @@ def _run_batch_takeover(tasks: list[dict]):
             hostname = dev_state['hostname'] if dev_state else dev_id
             
             # Scheme A: Start atomic takeover
+            logger.info(f"[Takeover] Starting Admin role for {hostname}")
+            admin_result = rotate_password(dev_id, role='admin')
+            if not admin_result or not admin_result.get('success'):
+                raise Exception(f"特权账号改密失败: {admin_result.get('message') if admin_result else '连接超时'}")
+            logger.info(f"[Takeover] Admin role success for {hostname}")
+
             if auth_model == 'dual':
                 logger.info(f"[Takeover] Starting Normal role for {hostname}")
                 normal_result = rotate_password(dev_id, role='normal')
-                if not normal_result.get('success'):
-                    raise Exception(f"普通账号改密失败: {normal_result.get('message')}")
+                if not normal_result or not normal_result.get('success'):
+                    raise Exception(f"普通账号改密失败: {normal_result.get('message') if normal_result else '连接超时'}")
                 logger.info(f"[Takeover] Normal role success for {hostname}")
 
-            logger.info(f"[Takeover] Starting Admin role for {hostname}")
-            admin_result = rotate_password(dev_id, role='admin')
-            
-            if admin_result and admin_result.get('success'):
-                logger.info(f"[Takeover] Admin role success for {hostname}. Transitioning to production.")
-                # SUCCESS: Commit lifecycle change and clear errors
-                bg_conn = get_db_connection()
-                try:
-                    bg_conn.execute(
-                        "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
-                        (dev_id,)
-                    )
-                    bg_conn.execute(
-                        "UPDATE physical_assets SET is_managed = 1, takeover_error = '' WHERE id = ?",
-                        (a_id,)
-                    )
-                    bg_conn.commit()
-                finally:
-                    bg_conn.close()
-                success_count += 1
-            else:
-                raise Exception(f"特权账号改密失败: {admin_result.get('message') if admin_result else '连接超时'}")
+            # SUCCESS: Commit lifecycle change and clear errors
+            logger.info(f"[Takeover] Takeover success for {hostname}. Transitioning to production.")
+            bg_conn = get_db_connection()
+            try:
+                bg_conn.execute(
+                    "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
+                    (dev_id,)
+                )
+                bg_conn.execute(
+                    "UPDATE physical_assets SET is_managed = 1, takeover_error = '' WHERE id = ?",
+                    (a_id,)
+                )
+                bg_conn.commit()
+            finally:
+                bg_conn.close()
+            success_count += 1
 
         except Exception as e:
             err_msg = str(e)

@@ -217,7 +217,7 @@ export const useConfigSnapshots = ({
         body: JSON.stringify({
           device_id: device.id,
           hostname: device.hostname,
-          vendor: getVendorFromPlatform(device.platform),
+          vendor: device.vendor || getVendorFromPlatform(device.platform),
           content: configContent,
           trigger,
           author: currentUser.username || 'admin',

@@ -95,6 +95,7 @@ export interface AutomationExecuteTabProps {
   onToggleBatchMode: () => void;
   onToggleBatchDevice: (deviceId: string) => void;
   onSelectDevice: (device: Device) => void;
+  handleClearSelection: () => void;
   onOpenCustomCommandModal: () => void;
   onOpenScenario: (scenario: AutomationScenario) => void;
   onClearScenario: () => void;

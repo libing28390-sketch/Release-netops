@@ -651,9 +651,10 @@ export const getVendorFromPlatform = (platform: string) => {
   const p = platform.toLowerCase();
   if (p.includes('cisco')) return 'Cisco';
   if (p.includes('juniper')) return 'Juniper';
-  if (p.includes('huawei')) return 'Huawei';
-  if (p.includes('h3c') || p.includes('comware')) return 'H3C';
+  if (p.includes('huawei') || p.includes('ne4') || p.includes('ne5') || p.includes('cx6')) return 'Huawei';
+  if (p.includes('h3c') || p.includes('comware') || p.includes('vsr')) return 'H3C';
   if (p.includes('arista')) return 'Arista';
+  if (p.includes('ruijie') || p.includes('rgos')) return 'Ruijie';
   return 'Other';
 };
 

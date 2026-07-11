@@ -83,7 +83,7 @@ export const useConfigWorkspace = ({
     const vendor = (selectedConfigTemplate?.vendor || '').trim();
     if (!vendor || vendor.toLowerCase() === 'custom') return devices;
     return devices.filter(
-      (device) => getVendorFromPlatform(device.platform).toLowerCase() === vendor.toLowerCase(),
+      (device) => (device.vendor || getVendorFromPlatform(device.platform)).toLowerCase() === vendor.toLowerCase(),
     );
   }, [devices, selectedConfigTemplate]);
 

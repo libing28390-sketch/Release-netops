@@ -29,7 +29,11 @@ PLATFORM_DEVICE_TYPE_MAP = {
     'juniper_junos': 'juniper_junos',
     'arista_eos': 'arista_eos',
     'huawei_vrp': 'huawei',
+    'huawei': 'huawei',
+    '\u534e\u4e3avrp': 'huawei',
     'h3c_comware': 'hp_comware',
+    'comware': 'hp_comware',
+    'hp_comware': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
     'linux': 'linux',
     'ubuntu': 'linux',
@@ -43,11 +47,28 @@ NTC_PLATFORM_MAP = {
     'juniper_junos': 'juniper_junos',
     'arista_eos': 'arista_eos',
     'huawei_vrp': 'huawei_vrp',
+    'huawei': 'huawei_vrp',
+    '\u534e\u4e3avrp': 'huawei_vrp',
     'h3c_comware': 'hp_comware',
+    'comware': 'hp_comware',
+    'hp_comware': 'hp_comware',
     # ntc-templates 当前没有 ruijie_os 平台索引，临时回退 to Cisco 语法族做有限复用。
     'ruijie_rgos': 'cisco_ios',
 }
 
+# Alias map: maps non-standard platform values stored in DB to canonical keys
+_PLATFORM_ALIAS: dict[str, str] = {
+    'comware': 'h3c_comware',
+    'hp_comware': 'h3c_comware',
+    'huawei': 'huawei_vrp',
+    '\u534e\u4e3avrp': 'huawei_vrp',
+}
+
+
+def _normalize_platform(raw: str) -> str:
+    """Normalize a raw platform string to a canonical COMMAND_CATALOG key."""
+    p = str(raw or '').lower().strip()
+    return _PLATFORM_ALIAS.get(p, p)
 
 # 按设备角色排除不适用的采集类别
 # router: 不采集 mac_table（交换表是二层交换功能）
@@ -163,8 +184,8 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
 
 
 def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'normal') -> dict[str, Any]:
-    platform = str(device_info.get('platform') or 'cisco_ios').lower()
-    device_type = PLATFORM_DEVICE_TYPE_MAP.get(platform, 'cisco_ios')
+    platform = _normalize_platform(device_info.get('platform') or '')
+    device_type = PLATFORM_DEVICE_TYPE_MAP.get(platform) or platform or 'cisco_ios'
     
     from core.crypto import decrypt_credential
     from services.vault_service import resolve_device_credentials
@@ -189,8 +210,8 @@ def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'norm
         'port': int(device_info.get('port') or 22),
         'timeout': 20,
         'session_timeout': 60,
-        'fast_cli': platform not in {'huawei_vrp', 'h3c_comware'},
-        'global_delay_factor': 1.5 if platform in {'huawei_vrp', 'h3c_comware'} else 0.5,
+        'fast_cli': device_type not in {'huawei', 'hp_comware', 'huawei_vrp'},
+        'global_delay_factor': 1.5 if device_type in {'huawei', 'hp_comware', 'huawei_vrp'} else 0.5,
         'blocking_timeout': 30,
     }
     params.update(build_netmiko_compatibility_kwargs())
@@ -623,7 +644,7 @@ def _build_base_payload(device_info: dict[str, Any], platform: str) -> dict[str,
 def collect_operational_data(device_info: dict[str, Any], categories: list[str] | None = None, auth_role: str = 'normal') -> dict[str, Any]:
     role = str(device_info.get('role') or '').strip()
     selected_categories = _resolve_categories(categories, role=role)
-    platform = str(device_info.get('platform') or 'cisco_ios').lower()
+    platform = _normalize_platform(device_info.get('platform') or 'cisco_ios')
     commands_by_category = _resolve_commands(platform, selected_categories)
     conn_params = _build_connection_params(device_info, auth_role=auth_role)
 
@@ -691,7 +712,7 @@ def collect_operational_data(device_info: dict[str, Any], categories: list[str] 
 
 
 def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_role: str = 'normal') -> dict[str, Any]:
-    platform = str(device_info.get('platform') or 'cisco_ios').lower()
+    platform = _normalize_platform(device_info.get('platform') or 'cisco_ios')
     conn_params = _build_connection_params(device_info, auth_role=auth_role)
 
     commands = [line.strip() for line in str(command or '').splitlines() if line.strip()]
