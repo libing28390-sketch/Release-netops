@@ -29,6 +29,7 @@ PLATFORM_DEVICE_TYPE_MAP = {
     'juniper_junos': 'juniper_junos',
     'arista_eos': 'arista_eos',
     'huawei_vrp': 'huawei',
+    'huawei_vrpv8': 'huawei',
     'huawei': 'huawei',
     '\u534e\u4e3avrp': 'huawei',
     'h3c_comware': 'hp_comware',
@@ -47,6 +48,7 @@ NTC_PLATFORM_MAP = {
     'juniper_junos': 'juniper_junos',
     'arista_eos': 'arista_eos',
     'huawei_vrp': 'huawei_vrp',
+    'huawei_vrpv8': 'huawei_vrp',
     'huawei': 'huawei_vrp',
     '\u534e\u4e3avrp': 'huawei_vrp',
     'h3c_comware': 'hp_comware',
@@ -61,6 +63,7 @@ _PLATFORM_ALIAS: dict[str, str] = {
     'comware': 'h3c_comware',
     'hp_comware': 'h3c_comware',
     'huawei': 'huawei_vrp',
+    'huawei_vrpv8': 'huawei_vrp',
     '\u534e\u4e3avrp': 'huawei_vrp',
 }
 

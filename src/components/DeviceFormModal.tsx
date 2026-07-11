@@ -23,7 +23,8 @@ const PLATFORM_OPTIONS = [
   { value: 'juniper_junos', label: 'Juniper Junos' },
   { value: 'arista_eos', label: 'Arista EOS' },
   { value: 'fortinet_fortios', label: 'Fortinet FortiOS' },
-  { value: 'huawei_vrp', label: 'Huawei VRP' },
+  { value: 'huawei_vrp', label: 'Huawei VRPv5' },
+  { value: 'huawei_vrpv8', label: 'Huawei VRPv8' },
   { value: 'h3c_comware', label: 'H3C Comware' },
   { value: 'ruijie_rgos', label: 'Ruijie RGOS' },
 ];

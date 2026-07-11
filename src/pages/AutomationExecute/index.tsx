@@ -191,7 +191,11 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         const q = automationSearch.toLowerCase();
         if (!String(d.hostname || '').toLowerCase().includes(q) && !String(d.ip_address || '').includes(q)) return false;
       }
-      if (statusFilter !== 'all' && d.status !== statusFilter) return false;
+      if (statusFilter !== 'all') {
+        const isOnline = d.status === 'online';
+        if (statusFilter === 'online' && !isOnline) return false;
+        if (statusFilter === 'offline' && isOnline) return false;
+      }
       if (vendorFilter !== 'all') {
         const vendor = getVendor(d);
         if (vendor !== vendorFilter) return false;
@@ -684,14 +688,6 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         icon={Zap}
         title={isZh ? '自动化执行控制台' : 'Automation Console'}
         subtitle={isZh ? '选择设备进行快捷查询或执行自定义命令' : 'Select devices for quick query or custom commands'}
-        actions={
-          <button
-            onClick={() => {}}
-            className="px-3 py-2 text-xs font-bold rounded-xl text-gray-500 hover:bg-gray-50 transition-all flex items-center gap-1.5"
-          >
-            {isZh ? '执行历史' : 'History'}
-          </button>
-        }
       />
 
       <div className="flex-1 min-h-0 flex flex-col px-6 py-5 overflow-hidden">

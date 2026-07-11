@@ -39,7 +39,7 @@ export const EMPTY_FORM = {
 
 export const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
   Cisco:      [{ value: 'cisco_ios', label: 'Cisco IOS' }, { value: 'cisco_nxos', label: 'Cisco NX-OS' }, { value: 'cisco_xe', label: 'Cisco IOS-XE' }],
-  Huawei:     [{ value: 'huawei_vrp', label: 'Huawei VRP' }],
+  Huawei:     [{ value: 'huawei_vrp', label: 'Huawei VRPv5' }, { value: 'huawei_vrpv8', label: 'Huawei VRPv8' }],
   H3C:        [{ value: 'hp_comware', label: 'H3C Comware' }],
   Arista:     [{ value: 'arista_eos', label: 'Arista EOS' }],
   Juniper:    [{ value: 'juniper_junos', label: 'Juniper JunOS' }],

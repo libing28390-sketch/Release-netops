@@ -439,6 +439,11 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
                 res = driver.send_config(commands)
                 if not res.success:
                     raise Exception(f"Config change failed: {res.error}")
+                if 'huawei' in platform.lower():
+                    # For Huawei VRP8, staged candidate configurations must be committed
+                    # to take effect. We run it in system-view; if it fails (like on VRP5
+                    # which lacks commit), the error is non-fatal and ignored.
+                    driver.send_config(['commit'])
                 save_res = driver.send_command(save_cmd)
                 if not save_res.success:
                     logger.warning(

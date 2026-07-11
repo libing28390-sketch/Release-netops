@@ -19,6 +19,14 @@ class NetmikoDriver(BaseDriver):
         self.capabilities = {Capability.EXEC_COMMAND, Capability.SEND_CONFIG}
 
     def _map_device_type(self, platform: str) -> str:
+        p = str(platform or '').lower().strip()
+        aliases = {
+            'comware': 'h3c_comware',
+            'hp_comware': 'h3c_comware',
+            'huawei': 'huawei_vrp',
+            '\u534e\u4e3avrp': 'huawei_vrp',
+        }
+        p = aliases.get(p, p)
         mapping = {
             'cisco_ios': 'cisco_ios',
             'huawei_vrp': 'huawei',
@@ -27,7 +35,7 @@ class NetmikoDriver(BaseDriver):
             'arista_eos': 'arista_eos',
             'ruijie_rgos': 'ruijie_os',
         }
-        return mapping.get(platform) or platform or 'cisco_ios'
+        return mapping.get(p) or p or 'cisco_ios'
 
     def connect(self):
         use_pool = self.device_info.get('use_pool', True)

@@ -28,6 +28,7 @@ PLATFORM_MAP = {
     'arista_eos': 'arista_eos',
     'fortinet_fortios': 'fortinet',
     'huawei_vrp': 'huawei_vrp',
+    'huawei_vrpv8': 'huawei_vrp',
     'huawei': 'huawei_vrp',
     '\u534e\u4e3avrp': 'huawei_vrp',
     'h3c_comware': 'hp_comware',
@@ -42,6 +43,7 @@ SCRAPLI_DRIVERS = {
     'juniper_junos': AsyncJunosDriver,
     'arista_eos': AsyncEOSDriver,
     'huawei_vrp': AsyncHuaweiVRPDriver,
+    'huawei_vrpv8': AsyncHuaweiVRPDriver,
     'h3c_comware': AsyncHPComwareDriver,
 }
 

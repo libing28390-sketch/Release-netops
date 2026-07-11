@@ -747,6 +747,79 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     wsNet['!cols'] = netHeaders.map(() => ({ wch: 16 }));
     XLSX.utils.book_append_sheet(wb, wsNet, zh ? '网络设备模板' : 'Network Device Template');
 
+    const optHeaders = zh
+      ? ['参数类型 (Field Type)', '标准填写值 (Standard Value)', '值含义说明 (Description)']
+      : ['Field Type', 'Standard Value', 'Description'];
+    const optRows = zh ? [
+      ['厂商 (Vendor)', 'Cisco', '思科'],
+      ['厂商 (Vendor)', 'Huawei', '华为'],
+      ['厂商 (Vendor)', 'H3C', '华三'],
+      ['厂商 (Vendor)', 'Arista', '阿里斯塔'],
+      ['厂商 (Vendor)', 'Juniper', '瞻博'],
+      ['厂商 (Vendor)', 'Ruijie', '锐捷'],
+      ['厂商 (Vendor)', 'Fortinet', '飞塔'],
+      ['厂商 (Vendor)', 'ZTE', '中兴'],
+      ['厂商 (Vendor)', 'Linux', '通用 Linux 服务器'],
+      ['厂商 (Vendor)', 'Dell', '戴尔'],
+      ['厂商 (Vendor)', 'HP', '惠普'],
+      ['厂商 (Vendor)', 'generic', '其它通用厂商'],
+      ['平台 (Platform)', 'cisco_ios', 'Cisco IOS'],
+      ['平台 (Platform)', 'cisco_nxos', 'Cisco NX-OS'],
+      ['平台 (Platform)', 'cisco_xe', 'Cisco IOS-XE'],
+      ['平台 (Platform)', 'huawei_vrp', 'Huawei VRPv5'],
+      ['平台 (Platform)', 'huawei_vrpv8', 'Huawei VRPv8'],
+      ['平台 (Platform)', 'hp_comware', 'H3C Comware'],
+      ['平台 (Platform)', 'juniper_junos', 'Juniper JunOS'],
+      ['平台 (Platform)', 'arista_eos', 'Arista EOS'],
+      ['平台 (Platform)', 'ruijie_os', 'Ruijie RGOS'],
+      ['平台 (Platform)', 'fortinet', 'FortiOS'],
+      ['平台 (Platform)', 'linux', 'Linux (Generic)'],
+      ['平台 (Platform)', 'ubuntu', 'Ubuntu'],
+      ['平台 (Platform)', 'centos', 'CentOS'],
+      ['平台 (Platform)', 'debian', 'Debian'],
+      ['平台 (Platform)', 'redhat', 'Red Hat (RHEL)'],
+      ['平台 (Platform)', 'windows', 'Windows Server'],
+      ['平台 (Platform)', 'esxi', 'VMware ESXi'],
+      ['设备分类 (Category)', 'server', '服务器'],
+      ['设备分类 (Category)', 'network_device', '网络设备'],
+    ] : [
+      ['Vendor', 'Cisco', 'Cisco'],
+      ['Vendor', 'Huawei', 'Huawei'],
+      ['Vendor', 'H3C', 'H3C'],
+      ['Vendor', 'Arista', 'Arista'],
+      ['Vendor', 'Juniper', 'Juniper'],
+      ['Vendor', 'Ruijie', 'Ruijie'],
+      ['Vendor', 'Fortinet', 'Fortinet'],
+      ['Vendor', 'ZTE', 'ZTE'],
+      ['Vendor', 'Linux', 'Linux Server'],
+      ['Vendor', 'Dell', 'Dell'],
+      ['Vendor', 'HP', 'HP'],
+      ['Vendor', 'generic', 'Generic Vendor'],
+      ['Platform', 'cisco_ios', 'Cisco IOS'],
+      ['Platform', 'cisco_nxos', 'Cisco NX-OS'],
+      ['Platform', 'cisco_xe', 'Cisco IOS-XE'],
+      ['Platform', 'huawei_vrp', 'Huawei VRPv5'],
+      ['Platform', 'huawei_vrpv8', 'Huawei VRPv8'],
+      ['Platform', 'hp_comware', 'H3C Comware'],
+      ['Platform', 'juniper_junos', 'Juniper JunOS'],
+      ['Platform', 'arista_eos', 'Arista EOS'],
+      ['Platform', 'ruijie_os', 'Ruijie RGOS'],
+      ['Platform', 'fortinet', 'FortiOS'],
+      ['Platform', 'linux', 'Linux (Generic)'],
+      ['Platform', 'ubuntu', 'Ubuntu'],
+      ['Platform', 'centos', 'CentOS'],
+      ['Platform', 'debian', 'Debian'],
+      ['Platform', 'redhat', 'Red Hat (RHEL)'],
+      ['Platform', 'windows', 'Windows Server'],
+      ['Platform', 'esxi', 'VMware ESXi'],
+      ['Device Category', 'server', 'Server'],
+      ['Device Category', 'network_device', 'Network Device'],
+    ];
+
+    const wsOpt = XLSX.utils.aoa_to_sheet([optHeaders, ...optRows]);
+    wsOpt['!cols'] = optHeaders.map(() => ({ wch: 25 }));
+    XLSX.utils.book_append_sheet(wb, wsOpt, zh ? '参数可选值参考' : 'Option Reference');
+
     XLSX.writeFile(wb, zh ? '资产导入模板.xlsx' : 'asset_import_template.xlsx');
   };
 

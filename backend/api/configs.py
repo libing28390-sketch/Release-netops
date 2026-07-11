@@ -1052,8 +1052,8 @@ async def run_scheduled_backup(run_id: str | None = None):
         d['conn_timeout'] = 8  # Use a shorter connection timeout of 8s for backup tasks to fail fast
         from services.vault_service import resolve_device_credentials
         creds = resolve_device_credentials(d)
-        username = creds.get('username') or ''
-        password = creds.get('password') or ''
+        username = creds.get('admin_username') or creds.get('username') or ''
+        password = creds.get('admin_password') or creds.get('password') or ''
         enable_pass = creds.get('enable_password') or ''
 
         if not username or not password:

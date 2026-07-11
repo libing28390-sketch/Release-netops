@@ -156,6 +156,15 @@ class NetmikoDriver(BaseDriver):
 
     def _map_platform(self, platform: str) -> str:
         import logging
+        p = str(platform or '').lower().strip()
+        aliases = {
+            'comware': 'h3c_comware',
+            'hp_comware': 'h3c_comware',
+            'huawei': 'huawei_vrp',
+            'huawei_vrpv8': 'huawei_vrp',
+            '\u534e\u4e3avrp': 'huawei_vrp',
+        }
+        p = aliases.get(p, p)
         mapping = {
             'cisco_ios':    'cisco_ios',
             'huawei_vrp':   'huawei',
@@ -169,16 +178,16 @@ class NetmikoDriver(BaseDriver):
             'redhat':       'linux',
             'esxi':         'linux',
         }
-        if platform not in mapping:
+        if p not in mapping:
             logging.getLogger(__name__).warning(
                 f"Unknown platform '{platform}', falling back to cisco_ios. "
                 f"Supported: {list(mapping)}"
             )
         # 自动纠错：如果资产类型是服务器且平台是默认值或未知，强制使用 linux 驱动
-        if self.device_info.get('asset_type') == 'server' and platform in ('', 'cisco_ios', 'unknown', None):
+        if self.device_info.get('asset_type') == 'server' and p in ('', 'cisco_ios', 'unknown', None):
             return 'linux'
             
-        return mapping.get(platform, 'cisco_ios')
+        return mapping.get(p, 'cisco_ios')
 
     def connect(self):
         import logging
@@ -388,13 +397,43 @@ class NetmikoDriver(BaseDriver):
             # 平台归一化：Cisco 系列要求点分十进制掩码，自动转换前缀长度写法
             configs = _normalize_ip_commands(configs, self.platform)
             logger.debug(f"Sending {len(configs)} config cmds to {self.host}")
-            per_cmd_timeout = max(30, len(configs) * 3)
-            output = self.conn.send_config_set(
-                configs,
-                exit_config_mode=True,
-                cmd_verify=False,
-                read_timeout=per_cmd_timeout,
-            )
+            # Determine if target is Huawei platform
+            is_huawei = 'huawei' in str(self.platform).lower() or 'huawei' in self.device_type
+            
+            if is_huawei:
+                # Huawei VRP8 requires interactive old password validation when a user
+                # updates their own password. We enter config mode and send commands individually.
+                self.conn.config_mode()
+                output = ""
+                for cmd in configs:
+                    self.conn.write_channel(cmd + '\n')
+                    out = self.conn.read_channel_timing(read_timeout=10)
+                    output += out
+                    if 'old password' in out.lower() or 'password:' in out.lower():
+                        self.conn.write_channel(self.password + '\n')
+                        out2 = self.conn.read_channel_timing(read_timeout=10)
+                        output += out2
+                
+                # Dynamic context and candidate-config cleanup for Huawei VRP8
+                prompt = self.conn.find_prompt()
+                if '-aaa' in prompt:
+                    self.conn.write_channel('quit\n')
+                    output += self.conn.read_channel_timing(read_timeout=5)
+                    prompt = self.conn.find_prompt()
+                
+                if prompt.startswith('*'):
+                    self.conn.write_channel('commit\n')
+                    output += self.conn.read_channel_timing(read_timeout=10)
+                
+                self.conn.exit_config_mode()
+            else:
+                per_cmd_timeout = max(30, len(configs) * 3)
+                output = self.conn.send_config_set(
+                    configs,
+                    exit_config_mode=True,
+                    cmd_verify=False,
+                    read_timeout=per_cmd_timeout,
+                )
             elapsed = time.time() - start_time
             err_line = self._check_cli_errors(output)
             
