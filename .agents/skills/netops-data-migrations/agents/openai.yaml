@@ -1,0 +1,4 @@
+interface:
+  display_name: "NetOps Data Migrations"
+  short_description: "Design safe PostgreSQL schema migrations"
+  default_prompt: "Use $netops-data-migrations to implement or review a safe database schema change."

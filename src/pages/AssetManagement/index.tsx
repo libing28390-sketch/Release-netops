@@ -660,6 +660,43 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     }
   };
 
+  const formatExcelDate = (val: any): string => {
+    if (val instanceof Date) {
+      return val.toISOString().split('T')[0];
+    }
+    const str = String(val).trim();
+    if (!str) return '';
+    if (/^\d+(\.\d+)?$/.test(str)) {
+      const num = Number(str);
+      if (num > 0) {
+        const excelEpoch = new Date(1899, 11, 30);
+        excelEpoch.setDate(excelEpoch.getDate() + num);
+        const y = excelEpoch.getFullYear();
+        const m = String(excelEpoch.getMonth() + 1).padStart(2, '0');
+        const d = String(excelEpoch.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+    }
+    const parts = str.split(/[-/.]/);
+    if (parts.length === 3) {
+      const y = parts[0];
+      const m = parts[1];
+      const d = parts[2];
+      if (y.length === 4) {
+        return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+      } else if (d.length === 4) {
+        const parsedDate = new Date(str);
+        if (!isNaN(parsedDate.getTime())) {
+          const y2 = parsedDate.getFullYear();
+          const m2 = String(parsedDate.getMonth() + 1).padStart(2, '0');
+          const d2 = String(parsedDate.getDate()).padStart(2, '0');
+          return `${y2}-${m2}-${d2}`;
+        }
+      }
+    }
+    return str;
+  };
+
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -684,6 +721,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                   const v = mappedVal.toLowerCase();
                   if (v.includes('server') || v.includes('服务器')) mappedVal = 'server';
                   else if (v.includes('network') || v.includes('网络') || v.includes('switch') || v.includes('router')) mappedVal = 'network_device';
+                } else if (key === 'purchase_date' || key === 'warranty_expiry') {
+                  mappedVal = formatExcelDate(val);
                 }
                 obj[key] = mappedVal;
               }

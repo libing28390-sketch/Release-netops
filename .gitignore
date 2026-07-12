@@ -113,6 +113,8 @@ tools/node/
 !**/*.github/**/*.md
 !.github/**/*.md
 !**/.agents/AGENTS.md
+!**/.agents/skills/**/SKILL.md
+!**/.agents/roles/*.md
 !**/docs/plans/plan_*.md
 !**/docs/walkthrough_*.md
 !**/docs/walkthrough/**/*.md

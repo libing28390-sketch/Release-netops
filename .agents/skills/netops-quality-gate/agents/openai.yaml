@@ -1,0 +1,4 @@
+interface:
+  display_name: "NetOps Quality Gate"
+  short_description: "Run risk-based tests and build checks"
+  default_prompt: "Use $netops-quality-gate to validate a NetOps change before delivery."

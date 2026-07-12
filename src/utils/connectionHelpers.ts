@@ -5,7 +5,7 @@ export const SSH_AUTH_ERROR_CODE = 'ssh_authentication_failed';
 export const SSH_TIMEOUT_ERROR_CODE = 'ssh_transport_timeout';
 export const SSH_TRANSPORT_ERROR_CODE = 'ssh_transport_unreachable';
 
-export const buildConnectionTestMessage = (detail: any, errorCode?: string): string => {
+export const buildConnectionTestMessage = (detail: any, errorCode?: string, port: number = 22): string => {
   const normalizedDetail = typeof detail === 'string'
     ? detail
     : (detail && typeof detail === 'object' && 'message' in detail ? String(detail.message) : 'Connection failed');
@@ -23,13 +23,13 @@ export const buildConnectionTestMessage = (detail: any, errorCode?: string): str
   }
 
   if (errorCode === SSH_TRANSPORT_ERROR_CODE) {
-    return 'SSH 传输层未建立，请检查 22 端口、SSH 服务和 ACL/防火墙策略。';
+    return `SSH 传输层未建立，请检查 ${port} 端口、SSH 服务和 ACL/防火墙策略。`;
   }
 
   return normalizedDetail || 'Connection failed';
 };
 
-export const buildConnectionTestHint = (errorCode?: string, language: string = 'zh'): string | null => {
+export const buildConnectionTestHint = (errorCode?: string, language: string = 'zh', port: number = 22): string | null => {
   const isZh = language === 'zh';
   if (errorCode === LEGACY_SSH_ERROR_CODE) {
     return isZh ? '建议先核对设备 SSH 算法与镜像版本。' : 'Check device SSH algorithm support and software version.';
@@ -41,7 +41,7 @@ export const buildConnectionTestHint = (errorCode?: string, language: string = '
     return isZh ? '建议先检查设备 CPU、会话配额和中间安全设备。' : 'Check device CPU, session limits, and any inline security controls.';
   }
   if (errorCode === SSH_TRANSPORT_ERROR_CODE) {
-    return isZh ? '建议先确认 22 端口、SSH 服务和路径 ACL。' : 'Verify TCP/22, the SSH service, and path ACLs.';
+    return isZh ? `建议先确认 ${port} 端口、SSH 服务和路径 ACL。` : `Verify TCP/${port}, the SSH service, and path ACLs.`;
   }
   return null;
 };

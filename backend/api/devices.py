@@ -198,29 +198,44 @@ def _sanitize_device_item(item: dict) -> dict:
     return sanitized
 
 
-def _build_ssh_failure_response(hostname: str | None, ip_address: str, error_text: str, probe_output: list[str], probe_stages: list[dict], status_code: int = 400) -> JSONResponse:
+def _build_ssh_failure_response(hostname: str | None, ip_address: str, error_text: str, probe_output: list[str], probe_stages: list[dict], status_code: int = 400, port: int = 22) -> JSONResponse:
+    # Clean up paramiko error wrapper
+    friendly_err = error_text.strip()
+    prefix = "A paramiko SSHException occurred during connection creation:"
+    if friendly_err.startswith(prefix):
+        friendly_err = friendly_err[len(prefix):].strip()
+    
+    if "Error reading SSH protocol banner" in friendly_err:
+        friendly_err = "读取 SSH 协议 Banner 失败 (Error reading SSH protocol banner)"
+    elif "Authentication failed" in friendly_err:
+        friendly_err = "身份验证失败 (Authentication failed)"
+    elif "Connection refused" in friendly_err:
+        friendly_err = "连接被拒绝 (Connection refused)"
+    elif "Connection timed out" in friendly_err:
+        friendly_err = "连接超时 (Connection timed out)"
+
     error_code = get_ssh_error_code(error_text)
     device_label = hostname or ip_address
-    detail = f"SSH login failed for {device_label}: {error_text}"
-    stage_detail = error_text
+    detail = f"SSH login failed for {device_label}: {friendly_err}"
+    stage_detail = friendly_err
 
     if error_code == 'legacy_ssh_algorithms':
         detail = '设备 SSH 算法较旧，兼容重试后仍未完成协商。'
         stage_detail = 'SSH 协商失败，目标设备仅接受较旧的算法组合。'
     elif error_code == 'ssh_authentication_failed':
         detail = '设备可达，但 SSH 认证被拒绝。请核对账号密码或 AAA/VTY 配置。'
-        stage_detail = 'TCP/22 已通，认证请求已到达设备，但用户名或密码被拒绝。'
+        stage_detail = f'TCP/{port} 已通，认证请求已到达设备，但用户名或密码被拒绝。'
     elif error_code == 'ssh_transport_timeout':
         detail = '设备管理口可达，但 SSH 会话建立或读取超时。'
         stage_detail = '传输层连接建立后响应超时，通常与设备负载或中间策略有关。'
     elif error_code == 'ssh_transport_unreachable':
         detail = '设备 IP 可达，但 SSH 传输层未正常建立。'
-        stage_detail = '目标主机未完成 SSH 会话建立，请检查端口、SSH 服务或安全策略。'
+        stage_detail = f'目标主机未完成 SSH 会话建立，请检查 {port} 端口、SSH 服务或安全策略。'
 
     content = {
         'detail': detail,
-        'raw_error': error_text,
-        'output': "\n".join(probe_output + [f"SSH login: failed ({error_text})"]),
+        'raw_error': friendly_err,
+        'output': "\n".join(probe_output + [f"SSH login: failed ({friendly_err})"]),
         'check_mode': 'deep',
         'stages': probe_stages + [
             _build_probe_stage('ssh', False, 'SSH login failed', stage_detail)
@@ -242,6 +257,7 @@ def _resolve_connection_target(payload: dict) -> dict:
         'method': payload.get('method', 'ssh'),
         'platform': payload.get('platform', 'cisco_ios'),
         'check_mode': str(payload.get('check_mode') or 'quick').lower(),
+        'port': payload.get('port') or payload.get('management_port'),
     }
 
     if not device_id:
@@ -271,6 +287,7 @@ def _resolve_connection_target(payload: dict) -> dict:
         resolved['password'] = creds['password']
     resolved['enable_password'] = creds['enable_password']
     resolved['priv_username'] = creds.get('priv_username', '') or stored.get('priv_username') or ''
+    resolved['port'] = resolved.get('port') or stored.get('management_port') or stored.get('port')
     return resolved
 
 def _normalize_device_row(row, conn=None):
@@ -445,7 +462,7 @@ def read_devices(
                 'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.sn, d.model, d.version, '
                 'd.role, d.site, d.uptime, d.connection_method, d.cpu_usage, d.memory_usage, d.temp, '
                 'd.fan_status, d.psu_status, d.sys_name, d.sys_location, d.sys_contact, d.asset_id, d.vendor, '
-                'd.device_category'
+                'd.device_category, d.management_port'
                 + asset_cols
             )
 
@@ -1116,10 +1133,16 @@ def test_device_connection(payload: dict = Body(...)):
     if not ip_address:
         raise HTTPException(status_code=400, detail="IP address is required")
     
-    # 默认使用 SSH（22 端口），除非明确指定其他方式
-    port = 22
-    if method and method.lower() == 'telnet':
-        port = 23
+    port = resolved.get('port')
+    if not port:
+        port = 22
+        if method and method.lower() == 'telnet':
+            port = 23
+    else:
+        try:
+            port = int(port)
+        except (ValueError, TypeError):
+            port = 22
     
     logger.info(f"Testing connection to device: {hostname or ip_address} (IP: {ip_address}, Port: {port}, Platform: {platform}, User: {username}, Mode: {check_mode})")
 
@@ -1248,7 +1271,7 @@ def test_device_connection(payload: dict = Body(...)):
             }
         else:
             logger.warning(f"Failed to connect to {hostname or ip_address}: {error_msg}")
-            return _build_ssh_failure_response(hostname, ip_address, error_msg, probe_output, probe_stages, status_code=400)
+            return _build_ssh_failure_response(hostname, ip_address, error_msg, probe_output, probe_stages, status_code=400, port=port)
     except HTTPException:
         raise
     except Exception as e:
@@ -1257,11 +1280,11 @@ def test_device_connection(payload: dict = Body(...)):
         error_code = get_ssh_error_code(raw_error)
         # 对于能识别的 SSH 错误，返回结构化用户友好响应
         if error_code:
-            return _build_ssh_failure_response(hostname, ip_address, raw_error, probe_output, probe_stages, status_code=500)
+            return _build_ssh_failure_response(hostname, ip_address, raw_error, probe_output, probe_stages, status_code=500, port=port)
         # 对于不能识别的错误（如 AttributeError、ImportError 等内部代码错误），
         # 不要将原始 Python 异常暴露给前端，返回通用的内部错误提示
         user_message = "服务内部异常，请联系管理员查看后端日志"
-        return _build_ssh_failure_response(hostname, ip_address, user_message, probe_output, probe_stages, status_code=500)
+        return _build_ssh_failure_response(hostname, ip_address, user_message, probe_output, probe_stages, status_code=500, port=port)
 
 @router.post("/devices/import")
 def import_devices(payload: dict = Body(...)):

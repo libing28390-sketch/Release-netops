@@ -340,7 +340,7 @@ def _build_ssh_params(device_info: dict) -> dict[str, Any]:
         'host': device_info.get('ip_address'),
         'username': username,
         'password': password,
-        'port': int(device_info.get('port') or 22),
+        'port': int(device_info.get('port') or device_info.get('management_port') or 22),
         'timeout': 10,
         'session_timeout': 20,
         'fast_cli': platform not in {'huawei_vrp', 'h3c_comware'},
@@ -360,7 +360,7 @@ def _send_command(device_info: dict, command: str) -> str:
     if cached is not None:
         return cached
 
-    port = int(device_info.get('port') or 22)
+    port = int(device_info.get('port') or device_info.get('management_port') or 22)
     from drivers.ssh_compat import is_ssh_port_open
     if not is_ssh_port_open(device_ip, port):
         logger.warning("SSH port %s is closed/unreachable for %s", port, device_ip)
@@ -2474,7 +2474,7 @@ def run_route_collector():
 
     def collect_device_routes(dev: dict) -> list[dict]:
         ip = dev.get('ip_address')
-        port = int(dev.get('port') or 22)
+        port = int(dev.get('port') or dev.get('management_port') or 22)
         from drivers.ssh_compat import is_ssh_port_open
         if not is_ssh_port_open(ip, port):
             logger.warning("[Route Collector] SSH port %s is closed/unreachable for %s", port, dev.get('hostname') or ip)

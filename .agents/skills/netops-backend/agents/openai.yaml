@@ -1,0 +1,4 @@
+interface:
+  display_name: "NetOps Backend"
+  short_description: "Build and review FastAPI backend services"
+  default_prompt: "Use $netops-backend to implement or review a NetOps backend change."

@@ -210,7 +210,7 @@ def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'norm
         'host': device_info.get('ip_address'),
         'username': username,
         'password': password,
-        'port': int(device_info.get('port') or 22),
+        'port': int(device_info.get('port') or device_info.get('management_port') or 22),
         'timeout': 20,
         'session_timeout': 60,
         'fast_cli': device_type not in {'huawei', 'hp_comware', 'huawei_vrp'},

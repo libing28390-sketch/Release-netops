@@ -51,6 +51,7 @@ export interface Device {
   psu_status?: 'redundant' | 'single' | 'fail';
   snmp_community?: string;
   snmp_port?: number;
+  management_port?: number;
   sys_name?: string;
   sys_location?: string;
   sys_contact?: string;

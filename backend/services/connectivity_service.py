@@ -174,7 +174,7 @@ def _build_device_info(dev: dict) -> dict:
         'username': dev.get('username', ''),
         'password': dev.get('password', ''),
         'enable_password': dev.get('enable_password', ''),
-        'port': dev.get('port') or 22,
+        'port': dev.get('port') or dev.get('management_port') or 22,
     }
 
 

@@ -618,7 +618,7 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 return cached
 
             if client is None:
-                port = int(dev.get('port') or 22)
+                port = int(dev.get('port') or dev.get('management_port') or 22)
                 from drivers.ssh_compat import is_ssh_port_open
                 if not is_ssh_port_open(device_ip, port):
                     raise DeviceConnectionError(f"SSH port {port} is closed/unreachable")

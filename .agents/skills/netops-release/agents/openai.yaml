@@ -1,0 +1,4 @@
+interface:
+  display_name: "NetOps Release"
+  short_description: "Prepare and review deployment releases"
+  default_prompt: "Use $netops-release to prepare or review a NetOps release."

@@ -194,7 +194,7 @@ class NetmikoDriver(BaseDriver):
         logger = logging.getLogger(__name__)
 
         # Huawei / H3C 等慢速设备需要关闭 fast_cli 并增大延迟因子
-        is_slow = self.platform in _SLOW_PLATFORMS
+        is_slow = self.platform in _SLOW_PLATFORMS or self.device_type in ('hp_comware', 'huawei')
         device_params = {
             'device_type':        self.device_type,
             'host':               self.host,

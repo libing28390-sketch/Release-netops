@@ -106,6 +106,7 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     pwd = getattr(body, 'password', '') or ''
     community = getattr(body, 'snmp_community', '') or 'public'
     port = getattr(body, 'snmp_port', None) or 161
+    mgmt_port = getattr(body, 'management_port', None) or 22
 
     # PAM (dual-account) fields
     normal_user = getattr(body, 'normal_username', '') or ''
@@ -155,8 +156,8 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
             connection_method, vendor, snmp_community, snmp_port,
             normal_username, normal_password, admin_username, admin_password,
             enable_password, auth_model, device_category, power_watts,
-            onboarding_status, credential_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            onboarding_status, credential_id, management_port
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         device_id, asset_id,
         body.hostname, body.management_ip,
@@ -172,7 +173,8 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         getattr(body, 'device_category', '') or '',
         getattr(body, 'power_watts', 0) or 0,
         onboarding,
-        credential_id
+        credential_id,
+        mgmt_port
     ))
     return device_id
 
@@ -249,6 +251,7 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
         'auth_model': getattr(body, 'auth_model', None),
         'device_category': getattr(body, 'device_category', None),
         'power_watts': getattr(body, 'power_watts', None),
+        'management_port': getattr(body, 'management_port', None),
     }
 
     if getattr(body, 'username', None) is not None: updates['username'] = body.username

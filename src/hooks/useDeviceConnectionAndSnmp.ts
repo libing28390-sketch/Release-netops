@@ -74,6 +74,7 @@ export const useDeviceConnectionAndSnmp = ({
           method: deviceToTest.connection_method,
           platform: deviceToTest.platform,
           check_mode: mode,
+          management_port: deviceToTest.management_port,
         }),
       });
       const data = await response.json();
@@ -97,7 +98,7 @@ export const useDeviceConnectionAndSnmp = ({
         setDeviceConnectionChecks((prev) => ({ ...prev, [deviceToTest.id]: summary }));
         setTestResult({
           success: false,
-          message: buildConnectionTestMessage(data.detail || data.error, data.error_code),
+          message: buildConnectionTestMessage(data.detail || data.error, data.error_code, deviceToTest.management_port || 22),
           output: data.output,
           rawError: data.raw_error,
           errorCode: data.error_code,
