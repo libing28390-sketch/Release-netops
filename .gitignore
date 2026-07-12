@@ -41,7 +41,7 @@ backend/tests/_out/
 
 # Root license
 license.json
-backend/tests/test_pbt_p8_migration_idempotency.py
+backend/tests/test_*.py
 tools/license_issuer/issued/registry.json
 
 # Video Presentation & TTS Generation
@@ -116,6 +116,7 @@ tools/node/
 !**/.agents/skills/**/SKILL.md
 !**/.agents/roles/*.md
 !**/docs/plans/plan_*.md
+!**/docs/architecture/*.md
 !**/docs/walkthrough_*.md
 !**/docs/walkthrough/**/*.md
 !**/docs/introduction.md

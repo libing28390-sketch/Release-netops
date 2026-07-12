@@ -26,6 +26,24 @@ export interface Rack {
   cooling_zone?: string;
   remarks?: string;
   placement_strategy?: 'bottom_first' | 'top_first';
+  rack_type_id?: string;
+  width_mm?: number;
+  depth_mm?: number;
+  allow_front_rear_mount?: number | boolean;
+}
+
+export interface RackType {
+  id: string;
+  name: string;
+  vendor?: string;
+  model?: string;
+  total_u: number;
+  width_mm?: number;
+  depth_mm?: number;
+  max_weight_kg?: number;
+  power_capacity_watts?: number;
+  allow_front_rear_mount?: number | boolean;
+  description?: string;
 }
 
 export interface DeviceType {
@@ -66,6 +84,12 @@ export interface RackLayout {
   description: string;
   status: string;
   placement_strategy?: 'bottom_first' | 'top_first';
+  rack_type_id?: string;
+  width_mm?: number;
+  depth_mm?: number;
+  max_weight_kg?: number | null;
+  power_capacity_watts?: number;
+  allow_front_rear_mount?: number | boolean;
   devices: RackDevice[];
   front_used: number;
   rear_used: number;

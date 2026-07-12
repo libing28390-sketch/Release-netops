@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 # Secret columns that must be encrypted at rest and masked on read.
 _SECRET_FIELDS = ('encrypted_password', 'enable_password', 'private_key', 'snmp_community')
 
+_ACCOUNT_ROLE_LABELS = {
+    'normal': '普通账号',
+    'admin': '管理员账号',
+    'login': '登录账号',
+    'mixed': '多角色',
+    'unbound': '未关联',
+}
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -52,6 +60,58 @@ def _to_safe_view(row) -> dict:
     return safe
 
 
+def _normalize_username(value: str | None) -> str:
+    return (value or '').strip().lower()
+
+
+def _infer_device_account_role(credential_username: str, device: dict) -> str:
+    """Infer how the credential username is used by a linked device.
+
+    The credential vault stores the actual login username, not a role. For legacy
+    single-account devices or incomplete dual-account data, keep the role generic.
+    """
+    username = _normalize_username(credential_username)
+    normal_username = _normalize_username(device.get('normal_username'))
+    admin_username = _normalize_username(device.get('admin_username'))
+
+    if username and admin_username and username == admin_username:
+        return 'admin'
+    if username and normal_username and username == normal_username:
+        return 'normal'
+    return 'login'
+
+
+def _account_role_from_devices(credential_username: str, devices: list[dict]) -> str:
+    if not devices:
+        return 'unbound'
+
+    roles = {
+        _infer_device_account_role(credential_username, device)
+        for device in devices
+    }
+    if len(roles) > 1:
+        return 'mixed'
+    return next(iter(roles))
+
+
+def _with_account_role(view: dict, devices: list[dict]) -> dict:
+    role = _account_role_from_devices(view.get('username') or '', devices)
+    view['account_role'] = role
+    view['account_role_label'] = _ACCOUNT_ROLE_LABELS.get(role, role)
+    return view
+
+
+def _public_device_refs(devices: list[dict]) -> list[dict]:
+    return [
+        {
+            'id': d.get('id'),
+            'hostname': d.get('hostname'),
+            'ip_address': d.get('ip_address'),
+        }
+        for d in devices
+    ]
+
+
 def list_credentials(conn) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM credentials ORDER BY credential_name"
@@ -59,7 +119,9 @@ def list_credentials(conn) -> list[dict]:
     res = []
     for r in rows:
         view = _to_safe_view(r)
-        view["devices"] = list_devices_using(conn, view["id"])
+        device_rows = _list_devices_using_rows(conn, view["id"])
+        view["devices"] = _public_device_refs(device_rows)
+        _with_account_role(view, device_rows)
         res.append(view)
     return res
 
@@ -68,7 +130,10 @@ def get_credential(conn, cred_id: str) -> dict:
     row = conn.execute("SELECT * FROM credentials WHERE id = ?", (cred_id,)).fetchone()
     if not row:
         raise ValueError(f"Credential not found: {cred_id}")
-    return _to_safe_view(row)
+    view = _to_safe_view(row)
+    device_rows = _list_devices_using_rows(conn, cred_id)
+    view["devices"] = _public_device_refs(device_rows)
+    return _with_account_role(view, device_rows)
 
 
 def _name_exists(conn, name: str, exclude_id: str | None = None) -> bool:
@@ -182,13 +247,21 @@ def delete_credential(conn, cred_id: str) -> None:
     logger.info(f"[CredentialService] Deleted credential {cred_id}")
 
 
-def list_devices_using(conn, cred_id: str) -> list[dict]:
-    """Return minimal device info for devices bound to this credential."""
+def _list_devices_using_rows(conn, cred_id: str) -> list[dict]:
+    """Return device info needed for safe credential metadata inference."""
     try:
         rows = conn.execute(
-            "SELECT id, hostname, ip_address FROM devices WHERE credential_id = ? ORDER BY hostname",
+            """SELECT id, hostname, ip_address, username, normal_username, admin_username, auth_model
+               FROM devices
+               WHERE credential_id = ?
+               ORDER BY hostname""",
             (cred_id,),
         ).fetchall()
     except Exception:
         return []
     return [_row_to_dict(r) for r in rows]
+
+
+def list_devices_using(conn, cred_id: str) -> list[dict]:
+    """Return minimal device info for devices bound to this credential."""
+    return _public_device_refs(_list_devices_using_rows(conn, cred_id))

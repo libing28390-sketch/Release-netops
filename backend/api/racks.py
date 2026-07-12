@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from database import get_db_connection
 from core.rbac import require_role
 from schemas.schemas import (
-    RackCreate, RackUpdate,
+    RackCreate, RackUpdate, RackTypeCreate, RackTypeUpdate,
     DeviceTypeCreate, DeviceTypeUpdate,
     RackDeviceCreate, RackDeviceUpdate,
 )
@@ -40,6 +40,66 @@ def api_rack_stats(_user=require_role("Viewer")):
     try:
         stats = rack_service.get_rack_stats(conn)
         return {"success": True, "data": stats, "message": ""}
+    finally:
+        conn.close()
+
+
+# 鈹€鈹€鈹€ Rack Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+@router.get("/rack-types")
+def api_list_rack_types(_user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        types = rack_service.list_rack_types(conn)
+        return {"success": True, "data": types, "message": ""}
+    finally:
+        conn.close()
+
+
+@router.get("/rack-types/{rack_type_id}")
+def api_get_rack_type(rack_type_id: str, _user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        rt = rack_service.get_rack_type(conn, rack_type_id)
+        return {"success": True, "data": rt, "message": ""}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.post("/rack-types")
+def api_create_rack_type(body: RackTypeCreate, user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        rt = rack_service.create_rack_type(conn, **body.model_dump())
+        return {"success": True, "data": rt, "message": "Rack type created"}
+    except (ValueError, Exception) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.put("/rack-types/{rack_type_id}")
+def api_update_rack_type(rack_type_id: str, body: RackTypeUpdate, user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        rt = rack_service.update_rack_type(conn, rack_type_id, **body.model_dump(exclude_unset=True))
+        return {"success": True, "data": rt, "message": "Rack type updated"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.delete("/rack-types/{rack_type_id}")
+def api_delete_rack_type(rack_type_id: str, user=require_role("Administrator")):
+    conn = get_db_connection()
+    try:
+        rack_service.delete_rack_type(conn, rack_type_id)
+        return {"success": True, "data": None, "message": "Rack type deleted"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         conn.close()
 

@@ -1148,7 +1148,7 @@ async def verify_asset_connectivity(asset_id: str):
     """
     Perform a quick connectivity check:
     1. Ping management IP
-    2. Try SSH port (22)
+    2. Try the configured SSH management port (defaults to 22)
     3. If credentials exist, try SSH login (fast)
     """
     conn = get_db_connection()
@@ -1182,7 +1182,8 @@ async def verify_asset_connectivity(asset_id: str):
             results["ping_error"] = str(e)
 
         # 2. SSH Port Test (Quick check)
-        ssh_port = 22
+        from services.connection_profile import resolve_ssh_port
+        ssh_port = resolve_ssh_port(asset)
         try:
             with socket.create_connection((ip, ssh_port), timeout=1):
                 results["ssh_port_open"] = True
@@ -1222,6 +1223,7 @@ async def verify_asset_connectivity(asset_id: str):
                 import platform as platform_module
                 device_config = {
                     "host": ip,
+                    "port": ssh_port,
                     "auth_username": username,
                     "auth_password": password,
                     "platform": platform or "linux",
@@ -1250,7 +1252,7 @@ async def verify_asset_connectivity(asset_id: str):
                             hostname=ip,
                             username=username,
                             password=password,
-                            port=device_config.get('port', 22),
+                            port=ssh_port,
                             timeout=10,
                             allow_agent=False,
                             look_for_keys=False,

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
+from services.connection_profile import resolve_ssh_port
 
 class CommandResult(BaseModel):
     """统一的命令执行结果结构"""
@@ -19,7 +20,7 @@ class BaseDriver(ABC):
         self.host = device_info.get('ip_address')
         self.username = device_info.get('username')
         self.password = device_info.get('password')
-        self.port = int(device_info.get('port', 22))
+        self.port = resolve_ssh_port(device_info)
         self.platform = device_info.get('platform')
 
     @abstractmethod

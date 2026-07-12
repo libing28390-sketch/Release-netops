@@ -11,7 +11,7 @@ import { ParameterConfigStep } from './components/ParameterConfigStep';
 import { ExecutionResultsStep } from './components/ExecutionResultsStep';
 import { QuickQueryOverlay } from './components/QuickQueryOverlay';
 import { QuickQueryResultOverlay } from './components/QuickQueryResultOverlay';
-import { getDeviceCategory, getVendor, classifyVarGroup } from './helpers';
+import { getDeviceCategory, getVendor, classifyVarGroup, normalizeAutomationPlatform } from './helpers';
 import { VAR_GROUP_ORDER } from './constants';
 
 export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
@@ -266,7 +266,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   /* Filtered scenarios */
   const displayScenarios = useMemo(() => {
     const selectedDevices = batchMode ? devices.filter((d) => batchDeviceIds.includes(d.id)) : selectedDevice ? [selectedDevice] : [];
-    const selectedPlatforms = new Set(selectedDevices.map((d) => d.platform));
+    const selectedPlatforms = new Set(selectedDevices.map((d) => normalizeAutomationPlatform(d.platform)));
     const selectedCategories = new Set(selectedDevices.map((d) => getDeviceCategory(d)));
 
     return filteredScenarios.filter((s) => {

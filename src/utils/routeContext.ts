@@ -180,6 +180,10 @@ export function getRouteContext(pathname: string): RouteContext {
       cmdbPage = 'credentials';
     } else if (second === 'racks') {
       cmdbPage = 'racks';
+    } else if (second === 'devices') {
+      cmdbPage = 'devices';
+    } else if (second === 'interfaces') {
+      cmdbPage = 'interfaces';
     } else if (second === 'sites') {
       cmdbPage = 'sites';
     } else if (second === 'vrfs') {
@@ -231,4 +235,3 @@ export function getRouteContext(pathname: string): RouteContext {
     cmdbPage,
   };
 }
-

@@ -32,6 +32,246 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
 
+def _count_reference(conn, table: str, column: str, value: str) -> int:
+    row = conn.execute(
+        f"SELECT COUNT(*) AS cnt FROM {table} WHERE {column} = ?",
+        (value,),
+    ).fetchone()
+    if row is None:
+        return 0
+    if hasattr(row, 'keys') and 'cnt' in row.keys():
+        return int(row['cnt'] or 0)
+    return int(row[0] or 0)
+
+
+def _raise_if_referenced(conn, label: str, refs: list[tuple[str, str, str]]) -> None:
+    blockers = []
+    for table, column, value in refs:
+        try:
+            cnt = _count_reference(conn, table, column, value)
+        except Exception:
+            continue
+        if cnt > 0:
+            blockers.append(f"{table}.{column}={value} ({cnt})")
+    if blockers:
+        raise ValueError(f"Cannot delete {label}: still referenced by " + "; ".join(blockers))
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CMDB Network Skeleton
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def list_cmdb_devices(conn) -> list[dict]:
+    """Return devices as CMDB skeleton nodes with asset and relationship counts."""
+    rows = conn.execute(
+        """
+        SELECT
+            d.id,
+            d.hostname,
+            d.ip_address,
+            d.platform,
+            d.status,
+            d.role,
+            d.site,
+            d.vendor,
+            d.lifecycle_status,
+            d.asset_id,
+            pa.asset_tag,
+            pa.serial_number,
+            pa.datacenter,
+            pa.rack,
+            pa.rack_unit,
+            pa.management_ip,
+            pa.business_ip,
+            pa.lifecycle_status AS asset_lifecycle_status,
+            (
+                SELECT COUNT(*)
+                FROM interfaces i
+                WHERE i.device_id = d.id
+            ) AS interface_count,
+            (
+                SELECT COUNT(*)
+                FROM ip_addresses ip
+                WHERE ip.device_id = d.id
+            ) AS ip_count,
+            (
+                SELECT COUNT(*)
+                FROM topology_links tl
+                WHERE tl.source_device_id = d.id OR tl.target_device_id = d.id
+            ) AS link_count
+        FROM devices d
+        LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+        ORDER BY COALESCE(d.hostname, ''), COALESCE(d.ip_address, '')
+        """
+    ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def list_cmdb_interfaces(conn) -> list[dict]:
+    """Return interfaces as CMDB skeleton resources with device context."""
+    rows = conn.execute(
+        """
+        SELECT
+            i.id,
+            i.device_id,
+            d.hostname AS device_hostname,
+            d.ip_address AS device_ip,
+            d.platform AS device_platform,
+            d.status AS device_status,
+            i.interface_name,
+            i.description,
+            i.admin_status,
+            i.oper_status,
+            i.mac_address,
+            i.speed,
+            i.bandwidth,
+            i.interface_type,
+            i.switchport_mode,
+            i.access_vlan,
+            i.native_vlan,
+            i.allowed_vlans,
+            i.vrf_id,
+            v.vrf_name,
+            i.ip_enabled,
+            i.last_flapped,
+            (
+                SELECT COUNT(*)
+                FROM ip_addresses ip
+                WHERE ip.interface_id = i.id
+                   OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
+            ) AS ip_count,
+            (
+                SELECT COUNT(*)
+                FROM topology_links tl
+                WHERE tl.source_interface_id = i.id OR tl.target_interface_id = i.id
+            ) AS link_count
+        FROM interfaces i
+        LEFT JOIN devices d ON d.id = i.device_id
+        LEFT JOIN vrfs v ON v.id = i.vrf_id
+        ORDER BY COALESCE(d.hostname, ''), COALESCE(i.interface_name, '')
+        """
+    ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_field_authority_quality(conn) -> dict:
+    """Return read-only data-quality counters for CMDB/IPAM authority migration."""
+    def count(sql: str, params: tuple = ()) -> int:
+        try:
+            row = conn.execute(sql, params).fetchone()
+        except Exception:
+            return 0
+        if row is None:
+            return 0
+        if hasattr(row, 'keys') and 'cnt' in row.keys():
+            return int(row['cnt'] or 0)
+        return int(row[0] or 0)
+
+    device_total = count("SELECT COUNT(*) AS cnt FROM devices")
+    interface_total = count("SELECT COUNT(*) AS cnt FROM interfaces")
+    ip_total = count("SELECT COUNT(*) AS cnt FROM ip_addresses")
+    link_total = count("SELECT COUNT(*) AS cnt FROM topology_links")
+
+    site_id_missing = count(
+        "SELECT COUNT(*) AS cnt FROM devices WHERE site_id IS NULL OR site_id = ''"
+    )
+    site_id_orphaned = count(
+        """SELECT COUNT(*) AS cnt
+           FROM devices d
+           LEFT JOIN sites s ON s.id = d.site_id
+           WHERE COALESCE(d.site_id, '') != '' AND s.id IS NULL"""
+    )
+    site_name_mismatch = count(
+        """SELECT COUNT(*) AS cnt
+           FROM devices d
+           LEFT JOIN sites s ON s.id = d.site_id
+           WHERE COALESCE(d.site, '') != ''
+             AND COALESCE(d.site_id, '') != ''
+             AND s.id IS NOT NULL
+             AND d.site NOT IN (s.site_name, s.site_code)"""
+    )
+    asset_id_orphaned = count(
+        """SELECT COUNT(*) AS cnt
+           FROM devices d
+           LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+           WHERE COALESCE(d.asset_id, '') != '' AND pa.id IS NULL"""
+    )
+    asset_device_ip_mismatch = count(
+        """SELECT COUNT(*) AS cnt
+           FROM devices d
+           JOIN physical_assets pa ON pa.id = d.asset_id
+           WHERE COALESCE(d.ip_address, '') != ''
+             AND COALESCE(pa.management_ip, '') != ''
+             AND d.ip_address != pa.management_ip"""
+    )
+    duplicate_asset_links = count(
+        """SELECT COUNT(*) AS cnt
+           FROM (
+             SELECT asset_id
+             FROM devices
+             WHERE COALESCE(asset_id, '') != ''
+             GROUP BY asset_id
+             HAVING COUNT(*) > 1
+           ) t"""
+    )
+    ip_missing_interface_id = count(
+        """SELECT COUNT(*) AS cnt
+           FROM ip_addresses
+           WHERE COALESCE(interface_name, '') != ''
+             AND (interface_id IS NULL OR interface_id = '')"""
+    )
+    ip_orphaned_interface_id = count(
+        """SELECT COUNT(*) AS cnt
+           FROM ip_addresses ip
+           LEFT JOIN interfaces i ON i.id = ip.interface_id
+           WHERE COALESCE(ip.interface_id, '') != '' AND i.id IS NULL"""
+    )
+    topo_missing_interface_id = count(
+        """SELECT COUNT(*) AS cnt
+           FROM topology_links
+           WHERE (COALESCE(source_port, '') != '' AND (source_interface_id IS NULL OR source_interface_id = ''))
+              OR (COALESCE(target_port, '') != '' AND (target_interface_id IS NULL OR target_interface_id = ''))"""
+    )
+    topo_orphaned_interface_id = count(
+        """SELECT COUNT(*) AS cnt
+           FROM topology_links tl
+           LEFT JOIN interfaces si ON si.id = tl.source_interface_id
+           LEFT JOIN interfaces ti ON ti.id = tl.target_interface_id
+           WHERE (COALESCE(tl.source_interface_id, '') != '' AND si.id IS NULL)
+              OR (COALESCE(tl.target_interface_id, '') != '' AND ti.id IS NULL)"""
+    )
+
+    issues = {
+        'site_id_missing': site_id_missing,
+        'site_id_orphaned': site_id_orphaned,
+        'site_name_mismatch': site_name_mismatch,
+        'asset_id_orphaned': asset_id_orphaned,
+        'asset_device_ip_mismatch': asset_device_ip_mismatch,
+        'duplicate_asset_links': duplicate_asset_links,
+        'ip_missing_interface_id': ip_missing_interface_id,
+        'ip_orphaned_interface_id': ip_orphaned_interface_id,
+        'topology_missing_interface_id': topo_missing_interface_id,
+        'topology_orphaned_interface_id': topo_orphaned_interface_id,
+    }
+    return {
+        'scope': 'cmdb_ipam_field_authority',
+        'summary': {
+            'devices': device_total,
+            'interfaces': interface_total,
+            'ip_addresses': ip_total,
+            'topology_links': link_total,
+            'issue_count': sum(issues.values()),
+        },
+        'issues': issues,
+        'recommendations': [
+            'Backfill devices.site_id before freezing devices.site.',
+            'Backfill ip_addresses.interface_id before treating interface_name as display-only.',
+            'Backfill topology_links source/target interface ids before using interface-id topology APIs.',
+            'Resolve duplicate devices.asset_id links before enforcing one-to-one asset/device relation.',
+        ],
+    }
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Tenants
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -166,19 +406,13 @@ def update_site(conn, site_id: str, **fields) -> dict:
 
 def delete_site(conn, site_id: str) -> None:
     get_site(conn, site_id)
-    # racks/vlans cascade via FK; warn if devices still reference the site by code
     site = get_site(conn, site_id)
-    try:
-        row = conn.execute(
-            "SELECT COUNT(*) AS cnt FROM racks WHERE site_id = ?", (site_id,)
-        ).fetchone()
-        cnt = row['cnt'] if hasattr(row, 'keys') and 'cnt' in row.keys() else row[0]
-        if cnt and cnt > 0:
-            raise ValueError(f"Cannot delete site: {cnt} rack(s) still installed in it.")
-    except ValueError:
-        raise
-    except Exception:
-        pass
+    _raise_if_referenced(conn, "site", [
+        ('devices', 'site_id', site_id),
+        ('racks', 'site_id', site_id),
+        ('vlans', 'site_id', site_id),
+        ('prefixes', 'site_id', site_id),
+    ])
     conn.execute("DELETE FROM sites WHERE id = ?", (site_id,))
     conn.commit()
     logger.info(f"[CmdbService] Deleted site {site_id} ({site.get('site_code')})")
@@ -243,6 +477,11 @@ def update_vrf(conn, vrf_id: str, **fields) -> dict:
 
 def delete_vrf(conn, vrf_id: str) -> None:
     get_vrf(conn, vrf_id)
+    _raise_if_referenced(conn, "VRF", [
+        ('interfaces', 'vrf_id', vrf_id),
+        ('prefixes', 'vrf_id', vrf_id),
+        ('ip_addresses', 'vrf_id', vrf_id),
+    ])
     conn.execute("DELETE FROM vrfs WHERE id = ?", (vrf_id,))
     conn.commit()
     logger.info(f"[CmdbService] Deleted VRF {vrf_id}")
@@ -322,7 +561,19 @@ def update_vlan(conn, vlan_pk: str, **fields) -> dict:
 
 
 def delete_vlan(conn, vlan_pk: str) -> None:
-    get_vlan(conn, vlan_pk)
+    vlan = get_vlan(conn, vlan_pk)
+    refs = [
+        ('prefixes', 'vlan_id', vlan_pk),
+    ]
+    try:
+        access_cnt = _count_reference(conn, 'interfaces', 'access_vlan', str(vlan.get('vlan_id')))
+    except Exception:
+        access_cnt = 0
+    if access_cnt > 0:
+        raise ValueError(
+            f"Cannot delete VLAN: interfaces.access_vlan={vlan.get('vlan_id')} ({access_cnt})"
+        )
+    _raise_if_referenced(conn, "VLAN", refs)
     conn.execute("DELETE FROM vlans WHERE id = ?", (vlan_pk,))
     conn.commit()
     logger.info(f"[CmdbService] Deleted VLAN {vlan_pk}")

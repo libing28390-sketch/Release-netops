@@ -68,6 +68,8 @@ export const navConfig: NavGroup[] = [
     children: [
       { id: 'cmdb-credentials', label: '凭据中心', labelEn: 'Credentials', path: '/cmdb/credentials', icon: 'Key', requiredRole: 'Operator' },
       { id: 'cmdb-racks',       label: '机柜管理', labelEn: 'Rack Layout',   path: '/cmdb/racks',       icon: 'Columns3', requiredRole: 'Operator' },
+      { id: 'cmdb-devices',     label: '设备骨架', labelEn: 'Devices',       path: '/cmdb/devices',     icon: 'Server', requiredRole: 'Operator' },
+      { id: 'cmdb-interfaces',  label: '接口骨架', labelEn: 'Interfaces',    path: '/cmdb/interfaces',  icon: 'Network', requiredRole: 'Operator' },
       { id: 'cmdb-sites',       label: '站点管理', labelEn: 'Sites',       path: '/cmdb/sites',       icon: 'Building2', requiredRole: 'Operator' },
       { id: 'cmdb-vrfs',        label: 'VRF管理',  labelEn: 'VRFs',        path: '/cmdb/vrfs',        icon: 'Network', requiredRole: 'Operator' },
       { id: 'cmdb-vlans',       label: 'VLAN管理', labelEn: 'VLANs',       path: '/cmdb/vlans',       icon: 'Layers', requiredRole: 'Operator' },

@@ -42,6 +42,35 @@ def _audit(user, event_type, severity, summary, target_type, target_id=None, tar
         logger.debug("audit log failed", exc_info=True)
 
 
+# ─── Network CMDB Skeleton ──────────────────────────
+
+@router.get("/cmdb/devices")
+def api_list_cmdb_devices(_user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        return {"success": True, "data": cmdb_service.list_cmdb_devices(conn), "message": ""}
+    finally:
+        conn.close()
+
+
+@router.get("/cmdb/interfaces")
+def api_list_cmdb_interfaces(_user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        return {"success": True, "data": cmdb_service.list_cmdb_interfaces(conn), "message": ""}
+    finally:
+        conn.close()
+
+
+@router.get("/cmdb/data-quality/field-authority")
+def api_cmdb_field_authority_quality(_user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        return {"success": True, "data": cmdb_service.get_field_authority_quality(conn), "message": ""}
+    finally:
+        conn.close()
+
+
 # ─── Tenants ────────────────────────────────────────────
 
 @router.get("/cmdb/tenants")

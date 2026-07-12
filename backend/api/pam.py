@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from database import get_db_connection
 from services.vault_service import resolve_device_credentials
 from services.audit_service import log_audit_event
+from services.connection_profile import resolve_ssh_port
 
 router = APIRouter()
 # WebSocket 路由单独放在无依赖的 router，避免 FastAPI 在 WS 握手阶段
@@ -287,6 +288,7 @@ def create_session(payload: SessionCreateIn):
         session_token = f"pam-sess-{uuid.uuid4().hex}"
         now = _utc_now()
         expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+        target_port = resolve_ssh_port(device if device else asset)
 
         conn.execute('''
             INSERT INTO pam_sessions (
@@ -299,7 +301,7 @@ def create_session(payload: SessionCreateIn):
         ''', (
             session_id, payload.asset_id, device['id'], requester,
             level, creds['username'], payload.connect_method,
-            ip, 22,
+            ip, target_port,
             asset.get('hostname') or device.get('hostname') or ip,
             'connecting', session_token, expires_at, now, now,
         ))
@@ -321,6 +323,7 @@ def create_session(payload: SessionCreateIn):
                 'session_id': session_id,
                 'access_level': level,
                 'connect_method': payload.connect_method,
+                'target_port': target_port,
                 'reason': payload.reason,
             },
         )
@@ -392,7 +395,7 @@ def list_sessions(
         rows = conn.execute(
             f'''
             SELECT id, asset_id, device_id, requester_username, access_level,
-                   login_username, connect_method, target_ip, status,
+                   login_username, connect_method, target_ip, target_port, status,
                    connected_at, closed_at, close_reason, duration_seconds,
                    command_count, recording_path, risk_level, risk_summary,
                    target_hostname, archived,
@@ -609,7 +612,7 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
     username = creds['username']
     password = creds['password']
     ip = session['target_ip'] or device.get('ip_address') or ''
-    port = device.get('management_port') or 22
+    port = resolve_ssh_port(session if session.get('target_port') else device)
 
     if not ip or not username or not password:
         _update_session_status(session_id, 'error', close_reason='missing_credentials')

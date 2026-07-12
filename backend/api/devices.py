@@ -247,6 +247,69 @@ def _build_ssh_failure_response(hostname: str | None, ip_address: str, error_tex
     return JSONResponse(status_code=status_code, content=content)
 
 
+def _clean_ssh_error_text(error_text: str) -> str:
+    friendly_err = (error_text or '').strip()
+    prefix = "A paramiko SSHException occurred during connection creation:"
+    if friendly_err.startswith(prefix):
+        friendly_err = friendly_err[len(prefix):].strip()
+    return friendly_err
+
+
+def _build_device_operation_ssh_failure_response(
+    device_info: dict,
+    error_text: str,
+    operation: str,
+) -> JSONResponse | None:
+    """Return a structured 400 response for known SSH dependency failures.
+
+    Operational-data collection and custom read-only commands run through a
+    different API path than the connection-test modal, but the user-facing SSH
+    failure classes should stay identical. Unknown exceptions intentionally
+    return ``None`` so callers can keep surfacing true server defects as 500s.
+    """
+    error_code = get_ssh_error_code(error_text)
+    if not error_code:
+        return None
+
+    hostname = device_info.get('hostname') or device_info.get('name') or ''
+    ip_address = device_info.get('ip_address') or device_info.get('management_ip') or ''
+    device_label = hostname or ip_address or 'device'
+    friendly_err = _clean_ssh_error_text(error_text)
+
+    detail_by_code = {
+        'legacy_ssh_algorithms': f'{device_label} 的 SSH 算法较旧，兼容重试后仍未完成协商。',
+        'ssh_authentication_failed': f'{device_label} 可达，但 SSH 认证被拒绝。请检查账号密码或 AAA/VTY 配置。',
+        'ssh_transport_timeout': f'{device_label} 管理地址可达，但 SSH 会话建立或读取超时。',
+        'ssh_transport_unreachable': f'{device_label} IP/TCP 可达性检查后，SSH 传输层未正常建立。',
+    }
+
+    return JSONResponse(
+        status_code=400,
+        content={
+            'detail': detail_by_code.get(error_code, f'{operation} failed: {friendly_err}'),
+            'error_code': error_code,
+            'guidance': build_ssh_error_guidance(error_text),
+            'raw_error': friendly_err,
+            'operation': operation,
+            'device': {
+                'id': device_info.get('id') or '',
+                'hostname': hostname,
+                'ip_address': ip_address,
+            },
+        },
+    )
+
+
+def _resolve_payload_password(value) -> str:
+    """Return a plaintext password from request payload without logging secrets."""
+    if value in (None, ''):
+        return ''
+    password = str(value)
+    if password.startswith(('enc:v1:', 'enc:v2:')):
+        return decrypt_credential(password) or ''
+    return password
+
+
 def _resolve_connection_target(payload: dict) -> dict:
     device_id = payload.get('device_id')
     resolved = {
@@ -261,6 +324,7 @@ def _resolve_connection_target(payload: dict) -> dict:
     }
 
     if not device_id:
+        resolved['password'] = _resolve_payload_password(resolved.get('password'))
         return resolved
 
     conn = get_db_connection()
@@ -281,10 +345,8 @@ def _resolve_connection_target(payload: dict) -> dict:
     resolved['username'] = resolved['username'] or creds['username'] or ''
     resolved['method'] = payload.get('method') or stored.get('connection_method') or 'ssh'
     resolved['platform'] = payload.get('platform') or stored.get('platform') or 'cisco_ios'
-    if payload_password and not str(payload_password).startswith('enc:v1:'):
-        resolved['password'] = payload_password
-    else:
-        resolved['password'] = creds['password']
+    payload_plain_password = _resolve_payload_password(payload_password)
+    resolved['password'] = payload_plain_password or creds['password']
     resolved['enable_password'] = creds['enable_password']
     resolved['priv_username'] = creds.get('priv_username', '') or stored.get('priv_username') or ''
     resolved['port'] = resolved.get('port') or stored.get('management_port') or stored.get('port')
@@ -1128,7 +1190,13 @@ def test_device_connection(payload: dict = Body(...)):
     platform = resolved.get('platform', 'cisco_ios')
     check_mode = resolved.get('check_mode', 'quick')
     
-    logger.info(f"DEBUG CONNECT TARGET: hostname={hostname}, user={username}, pwd_len={len(password or '')}, pwd_val={password!r}")
+    logger.info(
+        "DEBUG CONNECT TARGET: hostname=%s, user=%s, pwd_present=%s, pwd_len=%s",
+        hostname,
+        username,
+        bool(password),
+        len(password or ''),
+    )
     
     if not ip_address:
         raise HTTPException(status_code=400, detail="IP address is required")
@@ -1484,13 +1552,9 @@ def collect_device_operational_data(device_id: str, payload: dict = Body(default
         raise HTTPException(status_code=404, detail='Device not found')
 
     device_info = dict(row)
-    device_info['password'] = decrypt_credential(device_info.get('password')) or ''
-    device_info['normal_password'] = decrypt_credential(device_info.get('normal_password')) or ''
-    device_info['admin_password'] = decrypt_credential(device_info.get('admin_password')) or ''
-    device_info['enable_password'] = decrypt_credential(device_info.get('enable_password')) or ''
 
     categories = payload.get('categories') if isinstance(payload, dict) else None
-    auth_role = payload.get('auth_role', 'normal') if isinstance(payload, dict) else 'normal'
+    auth_role = payload.get('auth_role', 'auto') if isinstance(payload, dict) else 'auto'
     query_name = payload.get('name') or f"Quick Query: {', '.join(categories or [])}"
 
     try:
@@ -1515,6 +1579,13 @@ def collect_device_operational_data(device_id: str, payload: dict = Body(default
             platform=device_info.get('platform', 'unknown'),
             error=str(exc), device_info=device_info,
         )
+        ssh_failure_response = _build_device_operation_ssh_failure_response(
+            device_info,
+            str(exc),
+            'operational-data',
+        )
+        if ssh_failure_response:
+            return ssh_failure_response
         raise HTTPException(status_code=500, detail=f'Operational data collection failed: {exc}')
 
 
@@ -1531,10 +1602,6 @@ def collect_device_parsed_command(device_id: str, payload: dict = Body(default={
         raise HTTPException(status_code=404, detail='Device not found')
 
     device_info = dict(row)
-    device_info['password'] = decrypt_credential(device_info.get('password')) or ''
-    device_info['normal_password'] = decrypt_credential(device_info.get('normal_password')) or ''
-    device_info['admin_password'] = decrypt_credential(device_info.get('admin_password')) or ''
-    device_info['enable_password'] = decrypt_credential(device_info.get('enable_password')) or ''
 
     command = payload.get('command') if isinstance(payload, dict) else None
     if not command:
@@ -1569,7 +1636,7 @@ def collect_device_parsed_command(device_id: str, payload: dict = Body(default={
     if not is_query_only:
         raise HTTPException(status_code=403, detail="查询模式下只允许执行只读查询命令（如 show, display, ping 等）。如需修改配置，请走工单流程或通过配置模板下发！")
 
-    auth_role = payload.get('auth_role', 'normal') if isinstance(payload, dict) else 'normal'
+    auth_role = payload.get('auth_role', 'auto') if isinstance(payload, dict) else 'auto'
     query_name = payload.get('name') or "Custom Command Query"
 
     try:
@@ -1593,4 +1660,11 @@ def collect_device_parsed_command(device_id: str, payload: dict = Body(default={
             platform=device_info.get('platform', 'unknown'),
             error=str(exc), device_info=device_info,
         )
+        ssh_failure_response = _build_device_operation_ssh_failure_response(
+            device_info,
+            str(exc),
+            'parsed-command',
+        )
+        if ssh_failure_response:
+            return ssh_failure_response
         raise HTTPException(status_code=500, detail=f'Parsed command execution failed: {exc}')

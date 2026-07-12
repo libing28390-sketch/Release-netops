@@ -2,6 +2,7 @@ import abc
 import logging
 from typing import Dict, Any, Set
 from ..base import Capability, ExecutionMode
+from services.connection_profile import resolve_ssh_port
 
 logger = logging.getLogger("engine.driver")
 
@@ -22,16 +23,11 @@ class BaseDriver(abc.ABC):
             username = creds.get("username") or "root"
             password = creds.get("password") or ""
 
-        try:
-            port = int(device_info.get("port") or device_info.get("management_port") or 22)
-        except Exception:
-            port = 22
-        
         self.device_info = device_info
         self.ip = device_info.get("ip") or device_info.get("ip_address")
         self.username = username
         self.password = password
-        self.port = port
+        self.port = resolve_ssh_port(device_info)
         self.platform = device_info.get("platform", "")
         self.capabilities: Set[Capability] = set()
 

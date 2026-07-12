@@ -16,6 +16,7 @@ interface Device {
   ip_address: string;
   status: 'online' | 'offline' | 'pending';
   platform?: string;
+  management_port?: number;
   normal_username?: string;
   admin_username?: string;
 }
@@ -197,6 +198,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   ) => {
     const host = dev.ip_address;
     const user = level === 'admin' ? (dev.admin_username || 'admin') : (dev.normal_username || 'user');
+    let port = Number(dev.management_port || 22) || 22;
     let sessionToken = '';
 
     // MFA verification for privileged access — still goes through backend
@@ -228,6 +230,9 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         if (result.success && result.session_token) {
           sessionToken = result.session_token;
         }
+        if (result.success && result.port) {
+          port = Number(result.port) || port;
+        }
         // MFA passed — fall through to local launch below
       } catch {
         showToast(isZh ? 'MFA 验证请求失败' : 'MFA verification failed', 'error');
@@ -251,6 +256,9 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         if (result.success && result.session_token) {
           sessionToken = result.session_token;
         }
+        if (result.success && result.port) {
+          port = Number(result.port) || port;
+        }
       } catch (err) {
         console.error('Failed to fetch password for normal user launch', err);
       }
@@ -266,7 +274,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         const isSsl = window.location.protocol === 'https:' ? '1' : '0';
         uri = `nexora://${window.location.host}?token=${sessionToken}&client=${terminalType}&path=${encodeURIComponent(terminalPath || '')}&ssl=${isSsl}`;
       } else {
-        uri = `ssh://${encodeURIComponent(user)}@${host}:22`;
+        uri = `ssh://${encodeURIComponent(user)}@${host}:${port}`;
       }
 
       // 用户主动点击触发的 <a> 元素 click，浏览器会识别为用户行为，不会拦截

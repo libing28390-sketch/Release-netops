@@ -42,6 +42,9 @@ from services.ipam_service import (
     get_next_available_ip,
     get_next_available_prefix,
     get_ipam_reconciliation,
+    allocate_next_address,
+    reserve_address,
+    release_address,
 )
 from services.audit_service import log_audit_event
 
@@ -180,6 +183,7 @@ def api_create_address(subnet_id: str, body: IPAddressCreate, user=require_role(
             hostname=body.hostname,
             device_id=body.device_id,
             interface_name=body.interface_name,
+            interface_id=getattr(body, 'interface_id', ''),
             mac_address=body.mac_address,
             device_type=body.device_type,
             description=body.description,
@@ -199,6 +203,74 @@ def api_create_address(subnet_id: str, body: IPAddressCreate, user=require_role(
         target_type="ip_address",
         target_id=result["id"],
         target_name=body.address,
+    )
+    return result
+
+
+@router.post('/ipam/subnets/{subnet_id}/allocate-next', status_code=201)
+def api_allocate_next_address(subnet_id: str, body: dict, user=require_role("Operator")):
+    try:
+        result = allocate_next_address(
+            subnet_id,
+            hostname=body.get('hostname', ''),
+            device_id=body.get('device_id', ''),
+            interface_id=body.get('interface_id', ''),
+            interface_name=body.get('interface_name', ''),
+            mac_address=body.get('mac_address', ''),
+            purpose=body.get('purpose', ''),
+            requested_by=body.get('requested_by') or user.get('username', ''),
+            status=body.get('status', 'allocated'),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.address.allocate",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Allocated next IP {result.get('address')} from prefix {subnet_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ip_address",
+        target_id=result["id"],
+        target_name=result.get("address"),
+        details={'subnet_id': subnet_id, **body},
+    )
+    return result
+
+
+@router.post('/ipam/subnets/{subnet_id}/reserve', status_code=201)
+def api_reserve_address(subnet_id: str, body: dict, user=require_role("Operator")):
+    if not body.get('address'):
+        raise HTTPException(status_code=422, detail="address is required")
+    try:
+        result = reserve_address(
+            subnet_id,
+            address=body.get('address'),
+            hostname=body.get('hostname', ''),
+            device_id=body.get('device_id', ''),
+            interface_id=body.get('interface_id', ''),
+            interface_name=body.get('interface_name', ''),
+            mac_address=body.get('mac_address', ''),
+            purpose=body.get('purpose', ''),
+            requested_by=body.get('requested_by') or user.get('username', ''),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.address.reserve",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Reserved IP {result.get('address')} in prefix {subnet_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ip_address",
+        target_id=result["id"],
+        target_name=result.get("address"),
+        details={'subnet_id': subnet_id, **body},
     )
     return result
 
@@ -239,6 +311,27 @@ def api_delete_address(address_id: str, user=require_role("Administrator")):
         actor_role=user.get("role"),
         target_type="ip_address",
         target_id=address_id,
+    )
+    return {'ok': True}
+
+
+@router.post('/ipam/addresses/{address_id}/release')
+def api_release_address(address_id: str, body: dict | None = None, user=require_role("Operator")):
+    body = body or {}
+    if not release_address(address_id, released_by=body.get('released_by') or user.get('username', '')):
+        raise HTTPException(status_code=404, detail='Address not found')
+
+    log_audit_event(
+        event_type="ipam.address.release",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Released address {address_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ip_address",
+        target_id=address_id,
+        details=body,
     )
     return {'ok': True}
 

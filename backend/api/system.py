@@ -10,6 +10,7 @@ from core.crypto import decrypt_credential
 import random
 import time
 from database import get_db_connection
+from services.connection_profile import resolve_ssh_port
 
 router = APIRouter(prefix="/system", tags=["System"])
 
@@ -167,6 +168,7 @@ async def exchange_token(token: str) -> Dict[str, Any]:
 
         host = session_data.get("target_ip")
         user = session_data.get("login_username")
+        target_port = resolve_ssh_port(session_data)
 
         # Fetch device password
         dev_res = conn.execute("SELECT * FROM devices WHERE ip_address = ? LIMIT 1", (host,)).fetchone()
@@ -177,6 +179,7 @@ async def exchange_token(token: str) -> Dict[str, Any]:
             return {"success": False, "error": f"Device/Asset with IP {host} not found in database"}
 
         device_data = dict(dev_res)
+        target_port = resolve_ssh_port(session_data) if session_data.get("target_port") else resolve_ssh_port(device_data)
         password = ""
         if user == device_data.get("username") or user == device_data.get("admin_username"):
             password = device_data.get("password") or device_data.get("admin_password")
@@ -201,6 +204,7 @@ async def exchange_token(token: str) -> Dict[str, Any]:
         return {
             "success": True,
             "ip": host,
+            "port": target_port,
             "user": user,
             "password": plain_password
         }
@@ -257,6 +261,7 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
             return {"success": False, "error": f"Device/Asset with IP {host} not found in database"}
 
         device_data = dict(res)
+        target_port = resolve_ssh_port(device_data)
         password = ""
         if user == device_data.get("username") or user == device_data.get("admin_username"):
             password = device_data.get("password") or device_data.get("admin_password")
@@ -297,7 +302,7 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 session_id, asset_id, device_id, requester_username, access_level,
-                user, 'local', host, 22,
+                user, 'local', host, target_port,
                 # Local sessions are immediately 'closed' — we have no way to track
                 # when the user actually disconnects from their local client.
                 'closed', now_str, now_str, 'local_client_launched',
@@ -336,18 +341,18 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not path or not os.path.exists(path):
         # 前端客户端侧启动模式：path 为特殊标记，跳过文件检查，只写审计日志
         if path in ('__client_side_launch__', '__mfa_verify_only__'):
-            return {"success": True, "session_id": session_id, "client_side": True, "session_token": session_token}
+            return {"success": True, "session_id": session_id, "client_side": True, "session_token": session_token, "port": target_port}
         return {"success": False, "error": f"Executable path not found: {path}"}
 
     try:
         if app_type == "xshell":
-            cmd = f'"{path}" -url "ssh://{user}:{plain_password}@{host}"'
+            cmd = f'"{path}" -url "ssh://{user}:{plain_password}@{host}:{target_port}"'
         elif app_type == "putty":
-            cmd = f'"{path}" -ssh {user}@{host} -pw "{plain_password}"' if plain_password else f'"{path}" -ssh {user}@{host}'
+            cmd = f'"{path}" -ssh {user}@{host} -P {target_port} -pw "{plain_password}"' if plain_password else f'"{path}" -ssh {user}@{host} -P {target_port}'
         elif app_type == "securecrt":
-            cmd = f'"{path}" /SSH2 /L {user} /PASSWORD "{plain_password}" {host}' if plain_password else f'"{path}" /SSH2 /L {user} {host}'
+            cmd = f'"{path}" /SSH2 /L {user} /P {target_port} /PASSWORD "{plain_password}" {host}' if plain_password else f'"{path}" /SSH2 /L {user} /P {target_port} {host}'
         else:
-            cmd = f'"{path}" "{user}@{host}"'
+            cmd = f'"{path}" "{user}@{host}:{target_port}"'
 
         logger.info(f"[System] Launching terminal: {app_type} on {host}")
         subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)

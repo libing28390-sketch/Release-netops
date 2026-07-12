@@ -90,6 +90,7 @@ export const useDeviceDetail = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           categories: ['interfaces', 'neighbors', 'arp', 'mac_table', 'routing_table', 'bgp', 'ospf'],
+          auth_role: 'auto',
         }),
       });
       const data = await resp.json();

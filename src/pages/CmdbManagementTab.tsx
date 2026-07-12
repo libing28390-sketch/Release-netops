@@ -6,7 +6,7 @@ import Pagination from '../components/Pagination';
 
 /* ────────────────────────────────────────────────────────────
  * CMDB Management — unified CRUD for the foundational CMDB tables:
- *   credentials · sites · vrfs · vlans · tenants
+ *   credentials · devices · interfaces · sites · vrfs · vlans · tenants
  * Consumes the /api/credentials and /api/cmdb/* endpoints.
  * ──────────────────────────────────────────────────────────── */
 
@@ -15,7 +15,7 @@ interface Props {
   cmdbPage?: string;
 }
 
-type EntityKey = 'credentials' | 'sites' | 'vrfs' | 'vlans' | 'tenants';
+type EntityKey = 'credentials' | 'devices' | 'interfaces' | 'sites' | 'vrfs' | 'vlans' | 'tenants';
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('netops_token') || '';
@@ -112,6 +112,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const [form, setForm] = useState<Record<string, any>>({});
   const [confirmDelete, setConfirmDelete] = useState<any | null>(null);
   const [search, setSearch] = useState('');
+  const readOnlyTabs = useMemo(() => new Set<EntityKey>(['devices', 'interfaces']), []);
+  const isReadOnlyTab = readOnlyTabs.has(tab);
 
   // Pagination states
   const [page, setPage] = useState(1);
@@ -119,6 +121,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
 
   const tabs: { key: EntityKey; label: string; labelEn: string; icon: React.ReactNode }[] = [
     { key: 'credentials', label: '凭据中心', labelEn: 'Credentials', icon: <KeyRound size={14} /> },
+    { key: 'devices', label: '设备骨架', labelEn: 'Devices', icon: <Server size={14} /> },
+    { key: 'interfaces', label: '接口骨架', labelEn: 'Interfaces', icon: <Network size={14} /> },
     { key: 'sites', label: '站点', labelEn: 'Sites', icon: <Building2 size={14} /> },
     { key: 'vrfs', label: 'VRF', labelEn: 'VRFs', icon: <Network size={14} /> },
     { key: 'vlans', label: 'VLAN', labelEn: 'VLANs', icon: <Layers size={14} /> },
@@ -135,10 +139,36 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       { key: 'credential_name', label: '凭据名称', labelEn: 'Name', required: true },
       { key: 'credential_type', label: '类型', labelEn: 'Type', type: 'select', options: CRED_TYPE_OPTS },
       { key: 'username', label: '用户名', labelEn: 'Username' },
+      { key: 'account_role', label: '账号角色', labelEn: 'Account Role', hideInForm: true },
       { key: 'password', label: '密码', labelEn: 'Password', type: 'password', hideInTable: true, secretFlag: 'has_password' },
       { key: 'enable_password', label: 'Enable 密码', labelEn: 'Enable Password', type: 'password', hideInTable: true, secretFlag: 'has_enable_password' },
       { key: 'snmp_community', label: 'SNMP Community', labelEn: 'SNMP Community', type: 'password', hideInTable: true, secretFlag: 'has_snmp_community' },
       { key: 'devices', label: '关联设备', labelEn: 'Associated Devices', hideInForm: true },
+    ],
+    devices: [
+      { key: 'hostname', label: '设备名称', labelEn: 'Hostname', hideInForm: true },
+      { key: 'ip_address', label: '管理IP', labelEn: 'Management IP', hideInForm: true },
+      { key: 'platform', label: '平台', labelEn: 'Platform', hideInForm: true },
+      { key: 'role', label: '角色', labelEn: 'Role', hideInForm: true },
+      { key: 'status', label: '状态', labelEn: 'Status', hideInForm: true },
+      { key: 'site', label: '站点', labelEn: 'Site', hideInForm: true },
+      { key: 'asset_tag', label: '资产标签', labelEn: 'Asset Tag', hideInForm: true },
+      { key: 'interface_count', label: '接口数', labelEn: 'Interfaces', hideInForm: true },
+      { key: 'ip_count', label: 'IP数', labelEn: 'IPs', hideInForm: true },
+      { key: 'link_count', label: '链路数', labelEn: 'Links', hideInForm: true },
+    ],
+    interfaces: [
+      { key: 'interface_name', label: '接口名称', labelEn: 'Interface', hideInForm: true },
+      { key: 'device_hostname', label: '所属设备', labelEn: 'Device', hideInForm: true },
+      { key: 'device_ip', label: '设备IP', labelEn: 'Device IP', hideInForm: true },
+      { key: 'oper_status', label: '运行状态', labelEn: 'Oper Status', hideInForm: true },
+      { key: 'admin_status', label: '管理状态', labelEn: 'Admin Status', hideInForm: true },
+      { key: 'mac_address', label: 'MAC', labelEn: 'MAC', hideInForm: true },
+      { key: 'switchport_mode', label: '交换模式', labelEn: 'Switchport', hideInForm: true },
+      { key: 'access_vlan', label: 'Access VLAN', labelEn: 'Access VLAN', hideInForm: true },
+      { key: 'vrf_name', label: 'VRF', labelEn: 'VRF', hideInForm: true },
+      { key: 'ip_count', label: 'IP数', labelEn: 'IPs', hideInForm: true },
+      { key: 'link_count', label: '链路数', labelEn: 'Links', hideInForm: true },
     ],
     sites: [
       { key: 'site_code', label: '站点编码', labelEn: 'Site Code', required: true },
@@ -199,6 +229,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   }, [tab, search]);
 
   const openCreate = () => {
+    if (isReadOnlyTab) return;
     const defaults: Record<string, any> = {};
     fieldDefs[tab].forEach(f => {
       if (f.hideInForm) return;
@@ -214,6 +245,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   };
 
   const openEdit = (row: any) => {
+    if (isReadOnlyTab) return;
     const f: Record<string, any> = {};
     fieldDefs[tab].forEach(fd => {
       if (fd.hideInForm) return;
@@ -230,6 +262,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const idOf = (row: any) => row.id;
 
   const submit = async () => {
+    if (isReadOnlyTab) return;
     setError('');
     const defs = fieldDefs[tab].filter(fd => !fd.hideInForm);
     // basic required validation
@@ -259,6 +292,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   };
 
   const doDelete = async () => {
+    if (isReadOnlyTab) return;
     if (!confirmDelete) return;
     setError('');
     try {
@@ -339,7 +373,78 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     }
   };
 
+  const getAccountRoleLabel = (role: string) => {
+    if (!zh) {
+      switch (role) {
+        case 'normal': return 'Normal';
+        case 'admin': return 'Admin';
+        case 'mixed': return 'Mixed';
+        case 'unbound': return 'Unbound';
+        case 'login':
+        default: return 'Login';
+      }
+    }
+    switch (role) {
+      case 'normal': return '普通账号';
+      case 'admin': return '管理员账号';
+      case 'mixed': return '多角色';
+      case 'unbound': return '未关联';
+      case 'login':
+      default: return '登录账号';
+    }
+  };
+
+  const getAccountRoleStyle = (role: string) => {
+    switch (role) {
+      case 'normal':
+        return 'bg-sky-50 text-sky-700 border-sky-100 dark:bg-sky-950/20 dark:text-sky-400 dark:border-sky-900/30';
+      case 'admin':
+        return 'bg-rose-50 text-rose-700 border-rose-100 dark:bg-rose-950/20 dark:text-rose-400 dark:border-rose-900/30';
+      case 'mixed':
+        return 'bg-amber-50 text-amber-700 border-amber-100 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-900/30';
+      case 'unbound':
+        return 'bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-900/20 dark:text-slate-400 dark:border-slate-800';
+      case 'login':
+      default:
+        return 'bg-indigo-50 text-indigo-700 border-indigo-100 dark:bg-indigo-950/20 dark:text-indigo-400 dark:border-indigo-900/30';
+    }
+  };
+
   const renderCell = (row: any, fd: FieldDef) => {
+    if (tab === 'devices' && fd.key === 'hostname') {
+      const val = row.hostname || row.ip_address || row.id;
+      return (
+        <button
+          onClick={() => navigate('/assets/devices')}
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 hover:text-cyan-900 dark:text-cyan-400 dark:hover:text-cyan-300"
+          title={zh ? '查看设备资产' : 'Open device inventory'}
+        >
+          <Server size={13} />
+          {val}
+        </button>
+      );
+    }
+    if (tab === 'interfaces' && fd.key === 'device_hostname') {
+      const val = row.device_hostname || row.device_ip || row.device_id;
+      return (
+        <button
+          onClick={() => navigate('/assets/devices')}
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 hover:text-cyan-900 dark:text-cyan-400 dark:hover:text-cyan-300"
+          title={zh ? '查看设备资产' : 'Open device inventory'}
+        >
+          <Server size={13} />
+          {val}
+        </button>
+      );
+    }
+    if (['interface_count', 'ip_count', 'link_count'].includes(fd.key)) {
+      const val = Number(row[fd.key] || 0);
+      return (
+        <span className="inline-flex min-w-8 justify-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          {val}
+        </span>
+      );
+    }
     if (fd.key === 'devices') {
       const devList = row.devices || [];
       if (devList.length === 0) return <span className="text-black/30 dark:text-white/30">—</span>;
@@ -381,7 +486,20 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     }
     if (fd.key === 'status') {
       const val = row[fd.key] || 'active';
-      const badgeClass = tab === 'sites' ? getSiteStatusStyle(val) : getVlanStatusStyle(val);
+      const badgeClass = tab === 'sites' || tab === 'devices' ? getSiteStatusStyle(val) : getVlanStatusStyle(val);
+      return (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${badgeClass}`}>
+          {val}
+        </span>
+      );
+    }
+    if (fd.key === 'oper_status' || fd.key === 'admin_status') {
+      const val = row[fd.key] || 'unknown';
+      const badgeClass = val === 'up'
+        ? 'bg-emerald-50 text-emerald-700 border-emerald-100 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/30'
+        : val === 'down'
+          ? 'bg-rose-50 text-rose-700 border-rose-100 dark:bg-rose-950/20 dark:text-rose-400 dark:border-rose-900/30'
+          : 'bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-900/20 dark:text-slate-400 dark:border-slate-800';
       return (
         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${badgeClass}`}>
           {val}
@@ -397,8 +515,19 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
         </span>
       );
     }
+    if (fd.key === 'account_role') {
+      const role = row.account_role || 'login';
+      return (
+        <span
+          className={`inline-flex items-center px-2.5 py-0.5 rounded-full border text-[11px] font-semibold tracking-wide ${getAccountRoleStyle(role)}`}
+          title={zh ? '根据绑定设备的普通账号/管理员账号字段推断' : 'Inferred from linked device normal/admin username fields'}
+        >
+          {row.account_role_label || getAccountRoleLabel(role)}
+        </span>
+      );
+    }
 
-    const isMono = ['vlan_id', 'rd', 'username'].includes(fd.key);
+    const isMono = ['vlan_id', 'rd', 'username', 'ip_address', 'device_ip', 'mac_address', 'access_vlan'].includes(fd.key);
     const val = row[fd.key];
     if (val === '' || val == null) return <span className="text-black/30 dark:text-white/30">—</span>;
     if (isMono) {
@@ -443,16 +572,18 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
         icon={Server}
         eyebrow={zh ? '资产与配置 / CMDB' : 'Assets & Config / CMDB'}
         title={zh ? 'CMDB 基础数据维护' : 'CMDB Inventory'}
-        subtitle={zh ? '管理凭据中心、站点、VRF、VLAN 与租户等核心配置数据。' : 'Manage credentials, sites, VRFs, VLANs and tenants.'}
+        subtitle={zh ? '管理设备、接口、凭据、站点、VRF、VLAN 与租户等核心配置数据。' : 'Manage devices, interfaces, credentials, sites, VRFs, VLANs and tenants.'}
         actions={
           <>
-            <button
-              onClick={openCreate}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#06b6d4] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(6,182,212,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0891b2]"
-            >
-              <Plus size={14} />
-              {zh ? '新建记录' : 'New Record'}
-            </button>
+            {!isReadOnlyTab && (
+              <button
+                onClick={openCreate}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#06b6d4] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(6,182,212,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0891b2]"
+              >
+                <Plus size={14} />
+                {zh ? '新建记录' : 'New Record'}
+              </button>
+            )}
             <button
               onClick={load}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#d8e1eb] bg-[#f8fafc] px-4 text-sm font-semibold text-[#164e63] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#c7d4e2] hover:bg-white hover:text-[#0891b2]"
@@ -501,22 +632,24 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
                       {zh ? c.label : c.labelEn}
                     </th>
                   ))}
-                  <th className="px-6 py-4 text-right" style={{ width: 120 }}>
-                    {zh ? '操作' : 'Actions'}
-                  </th>
+                  {!isReadOnlyTab && (
+                    <th className="px-6 py-4 text-right" style={{ width: 120 }}>
+                      {zh ? '操作' : 'Actions'}
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredRows.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={tableColumns.length + 1} className="text-center py-16 text-black/40">
+                    <td colSpan={tableColumns.length + (isReadOnlyTab ? 0 : 1)} className="text-center py-16 text-black/40">
                       {zh ? '无匹配的数据记录' : 'No matching records found'}
                     </td>
                   </tr>
                 )}
                 {loading && filteredRows.length === 0 && (
                   <tr>
-                    <td colSpan={tableColumns.length + 1} className="text-center py-16 text-black/40">
+                    <td colSpan={tableColumns.length + (isReadOnlyTab ? 0 : 1)} className="text-center py-16 text-black/40">
                       <RefreshCw size={18} className="animate-spin inline mr-2 text-cyan-600" />
                       {zh ? '正在加载数据...' : 'Loading data...'}
                     </td>
@@ -527,24 +660,26 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
                     {tableColumns.map(c => (
                       <td key={c.key} className="px-6 py-4">{renderCell(row, c)}</td>
                     ))}
-                    <td className="px-6 py-4 text-right whitespace-nowrap align-middle">
-                      <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => openEdit(row)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-[#164e63] shadow-sm hover:border-black/10 hover:bg-[#ecfeff] hover:text-[#0891b2] transition-all"
-                          title={zh ? '编辑' : 'Edit'}
-                        >
-                          <Edit2 size={13} />
-                        </button>
-                        <button
-                          onClick={() => setConfirmDelete(row)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-rose-400 shadow-sm hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600 transition-all"
-                          title={zh ? '删除' : 'Delete'}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </td>
+                    {!isReadOnlyTab && (
+                      <td className="px-6 py-4 text-right whitespace-nowrap align-middle">
+                        <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => openEdit(row)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-[#164e63] shadow-sm hover:border-black/10 hover:bg-[#ecfeff] hover:text-[#0891b2] transition-all"
+                            title={zh ? '编辑' : 'Edit'}
+                          >
+                            <Edit2 size={13} />
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(row)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-rose-400 shadow-sm hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600 transition-all"
+                            title={zh ? '删除' : 'Delete'}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

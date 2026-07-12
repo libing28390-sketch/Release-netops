@@ -24,6 +24,79 @@ def _row_to_dict(row) -> dict:
     return dict(row)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# RackType CRUD
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def list_rack_types(conn) -> list[dict]:
+    rows = conn.execute("SELECT * FROM rack_types ORDER BY name").fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_rack_type(conn, rack_type_id: str) -> dict:
+    row = conn.execute("SELECT * FROM rack_types WHERE id = ?", (rack_type_id,)).fetchone()
+    if not row:
+        raise ValueError(f"Rack type not found: {rack_type_id}")
+    return _row_to_dict(row)
+
+
+def create_rack_type(conn, *, name: str, vendor: str = '', model: str = '',
+                     total_u: int = 42, width_mm: int = 600, depth_mm: int = 1000,
+                     max_weight_kg: int = 0, power_capacity_watts: int = 0,
+                     allow_front_rear_mount: bool = True, description: str = '') -> dict:
+    rack_type_id = str(uuid.uuid4())
+    now = _utc_now()
+    conn.execute(
+        """INSERT INTO rack_types (
+            id, name, vendor, model, total_u, width_mm, depth_mm, max_weight_kg,
+            power_capacity_watts, allow_front_rear_mount, description, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            rack_type_id, name.strip(), vendor, model, total_u, width_mm, depth_mm,
+            max_weight_kg, power_capacity_watts, 1 if allow_front_rear_mount else 0,
+            description, now, now,
+        )
+    )
+    conn.commit()
+    return get_rack_type(conn, rack_type_id)
+
+
+def update_rack_type(conn, rack_type_id: str, **fields) -> dict:
+    existing = get_rack_type(conn, rack_type_id)
+    updates = []
+    params = []
+    for key in (
+        'name', 'vendor', 'model', 'total_u', 'width_mm', 'depth_mm',
+        'max_weight_kg', 'power_capacity_watts', 'allow_front_rear_mount', 'description'
+    ):
+        if key in fields and fields[key] is not None:
+            val = fields[key]
+            if key == 'allow_front_rear_mount':
+                val = 1 if val else 0
+            updates.append(f"{key} = ?")
+            params.append(val)
+    if not updates:
+        return existing
+    updates.append("updated_at = ?")
+    params.append(_utc_now())
+    params.append(rack_type_id)
+    conn.execute(f"UPDATE rack_types SET {', '.join(updates)} WHERE id = ?", params)
+    conn.commit()
+    return get_rack_type(conn, rack_type_id)
+
+
+def delete_rack_type(conn, rack_type_id: str) -> None:
+    get_rack_type(conn, rack_type_id)
+    usage = conn.execute(
+        "SELECT COUNT(*) as cnt FROM racks WHERE rack_type_id = ?", (rack_type_id,)
+    ).fetchone()
+    cnt = usage['cnt'] if hasattr(usage, 'keys') and 'cnt' in usage.keys() else usage[0]
+    if cnt and cnt > 0:
+        raise ValueError("Cannot delete rack type: one or more racks are using it.")
+    conn.execute("DELETE FROM rack_types WHERE id = ?", (rack_type_id,))
+    conn.commit()
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Rack CRUD
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -49,10 +122,23 @@ def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
                 row: str = '', total_u: int = 42, description: str = '',
                 status: str = 'active', power_capacity_watts: int = 0,
                 site_id: str = 'site-default', rack_code: str = '',
-                placement_strategy: str = 'bottom_first', **kwargs) -> dict:
+                placement_strategy: str = 'bottom_first', rack_type_id: str = '',
+                width_mm: int = 600, depth_mm: int = 1000,
+                allow_front_rear_mount: bool = True, **kwargs) -> dict:
     rack_id = str(uuid.uuid4())
     if not rack_code:
         rack_code = f"RACK_{uuid.uuid4().hex[:12].upper()}"
+
+    if rack_type_id:
+        rack_type = get_rack_type(conn, rack_type_id)
+        total_u = kwargs.get('total_u') or total_u or rack_type.get('total_u') or 42
+        width_mm = kwargs.get('width_mm') or width_mm or rack_type.get('width_mm') or 600
+        depth_mm = kwargs.get('depth_mm') or depth_mm or rack_type.get('depth_mm') or 1000
+        if not power_capacity_watts:
+            power_capacity_watts = int(rack_type.get('power_capacity_watts') or 0)
+        if kwargs.get('max_weight_kg') is None:
+            kwargs['max_weight_kg'] = rack_type.get('max_weight_kg')
+        allow_front_rear_mount = bool(rack_type.get('allow_front_rear_mount')) if allow_front_rear_mount is None else allow_front_rear_mount
     
     # Synchronize old and new fields
     rack_name = kwargs.get('rack_name') or name
@@ -77,14 +163,14 @@ def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
             id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name,
             total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
             current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
-            placement_strategy, created_at, updated_at
+            placement_strategy, rack_type_id, width_mm, depth_mm, allow_front_rear_mount, created_at, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             rack_id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name,
             total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
             current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
-            placement_strategy, now, now
+            placement_strategy, rack_type_id, width_mm, depth_mm, 1 if allow_front_rear_mount else 0, now, now
         )
     )
     conn.commit()
@@ -102,7 +188,8 @@ def update_rack(conn, rack_id: str, **fields) -> dict:
         'name', 'datacenter', 'room', 'row', 'total_u', 'description', 'status', 'power_capacity_watts',
         'site_id', 'rack_code', 'rack_name', 'room_name', 'row_name', 'used_u', 'available_u',
         'power_capacity_w', 'current_power_w', 'power_utilization', 'max_weight_kg', 'current_weight_kg',
-        'cooling_zone', 'remarks', 'placement_strategy'
+        'cooling_zone', 'remarks', 'placement_strategy', 'rack_type_id', 'width_mm', 'depth_mm',
+        'allow_front_rear_mount'
     )
     
     # Align values if one of the duplicates is modified
@@ -133,6 +220,8 @@ def update_rack(conn, rack_id: str, **fields) -> dict:
         
     for key in supported_keys:
         if key in fields and fields[key] is not None:
+            if key == 'allow_front_rear_mount':
+                fields[key] = 1 if fields[key] else 0
             updates.append(f"{key} = ?")
             params.append(fields[key])
             

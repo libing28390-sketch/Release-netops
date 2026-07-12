@@ -358,6 +358,10 @@ class RackCreate(BaseModel):
     status: str = 'active'
     power_capacity_watts: int = 0
     placement_strategy: str = 'bottom_first'
+    rack_type_id: Optional[str] = ''
+    width_mm: Optional[int] = 600
+    depth_mm: Optional[int] = 1000
+    allow_front_rear_mount: Optional[bool] = True
 
     site_id: Optional[str] = 'site-default'
     rack_code: Optional[str] = ''
@@ -414,6 +418,10 @@ class RackUpdate(BaseModel):
     status: Optional[str] = None
     power_capacity_watts: Optional[int] = None
     placement_strategy: Optional[str] = None
+    rack_type_id: Optional[str] = None
+    width_mm: Optional[int] = None
+    depth_mm: Optional[int] = None
+    allow_front_rear_mount: Optional[bool] = None
 
     site_id: Optional[str] = None
     rack_code: Optional[str] = None
@@ -436,6 +444,47 @@ class RackUpdate(BaseModel):
         if v is not None and v not in ('bottom_first', 'top_first'):
             raise ValueError("placement_strategy must be either 'bottom_first' or 'top_first'")
         return v
+
+
+class RackTypeCreate(BaseModel):
+    name: str
+    vendor: str = ''
+    model: str = ''
+    total_u: int = 42
+    width_mm: int = 600
+    depth_mm: int = 1000
+    max_weight_kg: int = 0
+    power_capacity_watts: int = 0
+    allow_front_rear_mount: bool = True
+    description: str = ''
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 64:
+            raise ValueError('name must be 1-64 characters')
+        return v
+
+    @field_validator('total_u')
+    @classmethod
+    def validate_total_u(cls, v: int) -> int:
+        if v < 1 or v > 60:
+            raise ValueError('total_u must be between 1 and 60')
+        return v
+
+
+class RackTypeUpdate(BaseModel):
+    name: Optional[str] = None
+    vendor: Optional[str] = None
+    model: Optional[str] = None
+    total_u: Optional[int] = None
+    width_mm: Optional[int] = None
+    depth_mm: Optional[int] = None
+    max_weight_kg: Optional[int] = None
+    power_capacity_watts: Optional[int] = None
+    allow_front_rear_mount: Optional[bool] = None
+    description: Optional[str] = None
 
 
 

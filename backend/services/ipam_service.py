@@ -54,6 +54,73 @@ def _calculate_total_ips(prefix_str: str) -> int:
         return min(total, 2**63)
 
 
+def _normalize_prefix(prefix: str) -> tuple[str, ipaddress._BaseNetwork]:
+    try:
+        net = ipaddress.ip_network(prefix, strict=False)
+    except ValueError as exc:
+        raise ValueError(f"Invalid CIDR: {exc}") from exc
+    return str(net), net
+
+
+def _normalize_address(address: str) -> str:
+    try:
+        return str(ipaddress.ip_address(str(address).split('/')[0].strip()))
+    except ValueError as exc:
+        raise ValueError(f"Invalid IP address: {exc}") from exc
+
+
+def _prefix_scope(row_or_fields: dict) -> tuple[str, str, str]:
+    return (
+        row_or_fields.get('tenant_id') or 'tenant-default',
+        row_or_fields.get('vrf_id') or '',
+        row_or_fields.get('site_id') or '',
+    )
+
+
+def _validate_prefix_overlap(conn, *, prefix: str, tenant_id: str | None = None,
+                             vrf_id: str | None = None, site_id: str | None = None,
+                             exclude_id: str | None = None) -> None:
+    """Reject duplicate or sibling-overlap prefixes in the same tenant/VRF/site scope.
+
+    Parent/child containment is allowed; partial sibling overlap and exact duplicate
+    are rejected. Different VRFs are allowed to reuse the same prefix.
+    """
+    normalized, new_net = _normalize_prefix(prefix)
+    tenant = tenant_id or 'tenant-default'
+    vrf = vrf_id or ''
+    site = site_id or ''
+
+    rows = conn.execute(
+        f"""SELECT id, prefix, tenant_id, vrf_id, site_id
+            FROM prefixes
+            WHERE COALESCE(tenant_id, 'tenant-default') = {_PH}
+              AND COALESCE(vrf_id, '') = {_PH}
+              AND COALESCE(site_id, '') = {_PH}""",
+        (tenant, vrf, site),
+    ).fetchall()
+    for row in rows:
+        if exclude_id and row['id'] == exclude_id:
+            continue
+        try:
+            existing = ipaddress.ip_network(row['prefix'], strict=False)
+        except ValueError:
+            continue
+        if existing.version != new_net.version or not existing.overlaps(new_net):
+            continue
+        if existing == new_net:
+            raise ValueError(f"Prefix {normalized} already exists in this tenant/VRF/site scope")
+        if new_net.subnet_of(existing) or existing.subnet_of(new_net):
+            continue
+        raise ValueError(f"Prefix {normalized} overlaps with existing sibling prefix {row['prefix']}")
+
+
+def _select_prefix_for_update(conn, subnet_id: str):
+    sql = f"SELECT * FROM prefixes WHERE id = {_PH}"
+    if _USE_PG:
+        sql += " FOR UPDATE"
+    return conn.execute(sql, (subnet_id,)).fetchone()
+
+
 def _ph(n: int = 1) -> str:
     """Return n comma-separated placeholders."""
     return ', '.join([_PH] * n)
@@ -228,29 +295,17 @@ def create_subnet(
     traceable: int = 1,
 ) -> dict:
     """Create a prefix after validating CIDR and checking for VRF-scoped duplicates."""
-    # Normalize CIDR
-    try:
-        net = ipaddress.ip_network(prefix, strict=False)
-        prefix = str(net)  # Normalize e.g. 10.1.1.5/24 -> 10.1.1.0/24
-    except ValueError as exc:
-        raise ValueError(f"Invalid CIDR: {exc}") from exc
+    prefix, net = _normalize_prefix(prefix)
 
     conn = get_db_connection()
     try:
-        # VRF-scoped duplicate check
-        if vrf_id:
-            existing = conn.execute(
-                f'SELECT id FROM prefixes WHERE prefix = {_PH} AND vrf_id = {_PH}',
-                (prefix, vrf_id),
-            ).fetchone()
-        else:
-            existing = conn.execute(
-                f'SELECT id FROM prefixes WHERE prefix = {_PH} AND (vrf_id IS NULL OR vrf_id = {_PH})',
-                (prefix, ''),
-            ).fetchone()
-
-        if existing:
-            raise ValueError('Prefix already exists in this VRF')
+        _validate_prefix_overlap(
+            conn,
+            prefix=prefix,
+            tenant_id=tenant_id,
+            vrf_id=vrf_id,
+            site_id=site_id,
+        )
 
         prefix_id = f"prefix-{uuid.uuid4().hex[:12]}"
         now = _utc_now()
@@ -259,12 +314,13 @@ def create_subnet(
             f'''INSERT INTO prefixes
                (id, prefix, vrf_id, vlan_id, site_id, tenant_id, status,
                 name, gateway, description, network_type, gateway_device_id,
-                gateway_interface_id, traceable, created_at, updated_at)
-               VALUES ({_ph(16)})''',
+                gateway_interface_id, traceable, created_at, updated_at,
+                prefix_cidr, ip_version, prefix_len)
+               VALUES ({_ph(19)})''',
             (prefix_id, prefix, vrf_id or None, vlan_id or None, site_id or None,
              tenant_id, status, name, gateway, description, network_type,
              gateway_device_id or None, gateway_interface_id or None,
-             traceable, now, now),
+             traceable, now, now, prefix, net.version, net.prefixlen),
         )
         conn.commit()
 
@@ -272,7 +328,13 @@ def create_subnet(
         rebuild_prefixes_hierarchy(conn)
 
         logger.info("Created prefix %s (%s)", prefix_id, prefix)
-        return {'id': prefix_id, 'total_ips': _calculate_total_ips(prefix)}
+        return {
+            'id': prefix_id,
+            'prefix': prefix,
+            'ip_version': net.version,
+            'prefix_len': net.prefixlen,
+            'total_ips': _calculate_total_ips(prefix),
+        }
     finally:
         conn.close()
 
@@ -286,10 +348,30 @@ def update_subnet(subnet_id: str, **fields) -> bool:
         if not row:
             return False
 
+        if 'prefix' in fields and fields['prefix'] is not None:
+            fields['prefix'], _net = _normalize_prefix(fields['prefix'])
+        target = dict(row)
+        target.update({k: v for k, v in fields.items() if v is not None})
+        if any(k in fields for k in ('prefix', 'tenant_id', 'vrf_id', 'site_id')):
+            _validate_prefix_overlap(
+                conn,
+                prefix=target.get('prefix') or '',
+                tenant_id=target.get('tenant_id'),
+                vrf_id=target.get('vrf_id'),
+                site_id=target.get('site_id'),
+                exclude_id=subnet_id,
+            )
+
+        if 'prefix' in fields and fields['prefix'] is not None:
+            fields['prefix_cidr'] = fields['prefix']
+            fields['ip_version'] = _net.version
+            fields['prefix_len'] = _net.prefixlen
+
         allowed_fields = (
             'name', 'vrf_id', 'vlan_id', 'site_id', 'tenant_id', 'status',
             'gateway', 'description', 'prefix', 'network_type',
             'gateway_device_id', 'gateway_interface_id', 'traceable',
+            'prefix_cidr', 'ip_version', 'prefix_len',
         )
         updates = []
         params = []
@@ -370,47 +452,69 @@ def create_address(
     device_type: str = '',
     description: str = '',
     status: str = 'active',
+    interface_id: str = '',
 ) -> dict:
     """Add an IP address after validating it belongs to the subnet."""
+    address = _normalize_address(address)
     conn = get_db_connection()
     try:
-        subnet = conn.execute(
-            f'SELECT * FROM prefixes WHERE id = {_PH}', (subnet_id,)
-        ).fetchone()
-        if not subnet:
-            raise ValueError('Subnet not found')
-
-        # Parse prefix to validate
-        try:
-            net = ipaddress.ip_network(subnet['prefix'], strict=False)
-        except ValueError:
-            raise ValueError('Invalid subnet prefix')
-
-        if ipaddress.ip_address(address) not in net:
-            raise ValueError(f"Address {address} is not within subnet {net}")
-
-        # Duplicate check
-        existing = conn.execute(
-            f'SELECT id FROM ip_addresses WHERE subnet_id = {_PH} AND address = {_PH}',
-            (subnet_id, address),
-        ).fetchone()
-        if existing:
-            raise ValueError('IP address already registered in this subnet')
-
-        addr_id = f"ip-{uuid.uuid4().hex[:12]}"
-        now = _utc_now()
-        conn.execute(
-            f'''INSERT INTO ip_addresses
-               (id, subnet_id, address, hostname, device_id, interface_name,
-                mac_address, device_type, status, description, last_seen, created_at, updated_at)
-               VALUES ({_ph(13)})''',
-            (addr_id, subnet_id, address, hostname, device_id,
-             interface_name, mac_address, device_type, status, description, now, now, now),
+        addr = _create_address_with_conn(
+            conn,
+            subnet_id,
+            address=address,
+            hostname=hostname,
+            device_id=device_id,
+            interface_name=interface_name,
+            interface_id=interface_id,
+            mac_address=mac_address,
+            device_type=device_type,
+            description=description,
+            status=status,
+            lock_prefix=True,
         )
         conn.commit()
-        return {'id': addr_id}
+        return addr
     finally:
         conn.close()
+
+
+def _create_address_with_conn(conn, subnet_id: str, *, address: str, hostname: str = '',
+                              device_id: str = '', interface_name: str = '',
+                              interface_id: str = '', mac_address: str = '',
+                              device_type: str = '', description: str = '',
+                              status: str = 'active', lock_prefix: bool = False) -> dict:
+    subnet = _select_prefix_for_update(conn, subnet_id) if lock_prefix else conn.execute(
+        f'SELECT * FROM prefixes WHERE id = {_PH}', (subnet_id,)
+    ).fetchone()
+    if not subnet:
+        raise ValueError('Subnet not found')
+    try:
+        net = ipaddress.ip_network(subnet['prefix'], strict=False)
+    except ValueError:
+        raise ValueError('Invalid subnet prefix')
+    if ipaddress.ip_address(address) not in net:
+        raise ValueError(f"Address {address} is not within subnet {net}")
+    existing = conn.execute(
+        f'SELECT id FROM ip_addresses WHERE subnet_id = {_PH} AND address = {_PH}',
+        (subnet_id, address),
+    ).fetchone()
+    if existing:
+        raise ValueError('IP address already registered in this subnet')
+    addr_id = f"ip-{uuid.uuid4().hex[:12]}"
+    now = _utc_now()
+    ip_addr_with_mask = f"{address}/{net.prefixlen}"
+    conn.execute(
+        f'''INSERT INTO ip_addresses
+           (id, subnet_id, address, hostname, device_id, interface_name,
+            mac_address, device_type, status, description, last_seen, created_at, updated_at,
+            ip_address, prefix_id, vrf_id, interface_id, address_inet, ip_version)
+           VALUES ({_ph(19)})''',
+        (addr_id, subnet_id, address, hostname, device_id,
+         interface_name, mac_address, device_type, status, description, now, now, now,
+         ip_addr_with_mask, subnet_id, subnet['vrf_id'] or '', interface_id or '',
+         address, ipaddress.ip_address(address).version),
+    )
+    return {'id': addr_id, 'address': address, 'status': status}
 
 
 def update_address(address_id: str, **fields) -> bool:
@@ -424,7 +528,7 @@ def update_address(address_id: str, **fields) -> bool:
 
         updates = []
         params = []
-        for field in ('hostname', 'device_id', 'interface_name', 'mac_address',
+        for field in ('hostname', 'device_id', 'interface_name', 'interface_id', 'mac_address',
                       'device_type', 'description', 'status'):
             val = fields.get(field)
             if val is not None:
@@ -457,6 +561,81 @@ def delete_address(address_id: str) -> bool:
         return True
     finally:
         conn.close()
+
+
+def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str = '',
+                          interface_id: str = '', interface_name: str = '',
+                          mac_address: str = '', purpose: str = '',
+                          requested_by: str = '', status: str = 'allocated') -> dict:
+    conn = get_db_connection()
+    try:
+        subnet = _select_prefix_for_update(conn, subnet_id)
+        if not subnet:
+            raise ValueError('Subnet not found')
+        net = ipaddress.ip_network(subnet['prefix'], strict=False)
+        used_rows = conn.execute(
+            f"""SELECT address FROM ip_addresses
+                WHERE subnet_id = {_PH}
+                  AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
+            (subnet_id,),
+        ).fetchall()
+        used = {str(ipaddress.ip_address(r['address'])) for r in used_rows if r['address']}
+        candidates = net.hosts() if net.version == 4 and net.prefixlen < 31 else iter(net)
+        selected = None
+        for candidate in candidates:
+            cand = str(candidate)
+            if cand not in used:
+                selected = cand
+                break
+        if not selected:
+            raise ValueError('No available IP addresses in this subnet')
+        addr = _create_address_with_conn(
+            conn,
+            subnet_id,
+            address=selected,
+            hostname=hostname,
+            device_id=device_id,
+            interface_name=interface_name,
+            interface_id=interface_id,
+            mac_address=mac_address,
+            device_type=purpose,
+            description=f"Allocated by {requested_by}" if requested_by else '',
+            status=status,
+        )
+        conn.commit()
+        return addr
+    finally:
+        conn.close()
+
+
+def reserve_address(subnet_id: str, *, address: str, hostname: str = '', device_id: str = '',
+                    interface_id: str = '', interface_name: str = '', mac_address: str = '',
+                    purpose: str = '', requested_by: str = '') -> dict:
+    return create_address(
+        subnet_id,
+        address=address,
+        hostname=hostname,
+        device_id=device_id,
+        interface_id=interface_id,
+        interface_name=interface_name,
+        mac_address=mac_address,
+        device_type=purpose,
+        description=f"Reserved by {requested_by}" if requested_by else '',
+        status='reserved',
+    )
+
+
+def release_address(address_id: str, *, released_by: str = '') -> bool:
+    description_suffix = f"Released by {released_by}" if released_by else "Released"
+    return update_address(
+        address_id,
+        status='released',
+        device_id='',
+        interface_id='',
+        interface_name='',
+        mac_address='',
+        description=description_suffix,
+    )
 
 
 # ══════════════════════════════════════════════════════════

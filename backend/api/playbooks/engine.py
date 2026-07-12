@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from database import get_db_connection
-from core.crypto import decrypt_credential
+from services.vault_service import resolve_device_credentials
 from .manager import ws_manager
 from .scenarios import _render_phase_commands
 from .builtin_scenarios import PLATFORM_SAVE_COMMANDS, PLATFORM_SHOW_RUNNING
@@ -113,7 +113,10 @@ async def _run_playbook(
     devices = {}
     for d in device_rows:
         dd = dict(d)
-        dd['password'] = decrypt_credential(dd.get('password')) or ''
+        creds = resolve_device_credentials(dd)
+        dd['username'] = creds.get('normal_username') or creds.get('username') or creds.get('admin_username') or ''
+        dd['password'] = creds.get('normal_password') or creds.get('password') or creds.get('admin_password') or ''
+        dd['enable_password'] = creds.get('enable_password') or ''
         devices[d['id']] = dd
     conn.close()
 
@@ -425,4 +428,3 @@ async def _do_rollback(execution_id: str, service, device: dict, phases: dict, v
         "type": "rollback_done", "device_id": device['id'],
         "hostname": hostname, "output": result,
     })
-

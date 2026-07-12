@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import type { Job, ScheduledTask, Script, ConfigTemplate, SessionUser, Device } from '../types';
+import { normalizeAutomationPlatform } from '../pages/AutomationExecute/helpers';
 
 interface UseAutomationProps {
   currentUser: SessionUser;
@@ -308,7 +309,7 @@ export const useAutomation = ({
   }, [batchMode, batchDeviceIds, devices, selectedDevice]);
 
   const quickDetectedPlatforms = useMemo(() => {
-    return Array.from(new Set(quickTargetDevices.map((d) => d.platform).filter(Boolean)));
+    return Array.from(new Set(quickTargetDevices.map((d) => normalizeAutomationPlatform(d.platform)).filter(Boolean)));
   }, [quickTargetDevices]);
 
   const quickHasMixedPlatforms = quickDetectedPlatforms.length > 1;

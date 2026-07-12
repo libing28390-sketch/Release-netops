@@ -25,17 +25,34 @@ SUPPORTED_CATEGORIES = (
 
 PLATFORM_DEVICE_TYPE_MAP = {
     'cisco_ios': 'cisco_ios',
+    'cisco': 'cisco_ios',
+    'ios': 'cisco_ios',
+    'iosxe': 'cisco_ios',
+    'cisco_iosxe': 'cisco_ios',
     'cisco_nxos': 'cisco_nxos',
+    'nxos': 'cisco_nxos',
+    'nexus': 'cisco_nxos',
     'juniper_junos': 'juniper_junos',
+    'juniper': 'juniper_junos',
+    'junos': 'juniper_junos',
     'arista_eos': 'arista_eos',
+    'arista': 'arista_eos',
+    'eos': 'arista_eos',
     'huawei_vrp': 'huawei',
     'huawei_vrpv8': 'huawei',
     'huawei': 'huawei',
+    'vrp': 'huawei',
+    'ce': 'huawei',
+    'ce_vrp': 'huawei',
+    'ne': 'huawei',
     '\u534e\u4e3avrp': 'huawei',
     'h3c_comware': 'hp_comware',
+    'h3c': 'hp_comware',
     'comware': 'hp_comware',
     'hp_comware': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
+    'ruijie': 'ruijie_os',
+    'rgos': 'ruijie_os',
     'linux': 'linux',
     'ubuntu': 'linux',
     'centos': 'linux',
@@ -44,27 +61,61 @@ PLATFORM_DEVICE_TYPE_MAP = {
 
 NTC_PLATFORM_MAP = {
     'cisco_ios': 'cisco_ios',
+    'cisco': 'cisco_ios',
+    'ios': 'cisco_ios',
+    'iosxe': 'cisco_ios',
+    'cisco_iosxe': 'cisco_ios',
     'cisco_nxos': 'cisco_nxos',
+    'nxos': 'cisco_nxos',
+    'nexus': 'cisco_nxos',
     'juniper_junos': 'juniper_junos',
+    'juniper': 'juniper_junos',
+    'junos': 'juniper_junos',
     'arista_eos': 'arista_eos',
+    'arista': 'arista_eos',
+    'eos': 'arista_eos',
     'huawei_vrp': 'huawei_vrp',
     'huawei_vrpv8': 'huawei_vrp',
     'huawei': 'huawei_vrp',
+    'vrp': 'huawei_vrp',
+    'ce': 'huawei_vrp',
+    'ce_vrp': 'huawei_vrp',
+    'ne': 'huawei_vrp',
     '\u534e\u4e3avrp': 'huawei_vrp',
     'h3c_comware': 'hp_comware',
+    'h3c': 'hp_comware',
     'comware': 'hp_comware',
     'hp_comware': 'hp_comware',
     # ntc-templates 当前没有 ruijie_os 平台索引，临时回退 to Cisco 语法族做有限复用。
     'ruijie_rgos': 'cisco_ios',
+    'ruijie': 'cisco_ios',
+    'rgos': 'cisco_ios',
 }
 
 # Alias map: maps non-standard platform values stored in DB to canonical keys
 _PLATFORM_ALIAS: dict[str, str] = {
+    'cisco': 'cisco_ios',
+    'ios': 'cisco_ios',
+    'iosxe': 'cisco_ios',
+    'cisco_iosxe': 'cisco_ios',
+    'nxos': 'cisco_nxos',
+    'nexus': 'cisco_nxos',
+    'juniper': 'juniper_junos',
+    'junos': 'juniper_junos',
+    'arista': 'arista_eos',
+    'eos': 'arista_eos',
+    'h3c': 'h3c_comware',
     'comware': 'h3c_comware',
     'hp_comware': 'h3c_comware',
     'huawei': 'huawei_vrp',
     'huawei_vrpv8': 'huawei_vrp',
+    'vrp': 'huawei_vrp',
+    'ce': 'huawei_vrp',
+    'ce_vrp': 'huawei_vrp',
+    'ne': 'huawei_vrp',
     '\u534e\u4e3avrp': 'huawei_vrp',
+    'ruijie': 'ruijie_rgos',
+    'rgos': 'ruijie_rgos',
 }
 
 
@@ -186,7 +237,14 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
     return {category: catalog.get(category, []) for category in categories}
 
 
-def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'normal') -> dict[str, Any]:
+def _first_complete_pair(*pairs: tuple[str, str]) -> tuple[str, str]:
+    for username, password in pairs:
+        if username and password:
+            return username, password
+    return '', ''
+
+
+def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'auto') -> dict[str, Any]:
     platform = _normalize_platform(device_info.get('platform') or '')
     device_type = PLATFORM_DEVICE_TYPE_MAP.get(platform) or platform or 'cisco_ios'
     
@@ -196,14 +254,29 @@ def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'norm
     # 统一通过 resolve_device_credentials 解密，避免直接读取加密字段
     creds = resolve_device_credentials(device_info)
 
-    # PAM logic: select username/password based on role
-    if auth_role == 'admin':
-        username = creds.get('admin_username') or creds.get('username') or ''
-        password = creds.get('admin_password') or creds.get('password') or ''
+    username = ''
+    password = ''
+    role = str(auth_role or 'auto').lower().strip()
+    if role == 'admin':
+        username, password = _first_complete_pair(
+            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
+            (creds.get('username') or '', creds.get('password') or ''),
+            (creds.get('normal_username') or '', creds.get('normal_password') or ''),
+        )
+    elif role == 'normal':
+        username, password = _first_complete_pair(
+            (creds.get('normal_username') or '', creds.get('normal_password') or ''),
+            (creds.get('username') or '', creds.get('password') or ''),
+            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
+        )
     else:
-        # Default to normal user, but fallback to main credentials if missing
-        username = creds.get('normal_username') or creds.get('username') or ''
-        password = creds.get('normal_password') or creds.get('password') or ''
+        # For operational collection, prefer the credential-vault primary login,
+        # then privileged login, then normal login. Keep username/password paired.
+        username, password = _first_complete_pair(
+            (creds.get('username') or '', creds.get('password') or ''),
+            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
+            (creds.get('normal_username') or '', creds.get('normal_password') or ''),
+        )
 
     params = {
         'device_type': device_type,
@@ -644,7 +717,7 @@ def _build_base_payload(device_info: dict[str, Any], platform: str) -> dict[str,
     }
 
 
-def collect_operational_data(device_info: dict[str, Any], categories: list[str] | None = None, auth_role: str = 'normal') -> dict[str, Any]:
+def collect_operational_data(device_info: dict[str, Any], categories: list[str] | None = None, auth_role: str = 'auto') -> dict[str, Any]:
     role = str(device_info.get('role') or '').strip()
     selected_categories = _resolve_categories(categories, role=role)
     platform = _normalize_platform(device_info.get('platform') or 'cisco_ios')
@@ -714,7 +787,7 @@ def collect_operational_data(device_info: dict[str, Any], categories: list[str] 
     return payload
 
 
-def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_role: str = 'normal') -> dict[str, Any]:
+def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_role: str = 'auto') -> dict[str, Any]:
     platform = _normalize_platform(device_info.get('platform') or 'cisco_ios')
     conn_params = _build_connection_params(device_info, auth_role=auth_role)
 

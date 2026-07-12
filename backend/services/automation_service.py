@@ -1,6 +1,7 @@
 from typing import List, Dict, Any
 from engine.orchestrator import get_orchestrator
 from drivers.base import CommandResult
+from services.connection_profile import resolve_ssh_port
 
 class AutomationService:
     """
@@ -44,7 +45,7 @@ class AutomationService:
             "platform": platform,
             "use_pool": False
         }
-        category = str(d.get('device_category') or '').lower() if hasattr(d, 'get') else ''
+        category = ''
         is_server = any(t in platform.lower() for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server')) or 'server' in category
         dummy_cmd = "echo 1" if is_server else "show clock"
         res = self.orchestrator.execute_single(device, "command", dummy_cmd)
@@ -59,7 +60,7 @@ class AutomationService:
             "username": device_info.get("username"),
             "password": device_info.get("password"),
             "platform": device_info.get("platform", "cisco_ios"),
-            "port": device_info.get("port", 22),
+            "port": resolve_ssh_port(device_info),
             "driver_type": self.driver_type,
             "use_pool": False
         }

@@ -151,11 +151,13 @@ def handle_url(url):
                 return
                 
             ip = resp_data.get('ip')
+            port = int(resp_data.get('port') or 22)
             user = resp_data.get('user')
             password = resp_data.get('password')
         else:
             # Fallback to direct credentials in URI parameters
-            ip = parsed.netloc
+            ip = parsed.hostname or parsed.netloc
+            port = parsed.port or int(params.get('port', ['22'])[0] or 22)
             user = params.get('user', ['admin'])[0]
             password = params.get('password', [''])[0]
         
@@ -170,31 +172,31 @@ def handle_url(url):
             show_error(error_msg)
             return
 
-        print(f"Connecting to {ip} as {user} using {client_type} at {client_path}...")
+        print(f"Connecting to {ip}:{port} as {user} using {client_type} at {client_path}...")
         
         # Construct arguments based on client type
         args = None
         if client_type == 'xshell':
             # Xshell command: xshell.exe -url ssh://user:password@host
             if password:
-                args = f"-url ssh://{user}:{password}@{ip}"
+                args = f"-url ssh://{user}:{password}@{ip}:{port}"
             else:
-                args = f"-url ssh://{user}@{ip}"
+                args = f"-url ssh://{user}@{ip}:{port}"
         elif client_type == 'putty':
             if password:
-                args = f"-ssh {user}@{ip} -pw \"{password}\""
+                args = f"-ssh {user}@{ip} -P {port} -pw \"{password}\""
             else:
-                args = f"-ssh {user}@{ip}"
+                args = f"-ssh {user}@{ip} -P {port}"
         elif client_type == 'securecrt':
             if password:
-                args = f"/SSH2 /L {user} /PASSWORD \"{password}\" {ip}"
+                args = f"/SSH2 /L {user} /P {port} /PASSWORD \"{password}\" {ip}"
             else:
-                args = f"/SSH2 /L {user} {ip}"
+                args = f"/SSH2 /L {user} /P {port} {ip}"
         elif client_type == 'mobaxterm':
             if password:
-                args = f"ssh://{user}:{password}@{ip}"
+                args = f"ssh://{user}:{password}@{ip}:{port}"
             else:
-                args = f"ssh://{user}@{ip}"
+                args = f"ssh://{user}@{ip}:{port}"
 
         if args is not None:
             try:
@@ -205,17 +207,17 @@ def handle_url(url):
                 # Fallback to subprocess if ShellExecuteW fails
                 cmd = [client_path]
                 if client_type == 'xshell':
-                    cmd += ["-url", f"ssh://{user}@{ip}"]
+                    cmd += ["-url", f"ssh://{user}@{ip}:{port}"]
                 elif client_type == 'putty':
-                    cmd += ["-ssh", f"{user}@{ip}"]
+                    cmd += ["-ssh", f"{user}@{ip}", "-P", str(port)]
                 elif client_type == 'securecrt':
-                    cmd += ["/SSH2", "/L", user, ip]
+                    cmd += ["/SSH2", "/L", user, "/P", str(port), ip]
                 elif client_type == 'mobaxterm':
-                    cmd += [f"ssh://{user}@{ip}"]
+                    cmd += [f"ssh://{user}@{ip}:{port}"]
                 subprocess.Popen(cmd)
         else:
             # Default fallback to standard ssh handler URL
-            webbrowser.open(f"ssh://{user}@{ip}")
+            webbrowser.open(f"ssh://{user}@{ip}:{port}")
             
     except Exception as e:
         show_error(f"Error handling {url}:\n{str(e)}")
@@ -235,4 +237,3 @@ if __name__ == "__main__":
         handle_url(sys.argv[1])
     else:
         register_protocol()
-

@@ -1301,14 +1301,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         let url = '';
                         let user = '';
                         let host = '';
+                        let port = 22;
 
                         if (terminalTarget) {
                           user = terminalAccessLevel === 'admin' ? (terminalTarget.admin_username || 'admin') : (terminalTarget.normal_username || 'user');
                           host = terminalTarget.management_ip;
+                          port = Number(terminalTarget.management_port || 22) || 22;
                         } else if (terminalSession.title.includes('@')) {
                           const [u, h] = terminalSession.title.split('@');
                           user = u;
                           host = h.split(':')[0];
+                          port = Number(h.split(':')[1] || 22) || 22;
                         }
 
                         if (host && user) {
@@ -1329,6 +1332,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                             if (result.success && result.session_token) {
                               sessionToken = result.session_token;
                             }
+                            if (result.success && result.port) {
+                              port = Number(result.port) || port;
+                            }
                           } catch (err) {
                             console.error(err);
                           }
@@ -1337,7 +1343,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                             const isSsl = window.location.protocol === 'https:' ? '1' : '0';
                             url = `nexora://${window.location.host}?token=${sessionToken}&client=${terminalType}&path=${encodeURIComponent(terminalPath)}&ssl=${isSsl}`;
                           } else {
-                            url = `ssh://${encodeURIComponent(user)}@${host}:22`;
+                            url = `ssh://${encodeURIComponent(user)}@${host}:${port}`;
                           }
                         }
 

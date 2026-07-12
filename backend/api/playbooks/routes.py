@@ -26,6 +26,35 @@ from .engine import (
 router = APIRouter()
 logger = logging.getLogger("api.playbooks.routes")
 
+
+def _normalize_playbook_platform(platform: str | None) -> str:
+    p = str(platform or '').lower().strip()
+    aliases = {
+        'cisco': 'cisco_ios',
+        'ios': 'cisco_ios',
+        'iosxe': 'cisco_ios',
+        'cisco_iosxe': 'cisco_ios',
+        'nxos': 'cisco_nxos',
+        'nexus': 'cisco_nxos',
+        'huawei': 'huawei_vrp',
+        'huawei_vrpv8': 'huawei_vrp',
+        'vrp': 'huawei_vrp',
+        'ce': 'huawei_vrp',
+        'ce_vrp': 'huawei_vrp',
+        'ne': 'huawei_vrp',
+        'h3c': 'h3c_comware',
+        'comware': 'h3c_comware',
+        'hp_comware': 'h3c_comware',
+        'juniper': 'juniper_junos',
+        'junos': 'juniper_junos',
+        'arista': 'arista_eos',
+        'eos': 'arista_eos',
+        'ruijie': 'ruijie_rgos',
+        'rgos': 'ruijie_rgos',
+    }
+    return aliases.get(p, p or 'cisco_ios')
+
+
 @router.get("/playbooks/platforms")
 async def list_platforms():
     """Return all supported vendor/platform definitions."""
@@ -483,7 +512,8 @@ async def preview_playbook(payload: dict = Body(...)):
     """Preview rendered commands without executing."""
     scenario_id = payload.get('scenario_id')
     variables = payload.get('variables', {})
-    platform = payload.get('platform', 'cisco_ios')
+    requested_platform = payload.get('platform', 'cisco_ios')
+    platform = _normalize_playbook_platform(requested_platform)
 
     scenario = next((s for s in _all_scenarios() if s['id'] == scenario_id), None)
     if not scenario:
@@ -495,6 +525,7 @@ async def preview_playbook(payload: dict = Body(...)):
 
     return {
         "platform": platform,
+        "requested_platform": requested_platform,
         "pre_check": _render_phase_commands(phases.get('pre_check', []), variables),
         "execute": _render_phase_commands(phases.get('execute', []), variables),
         "post_check": _render_phase_commands(phases.get('post_check', []), variables),
@@ -629,7 +660,8 @@ async def execute_playbook(request: Request, payload: dict = Body(...)):
     if not device_ids:
         raise HTTPException(status_code=400, detail="No devices selected")
 
-    platform = payload.get('platform', 'cisco_ios')
+    requested_platform = payload.get('platform', 'cisco_ios')
+    platform = _normalize_playbook_platform(requested_platform)
 
     scenario = next((s for s in _all_scenarios() if s['id'] == scenario_id), None)
     # Allow custom playbooks (scenario can be None — user provides commands directly)
@@ -751,5 +783,3 @@ async def confirm_commit(execution_id: str):
                 "message": "Commit confirmed. Auto-rollback cancelled."}
     return {"status": "no_pending", "execution_id": execution_id,
             "message": "No pending commit confirmation found (already confirmed or timed out)."}
-
-

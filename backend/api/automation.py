@@ -15,8 +15,8 @@ from drivers.base import CommandResult
 from services.audit_service import log_audit_event
 from api.devices import _record_instant_execution
 from services.config_approval_service import request_approval, verify_code, consume_approval
-from core.crypto import decrypt_credential
 from core.rbac import require_role
+from services.vault_service import resolve_device_credentials
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -28,6 +28,45 @@ def get_operator(user=require_role("Operator")):
 
 def get_admin(user=require_role("Administrator")):
     return user
+
+
+def _first_complete_credential_pair(*pairs: tuple[str, str]) -> tuple[str, str]:
+    for username, password in pairs:
+        if username and password:
+            return username, password
+    return '', ''
+
+
+def _resolve_execution_credentials(device: dict, auth_role: str = 'normal') -> dict:
+    """Resolve paired plaintext credentials for automation command execution."""
+    creds = resolve_device_credentials(device)
+    role = str(auth_role or 'normal').lower().strip()
+
+    if role == 'admin':
+        username, password = _first_complete_credential_pair(
+            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
+            (creds.get('username') or '', creds.get('password') or ''),
+            (creds.get('normal_username') or '', creds.get('normal_password') or ''),
+        )
+    elif role == 'auto':
+        username, password = _first_complete_credential_pair(
+            (creds.get('username') or '', creds.get('password') or ''),
+            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
+            (creds.get('normal_username') or '', creds.get('normal_password') or ''),
+        )
+    else:
+        username, password = _first_complete_credential_pair(
+            (creds.get('normal_username') or '', creds.get('normal_password') or ''),
+            (creds.get('username') or '', creds.get('password') or ''),
+            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
+        )
+
+    return {
+        'username': username,
+        'password': password,
+        'enable_password': creds.get('enable_password') or '',
+        'resolved_role': role,
+    }
 
 # ── Script Management CRUD ──
 
@@ -233,22 +272,12 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
             device_row = conn.execute('SELECT * FROM devices WHERE id = ?', (dev_id,)).fetchone()
             if device_row:
                 d = dict(device_row)
-                # Resolve credentials based on auth_role: Default to 'normal' for least privilege
                 auth_role = payload.get('auth_role') or payload.get('role') or 'normal'
-                
-                exec_username = d.get('username')
-                exec_password = d.get('password')
-                
-                if auth_role == 'normal':
-                    if d.get('normal_username'): exec_username = d.get('normal_username')
-                    if d.get('normal_password'): exec_password = d.get('normal_password')
-                elif auth_role == 'admin':
-                    if d.get('admin_username'): exec_username = d.get('admin_username')
-                    if d.get('admin_password'): exec_password = d.get('admin_password')
-
+                resolved_creds = _resolve_execution_credentials(d, auth_role)
+                exec_username = resolved_creds['username']
                 d['username'] = exec_username
-                decrypted_pwd = decrypt_credential(exec_password) or ''
-                d['password'] = decrypted_pwd
+                d['password'] = resolved_creds['password']
+                d['enable_password'] = resolved_creds['enable_password']
                 
                 logger.info(f"[Automation] Executing for {d.get('hostname')} ({d.get('ip_address')}) with role={auth_role}, username={exec_username}")
                 

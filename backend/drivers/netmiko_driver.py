@@ -158,19 +158,38 @@ class NetmikoDriver(BaseDriver):
         import logging
         p = str(platform or '').lower().strip()
         aliases = {
+            'cisco': 'cisco_ios',
+            'ios': 'cisco_ios',
+            'iosxe': 'cisco_ios',
+            'cisco_iosxe': 'cisco_ios',
+            'nxos': 'cisco_nxos',
+            'nexus': 'cisco_nxos',
+            'h3c': 'h3c_comware',
             'comware': 'h3c_comware',
             'hp_comware': 'h3c_comware',
             'huawei': 'huawei_vrp',
             'huawei_vrpv8': 'huawei_vrp',
+            'vrp': 'huawei_vrp',
+            'ce': 'huawei_vrp',
+            'ce_vrp': 'huawei_vrp',
+            'ne': 'huawei_vrp',
+            'juniper': 'juniper_junos',
+            'junos': 'juniper_junos',
+            'arista': 'arista_eos',
+            'eos': 'arista_eos',
+            'ruijie': 'ruijie_rgos',
+            'rgos': 'ruijie_rgos',
             '\u534e\u4e3avrp': 'huawei_vrp',
         }
         p = aliases.get(p, p)
         mapping = {
             'cisco_ios':    'cisco_ios',
+            'cisco_nxos':   'cisco_nxos',
             'huawei_vrp':   'huawei',
             'h3c_comware':  'hp_comware',
             'juniper_junos':'juniper_junos',
             'arista_eos':   'arista_eos',
+            'ruijie_rgos':  'ruijie_os',
             'linux':        'linux',
             'ubuntu':       'linux',
             'centos':       'linux',

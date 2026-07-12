@@ -26,7 +26,7 @@ import {
 import * as XLSX from 'xlsx';
 import { AssetReadonlyDetailInner, normalizeAssetApiRow } from '../../components/AssetReadonlyDetail';
 import PageHero from '../../components/PageHero';
-import { Rack, DeviceType, RackDevice, RackLayout, RackStats, Props } from './types';
+import { Rack, RackType, DeviceType, RackDevice, RackLayout, RackStats, Props } from './types';
 import { ROLE_COLORS, U_PX, RACK_W, LABEL_W, API, INSTALL_ASSET_PAGE_SIZE, STATUS_LABEL } from './constants';
 import {
   getNormalizedRoleColor,
@@ -61,6 +61,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const zh = language === 'zh';
 
   const [racks, setRacks] = useState<Rack[]>([]);
+  const [rackTypes, setRackTypes] = useState<RackType[]>([]);
   const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>([]);
   const [stats, setStats] = useState<RackStats | null>(null);
   const [selectedRackId, setSelectedRackId] = useState('');
@@ -94,7 +95,21 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showDeviceTypeModal, setShowDeviceTypeModal] = useState(false);
 
-  const [rackForm, setRackForm] = useState({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '', power_capacity_watts: 0, placement_strategy: 'bottom_first' });
+  const [rackForm, setRackForm] = useState({
+    name: '',
+    datacenter: '',
+    room: '',
+    row: '',
+    rack_type_id: '',
+    total_u: 42,
+    width_mm: 600,
+    depth_mm: 1000,
+    max_weight_kg: 0,
+    description: '',
+    power_capacity_watts: 0,
+    allow_front_rear_mount: true,
+    placement_strategy: 'bottom_first'
+  });
   const [deviceForm, setDeviceForm] = useState({ name: '', device_type_id: '', start_u: 1, position: 'front' as string, status: 'active', serial_number: '', asset_id: '' });
   const [dtForm, setDtForm] = useState({ model: '', vendor: '', u_height: 1, device_role: 'switch', description: '', power_watts: 0 });
   const [formError, setFormError] = useState('');
@@ -140,6 +155,17 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     const dcs = new Set(racks.map(r => r.datacenter).filter(Boolean));
     return Array.from(dcs).sort();
   }, [racks]);
+
+  const rackTypeById = useMemo(() => {
+    const map = new Map<string, RackType>();
+    rackTypes.forEach(rt => map.set(rt.id, rt));
+    return map;
+  }, [rackTypes]);
+
+  const getRackTypeName = useCallback((rackTypeId?: string) => {
+    if (!rackTypeId) return '';
+    return rackTypeById.get(rackTypeId)?.name || '';
+  }, [rackTypeById]);
 
   const filteredRacks = useMemo(() => {
     let list = racks;
@@ -189,6 +215,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const loadDeviceTypes = useCallback(async () => {
     try { setDeviceTypes(await fetchJson<DeviceType[]>(`${API}/device-types`)); } catch {}
+  }, []);
+
+  const loadRackTypes = useCallback(async () => {
+    try { setRackTypes(await fetchJson<RackType[]>(`${API}/rack-types`)); } catch {}
   }, []);
 
   const loadStats = useCallback(async () => {
@@ -243,7 +273,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { loadRacks(); loadDeviceTypes(); loadStats(); }, []);
+  useEffect(() => { loadRacks(); loadDeviceTypes(); loadRackTypes(); loadStats(); }, []);
   useEffect(() => { if (selectedRackId) loadLayout(selectedRackId); }, [selectedRackId, loadLayout]);
 
   useEffect(() => {
@@ -268,7 +298,23 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const installAssetsCanLoadMore = assetTotal > 0 && assets.length < assetTotal;
 
-  const refresh = () => { loadRacks(); loadStats(); if (selectedRackId) loadLayout(selectedRackId); };
+  const refresh = () => { loadRacks(); loadRackTypes(); loadStats(); if (selectedRackId) loadLayout(selectedRackId); };
+
+  const applyRackTypeToForm = (rackTypeId: string) => {
+    const rt = rackTypeById.get(rackTypeId);
+    setRackForm(prev => ({
+      ...prev,
+      rack_type_id: rackTypeId,
+      ...(rt ? {
+        total_u: rt.total_u || prev.total_u,
+        width_mm: rt.width_mm || prev.width_mm,
+        depth_mm: rt.depth_mm || prev.depth_mm,
+        max_weight_kg: rt.max_weight_kg || prev.max_weight_kg,
+        power_capacity_watts: rt.power_capacity_watts || prev.power_capacity_watts,
+        allow_front_rear_mount: rt.allow_front_rear_mount === false || rt.allow_front_rear_mount === 0 ? false : true,
+      } : {})
+    }));
+  };
 
   const handleDeviceSelect = (deviceId: string) => {
     setSelectedDeviceId(deviceId);
@@ -333,12 +379,29 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     '备注': 'remarks',
     'Name*': 'name',
     'Name': 'name',
+    '机柜名称': 'name',
+    '机柜类型': 'rack_type_name',
+    '宽度(mm)': 'width_mm',
+    '深度(mm)': 'depth_mm',
+    '最大承重(kg)': 'max_weight_kg',
+    '允许正反面': 'allow_front_rear_mount',
+    'Rack Type': 'rack_type_name',
+    'Rack Type Name': 'rack_type_name',
+    'rack_type': 'rack_type_name',
+    'rack_type_name': 'rack_type_name',
     'Datacenter': 'datacenter',
     'Room': 'room',
     'Row': 'row',
     'Total U': 'total_u',
+    'Width(mm)': 'width_mm',
+    'Width MM': 'width_mm',
+    'Depth(mm)': 'depth_mm',
+    'Depth MM': 'depth_mm',
+    'Max Weight(kg)': 'max_weight_kg',
+    'Max Weight KG': 'max_weight_kg',
     'Max Power(W)': 'power_capacity_watts',
     'Max Power': 'power_capacity_watts',
+    'Allow Front/Rear': 'allow_front_rear_mount',
     'Cooling Zone': 'cooling_zone',
     'Notes': 'remarks',
     'Description': 'remarks',
@@ -353,9 +416,17 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     const example = zh
       ? ['A-01', '北京第一数据中心', '302机房', 'A列', 42, 6000, '冷通道A区', '测试机柜']
       : ['A-01', 'Beijing DC 1', 'Room 302', 'Row A', 42, 6000, 'Zone A', 'Test rack'];
+    void headers;
+    void example;
+    const templateHeaders = zh
+      ? ['机柜名称*', '机柜类型', '数据中心', '机房', '列', '总U位', '宽度(mm)', '深度(mm)', '最大承重(kg)', '最大功率(W)', '允许正反面', '散热区域', '备注']
+      : ['Name*', 'Rack Type', 'Datacenter', 'Room', 'Row', 'Total U', 'Width(mm)', 'Depth(mm)', 'Max Weight(kg)', 'Max Power(W)', 'Allow Front/Rear', 'Cooling Zone', 'Notes'];
+    const templateExample = zh
+      ? ['A-01', '48U Network Cabinet', '北京第一数据中心', '302机房', 'A列', 48, 600, 1000, 1200, 12000, '是', '冷通道A区', '核心网络机柜']
+      : ['A-01', '48U Network Cabinet', 'Beijing DC 1', 'Room 302', 'Row A', 48, 600, 1000, 1200, 12000, 'yes', 'Zone A', 'Core network rack'];
     
-    const ws = XLSX.utils.aoa_to_sheet([headers, example]);
-    ws['!cols'] = headers.map(() => ({ wch: 15 }));
+    const ws = XLSX.utils.aoa_to_sheet([templateHeaders, templateExample]);
+    ws['!cols'] = templateHeaders.map(() => ({ wch: 15 }));
     XLSX.utils.book_append_sheet(wb, ws, zh ? '机柜模板' : 'Rack Template');
     XLSX.writeFile(wb, zh ? '机柜导入模板.xlsx' : 'rack_import_template.xlsx');
   };
@@ -365,6 +436,11 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       const rows = filteredRacks.map(r => {
         const ly = allLayouts.find(l => l.id === r.id);
         return {
+          [zh ? '机柜类型' : 'Rack Type']: getRackTypeName(r.rack_type_id),
+          [zh ? '宽度(mm)' : 'Width(mm)']: r.width_mm || 0,
+          [zh ? '深度(mm)' : 'Depth(mm)']: r.depth_mm || 0,
+          [zh ? '最大承重(kg)' : 'Max Weight(kg)']: r.max_weight_kg || 0,
+          [zh ? '允许正反面' : 'Allow Front/Rear']: r.allow_front_rear_mount === false || r.allow_front_rear_mount === 0 ? (zh ? '否' : 'no') : (zh ? '是' : 'yes'),
           [zh ? '机柜名称' : 'Name']: r.name,
           [zh ? '数据中心' : 'Datacenter']: r.datacenter || '',
           [zh ? '机房' : 'Room']: r.room || '',
@@ -409,15 +485,34 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
               let mappedVal: any = String(val).trim();
               if (key === 'total_u') {
                 mappedVal = parseInt(mappedVal) || 42;
-              } else if (key === 'power_capacity_watts') {
+              } else if (key === 'power_capacity_watts' || key === 'width_mm' || key === 'depth_mm' || key === 'max_weight_kg') {
                 mappedVal = parseInt(mappedVal) || 0;
+              } else if (key === 'allow_front_rear_mount') {
+                mappedVal = !['false', '0', 'no', '否', '不允许'].includes(String(mappedVal).trim().toLowerCase());
               }
               obj[key] = mappedVal;
             }
           }
           if (obj.name) {
+            if (obj.rack_type_name) {
+              const rackType = rackTypes.find(rt => rt.name.trim().toLowerCase() === String(obj.rack_type_name).trim().toLowerCase());
+              if (rackType) {
+                obj.rack_type_id = rackType.id;
+                if (!obj.total_u) obj.total_u = rackType.total_u;
+                if (!obj.width_mm) obj.width_mm = rackType.width_mm || 600;
+                if (!obj.depth_mm) obj.depth_mm = rackType.depth_mm || 1000;
+                if (!obj.max_weight_kg) obj.max_weight_kg = rackType.max_weight_kg || 0;
+                if (!obj.power_capacity_watts) obj.power_capacity_watts = rackType.power_capacity_watts || 0;
+                if (obj.allow_front_rear_mount === undefined) {
+                  obj.allow_front_rear_mount = rackType.allow_front_rear_mount === false || rackType.allow_front_rear_mount === 0 ? false : true;
+                }
+              }
+              delete obj.rack_type_name;
+            }
             if (!obj.total_u) obj.total_u = 42;
             if (!obj.power_capacity_watts) obj.power_capacity_watts = 0;
+            if (!obj.width_mm) obj.width_mm = 600;
+            if (!obj.depth_mm) obj.depth_mm = 1000;
             mapped.push(obj);
           }
         }
@@ -455,13 +550,41 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const openNewRack = () => {
     setEditingRack(null);
-    setRackForm({ name: '', datacenter: '', room: '', row: '', total_u: 42, description: '', power_capacity_watts: 0, placement_strategy: 'bottom_first' });
+    setRackForm({
+      name: '',
+      datacenter: '',
+      room: '',
+      row: '',
+      rack_type_id: '',
+      total_u: 42,
+      width_mm: 600,
+      depth_mm: 1000,
+      max_weight_kg: 0,
+      description: '',
+      power_capacity_watts: 0,
+      allow_front_rear_mount: true,
+      placement_strategy: 'bottom_first'
+    });
     setFormError(''); setShowRackModal(true);
   };
   
   const openEditRack = (rack: Rack) => {
     setEditingRack(rack);
-    setRackForm({ name: rack.name, datacenter: rack.datacenter, room: rack.room, row: rack.row, total_u: rack.total_u, description: rack.description, power_capacity_watts: (rack as any).power_capacity_watts ?? 0, placement_strategy: rack.placement_strategy || 'bottom_first' });
+    setRackForm({
+      name: rack.name,
+      datacenter: rack.datacenter,
+      room: rack.room,
+      row: rack.row,
+      rack_type_id: rack.rack_type_id || '',
+      total_u: rack.total_u,
+      width_mm: rack.width_mm || 600,
+      depth_mm: rack.depth_mm || 1000,
+      max_weight_kg: rack.max_weight_kg || 0,
+      description: rack.description,
+      power_capacity_watts: (rack as any).power_capacity_watts ?? 0,
+      allow_front_rear_mount: rack.allow_front_rear_mount === false || rack.allow_front_rear_mount === 0 ? false : true,
+      placement_strategy: rack.placement_strategy || 'bottom_first'
+    });
     setFormError(''); setShowRackModal(true);
   };
 
@@ -471,6 +594,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       ...rackForm,
       total_u: parseInt(String(rackForm.total_u)) || 42,
       power_capacity_watts: parseInt(String(rackForm.power_capacity_watts)) || 0,
+      width_mm: parseInt(String(rackForm.width_mm)) || 600,
+      depth_mm: parseInt(String(rackForm.depth_mm)) || 1000,
+      max_weight_kg: parseInt(String(rackForm.max_weight_kg)) || 0,
+      allow_front_rear_mount: !!rackForm.allow_front_rear_mount,
     };
     try {
       if (editingRack) {
@@ -647,7 +774,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   /* -- Drag-to-move -- */
 
-  const handleDeviceMove = useCallback((deviceId: string, newStartU: number) => {
+  const handleDeviceMove = useCallback(async (deviceId: string, newStartU: number) => {
     // Find the device info from layout to show in confirmation
     const dev = layout?.devices.find(d => d.id === deviceId);
     if (!dev) return;
@@ -1023,7 +1150,9 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     {rack.datacenter && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#06b6d415', color: '#06b6d4' }}>{rack.datacenter}</span>}
+                    {rack.rack_type_id && <span className="text-[10px] truncate max-w-[120px]" style={{ color: 'var(--muted-text)' }}>{getRackTypeName(rack.rack_type_id)}</span>}
                     <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.total_u}U</span>
+                    {(rack.width_mm || rack.depth_mm) && <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.width_mm || '-'}×{rack.depth_mm || '-'}mm</span>}
                   </div>
                   {searchQuery && (() => {
                     const q = searchQuery.toLowerCase();
@@ -1485,6 +1614,25 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '机柜名称' : 'Name'} *</label>
                   <input value={rackForm.name} onChange={e => setRackForm({ ...rackForm, name: e.target.value })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} placeholder="A-01" />
                 </div>
+                <div>
+                  <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '机柜类型模板' : 'Rack Type Template'}</label>
+                  <select
+                    value={rackForm.rack_type_id}
+                    onChange={e => applyRackTypeToForm(e.target.value)}
+                    className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
+                    style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                  >
+                    <option value="">{zh ? '不使用模板 / 自定义' : 'Custom / No template'}</option>
+                    {rackTypes.map(rt => (
+                      <option key={rt.id} value={rt.id}>
+                        {rt.name} · {rt.total_u}U{rt.width_mm || rt.depth_mm ? ` · ${rt.width_mm || '-'}x${rt.depth_mm || '-'}mm` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--muted-text)' }}>
+                    {zh ? '选择模板会自动填充规格，保存前仍可覆盖。' : 'Selecting a template pre-fills specs; you can still override them.'}
+                  </p>
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '数据中心' : 'Datacenter'}</label>
@@ -1531,6 +1679,30 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                 </div>
                 <div>
                   <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '备注' : 'Description'}</label>
+                  <div className="mb-3 grid grid-cols-2 gap-3">
+                    <input aria-label="rack width mm" type="number" min={0} value={rackForm.width_mm ?? ''} onChange={e => {
+                      const val = e.target.value;
+                      setRackForm({ ...rackForm, width_mm: val === '' ? '' as any : (parseInt(val) || 0) });
+                    }} placeholder={zh ? '宽度(mm)' : 'Width (mm)'} className="w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
+                    <input aria-label="rack depth mm" type="number" min={0} value={rackForm.depth_mm ?? ''} onChange={e => {
+                      const val = e.target.value;
+                      setRackForm({ ...rackForm, depth_mm: val === '' ? '' as any : (parseInt(val) || 0) });
+                    }} placeholder={zh ? '深度(mm)' : 'Depth (mm)'} className="w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
+                    <input aria-label="rack max weight kg" type="number" min={0} value={rackForm.max_weight_kg ?? ''} onChange={e => {
+                      const val = e.target.value;
+                      setRackForm({ ...rackForm, max_weight_kg: val === '' ? '' as any : (parseInt(val) || 0) });
+                    }} placeholder={zh ? '最大承重(kg)' : 'Max Weight (kg)'} className="w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
+                    <select
+                      aria-label="rack front rear mount"
+                      value={rackForm.allow_front_rear_mount ? 'true' : 'false'}
+                      onChange={e => setRackForm({ ...rackForm, allow_front_rear_mount: e.target.value === 'true' })}
+                      className="w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30"
+                      style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}
+                    >
+                      <option value="true">{zh ? '允许正反面' : 'Front/Rear allowed'}</option>
+                      <option value="false">{zh ? '仅单面' : 'Single side only'}</option>
+                    </select>
+                  </div>
                   <textarea value={rackForm.description} onChange={e => setRackForm({ ...rackForm, description: e.target.value })} rows={2} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none resize-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
                 </div>
               </div>

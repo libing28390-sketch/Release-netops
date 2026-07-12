@@ -290,11 +290,57 @@ def _init_db_logic(conn):
     ensure_column('racks', 'cooling_zone', "VARCHAR(50)" if _USE_PG else "TEXT")
     ensure_column('racks', 'status', "VARCHAR(20) DEFAULT 'active'" if _USE_PG else "TEXT DEFAULT 'active'")
     ensure_column('racks', 'placement_strategy', "VARCHAR(20) DEFAULT 'bottom_first'" if _USE_PG else "TEXT DEFAULT 'bottom_first'")
+    ensure_column('racks', 'rack_type_id', "VARCHAR(50) DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
+    ensure_column('racks', 'width_mm', "INTEGER DEFAULT 600" if _USE_PG else "INTEGER DEFAULT 600")
+    ensure_column('racks', 'depth_mm', "INTEGER DEFAULT 1000" if _USE_PG else "INTEGER DEFAULT 1000")
+    ensure_column('racks', 'allow_front_rear_mount', "INTEGER DEFAULT 1" if _USE_PG else "INTEGER DEFAULT 1")
     ensure_column('racks', 'remarks', "TEXT" if _USE_PG else "TEXT")
     ensure_column('racks', 'description', "TEXT DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
 
     ensure_column('racks', 'created_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if _USE_PG else "TEXT")
     ensure_column('racks', 'updated_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if _USE_PG else "TEXT")
+
+    # Create rack_types table if not exists. Rack instances may override
+    # dimensions/capacity, but this gives CMDB a reusable enterprise-grade
+    # cabinet template layer instead of relying on hardcoded 42U assumptions.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS rack_types (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        vendor TEXT DEFAULT '',
+        model TEXT DEFAULT '',
+        total_u INTEGER NOT NULL DEFAULT 42,
+        width_mm INTEGER DEFAULT 600,
+        depth_mm INTEGER DEFAULT 1000,
+        max_weight_kg INTEGER DEFAULT 0,
+        power_capacity_watts INTEGER DEFAULT 0,
+        allow_front_rear_mount INTEGER DEFAULT 1,
+        description TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_rack_types_name ON rack_types(name)')
+    default_rack_types = [
+        ('rack-type-24u-standard', '24U Standard Cabinet', 'Generic', 'STD-24U', 24, 600, 800, 600, 6000, 1, 'Default 24U cabinet template'),
+        ('rack-type-42u-standard', '42U Standard Cabinet', 'Generic', 'STD-42U', 42, 600, 1000, 1000, 10000, 1, 'Default 42U cabinet template'),
+        ('rack-type-48u-network', '48U Network Cabinet', 'Generic', 'NET-48U', 48, 600, 1000, 1200, 12000, 1, 'Default high-density network cabinet template'),
+        ('rack-type-wall-mount-12u', '12U Wall Mount Cabinet', 'Generic', 'WALL-12U', 12, 600, 450, 80, 2000, 0, 'Default wall-mount cabinet template'),
+    ]
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    for rt in default_rack_types:
+        exists = cursor.execute(
+            "SELECT id FROM rack_types WHERE id = ? OR name = ? LIMIT 1",
+            (rt[0], rt[1])
+        ).fetchone()
+        if not exists:
+            cursor.execute(
+                """INSERT INTO rack_types (
+                    id, name, vendor, model, total_u, width_mm, depth_mm, max_weight_kg,
+                    power_capacity_watts, allow_front_rear_mount, description, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (*rt, now, now)
+            )
 
     # Create device_types table if not exists
     cursor.execute('''
@@ -380,6 +426,9 @@ def _init_db_logic(conn):
     ensure_column('prefixes', 'gateway_device_id', "TEXT")
     ensure_column('prefixes', 'gateway_interface_id', "TEXT")
     ensure_column('prefixes', 'traceable', "INTEGER DEFAULT 1")
+    ensure_column('prefixes', 'prefix_cidr', "TEXT DEFAULT ''")
+    ensure_column('prefixes', 'ip_version', "INTEGER DEFAULT 0")
+    ensure_column('prefixes', 'prefix_len', "INTEGER DEFAULT 0")
 
     # Create ipam_pools table if not exists
     cursor.execute('''
@@ -2121,6 +2170,8 @@ def _init_db_logic(conn):
     ensure_column('ip_addresses', 'prefix_id', "TEXT DEFAULT ''")
     ensure_column('ip_addresses', 'vrf_id', "TEXT DEFAULT ''")
     ensure_column('ip_addresses', 'interface_id', "TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'address_inet', "TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'ip_version', "INTEGER DEFAULT 0")
 
     # Capacity planning snapshots
     cursor.execute('''
