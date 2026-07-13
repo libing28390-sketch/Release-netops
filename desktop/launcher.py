@@ -16,10 +16,18 @@ import ctypes
 import socket
 import urllib.request
 import urllib.error
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 import ssl
 import zipfile
 import winreg
+
+SOURCE_DESKTOP_DIR = os.path.dirname(os.path.abspath(__file__))
+SOURCE_PROJECT_ROOT = os.path.dirname(SOURCE_DESKTOP_DIR)
+if SOURCE_PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, SOURCE_PROJECT_ROOT)
+
+from desktop.ui.feedback import show_message
+from desktop.ui.launcher_theme import build_launcher_stylesheet
 
 if getattr(sys, 'frozen', False):
     # Running as the bundled NetOps.exe, which lives at the repo root.
@@ -74,12 +82,12 @@ sys.stderr = LogStreamRedirector("LAUNCHER-ERR")
 try:
     from PySide6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-        QLabel, QProgressBar, QFrame, QGraphicsDropShadowEffect, QMessageBox,
+        QLabel, QProgressBar, QFrame,
         QStackedWidget, QRadioButton, QLineEdit, QPushButton, QPlainTextEdit,
         QFormLayout, QButtonGroup
     )
     from PySide6.QtCore import Qt, Signal, Slot, QObject, QTimer
-    from PySide6.QtGui import QIcon, QFont, QColor, QTextCursor
+    from PySide6.QtGui import QIcon, QTextCursor
 except ImportError as e:
     log_message(f"PySide6 import failed: {e}")
     # PyInstaller execution packs PySide6 inside. This is fallback for raw dev runs.
@@ -99,106 +107,8 @@ def set_dark_title_bar(window_handle):
     except Exception as e:
         log_message(f"Failed to set dark title bar: {e}")
 
-LAUNCHER_STYLE = """
-QWidget {
-    font-family: "Segoe UI", "Microsoft YaHei UI";
-    color: #F8FAFC;
-    font-size: 13px;
-}
-QMainWindow {
-    background-color: #0B0F19;
-}
-QLabel#lbl_title {
-    font-size: 20px;
-    font-weight: bold;
-    color: #F8FAFC;
-}
-QLabel#lbl_subtitle {
-    font-size: 12px;
-    color: #64748B;
-}
-QLabel#lbl_section {
-    font-size: 14px;
-    font-weight: bold;
-    color: #38BDF8;
-    margin-top: 10px;
-}
-QFrame#card {
-    background-color: #111827;
-    border: 1px solid #1F2937;
-    border-radius: 12px;
-}
-QFrame#db_card {
-    background-color: #111827;
-    border: 1px solid #1F2937;
-    border-radius: 10px;
-}
-QFrame#db_card:hover {
-    border: 1px solid #06B6D4;
-    background-color: #1E293B;
-}
-QRadioButton {
-    font-weight: bold;
-    font-size: 14px;
-    color: #F8FAFC;
-}
-QLineEdit {
-    background-color: #1F2937;
-    border: 1px solid #374151;
-    border-radius: 6px;
-    padding: 6px 10px;
-    color: #F8FAFC;
-}
-QLineEdit:focus {
-    border: 1px solid #06B6D4;
-}
-QPushButton#btn_primary {
-    background-color: #0891B2;
-    color: #FFFFFF;
-    border-radius: 8px;
-    padding: 10px 24px;
-    font-weight: bold;
-    font-size: 14px;
-    border: none;
-}
-QPushButton#btn_primary:hover {
-    background-color: #06B6D4;
-}
-QPushButton#btn_primary:pressed {
-    background-color: #0E7490;
-}
-QPushButton#btn_secondary {
-    background-color: #1F2937;
-    color: #F8FAFC;
-    border-radius: 8px;
-    padding: 10px 24px;
-    font-weight: bold;
-    font-size: 14px;
-    border: 1px solid #374151;
-}
-QPushButton#btn_secondary:hover {
-    background-color: #374151;
-}
-QPlainTextEdit#console_log {
-    background-color: #030712;
-    border: 1px solid #1F2937;
-    border-radius: 8px;
-    font-family: "Consolas", "Courier New", monospace;
-    font-size: 11px;
-    color: #10B981;
-}
-QProgressBar {
-    background-color: #1F2937;
-    border: none;
-    border-radius: 6px;
-    height: 12px;
-    text-align: center;
-}
-QProgressBar::chunk {
-    background-color: #06B6D4;
-    border-radius: 6px;
-}
-"""
+
+LAUNCHER_STYLE = build_launcher_stylesheet(True)
 
 class SetupWorker(QObject):
     log_signal = Signal(str)
@@ -787,7 +697,12 @@ class SetupWorker(QObject):
         keys_to_update["POSTGRES_USER"] = user
         keys_to_update["POSTGRES_PASSWORD"] = password
         keys_to_update["POSTGRES_DB"] = db_name
-        keys_to_update["DATABASE_URL"] = f"postgresql://{user}:{password}@{host}:{port}/{db_name}"
+        encoded_user = quote(user or "", safe="")
+        encoded_password = quote(password or "", safe="")
+        encoded_db_name = quote(db_name or "", safe="")
+        keys_to_update["DATABASE_URL"] = (
+            f"postgresql://{encoded_user}:{encoded_password}@{host}:{port}/{encoded_db_name}"
+        )
 
         new_lines = []
         updated_keys = set()
@@ -920,13 +835,14 @@ class LauncherUI(QMainWindow):
         super().__init__()
         self.initial_config = load_database_config_from_env()
         self.setWindowTitle("NetOps 部署与启动管理器")
-        self.setFixedSize(700, 520)
+        self.setMinimumSize(700, 520)
+        self.resize(760, 560)
         
         # Center the window
         screen = self.screen().geometry()
-        x = (screen.width() - 700) // 2
-        y = (screen.height() - 520) // 2
-        self.setGeometry(x, y, 700, 520)
+        x = (screen.width() - self.width()) // 2
+        y = (screen.height() - self.height()) // 2
+        self.move(x, y)
         
         # Program icon
         ico_path = os.path.join(DESKTOP_DIR, "netops.ico")
@@ -935,12 +851,6 @@ class LauncherUI(QMainWindow):
             
         self.setStyleSheet(LAUNCHER_STYLE)
         set_dark_title_bar(self.winId())
-        
-        # Set light shadow
-        self.shadow = QGraphicsDropShadowEffect(self)
-        self.shadow.setBlurRadius(15)
-        self.shadow.setColor(QColor(0, 0, 0, 80))
-        self.shadow.setOffset(0, 4)
         
         self.setup_ui()
 
@@ -958,7 +868,7 @@ class LauncherUI(QMainWindow):
         self.stacked_widget.addWidget(self.page_finish)
         
         env_path = os.path.join(PROJECT_ROOT, ".env")
-        force_reconfig = "--reconfig" in sys.argv
+        force_reconfig = "--reconfig" in sys.argv or "--smoke-test" in sys.argv
         has_valid_config = (
             self.initial_config.get("host") and 
             self.initial_config.get("port") and 
@@ -983,9 +893,9 @@ class LauncherUI(QMainWindow):
         # Header Layout
         header_layout = QHBoxLayout()
         accent_bar = QFrame(self)
+        accent_bar.setObjectName("accent_bar")
         accent_bar.setFixedWidth(4)
         accent_bar.setFixedHeight(45)
-        accent_bar.setStyleSheet("background-color: #06B6D4; border-radius: 2px;")
         header_layout.addWidget(accent_bar)
         
         title_vbox = QVBoxLayout()
@@ -999,7 +909,7 @@ class LauncherUI(QMainWindow):
         layout.addLayout(header_layout)
         
         # Credentials Form
-        lbl_pg_sec = QLabel("配置 PostgreSQL 连接参数 / Database Credentials", self)
+        lbl_pg_sec = QLabel("PostgreSQL 连接参数", self)
         lbl_pg_sec.setObjectName("lbl_section")
         layout.addWidget(lbl_pg_sec)
         
@@ -1011,13 +921,14 @@ class LauncherUI(QMainWindow):
         self.input_port = QLineEdit(self.initial_config["port"], self)
         self.input_user = QLineEdit(self.initial_config["user"], self)
         self.input_pass = QLineEdit(self.initial_config["password"], self)
+        self.input_pass.setEchoMode(QLineEdit.Password)
         self.input_db_name = QLineEdit(self.initial_config["db_name"], self)
         
-        form_fields_layout.addRow("数据库主机 / Host:", self.input_host)
-        form_fields_layout.addRow("端口 / Port:", self.input_port)
-        form_fields_layout.addRow("用户名 / User:", self.input_user)
-        form_fields_layout.addRow("密码 / Password:", self.input_pass)
-        form_fields_layout.addRow("数据库名 / DB Name:", self.input_db_name)
+        form_fields_layout.addRow("数据库主机:", self.input_host)
+        form_fields_layout.addRow("端口:", self.input_port)
+        form_fields_layout.addRow("用户名:", self.input_user)
+        form_fields_layout.addRow("密码:", self.input_pass)
+        form_fields_layout.addRow("数据库名:", self.input_db_name)
         layout.addLayout(form_fields_layout)
         
         layout.addStretch()
@@ -1042,34 +953,32 @@ class LauncherUI(QMainWindow):
         # Header
         header_layout = QHBoxLayout()
         accent_bar = QFrame(self)
+        accent_bar.setObjectName("accent_bar")
         accent_bar.setFixedWidth(4)
         accent_bar.setFixedHeight(30)
-        accent_bar.setStyleSheet("background-color: #38BDF8; border-radius: 2px;")
         header_layout.addWidget(accent_bar)
         
         title_vbox = QVBoxLayout()
         lbl_title = QLabel("正在部署 NetOps 系统组件", self)
         lbl_title.setObjectName("lbl_title")
-        lbl_title.setStyleSheet("font-size: 16px;")
         title_vbox.addWidget(lbl_title)
         header_layout.addLayout(title_vbox)
         layout.addLayout(header_layout)
         
         # Progress Bar and Status
         self.lbl_status = QLabel("正在初始化部署管道...", self)
-        self.lbl_status.setStyleSheet("font-weight: bold; color: #38BDF8;")
+        self.lbl_status.setObjectName("status_text")
         layout.addWidget(self.lbl_status)
         
         self.progress_bar = QProgressBar(self)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
-        self.progress_bar.setStyleSheet("QProgressBar::chunk { background-color: #38BDF8; }")
         layout.addWidget(self.progress_bar)
         
         # Log terminal
-        lbl_log_title = QLabel("部署控制台输出 / Output logs", self)
-        lbl_log_title.setStyleSheet("color: #64748B; font-size: 11px;")
+        lbl_log_title = QLabel("部署控制台输出", self)
+        lbl_log_title.setObjectName("helper_text")
         layout.addWidget(lbl_log_title)
         
         self.console_log = QPlainTextEdit(self)
@@ -1079,7 +988,7 @@ class LauncherUI(QMainWindow):
         
         # Warning label
         lbl_uac_warn = QLabel("注：在安装 Python、Node.js 或 PostgreSQL 数据库时可能会弹出 Windows UAC 管理员提权确认框，请点击“是”允许运行。", self)
-        lbl_uac_warn.setStyleSheet("color: #E2E8F0; font-size: 11px; font-weight: bold;")
+        lbl_uac_warn.setObjectName("helper_text")
         lbl_uac_warn.setWordWrap(True)
         layout.addWidget(lbl_uac_warn)
 
@@ -1094,7 +1003,7 @@ class LauncherUI(QMainWindow):
         # Checkmark Icon (rendered using simple CSS)
         lbl_icon = QLabel("✔", self)
         lbl_icon.setAlignment(Qt.AlignCenter)
-        lbl_icon.setStyleSheet("font-size: 64px; color: #10B981; font-weight: bold;")
+        lbl_icon.setObjectName("success_icon")
         layout.addWidget(lbl_icon)
         
         # Finish Title
@@ -1106,7 +1015,7 @@ class LauncherUI(QMainWindow):
         # Details
         self.lbl_finish_desc = QLabel("已成功为您创建虚拟环境、安装核心包依赖并配置了数据库选项。\n您现在可以启动托盘控制中心进入平台。", self)
         self.lbl_finish_desc.setAlignment(Qt.AlignCenter)
-        self.lbl_finish_desc.setStyleSheet("color: #94A3B8; font-size: 13px; line-height: 20px;")
+        self.lbl_finish_desc.setObjectName("finish_desc")
         layout.addWidget(self.lbl_finish_desc)
         
         layout.addStretch()
@@ -1135,11 +1044,23 @@ class LauncherUI(QMainWindow):
         db_config["host"] = self.input_host.text().strip()
         db_config["port"] = self.input_port.text().strip()
         db_config["user"] = self.input_user.text().strip()
-        db_config["password"] = self.input_pass.text().strip()
+        db_config["password"] = self.input_pass.text()
         db_config["db_name"] = self.input_db_name.text().strip()
         
         if not db_config["host"] or not db_config["port"] or not db_config["user"] or not db_config["db_name"]:
-            QMessageBox.warning(self, "参数不完整", "请完整填写 PostgreSQL 数据库的所有连接参数！")
+            show_message(
+                self,
+                "参数不完整",
+                "请完整填写 PostgreSQL 数据库的所有连接参数。",
+                dark=True,
+            )
+            return
+        try:
+            port = int(db_config["port"])
+        except ValueError:
+            port = 0
+        if not 1 <= port <= 65535:
+            show_message(self, "端口无效", "数据库端口必须是 1 到 65535 之间的整数。", dark=True)
             return
 
         # Show page 2
@@ -1178,10 +1099,11 @@ class LauncherUI(QMainWindow):
 
     @Slot(str)
     def on_error_received(self, err_msg):
-        QMessageBox.critical(
+        show_message(
             self,
             "部署错误",
-            f"系统在部署安装过程中遭遇致命错误，流程终止：\n\n{err_msg}\n\n详情请查阅项目目录下的 launcher_setup.log 日志。"
+            f"系统在部署安装过程中遭遇错误，流程已终止：\n\n{err_msg}\n\n详情请查阅项目目录下的 launcher_setup.log 日志。",
+            dark=True,
         )
         self.close()
         sys.exit(1)
@@ -1240,7 +1162,7 @@ class LauncherUI(QMainWindow):
             else:
                 raise FileNotFoundError("无法找到 pythonw.exe 虚拟环境组件或 desktop_tray.py 主程序")
         except Exception as e:
-            QMessageBox.critical(self, "启动失败", f"无法启动托盘自愈程序：{e}")
+            show_message(self, "启动失败", f"无法启动托盘客户端：{e}", dark=True)
             
         self.close()
         sys.exit(0)
@@ -1248,9 +1170,10 @@ class LauncherUI(QMainWindow):
 
 def main():
     log_message("=== NetOps Setup GUI Session Started ===")
+    smoke_test = "--smoke-test" in sys.argv
     
     # 1. Check if another instance of desktop tray is already running (to directly bring it up)
-    if "--reconfig" not in sys.argv:
+    if "--reconfig" not in sys.argv and not smoke_test:
         import socket
         try:
             test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1316,7 +1239,14 @@ def main():
     app = QApplication(sys.argv)
     window = LauncherUI()
     window.show()
-    sys.exit(app.exec())
+    if smoke_test:
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(500, app.quit)
+    exit_code = app.exec()
+    if smoke_test:
+        log_message("SMOKE_TEST_OK")
+    sys.exit(exit_code)
 
 
 if __name__ == '__main__':

@@ -177,7 +177,18 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 {form.asset_type === 'server' ? (
                   <select
                     value={form.vendor}
-                    onChange={e => setForm(f => ({ ...f, vendor: e.target.value }))}
+                    onChange={e => {
+                      const vendor = e.target.value;
+                      const platformOptions = VENDOR_PLATFORMS[vendor] || [];
+                      setForm(f => ({
+                        ...f,
+                        vendor,
+                        model: f.vendor === vendor ? f.model : '',
+                        platform: platformOptions.some(option => option.value === f.platform)
+                          ? f.platform
+                          : (platformOptions[0]?.value || ''),
+                      }));
+                    }}
                     className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
                     title="Vendor"
                   >

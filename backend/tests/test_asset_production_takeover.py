@@ -357,3 +357,67 @@ def test_import_legacy_production_asset_records_exemption(isolated_db):
     assert device["lifecycle_status"] == "production"
     assert device["rotation_status"] == "exempt"
     assert device["is_managed"] == 0
+
+
+def test_huawei_vendor_corrects_stale_cisco_platform(isolated_db):
+    from api import assets
+    from database import get_db_connection
+
+    result = assets.create_asset(
+        assets.AssetCreate(
+            asset_type="network_device",
+            hostname="huawei-switch",
+            management_ip="192.0.2.100",
+            vendor="Huawei",
+            model="S6800",
+            platform="cisco_ios",
+        )
+    )
+
+    conn = get_db_connection()
+    try:
+        asset = conn.execute(
+            "SELECT platform FROM physical_assets WHERE id = ?", (result["id"],)
+        ).fetchone()
+        device = conn.execute(
+            "SELECT platform FROM devices WHERE id = ?", (result["device_id"],)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert asset["platform"] == "huawei_vrp"
+    assert device["platform"] == "huawei_vrp"
+
+
+def test_vendor_change_repairs_existing_platform(isolated_db):
+    from api import assets
+    from database import get_db_connection
+
+    result = assets.create_asset(
+        assets.AssetCreate(
+            asset_type="network_device",
+            hostname="vendor-change-switch",
+            management_ip="192.0.2.101",
+            vendor="Cisco",
+            platform="cisco_ios",
+        )
+    )
+
+    assets.update_asset(
+        result["id"],
+        assets.AssetUpdate(vendor="Huawei", platform="cisco_ios"),
+    )
+
+    conn = get_db_connection()
+    try:
+        asset = conn.execute(
+            "SELECT vendor, platform FROM physical_assets WHERE id = ?", (result["id"],)
+        ).fetchone()
+        device = conn.execute(
+            "SELECT vendor, platform FROM devices WHERE id = ?", (result["device_id"],)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert dict(asset) == {"vendor": "Huawei", "platform": "huawei_vrp"}
+    assert dict(device) == {"vendor": "Huawei", "platform": "huawei_vrp"}

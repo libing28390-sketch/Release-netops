@@ -54,6 +54,44 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
     return 'cisco_iosxe'
 
 
+_VENDOR_PLATFORM_RULES: tuple[tuple[str, set[str], str], ...] = (
+    ('cisco', {'cisco', 'ios', 'iosxe', 'cisco_ios', 'cisco_iosxe', 'cisco_xe', 'cisco_nxos', 'nxos', 'nexus'}, 'cisco_ios'),
+    ('huawei', {'huawei', 'huawei_vrp', 'huawei_vrpv8', 'vrp', 'ce', 'ce_vrp', 'ne'}, 'huawei_vrp'),
+    ('h3c', {'h3c', 'h3c_comware', 'hp_comware', 'comware'}, 'hp_comware'),
+    ('comware', {'h3c', 'h3c_comware', 'hp_comware', 'comware'}, 'hp_comware'),
+    ('arista', {'arista', 'arista_eos', 'eos'}, 'arista_eos'),
+    ('juniper', {'juniper', 'juniper_junos', 'junos'}, 'juniper_junos'),
+    ('ruijie', {'ruijie', 'ruijie_os', 'ruijie_rgos', 'rgos'}, 'ruijie_os'),
+)
+
+_SERVER_PLATFORMS = {
+    'linux', 'ubuntu', 'centos', 'debian', 'redhat', 'windows', 'windows_server', 'esxi',
+}
+
+
+def _normalize_asset_platform(vendor: str, platform: str, asset_type: str = 'network_device') -> str:
+    """Keep the persisted platform compatible with the selected asset vendor/type."""
+    raw = str(platform or '').strip()
+    normalized = raw.lower()
+    if asset_type == 'server':
+        return raw if normalized in _SERVER_PLATFORMS else 'linux'
+
+    vendor_normalized = str(vendor or '').strip().lower()
+    for vendor_marker, allowed, default_platform in _VENDOR_PLATFORM_RULES:
+        if vendor_marker in vendor_normalized:
+            if normalized in allowed:
+                return raw
+            if raw:
+                logger.warning(
+                    "Correcting incompatible asset platform vendor=%s platform=%s -> %s",
+                    vendor,
+                    raw,
+                    default_platform,
+                )
+            return default_platform
+    return raw or _platform_from_vendor(vendor, asset_type)
+
+
 def _safe_encrypt(plaintext: str) -> str:
     """Encrypt credential, return empty string if encryption key is not configured."""
     if not plaintext:
@@ -100,7 +138,11 @@ def _sync_device_type_power(conn, vendor: str, model: str, power_watts: int, dev
 def _create_linked_device(conn, asset_id: str, body) -> str:
     """Create a devices row linked to a physical_assets row."""
     device_id = str(uuid.uuid4())
-    platform = getattr(body, 'platform', '') or _platform_from_vendor(body.vendor, body.asset_type)
+    platform = _normalize_asset_platform(
+        body.vendor,
+        getattr(body, 'platform', ''),
+        body.asset_type,
+    )
     method = getattr(body, 'connection_method', '') or 'ssh'
     uname = getattr(body, 'username', '') or ''
     pwd = getattr(body, 'password', '') or ''
@@ -244,7 +286,11 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
         'role': body.device_role,
         'site': body.datacenter,
         'vendor': body.vendor,
-        'platform': getattr(body, 'platform', None),
+        'platform': _normalize_asset_platform(
+            getattr(body, 'vendor', None) or '',
+            getattr(body, 'platform', None) or '',
+            getattr(body, 'asset_type', None) or 'network_device',
+        ) if getattr(body, 'platform', None) is not None else None,
         'connection_method': getattr(body, 'connection_method', None),
         'snmp_community': getattr(body, 'snmp_community', None),
         'snmp_port': getattr(body, 'snmp_port', None),
@@ -715,6 +761,7 @@ def create_asset(body: AssetCreate):
         asset_id = f"asset-{uuid.uuid4().hex[:12]}"
         now = _utc_now()
         asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
+        body.platform = _normalize_asset_platform(body.vendor, body.platform, body.asset_type)
         legacy_production = asset_origin == 'legacy' and body.lifecycle_status == 'production'
         initial_lifecycle = 'production' if legacy_production else 'staging'
         if legacy_production:
@@ -806,6 +853,17 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
         row = conn.execute('SELECT * FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Asset not found')
+
+        effective_vendor = body.vendor if body.vendor is not None else row['vendor']
+        effective_asset_type = body.asset_type if body.asset_type is not None else row['asset_type']
+        effective_platform = body.platform if body.platform is not None else row['platform']
+        normalized_platform = _normalize_asset_platform(
+            effective_vendor,
+            effective_platform,
+            effective_asset_type,
+        )
+        if normalized_platform != effective_platform or body.platform is not None or body.vendor is not None:
+            body.platform = normalized_platform
 
         # Check unique asset_tag if changed
         if body.asset_tag is not None and body.asset_tag and body.asset_tag != row['asset_tag']:
@@ -1183,6 +1241,7 @@ def import_assets(items: list[AssetCreate]):
         skipped = 0
         for body in items:
             asset_id = f"asset-{uuid.uuid4().hex[:12]}"
+            body.platform = _normalize_asset_platform(body.vendor, body.platform, body.asset_type)
             asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
             legacy_production = asset_origin == 'legacy' and body.lifecycle_status == 'production'
             initial_lifecycle = 'production' if legacy_production else 'staging'

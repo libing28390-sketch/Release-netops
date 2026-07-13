@@ -288,6 +288,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         if (!serverValues.includes(String(form.platform))) {
           normalizedPlatform = 'linux';
         }
+      } else if (form.asset_type === 'network_device') {
+        const vendorPlatforms = VENDOR_PLATFORMS[form.vendor] || [];
+        if (vendorPlatforms.length > 0 && !vendorPlatforms.some(p => p.value === String(form.platform))) {
+          normalizedPlatform = vendorPlatforms[0].value;
+        }
       }
       const payload = {
         ...form,
