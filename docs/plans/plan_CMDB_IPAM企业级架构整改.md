@@ -42,6 +42,25 @@
 | Phase 7 | 可观测性、部署和高可用 | P2 | 支撑多实例、生产监控、故障定位 |
 | Phase 8 | 性能压测与企业验收 | P2 | 有明确容量边界和上线标准 |
 
+## 2026-07-13 执行状态
+
+| 阶段 | 状态 | 完成说明 |
+|---|---|---|
+| Phase 0 | 已完成 | 数据关系/权威矩阵与企业整改 backlog 已建立 |
+| Phase 1 | 已完成 | 资产-设备-接口关系、复合唯一规则、引用审计和确定性回填已落地 |
+| Phase 2 | 已完成 | PostgreSQL CIDR/INET 迁移、Prefix 规则、原子分配和生命周期已落地 |
+| Phase 3 | 已完成 | Discovery observation、finding、action 和审批写入闭环已落地 |
+| Phase 4 | 已完成 | 统一 Job/step/target/artifact/event、限流、重试和取消语义已落地 |
+| Phase 5 | 已完成 | resource/scope/action 权限与统一 before/after 审计已落地 |
+| Phase 6 | 已完成 | CMDB/IPAM client、类型、领域 hooks 和四类企业工作流入口已落地 |
+| Phase 7 | 未开始 | request_id、指标、健康检查、多实例与无状态化 |
+| Phase 8 | 未开始 | 标准容量压测与企业验收基准 |
+
+Phase 0–6 的统一交付记录见：
+
+- `docs/plans/plan_20260713_2009_01_CMDB_IPAM_Phase0至Phase6连续整改.md`
+- `docs/walkthrough/walkthrough_20260713_2009_01_CMDB_IPAM_Phase0至Phase6连续整改.md`
+
 ---
 
 ## Phase 0：基线梳理与风险冻结

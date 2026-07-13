@@ -38,16 +38,26 @@ class AutomationService:
             return results if results else [{"success": False, "stderr": "No commands provided", "stdout": ""}]
 
     def test_connectivity(self, ip_address: str, username: str, password: str, platform: str) -> bool:
+        from core.platform_utils import normalize_device_platform
+        normalized_platform = normalize_device_platform("", platform)
         device = {
             "ip": ip_address,
             "username": username,
             "password": password,
-            "platform": platform,
+            "platform": normalized_platform,
             "use_pool": False
         }
         category = ''
-        is_server = any(t in platform.lower() for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server')) or 'server' in category
-        dummy_cmd = "echo 1" if is_server else "show clock"
+        is_server = any(t in normalized_platform.lower() for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server')) or 'server' in category
+        if is_server:
+            dummy_cmd = "echo 1"
+        elif 'huawei' in normalized_platform or 'vrp' in normalized_platform:
+            dummy_cmd = "display clock"
+        elif 'h3c' in normalized_platform or 'comware' in normalized_platform or 'hp_comware' in normalized_platform:
+            dummy_cmd = "display clock"
+        else:
+            dummy_cmd = "show clock"
+            
         res = self.orchestrator.execute_single(device, "command", dummy_cmd)
         return res.get("success", False)
 
@@ -55,19 +65,30 @@ class AutomationService:
         """
         Used by the quick connect test to return both status and error message.
         """
+        from core.platform_utils import normalize_device_platform
+        vendor = device_info.get("vendor") or ""
+        platform = normalize_device_platform(vendor, device_info.get("platform") or "")
+        
         device = {
             "ip": device_info.get("ip_address") or device_info.get("ip"),
             "username": device_info.get("username"),
             "password": device_info.get("password"),
-            "platform": device_info.get("platform", "cisco_ios"),
+            "platform": platform,
             "port": resolve_ssh_port(device_info),
             "driver_type": self.driver_type,
             "use_pool": False
         }
-        platform = str(device_info.get("platform") or "").lower()
         category = str(device_info.get('device_category') or '').lower()
         is_server = any(t in platform for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server')) or 'server' in category
-        dummy_cmd = "echo 1" if is_server else "show clock"
+        if is_server:
+            dummy_cmd = "echo 1"
+        elif 'huawei' in platform or 'vrp' in platform:
+            dummy_cmd = "display clock"
+        elif 'h3c' in platform or 'comware' in platform or 'hp_comware' in platform:
+            dummy_cmd = "display clock"
+        else:
+            dummy_cmd = "show clock"
+            
         res = self.orchestrator.execute_single(device, "command", dummy_cmd)
         success = res.get("success", False)
         if success:

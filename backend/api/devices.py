@@ -354,6 +354,8 @@ def _resolve_connection_target(payload: dict) -> dict:
 
 def _normalize_device_row(row, conn=None):
     item = dict(row)
+    from core.platform_utils import normalize_device_platform
+    item['platform'] = normalize_device_platform(item.get('vendor'), item.get('platform'))
     try:
         item['config_history'] = json.loads(item.get('config_history', '[]'))
     except Exception:

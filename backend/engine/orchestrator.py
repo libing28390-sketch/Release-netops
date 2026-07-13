@@ -49,14 +49,26 @@ class ExecutionOrchestrator:
             res["mode"] = mode
             if "device" not in res:
                 res["device"] = device.get("ip_address") or device.get("ip")
+            duration = time.perf_counter() - start_time
             if "duration" not in res:
-                res["duration"] = time.perf_counter() - start_time
+                res["duration"] = duration
                 
+            try:
+                from core.metrics import metrics_registry
+                metrics_registry.record_ssh(duration, res.get("success", False))
+            except Exception:
+                pass
             return res
         except Exception as e:
+            duration = time.perf_counter() - start_time
+            try:
+                from core.metrics import metrics_registry
+                metrics_registry.record_ssh(duration, False)
+            except Exception:
+                pass
             return {
                 "success": False, "stderr": str(e), "device": device.get("ip_address"),
-                "task_id": task_id, "mode": mode, "duration": time.perf_counter() - start_time
+                "task_id": task_id, "mode": mode, "duration": duration
             }
 
     def batch_execute(self, devices: List[Dict[str, Any]], mode: str, content: Any, 

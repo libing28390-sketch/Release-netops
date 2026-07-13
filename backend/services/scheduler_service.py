@@ -481,6 +481,10 @@ def sync_scheduler_jobs(scheduler):
 
 def run_scheduled_automation_job_sync_wrapper(job_id: str):
     """同步包装器，用于 APScheduler 调用协程"""
+    from core.scheduler_lock import acquire_scheduler_lock
+    if not acquire_scheduler_lock(f"dyn_{job_id}", expire_seconds=300):
+        logger.debug(f"Dynamic job {job_id} lock is already held. Skipping.")
+        return
     import asyncio
     try:
         # 获取当前运行的事件循环
@@ -746,7 +750,8 @@ def sync_topology_and_interfaces_job():
             return []
 
         dev_id = device['id']
-        platform = str(device.get('platform') or 'cisco_ios').lower()
+        from core.platform_utils import normalize_device_platform
+        platform = normalize_device_platform(device.get('vendor'), device.get('platform'))
         creds = resolve_device_credentials(device)
         username = creds.get('normal_username') or creds.get('username') or ''
         password = creds.get('normal_password') or creds.get('password') or ''
@@ -963,7 +968,8 @@ def poll_endpoints_job():
             return []
 
         dev_id = device['id']
-        platform = str(device.get('platform') or 'cisco_ios').lower()
+        from core.platform_utils import normalize_device_platform
+        platform = normalize_device_platform(device.get('vendor'), device.get('platform'))
         creds = resolve_device_credentials(device)
         username = creds.get('normal_username') or creds.get('username') or ''
         password = creds.get('normal_password') or creds.get('password') or ''
@@ -1007,7 +1013,8 @@ def poll_endpoints_job():
             return []
 
         dev_id = device['id']
-        platform = str(device.get('platform') or 'cisco_ios').lower()
+        from core.platform_utils import normalize_device_platform
+        platform = normalize_device_platform(device.get('vendor'), device.get('platform'))
         creds = resolve_device_credentials(device)
         username = creds.get('normal_username') or creds.get('username') or ''
         password = creds.get('normal_password') or creds.get('password') or ''
@@ -1368,7 +1375,8 @@ def sync_bgp_routes_job():
 
     def collect_bgp_routes(dev: dict) -> list[dict]:
         dev_id = dev['id']
-        platform = str(dev.get('platform') or 'cisco_ios').lower()
+        from core.platform_utils import normalize_device_platform
+        platform = normalize_device_platform(dev.get('vendor'), dev.get('platform'))
         res = []
         local_as = 0
 

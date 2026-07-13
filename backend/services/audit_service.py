@@ -7,14 +7,30 @@ from database import get_db_connection
 
 
 AUDIT_OPEN_STATUSES = {"open", "investigating", "accepted"}
+_SENSITIVE_KEY_PARTS = (
+    "password", "passwd", "token", "secret", "private_key", "community",
+    "authorization", "credential", "api_key",
+)
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
+def redact_audit_value(value: Any, key: str = "") -> Any:
+    """Recursively remove credentials and tokens before persistence."""
+    lowered = key.lower()
+    if key and any(part in lowered for part in _SENSITIVE_KEY_PARTS):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(k): redact_audit_value(v, str(k)) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_audit_value(item) for item in value]
+    return value
+
+
 def _json_dumps(value: Any) -> str:
-    return json.dumps(value or {}, ensure_ascii=True)
+    return json.dumps(redact_audit_value(value or {}), ensure_ascii=True, default=str)
 
 
 def log_audit_event(
@@ -35,6 +51,9 @@ def log_audit_event(
     job_id: str | None = None,
     execution_id: str | None = None,
     snapshot_id: str | None = None,
+    request_id: str | None = None,
+    before: dict[str, Any] | None = None,
+    after: dict[str, Any] | None = None,
     details: dict[str, Any] | None = None,
     conn=None,
 ) -> str:
@@ -51,8 +70,8 @@ def log_audit_event(
                 actor_id, actor_username, actor_role, source_ip,
                 target_type, target_id, target_name,
                 device_id, job_id, execution_id, snapshot_id,
-                summary, details_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                summary, details_json, request_id, before_json, after_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 event_id,
@@ -73,6 +92,9 @@ def log_audit_event(
                 snapshot_id,
                 summary,
                 _json_dumps(details),
+                request_id or "",
+                _json_dumps(before),
+                _json_dumps(after),
                 created_at,
             ),
         )
@@ -144,6 +166,11 @@ def list_audit_events(
                 item["details"] = json.loads(item.get("details_json") or "{}")
             except Exception:
                 item["details"] = {}
+            for json_field, output_field in (("before_json", "before"), ("after_json", "after")):
+                try:
+                    item[output_field] = json.loads(item.get(json_field) or "{}")
+                except Exception:
+                    item[output_field] = {}
             items.append(item)
 
         return {
@@ -167,6 +194,11 @@ def get_audit_event(event_id: str) -> dict[str, Any] | None:
             item["details"] = json.loads(item.get("details_json") or "{}")
         except Exception:
             item["details"] = {}
+        for json_field, output_field in (("before_json", "before"), ("after_json", "after")):
+            try:
+                item[output_field] = json.loads(item.get(json_field) or "{}")
+            except Exception:
+                item[output_field] = {}
         return item
     finally:
         conn.close()

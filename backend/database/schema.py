@@ -373,7 +373,7 @@ def _init_db_logic(conn):
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS vrfs (
         id TEXT PRIMARY KEY,
-        vrf_name TEXT NOT NULL UNIQUE,
+        vrf_name TEXT NOT NULL,
         rd TEXT DEFAULT '',
         description TEXT DEFAULT '',
         tenant_id TEXT,
@@ -395,6 +395,14 @@ def _init_db_logic(conn):
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_vlans_site_vlan ON vlans(site_id, vlan_id)')
+    for _unique_sql in (
+        'CREATE UNIQUE INDEX IF NOT EXISTS uq_vlans_site_vlan ON vlans(site_id, vlan_id)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS uq_vrfs_tenant_name ON vrfs(tenant_id, vrf_name)',
+    ):
+        try:
+            cursor.execute(_unique_sql)
+        except Exception as _unique_exc:
+            logger.warning("CMDB unique index deferred because historical duplicates exist: %s", _unique_exc)
 
     # Create prefixes table if not exists
     cursor.execute('''
@@ -426,7 +434,7 @@ def _init_db_logic(conn):
     ensure_column('prefixes', 'gateway_device_id', "TEXT")
     ensure_column('prefixes', 'gateway_interface_id', "TEXT")
     ensure_column('prefixes', 'traceable', "INTEGER DEFAULT 1")
-    ensure_column('prefixes', 'prefix_cidr', "TEXT DEFAULT ''")
+    ensure_column('prefixes', 'prefix_cidr', "CIDR" if _USE_PG else "TEXT DEFAULT ''")
     ensure_column('prefixes', 'ip_version', "INTEGER DEFAULT 0")
     ensure_column('prefixes', 'prefix_len', "INTEGER DEFAULT 0")
 
@@ -500,6 +508,24 @@ def _init_db_logic(conn):
         FOREIGN KEY (device_id) REFERENCES devices (id)
     )
     ''')
+    for col, dtype in [
+        ('job_type', "TEXT DEFAULT 'generic'"),
+        ('created_by', "TEXT DEFAULT 'system'"),
+        ('started_at', 'TEXT'),
+        ('finished_at', 'TEXT'),
+        ('updated_at', 'TEXT'),
+        ('progress', 'INTEGER DEFAULT 0'),
+        ('total_targets', 'INTEGER DEFAULT 0'),
+        ('success_count', 'INTEGER DEFAULT 0'),
+        ('failed_count', 'INTEGER DEFAULT 0'),
+        ('cancel_requested', 'INTEGER DEFAULT 0'),
+        ('error_summary', "TEXT DEFAULT ''"),
+        ('concurrency_limit', 'INTEGER DEFAULT 5'),
+        ('retry_limit', 'INTEGER DEFAULT 0'),
+        ('timeout_seconds', 'INTEGER DEFAULT 300'),
+        ('scope_json', "TEXT DEFAULT '{}'"),
+    ]:
+        ensure_column('jobs', col, dtype)
     
     # Create scripts table if not exists
     cursor.execute('''
@@ -623,6 +649,8 @@ def _init_db_logic(conn):
     ensure_column('users', 'email', "TEXT DEFAULT ''")
     ensure_column('users', 'role_id', "TEXT DEFAULT ''")
     ensure_column('users', 'tenant_id', "TEXT DEFAULT ''")
+    ensure_column('users', 'scope_type', "TEXT DEFAULT 'global'")
+    ensure_column('users', 'scope_ids_json', "TEXT DEFAULT '[]'")
     ensure_column('users', 'mfa_secret', "TEXT DEFAULT ''")
     ensure_column('users', 'mfa_enabled', "INTEGER DEFAULT 0")
 
@@ -1409,6 +1437,171 @@ def _init_db_logic(conn):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_category ON audit_events(category)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_severity ON audit_events(severity)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_events_actor_username ON audit_events(actor_username)')
+    ensure_column('audit_events', 'request_id', "TEXT DEFAULT ''")
+    ensure_column('audit_events', 'before_json', "TEXT DEFAULT '{}'")
+    ensure_column('audit_events', 'after_json', "TEXT DEFAULT '{}'")
+
+    # Enterprise CMDB/IPAM observations, reconciliation, jobs and scoped access.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS discovery_runs (
+        id TEXT PRIMARY KEY,
+        run_type TEXT NOT NULL DEFAULT 'network',
+        status TEXT NOT NULL DEFAULT 'queued',
+        requested_by TEXT DEFAULT 'system',
+        scope_json TEXT DEFAULT '{}',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        summary_json TEXT DEFAULT '{}'
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_discovery_runs_status ON discovery_runs(status)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS discovery_observations (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        source_device_id TEXT,
+        source_type TEXT NOT NULL,
+        observed_type TEXT NOT NULL,
+        observed_key TEXT NOT NULL,
+        payload_json TEXT DEFAULT '{}',
+        confidence REAL DEFAULT 0.5,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        FOREIGN KEY (run_id) REFERENCES discovery_runs(id) ON DELETE CASCADE,
+        FOREIGN KEY (source_device_id) REFERENCES devices(id) ON DELETE SET NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_discovery_observations_run ON discovery_observations(run_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_discovery_observations_key ON discovery_observations(observed_type, observed_key)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS reconciliation_runs (
+        id TEXT PRIMARY KEY,
+        discovery_run_id TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        requested_by TEXT DEFAULT 'system',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        total_findings INTEGER DEFAULT 0,
+        open_findings INTEGER DEFAULT 0,
+        summary_json TEXT DEFAULT '{}',
+        FOREIGN KEY (discovery_run_id) REFERENCES discovery_runs(id) ON DELETE SET NULL
+    )
+    ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS reconciliation_findings (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        observation_id TEXT,
+        finding_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        risk_level TEXT NOT NULL DEFAULT 'medium',
+        target_type TEXT,
+        target_id TEXT,
+        tenant_id TEXT,
+        site_id TEXT,
+        observed_json TEXT DEFAULT '{}',
+        current_json TEXT DEFAULT '{}',
+        proposed_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        resolved_at TEXT,
+        resolved_by TEXT,
+        FOREIGN KEY (run_id) REFERENCES reconciliation_runs(id) ON DELETE CASCADE,
+        FOREIGN KEY (observation_id) REFERENCES discovery_observations(id) ON DELETE SET NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_reconciliation_findings_run_status ON reconciliation_findings(run_id, status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_reconciliation_findings_type ON reconciliation_findings(finding_type)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS reconciliation_actions (
+        id TEXT PRIMARY KEY,
+        finding_id TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        requested_by TEXT NOT NULL,
+        approved_by TEXT,
+        payload_json TEXT DEFAULT '{}',
+        result_json TEXT DEFAULT '{}',
+        error_message TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        applied_at TEXT,
+        FOREIGN KEY (finding_id) REFERENCES reconciliation_findings(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_reconciliation_actions_finding ON reconciliation_actions(finding_id)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS job_steps (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        step_name TEXT NOT NULL,
+        step_order INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'queued',
+        started_at TEXT,
+        finished_at TEXT,
+        error_message TEXT DEFAULT '',
+        result_json TEXT DEFAULT '{}',
+        FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_job_steps_job ON job_steps(job_id, step_order)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS job_targets (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        target_type TEXT NOT NULL DEFAULT 'device',
+        target_id TEXT NOT NULL,
+        site_id TEXT,
+        vendor TEXT,
+        status TEXT NOT NULL DEFAULT 'queued',
+        attempt_count INTEGER DEFAULT 0,
+        started_at TEXT,
+        finished_at TEXT,
+        error_message TEXT DEFAULT '',
+        result_json TEXT DEFAULT '{}',
+        FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_job_targets_job_status ON job_targets(job_id, status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_job_targets_device_lock ON job_targets(target_type, target_id, status)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS job_artifacts (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        artifact_type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        uri TEXT NOT NULL,
+        metadata_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS job_events (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        severity TEXT DEFAULT 'info',
+        message TEXT NOT NULL,
+        details_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_job_events_job_time ON job_events(job_id, created_at)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS user_resource_scopes (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        resource_type TEXT NOT NULL,
+        scope_type TEXT NOT NULL,
+        scope_id TEXT NOT NULL DEFAULT '',
+        actions_json TEXT DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_user_resource_scope ON user_resource_scopes(user_id, resource_type, scope_type, scope_id)')
 
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS compliance_rules (
@@ -2169,9 +2362,52 @@ def _init_db_logic(conn):
     ensure_column('ip_addresses', 'ip_address', "TEXT DEFAULT ''")
     ensure_column('ip_addresses', 'prefix_id', "TEXT DEFAULT ''")
     ensure_column('ip_addresses', 'vrf_id', "TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'tenant_id', "TEXT DEFAULT 'tenant-default'")
+    ensure_column('ip_addresses', 'site_id', "TEXT DEFAULT ''")
     ensure_column('ip_addresses', 'interface_id', "TEXT DEFAULT ''")
-    ensure_column('ip_addresses', 'address_inet', "TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'address_inet', "INET" if _USE_PG else "TEXT DEFAULT ''")
     ensure_column('ip_addresses', 'ip_version', "INTEGER DEFAULT 0")
+    for col, dtype in [
+        ('released_at', 'TEXT'),
+        ('available_after', 'TEXT'),
+        ('expires_at', 'TEXT'),
+        ('purpose', "TEXT DEFAULT ''"),
+        ('requested_by', "TEXT DEFAULT ''"),
+        ('source_type', "TEXT DEFAULT 'manual'"),
+        ('source_ref', "TEXT DEFAULT ''"),
+        ('last_confirmed_at', 'TEXT'),
+        ('confirmed_by', "TEXT DEFAULT ''"),
+    ]:
+        ensure_column('ip_addresses', col, dtype)
+
+    for table_name in ('devices', 'interfaces', 'prefixes'):
+        for col, dtype in [
+            ('source_type', "TEXT DEFAULT 'manual'"),
+            ('source_ref', "TEXT DEFAULT ''"),
+            ('confidence', 'REAL DEFAULT 1.0'),
+            ('last_confirmed_at', 'TEXT'),
+            ('last_observed_at', 'TEXT'),
+            ('confirmed_by', "TEXT DEFAULT ''"),
+        ]:
+            ensure_column(table_name, col, dtype)
+
+    try:
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_asset_id ON devices(asset_id) WHERE asset_id IS NOT NULL AND asset_id <> ''")
+    except Exception as _asset_unique_exc:
+        logger.warning("Asset/device unique index deferred because historical duplicates exist: %s", _asset_unique_exc)
+    try:
+        if _USE_PG:
+            cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_ip_addresses_scope_active
+                ON ip_addresses(tenant_id, vrf_id, address_inet)
+                WHERE address_inet IS NOT NULL
+                  AND COALESCE(status, 'active') NOT IN ('released', 'available')""")
+        else:
+            cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_ip_addresses_scope_active
+                ON ip_addresses(tenant_id, vrf_id, address_inet)
+                WHERE address_inet IS NOT NULL AND address_inet <> ''
+                  AND COALESCE(status, 'active') NOT IN ('released', 'available')""")
+    except Exception as _ip_unique_exc:
+        logger.warning("IPAM active-address unique index deferred because historical conflicts exist: %s", _ip_unique_exc)
 
     # Capacity planning snapshots
     cursor.execute('''
@@ -2257,6 +2493,15 @@ def _init_db_logic(conn):
     ensure_column('physical_assets', 'takeover_exempt_reason', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'takeover_exempt_at', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'asset_origin', "TEXT DEFAULT 'new'")
+    for col, dtype in [
+        ('source_type', "TEXT DEFAULT 'manual'"),
+        ('source_ref', "TEXT DEFAULT ''"),
+        ('confidence', 'REAL DEFAULT 1.0'),
+        ('last_confirmed_at', 'TEXT'),
+        ('last_observed_at', 'TEXT'),
+        ('confirmed_by', "TEXT DEFAULT ''"),
+    ]:
+        ensure_column('physical_assets', col, dtype)
     ensure_column('physical_assets', 'u_height', 'INTEGER NOT NULL DEFAULT 1')
     ensure_column('physical_assets', 'planned_start_u', 'INTEGER')
     ensure_column('physical_assets', 'device_category', "TEXT DEFAULT ''")

@@ -7,7 +7,7 @@ Extended with hierarchy tree, VRF-scoped uniqueness, pool/VIP/lease CRUD, and ac
 import uuid
 import ipaddress
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from database import get_db_connection, _USE_PG
@@ -17,9 +17,31 @@ logger = logging.getLogger(__name__)
 _GROUP_CONCAT = 'STRING_AGG({col}, \',\')' if _USE_PG else 'GROUP_CONCAT({col})'
 _PH = '%s' if _USE_PG else '?'
 
+ADDRESS_STATUSES = {
+    'available', 'reserved', 'allocated', 'active', 'dhcp', 'vip',
+    'deprecated', 'released', 'quarantine',
+}
+PREFIX_STATUSES = {'container', 'active', 'reserved', 'deprecated'}
+ADDRESS_TRANSITIONS = {
+    'available': {'reserved', 'allocated', 'dhcp', 'vip', 'quarantine'},
+    'reserved': {'allocated', 'released', 'deprecated', 'quarantine'},
+    'allocated': {'released', 'deprecated', 'quarantine'},
+    'active': {'released', 'deprecated', 'quarantine'},
+    'dhcp': {'released', 'deprecated', 'quarantine'},
+    'vip': {'released', 'deprecated', 'quarantine'},
+    'deprecated': {'released', 'quarantine'},
+    'released': {'available', 'reserved', 'allocated', 'quarantine'},
+    'quarantine': {'available', 'released'},
+}
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _table_columns(conn, table: str) -> set[str]:
+    cursor = conn.execute(f"SELECT * FROM {table} WHERE 1 = 0")
+    return {column[0] for column in (cursor.description or [])}
 
 
 def _ip_in_subnet(addr: str, network: str, prefix_len: int) -> bool:
@@ -75,6 +97,80 @@ def _prefix_scope(row_or_fields: dict) -> tuple[str, str, str]:
         row_or_fields.get('vrf_id') or '',
         row_or_fields.get('site_id') or '',
     )
+
+
+def _validate_prefix_status(status: str) -> str:
+    normalized = (status or 'active').strip().lower()
+    if normalized not in PREFIX_STATUSES:
+        raise ValueError(f"Unsupported prefix status: {status}")
+    return normalized
+
+
+def _validate_address_status(status: str) -> str:
+    normalized = (status or 'allocated').strip().lower()
+    if normalized not in ADDRESS_STATUSES:
+        raise ValueError(f"Unsupported address status: {status}")
+    return normalized
+
+
+def _validate_address_conflicts(conn, subnet, address: str, *, exclude_id: str = '') -> None:
+    """Reject active static/DHCP/VIP conflicts in the same authority scope."""
+    tenant_id = subnet['tenant_id'] or 'tenant-default'
+    vrf_id = subnet['vrf_id'] or ''
+    params = [address, tenant_id, vrf_id]
+    exclude_sql = ''
+    if exclude_id:
+        exclude_sql = f' AND ip.id <> {_PH}'
+        params.append(exclude_id)
+    existing = conn.execute(
+        f"""SELECT ip.id FROM ip_addresses ip
+            LEFT JOIN prefixes p ON p.id = ip.subnet_id
+            WHERE ip.address = {_PH}
+              AND COALESCE(p.tenant_id, 'tenant-default') = {_PH}
+              AND COALESCE(p.vrf_id, '') = {_PH}
+              AND COALESCE(ip.status, 'active') NOT IN ('released', 'available')
+              {exclude_sql} LIMIT 1""",
+        tuple(params),
+    ).fetchone()
+    if existing:
+        try:
+            from core.metrics import metrics_registry
+            metrics_registry.record_ipam_conflict()
+        except Exception:
+            pass
+        raise ValueError(f'IP address {address} is already allocated in this tenant/VRF')
+    try:
+        vip = conn.execute(
+            f"""SELECT id FROM ipam_vips
+                WHERE address = {_PH} AND COALESCE(tenant_id, 'tenant-default') = {_PH}
+                  AND COALESCE(status, 'active') NOT IN ('released', 'deprecated') LIMIT 1""",
+            (address, tenant_id),
+        ).fetchone()
+    except Exception:
+        vip = None
+    if vip:
+        try:
+            from core.metrics import metrics_registry
+            metrics_registry.record_ipam_conflict()
+        except Exception:
+            pass
+        raise ValueError(f'IP address {address} conflicts with an active VIP')
+    try:
+        lease = conn.execute(
+            f"""SELECT id FROM ipam_dhcp_leases
+                WHERE address = {_PH} AND COALESCE(lease_state, 'active') IN ('active', 'offered')
+                LIMIT 1""",
+            (address,),
+        ).fetchone()
+    except Exception:
+        lease = None
+    if lease:
+        try:
+            from core.metrics import metrics_registry
+            metrics_registry.record_ipam_conflict()
+        except Exception:
+            pass
+        raise ValueError(f'IP address {address} conflicts with an active DHCP lease')
 
 
 def _validate_prefix_overlap(conn, *, prefix: str, tenant_id: str | None = None,
@@ -240,7 +336,8 @@ def list_subnets(*, site: str = 'all', status: str = 'all', q: str = '') -> list
 
             # Count used IPs (allocated in ip_addresses table)
             count = conn.execute(
-                f'SELECT COUNT(*) as cnt FROM ip_addresses WHERE subnet_id = {_PH}',
+                f"""SELECT COUNT(*) as cnt FROM ip_addresses WHERE subnet_id = {_PH}
+                    AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
                 (r['id'],),
             ).fetchone()
             used_ips = count['cnt'] if count else 0
@@ -296,6 +393,7 @@ def create_subnet(
 ) -> dict:
     """Create a prefix after validating CIDR and checking for VRF-scoped duplicates."""
     prefix, net = _normalize_prefix(prefix)
+    status = _validate_prefix_status(status)
 
     conn = get_db_connection()
     try:
@@ -350,6 +448,8 @@ def update_subnet(subnet_id: str, **fields) -> bool:
 
         if 'prefix' in fields and fields['prefix'] is not None:
             fields['prefix'], _net = _normalize_prefix(fields['prefix'])
+        if 'status' in fields and fields['status'] is not None:
+            fields['status'] = _validate_prefix_status(fields['status'])
         target = dict(row)
         target.update({k: v for k, v in fields.items() if v is not None})
         if any(k in fields for k in ('prefix', 'tenant_id', 'vrf_id', 'site_id')):
@@ -453,9 +553,15 @@ def create_address(
     description: str = '',
     status: str = 'active',
     interface_id: str = '',
+    purpose: str = '',
+    requested_by: str = '',
+    expires_at: str = '',
+    source_type: str = 'manual',
+    source_ref: str = '',
 ) -> dict:
     """Add an IP address after validating it belongs to the subnet."""
     address = _normalize_address(address)
+    status = _validate_address_status(status)
     conn = get_db_connection()
     try:
         addr = _create_address_with_conn(
@@ -471,6 +577,11 @@ def create_address(
             description=description,
             status=status,
             lock_prefix=True,
+            purpose=purpose,
+            requested_by=requested_by,
+            expires_at=expires_at,
+            source_type=source_type,
+            source_ref=source_ref,
         )
         conn.commit()
         return addr
@@ -482,7 +593,10 @@ def _create_address_with_conn(conn, subnet_id: str, *, address: str, hostname: s
                               device_id: str = '', interface_name: str = '',
                               interface_id: str = '', mac_address: str = '',
                               device_type: str = '', description: str = '',
-                              status: str = 'active', lock_prefix: bool = False) -> dict:
+                              status: str = 'active', lock_prefix: bool = False,
+                              purpose: str = '', requested_by: str = '',
+                              expires_at: str = '', source_type: str = 'manual',
+                              source_ref: str = '') -> dict:
     subnet = _select_prefix_for_update(conn, subnet_id) if lock_prefix else conn.execute(
         f'SELECT * FROM prefixes WHERE id = {_PH}', (subnet_id,)
     ).fetchone()
@@ -494,25 +608,55 @@ def _create_address_with_conn(conn, subnet_id: str, *, address: str, hostname: s
         raise ValueError('Invalid subnet prefix')
     if ipaddress.ip_address(address) not in net:
         raise ValueError(f"Address {address} is not within subnet {net}")
+    status = _validate_address_status(status)
+    _validate_address_conflicts(conn, subnet, address)
+    address_columns = _table_columns(conn, 'ip_addresses')
+    existing_fields = 'id, status' + (', available_after' if 'available_after' in address_columns else '')
     existing = conn.execute(
-        f'SELECT id FROM ip_addresses WHERE subnet_id = {_PH} AND address = {_PH}',
+        f'SELECT {existing_fields} FROM ip_addresses WHERE subnet_id = {_PH} AND address = {_PH}',
         (subnet_id, address),
     ).fetchone()
     if existing:
-        raise ValueError('IP address already registered in this subnet')
+        if existing['status'] not in ('released', 'available'):
+            raise ValueError('IP address already registered in this subnet')
+        if 'available_after' in address_columns and existing['available_after'] and existing['available_after'] > _utc_now():
+            raise ValueError(f"IP address is quarantined until {existing['available_after']}")
+        now = _utc_now()
+        reuse_values = {
+            'status': status, 'hostname': hostname, 'device_id': device_id,
+            'interface_name': interface_name, 'interface_id': interface_id,
+            'mac_address': mac_address, 'device_type': device_type,
+            'description': description, 'purpose': purpose,
+            'requested_by': requested_by, 'expires_at': expires_at or None,
+            'source_type': source_type, 'source_ref': source_ref,
+            'released_at': None, 'available_after': None, 'updated_at': now,
+        }
+        reuse_values = {key: value for key, value in reuse_values.items() if key in address_columns}
+        assignments = ', '.join(f'{key} = {_PH}' for key in reuse_values)
+        conn.execute(
+            f"UPDATE ip_addresses SET {assignments} WHERE id = {_PH}",
+            (*reuse_values.values(), existing['id']),
+        )
+        return {'id': existing['id'], 'address': address, 'status': status, 'reused': True}
     addr_id = f"ip-{uuid.uuid4().hex[:12]}"
     now = _utc_now()
     ip_addr_with_mask = f"{address}/{net.prefixlen}"
+    insert_values = {
+        'id': addr_id, 'subnet_id': subnet_id, 'address': address,
+        'hostname': hostname, 'device_id': device_id, 'interface_name': interface_name,
+        'mac_address': mac_address, 'device_type': device_type, 'status': status,
+        'description': description, 'last_seen': now, 'created_at': now, 'updated_at': now,
+        'ip_address': ip_addr_with_mask, 'prefix_id': subnet_id,
+        'vrf_id': subnet['vrf_id'] or '', 'tenant_id': subnet['tenant_id'] or 'tenant-default',
+        'site_id': subnet['site_id'] or '', 'interface_id': interface_id or '',
+        'address_inet': address, 'ip_version': ipaddress.ip_address(address).version,
+        'purpose': purpose, 'requested_by': requested_by, 'expires_at': expires_at or None,
+        'source_type': source_type, 'source_ref': source_ref,
+    }
+    insert_values = {key: value for key, value in insert_values.items() if key in address_columns}
     conn.execute(
-        f'''INSERT INTO ip_addresses
-           (id, subnet_id, address, hostname, device_id, interface_name,
-            mac_address, device_type, status, description, last_seen, created_at, updated_at,
-            ip_address, prefix_id, vrf_id, interface_id, address_inet, ip_version)
-           VALUES ({_ph(19)})''',
-        (addr_id, subnet_id, address, hostname, device_id,
-         interface_name, mac_address, device_type, status, description, now, now, now,
-         ip_addr_with_mask, subnet_id, subnet['vrf_id'] or '', interface_id or '',
-         address, ipaddress.ip_address(address).version),
+        f"INSERT INTO ip_addresses ({', '.join(insert_values)}) VALUES ({_ph(len(insert_values))})",
+        tuple(insert_values.values()),
     )
     return {'id': addr_id, 'address': address, 'status': status}
 
@@ -526,12 +670,21 @@ def update_address(address_id: str, **fields) -> bool:
         if not row:
             return False
 
+        if 'status' in fields and fields['status'] is not None:
+            target_status = _validate_address_status(fields['status'])
+            current_status = (row['status'] or 'active').lower()
+            if target_status != current_status and target_status not in ADDRESS_TRANSITIONS.get(current_status, set()):
+                raise ValueError(f'Invalid address lifecycle transition: {current_status} -> {target_status}')
+            fields['status'] = target_status
+
         updates = []
         params = []
+        address_columns = _table_columns(conn, 'ip_addresses')
         for field in ('hostname', 'device_id', 'interface_name', 'interface_id', 'mac_address',
-                      'device_type', 'description', 'status'):
+                      'device_type', 'description', 'status', 'purpose', 'requested_by',
+                      'expires_at', 'source_type', 'source_ref', 'released_at', 'available_after'):
             val = fields.get(field)
-            if val is not None:
+            if val is not None and field in address_columns:
                 updates.append(f'{field} = {_PH}')
                 params.append(val)
         if updates:
@@ -566,19 +719,29 @@ def delete_address(address_id: str) -> bool:
 def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str = '',
                           interface_id: str = '', interface_name: str = '',
                           mac_address: str = '', purpose: str = '',
-                          requested_by: str = '', status: str = 'allocated') -> dict:
+                          requested_by: str = '', status: str = 'allocated',
+                          expires_at: str = '') -> dict:
     conn = get_db_connection()
     try:
         subnet = _select_prefix_for_update(conn, subnet_id)
         if not subnet:
             raise ValueError('Subnet not found')
         net = ipaddress.ip_network(subnet['prefix'], strict=False)
-        used_rows = conn.execute(
-            f"""SELECT address FROM ip_addresses
-                WHERE subnet_id = {_PH}
-                  AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
-            (subnet_id,),
-        ).fetchall()
+        now = _utc_now()
+        if 'available_after' in _table_columns(conn, 'ip_addresses'):
+            used_rows = conn.execute(
+                f"""SELECT address FROM ip_addresses
+                    WHERE subnet_id = {_PH}
+                      AND (COALESCE(status, 'active') NOT IN ('released', 'available')
+                           OR (available_after IS NOT NULL AND available_after > {_PH}))""",
+                (subnet_id, now),
+            ).fetchall()
+        else:
+            used_rows = conn.execute(
+                f"""SELECT address FROM ip_addresses WHERE subnet_id = {_PH}
+                    AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
+                (subnet_id,),
+            ).fetchall()
         used = {str(ipaddress.ip_address(r['address'])) for r in used_rows if r['address']}
         candidates = net.hosts() if net.version == 4 and net.prefixlen < 31 else iter(net)
         selected = None
@@ -601,6 +764,9 @@ def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str 
             device_type=purpose,
             description=f"Allocated by {requested_by}" if requested_by else '',
             status=status,
+            purpose=purpose,
+            requested_by=requested_by,
+            expires_at=expires_at,
         )
         conn.commit()
         return addr
@@ -610,7 +776,7 @@ def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str 
 
 def reserve_address(subnet_id: str, *, address: str, hostname: str = '', device_id: str = '',
                     interface_id: str = '', interface_name: str = '', mac_address: str = '',
-                    purpose: str = '', requested_by: str = '') -> dict:
+                    purpose: str = '', requested_by: str = '', expires_at: str = '') -> dict:
     return create_address(
         subnet_id,
         address=address,
@@ -622,10 +788,15 @@ def reserve_address(subnet_id: str, *, address: str, hostname: str = '', device_
         device_type=purpose,
         description=f"Reserved by {requested_by}" if requested_by else '',
         status='reserved',
+        purpose=purpose,
+        requested_by=requested_by,
+        expires_at=expires_at,
     )
 
 
 def release_address(address_id: str, *, released_by: str = '') -> bool:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    available_after = (now + timedelta(hours=24)).isoformat()
     description_suffix = f"Released by {released_by}" if released_by else "Released"
     return update_address(
         address_id,
@@ -635,6 +806,8 @@ def release_address(address_id: str, *, released_by: str = '') -> bool:
         interface_name='',
         mac_address='',
         description=description_suffix,
+        released_at=now.isoformat(),
+        available_after=available_after,
     )
 
 
@@ -648,14 +821,17 @@ def detect_conflicts() -> dict:
     try:
         dup_ips = conn.execute(f'''
             SELECT address, {_GROUP_CONCAT.format(col='subnet_id')} as subnets, COUNT(*) as cnt
-            FROM ip_addresses GROUP BY address HAVING cnt > 1
+            FROM ip_addresses
+            WHERE COALESCE(status, 'active') NOT IN ('released', 'available')
+            GROUP BY address HAVING COUNT(*) > 1
         ''').fetchall()
 
         dup_macs = conn.execute(f'''
             SELECT mac_address, {_GROUP_CONCAT.format(col='address')} as addresses, COUNT(*) as cnt
             FROM ip_addresses
             WHERE mac_address != '' AND mac_address IS NOT NULL
-            GROUP BY mac_address HAVING cnt > 1
+              AND COALESCE(status, 'active') NOT IN ('released', 'available')
+            GROUP BY mac_address HAVING COUNT(*) > 1
         ''').fetchall()
 
         return {
@@ -681,7 +857,9 @@ def ipam_summary() -> dict:
         all_prefixes = conn.execute('SELECT prefix FROM prefixes').fetchall()
         total_capacity = sum(_calculate_total_ips(r['prefix']) for r in all_prefixes)
 
-        total_used = conn.execute('SELECT COUNT(*) as total FROM ip_addresses').fetchone()
+        total_used = conn.execute(
+            "SELECT COUNT(*) as total FROM ip_addresses WHERE COALESCE(status, 'active') NOT IN ('released', 'available')"
+        ).fetchone()
 
         return {
             'total_subnets': subnets['cnt'] if subnets else 0,
@@ -718,7 +896,8 @@ def get_utilization_analytics() -> dict:
         for r in rows:
             total = _calculate_total_ips(r['prefix'])
             used_row = conn.execute(
-                f'SELECT COUNT(*) as cnt FROM ip_addresses WHERE subnet_id = {_PH}',
+                f"""SELECT COUNT(*) as cnt FROM ip_addresses WHERE subnet_id = {_PH}
+                    AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
                 (r['id'],),
             ).fetchone()
             used_count = used_row['cnt'] if used_row else 0
@@ -795,6 +974,7 @@ def get_utilization_analytics() -> dict:
                 '''SELECT substr(created_at, 1, 10) as day, COUNT(*) as cnt
                    FROM ip_addresses
                    WHERE created_at IS NOT NULL AND created_at != ''
+                     AND COALESCE(status, 'active') NOT IN ('released', 'available')
                    GROUP BY substr(created_at, 1, 10)
                    ORDER BY day'''
             ).fetchall()
@@ -1038,8 +1218,25 @@ def create_vip(
     status: str = 'active',
     tenant_id: str = 'tenant-default',
 ) -> dict:
+    address = _normalize_address(address)
     conn = get_db_connection()
     try:
+        existing_ip = conn.execute(
+            f"""SELECT ip.id FROM ip_addresses ip
+                LEFT JOIN prefixes p ON p.id = ip.subnet_id
+                WHERE ip.address = {_PH}
+                  AND COALESCE(p.tenant_id, 'tenant-default') = {_PH}
+                  AND COALESCE(ip.status, 'active') NOT IN ('released', 'available') LIMIT 1""",
+            (address, tenant_id),
+        ).fetchone()
+        if existing_ip:
+            raise ValueError(f'VIP {address} conflicts with an allocated IP address')
+        existing_lease = conn.execute(
+            f"SELECT id FROM ipam_dhcp_leases WHERE address = {_PH} AND COALESCE(lease_state, 'active') IN ('active', 'offered') LIMIT 1",
+            (address,),
+        ).fetchone()
+        if existing_lease:
+            raise ValueError(f'VIP {address} conflicts with an active DHCP lease')
         vip_id = f"vip-{uuid.uuid4().hex[:12]}"
         now = _utc_now()
         conn.execute(
@@ -1124,8 +1321,21 @@ def create_lease(
     lease_start: str = '',
     lease_end: str = '',
 ) -> dict:
+    address = _normalize_address(address)
     conn = get_db_connection()
     try:
+        existing_ip = conn.execute(
+            f"SELECT id FROM ip_addresses WHERE address = {_PH} AND COALESCE(status, 'active') NOT IN ('released', 'available') LIMIT 1",
+            (address,),
+        ).fetchone()
+        if existing_ip:
+            raise ValueError(f'DHCP lease {address} conflicts with an allocated IP address')
+        existing_vip = conn.execute(
+            f"SELECT id FROM ipam_vips WHERE address = {_PH} AND COALESCE(status, 'active') NOT IN ('released', 'deprecated') LIMIT 1",
+            (address,),
+        ).fetchone()
+        if existing_vip:
+            raise ValueError(f'DHCP lease {address} conflicts with an active VIP')
         lease_id = f"lease-{uuid.uuid4().hex[:12]}"
         now = _utc_now()
         conn.execute(
@@ -1205,9 +1415,19 @@ def get_next_available_ip(subnet_id: str) -> Optional[str]:
         except ValueError:
             return None
             
-        allocated_rows = conn.execute(
-            f'SELECT address FROM ip_addresses WHERE subnet_id = {_PH}', (subnet_id,)
-        ).fetchall()
+        if 'available_after' in _table_columns(conn, 'ip_addresses'):
+            allocated_rows = conn.execute(
+                f"""SELECT address FROM ip_addresses WHERE subnet_id = {_PH}
+                    AND (COALESCE(status, 'active') NOT IN ('released', 'available')
+                         OR (available_after IS NOT NULL AND available_after > {_PH}))""",
+                (subnet_id, _utc_now()),
+            ).fetchall()
+        else:
+            allocated_rows = conn.execute(
+                f"""SELECT address FROM ip_addresses WHERE subnet_id = {_PH}
+                    AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
+                (subnet_id,),
+            ).fetchall()
         allocated_ips = {r['address'] for r in allocated_rows}
         
         limit = 10000

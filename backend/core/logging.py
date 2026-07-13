@@ -7,11 +7,11 @@ import re
 from logging.handlers import TimedRotatingFileHandler
 
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "logs")
-LOG_FORMAT = "%(asctime)s [%(levelname)s] (PID:%(process)d) %(name)s: %(message)s"
+LOG_FORMAT = "%(asctime)s [%(levelname)s] (PID:%(process)d) [%(context)s] %(name)s: %(message)s"
 
 # 三方库噪声压制：只保留 WARNING 及以上
 _NOISY_LIBS = [
-    # "uvicorn.access",
+    "uvicorn.access",
     "uvicorn.error",
     "apscheduler",
     "netmiko",
@@ -42,6 +42,35 @@ class SanitizeFilter(logging.Filter):
             record.args = tuple(sanitized) if isinstance(record.args, tuple) else sanitized[0]
         return True
 
+class ContextFormatter(logging.Formatter):
+    """Formatter that ensures the request/job context variables are present on the record."""
+    def format(self, record):
+        if not hasattr(record, "context"):
+            try:
+                from core.context import request_id_var, user_var, job_id_var, target_id_var, device_id_var
+                req_id = request_id_var.get()
+                user = user_var.get()
+                job_id = job_id_var.get()
+                target_id = target_id_var.get()
+                device_id = device_id_var.get()
+                
+                ctx_parts = []
+                if req_id and req_id != "-":
+                    ctx_parts.append(f"req:{req_id}")
+                if user and user != "-":
+                    ctx_parts.append(f"user:{user}")
+                if job_id and job_id != "-":
+                    ctx_parts.append(f"job:{job_id}")
+                if target_id and target_id != "-":
+                    ctx_parts.append(f"target:{target_id}")
+                if device_id and device_id != "-":
+                    ctx_parts.append(f"device:{device_id}")
+                    
+                record.context = ", ".join(ctx_parts) if ctx_parts else "-"
+            except Exception:
+                record.context = "-"
+        return super().format(record)
+
 def setup_logging():
     os.makedirs(LOG_DIR, exist_ok=True)
     log_file = os.path.join(LOG_DIR, "netops.log")
@@ -52,7 +81,7 @@ def setup_logging():
     root.setLevel(logging.INFO)
     root.addFilter(SanitizeFilter())
 
-    fmt = logging.Formatter(LOG_FORMAT)
+    fmt = ContextFormatter(LOG_FORMAT)
 
     # stdout handler
     console = logging.StreamHandler(sys.stdout)

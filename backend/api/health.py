@@ -554,6 +554,45 @@ def _downsample_host_resource_series(rows: list[dict[str, Any]], max_points: int
         aggregated.append(point)
     return aggregated
 
+def _get_db_pool_status() -> dict:
+    from database import _USE_PG
+    from database.core import _POOL_SIZE
+    if _USE_PG:
+        from database.core import _pg_pool
+        if _pg_pool is not None:
+            used = len(_pg_pool._used) if hasattr(_pg_pool, '_used') else 0
+            maxconn = _pg_pool.maxconn if hasattr(_pg_pool, 'maxconn') else _POOL_SIZE
+            return {"active": used, "max": maxconn}
+        return {"active": 0, "max": _POOL_SIZE}
+    else:
+        try:
+            from database.core import _active_connections
+            return {"active": _active_connections, "max": _POOL_SIZE}
+        except ImportError:
+            return {"active": 0, "max": _POOL_SIZE}
+
+def _get_db_metrics() -> dict:
+    conn = get_db_connection()
+    try:
+        queued_targets = conn.execute("SELECT COUNT(*) as cnt FROM job_targets WHERE status = 'queued'").fetchone()['cnt']
+        job_rows = conn.execute("SELECT status, COUNT(*) as cnt FROM jobs GROUP BY status").fetchall()
+        job_stats = {row['status']: row['cnt'] for row in job_rows}
+        open_findings = conn.execute("SELECT COUNT(*) as cnt FROM reconciliation_findings WHERE status = 'open'").fetchone()['cnt']
+        return {
+            "worker_queue_length": queued_targets,
+            "jobs_by_status": job_stats,
+            "reconciliation_findings_open": open_findings,
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch DB metrics: {e}")
+        return {
+            "worker_queue_length": 0,
+            "jobs_by_status": {},
+            "reconciliation_findings_open": 0,
+        }
+    finally:
+        conn.close()
+
 @router.api_route("/health", methods=["GET", "HEAD"], tags=["health"])
 async def health_check():
     logger.debug("Health check endpoint called")
@@ -563,7 +602,25 @@ async def health_check():
     disk_free_gb = resources["disk_free_gb"]
     disk_warn = disk_free_gb < 1.0
 
-    overall = "healthy" if (db_ok and not disk_warn) else "degraded"
+    # APScheduler Status
+    from core.scheduler_manager import scheduler
+    scheduler_ok = scheduler.running
+    scheduler_status = "running" if scheduler_ok else "stopped"
+
+    # Worker Status
+    worker_ok = True
+    worker_status = "active"
+    try:
+        from engine.orchestrator import get_orchestrator
+        orch = get_orchestrator()
+        if not orch.initialized:
+            worker_ok = False
+            worker_status = "uninitialized"
+    except Exception:
+        worker_ok = False
+        worker_status = "error"
+
+    overall = "healthy" if (db_ok and not disk_warn and scheduler_ok and worker_ok) else "degraded"
 
     # Device summary for public display (login page)
     device_total = 0
@@ -580,11 +637,29 @@ async def health_check():
     except Exception:
         pass
 
+    # Collect memory metrics
+    from core.metrics import metrics_registry
+    metrics = metrics_registry.get_metrics()
+    
+    # Enrich metrics with DB pool, queue length, and scheduler details
+    db_pool = _get_db_pool_status()
+    db_metrics = _get_db_metrics()
+    
+    metrics.update({
+        "db_connections_active": db_pool["active"],
+        "db_connections_max": db_pool["max"],
+        "worker_queue_length": db_metrics["worker_queue_length"],
+        "jobs_by_status": db_metrics["jobs_by_status"],
+        "reconciliation_findings_open": db_metrics["reconciliation_findings_open"],
+    })
+
     return {
         "status": overall,
         "environment": settings.ENVIRONMENT,
         "project": settings.PROJECT_NAME,
         "database": db_status,
+        "scheduler": scheduler_status,
+        "worker": worker_status,
         "disk_free_gb": disk_free_gb,
         "disk_warning": disk_warn,
         "device_total": device_total,
@@ -596,7 +671,23 @@ async def health_check():
             "disk_percent": resources["disk_percent"],
             "updated_at": resources["updated_at"],
         },
+        "metrics": metrics
     }
+
+@router.get("/health/metrics", tags=["health"])
+async def health_metrics():
+    from core.metrics import metrics_registry
+    metrics = metrics_registry.get_metrics()
+    db_pool = _get_db_pool_status()
+    db_metrics = _get_db_metrics()
+    metrics.update({
+        "db_connections_active": db_pool["active"],
+        "db_connections_max": db_pool["max"],
+        "worker_queue_length": db_metrics["worker_queue_length"],
+        "jobs_by_status": db_metrics["jobs_by_status"],
+        "reconciliation_findings_open": db_metrics["reconciliation_findings_open"],
+    })
+    return metrics
 
 
 @router.get("/health/resources", tags=["health"])

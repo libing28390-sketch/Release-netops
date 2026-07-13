@@ -893,6 +893,21 @@ async def _probe_device_reachability(ip_address: str, management_port: int = 22)
         return False, 'unreachable'
 
 async def process_device(device, cycle_tick: int):
+    start_time = _time.perf_counter()
+    success = False
+    try:
+        res = await _process_device_raw(device, cycle_tick)
+        success = True
+        return res
+    finally:
+        duration = _time.perf_counter() - start_time
+        try:
+            from core.metrics import metrics_registry
+            metrics_registry.record_polling(duration, success)
+        except Exception:
+            pass
+
+async def _process_device_raw(device, cycle_tick: int):
     async with _get_semaphore():
         device = _as_dict(device)
         ip = device['ip_address']

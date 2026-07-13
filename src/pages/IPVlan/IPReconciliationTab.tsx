@@ -196,9 +196,10 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
     if (!releasingItem) return;
     setApiError('');
     try {
-      const res = await fetch(`/api/ipam/addresses/${releasingItem.id}`, {
-        method: 'DELETE',
-        headers: authHeaders(),
+      const res = await fetch(`/api/ipam/addresses/${releasingItem.id}/release`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: '{}',
       });
       if (res.ok) {
         setReleasingItem(null);

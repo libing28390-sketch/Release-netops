@@ -1,4 +1,5 @@
 import React, { Suspense, lazy } from 'react';
+import EnterpriseWorkflowPanel from './IPVlan/components/EnterpriseWorkflowPanel';
 
 // Lazy load children to optimize initial package size
 const PrefixManagementTab = lazy(() => import('./IPVlan/PrefixManagementTab'));
@@ -23,15 +24,18 @@ const lazyPanelFallback = (
 
 const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipamPage }) => {
   return (
-    <Suspense fallback={lazyPanelFallback}>
-      {ipamPage === 'prefixes' && <PrefixManagementTab language={language} t={t} />}
-      {ipamPage === 'ips' && <IPAddressTab language={language} t={t} />}
-      {ipamPage === 'pools' && <IPPoolTab language={language} t={t} />}
-      {ipamPage === 'vips' && <VIPManagementTab language={language} t={t} />}
-      {ipamPage === 'dhcp' && <DHCPLeaseTab language={language} t={t} />}
-      {ipamPage === 'utilization' && <IPUtilizationTab language={language} t={t} />}
-      {ipamPage === 'reconciliation' && <IPReconciliationTab language={language} t={t} />}
-    </Suspense>
+    <>
+      <EnterpriseWorkflowPanel language={language} />
+      <Suspense fallback={lazyPanelFallback}>
+        {ipamPage === 'prefixes' && <PrefixManagementTab language={language} t={t} />}
+        {ipamPage === 'ips' && <IPAddressTab language={language} t={t} />}
+        {ipamPage === 'pools' && <IPPoolTab language={language} t={t} />}
+        {ipamPage === 'vips' && <VIPManagementTab language={language} t={t} />}
+        {ipamPage === 'dhcp' && <DHCPLeaseTab language={language} t={t} />}
+        {ipamPage === 'utilization' && <IPUtilizationTab language={language} t={t} />}
+        {ipamPage === 'reconciliation' && <IPReconciliationTab language={language} t={t} />}
+      </Suspense>
+    </>
   );
 };
 

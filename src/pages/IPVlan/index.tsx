@@ -342,7 +342,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
   const handleDeleteIP = async (id: string) => {
     setApiError('');
     try {
-      const r = await fetch(`/api/ipam/addresses/${id}`, { method: 'DELETE', headers: authHeaders() });
+      const r = await fetch(`/api/ipam/addresses/${id}/release`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: '{}' });
       if (!r.ok) {
         const detail = await r.json().catch(() => null);
         setApiError(detail?.detail || `删除地址失败: ${r.status}`);

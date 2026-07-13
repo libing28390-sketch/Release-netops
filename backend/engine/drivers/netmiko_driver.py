@@ -12,7 +12,9 @@ class NetmikoDriver(BaseDriver):
     
     def __init__(self, device_info: Dict[str, Any]):
         super().__init__(device_info)
-        # Netmiko 需要具体的 device_type
+        # Apply strict vendor/platform mapping to prevent silent Cisco fallback
+        from core.platform_utils import normalize_device_platform
+        self.platform = normalize_device_platform(device_info.get("vendor"), self.platform)
         self.device_type = self._map_device_type(self.platform)
         self.secret = device_info.get("enable_password") or ""
         self.conn = None

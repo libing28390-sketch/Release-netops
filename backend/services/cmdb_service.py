@@ -240,6 +240,22 @@ def get_field_authority_quality(conn) -> dict:
            WHERE (COALESCE(tl.source_interface_id, '') != '' AND si.id IS NULL)
               OR (COALESCE(tl.target_interface_id, '') != '' AND ti.id IS NULL)"""
     )
+    duplicate_vrf_names = count(
+        """SELECT COUNT(*) AS cnt FROM (
+             SELECT COALESCE(tenant_id, ''), vrf_name FROM vrfs
+             GROUP BY COALESCE(tenant_id, ''), vrf_name HAVING COUNT(*) > 1
+           ) t"""
+    )
+    duplicate_site_vlans = count(
+        """SELECT COUNT(*) AS cnt FROM (
+             SELECT COALESCE(site_id, ''), vlan_id FROM vlans
+             GROUP BY COALESCE(site_id, ''), vlan_id HAVING COUNT(*) > 1
+           ) t"""
+    )
+    prefix_scope_missing = count(
+        """SELECT COUNT(*) AS cnt FROM prefixes
+           WHERE COALESCE(tenant_id, '') = '' OR COALESCE(vrf_id, '') = '' OR COALESCE(site_id, '') = ''"""
+    )
 
     issues = {
         'site_id_missing': site_id_missing,
@@ -252,6 +268,9 @@ def get_field_authority_quality(conn) -> dict:
         'ip_orphaned_interface_id': ip_orphaned_interface_id,
         'topology_missing_interface_id': topo_missing_interface_id,
         'topology_orphaned_interface_id': topo_orphaned_interface_id,
+        'duplicate_vrf_names': duplicate_vrf_names,
+        'duplicate_site_vlans': duplicate_site_vlans,
+        'prefix_scope_missing': prefix_scope_missing,
     }
     return {
         'scope': 'cmdb_ipam_field_authority',
@@ -270,6 +289,64 @@ def get_field_authority_quality(conn) -> dict:
             'Resolve duplicate devices.asset_id links before enforcing one-to-one asset/device relation.',
         ],
     }
+
+
+def backfill_field_authority(conn) -> dict:
+    """Perform deterministic, non-destructive authority-field backfills."""
+    counters = {
+        'devices_site_id': 0,
+        'ip_addresses_interface_id': 0,
+        'topology_source_interface_id': 0,
+        'topology_target_interface_id': 0,
+    }
+    devices = conn.execute(
+        "SELECT id, site FROM devices WHERE COALESCE(site_id, '') = '' AND COALESCE(site, '') <> ''"
+    ).fetchall()
+    for device in devices:
+        matches = conn.execute(
+            "SELECT id FROM sites WHERE site_code = ? OR site_name = ?",
+            (device['site'], device['site']),
+        ).fetchall()
+        unique_ids = {row['id'] for row in matches}
+        if len(unique_ids) == 1:
+            conn.execute("UPDATE devices SET site_id = ? WHERE id = ?", (next(iter(unique_ids)), device['id']))
+            counters['devices_site_id'] += 1
+
+    addresses = conn.execute(
+        """SELECT id, device_id, interface_name FROM ip_addresses
+           WHERE COALESCE(interface_id, '') = '' AND COALESCE(device_id, '') <> ''
+             AND COALESCE(interface_name, '') <> ''"""
+    ).fetchall()
+    for address in addresses:
+        matches = conn.execute(
+            "SELECT id FROM interfaces WHERE device_id = ? AND interface_name = ?",
+            (address['device_id'], address['interface_name']),
+        ).fetchall()
+        if len(matches) == 1:
+            conn.execute("UPDATE ip_addresses SET interface_id = ? WHERE id = ?", (matches[0]['id'], address['id']))
+            counters['ip_addresses_interface_id'] += 1
+
+    links = conn.execute(
+        """SELECT id, source_device_id, source_port, source_interface_id,
+                  target_device_id, target_port, target_interface_id
+           FROM topology_links"""
+    ).fetchall()
+    for link in links:
+        for side in ('source', 'target'):
+            if link[f'{side}_interface_id'] or not link[f'{side}_device_id'] or not link[f'{side}_port']:
+                continue
+            matches = conn.execute(
+                "SELECT id FROM interfaces WHERE device_id = ? AND interface_name = ?",
+                (link[f'{side}_device_id'], link[f'{side}_port']),
+            ).fetchall()
+            if len(matches) == 1:
+                conn.execute(
+                    f"UPDATE topology_links SET {side}_interface_id = ? WHERE id = ?",
+                    (matches[0]['id'], link['id']),
+                )
+                counters[f'topology_{side}_interface_id'] += 1
+    conn.commit()
+    return {'updated': counters, 'quality': get_field_authority_quality(conn)}
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -441,13 +518,17 @@ def get_vrf(conn, vrf_id: str) -> dict:
 
 def create_vrf(conn, *, vrf_name: str, rd: str = '', description: str = '',
                tenant_id: str = _DEFAULT_TENANT) -> dict:
-    dup = conn.execute("SELECT 1 FROM vrfs WHERE vrf_name = ?", (vrf_name,)).fetchone()
+    target_tenant = tenant_id or _DEFAULT_TENANT
+    dup = conn.execute(
+        "SELECT 1 FROM vrfs WHERE vrf_name = ? AND COALESCE(tenant_id, ?) = ?",
+        (vrf_name, _DEFAULT_TENANT, target_tenant),
+    ).fetchone()
     if dup:
         raise ValueError(f"VRF name already exists: {vrf_name}")
     vrf_id = _new_id('vrf')
     conn.execute(
         "INSERT INTO vrfs (id, vrf_name, rd, description, tenant_id) VALUES (?, ?, ?, ?, ?)",
-        (vrf_id, vrf_name, rd, description, tenant_id or _DEFAULT_TENANT),
+        (vrf_id, vrf_name, rd, description, target_tenant),
     )
     conn.commit()
     logger.info(f"[CmdbService] Created VRF '{vrf_name}'")
@@ -455,13 +536,16 @@ def create_vrf(conn, *, vrf_name: str, rd: str = '', description: str = '',
 
 
 def update_vrf(conn, vrf_id: str, **fields) -> dict:
-    get_vrf(conn, vrf_id)
-    if 'vrf_name' in fields and fields['vrf_name'] is not None:
+    existing = get_vrf(conn, vrf_id)
+    if any(key in fields and fields[key] is not None for key in ('vrf_name', 'tenant_id')):
+        target_name = fields.get('vrf_name', existing.get('vrf_name'))
+        target_tenant = fields.get('tenant_id', existing.get('tenant_id')) or _DEFAULT_TENANT
         dup = conn.execute(
-            "SELECT 1 FROM vrfs WHERE vrf_name = ? AND id != ?", (fields['vrf_name'], vrf_id)
+            "SELECT 1 FROM vrfs WHERE vrf_name = ? AND COALESCE(tenant_id, ?) = ? AND id != ?",
+            (target_name, _DEFAULT_TENANT, target_tenant, vrf_id),
         ).fetchone()
         if dup:
-            raise ValueError(f"VRF name already exists: {fields['vrf_name']}")
+            raise ValueError(f"VRF name already exists in tenant: {target_name}")
     updates, params = [], []
     for key in ('vrf_name', 'rd', 'description', 'tenant_id'):
         if key in fields and fields[key] is not None:
@@ -536,17 +620,18 @@ def create_vlan(conn, *, vlan_id: int, name: str, site_id: str | None = None,
 
 def update_vlan(conn, vlan_pk: str, **fields) -> dict:
     existing = get_vlan(conn, vlan_pk)
-    if 'vlan_id' in fields and fields['vlan_id'] is not None:
-        if not (1 <= int(fields['vlan_id']) <= 4094):
+    if any(key in fields and fields[key] is not None for key in ('vlan_id', 'site_id')):
+        target_vlan = int(fields.get('vlan_id', existing.get('vlan_id')))
+        if not (1 <= target_vlan <= 4094):
             raise ValueError("vlan_id must be between 1 and 4094")
         target_site = fields.get('site_id', existing.get('site_id'))
         if target_site:
             dup = conn.execute(
                 "SELECT 1 FROM vlans WHERE site_id = ? AND vlan_id = ? AND id != ?",
-                (target_site, fields['vlan_id'], vlan_pk),
+                (target_site, target_vlan, vlan_pk),
             ).fetchone()
             if dup:
-                raise ValueError(f"VLAN {fields['vlan_id']} already exists in this site")
+                raise ValueError(f"VLAN {target_vlan} already exists in this site")
     updates, params = [], []
     for key in ('vlan_id', 'name', 'site_id', 'status', 'tenant_id'):
         if key in fields and fields[key] is not None:

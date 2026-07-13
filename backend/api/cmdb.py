@@ -71,6 +71,21 @@ def api_cmdb_field_authority_quality(_user=require_role("Viewer")):
         conn.close()
 
 
+@router.post("/cmdb/data-quality/backfill-authority")
+def api_cmdb_backfill_field_authority(user=require_role("Administrator")):
+    conn = get_db_connection()
+    try:
+        result = cmdb_service.backfill_field_authority(conn)
+        _audit(
+            user, "cmdb.authority.backfill", "warning",
+            "Backfilled deterministic CMDB authority references",
+            "cmdb_data_quality", target_name="field-authority",
+        )
+        return {"success": True, "data": result, "message": "Authority references backfilled"}
+    finally:
+        conn.close()
+
+
 # ─── Tenants ────────────────────────────────────────────
 
 @router.get("/cmdb/tenants")

@@ -5,7 +5,9 @@ All write operations require Operator+; delete requires Administrator.
 
 import logging
 from fastapi import APIRouter, HTTPException, Query
-from core.rbac import require_role
+from pydantic import BaseModel
+from core.rbac import enforce_resource_scope, require_permission, require_role
+from database import get_db_connection
 from schemas.schemas import (
     PrefixCreate, PrefixUpdate,
     IPAddressCreate, IPAddressUpdate,
@@ -53,6 +55,52 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+class AllocationRequest(BaseModel):
+    hostname: str = ''
+    device_id: str = ''
+    interface_id: str = ''
+    interface_name: str = ''
+    mac_address: str = ''
+    purpose: str = ''
+    requested_by: str = ''
+    expires_at: str = ''
+    status: str = 'allocated'
+
+
+class ReservationRequest(AllocationRequest):
+    address: str
+
+
+class ReleaseRequest(BaseModel):
+    released_by: str = ''
+
+
+def _prefix_scope(subnet_id: str) -> dict:
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT tenant_id, site_id FROM prefixes WHERE id = ?", (subnet_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Prefix not found')
+        return {'tenant_id': row['tenant_id'], 'site_id': row['site_id']}
+    finally:
+        conn.close()
+
+
+def _address_scope(address_id: str) -> dict:
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """SELECT p.tenant_id, p.site_id FROM ip_addresses ip
+               JOIN prefixes p ON p.id = ip.subnet_id WHERE ip.id = ?""",
+            (address_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Address not found')
+        return {'tenant_id': row['tenant_id'], 'site_id': row['site_id']}
+    finally:
+        conn.close()
+
+
 # ── Prefixes (Subnets) ──────────────────────────
 
 @router.get('/ipam/subnets')
@@ -66,7 +114,8 @@ def api_list_subnets(
 
 
 @router.post('/ipam/subnets', status_code=201)
-def api_create_subnet(body: PrefixCreate, user=require_role("Operator")):
+def api_create_subnet(body: PrefixCreate, user=require_permission('prefix', 'create')):
+    enforce_resource_scope(user, 'prefix', 'create', tenant_id=body.tenant_id, site_id=body.site_id)
     try:
         result = create_subnet(
             prefix=body.prefix,
@@ -102,7 +151,8 @@ def api_create_subnet(body: PrefixCreate, user=require_role("Operator")):
 
 
 @router.put('/ipam/subnets/{subnet_id}')
-def api_update_subnet(subnet_id: str, body: PrefixUpdate, user=require_role("Operator")):
+def api_update_subnet(subnet_id: str, body: PrefixUpdate, user=require_permission('prefix', 'update')):
+    enforce_resource_scope(user, 'prefix', 'update', **_prefix_scope(subnet_id))
     fields = body.model_dump(exclude_none=True)
     if not update_subnet(subnet_id, **fields):
         raise HTTPException(status_code=404, detail='Prefix not found')
@@ -123,7 +173,8 @@ def api_update_subnet(subnet_id: str, body: PrefixUpdate, user=require_role("Ope
 
 
 @router.delete('/ipam/subnets/{subnet_id}')
-def api_delete_subnet(subnet_id: str, user=require_role("Administrator")):
+def api_delete_subnet(subnet_id: str, user=require_permission('prefix', 'delete')):
+    enforce_resource_scope(user, 'prefix', 'delete', **_prefix_scope(subnet_id))
     if not delete_subnet(subnet_id):
         raise HTTPException(status_code=404, detail='Prefix not found')
 
@@ -142,13 +193,14 @@ def api_delete_subnet(subnet_id: str, user=require_role("Administrator")):
 
 
 @router.post('/ipam/subnets/batch-delete')
-def api_batch_delete_subnets(body: dict, user=require_role("Administrator")):
+def api_batch_delete_subnets(body: dict, user=require_permission('prefix', 'delete')):
     ids = body.get("ids", [])
     if not ids or not isinstance(ids, list):
         raise HTTPException(status_code=422, detail="ids must be a non-empty list")
     deleted = 0
     failed = 0
     for sid in ids:
+        enforce_resource_scope(user, 'prefix', 'delete', **_prefix_scope(str(sid)))
         if delete_subnet(str(sid)):
             deleted += 1
             log_audit_event(
@@ -175,7 +227,8 @@ def api_list_addresses(subnet_id: str, _user=require_role("Viewer")):
 
 
 @router.post('/ipam/subnets/{subnet_id}/addresses', status_code=201)
-def api_create_address(subnet_id: str, body: IPAddressCreate, user=require_role("Operator")):
+def api_create_address(subnet_id: str, body: IPAddressCreate, user=require_permission('ip_address', 'create')):
+    enforce_resource_scope(user, 'ip_address', 'create', **_prefix_scope(subnet_id))
     try:
         result = create_address(
             subnet_id,
@@ -208,18 +261,17 @@ def api_create_address(subnet_id: str, body: IPAddressCreate, user=require_role(
 
 
 @router.post('/ipam/subnets/{subnet_id}/allocate-next', status_code=201)
-def api_allocate_next_address(subnet_id: str, body: dict, user=require_role("Operator")):
+def api_allocate_next_address(subnet_id: str, body: AllocationRequest, user=require_permission('ip_address', 'allocate')):
+    enforce_resource_scope(user, 'ip_address', 'allocate', **_prefix_scope(subnet_id))
+    values = body.model_dump()
     try:
         result = allocate_next_address(
             subnet_id,
-            hostname=body.get('hostname', ''),
-            device_id=body.get('device_id', ''),
-            interface_id=body.get('interface_id', ''),
-            interface_name=body.get('interface_name', ''),
-            mac_address=body.get('mac_address', ''),
-            purpose=body.get('purpose', ''),
-            requested_by=body.get('requested_by') or user.get('username', ''),
-            status=body.get('status', 'allocated'),
+            hostname=values['hostname'], device_id=values['device_id'],
+            interface_id=values['interface_id'], interface_name=values['interface_name'],
+            mac_address=values['mac_address'], purpose=values['purpose'],
+            requested_by=values['requested_by'] or user.get('username', ''),
+            status=values['status'], expires_at=values['expires_at'],
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -235,26 +287,23 @@ def api_allocate_next_address(subnet_id: str, body: dict, user=require_role("Ope
         target_type="ip_address",
         target_id=result["id"],
         target_name=result.get("address"),
-        details={'subnet_id': subnet_id, **body},
+        details={'subnet_id': subnet_id, **values},
     )
     return result
 
 
 @router.post('/ipam/subnets/{subnet_id}/reserve', status_code=201)
-def api_reserve_address(subnet_id: str, body: dict, user=require_role("Operator")):
-    if not body.get('address'):
-        raise HTTPException(status_code=422, detail="address is required")
+def api_reserve_address(subnet_id: str, body: ReservationRequest, user=require_permission('ip_address', 'reserve')):
+    enforce_resource_scope(user, 'ip_address', 'reserve', **_prefix_scope(subnet_id))
+    values = body.model_dump()
     try:
         result = reserve_address(
             subnet_id,
-            address=body.get('address'),
-            hostname=body.get('hostname', ''),
-            device_id=body.get('device_id', ''),
-            interface_id=body.get('interface_id', ''),
-            interface_name=body.get('interface_name', ''),
-            mac_address=body.get('mac_address', ''),
-            purpose=body.get('purpose', ''),
-            requested_by=body.get('requested_by') or user.get('username', ''),
+            address=values['address'], hostname=values['hostname'],
+            device_id=values['device_id'], interface_id=values['interface_id'],
+            interface_name=values['interface_name'], mac_address=values['mac_address'],
+            purpose=values['purpose'], requested_by=values['requested_by'] or user.get('username', ''),
+            expires_at=values['expires_at'],
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -270,16 +319,20 @@ def api_reserve_address(subnet_id: str, body: dict, user=require_role("Operator"
         target_type="ip_address",
         target_id=result["id"],
         target_name=result.get("address"),
-        details={'subnet_id': subnet_id, **body},
+        details={'subnet_id': subnet_id, **values},
     )
     return result
 
 
 @router.put('/ipam/addresses/{address_id}')
-def api_update_address(address_id: str, body: IPAddressUpdate, user=require_role("Operator")):
+def api_update_address(address_id: str, body: IPAddressUpdate, user=require_permission('ip_address', 'update')):
+    enforce_resource_scope(user, 'ip_address', 'update', **_address_scope(address_id))
     fields = body.model_dump(exclude_none=True)
-    if not update_address(address_id, **fields):
-        raise HTTPException(status_code=404, detail='Address not found')
+    try:
+        if not update_address(address_id, **fields):
+            raise HTTPException(status_code=404, detail='Address not found')
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     log_audit_event(
         event_type="ipam.address.update",
@@ -297,7 +350,8 @@ def api_update_address(address_id: str, body: IPAddressUpdate, user=require_role
 
 
 @router.delete('/ipam/addresses/{address_id}')
-def api_delete_address(address_id: str, user=require_role("Administrator")):
+def api_delete_address(address_id: str, user=require_permission('ip_address', 'delete')):
+    enforce_resource_scope(user, 'ip_address', 'delete', **_address_scope(address_id))
     if not delete_address(address_id):
         raise HTTPException(status_code=404, detail='Address not found')
 
@@ -316,9 +370,10 @@ def api_delete_address(address_id: str, user=require_role("Administrator")):
 
 
 @router.post('/ipam/addresses/{address_id}/release')
-def api_release_address(address_id: str, body: dict | None = None, user=require_role("Operator")):
-    body = body or {}
-    if not release_address(address_id, released_by=body.get('released_by') or user.get('username', '')):
+def api_release_address(address_id: str, body: ReleaseRequest | None = None, user=require_permission('ip_address', 'release')):
+    enforce_resource_scope(user, 'ip_address', 'release', **_address_scope(address_id))
+    values = body.model_dump() if body else {}
+    if not release_address(address_id, released_by=values.get('released_by') or user.get('username', '')):
         raise HTTPException(status_code=404, detail='Address not found')
 
     log_audit_event(
@@ -331,7 +386,7 @@ def api_release_address(address_id: str, body: dict | None = None, user=require_
         actor_role=user.get("role"),
         target_type="ip_address",
         target_id=address_id,
-        details=body,
+        details=values,
     )
     return {'ok': True}
 

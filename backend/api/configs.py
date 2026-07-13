@@ -967,7 +967,7 @@ async def run_scheduled_backup(run_id: str | None = None):
     conn = get_db_connection()
     try:
         devices = conn.execute(
-            "SELECT id, hostname, ip_address, platform, role, username, password, "
+            "SELECT id, hostname, ip_address, platform, vendor, role, username, password, "
             "normal_username, normal_password, admin_username, admin_password, enable_password, "
             "credential_id, credential_source, vault_path, management_port "
             "FROM devices WHERE status = 'online'"
@@ -1040,7 +1040,8 @@ async def run_scheduled_backup(run_id: str | None = None):
         """Back up a single device; returns a result dict."""
         nonlocal success_count, failed_count
 
-        _platform = (device['platform'] or '').lower()
+        from core.platform_utils import normalize_device_platform
+        _platform = normalize_device_platform(device.get('vendor'), device.get('platform'))
         if 'cisco' in _platform or 'arista' in _platform or 'rgos' in _platform or 'ruijie' in _platform:
             _backup_cmd = 'show running-config'
         elif 'juniper' in _platform or 'junos' in _platform:
@@ -1049,6 +1050,7 @@ async def run_scheduled_backup(run_id: str | None = None):
             _backup_cmd = 'display current-configuration'
 
         d = dict(device)
+        d['platform'] = _platform
         d['conn_timeout'] = 8  # Use a shorter connection timeout of 8s for backup tasks to fail fast
         from services.vault_service import resolve_device_credentials
         creds = resolve_device_credentials(d)

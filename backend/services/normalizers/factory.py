@@ -17,14 +17,16 @@ class NormalizerFactory:
         platform_lower = str(platform).strip().lower()
         
         # Fallbacks for platform variations
-        if "cisco" in platform_lower or platform_lower == "network":
+        if "cisco" in platform_lower:
             platform_lower = "cisco_ios"
         elif "huawei" in platform_lower:
             platform_lower = "huawei_vrp"
             
         normalizer_cls = cls._normalizers.get(platform_lower)
         if not normalizer_cls:
-            # Fallback to Cisco IOS as default generic parser
-            normalizer_cls = CiscoNormalizer
+            raise ValueError(
+                f"Unsupported normalizer platform '{platform}'. "
+                "Vendor-specific output will not be parsed with Cisco rules."
+            )
             
         return normalizer_cls()

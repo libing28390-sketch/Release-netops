@@ -720,7 +720,8 @@ def _build_base_payload(device_info: dict[str, Any], platform: str) -> dict[str,
 def collect_operational_data(device_info: dict[str, Any], categories: list[str] | None = None, auth_role: str = 'auto') -> dict[str, Any]:
     role = str(device_info.get('role') or '').strip()
     selected_categories = _resolve_categories(categories, role=role)
-    platform = _normalize_platform(device_info.get('platform') or 'cisco_ios')
+    from core.platform_utils import normalize_device_platform
+    platform = normalize_device_platform(device_info.get('vendor'), device_info.get('platform') or 'cisco_ios')
     commands_by_category = _resolve_commands(platform, selected_categories)
     conn_params = _build_connection_params(device_info, auth_role=auth_role)
 
@@ -788,7 +789,8 @@ def collect_operational_data(device_info: dict[str, Any], categories: list[str] 
 
 
 def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_role: str = 'auto') -> dict[str, Any]:
-    platform = _normalize_platform(device_info.get('platform') or 'cisco_ios')
+    from core.platform_utils import normalize_device_platform
+    platform = normalize_device_platform(device_info.get('vendor'), device_info.get('platform') or 'cisco_ios')
     conn_params = _build_connection_params(device_info, auth_role=auth_role)
 
     commands = [line.strip() for line in str(command or '').splitlines() if line.strip()]

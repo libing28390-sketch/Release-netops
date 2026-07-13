@@ -398,9 +398,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
   const handleDelete = async (id: string) => {
     try {
-      const res = await fetch(`/api/ipam/addresses/${id}`, {
-        method: 'DELETE',
-        headers: authHeaders(),
+      const res = await fetch(`/api/ipam/addresses/${id}/release`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: '{}',
       });
       if (res.ok) {
         setShowDeleteConfirm(null);

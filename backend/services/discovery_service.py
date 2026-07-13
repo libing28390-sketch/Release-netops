@@ -1,169 +1,213 @@
+"""Read-only multi-vendor discovery producing observations and findings.
+
+Discovery never writes authoritative CMDB/IPAM fields. Confirmed changes are
+applied only by reconciliation actions.
+"""
+
+from __future__ import annotations
+
 import logging
-from typing import Dict, Any, List, Optional
+from dataclasses import asdict
+from typing import Any
+
 from database.core import get_db_connection
-from repository.inventory_repository import InventoryRepository
-from services.inventory_synchronizer import InventorySynchronizer
-from services.normalizers.factory import NormalizerFactory
 from drivers.factory import DriverFactory
-from domain.models import Device, Interface, Neighbor
+from services.normalizers.factory import NormalizerFactory
+from services.reconciliation_service import (
+    complete_discovery_run,
+    create_discovery_run,
+    create_reconciliation_run,
+    record_observation,
+)
+
 
 _logger = logging.getLogger(__name__)
 
-class DiscoveryService:
-    def __init__(self, repo: Optional[InventoryRepository] = None, sync: Optional[InventorySynchronizer] = None):
-        self.repo = repo or InventoryRepository()
-        self.sync = sync or InventorySynchronizer(self.repo)
 
-    def discover_device(self, device_id: str) -> dict:
-        """
-        Execute active CLI discovery for a device ID, parse outputs via 
-        Vendor Normalizers, and synchronize results to the Repository SSoT.
-        """
+COMMAND_PROFILES = {
+    'cisco_ios': {
+        'version': 'show version', 'interfaces': 'show interfaces',
+        'brief': 'show ip interface brief', 'neighbors': 'show lldp neighbors detail',
+        'normalizer': 'cisco_ios',
+    },
+    'huawei_vrp': {
+        'version': 'display version', 'interfaces': 'display interface',
+        'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor verbose',
+        'normalizer': 'huawei_vrp',
+    },
+    'huawei_vrpv8': {
+        'version': 'display version', 'interfaces': 'display interface',
+        'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor verbose',
+        'normalizer': 'huawei_vrp',
+    },
+    'hp_comware': {
+        'version': 'display version', 'interfaces': 'display interface',
+        'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor-information verbose',
+        'normalizer': None,
+    },
+    'h3c_comware': {
+        'version': 'display version', 'interfaces': 'display interface',
+        'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor-information verbose',
+        'normalizer': None,
+    },
+    'juniper_junos': {
+        'version': 'show version', 'interfaces': 'show interfaces detail',
+        'brief': 'show interfaces terse', 'neighbors': 'show lldp neighbors detail',
+        'normalizer': None,
+    },
+    'arista_eos': {
+        'version': 'show version', 'interfaces': 'show interfaces',
+        'brief': 'show ip interface brief', 'neighbors': 'show lldp neighbors detail',
+        'normalizer': None,
+    },
+    'ruijie_rgos': {
+        'version': 'show version', 'interfaces': 'show interfaces',
+        'brief': 'show ip interface brief', 'neighbors': 'show lldp neighbors detail',
+        'normalizer': None,
+    },
+}
+
+PLATFORM_ALIASES = {
+    'huawei': 'huawei_vrp', 'vrp': 'huawei_vrp', 'huawei_v8': 'huawei_vrpv8',
+    'h3c': 'hp_comware', 'comware': 'hp_comware',
+    'cisco': 'cisco_ios', 'ios': 'cisco_ios',
+    'juniper': 'juniper_junos', 'arista': 'arista_eos', 'ruijie': 'ruijie_rgos',
+}
+
+
+def resolve_discovery_profile(platform: str) -> tuple[str, dict]:
+    key = str(platform or '').strip().lower()
+    key = PLATFORM_ALIASES.get(key, key)
+    if key not in COMMAND_PROFILES:
+        raise ValueError(f"Unsupported discovery platform '{platform}'. Refusing Cisco command fallback.")
+    return key, COMMAND_PROFILES[key]
+
+
+class DiscoveryService:
+    def discover_device(self, device_id: str, *, requested_by: str = 'system') -> dict:
         conn = get_db_connection()
+        run_id = create_discovery_run(
+            run_type='device_cli', requested_by=requested_by,
+            scope={'device_ids': [device_id]}, conn=conn,
+        )
+        conn.commit()
         try:
-            # 1. Fetch device connection details from DB
             row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
             if not row:
-                raise ValueError(f"Device {device_id} not found in database CMDB")
-            
+                raise ValueError(f"Device {device_id} not found in CMDB")
             device_info = dict(row)
-            platform = device_info.get("platform") or "cisco_ios"
-            driver_type = device_info.get("connection_method") or "netmiko"
-            
-            # Map platform to commands
-            if "huawei" in platform.lower():
-                cmd_version = "display version"
-                cmd_interfaces = "display interface"
-                cmd_brief = "display ip interface brief"
-                cmd_lldp = "display lldp neighbor verbose"
-            else: # default Cisco
-                cmd_version = "show version"
-                cmd_interfaces = "show interfaces"
-                cmd_brief = "show ip interface brief"
-                cmd_lldp = "show lldp neighbors detail"
-                
-            # 2. Connect via Driver and run commands
-            _logger.info(f"Connecting to device {device_id} ({device_info.get('ip_address')}) via {driver_type}")
+            platform_key, profile = resolve_discovery_profile(device_info.get('platform') or '')
+            driver_type = device_info.get('connection_method') or 'netmiko'
+
+            outputs: dict[str, str] = {}
             driver = DriverFactory.get_driver(driver_type, device_info)
-            
             with driver:
-                res_ver = driver.send_command(cmd_version)
-                res_int = driver.send_command(cmd_interfaces)
-                res_brf = driver.send_command(cmd_brief)
-                res_lldp = driver.send_command(cmd_lldp)
-                
-            # Check execution success (allow empty output for non-critical commands)
-            raw_version = res_ver.output if res_ver.success else ""
-            raw_interfaces = res_int.output if res_int.success else ""
-            raw_brief = res_brf.output if res_brf.success else ""
-            raw_lldp = res_lldp.output if res_lldp.success else ""
-            
-            # 3. Resolve Normalizer and parse outputs
-            normalizer = NormalizerFactory.get_normalizer(platform)
-            
-            # Parse Device Info
-            device_obj: Device = normalizer.parse_device_info(device_id, raw_version)
-            # Inject IP address from CMDB
-            device_obj.ip_address = device_info.get("ip_address") or ""
-            
-            # Parse Interfaces
-            interfaces: List[Interface] = normalizer.parse_interfaces(device_id, raw_interfaces, raw_brief)
-            
-            # Parse Neighbors
-            neighbors: List[Neighbor] = normalizer.parse_neighbors(device_id, raw_lldp)
-            
-            # 4. Synchronize parsed Domain Objects to the database Repository
-            _logger.info(f"Starting database synchronization for device {device_id}")
-            
-            # Update Device static details in CMDB
-            conn.execute(
-                """
-                UPDATE devices SET 
-                    hostname = ?,
-                    vendor = ?,
-                    platform = ?,
-                    serial_number = ?,
-                    model = ?,
-                    os_version = ?,
-                    uptime = ?
-                WHERE id = ?
-                """,
-                (
-                    device_obj.hostname, device_obj.vendor, device_obj.platform,
-                    device_obj.sn, device_obj.model, device_obj.version,
-                    device_obj.uptime, device_id
+                for output_key in ('version', 'interfaces', 'brief', 'neighbors'):
+                    command = profile[output_key]
+                    result = driver.send_command(command)
+                    outputs[output_key] = result.output if result.success else ''
+                    record_observation(
+                        run_id, source_device_id=device_id, source_type='cli',
+                        observed_type='cli_output', observed_key=f'{device_id}:{output_key}',
+                        payload={'command': command, 'platform': platform_key,
+                                 'success': bool(result.success), 'output': outputs[output_key]},
+                        confidence=0.9 if result.success else 0.2, conn=conn,
+                    )
+
+            findings: list[dict[str, Any]] = []
+            parsed_summary = {'device': 0, 'interfaces': 0, 'neighbors': 0, 'raw_only': profile['normalizer'] is None}
+            if profile['normalizer']:
+                normalizer = NormalizerFactory.get_normalizer(profile['normalizer'])
+                device_obj = normalizer.parse_device_info(device_id, outputs['version'])
+                device_payload = {
+                    'hostname': device_obj.hostname, 'vendor': device_obj.vendor,
+                    'platform': device_obj.platform or platform_key,
+                    'serial_number': device_obj.sn, 'model': device_obj.model,
+                    'os_version': device_obj.version, 'uptime': device_obj.uptime,
+                }
+                observation_id = record_observation(
+                    run_id, source_device_id=device_id, source_type='normalized_cli',
+                    observed_type='device', observed_key=device_id, payload=device_payload,
+                    confidence=0.9, conn=conn,
                 )
+                proposed = {
+                    key: value for key, value in device_payload.items()
+                    if value not in (None, '') and str(device_info.get(key) or '') != str(value)
+                }
+                if proposed:
+                    findings.append({
+                        'observation_id': observation_id, 'finding_type': 'device_fact_mismatch',
+                        'risk_level': 'high', 'target_type': 'device', 'target_id': device_id,
+                        'tenant_id': device_info.get('tenant_id'), 'site_id': device_info.get('site_id'),
+                        'observed': device_payload,
+                        'current': {key: device_info.get(key) for key in proposed},
+                        'proposed': proposed,
+                    })
+                parsed_summary['device'] = 1
+
+                interfaces = normalizer.parse_interfaces(device_id, outputs['interfaces'], outputs['brief'])
+                for interface in interfaces:
+                    payload = asdict(interface)
+                    payload['interface_name'] = interface.name_display or interface.name_raw
+                    observation_id = record_observation(
+                        run_id, source_device_id=device_id, source_type='normalized_cli',
+                        observed_type='interface', observed_key=f"{device_id}:{payload['interface_name']}",
+                        payload=payload, confidence=0.85, conn=conn,
+                    )
+                    existing = conn.execute(
+                        "SELECT * FROM interfaces WHERE device_id = ? AND interface_name = ?",
+                        (device_id, payload['interface_name']),
+                    ).fetchone()
+                    if not existing:
+                        findings.append({
+                            'observation_id': observation_id, 'finding_type': 'undocumented_interface',
+                            'risk_level': 'medium', 'target_type': 'interface',
+                            'target_id': f"{device_id}:{payload['interface_name']}",
+                            'tenant_id': device_info.get('tenant_id'), 'site_id': device_info.get('site_id'),
+                            'observed': payload, 'proposed': payload,
+                        })
+                parsed_summary['interfaces'] = len(interfaces)
+
+                neighbors = normalizer.parse_neighbors(device_id, outputs['neighbors'])
+                for neighbor in neighbors:
+                    payload = asdict(neighbor)
+                    observation_id = record_observation(
+                        run_id, source_device_id=device_id, source_type='lldp',
+                        observed_type='topology',
+                        observed_key=f"{device_id}:{neighbor.local_interface}:{neighbor.remote_device}:{neighbor.remote_interface}",
+                        payload=payload, confidence=0.85, conn=conn,
+                    )
+                    findings.append({
+                        'observation_id': observation_id, 'finding_type': 'topology_candidate',
+                        'risk_level': 'low', 'target_type': 'topology_link',
+                        'target_id': None, 'observed': payload, 'proposed': payload,
+                    })
+                parsed_summary['neighbors'] = len(neighbors)
+
+            reconciliation = create_reconciliation_run(
+                discovery_run_id=run_id, requested_by=requested_by, findings=findings, conn=conn,
             )
+            complete_discovery_run(run_id, status='succeeded', summary={
+                **parsed_summary, 'findings': reconciliation['total_findings'],
+                'platform': platform_key,
+            }, conn=conn)
             conn.commit()
-            
-            # Sync Interfaces via InventorySynchronizer (delta changes and status logging)
-            sync_res = self.sync.sync_interfaces(device_id, interfaces)
-            
-            # Save LLDP neighbors
-            # Clean up old neighbors first to avoid duplicates
-            conn.execute("DELETE FROM topology_links WHERE source_device_id = ?", (device_id,))
-            for n in neighbors:
-                # Find target device by hostname or ID
-                target_row = conn.execute(
-                    "SELECT id FROM devices WHERE hostname = ? OR id = ?",
-                    (n.remote_device, n.remote_device)
-                ).fetchone()
-                if not target_row:
-                    _logger.warning(f"Neighbor target device '{n.remote_device}' not found in CMDB, skipping link entry creation")
-                    continue
-                
-                target_device_id = target_row["id"]
-                link_key = f"{device_id}:{n.local_interface}-{target_device_id}:{n.remote_interface}"
-                
-                # Fetch source and target interface IDs if they exist
-                src_intf_id = f"{device_id}:{n.local_interface}"
-                tgt_intf_id = f"{target_device_id}:{n.remote_interface}"
-                
-                # Ensure source and target interface stubs exist in DB to prevent FK violations
-                src_intf_row = conn.execute("SELECT id FROM interfaces WHERE id = ?", (src_intf_id,)).fetchone()
-                if not src_intf_row:
-                    conn.execute(
-                        "INSERT INTO interfaces (id, device_id, interface_name, name_raw, name_display, interface_type, admin_status, oper_status) VALUES (?, ?, ?, ?, ?, 'physical', 'up', 'up')",
-                        (src_intf_id, device_id, n.local_interface, n.local_interface, n.local_interface)
-                    )
-                
-                tgt_intf_row = conn.execute("SELECT id FROM interfaces WHERE id = ?", (tgt_intf_id,)).fetchone()
-                if not tgt_intf_row:
-                    conn.execute(
-                        "INSERT INTO interfaces (id, device_id, interface_name, name_raw, name_display, interface_type, admin_status, oper_status) VALUES (?, ?, ?, ?, ?, 'physical', 'up', 'up')",
-                        (tgt_intf_id, target_device_id, n.remote_interface, n.remote_interface, n.remote_interface)
-                    )
-                
-                conn.execute(
-                    """
-                    INSERT INTO topology_links (
-                        id, link_key, source_device_id, source_interface_id, source_port, source_port_normalized,
-                        target_device_id, target_interface_id, target_port, target_port_normalized,
-                        discovery_source, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'lldp', 'up')
-                    ON CONFLICT(id) DO NOTHING
-                    """,
-                    (
-                        link_key, link_key, device_id, src_intf_id, n.local_interface, n.local_interface,
-                        target_device_id, tgt_intf_id, n.remote_interface, n.remote_interface
-                    )
-                )
-            conn.commit()
-            
             return {
-                "success": True,
-                "device_id": device_id,
-                "hostname": device_obj.hostname,
-                "interfaces_sync": sync_res,
-                "neighbors_count": len(neighbors)
+                'success': True, 'device_id': device_id, 'platform': platform_key,
+                'discovery_run_id': run_id,
+                'reconciliation_run_id': reconciliation['id'],
+                'observations': 4 + parsed_summary['device'] + parsed_summary['interfaces'] + parsed_summary['neighbors'],
+                'findings': reconciliation['total_findings'],
+                'authoritative_write': False,
             }
-            
         except Exception as exc:
-            _logger.error(f"Discovery failed on device {device_id}: {exc}", exc_info=True)
-            return {
-                "success": False,
-                "device_id": device_id,
-                "error": str(exc)
-            }
+            conn.rollback()
+            try:
+                complete_discovery_run(run_id, status='failed', summary={'error': str(exc)}, conn=conn)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+            _logger.error("Discovery failed on device %s: %s", device_id, exc, exc_info=True)
+            return {'success': False, 'device_id': device_id, 'discovery_run_id': run_id, 'error': str(exc)}
         finally:
             conn.close()

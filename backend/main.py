@@ -13,9 +13,13 @@ if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     except Exception:
         pass
+# Ensure proper MIME type mapping for static files on Windows (prevents white screen)
+import mimetypes
+mimetypes.add_type('application/javascript', '.js')
+mimetypes.add_type('text/css', '.css')
 # ----------------------------
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from core.config import settings
@@ -133,29 +137,62 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     
     # Register periodic jobs
-    scheduler.add_job(record_host_resource_snapshot, 'interval', minutes=1, id='host_resource_sampler', replace_existing=True)
-    scheduler.add_job(record_device_health_snapshot, 'interval', minutes=1, id='device_health_sampler', replace_existing=True)
+    scheduler.add_job(
+        synchronized_scheduler_job('host_resource_sampler', expire_seconds=55)(record_host_resource_snapshot),
+        'interval', minutes=1, id='host_resource_sampler', replace_existing=True
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('device_health_sampler', expire_seconds=55)(record_device_health_snapshot),
+        'interval', minutes=1, id='device_health_sampler', replace_existing=True
+    )
     
     from services.telemetry_service import record_device_telemetry_snapshot
-    scheduler.add_job(record_device_telemetry_snapshot, 'interval', minutes=1, id='device_telemetry_sampler', replace_existing=True)
+    scheduler.add_job(
+        synchronized_scheduler_job('device_telemetry_sampler', expire_seconds=55)(record_device_telemetry_snapshot),
+        'interval', minutes=1, id='device_telemetry_sampler', replace_existing=True
+    )
     
     reschedule_backup(schedule_cfg)
     
     from services.ip_locator_service import run_endpoint_collector, run_route_collector, ARP_SWEEP_INTERVAL_SECONDS
-    scheduler.add_job(run_endpoint_collector, 'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='arp_cache_sweep', replace_existing=True)
-    scheduler.add_job(run_route_collector, 'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='route_cache_sweep', replace_existing=True)
+    scheduler.add_job(
+        synchronized_scheduler_job('arp_cache_sweep', expire_seconds=int(ARP_SWEEP_INTERVAL_SECONDS - 1))(run_endpoint_collector),
+        'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='arp_cache_sweep', replace_existing=True
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('route_cache_sweep', expire_seconds=int(ARP_SWEEP_INTERVAL_SECONDS - 1))(run_route_collector),
+        'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='route_cache_sweep', replace_existing=True
+    )
     
     from services.scheduler_service import sync_topology_and_interfaces_job, poll_endpoints_job, sync_routing_neighbors_job, sync_bgp_routes_job
-    scheduler.add_job(sync_topology_and_interfaces_job, 'interval', minutes=5, id='topology_interface_sync', replace_existing=True)
-    scheduler.add_job(poll_endpoints_job, 'interval', minutes=5, id='poll_endpoints', replace_existing=True)
-    scheduler.add_job(sync_routing_neighbors_job, 'interval', minutes=5, id='routing_neighbors_sync', replace_existing=True)
-    scheduler.add_job(sync_bgp_routes_job, 'interval', minutes=5, id='bgp_routes_sync', replace_existing=True)
+    scheduler.add_job(
+        synchronized_scheduler_job('topology_interface_sync', expire_seconds=290)(sync_topology_and_interfaces_job),
+        'interval', minutes=5, id='topology_interface_sync', replace_existing=True
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('poll_endpoints', expire_seconds=290)(poll_endpoints_job),
+        'interval', minutes=5, id='poll_endpoints', replace_existing=True
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('routing_neighbors_sync', expire_seconds=290)(sync_routing_neighbors_job),
+        'interval', minutes=5, id='routing_neighbors_sync', replace_existing=True
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('bgp_routes_sync', expire_seconds=290)(sync_bgp_routes_job),
+        'interval', minutes=5, id='bgp_routes_sync', replace_existing=True
+    )
     
     from services.inspection_service import run_scheduled_inspections
-    scheduler.add_job(run_scheduled_inspections, CronTrigger(minute='0,30'), id='inspection_scheduler', replace_existing=True)
+    scheduler.add_job(
+        synchronized_scheduler_job('inspection_scheduler', expire_seconds=1700)(run_scheduled_inspections),
+        CronTrigger(minute='0,30'), id='inspection_scheduler', replace_existing=True
+    )
     
     from services.password_rotation_service import run_rotation_sweep
-    scheduler.add_job(run_rotation_sweep, CronTrigger(hour=2, minute=0), id='password_rotation_sweep', replace_existing=True)
+    scheduler.add_job(
+        synchronized_scheduler_job('password_rotation_sweep', expire_seconds=3600)(run_rotation_sweep),
+        CronTrigger(hour=2, minute=0), id='password_rotation_sweep', replace_existing=True
+    )
 
     # Launch background tasks
     asyncio.create_task(_bg_init())
@@ -174,6 +211,11 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown(wait=False)
     logger.info("[Scheduler] APScheduler stopped")
 
+from core.context import request_id_var, user_var, route_var
+from core.metrics import metrics_registry
+from core.scheduler_lock import synchronized_scheduler_job
+import time
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="2.0.0",
@@ -182,6 +224,51 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+@app.middleware("http")
+async def add_request_id_and_log(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    req_token = request_id_var.set(request_id)
+    user_token = user_var.set("anonymous")
+    route_token = route_var.set(request.url.path)
+    
+    auth = request.headers.get('Authorization', '')
+    if auth.startswith('Bearer '):
+        token = auth.replace('Bearer ', '')
+        if token:
+            try:
+                from api.users import validate_session_token
+                user = validate_session_token(token)
+                if user and user.get('username'):
+                    user_var.set(user['username'])
+            except Exception:
+                pass
+                
+    start_time = time.time()
+    try:
+        response = await call_next(request)
+        duration_ms = (time.time() - start_time) * 1000
+        metrics_registry.record_api_latency(duration_ms)
+        logger.info(
+            f"Route: {request.method} {request.url.path} | "
+            f"Status: {response.status_code} | "
+            f"Duration: {duration_ms:.2f}ms"
+        )
+        response.headers["X-Request-ID"] = request_id
+        return response
+    except Exception as exc:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(
+            f"Route: {request.method} {request.url.path} | "
+            f"Failed: {exc} | "
+            f"Duration: {duration_ms:.2f}ms",
+            exc_info=True
+        )
+        raise exc
+    finally:
+        request_id_var.reset(req_token)
+        user_var.reset(user_token)
+        route_var.reset(route_token)
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
