@@ -20,7 +20,7 @@ interface AssetModalProps {
   showProductionConfirm: boolean;
   setShowProductionConfirm: (val: boolean) => void;
   handleSave: () => void;
-  doSave: () => void;
+  doSave: (overrides?: Record<string, unknown>) => void;
   language: string;
   setFeedbackMsg: (msg: any) => void;
 }
@@ -48,6 +48,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 
   const [racks, setRacks] = React.useState<any[]>([]);
   const [uValidationError, setUValidationError] = React.useState<string | null>(null);
+  const [legacyExemptReason, setLegacyExemptReason] = React.useState('');
 
   React.useEffect(() => {
     if (isOpen) {
@@ -150,6 +151,9 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 
           {/* Scrollable body */}
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+            <div className="rounded-lg border border-cyan-100 bg-cyan-50/60 px-3 py-2 text-[10px] text-cyan-800">
+              {zh ? '必填规则：主机名、资产编号至少填写一项。存量设备直接投产时，还必须填写普通账号、普通密码和免上收投产原因（至少 5 个字符）。' : 'Required: provide either Hostname or Asset Tag. Legacy devices created as production also require a normal username, normal password, and an exemption reason (minimum 5 characters).'}
+            </div>
             {/* ─── 基本属性 ─── */}
             <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
               <div>
@@ -226,6 +230,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 <select
                   value={form.lifecycle_status}
                   onChange={e => setForm(f => ({ ...f, lifecycle_status: e.target.value }))}
+                  disabled={!isEditMode && form.asset_origin !== 'legacy'}
                   title="Lifecycle"
                   className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
                 >
@@ -235,7 +240,40 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     </option>
                   ))}
                 </select>
+                {!isEditMode && form.asset_origin !== 'legacy' && <p className="mt-1 text-[9px] text-black/30">{zh ? '新设备统一以待投产状态入库' : 'New devices are always created in staging'}</p>}
               </div>
+              <div>
+                <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '录入来源' : 'Asset Origin'}</label>
+                <select
+                  value={form.asset_origin || 'new'}
+                  onChange={e => setForm(f => ({
+                    ...f,
+                    asset_origin: e.target.value,
+                    lifecycle_status: e.target.value === 'legacy' ? f.lifecycle_status : 'staging',
+                    takeover_exempt_reason: e.target.value === 'legacy' ? f.takeover_exempt_reason : '',
+                  }))}
+                  disabled={isEditMode}
+                  className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 disabled:bg-black/[0.02] focus:outline-none focus:border-[#00bceb]/25"
+                >
+                  <option value="new">{zh ? '新设备录入' : 'New Device'}</option>
+                  <option value="legacy">{zh ? '存量设备补录' : 'Legacy Device'}</option>
+                </select>
+                <p className="mt-1 text-[9px] text-black/30">
+                  {zh ? '记录首次录入方式，投产后不会改变' : 'Records how the asset was first entered and does not change after production'}
+                </p>
+              </div>
+              {!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && (
+                <div className="col-span-2">
+                  <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '免上收投产原因' : 'Takeover Exemption Reason'}</label>
+                  <textarea
+                    value={form.takeover_exempt_reason || ''}
+                    onChange={e => setForm(f => ({ ...f, takeover_exempt_reason: e.target.value }))}
+                    rows={2}
+                    placeholder={zh ? '说明该存量设备暂不修改口令的原因，至少 5 个字符' : 'Explain why this legacy device will not rotate passwords yet'}
+                    className="w-full resize-none rounded-lg border border-amber-200 bg-amber-50/40 px-2.5 py-2 text-xs text-black/65 outline-none focus:border-amber-400"
+                  />
+                </div>
+              )}
               <Field label={zh ? '管理IP' : 'Mgmt IP'} value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" />
               <Field label={zh ? '端口 (SSH/Mgmt)' : 'Mgmt Port'} value={form.management_port} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder="22" />
               
@@ -513,7 +551,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               <button onClick={onClose} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
               <button
                 onClick={handleSave}
-                disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError}
+                disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5)}
                 className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20"
               >
                 {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
@@ -537,9 +575,16 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 </div>
                 <p className="text-xs leading-relaxed text-black/50 mb-4">
                   {zh
-                    ? '设备即将标记为已投产，系统将自动修改默认口令并完成凭据上收，确保安全合规。'
-                    : 'Device will be marked as in production. Default passwords will be auto-rotated and credentials secured.'}
+                    ? '系统将先执行口令上收与回连验证，全部成功后才会把设备标记为已投产。上收期间设备保持待投产状态。'
+                    : 'Credentials will be rotated and verified first. The device will be marked as production only after takeover succeeds.'}
                 </p>
+                <textarea
+                  value={legacyExemptReason}
+                  onChange={event => setLegacyExemptReason(event.target.value)}
+                  rows={2}
+                  placeholder={zh ? '选择免上收投产时，请填写存量设备豁免原因（至少 5 个字符）' : 'Reason required for legacy exemption (minimum 5 characters)'}
+                  className="mb-3 w-full resize-none rounded-lg border border-black/10 px-3 py-2 text-xs text-black/70 outline-none focus:border-amber-400"
+                />
                 <div className="flex gap-2">
                   <button
                     onClick={() => setShowProductionConfirm(false)}
@@ -548,13 +593,26 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     {zh ? '取消' : 'Cancel'}
                   </button>
                   <button
-                    onClick={() => { setShowProductionConfirm(false); doSave(); }}
+                    onClick={() => { setShowProductionConfirm(false); doSave({ production_mode: 'takeover' }); }}
                     disabled={saving}
                     className="flex-1 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50"
                   >
                     {saving ? (zh ? '处理中...' : 'Processing...') : (zh ? '确认投产' : 'Confirm')}
                   </button>
                 </div>
+                <button
+                  onClick={() => {
+                    setShowProductionConfirm(false);
+                    doSave({ production_mode: 'legacy_exempt', takeover_exempt_reason: legacyExemptReason.trim() });
+                  }}
+                  disabled={saving || editingAsset?.asset_origin !== 'legacy' || legacyExemptReason.trim().length < 5}
+                  className="mt-2 w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {zh ? '存量设备免上收投产' : 'Legacy production without takeover'}
+                </button>
+                {editingAsset?.asset_origin !== 'legacy' && (
+                  <p className="mt-1 text-center text-[9px] text-black/35">{zh ? '仅录入时标记为“存量设备”的资产可使用免上收投产' : 'Only assets marked as legacy during creation can use this option'}</p>
+                )}
               </div>
             </motion.div>
           )}

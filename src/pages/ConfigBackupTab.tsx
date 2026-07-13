@@ -29,6 +29,35 @@ interface ConfigBackupTabProps {
   activeRunId?: string | null;
 }
 
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {}
+  }
+
+  const textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.setAttribute('readonly', '');
+  textArea.style.position = 'fixed';
+  textArea.style.left = '-9999px';
+  textArea.style.top = '0';
+  textArea.style.opacity = '0';
+  document.body.appendChild(textArea);
+
+  try {
+    textArea.focus();
+    textArea.select();
+    textArea.setSelectionRange(0, text.length);
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textArea);
+  }
+};
+
 const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   t,
   language,
@@ -211,10 +240,10 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
 
   const handleCopy = async () => {
     if (!viewContent) return;
-    try {
-      await navigator.clipboard.writeText(viewContent);
+    const copied = await copyTextToClipboard(viewContent);
+    if (copied) {
       showToast(zh ? '已复制到剪贴板' : 'Copied', 'success');
-    } catch {
+    } else {
       showToast(zh ? '复制失败' : 'Copy failed', 'error');
     }
   };

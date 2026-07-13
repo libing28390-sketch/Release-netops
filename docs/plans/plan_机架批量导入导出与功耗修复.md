@@ -17,6 +17,7 @@ This plan details the technical steps to resolve the number input issue for rack
 - Import `List` from `typing`.
 - Add a new endpoint `POST /api/racks/batch` accepting `List[RackCreate]` that loops through each rack payload and calls [create_rack](file:///e:/data/netsops/backend/services/rack_service.py#L48).
 - Ensure atomic error reporting so that the user knows exactly which row failed if a constraint is violated.
+- Use a single transaction for the whole batch so a later row failure rolls back earlier rows from the same import.
 
 ---
 
@@ -40,6 +41,7 @@ This plan details the technical steps to resolve the number input issue for rack
 
 ### Automated Tests
 - Add a new unit test in [test_racks_new_fields.py](file:///e:/data/netsops/backend/tests/test_racks_new_fields.py) targeting `api_batch_create_racks` to verify atomic import.
+- Add a rollback regression case where row 2 fails and row 1 must not remain in `racks`.
 - Run `pytest` to ensure all tests pass.
 
 ### Manual Verification

@@ -7,7 +7,7 @@ try:
 except ImportError:
     HAS_NETMIKO = False
 from .base import BaseDriver, CommandResult
-from .ssh_compat import build_netmiko_compatibility_kwargs
+from .ssh_compat import build_netmiko_compatibility_kwargs, drain_paged_output
 
 # ── CLI 错误特征（通用），用于在 success=True 时二次检测配置失败 ──────────────
 # 注意：
@@ -361,6 +361,7 @@ class NetmikoDriver(BaseDriver):
                     output = self.conn.send_command_timing(command, read_timeout=params['read_timeout'])
                 else:
                     raise e
+            output = drain_paged_output(self.conn, output, read_timeout=params['read_timeout'])
             
             elapsed = time.time() - start_time
             err_line = self._check_cli_errors(output)

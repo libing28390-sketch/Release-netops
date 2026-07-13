@@ -1,56 +1,38 @@
-# H3C Comware 路由查询修复 — 完成报告
+# H3C Comware 路由查询解析失败修复 Walkthrough
 
 ## 完成摘要
 
-修复了 H3C Comware V7 设备（AGG-SW1, 192.168.96.222）在自动化任务中执行 `display ip routing-table` 失败的问题。
-
-**根因**：Playbook 引擎凭据解析优先选择低权限用户 `user`，该用户无权执行 `screen-length disable`，导致 Netmiko 无法禁用分页 → 长输出在 `---- More ----` 处暂停 → Netmiko 等不到提示符超时报错。
-
-**修复方案**：
-1. 调整凭据优先级为 `username > admin_username > normal_username`（与 automation.py 的 `auto` 模式一致）
-2. 新增 `safe_send_command` 包装器，对 Comware 设备自动构造灵活的 expect_string，失败时回退到 timing 模式
+- 保留自动化查询默认使用普通账号的最小权限策略，未将 Playbook 全局改为管理员账号优先。
+- 在 SSH 兼容层新增通用分页提示识别与分页 drain 逻辑，覆盖 H3C `---- More ----` 以及常见 `--More--` 提示。
+- 在两套 Netmiko 命令执行路径中接入分页 drain，避免普通账号无法关闭分页时长输出命令挂起。
 
 ## 实际修改文件
 
-| 文件 | 变更 |
-|------|------|
-| [`ssh_compat.py`](file:///d:/netops/netsops-main/backend/drivers/ssh_compat.py) | +45 行：新增 `safe_send_command()` |
-| [`operational_data_service.py`](file:///d:/netops/netsops-main/backend/services/operational_data_service.py) | 2 处 `send_command` → `safe_send_command` |
-| [`inspection_service.py`](file:///d:/netops/netsops-main/backend/services/inspection_service.py) | 1 处 `send_command` → `safe_send_command` |
-| [`ip_locator_service.py`](file:///d:/netops/netsops-main/backend/services/ip_locator_service.py) | 1 处 `send_command` → `safe_send_command` |
-| [`engine.py`](file:///d:/netops/netsops-main/backend/api/playbooks/engine.py) | 凭据优先级从 `normal > username > admin` 改为 `username > admin > normal` |
+- `backend/drivers/ssh_compat.py`
+- `backend/engine/drivers/netmiko_driver.py`
+- `backend/drivers/netmiko_driver.py`
+- `backend/tests/test_ssh_compat_paging.py`
+- `docs/plans/plan_H3C路由查询修复.md`
 
 ## 关键实现说明
 
-### safe_send_command 工作原理
-
-1. **Comware 自适应 expect_string**：检测 `device_type` 包含 `hp_comware` 时，自动构造 `[<\[]?{base_prompt}[>\]]` 正则，同时匹配用户视图 `<prompt>` 和系统视图 `[prompt]`
-2. **异常回退**：捕获 `Pattern not detected` / `Timeout` 异常后，自动回退到 `send_command_timing` 模式
-3. **对非 Comware 设备**：透传到原始 `send_command`，零影响
-
-### 凭据优先级修复
-
-```diff
-- dd['username'] = creds.get('normal_username') or creds.get('username') or ...
-+ # username > admin_username > normal_username (auto mode)
-+ for u_key, p_key in [('username','password'), ('admin_username','admin_password'), ...]:
-```
+- `contains_paging_prompt` 统一识别厂商分页提示。
+- `drain_paged_output` 在发现分页提示后向设备发送空格并继续读取，直到最新输出不再包含分页提示或达到页数上限。
+- V3 `backend/engine/drivers/netmiko_driver.py` 与旧版 `backend/drivers/netmiko_driver.py` 都在命令输出返回前调用分页 drain，保证 Playbook 和旧调用链都受益。
+- 凭据优先级不变：自动化查询默认普通账号；备份、配置保存、回滚、变更和显式特权借用继续使用管理员账号或 enable/admin 凭据。
 
 ## 验证命令与结果
 
-```
-$ python verify_creds.py
-OLD playbook credential: username=user    # ← 旧逻辑选了低权限用户
-NEW playbook credential: username=admin   # ← 新逻辑选了有权限的用户
-```
+- `.\.venv\Scripts\python.exe -m pytest backend/tests/test_ssh_compat_paging.py backend/tests/test_racks_new_fields.py -q`
+- 结果：`8 passed in 4.63s`
+- `npm run lint`
+- 结果：通过，`tsc --noEmit` 退出码 `0`
 
 ## 未执行验证及原因
 
-- 未能执行端到端 SSH 连接测试（测试脚本中硬编码的密码已变更，认证失败）
-- 需要重启后端服务后在 UI 上重试 H3C 路由查询验证
+- 未连接真实 H3C 设备验证；当前环境没有生产设备交互授权与现场 SSH 会话。
 
-## 剩余风险/后续建议
+## 剩余风险与建议
 
-1. **重启后端验证**：需重启 FastAPI 服务使代码生效，然后在 `/automation/tasks` 重试 H3C 路由查询
-2. **低权限场景**：如果业务需要用低权限账号连接 H3C 设备，建议在设备侧给 `user` 账号授予 `screen-length disable` 权限
-3. **其他 Comware 设备**：修复覆盖所有使用 Netmiko `send_command` 的调用路径，对后续新增 Comware 设备同样生效
+- 如果设备分页提示格式不在当前正则集合内，仍可能需要追加匹配样式。
+- 建议后续在真实 H3C Comware V7 上重试 `display ip routing-table`，确认 UI 输出完整返回。

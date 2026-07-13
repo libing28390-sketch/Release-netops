@@ -19,6 +19,7 @@ export interface Asset {
   uplink_port: string;
   status: string;
   lifecycle_status: string;
+  asset_origin?: 'new' | 'legacy';
   purchase_date: string;
   warranty_expiry: string;
   department: string;

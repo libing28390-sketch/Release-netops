@@ -17,6 +17,7 @@ import ctypes
 import platform
 import shutil
 import zipfile
+import json
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
@@ -100,7 +101,7 @@ try:
         QLabel, QPushButton, QComboBox, QFrame, QGraphicsDropShadowEffect, 
         QSystemTrayIcon, QMenu, QCheckBox, QStackedWidget, QLineEdit, 
         QPlainTextEdit, QFileDialog, QMessageBox, QGridLayout, QScrollArea,
-        QListView, QStyledItemDelegate, QDialog
+        QListView, QStyledItemDelegate, QDialog, QInputDialog
     )
     from PySide6.QtCore import Qt, QSize, Signal, Slot, QTimer, QSettings, QPoint, QPropertyAnimation, QEasingCurve, Property, QRectF
     from PySide6.QtGui import QIcon, QFont, QColor, QAction, QCursor, QPainter, QBrush, QPen, QPixmap, QPolygon
@@ -151,19 +152,19 @@ def create_status_icon(color_name):
     # Draw status dot in the bottom right corner
     if color_name == "green":
         # Green dot
-        painter.setBrush(QBrush(QColor("#10B981")))
+        painter.setBrush(QBrush(QColor("#2DA44E")))
     elif color_name == "red":
         # Red dot
-        painter.setBrush(QBrush(QColor("#EF4444")))
+        painter.setBrush(QBrush(QColor("#CF222E")))
     elif color_name == "yellow":
         # Yellow dot for warning/error
-        painter.setBrush(QBrush(QColor("#F59E0B")))
+        painter.setBrush(QBrush(QColor("#D29922")))
     elif color_name == "blue":
         # Blue dot for starting (changed to brand cyan)
-        painter.setBrush(QBrush(QColor("#06B6D4")))
+        painter.setBrush(QBrush(QColor("#8B949E")))
     else:
         # Grey dot for unknown
-        painter.setBrush(QBrush(QColor("#64748B")))
+        painter.setBrush(QBrush(QColor("#6B7280")))
         
     # Draw status dot at (19, 19) with size 11x11, and a dark outline for high visibility
     painter.setPen(QPen(QColor("#0B0F19"), 1.5))
@@ -190,15 +191,15 @@ TRANSLATIONS = {
         "agent_license": "许可: 免费开源版 (Free & Open Source)",
         
         "status_card_title": "后台服务状态 (Service Status)",
-        "status_running": "🟢 运行中 (RUNNING)",
-        "status_stopped": "🔴 已停止 (STOPPED)",
+        "status_running": "运行中 · RUNNING",
+        "status_stopped": "已停止 · STOPPED",
         "status_starting": "🟡 正在启动 (STARTING)",
         "status_unknown": "⚪ 未知 (UNKNOWN)",
         "health_healthy": "正常 (Healthy)",
         "health_unhealthy": "异常 (Unhealthy)",
         
         "conn_card_title": "平台连接状态 (Platform Connection)",
-        "conn_connected": "🟢 已连接 (Connected)",
+        "conn_connected": "已连接 · Connected",
         "conn_disconnected": "🔴 已断开 (Disconnected)",
         "conn_controller": "控制器地址:",
         "conn_sync": "上次同步:",
@@ -313,15 +314,15 @@ TRANSLATIONS = {
         "agent_license": "License: Free & Open Source",
         
         "status_card_title": "Backend Service Status",
-        "status_running": "🟢 RUNNING",
-        "status_stopped": "🔴 STOPPED",
+        "status_running": "RUNNING",
+        "status_stopped": "STOPPED",
         "status_starting": "🟡 STARTING",
         "status_unknown": "⚪ UNKNOWN",
         "health_healthy": "Healthy",
         "health_unhealthy": "Unhealthy",
         
         "conn_card_title": "Platform Connection",
-        "conn_connected": "🟢 Connected",
+        "conn_connected": "Connected",
         "conn_disconnected": "🔴 Disconnected",
         "conn_controller": "Controller IP:",
         "conn_sync": "Last Sync:",
@@ -426,115 +427,117 @@ TRANSLATIONS = {
 DARK_STYLE = """
 QWidget {
     font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", -apple-system, sans-serif;
-    color: #F3F4F6;
+    color: #E6EDF3;
     font-size: 12px;
 }
 QMainWindow {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #090E1A, stop:1 #0F172A);
+    background: #0D1117;
 }
 /* Sidebar Container */
 QWidget#sidebar_container {
-    background-color: #0B0F19;
-    border-right: 1px solid #1E293B;
+    background-color: #090D14;
+    border-right: 1px solid #1F2937;
 }
 QLabel#lbl_sidebar_title {
     font-size: 15px;
-    font-weight: bold;
-    color: #FFFFFF;
+    font-weight: 650;
+    color: #F0F6FC;
 }
 QLabel#lbl_sidebar_ver {
     font-size: 11px;
-    color: #64748B;
+    color: #8B949E;
 }
 QPushButton.nav_btn {
     text-align: left;
-    padding: 10px 16px;
-    margin: 4px 12px;
+    padding: 9px 14px;
+    margin: 3px 14px;
     font-size: 12px;
-    font-weight: bold;
-    color: #94A3B8;
+    font-weight: 600;
+    color: #8B949E;
     background-color: transparent;
     border: none;
     border-radius: 8px;
     outline: none;
 }
 QPushButton.nav_btn:hover {
-    color: #F8FAFC;
-    background-color: #1E293B;
+    color: #F0F6FC;
+    background-color: #151B23;
 }
 QPushButton.nav_btn:checked {
-    color: #06B6D4;
-    background-color: #0F2C59;
+    color: #F0F6FC;
+    background-color: #1C2128;
 }
 QPushButton.nav_btn QLabel {
-    color: #94A3B8;
+    color: #8B949E;
 }
 QPushButton.nav_btn:hover QLabel {
-    color: #F8FAFC;
+    color: #F0F6FC;
 }
 QPushButton.nav_btn:checked QLabel {
-    color: #06B6D4;
+    color: #F0F6FC;
 }
 /* Right content areas */
 QStackedWidget#content_pane {
     background-color: transparent;
 }
 QFrame.card {
-    background-color: #0F172A;
-    border: 1px solid #1E293B;
-    border-radius: 12px;
+    background-color: #111827;
+    border: 1px solid #263241;
+    border-radius: 14px;
 }
 QLabel#lbl_card_title {
-    font-size: 11px;
-    font-weight: bold;
-    color: #64748B;
+    font-size: 10px;
+    font-weight: 650;
+    color: #8B949E;
     text-transform: uppercase;
 }
 QLabel#lbl_status_large {
-    font-size: 24px;
-    font-weight: bold;
+    font-size: 20px;
+    font-weight: 650;
 }
 QLabel#lbl_field_name {
-    color: #94A3B8;
+    color: #8B949E;
 }
 #lbl_field_val {
-    color: #F3F4F6;
-    font-weight: bold;
+    color: #E6EDF3;
+    font-weight: 600;
 }
 /* Buttons styles */
 QPushButton, QCheckBox {
     outline: none;
 }
 QPushButton#btn_primary {
-    background-color: #06B6D4;
-    color: #FFFFFF;
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-weight: bold;
-    border: none;
+    background-color: #F0F6FC;
+    color: #0D1117;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-weight: 650;
+    border: 1px solid #F0F6FC;
 }
 QPushButton#btn_primary:hover {
-    background-color: #0891B2;
+    background-color: #DDE7F0;
+    border-color: #DDE7F0;
 }
 QPushButton#btn_primary:pressed {
-    background-color: #0E7490;
+    background-color: #C9D6E2;
 }
 QPushButton#btn_primary:disabled {
-    background-color: #1E293B;
-    color: #475569;
+    background-color: #151B23;
+    border-color: #263241;
+    color: #6E7681;
 }
 
 QPushButton#btn_danger {
     background-color: transparent;
-    color: #F87171;
-    border: 1px solid #991B1B;
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-weight: bold;
+    color: #F85149;
+    border: 1px solid #3B1D22;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-weight: 600;
 }
 QPushButton#btn_danger:hover {
-    background-color: #991B1B;
-    color: #FFFFFF;
+    background-color: #2A1215;
+    color: #FF7B72;
 }
 QPushButton#btn_danger:pressed {
     background-color: #7F1D1D;
@@ -544,28 +547,34 @@ QPushButton#btn_danger:disabled {
     background-color: #1E293B;
     color: #475569;
 }
+QPushButton#btn_danger:disabled:hover {
+    background-color: #1E293B;
+    color: #6E7681;
+    border-color: #263241;
+}
 
 QPushButton#btn_secondary {
-    background-color: #1E293B;
-    color: #F3F4F6;
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-weight: bold;
-    border: 1px solid #334155;
+    background-color: #151B23;
+    color: #E6EDF3;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-weight: 600;
+    border: 1px solid #263241;
 }
 QPushButton#btn_secondary:hover {
-    background-color: #334155;
+    background-color: #1C2128;
+    border-color: #3D444D;
 }
 QPushButton#btn_secondary:pressed {
-    background-color: #0F172A;
+    background-color: #0D1117;
 }
 
 QPushButton#btn_start {
-    background-color: #10B981;
+    background-color: #238636;
     color: #FFFFFF;
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 6px 16px;
-    font-weight: bold;
+    font-weight: 650;
     border: none;
 }
 QPushButton#btn_start:hover {
@@ -580,11 +589,11 @@ QPushButton#btn_start:disabled {
 }
 
 QPushButton#btn_stop {
-    background-color: #EF4444;
+    background-color: #DA3633;
     color: #FFFFFF;
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 6px 16px;
-    font-weight: bold;
+    font-weight: 650;
     border: none;
 }
 QPushButton#btn_stop:hover {
@@ -599,11 +608,11 @@ QPushButton#btn_stop:disabled {
 }
 
 QPushButton#btn_restart {
-    background-color: #3B82F6;
+    background-color: #1F6FEB;
     color: #FFFFFF;
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 6px 16px;
-    font-weight: bold;
+    font-weight: 650;
     border: none;
 }
 QPushButton#btn_restart:hover {
@@ -618,33 +627,33 @@ QPushButton#btn_restart:disabled {
 }
 
 QPushButton#btn_copy {
-    background-color: #1E293B;
-    color: #94A3B8;
-    border: 1px solid #334155;
-    border-radius: 4px;
+    background-color: #151B23;
+    color: #8B949E;
+    border: 1px solid #263241;
+    border-radius: 6px;
     padding: 2px 6px;
     font-size: 10px;
 }
 QPushButton#btn_copy:hover {
-    background-color: #334155;
-    color: #FFFFFF;
+    background-color: #1C2128;
+    color: #F0F6FC;
 }
 
 /* Inputs and terminals */
 QComboBox, QLineEdit {
-    background-color: #1E293B;
-    border: 1px solid #334155;
-    border-radius: 6px;
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 8px;
     padding: 6px 12px;
-    color: #F3F4F6;
+    color: #E6EDF3;
 }
 QComboBox:hover, QLineEdit:hover {
-    border-color: #475569;
-    background-color: #334155;
+    border-color: #3D444D;
+    background-color: #111827;
 }
 QComboBox:focus, QLineEdit:focus {
-    border-color: #06B6D4;
-    background-color: #0F172A;
+    border-color: #58A6FF;
+    background-color: #0D1117;
 }
 QComboBox::drop-down {
     subcontrol-origin: padding;
@@ -659,12 +668,12 @@ QComboBox::down-arrow:hover {
     image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23F3F4F6' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
 }
 QComboBox QAbstractItemView, QListView {
-    background-color: #1F2937;
-    border: 1px solid #4B5563;
+    background-color: #111827;
+    border: 1px solid #30363D;
     padding: 0px;
-    color: #F3F4F6;
-    selection-background-color: #0891B2;
-    selection-color: #FFFFFF;
+    color: #E6EDF3;
+    selection-background-color: #1C2128;
+    selection-color: #F0F6FC;
     outline: none;
 }
 QComboBox QAbstractItemView::item, QListView::item {
@@ -672,12 +681,12 @@ QComboBox QAbstractItemView::item, QListView::item {
     min-height: 26px;
     border-radius: 0px;
     border: none;
-    color: #F3F4F6;
-    background-color: #1F2937;
+    color: #E6EDF3;
+    background-color: #111827;
 }
 QComboBox QAbstractItemView::item:selected, QListView::item:selected {
-    background-color: #0891B2;
-    color: #FFFFFF;
+    background-color: #1C2128;
+    color: #F0F6FC;
 }
 QScrollBar:vertical {
     border: none;
@@ -686,12 +695,12 @@ QScrollBar:vertical {
     margin: 0px;
 }
 QScrollBar::handle:vertical {
-    background-color: #334155;
+    background-color: #30363D;
     min-height: 20px;
     border-radius: 3px;
 }
 QScrollBar::handle:vertical:hover {
-    background-color: #475569;
+    background-color: #484F58;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
@@ -707,12 +716,12 @@ QScrollBar:horizontal {
     margin: 0px;
 }
 QScrollBar::handle:horizontal {
-    background-color: #334155;
+    background-color: #30363D;
     min-width: 20px;
     border-radius: 3px;
 }
 QScrollBar::handle:horizontal:hover {
-    background-color: #475569;
+    background-color: #484F58;
 }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     width: 0px;
@@ -723,12 +732,12 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
 }
 
 QPlainTextEdit#log_viewer {
-    background-color: #030712;
-    border: 1px solid #1E293B;
-    border-radius: 8px;
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 10px;
     font-family: "Consolas", "Courier New", monospace;
     font-size: 12px;
-    color: #10B981;
+    color: #C9D1D9;
 }
 
 QCheckBox {
@@ -752,29 +761,29 @@ QCheckBox::indicator:checked:hover {
     image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='20' viewBox='0 0 38 20'><rect width='38' height='20' rx='10' fill='%230891B2'/><circle cx='28' cy='10' r='6' fill='white'/></svg>");
 }
 QWidget.setting_row_widget {
-    border-bottom: 1px solid #1E293B;
+    border-bottom: 1px solid #263241;
 }
 QWidget.setting_row_widget:hover {
-    background-color: #1E293B;
+    background-color: #151B23;
     border-radius: 8px;
 }
 QMenu {
-    background-color: #1E293B;
-    border: 1px solid #334155;
+    background-color: #111827;
+    border: 1px solid #30363D;
     padding: 4px;
 }
 QMenu::item {
     background-color: transparent;
     padding: 6px 24px;
-    color: #F3F4F6;
+    color: #E6EDF3;
 }
 QMenu::item:selected {
-    background-color: #0891B2;
-    color: #FFFFFF;
+    background-color: #1C2128;
+    color: #F0F6FC;
 }
 QMenu::separator {
     height: 1px;
-    background-color: #334155;
+    background-color: #263241;
     margin: 4px 0px;
 }
 """
@@ -782,54 +791,54 @@ QMenu::separator {
 LIGHT_STYLE = """
 QWidget {
     font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", -apple-system, sans-serif;
-    color: #0F172A;
+    color: #111827;
     font-size: 12px;
 }
 QMainWindow {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #EAF5FF, stop:1 #F8FAFC);
+    background: #F7F7F4;
 }
 /* Sidebar Container */
 QWidget#sidebar_container {
-    background-color: #FFFFFF;
-    border-right: 1px solid #E2E8F0;
+    background-color: #FBFBFA;
+    border-right: 1px solid #E5E2DC;
 }
 QLabel#lbl_sidebar_title {
     font-size: 15px;
-    font-weight: bold;
-    color: #0F172A;
+    font-weight: 650;
+    color: #111827;
 }
 QLabel#lbl_sidebar_ver {
     font-size: 11px;
-    color: #64748B;
+    color: #6B7280;
 }
 QPushButton.nav_btn {
     text-align: left;
-    padding: 10px 16px;
-    margin: 4px 12px;
+    padding: 9px 14px;
+    margin: 3px 14px;
     font-size: 12px;
-    font-weight: bold;
-    color: #64748B;
+    font-weight: 600;
+    color: #6B7280;
     background-color: transparent;
     border: none;
     border-radius: 8px;
     outline: none;
 }
 QPushButton.nav_btn:hover {
-    color: #0F172A;
-    background-color: #F1F5F9;
+    color: #111827;
+    background-color: #F0EFEC;
 }
 QPushButton.nav_btn:checked {
-    color: #0891B2;
-    background-color: #E0F2FE;
+    color: #111827;
+    background-color: #ECEBE7;
 }
 QPushButton.nav_btn QLabel {
-    color: #64748B;
+    color: #6B7280;
 }
 QPushButton.nav_btn:hover QLabel {
-    color: #0F172A;
+    color: #111827;
 }
 QPushButton.nav_btn:checked QLabel {
-    color: #0891B2;
+    color: #111827;
 }
 /* Right content areas */
 QStackedWidget#content_pane {
@@ -837,60 +846,62 @@ QStackedWidget#content_pane {
 }
 QFrame.card {
     background-color: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 12px;
+    border: 1px solid #E5E2DC;
+    border-radius: 14px;
 }
 QLabel#lbl_card_title {
-    font-size: 11px;
-    font-weight: bold;
-    color: #64748B;
+    font-size: 10px;
+    font-weight: 650;
+    color: #6B7280;
     text-transform: uppercase;
 }
 QLabel#lbl_status_large {
-    font-size: 24px;
-    font-weight: bold;
+    font-size: 20px;
+    font-weight: 650;
 }
 QLabel#lbl_field_name {
-    color: #64748B;
+    color: #6B7280;
 }
 #lbl_field_val {
-    color: #0F172A;
-    font-weight: bold;
+    color: #111827;
+    font-weight: 600;
 }
 /* Buttons styles */
 QPushButton, QCheckBox {
     outline: none;
 }
 QPushButton#btn_primary {
-    background-color: #0891B2;
+    background-color: #111827;
     color: #FFFFFF;
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-weight: bold;
-    border: none;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-weight: 650;
+    border: 1px solid #111827;
 }
 QPushButton#btn_primary:hover {
-    background-color: #06B6D4;
+    background-color: #374151;
+    border-color: #374151;
 }
 QPushButton#btn_primary:pressed {
-    background-color: #0E7490;
+    background-color: #030712;
 }
 QPushButton#btn_primary:disabled {
-    background-color: #E5E7EB;
-    color: #94A3B8;
+    background-color: #E5E2DC;
+    border-color: #E5E2DC;
+    color: #9CA3AF;
 }
 
 QPushButton#btn_danger {
     background-color: transparent;
-    color: #DC2626;
-    border: 1px solid #FCA5A5;
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-weight: bold;
+    color: #B42318;
+    border: 1px solid #F3D6D2;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-weight: 600;
 }
 QPushButton#btn_danger:hover {
-    background-color: #DC2626;
-    color: #FFFFFF;
+    background-color: #FDECEC;
+    color: #B42318;
     border-color: #DC2626;
 }
 QPushButton#btn_danger:pressed {
@@ -902,28 +913,33 @@ QPushButton#btn_danger:disabled {
     background-color: #E5E7EB;
     color: #94A3B8;
 }
+QPushButton#btn_danger:disabled:hover {
+    background-color: #E5E7EB;
+    color: #64748B;
+    border-color: #D1D5DB;
+}
 
 QPushButton#btn_secondary {
     background-color: #FFFFFF;
-    color: #0F172A;
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-weight: bold;
-    border: 1px solid #CBD5E1;
+    color: #111827;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-weight: 600;
+    border: 1px solid #D8D5CF;
 }
 QPushButton#btn_secondary:hover {
-    background-color: #F1F5F9;
+    background-color: #F3F2EF;
 }
 QPushButton#btn_secondary:pressed {
-    background-color: #E2E8F0;
+    background-color: #ECEBE7;
 }
 
 QPushButton#btn_start {
-    background-color: #10B981;
+    background-color: #2DA44E;
     color: #FFFFFF;
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 6px 16px;
-    font-weight: bold;
+    font-weight: 650;
     border: none;
 }
 QPushButton#btn_start:hover {
@@ -938,11 +954,11 @@ QPushButton#btn_start:disabled {
 }
 
 QPushButton#btn_stop {
-    background-color: #EF4444;
+    background-color: #CF222E;
     color: #FFFFFF;
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 6px 16px;
-    font-weight: bold;
+    font-weight: 650;
     border: none;
 }
 QPushButton#btn_stop:hover {
@@ -957,11 +973,11 @@ QPushButton#btn_stop:disabled {
 }
 
 QPushButton#btn_restart {
-    background-color: #3B82F6;
+    background-color: #0969DA;
     color: #FFFFFF;
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 6px 16px;
-    font-weight: bold;
+    font-weight: 650;
     border: none;
 }
 QPushButton#btn_restart:hover {
@@ -976,32 +992,32 @@ QPushButton#btn_restart:disabled {
 }
 
 QPushButton#btn_copy {
-    background-color: #F8FAFC;
-    color: #64748B;
-    border: 1px solid #CBD5E1;
-    border-radius: 4px;
+    background-color: #FFFFFF;
+    color: #6B7280;
+    border: 1px solid #D8D5CF;
+    border-radius: 6px;
     padding: 2px 6px;
     font-size: 10px;
 }
 QPushButton#btn_copy:hover {
-    background-color: #E2E8F0;
-    color: #0F172A;
+    background-color: #F3F2EF;
+    color: #111827;
 }
 
 /* Inputs and terminals */
 QComboBox, QLineEdit {
-    background-color: #F1F5F9;
-    border: 1px solid #E2E8F0;
-    border-radius: 6px;
+    background-color: #FFFFFF;
+    border: 1px solid #D8D5CF;
+    border-radius: 8px;
     padding: 6px 12px;
-    color: #0F172A;
+    color: #111827;
 }
 QComboBox:hover, QLineEdit:hover {
-    border-color: #CBD5E1;
-    background-color: #E2E8F0;
+    border-color: #C9C5BD;
+    background-color: #FBFBFA;
 }
 QComboBox:focus, QLineEdit:focus {
-    border-color: #0891B2;
+    border-color: #9CA3AF;
     background-color: #FFFFFF;
 }
 QComboBox::drop-down {
@@ -1018,11 +1034,11 @@ QComboBox::down-arrow:hover {
 }
 QComboBox QAbstractItemView, QListView {
     background-color: #FFFFFF;
-    border: 1px solid #CBD5E1;
+    border: 1px solid #D8D5CF;
     padding: 0px;
-    color: #1F2937;
-    selection-background-color: #E0F2FE;
-    selection-color: #0369A1;
+    color: #111827;
+    selection-background-color: #ECEBE7;
+    selection-color: #111827;
     outline: none;
 }
 QComboBox QAbstractItemView::item, QListView::item {
@@ -1030,12 +1046,12 @@ QComboBox QAbstractItemView::item, QListView::item {
     min-height: 26px;
     border-radius: 0px;
     border: none;
-    color: #1F2937;
+    color: #111827;
     background-color: #FFFFFF;
 }
 QComboBox QAbstractItemView::item:selected, QListView::item:selected {
-    background-color: #E0F2FE;
-    color: #0369A1;
+    background-color: #ECEBE7;
+    color: #111827;
 }
 QScrollBar:vertical {
     border: none;
@@ -1044,12 +1060,12 @@ QScrollBar:vertical {
     margin: 0px;
 }
 QScrollBar::handle:vertical {
-    background-color: #CBD5E1;
+    background-color: #D8D5CF;
     min-height: 20px;
     border-radius: 3px;
 }
 QScrollBar::handle:vertical:hover {
-    background-color: #94A3B8;
+    background-color: #B8B4AC;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
@@ -1065,12 +1081,12 @@ QScrollBar:horizontal {
     margin: 0px;
 }
 QScrollBar::handle:horizontal {
-    background-color: #CBD5E1;
+    background-color: #D8D5CF;
     min-width: 20px;
     border-radius: 3px;
 }
 QScrollBar::handle:horizontal:hover {
-    background-color: #94A3B8;
+    background-color: #B8B4AC;
 }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     width: 0px;
@@ -1081,12 +1097,12 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
 }
 
 QPlainTextEdit#log_viewer {
-    background-color: #F8FAFC;
-    border: 1px solid #CBD5E1;
-    border-radius: 8px;
+    background-color: #FBFBFA;
+    border: 1px solid #D8D5CF;
+    border-radius: 10px;
     font-family: "Consolas", "Courier New", monospace;
     font-size: 12px;
-    color: #0F172A;
+    color: #374151;
 }
 
 QCheckBox {
@@ -1110,29 +1126,29 @@ QCheckBox::indicator:checked:hover {
     image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='20' viewBox='0 0 38 20'><rect width='38' height='20' rx='10' fill='%2306B6D4'/><circle cx='28' cy='10' r='6' fill='white'/></svg>");
 }
 QWidget.setting_row_widget {
-    border-bottom: 1px solid #F1F5F9;
+    border-bottom: 1px solid #ECEBE7;
 }
 QWidget.setting_row_widget:hover {
-    background-color: #F8FAFC;
+    background-color: #F7F7F4;
     border-radius: 8px;
 }
 QMenu {
     background-color: #FFFFFF;
-    border: 1px solid #E5E7EB;
+    border: 1px solid #D8D5CF;
     padding: 4px;
 }
 QMenu::item {
     background-color: transparent;
     padding: 6px 24px;
-    color: #0F172A;
+    color: #111827;
 }
 QMenu::item:selected {
-    background-color: #0891B2;
-    color: #FFFFFF;
+    background-color: #ECEBE7;
+    color: #111827;
 }
 QMenu::separator {
     height: 1px;
-    background-color: #E5E7EB;
+    background-color: #ECEBE7;
     margin: 4px 0px;
 }
 """
@@ -1145,7 +1161,8 @@ class ToggleSwitch(QCheckBox):
     这里完全用 QPainter 绘制轨道 + 滑块，并带轻量的滑动动画，确保在明/暗主题下都稳定可见。
     """
 
-    TRACK_ON = "#06B6D4"
+    TRACK_ON_DARK = "#F0F6FC"
+    TRACK_ON_LIGHT = "#111827"
 
     def __init__(self, parent=None, dark=True):
         super().__init__(parent)
@@ -1194,8 +1211,8 @@ class ToggleSwitch(QCheckBox):
         w, h = self.width(), self.height()
         radius = h / 2.0
 
-        track_off = QColor("#334155" if self._dark else "#CBD5E1")
-        track_on = QColor(self.TRACK_ON)
+        track_off = QColor("#30363D" if self._dark else "#D8D5CF")
+        track_on = QColor(self.TRACK_ON_DARK if self._dark else self.TRACK_ON_LIGHT)
         track = self._blend(track_off, track_on, self._offset)
 
         painter.setPen(Qt.NoPen)
@@ -1212,7 +1229,7 @@ class ToggleSwitch(QCheckBox):
 
 class ProgressSpinner(QWidget):
     """自绘制的 Fluent 风格旋转进度条 (Smooth 60FPS spinner)."""
-    def __init__(self, parent=None, color="#06B6D4"):
+    def __init__(self, parent=None, color="#8B949E"):
         super().__init__(parent)
         self.color = QColor(color)
         self.angle = 0
@@ -1246,12 +1263,12 @@ class StatusIcon(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         if self.is_success:
-            pen = QPen(QColor("#10B981"), 4, Qt.SolidLine, Qt.RoundCap)
+            pen = QPen(QColor("#2DA44E"), 4, Qt.SolidLine, Qt.RoundCap)
             painter.setPen(pen)
             painter.drawLine(10, 20, 18, 28)
             painter.drawLine(18, 28, 30, 12)
         else:
-            pen = QPen(QColor("#EF4444"), 4, Qt.SolidLine, Qt.RoundCap)
+            pen = QPen(QColor("#CF222E"), 4, Qt.SolidLine, Qt.RoundCap)
             painter.setPen(pen)
             painter.drawLine(12, 12, 28, 28)
             painter.drawLine(28, 12, 12, 28)
@@ -1280,10 +1297,10 @@ class FluentProgressDialog(QDialog):
         self.container.setObjectName("dialog_container")
         
         # 配色定义
-        bg_color = "#1E293B" if self.dark_mode else "#FFFFFF"
-        border_color = "#334155" if self.dark_mode else "#E2E8F0"
-        text_color = "#F3F4F6" if self.dark_mode else "#0F172A"
-        desc_color = "#94A3B8" if self.dark_mode else "#64748B"
+        bg_color = "#111827" if self.dark_mode else "#FFFFFF"
+        border_color = "#263241" if self.dark_mode else "#E5E2DC"
+        text_color = "#E6EDF3" if self.dark_mode else "#111827"
+        desc_color = "#8B949E" if self.dark_mode else "#6B7280"
         
         self.container.setStyleSheet(f"""
             QFrame#dialog_container {{
@@ -1300,31 +1317,31 @@ class FluentProgressDialog(QDialog):
             }}
             QLabel#title_label {{
                 font-size: 16px;
-                font-weight: bold;
+                font-weight: 650;
             }}
             QLabel#status_label {{
                 color: {desc_color};
                 font-size: 12px;
             }}
             QPushButton#btn_close {{
-                background-color: #06B6D4;
-                color: #FFFFFF;
-                border-radius: 6px;
-                padding: 6px 20px;
-                font-weight: bold;
-                border: none;
+                background-color: {"#F0F6FC" if self.dark_mode else "#111827"};
+                color: {"#0D1117" if self.dark_mode else "#FFFFFF"};
+                border-radius: 8px;
+                padding: 7px 20px;
+                font-weight: 650;
+                border: 1px solid {"#F0F6FC" if self.dark_mode else "#111827"};
                 font-size: 12px;
                 outline: none;
             }}
             QPushButton#btn_close:hover {{
-                background-color: #0891B2;
+                background-color: {"#DDE7F0" if self.dark_mode else "#374151"};
             }}
             QPushButton#btn_close:pressed {{
-                background-color: #0E7490;
+                background-color: {"#C9D6E2" if self.dark_mode else "#030712"};
             }}
             QPushButton#btn_close:disabled {{
                 background-color: #475569;
-                color: #94A3B8;
+                color: {desc_color};
                 border: none;
             }}
         """)
@@ -1360,7 +1377,7 @@ class FluentProgressDialog(QDialog):
         self.icon_layout = QVBoxLayout(self.icon_container)
         self.icon_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.spinner = ProgressSpinner(self.icon_container, color="#06B6D4")
+        self.spinner = ProgressSpinner(self.icon_container, color="#8B949E")
         self.icon_layout.addWidget(self.spinner)
         self.progress_layout.addWidget(self.icon_container)
         
@@ -1393,6 +1410,127 @@ class FluentProgressDialog(QDialog):
         if event.buttons() == Qt.LeftButton:
             self.move(event.globalPosition().toPoint() - self.drag_position)
             event.accept()
+
+
+class DatabaseResetConfirmDialog(QDialog):
+    def __init__(self, target, config_source, backup_directory, dark_mode=True, lang="zh", parent=None):
+        super().__init__(parent)
+        self.database_name = target["database"]
+        self.dark_mode = dark_mode
+        self.lang = lang
+        self.setModal(True)
+        self.setWindowTitle("恢复数据库出厂状态" if lang == "zh" else "Factory Reset Database")
+        self.setMinimumWidth(620)
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
+
+        background = "#111827" if dark_mode else "#FFFFFF"
+        panel = "#0D1117" if dark_mode else "#F7F7F4"
+        border = "#30363D" if dark_mode else "#E5E2DC"
+        text = "#E6EDF3" if dark_mode else "#111827"
+        muted = "#8B949E" if dark_mode else "#64748B"
+        input_background = "#0D1117" if dark_mode else "#FFFFFF"
+        secondary_hover = "#21262D" if dark_mode else "#ECEBE7"
+
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {background}; color: {text}; }}
+            QLabel {{ color: {text}; background: transparent; font-size: 12px; }}
+            QLabel#dialog_title {{ font-size: 17px; font-weight: 650; }}
+            QLabel#dialog_description {{ color: {muted}; line-height: 18px; }}
+            QFrame#target_panel {{ background-color: {panel}; border: 1px solid {border}; border-radius: 10px; }}
+            QLabel#field_name {{ color: {muted}; }}
+            QLabel#field_value {{ color: {text}; font-weight: 600; }}
+            QLineEdit {{
+                background-color: {input_background}; color: {text}; border: 1px solid {border};
+                border-radius: 8px; padding: 8px 10px; selection-background-color: #0969DA;
+            }}
+            QLineEdit:focus {{ border-color: #CF222E; }}
+            QPushButton {{ border-radius: 8px; padding: 8px 18px; font-weight: 650; min-width: 82px; }}
+            QPushButton#cancel_button {{ background-color: transparent; color: {text}; border: 1px solid {border}; }}
+            QPushButton#cancel_button:hover {{ background-color: {secondary_hover}; }}
+            QPushButton#reset_button {{ background-color: #CF222E; color: #FFFFFF; border: 1px solid #CF222E; }}
+            QPushButton#reset_button:hover {{ background-color: #A40E26; border-color: #A40E26; }}
+            QPushButton#reset_button:disabled {{ background-color: {panel}; color: {muted}; border-color: {border}; }}
+            QPushButton#reset_button:disabled:hover {{ background-color: {panel}; color: {muted}; border-color: {border}; }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("危险操作：恢复数据库出厂状态" if lang == "zh" else "Dangerous action: factory reset database")
+        title.setObjectName("dialog_title")
+        layout.addWidget(title)
+
+        description = QLabel(
+            "系统会先创建 PostgreSQL 备份，再清除 public schema 中的全部业务数据并重新建表。\n"
+            "附件、PAM 录像、日志和环境配置不会被删除。"
+            if lang == "zh"
+            else "A PostgreSQL backup will be created before all business data in the public schema is removed.\n"
+                 "Attachments, PAM recordings, logs, and environment files will not be deleted."
+        )
+        description.setObjectName("dialog_description")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        target_address = (
+            f"{target['host']}:{target['port']}" if target["backend"] == "postgresql" else target["host"]
+        )
+        panel_widget = QFrame(self)
+        panel_widget.setObjectName("target_panel")
+        panel_layout = QGridLayout(panel_widget)
+        panel_layout.setContentsMargins(16, 14, 16, 14)
+        panel_layout.setHorizontalSpacing(20)
+        panel_layout.setVerticalSpacing(9)
+        fields = [
+            (("数据库类型", "Backend"), target["backend"]),
+            (("目标地址", "Address"), target_address),
+            (("数据库名", "Database"), self.database_name),
+            (("配置来源", "Configuration"), f"{config_source} (DATABASE_URL)"),
+            (("备份目录", "Backup directory"), backup_directory),
+        ]
+        for row, (labels, value) in enumerate(fields):
+            name_label = QLabel(labels[0] if lang == "zh" else labels[1])
+            name_label.setObjectName("field_name")
+            value_label = QLabel(str(value))
+            value_label.setObjectName("field_value")
+            value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            value_label.setWordWrap(True)
+            panel_layout.addWidget(name_label, row, 0, Qt.AlignTop)
+            panel_layout.addWidget(value_label, row, 1)
+        panel_layout.setColumnStretch(1, 1)
+        layout.addWidget(panel_widget)
+
+        confirmation_label = QLabel(
+            f"请输入数据库名 {self.database_name} 以确认执行："
+            if lang == "zh"
+            else f"Type the database name {self.database_name} to continue:"
+        )
+        layout.addWidget(confirmation_label)
+        self.confirmation_input = QLineEdit(self)
+        self.confirmation_input.setPlaceholderText(self.database_name)
+        layout.addWidget(self.confirmation_input)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        cancel_button = QPushButton("取消" if lang == "zh" else "Cancel", self)
+        cancel_button.setObjectName("cancel_button")
+        cancel_button.clicked.connect(self.reject)
+        self.reset_button = QPushButton("确认清理" if lang == "zh" else "Reset Database", self)
+        self.reset_button.setObjectName("reset_button")
+        self.reset_button.setEnabled(False)
+        self.reset_button.clicked.connect(self.accept)
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(self.reset_button)
+        layout.addLayout(button_layout)
+
+        self.confirmation_input.textChanged.connect(
+            lambda value: self.reset_button.setEnabled(value.strip() == self.database_name)
+        )
+        self.confirmation_input.setFocus()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        set_dark_title_bar(self.winId(), self.dark_mode)
 
 
 def get_python_executable():
@@ -1528,24 +1666,24 @@ class NetOpsAgentUI(QMainWindow):
         
         # Main Window configuration
         self.setWindowTitle("NetOps Agent Manager")
-        self.setMinimumSize(900, 620)
-        self.resize(1000, 620)
+        self.setMinimumSize(980, 640)
+        self.resize(1120, 680)
         
         # Setup modern shadows
         self.shadow_status = QGraphicsDropShadowEffect(self)
-        self.shadow_status.setBlurRadius(12)
-        self.shadow_status.setColor(QColor(0, 0, 0, 30))
-        self.shadow_status.setOffset(0, 3)
+        self.shadow_status.setBlurRadius(24)
+        self.shadow_status.setColor(QColor(0, 0, 0, 18))
+        self.shadow_status.setOffset(0, 10)
         
         self.shadow_conn = QGraphicsDropShadowEffect(self)
-        self.shadow_conn.setBlurRadius(12)
-        self.shadow_conn.setColor(QColor(0, 0, 0, 30))
-        self.shadow_conn.setOffset(0, 3)
+        self.shadow_conn.setBlurRadius(24)
+        self.shadow_conn.setColor(QColor(0, 0, 0, 18))
+        self.shadow_conn.setOffset(0, 10)
         
         self.shadow_diag = QGraphicsDropShadowEffect(self)
-        self.shadow_diag.setBlurRadius(12)
-        self.shadow_diag.setColor(QColor(0, 0, 0, 30))
-        self.shadow_diag.setOffset(0, 3)
+        self.shadow_diag.setBlurRadius(24)
+        self.shadow_diag.setColor(QColor(0, 0, 0, 18))
+        self.shadow_diag.setOffset(0, 10)
         
         self.setup_ui()
         self.apply_theme()
@@ -1645,6 +1783,168 @@ class NetOpsAgentUI(QMainWindow):
             self.launch_reconfig_wizard(force_reconfig=False)
 
     def clear_and_reset_database(self):
+        try:
+            inspection = self._run_database_reset_command("inspect")
+            target = inspection["target"]
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "数据库检查失败" if self.lang == "zh" else "Database Check Failed",
+                str(exc),
+            )
+            return
+
+        confirmation_dialog = DatabaseResetConfirmDialog(
+            target=target,
+            config_source=inspection.get("config_source", os.path.join(PROJECT_ROOT, ".env")),
+            backup_directory=inspection.get(
+                "backup_directory",
+                os.path.join(PROJECT_ROOT, "data", "backups", "database-reset"),
+            ),
+            dark_mode=self.dark_mode,
+            lang=self.lang,
+            parent=self,
+        )
+        if confirmation_dialog.exec() != QDialog.Accepted:
+            return
+
+        database_name = target["database"]
+        title = "恢复数据库出厂状态" if self.lang == "zh" else "Factory Reset Database"
+        self.db_reset_dialog = FluentProgressDialog(self, title, self.dark_mode, self.lang)
+
+        def reset_worker():
+            try:
+                self.stop_backend_server()
+                result = self._run_database_reset_command("reset", database_name, timeout=900)
+                self.db_reset_finished_signal.emit(True, json.dumps(result, ensure_ascii=False))
+            except Exception as exc:
+                self.db_reset_finished_signal.emit(False, str(exc))
+
+        threading.Thread(target=reset_worker, daemon=True).start()
+        self.db_reset_dialog.exec()
+
+    def _legacy_native_clear_and_reset_database(self):
+        title = "恢复数据库出厂状态" if self.lang == "zh" else "Factory Reset Database"
+        try:
+            inspection = self._run_database_reset_command("inspect")
+            target = inspection["target"]
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "数据库检查失败" if self.lang == "zh" else "Database Check Failed",
+                str(exc),
+            )
+            return
+
+        database_name = target["database"]
+        config_source = inspection.get("config_source", os.path.join(PROJECT_ROOT, ".env"))
+        backup_directory = inspection.get(
+            "backup_directory",
+            os.path.join(PROJECT_ROOT, "data", "backups", "database-reset"),
+        )
+        target_address = (
+            f"{target['host']}:{target['port']}"
+            if target["backend"] == "postgresql"
+            else target["host"]
+        )
+        message = (
+            f"即将恢复数据库出厂状态：\n\n"
+            f"数据库类型：{target['backend']}\n"
+            f"目标地址：{target_address}\n"
+            f"数据库名：{database_name}\n\n"
+            f"配置来源：{config_source}（DATABASE_URL）\n"
+            f"备份目录：{backup_directory}\n\n"
+            "系统会先创建 PostgreSQL 备份，然后清除 public schema 中的全部业务数据，"
+            "重新建表并恢复默认管理员 admin / admin。\n"
+            "附件、PAM 录像、日志和环境配置不会被删除。\n\n"
+            "此操作不可撤销，是否继续？"
+            if self.lang == "zh"
+            else (
+                f"The following database will be reset to factory state:\n\n"
+                f"Backend: {target['backend']}\n"
+                f"Address: {target_address}\n"
+                f"Database: {database_name}\n\n"
+                f"Configuration: {config_source} (DATABASE_URL)\n"
+                f"Backup directory: {backup_directory}\n\n"
+                "A PostgreSQL backup will be created before all business data in the public schema is removed. "
+                "Tables will be rebuilt and the administrator restored to admin / admin.\n"
+                "Attachments, PAM recordings, logs, and environment files will not be deleted.\n\n"
+                "This action cannot be undone. Continue?"
+            )
+        )
+        reply = QMessageBox.warning(
+            self,
+            title,
+            message,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        confirmation, accepted = QInputDialog.getText(
+            self,
+            "输入数据库名确认" if self.lang == "zh" else "Confirm Database Name",
+            (
+                f"请输入数据库名 {database_name} 以确认执行："
+                if self.lang == "zh"
+                else f"Type the database name {database_name} to continue:"
+            ),
+        )
+        if not accepted:
+            return
+        if confirmation.strip() != database_name:
+            QMessageBox.warning(
+                self,
+                "确认失败" if self.lang == "zh" else "Confirmation Failed",
+                "输入的数据库名不匹配，操作已取消。"
+                if self.lang == "zh"
+                else "The database name did not match. Reset cancelled.",
+            )
+            return
+
+        self.db_reset_dialog = FluentProgressDialog(self, title, self.dark_mode, self.lang)
+
+        def reset_worker():
+            try:
+                self.stop_backend_server()
+                result = self._run_database_reset_command("reset", database_name, timeout=900)
+                self.db_reset_finished_signal.emit(True, json.dumps(result, ensure_ascii=False))
+            except Exception as exc:
+                self.db_reset_finished_signal.emit(False, str(exc))
+
+        threading.Thread(target=reset_worker, daemon=True).start()
+        self.db_reset_dialog.exec()
+
+    def _run_database_reset_command(self, action, database_name="", timeout=30):
+        command = [get_python_executable(), "-m", "database.reset", action]
+        if action == "reset":
+            command.extend(["--confirm-database", database_name])
+        environment = os.environ.copy()
+        environment.pop("_MEIPASS", None)
+        environment.pop("PYTHONHOME", None)
+        environment["PYTHONPATH"] = os.path.join(PROJECT_ROOT, "backend")
+        result = subprocess.run(
+            command,
+            cwd=os.path.join(PROJECT_ROOT, "backend"),
+            env=environment,
+            capture_output=True,
+            text=True,
+            creationflags=0x08000000 if sys.platform == "win32" else 0,
+            timeout=timeout,
+        )
+        output_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        try:
+            payload = json.loads(output_lines[-1]) if output_lines else {}
+        except json.JSONDecodeError as exc:
+            detail = result.stderr.strip() or result.stdout.strip() or str(exc)
+            raise RuntimeError(detail) from exc
+        if result.returncode != 0 or not payload.get("ok"):
+            raise RuntimeError(payload.get("error") or result.stderr.strip() or "Database reset failed")
+        return payload
+
+    def _legacy_clear_and_reset_database(self):
+        raise RuntimeError("Legacy database reset implementation is disabled")
         title = "清除并重置数据库" if self.lang == "zh" else "Clear & Reset Database"
         msg = (
             "确定要彻底清除并重置数据库吗？\n\n"
@@ -1668,11 +1968,14 @@ class NetOpsAgentUI(QMainWindow):
         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg_box.setDefaultButton(QMessageBox.No)
         
-        bg_color = "#1E293B" if self.dark_mode else "#FFFFFF"
-        border_color = "#334155" if self.dark_mode else "#E2E8F0"
-        text_color = "#F3F4F6" if self.dark_mode else "#0F172A"
-        button_bg = "#334155" if self.dark_mode else "#E2E8F0"
-        button_hover = "#475569" if self.dark_mode else "#CBD5E1"
+        bg_color = "#111827" if self.dark_mode else "#FFFFFF"
+        border_color = "#263241" if self.dark_mode else "#E5E2DC"
+        text_color = "#E6EDF3" if self.dark_mode else "#111827"
+        button_bg = "#151B23" if self.dark_mode else "#F3F2EF"
+        button_hover = "#1C2128" if self.dark_mode else "#ECEBE7"
+        default_bg = "#F0F6FC" if self.dark_mode else "#111827"
+        default_fg = "#0D1117" if self.dark_mode else "#FFFFFF"
+        default_hover = "#DDE7F0" if self.dark_mode else "#374151"
         
         msg_box.setStyleSheet(f"""
             QMessageBox {{
@@ -1689,9 +1992,9 @@ class NetOpsAgentUI(QMainWindow):
                 background-color: {button_bg};
                 color: {text_color};
                 border: 1px solid {border_color};
-                border-radius: 6px;
-                padding: 6px 18px;
-                font-weight: bold;
+                border-radius: 8px;
+                padding: 7px 18px;
+                font-weight: 600;
                 font-size: 12px;
                 min-width: 65px;
             }}
@@ -1699,12 +2002,13 @@ class NetOpsAgentUI(QMainWindow):
                 background-color: {button_hover};
             }}
             QPushButton:default {{
-                background-color: #06B6D4;
-                color: #FFFFFF;
-                border: none;
+                background-color: {default_bg};
+                color: {default_fg};
+                border: 1px solid {default_bg};
             }}
             QPushButton:default:hover {{
-                background-color: #0891B2;
+                background-color: {default_hover};
+                border-color: {default_hover};
             }}
         """)
         
@@ -1772,6 +2076,47 @@ class NetOpsAgentUI(QMainWindow):
             self.db_reset_dialog.exec()
 
     def on_db_reset_finished(self, success, message):
+        if not hasattr(self, "db_reset_dialog") or self.db_reset_dialog is None:
+            return
+
+        self.db_reset_dialog.spinner.hide()
+        self.db_reset_dialog.icon_layout.removeWidget(self.db_reset_dialog.spinner)
+        status_icon = StatusIcon(self.db_reset_dialog.icon_container, is_success=success)
+        self.db_reset_dialog.icon_layout.addWidget(status_icon)
+
+        if success:
+            try:
+                result = json.loads(message) if message else {}
+            except json.JSONDecodeError:
+                result = {}
+            backup_path = result.get("backup_path", "")
+            verification = result.get("verification", {})
+            table_count = verification.get("table_count", 0)
+            status_message = (
+                "数据库已成功备份并恢复出厂状态！\n"
+                "管理员账户：admin / admin（请登录后立即修改密码）\n"
+                f"已重建 {table_count} 张表。\n"
+                f"备份文件：{backup_path}\n"
+                "正在重新启动后端服务。"
+                if self.lang == "zh"
+                else (
+                    "Database backup and factory reset completed successfully!\n"
+                    "Administrator: admin / admin (change it immediately after login)\n"
+                    f"Rebuilt {table_count} tables.\n"
+                    f"Backup: {backup_path}\n"
+                    "The backend service is restarting."
+                )
+            )
+            self.db_reset_dialog.lbl_status.setText(status_message)
+            QTimer.singleShot(500, self.start_backend_server)
+        else:
+            prefix = "数据库恢复出厂失败：\n" if self.lang == "zh" else "Database factory reset failed:\n"
+            self.db_reset_dialog.lbl_status.setText(f"{prefix}{message}")
+
+        self.db_reset_dialog.btn_close.setEnabled(True)
+        self.update_runtime_state()
+
+    def _legacy_on_db_reset_finished(self, success, message):
         if not hasattr(self, "db_reset_dialog") or self.db_reset_dialog is None:
             return
         
@@ -1842,15 +2187,15 @@ class NetOpsAgentUI(QMainWindow):
         # 1. Left Sidebar
         self.sidebar = QWidget(self)
         self.sidebar.setObjectName("sidebar_container")
-        self.sidebar.setFixedWidth(230)
+        self.sidebar.setFixedWidth(220)
         
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(0, 24, 0, 20)
-        sidebar_layout.setSpacing(8)
+        sidebar_layout.setContentsMargins(0, 22, 0, 18)
+        sidebar_layout.setSpacing(6)
         
         # Sidebar branding
         brand_layout = QHBoxLayout()
-        brand_layout.setContentsMargins(20, 0, 20, 10)
+        brand_layout.setContentsMargins(22, 0, 22, 12)
         
         # Select best icon font
         from PySide6.QtGui import QFontDatabase
@@ -1875,7 +2220,7 @@ class NetOpsAgentUI(QMainWindow):
         else:
             self.brand_icon.setText(ICON_MAP["brand"][0])
             self.brand_icon.setFont(QFont(self.icon_font_family, 22))
-            self.brand_icon.setStyleSheet("color: #06B6D4; background: transparent; border: none;")
+            self.brand_icon.setStyleSheet("color: #8B949E; background: transparent; border: none;")
             
         brand_text_vbox = QVBoxLayout()
         self.lbl_sidebar_title = QLabel("NetOps Agent", self.sidebar)
@@ -1927,7 +2272,7 @@ class NetOpsAgentUI(QMainWindow):
                 
             lbl_text = QLabel(btn)
             lbl_text.setAttribute(Qt.WA_TransparentForMouseEvents)
-            lbl_text.setStyleSheet("background: transparent; border: none; font-weight: bold; font-size: 12px;")
+            lbl_text.setStyleSheet("background: transparent; border: none; font-weight: 600; font-size: 12px;")
             
             btn_layout.addWidget(lbl_icon)
             btn_layout.addWidget(lbl_text)
@@ -1979,15 +2324,15 @@ class NetOpsAgentUI(QMainWindow):
         不依赖 QSS 后代 `:checked QLabel` 级联（在部分 Qt 构建上不稳定），
         保证「灰 → 青 + pill 背景」的层级在明/暗主题下都确定生效。
         """
-        active = "#06B6D4" if self.dark_mode else "#0891B2"
-        inactive = "#94A3B8" if self.dark_mode else "#64748B"
+        active = "#F0F6FC" if self.dark_mode else "#111827"
+        inactive = "#8B949E" if self.dark_mode else "#6B7280"
         for i, btn in enumerate(self.nav_group):
             key = self.nav_items[i][1]
             color = active if btn.isChecked() else inactive
             lbl = self.nav_labels.get(key)
             if lbl:
                 lbl.setStyleSheet(
-                    f"background: transparent; border: none; font-weight: bold; "
+                    f"background: transparent; border: none; font-weight: 600; "
                     f"font-size: 12px; color: {color};"
                 )
             icon = self.nav_icons.get(key)
@@ -1998,36 +2343,36 @@ class NetOpsAgentUI(QMainWindow):
     def init_dashboard_page(self):
         page = QWidget(self)
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(30, 26, 30, 26)
+        layout.setSpacing(18)
         
         # Title Greeting Banner
         greeting_layout = QVBoxLayout()
         self.lbl_greet_title = QLabel("NetOps Agent Enterprise", self)
-        self.lbl_greet_title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        self.lbl_greet_title.setStyleSheet("font-size: 24px; font-weight: 650;")
         self.lbl_greet_desc = QLabel("Version v1.0.1 | License: Enterprise Commercial", self)
-        self.lbl_greet_desc.setStyleSheet("color: #64748B; font-size: 11px;")
+        self.lbl_greet_desc.setStyleSheet("color: #8B949E; font-size: 12px;")
         greeting_layout.addWidget(self.lbl_greet_title)
         greeting_layout.addWidget(self.lbl_greet_desc)
         layout.addLayout(greeting_layout)
         
         # Middle Cards Layout (Service Status & Platform Connection)
         cards_layout = QHBoxLayout()
-        cards_layout.setSpacing(16)
+        cards_layout.setSpacing(18)
         
         # Card 1: Service Status
         self.card_status = QFrame(self)
         self.card_status.setProperty("class", "card")
         self.card_status.setGraphicsEffect(self.shadow_status)
         card_status_layout = QVBoxLayout(self.card_status)
-        card_status_layout.setContentsMargins(18, 14, 18, 14)
-        card_status_layout.setSpacing(8)
+        card_status_layout.setContentsMargins(22, 18, 22, 18)
+        card_status_layout.setSpacing(10)
         
         self.lbl_card_status_title = QLabel("服务状态 (Service Status)", self)
         self.lbl_card_status_title.setObjectName("lbl_card_title")
         self.lbl_status_large = QLabel("STOPPED", self)
         self.lbl_status_large.setObjectName("lbl_status_large")
-        self.lbl_status_large.setStyleSheet("color: #EF4444;")
+        self.lbl_status_large.setStyleSheet("color: #F85149;")
         
         card_status_layout.addWidget(self.lbl_card_status_title)
         card_status_layout.addWidget(self.lbl_status_large)
@@ -2071,14 +2416,14 @@ class NetOpsAgentUI(QMainWindow):
         self.card_conn.setProperty("class", "card")
         self.card_conn.setGraphicsEffect(self.shadow_conn)
         card_conn_layout = QVBoxLayout(self.card_conn)
-        card_conn_layout.setContentsMargins(18, 14, 18, 14)
-        card_conn_layout.setSpacing(8)
+        card_conn_layout.setContentsMargins(22, 18, 22, 18)
+        card_conn_layout.setSpacing(10)
         
         self.lbl_card_conn_title = QLabel("平台连接状态 (Platform Connection)", self)
         self.lbl_card_conn_title.setObjectName("lbl_card_title")
         self.lbl_conn_large = QLabel("DISCONNECTED", self)
         self.lbl_conn_large.setObjectName("lbl_status_large")
-        self.lbl_conn_large.setStyleSheet("color: #64748B;")
+        self.lbl_conn_large.setStyleSheet("color: #8B949E;")
         
         card_conn_layout.addWidget(self.lbl_card_conn_title)
         card_conn_layout.addWidget(self.lbl_conn_large)
@@ -2111,8 +2456,8 @@ class NetOpsAgentUI(QMainWindow):
         self.card_diag.setProperty("class", "card")
         self.card_diag.setGraphicsEffect(self.shadow_diag)
         card_diag_layout = QVBoxLayout(self.card_diag)
-        card_diag_layout.setContentsMargins(18, 14, 18, 14)
-        card_diag_layout.setSpacing(10)
+        card_diag_layout.setContentsMargins(22, 18, 22, 18)
+        card_diag_layout.setSpacing(12)
         
         self.lbl_diag_title = QLabel("一键诊断 (Run Diagnostics)", self)
         self.lbl_diag_title.setObjectName("lbl_card_title")
@@ -2120,7 +2465,7 @@ class NetOpsAgentUI(QMainWindow):
         
         diag_desc_hbox = QHBoxLayout()
         self.lbl_diag_desc = QLabel("对本地 Agent 的运行状态、控制器连接性、DNS、NTP 及磁盘空间进行完整性检测。", self)
-        self.lbl_diag_desc.setStyleSheet("color: #64748B; font-size: 11px;")
+        self.lbl_diag_desc.setStyleSheet("color: #8B949E; font-size: 12px;")
         self.btn_run_diagnose = QPushButton("运行诊断", self)
         self.btn_run_diagnose.setObjectName("btn_primary")
         self.btn_run_diagnose.setCursor(Qt.PointingHandCursor)
@@ -2143,8 +2488,8 @@ class NetOpsAgentUI(QMainWindow):
     def init_service_page(self):
         page = QWidget(self)
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(30, 26, 30, 26)
+        layout.setSpacing(18)
         
         # 1. Lifecycle Panel
         card_ctrl = QFrame(self)
@@ -2269,7 +2614,7 @@ class NetOpsAgentUI(QMainWindow):
         self.toggle_switches.append(self.chk_pause_scroll)
         self.lbl_pause_scroll = QLabel("暂停滚动", self)
         self.lbl_pause_scroll.setObjectName("lbl_field_name")
-        self.lbl_pause_scroll.setStyleSheet("background: transparent; font-weight: bold;")
+        self.lbl_pause_scroll.setStyleSheet("background: transparent; font-weight: 600;")
         self.lbl_pause_scroll.setCursor(Qt.PointingHandCursor)
         # 点击文字也能切换开关
         self.lbl_pause_scroll.mousePressEvent = lambda _e: self.chk_pause_scroll.toggle()
@@ -2405,11 +2750,11 @@ class NetOpsAgentUI(QMainWindow):
         
         lbl_title = QLabel(row)
         lbl_title.setObjectName("lbl_setting_title_" + key)
-        lbl_title.setStyleSheet("font-weight: bold; font-size: 13px; background: transparent;")
+        lbl_title.setStyleSheet("font-weight: 650; font-size: 13px; background: transparent;")
         
         lbl_desc = QLabel(row)
         lbl_desc.setObjectName("lbl_setting_desc_" + key)
-        lbl_desc.setStyleSheet("color: #64748B; font-size: 11px; background: transparent;")
+        lbl_desc.setStyleSheet("color: #8B949E; font-size: 11px; background: transparent;")
         lbl_desc.setWordWrap(True)
         
         text_layout.addWidget(lbl_title)
@@ -2435,7 +2780,7 @@ class NetOpsAgentUI(QMainWindow):
         
         lbl_name = QLabel(row)
         lbl_name.setObjectName("lbl_spec_name_" + key)
-        lbl_name.setStyleSheet("font-weight: bold; font-size: 12px; background: transparent;")
+        lbl_name.setStyleSheet("font-weight: 650; font-size: 12px; background: transparent;")
         lbl_name.setFixedWidth(140)
         
         row_layout.addWidget(lbl_name, 0, Qt.AlignLeft | Qt.AlignVCenter)
@@ -2466,8 +2811,8 @@ class NetOpsAgentUI(QMainWindow):
     def init_settings_page(self):
         page = QWidget(self)
         layout = QHBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(30, 26, 30, 26)
+        layout.setSpacing(18)
         
         # Left Scroll Area for Preferences
         scroll_prefs = QScrollArea(page)
@@ -2642,18 +2987,18 @@ class NetOpsAgentUI(QMainWindow):
         
         lbl_host_val = QLabel(hostname, card_sys)
         lbl_host_val.setObjectName("lbl_field_val")
-        lbl_host_val.setStyleSheet("font-weight: bold; background: transparent;")
+        lbl_host_val.setStyleSheet("font-weight: 650; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_hostname", lbl_host_val))
         
         lbl_os_val = QLabel(os_info, card_sys)
         lbl_os_val.setObjectName("lbl_field_val")
-        lbl_os_val.setStyleSheet("font-weight: bold; background: transparent;")
+        lbl_os_val.setStyleSheet("font-weight: 650; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_os", lbl_os_val))
         
         lbl_cpu_val = QLabel(cpu_info, card_sys)
         lbl_cpu_val.setObjectName("lbl_field_val")
         lbl_cpu_val.setWordWrap(True)
-        lbl_cpu_val.setStyleSheet("font-weight: bold; font-size: 11px; background: transparent;")
+        lbl_cpu_val.setStyleSheet("font-weight: 650; font-size: 11px; background: transparent;")
         lbl_cpu_val.setMaximumWidth(180)
         lbl_cpu_val.setMinimumWidth(150)
         lbl_cpu_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -2661,7 +3006,7 @@ class NetOpsAgentUI(QMainWindow):
         
         lbl_mem_val = QLabel(mem_info, card_sys)
         lbl_mem_val.setObjectName("lbl_field_val")
-        lbl_mem_val.setStyleSheet("font-weight: bold; background: transparent;")
+        lbl_mem_val.setStyleSheet("font-weight: 650; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_mem", lbl_mem_val))
         
         # CPU Cores
@@ -2669,7 +3014,7 @@ class NetOpsAgentUI(QMainWindow):
         cores_info = f"{cores} Cores" if cores else "Unknown"
         lbl_cores_val = QLabel(cores_info, card_sys)
         lbl_cores_val.setObjectName("lbl_field_val")
-        lbl_cores_val.setStyleSheet("font-weight: bold; background: transparent;")
+        lbl_cores_val.setStyleSheet("font-weight: 650; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_cpu_cores", lbl_cores_val))
 
         # Disk space
@@ -2682,7 +3027,7 @@ class NetOpsAgentUI(QMainWindow):
             disk_info = "Unknown"
         lbl_disk_val = QLabel(disk_info, card_sys)
         lbl_disk_val.setObjectName("lbl_field_val")
-        lbl_disk_val.setStyleSheet("font-weight: bold; background: transparent;")
+        lbl_disk_val.setStyleSheet("font-weight: 650; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_disk", lbl_disk_val))
 
         # MAC Address
@@ -2694,14 +3039,14 @@ class NetOpsAgentUI(QMainWindow):
             mac_str = "Unknown"
         lbl_mac_val = QLabel(mac_str, card_sys)
         lbl_mac_val.setObjectName("lbl_field_val")
-        lbl_mac_val.setStyleSheet("font-weight: bold; background: transparent;")
+        lbl_mac_val.setStyleSheet("font-weight: 650; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_mac", lbl_mac_val))
 
         # Python Version
         python_ver = f"Python {sys.version.split()[0]}"
         lbl_py_val = QLabel(python_ver, card_sys)
         lbl_py_val.setObjectName("lbl_field_val")
-        lbl_py_val.setStyleSheet("font-weight: bold; background: transparent;")
+        lbl_py_val.setStyleSheet("font-weight: 650; background: transparent;")
         sys_layout.addWidget(self.create_spec_row("sys_python", lbl_py_val))
         
         # IP Dropdown + Copy
@@ -2831,12 +3176,12 @@ class NetOpsAgentUI(QMainWindow):
         if valid:
             self.combo_controller_ip.setStyleSheet("")
             # 中性状态点（未测试）
-            self.lbl_ip_status_dot.setStyleSheet("background-color: #94A3B8; border-radius: 5px;")
+            self.lbl_ip_status_dot.setStyleSheet("background-color: #8B949E; border-radius: 5px;")
             if hasattr(self, "btn_test_controller"):
                 self.btn_test_controller.setEnabled(True)
         else:
-            self.combo_controller_ip.setStyleSheet("QComboBox { border: 1px solid #EF4444; }")
-            self.lbl_ip_status_dot.setStyleSheet("background-color: #EF4444; border-radius: 5px;")
+            self.combo_controller_ip.setStyleSheet("QComboBox { border: 1px solid #CF222E; }")
+            self.lbl_ip_status_dot.setStyleSheet("background-color: #CF222E; border-radius: 5px;")
             if hasattr(self, "btn_test_controller"):
                 self.btn_test_controller.setEnabled(False)
         return valid
@@ -2854,7 +3199,7 @@ class NetOpsAgentUI(QMainWindow):
         tr = TRANSLATIONS[self.lang]
         self.btn_test_controller.setEnabled(False)
         self.btn_test_controller.setText(tr["btn_test_controller_testing"])
-        self.lbl_ip_status_dot.setStyleSheet("background-color: #F59E0B; border-radius: 5px;")
+        self.lbl_ip_status_dot.setStyleSheet("background-color: #D29922; border-radius: 5px;")
 
         def worker():
             ok = False
@@ -2871,9 +3216,9 @@ class NetOpsAgentUI(QMainWindow):
         self.btn_test_controller.setEnabled(True)
         self.btn_test_controller.setText(tr["btn_test_controller"])
         if success:
-            self.lbl_ip_status_dot.setStyleSheet("background-color: #10B981; border-radius: 5px;")
+            self.lbl_ip_status_dot.setStyleSheet("background-color: #2DA44E; border-radius: 5px;")
         else:
-            self.lbl_ip_status_dot.setStyleSheet("background-color: #EF4444; border-radius: 5px;")
+            self.lbl_ip_status_dot.setStyleSheet("background-color: #CF222E; border-radius: 5px;")
 
     # PAGE 5: About us
     def init_about_page(self):
@@ -2907,11 +3252,11 @@ class NetOpsAgentUI(QMainWindow):
         left_layout.addWidget(self.lbl_about_logo, 0, Qt.AlignLeft)
         
         self.lbl_about_name = QLabel("NetOps 智能自动化网络运维平台", self)
-        self.lbl_about_name.setStyleSheet("font-size: 18px; font-weight: bold; color: #06B6D4;")
+        self.lbl_about_name.setStyleSheet("font-size: 20px; font-weight: 650;")
         left_layout.addWidget(self.lbl_about_name, 0, Qt.AlignLeft)
         
         self.lbl_about_desc = QLabel(self)
-        self.lbl_about_desc.setStyleSheet("color: #64748B; font-size: 12px; line-height: 1.6;")
+        self.lbl_about_desc.setStyleSheet("color: #8B949E; font-size: 12px; line-height: 1.6;")
         self.lbl_about_desc.setWordWrap(True)
         self.lbl_about_desc.setAlignment(Qt.AlignLeft)
         left_layout.addWidget(self.lbl_about_desc)
@@ -2940,21 +3285,21 @@ class NetOpsAgentUI(QMainWindow):
         self.lbl_about_site_name.setObjectName("lbl_field_name")
         self.lbl_about_site_val = QPushButton(repo_url, self)
         self.lbl_about_site_val.setCursor(Qt.PointingHandCursor)
-        self.lbl_about_site_val.setStyleSheet("color: #06B6D4; border: none; background: transparent; text-align: left; font-weight: bold;")
+        self.lbl_about_site_val.setStyleSheet("color: #58A6FF; border: none; background: transparent; text-align: left; font-weight: 600;")
         self.lbl_about_site_val.clicked.connect(lambda: webbrowser.open(repo_url))
         
         self.lbl_about_support_name = QLabel(self)
         self.lbl_about_support_name.setObjectName("lbl_field_name")
         self.lbl_about_support_val = QPushButton(repo_url, self)
         self.lbl_about_support_val.setCursor(Qt.PointingHandCursor)
-        self.lbl_about_support_val.setStyleSheet("color: #06B6D4; border: none; background: transparent; text-align: left; font-weight: bold;")
+        self.lbl_about_support_val.setStyleSheet("color: #58A6FF; border: none; background: transparent; text-align: left; font-weight: 600;")
         self.lbl_about_support_val.clicked.connect(lambda: webbrowser.open(repo_url))
         
         self.lbl_about_wechat_name = QLabel(self)
         self.lbl_about_wechat_name.setObjectName("lbl_field_name")
         self.lbl_about_wechat_val = QLabel("小网工爱运维", self)
         self.lbl_about_wechat_val.setObjectName("lbl_field_val")
-        self.lbl_about_wechat_val.setStyleSheet("font-weight: bold; color: #10B981;")
+        self.lbl_about_wechat_val.setStyleSheet("font-weight: 600; color: #2DA44E;")
         
         details_grid.addWidget(self.lbl_about_ver_name, 0, 0)
         details_grid.addWidget(self.lbl_about_ver_val, 0, 1)
@@ -2970,7 +3315,7 @@ class NetOpsAgentUI(QMainWindow):
         left_layout.addLayout(details_grid)
         
         self.lbl_about_copyright = QLabel(self)
-        self.lbl_about_copyright.setStyleSheet("color: #64748B; font-size: 11px; margin-top: 12px;")
+        self.lbl_about_copyright.setStyleSheet("color: #8B949E; font-size: 11px; margin-top: 12px;")
         left_layout.addWidget(self.lbl_about_copyright)
         
         about_layout.addWidget(left_widget, 5)
@@ -2992,10 +3337,10 @@ class NetOpsAgentUI(QMainWindow):
             self.lbl_qr_code.setStyleSheet("border: 1px solid #CBD5E1; border-radius: 8px; padding: 6px; background-color: #FFFFFF;")
         else:
             self.lbl_qr_code.setText("[QR Code]")
-            self.lbl_qr_code.setStyleSheet("color: #64748B; font-size: 12px;")
+            self.lbl_qr_code.setStyleSheet("color: #8B949E; font-size: 12px;")
             
         self.lbl_qr_desc = QLabel(self)
-        self.lbl_qr_desc.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: bold; margin-top: 4px;")
+        self.lbl_qr_desc.setStyleSheet("color: #8B949E; font-size: 11px; font-weight: 600; margin-top: 4px;")
         self.lbl_qr_desc.setAlignment(Qt.AlignCenter)
         
         right_layout.addWidget(self.lbl_qr_code, 0, Qt.AlignCenter)
@@ -3317,7 +3662,7 @@ class NetOpsAgentUI(QMainWindow):
         if active:
             self.backend_starting = False
             self.lbl_status_large.setText(tr["status_running"])
-            self.lbl_status_large.setStyleSheet("color: #10B981; font-weight: bold;")
+            self.lbl_status_large.setStyleSheet("color: #2DA44E; font-weight: 650;")
             self.lbl_dash_pid_val.setText(str(self.backend_pid) if self.backend_pid else "-")
             
             # Format uptime
@@ -3339,7 +3684,7 @@ class NetOpsAgentUI(QMainWindow):
                 
             self.lbl_dash_uptime_val.setText(uptime_str)
             self.lbl_dash_health_val.setText(tr["health_healthy"])
-            self.lbl_dash_health_val.setStyleSheet("color: #10B981; font-weight: bold;")
+            self.lbl_dash_health_val.setStyleSheet("color: #2DA44E; font-weight: 600;")
             
             self.btn_start.setEnabled(False)
             self.btn_stop.setEnabled(True)
@@ -3351,11 +3696,11 @@ class NetOpsAgentUI(QMainWindow):
         else:
             if getattr(self, "backend_starting", False):
                 self.lbl_status_large.setText(tr["status_starting"])
-                self.lbl_status_large.setStyleSheet("color: #F59E0B; font-weight: bold;")
+                self.lbl_status_large.setStyleSheet("color: #D29922; font-weight: 650;")
                 self.lbl_dash_pid_val.setText("-")
                 self.lbl_dash_uptime_val.setText("0s")
                 self.lbl_dash_health_val.setText(tr["health_unhealthy"])
-                self.lbl_dash_health_val.setStyleSheet("color: #EF4444; font-weight: bold;")
+                self.lbl_dash_health_val.setStyleSheet("color: #CF222E; font-weight: 600;")
                 
                 self.btn_start.setEnabled(False)
                 self.btn_stop.setEnabled(True)
@@ -3366,11 +3711,11 @@ class NetOpsAgentUI(QMainWindow):
                     self.tray_icon.setIcon(create_status_icon("yellow"))
             else:
                 self.lbl_status_large.setText(tr["status_stopped"])
-                self.lbl_status_large.setStyleSheet("color: #EF4444; font-weight: bold;")
+                self.lbl_status_large.setStyleSheet("color: #CF222E; font-weight: 650;")
                 self.lbl_dash_pid_val.setText("-")
                 self.lbl_dash_uptime_val.setText("0s")
                 self.lbl_dash_health_val.setText(tr["health_unhealthy"])
-                self.lbl_dash_health_val.setStyleSheet("color: #EF4444; font-weight: bold;")
+                self.lbl_dash_health_val.setStyleSheet("color: #CF222E; font-weight: 600;")
                 
                 self.btn_start.setEnabled(True)
                 self.btn_stop.setEnabled(False)
@@ -3383,10 +3728,10 @@ class NetOpsAgentUI(QMainWindow):
         # 2. Update platform cards
         if self.controller_connected:
             self.lbl_conn_large.setText(tr["conn_connected"])
-            self.lbl_conn_large.setStyleSheet("color: #10B981; font-weight: bold;")
+            self.lbl_conn_large.setStyleSheet("color: #2DA44E; font-weight: 650;")
         else:
             self.lbl_conn_large.setText(tr["conn_disconnected"])
-            self.lbl_conn_large.setStyleSheet("color: #EF4444; font-weight: bold;")
+            self.lbl_conn_large.setStyleSheet("color: #CF222E; font-weight: 650;")
             
         self.lbl_dash_ctrl_val.setText(self.controller_ip)
         self.lbl_dash_sync_val.setText(self.last_sync_time)

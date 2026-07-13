@@ -18,7 +18,7 @@ import { fetchAllPaginatedItems } from '../../utils/pagination';
 import { useSystem } from '../../hooks/useSystem';
 
 import { Asset, AssetSummary, AssetManagementTabProps, ViewMode, GroupBy } from './types';
-import { STATUSES, TYPES, LIFECYCLE_STATUSES, EMPTY_FORM, VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, COL_MAP } from './constants';
+import { STATUSES, TYPES, LIFECYCLE_STATUSES, EMPTY_FORM, VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, COL_MAP, IMPORT_VALUE_MAP } from './constants';
 import { statusMeta, typeMeta, severityOf } from './helpers';
 
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
@@ -214,7 +214,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       management_ip: a.management_ip,
       business_ip: a.business_ip, device_role: a.device_role,
       vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
-      status: a.status, lifecycle_status: a.lifecycle_status || 'staging',
+      status: a.status, lifecycle_status: a.lifecycle_status || 'staging', asset_origin: a.asset_origin || 'legacy', takeover_exempt_reason: '',
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
       platform: (a as any).platform || (a.asset_type === 'server' ? 'linux' : 'cisco_ios'),
@@ -239,7 +239,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const startRotationPoll = useCallback((assetId: string) => {
     if (rotationPollRef.current) clearInterval(rotationPollRef.current);
     setRotatingAssetId(assetId);
-    setFeedbackMsg({ type: 'info', text: zh ? '⏳ 口令上收中，请稍候...' : '⏳ Rotating password, please wait...' });
+    setFeedbackMsg({ type: 'info', text: zh ? '⏳ 口令上收中，上收成功后将自动投产...' : '⏳ Taking over credentials. Production status will be applied after success...' });
     let attempts = 0;
     rotationPollRef.current = setInterval(async () => {
       attempts++;
@@ -269,7 +269,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     }, 2000);
   }, [zh, fetchAssets]);
 
-  const doSave = async () => {
+  const doSave = async (overrides: Record<string, unknown> = {}) => {
     setSaving(true);
     try {
       const url = editingAsset ? `/api/assets/${editingAsset.id}` : '/api/assets';
@@ -291,6 +291,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       }
       const payload = {
         ...form,
+        ...overrides,
         platform: normalizedPlatform,
         u_height: Math.max(1, Math.min(60, parseInt(String(form.u_height), 10) || 1)),
         planned_start_u,
@@ -306,6 +307,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         fetchSummary();
         if (data?.rotation_pending && editingAsset) {
           startRotationPoll(editingAsset.id);
+        } else if (data?.legacy_exempt) {
+          setFeedbackMsg({ type: 'success', text: zh ? '存量设备已免上收投产，可使用普通账号执行只读任务。' : 'Legacy device marked as production without takeover; read-only tasks remain available.' });
         } else if (data?.password_rotated) {
           setFeedbackMsg({ type: 'success', text: zh ? '已投产，默认口令已自动修改上收。' : 'Marked as production. Default password has been auto-rotated.' });
         } else if (data?.lifecycle_reverted && data?.rotation_detail) {
@@ -327,7 +330,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   };
 
   const handleSave = async () => {
-    if (!form.hostname.trim() && !form.asset_tag.trim()) return;
+    if (!form.hostname.trim() && !form.asset_tag.trim()) {
+      setModalError(zh ? '主机名和资产编号至少填写一项' : 'Hostname or Asset Tag is required');
+      return;
+    }
     const oldLifecycle = editingAsset ? (editingAsset.lifecycle_status || 'staging') : 'staging';
     if (editingAsset && form.lifecycle_status === 'production' && oldLifecycle !== 'production') {
       setShowProductionConfirm(true);
@@ -345,7 +351,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       rack: a.rack, rack_unit: '', u_height: String(a.u_height ?? 1), planned_start_u: a.planned_start_u != null ? String(a.planned_start_u) : '', management_ip: '',
       business_ip: '', device_role: a.device_role,
       vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
-      status: a.status, lifecycle_status: 'staging',
+      status: a.status, lifecycle_status: 'staging', asset_origin: 'new', takeover_exempt_reason: '',
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
       platform: a.platform || (a.asset_type === 'server' ? 'linux' : 'cisco_ios'),
@@ -581,7 +587,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         fetchSummary();
         fetchAllRacks();
       } else {
-        setFeedbackMsg({ type: 'error', text: zh ? '导入失败' : 'Import failed' });
+        const error = await r.json().catch(() => null);
+        setFeedbackMsg({ type: 'error', text: error?.detail || (zh ? '导入失败' : 'Import failed') });
       }
     } catch {
       setFeedbackMsg({ type: 'error', text: zh ? '连接失败，导入未完成' : 'Connection failed, import incomplete' });
@@ -717,6 +724,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               const key = COL_MAP[col.trim()];
               if (key) {
                 let mappedVal = String(val).trim();
+                const valueMap = IMPORT_VALUE_MAP[key];
+                if (valueMap) {
+                  mappedVal = valueMap[mappedVal] || valueMap[mappedVal.toLowerCase()] || mappedVal;
+                }
                 if (key === 'asset_type') {
                   const v = mappedVal.toLowerCase();
                   if (v.includes('server') || v.includes('服务器')) mappedVal = 'server';
@@ -766,22 +777,45 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const handleDownloadTemplate = () => {
     const wb = XLSX.utils.book_new();
 
+    const guideRows = zh ? [
+      ['资产导入填写说明'],
+      ['字段', '是否必填', '填写规则'],
+      ['录入来源', '必填', '填写“新设备”或“存量设备”'],
+      ['投产状态', '必填', '新设备填写“待投产”；存量设备可填写“待投产”或“已投产”'],
+      ['主机名/资产编号', '至少一项', '主机名和资产编号不能同时为空'],
+      ['普通用户/普通密码', '条件必填', '存量设备直接填写“已投产”时必须填写'],
+      ['特权用户/特权密码', '标准投产必填', '标准口令上收和改密使用'],
+      ['免上收投产原因', '条件必填', '录入来源为“存量设备”且投产状态为“已投产”时至少填写 5 个字符'],
+    ] : [
+      ['Asset Import Instructions'],
+      ['Field', 'Required', 'Rule'],
+      ['Asset Origin', 'Yes', 'Use new (new device) or legacy (existing device)'],
+      ['Lifecycle', 'Yes', 'Use staging for new devices; legacy devices may use staging or production'],
+      ['Hostname / Asset Tag', 'At least one', 'Hostname and Asset Tag cannot both be empty'],
+      ['Normal User / Password', 'Conditional', 'Required for legacy devices imported as production'],
+      ['Admin User / Password', 'Standard production', 'Required for managed password takeover'],
+      ['Takeover Exemption Reason', 'Conditional', 'Minimum 5 characters for legacy + production'],
+    ];
+    const wsGuide = XLSX.utils.aoa_to_sheet(guideRows);
+    wsGuide['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 72 }];
+    XLSX.utils.book_append_sheet(wb, wsGuide, zh ? '填写说明' : 'Instructions');
+
     const srvHeaders = zh
-      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '业务IP', '连接方式', '状态', '角色', '设备分类', 'VLAN', '上联交换机', '上联端口', '数据中心', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '部门', '购买日期', '投产状态', '保修到期', '备注']
-      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Business IP', 'Connection', 'Status', 'Role', 'Device Category', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Datacenter', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Department', 'Purchase Date', 'Lifecycle', 'Warranty Expiry', 'Notes'];
+      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '业务IP', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '数据中心', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
+      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Business IP', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Datacenter', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
     const srvExample = zh
-      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '22', '192.168.1.10', 'ssh', 'active', 'web', '服务器', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT部', '2024-01-15', '待投产', '2027-01-15', '服务器备注']
-      : ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '22', '192.168.1.10', 'ssh', 'active', 'web', 'server', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT Dept', '2024-01-15', 'staging', '2027-01-15', 'Production srv'];
+      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'Linux（通用）', '10.0.1.10', '22', '192.168.1.10', 'SSH', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT部', '2024-01-15', '待投产', '', '2027-01-15', '服务器备注']
+      : ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '22', '192.168.1.10', 'ssh', 'active', 'web', 'server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT Dept', '2024-01-15', 'staging', '', '2027-01-15', 'Production srv'];
     const wsSrv = XLSX.utils.aoa_to_sheet([srvHeaders, srvExample]);
     wsSrv['!cols'] = srvHeaders.map(() => ({ wch: 16 }));
     XLSX.utils.book_append_sheet(wb, wsSrv, zh ? '服务器模板' : 'Server Template');
 
     const netHeaders = zh
-      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '连接方式', '状态', '角色', '设备分类', '数据中心', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '部门', '购买日期', '投产状态', '保修到期', '备注']
-      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Connection', 'Status', 'Role', 'Device Category', 'Datacenter', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Department', 'Purchase Date', 'Lifecycle', 'Warranty Expiry', 'Notes'];
+      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', '数据中心', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
+      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'Datacenter', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
     const netExample = zh
-      ? ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '22', 'ssh', 'active', 'switch', '交换机', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT部', '2023-06-01', '待投产', '2026-06-01', '核心交换机']
-      : ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '22', 'ssh', 'active', 'switch', 'switch', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT Dept', '2023-06-01', 'staging', '2026-06-01', 'Core switch'];
+      ? ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'Cisco IOS', '10.0.0.1', '22', 'SSH', '在用', '核心交换机', '交换机', '存量设备', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', '普通账号密码', '特权账号密码', '', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2026-06-01', '核心交换机']
+      : ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '22', 'ssh', 'active', 'switch', 'switch', 'legacy', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', 'normal-password', 'admin-password', '', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2026-06-01', 'Core switch'];
     const wsNet = XLSX.utils.aoa_to_sheet([netHeaders, netExample]);
     wsNet['!cols'] = netHeaders.map(() => ({ wch: 16 }));
     XLSX.utils.book_append_sheet(wb, wsNet, zh ? '网络设备模板' : 'Network Device Template');
@@ -790,6 +824,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ? ['参数类型 (Field Type)', '标准填写值 (Standard Value)', '值含义说明 (Description)']
       : ['Field Type', 'Standard Value', 'Description'];
     const optRows = zh ? [
+      ['录入来源', '新设备', '新采购或新部署设备；导入时强制以待投产状态入库'],
+      ['录入来源', '存量设备', '历史运行设备补录；允许填写已投产并登记免上收原因'],
+      ['投产状态', '待投产', '尚未完成口令上收'],
+      ['投产状态', '已投产', '已完成上收，或存量设备按豁免方式投产'],
+      ['资产状态', '在用', '资产正在使用'],
+      ['资产状态', '闲置', '资产当前未使用'],
+      ['资产状态', '库存中', '资产位于库存'],
+      ['连接方式', 'SSH', '通过 SSH 管理设备'],
       ['厂商 (Vendor)', 'Cisco', '思科'],
       ['厂商 (Vendor)', 'Huawei', '华为'],
       ['厂商 (Vendor)', 'H3C', '华三'],
@@ -802,26 +844,38 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['厂商 (Vendor)', 'Dell', '戴尔'],
       ['厂商 (Vendor)', 'HP', '惠普'],
       ['厂商 (Vendor)', 'generic', '其它通用厂商'],
-      ['平台 (Platform)', 'cisco_ios', 'Cisco IOS'],
-      ['平台 (Platform)', 'cisco_nxos', 'Cisco NX-OS'],
-      ['平台 (Platform)', 'cisco_xe', 'Cisco IOS-XE'],
-      ['平台 (Platform)', 'huawei_vrp', 'Huawei VRPv5'],
-      ['平台 (Platform)', 'huawei_vrpv8', 'Huawei VRPv8'],
-      ['平台 (Platform)', 'hp_comware', 'H3C Comware'],
-      ['平台 (Platform)', 'juniper_junos', 'Juniper JunOS'],
-      ['平台 (Platform)', 'arista_eos', 'Arista EOS'],
-      ['平台 (Platform)', 'ruijie_os', 'Ruijie RGOS'],
-      ['平台 (Platform)', 'fortinet', 'FortiOS'],
-      ['平台 (Platform)', 'linux', 'Linux (Generic)'],
+      ['平台', 'Cisco IOS', '思科 IOS'],
+      ['平台', 'Cisco NX-OS', '思科 Nexus NX-OS'],
+      ['平台', 'Cisco IOS-XE', '思科 IOS-XE'],
+      ['平台', '华为 VRPv5', '华为 VRP 第五版'],
+      ['平台', '华为 VRPv8', '华为 VRP 第八版'],
+      ['平台', 'H3C Comware', '新华三 Comware'],
+      ['平台', 'Juniper JunOS', '瞻博 JunOS'],
+      ['平台', 'Arista EOS', 'Arista EOS'],
+      ['平台', '锐捷 RGOS', '锐捷 RGOS'],
+      ['平台', 'FortiOS', '飞塔 FortiOS'],
+      ['平台', 'Linux（通用）', '通用 Linux 服务器'],
       ['平台 (Platform)', 'ubuntu', 'Ubuntu'],
       ['平台 (Platform)', 'centos', 'CentOS'],
       ['平台 (Platform)', 'debian', 'Debian'],
-      ['平台 (Platform)', 'redhat', 'Red Hat (RHEL)'],
+      ['平台', '红帽 RHEL', 'Red Hat Enterprise Linux'],
       ['平台 (Platform)', 'windows', 'Windows Server'],
       ['平台 (Platform)', 'esxi', 'VMware ESXi'],
-      ['设备分类 (Category)', 'server', '服务器'],
-      ['设备分类 (Category)', 'network_device', '网络设备'],
+      ['服务器分类', '机架式服务器', '标准机架式服务器'],
+      ['服务器分类', '刀片服务器', '刀片式服务器'],
+      ['服务器分类', '塔式服务器', '塔式服务器'],
+      ['服务器分类', '高密度服务器', '高密度计算节点'],
+      ['服务器分类', 'GPU服务器', 'GPU 计算服务器'],
+      ['服务器分类', '存储服务器', '存储用途服务器'],
+      ['服务器分类', '虚拟化宿主机', '虚拟化平台宿主机'],
+      ['网络设备分类', '交换机', '网络交换设备'],
+      ['网络设备分类', '路由器', '网络路由设备'],
+      ['网络设备分类', '防火墙', '安全防护设备'],
+      ['网络设备分类', '负载均衡', '负载均衡设备'],
+      ['网络设备分类', '无线AP', '无线接入点'],
     ] : [
+      ['Asset Origin', 'new', 'New device; always imported as staging'],
+      ['Asset Origin', 'legacy', 'Legacy device; may be imported as production with an exemption reason'],
       ['Vendor', 'Cisco', 'Cisco'],
       ['Vendor', 'Huawei', 'Huawei'],
       ['Vendor', 'H3C', 'H3C'],
@@ -873,9 +927,25 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     return g;
   }, [displayAssets, groupBy, zh]);
 
-  const typeDisplay = (a: Asset) => {
-    if (a.asset_type === 'network_device' && a.device_role) return a.device_role.charAt(0).toUpperCase() + a.device_role.slice(1);
-    return typeMeta(a.asset_type).label[zh ? 'zh' : 'en'];
+  const typeDisplay = (a: Asset) => typeMeta(a.asset_type).label[zh ? 'zh' : 'en'];
+
+  const categoryDisplay = (a: Asset) => {
+    const labels: Record<string, { zh: string; en: string }> = {
+      rack_server: { zh: '机架式服务器', en: 'Rack Server' },
+      blade_server: { zh: '刀片服务器', en: 'Blade Server' },
+      tower_server: { zh: '塔式服务器', en: 'Tower Server' },
+      high_density: { zh: '高密度服务器', en: 'High-Density Server' },
+      gpu_server: { zh: 'GPU 服务器', en: 'GPU Server' },
+      storage_server: { zh: '存储服务器', en: 'Storage Server' },
+      virtual_host: { zh: '虚拟/物理宿主机', en: 'Virtual Host' },
+      switch: { zh: '交换机', en: 'Switch' },
+      router: { zh: '路由器', en: 'Router' },
+      firewall: { zh: '防火墙', en: 'Firewall' },
+      load_balancer: { zh: '负载均衡', en: 'Load Balancer' },
+      wireless_ap: { zh: '无线 AP', en: 'Wireless AP' },
+      other: { zh: '其他', en: 'Other' },
+    };
+    return labels[a.device_category || '']?.[zh ? 'zh' : 'en'] || a.device_category || '—';
   };
 
   const hasFilters = typeFilter !== 'all' || statusFilter !== 'all' || vendorFilter !== 'all' || dcFilter !== 'all' || deptFilter !== 'all' || lifecycleFilter !== 'all';
@@ -1085,12 +1155,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                     </th>
                     {([
                       { l: zh ? '主机名' : 'Hostname',        w: 'min-w-[150px]' },
-                      { l: zh ? '类型'   : 'Type',            w: 'w-20' },
+                      { l: zh ? '资产类型' : 'Asset Type',     w: 'w-20' },
                       { l: zh ? '厂商/型号' : 'Vendor/Model', w: 'min-w-[110px]' },
                       { l: zh ? '管理IP' : 'Mgmt IP',         w: 'w-[110px]' },
                       { l: zh ? '状态'   : 'Status',          w: 'w-[80px]' },
                       { l: zh ? '投产'   : 'Lifecycle',       w: 'w-[80px]' },
-                      { l: zh ? '角色'   : 'Role',            w: 'w-16' },
+                      { l: zh ? '设备子类' : 'Sub-category',   w: 'w-20' },
                       { l: zh ? '机房'   : 'DC',              w: 'w-20' },
                       { l: zh ? '部门'   : 'Dept',            w: 'w-20' },
                       { l: zh ? '保修到期' : 'Warranty',       w: 'w-24' },
@@ -1182,7 +1252,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                             </div>
                           )}
                         </td>
-                        <td className="px-1.5 py-1 text-[9px] text-black/30 capitalize">{a.device_role || '—'}</td>
+                        <td className="px-1.5 py-1 text-[9px] text-black/30">{categoryDisplay(a)}</td>
                         <td className="px-1.5 py-1 text-[10px] text-black/30 truncate max-w-[80px]">
                           {a.datacenter || '—'}
                           {a.rack && <span className="text-black/15 block text-[9px]">{a.rack}{a.rack_unit ? `U${a.rack_unit}` : ''}</span>}
@@ -1256,7 +1326,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                                         <span className={`h-1.5 w-1.5 rounded-full ${sm.dot}`} />{sm.label[zh ? 'zh' : 'en']}
                                       </span>
                                     </td>
-                                    <td className="px-2 py-1.5 text-[9px] text-black/30 capitalize">{a.device_role || '—'}</td>
+                                    <td className="px-2 py-1.5 text-[9px] text-black/30">{categoryDisplay(a)}</td>
                                     <td className="px-2 py-1.5">
                                       <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${a.lifecycle_status === 'production' ? 'bg-emerald-50 text-emerald-600' : a.lifecycle_status === 'decommissioned' ? 'bg-slate-100 text-slate-400' : a.lifecycle_status === 'maintenance' ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-500'}`}>
                                         {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}

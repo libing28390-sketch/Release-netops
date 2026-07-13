@@ -105,7 +105,10 @@ class TelemetryOrchestrator:
         while True:
             try:
                 if os.path.exists(DB_PATH):
-                    devices = _db_quick("SELECT * FROM devices WHERE status != 'pending'", fetchall=True)
+                    devices = _db_quick(
+                        "SELECT * FROM devices WHERE ip_address IS NOT NULL AND ip_address != ''",
+                        fetchall=True,
+                    )
                     async def bounded_fast(d):
                         async with sem:
                             await process_device_fast(d)

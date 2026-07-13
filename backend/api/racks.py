@@ -200,17 +200,21 @@ def api_create_rack(body: RackCreate, user=require_role("Operator")):
 def api_batch_create_racks(body: List[RackCreate], user=require_role("Operator")):
     conn = get_db_connection()
     try:
+        conn.execute("BEGIN")
         created_racks = []
         for i, rack_data in enumerate(body):
             try:
-                rack = rack_service.create_rack(conn, **rack_data.model_dump())
+                rack = rack_service.create_rack(conn, commit=False, **rack_data.model_dump())
                 created_racks.append(rack)
             except Exception as e:
+                conn.rollback()
                 raise HTTPException(status_code=400, detail=f"导入第 {i+1} 行机柜数据失败: {str(e)}")
+        conn.commit()
         return {"success": True, "data": created_racks, "message": f"成功导入 {len(created_racks)} 个机柜"}
     except HTTPException:
         raise
     except Exception as e:
+        conn.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         conn.close()

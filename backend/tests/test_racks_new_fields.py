@@ -236,6 +236,47 @@ def test_api_batch_create_racks_endpoint(isolated_db, requester):
     assert "导入第 1 行机柜数据失败" in exc_info.value.detail
 
 
+def test_api_batch_create_racks_rolls_back_on_partial_failure(isolated_db, requester):
+    from api.racks import api_batch_create_racks
+    from schemas.schemas import RackCreate
+    from fastapi import HTTPException
+
+    body = [
+        RackCreate(
+            name="Batch Rollback 01",
+            datacenter="Beijing DC",
+            room="Room 101",
+            row="Row X",
+            total_u=42,
+            rack_code="RACK-ROLLBACK-01"
+        ),
+        RackCreate(
+            name="Batch Rollback Duplicate",
+            datacenter="Beijing DC",
+            room="Room 101",
+            row="Row X",
+            total_u=42,
+            rack_code="RACK-ROLLBACK-01"
+        ),
+    ]
+
+    with pytest.raises(HTTPException) as exc_info:
+        api_batch_create_racks(body=body, user=requester)
+
+    assert exc_info.value.status_code == 400
+    assert "导入第 2 行机柜数据失败" in exc_info.value.detail
+
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM racks WHERE rack_code = ?",
+            ("RACK-ROLLBACK-01",),
+        ).fetchone()
+        assert row["cnt"] == 0
+    finally:
+        conn.close()
+
+
 def test_placement_strategy_and_concurrency(isolated_db):
     conn = get_db_connection()
     try:

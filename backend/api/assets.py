@@ -405,6 +405,8 @@ class AssetCreate(BaseModel):
     uplink_port: str = ''
     status: str = 'active'
     lifecycle_status: str = 'staging'
+    asset_origin: str = 'new'
+    takeover_exempt_reason: str = ''
     purchase_date: str = ''
     warranty_expiry: str = ''
     department: str = ''
@@ -501,6 +503,7 @@ class AssetUpdate(BaseModel):
     uplink_port: Optional[str] = None
     status: Optional[str] = None
     lifecycle_status: Optional[str] = None
+    asset_origin: Optional[str] = None
     purchase_date: Optional[str] = None
     warranty_expiry: Optional[str] = None
     department: Optional[str] = None
@@ -522,6 +525,8 @@ class AssetUpdate(BaseModel):
     management_port: Optional[int] = None
     device_category: Optional[str] = None
     power_watts: Optional[int] = None
+    production_mode: Optional[str] = None
+    takeover_exempt_reason: Optional[str] = None
 
     @field_validator('power_watts', mode='before')
     @classmethod
@@ -709,6 +714,17 @@ def create_asset(body: AssetCreate):
     try:
         asset_id = f"asset-{uuid.uuid4().hex[:12]}"
         now = _utc_now()
+        asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
+        legacy_production = asset_origin == 'legacy' and body.lifecycle_status == 'production'
+        initial_lifecycle = 'production' if legacy_production else 'staging'
+        if legacy_production:
+            reason = (body.takeover_exempt_reason or '').strip()
+            normal_username = (body.normal_username or body.username or '').strip()
+            normal_password = (body.normal_password or body.password or '').strip()
+            if len(reason) < 5:
+                raise HTTPException(status_code=422, detail='存量设备直接投产必须填写至少 5 个字符的免上收原因。')
+            if not normal_username or not normal_password:
+                raise HTTPException(status_code=422, detail='存量设备直接投产必须配置普通账号用户名和密码。')
 
         # Check unique asset_tag if provided
         if body.asset_tag:
@@ -721,20 +737,20 @@ def create_asset(body: AssetCreate):
                 id, asset_type, asset_tag, serial_number, vendor, model, hostname,
                 datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
-                status, lifecycle_status, purchase_date, warranty_expiry, department, notes,
+                status, lifecycle_status, asset_origin, purchase_date, warranty_expiry, department, notes,
                 platform, connection_method, username, password,
                 normal_username, normal_password, admin_username, admin_password,
                 enable_password, auth_model,
                 snmp_community, snmp_port, device_category, power_watts,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
             max(1, min(60, body.u_height)), body.planned_start_u,
             body.management_ip, body.business_ip, body.device_role,
             body.vlan, body.uplink_switch, body.uplink_port,
-            body.status, body.lifecycle_status,
+            body.status, initial_lifecycle, asset_origin,
             body.purchase_date, body.warranty_expiry, body.department, body.notes,
             body.platform, body.connection_method,
             body.username, _safe_encrypt(body.password),
@@ -752,7 +768,20 @@ def create_asset(body: AssetCreate):
         device_id = None
         if body.asset_type in ('network_device', 'server'):
             device_id = _create_linked_device(conn, asset_id, body)
+            if legacy_production:
+                conn.execute(
+                    "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', "
+                    "is_managed = 0 WHERE id = ?",
+                    (device_id,),
+                )
             logger.info('Auto-created device %s for asset %s (%s)', device_id, asset_id, body.asset_type)
+
+        if legacy_production:
+            conn.execute(
+                "UPDATE physical_assets SET credential_governance_mode = 'legacy_exempt', "
+                "takeover_exempt_reason = ?, takeover_exempt_at = ?, is_managed = 0 WHERE id = ?",
+                ((body.takeover_exempt_reason or '').strip(), now, asset_id),
+            )
 
         try:
             _sync_rack_device_from_asset(conn, asset_id, body)
@@ -763,7 +792,7 @@ def create_asset(body: AssetCreate):
         _sync_device_type_power(conn, body.vendor, body.model, body.power_watts, body.device_role, body.u_height)
 
         conn.commit()
-        return {'id': asset_id, 'device_id': device_id}
+        return {'id': asset_id, 'device_id': device_id, 'legacy_exempt': legacy_production}
     finally:
         conn.close()
 
@@ -788,6 +817,9 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
         old_lifecycle = row['lifecycle_status'] if 'lifecycle_status' in row.keys() else 'staging'
         new_lifecycle = body.lifecycle_status if body.lifecycle_status is not None else old_lifecycle
         transitioning_to_production = (new_lifecycle == 'production' and old_lifecycle != 'production')
+        legacy_exempt = transitioning_to_production and body.production_mode == 'legacy_exempt'
+        if legacy_exempt and (row['asset_origin'] or 'new') != 'legacy':
+            raise HTTPException(status_code=422, detail='只有标记为存量设备的资产才能使用免上收投产。')
 
         # ── Pre-flight: block production transition if onboarding not complete ──
         if transitioning_to_production and row['asset_type'] in ('network_device', 'server'):
@@ -798,6 +830,11 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                 'FROM devices WHERE asset_id = ?',
                 (asset_id,)
             ).fetchone()
+            if not device_row:
+                raise HTTPException(
+                    status_code=422,
+                    detail='投产前请先完成设备关联与口令上收准备，当前资产缺少关联设备记录。'
+                )
             if device_row:
                 device_row = dict(device_row)
                 ob_status = device_row['onboarding_status'] or 'pending_credentials'
@@ -824,7 +861,25 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                 if not ip:
                     missing.append('管理IP')
 
-                if auth_model == 'dual':
+                if legacy_exempt:
+                    reason = (body.takeover_exempt_reason or '').strip()
+                    if len(reason) < 5:
+                        raise HTTPException(status_code=422, detail='存量设备免上收投产必须填写至少 5 个字符的豁免原因。')
+                    normal_username = (
+                        getattr(body, 'normal_username', None)
+                        or creds.get('normal_username')
+                        or creds.get('username')
+                        or ''
+                    ).strip()
+                    normal_password = (
+                        getattr(body, 'normal_password', None)
+                        or creds.get('normal_password')
+                        or creds.get('password')
+                        or ''
+                    ).strip()
+                    if not normal_username: missing.append('普通用户名')
+                    if not normal_password: missing.append('普通密码')
+                elif auth_model == 'dual':
                     # For dual mode: body password fields take priority; if left blank (edit mode),
                     # fall back to existing DB values. Also accept legacy/resolved 'password' field as fallback
                     # for both normal and admin passwords so old single-mode records don't block production transition.
@@ -867,7 +922,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
             'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
             'datacenter', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
             'vlan', 'uplink_switch', 'uplink_port',
-            'status', 'lifecycle_status', 'purchase_date', 'warranty_expiry', 'department', 'notes',
+            'status', 'lifecycle_status', 'asset_origin', 'purchase_date', 'warranty_expiry', 'department', 'notes',
             'platform', 'connection_method', 'username', 'password',
             'normal_username', 'normal_password', 'admin_username', 'admin_password', 'enable_password', 'auth_model',
             'snmp_community', 'snmp_port', 'management_port', 'device_category', 'power_watts'
@@ -875,6 +930,8 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
         for field in updatable:
             val = getattr(body, field, None)
             if val is not None:
+                if field == 'lifecycle_status' and transitioning_to_production:
+                    continue
                 if field in ('password', 'normal_password', 'admin_password', 'enable_password'):
                     # Empty string = "keep existing" — skip the update
                     if val != '':
@@ -884,8 +941,43 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                     updates.append(f'{field} = ?')
                     params.append(val)
 
+        if legacy_exempt:
+            exempt_reason = (body.takeover_exempt_reason or '').strip()
+            exempt_at = _utc_now()
+            if updates:
+                updates.append('updated_at = ?')
+                params.extend([exempt_at, asset_id])
+                conn.execute(f"UPDATE physical_assets SET {', '.join(updates)} WHERE id = ?", tuple(params))
+                updated_row = conn.execute("SELECT * FROM physical_assets WHERE id = ?", (asset_id,)).fetchone()
+                try:
+                    _sync_rack_device_from_asset(conn, asset_id, updated_row)
+                except ValueError as exc:
+                    conn.rollback()
+                    raise HTTPException(status_code=400, detail=str(exc))
+                _sync_device_from_asset(conn, asset_id, body)
+            conn.execute(
+                "UPDATE physical_assets SET lifecycle_status = 'production', is_managed = 0, "
+                "credential_governance_mode = 'legacy_exempt', takeover_exempt_reason = ?, "
+                "takeover_exempt_at = ?, takeover_error = '', updated_at = ? WHERE id = ?",
+                (exempt_reason, exempt_at, exempt_at, asset_id),
+            )
+            conn.execute(
+                "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', "
+                "is_managed = 0, takeover_error = '' WHERE asset_id = ?",
+                (asset_id,),
+            )
+            conn.commit()
+            return {
+                'ok': True,
+                'password_rotated': False,
+                'rotation_pending': False,
+                'rotation_detail': None,
+                'lifecycle_reverted': False,
+                'legacy_exempt': True,
+            }
+
         rotation_result = None
-        if updates:
+        if updates or transitioning_to_production:
             updates.append('updated_at = ?')
             params.append(_utc_now())
             params.append(asset_id)
@@ -904,7 +996,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
             if current_type in ('network_device', 'server'):
                 _sync_device_from_asset(conn, asset_id, body)
                 # Also sync lifecycle_status to linked device
-                if body.lifecycle_status is not None:
+                if body.lifecycle_status is not None and not transitioning_to_production:
                     conn.execute(
                         'UPDATE devices SET lifecycle_status = ? WHERE asset_id = ?',
                         (body.lifecycle_status, asset_id)
@@ -970,11 +1062,11 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                             bg_conn = get_db_connection()
                             try:
                                 bg_conn.execute(
-                                    "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
+                                    "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', lifecycle_status = 'production', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
                                     (dev_id,)
                                 )
                                 bg_conn.execute(
-                                    "UPDATE physical_assets SET is_managed = 1, takeover_error = '' WHERE id = ?",
+                                    "UPDATE physical_assets SET lifecycle_status = 'production', is_managed = 1, takeover_error = '' WHERE id = ?",
                                     (a_id,)
                                 )
                                 bg_conn.commit()
@@ -1091,6 +1183,19 @@ def import_assets(items: list[AssetCreate]):
         skipped = 0
         for body in items:
             asset_id = f"asset-{uuid.uuid4().hex[:12]}"
+            asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
+            legacy_production = asset_origin == 'legacy' and body.lifecycle_status == 'production'
+            initial_lifecycle = 'production' if legacy_production else 'staging'
+            if not (body.hostname or '').strip() and not (body.asset_tag or '').strip():
+                raise HTTPException(status_code=422, detail='导入资产必须至少填写主机名或资产编号')
+            if legacy_production:
+                reason = (body.takeover_exempt_reason or '').strip()
+                normal_username = (body.normal_username or body.username or '').strip()
+                normal_password = (body.normal_password or body.password or '').strip()
+                if len(reason) < 5:
+                    raise HTTPException(status_code=422, detail='存量设备直接投产必须填写至少 5 个字符的免上收原因')
+                if not normal_username or not normal_password:
+                    raise HTTPException(status_code=422, detail='存量设备直接投产必须配置普通账号用户名和密码')
             if body.asset_tag:
                 existing = conn.execute('SELECT id FROM physical_assets WHERE asset_tag = ?', (body.asset_tag,)).fetchone()
                 if existing:
@@ -1101,20 +1206,21 @@ def import_assets(items: list[AssetCreate]):
                     id, asset_type, asset_tag, serial_number, vendor, model, hostname,
                     datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                     vlan, uplink_switch, uplink_port,
-                    status, lifecycle_status, purchase_date, warranty_expiry, department, notes,
+                    status, lifecycle_status, asset_origin, purchase_date, warranty_expiry, department, notes,
                     platform, connection_method, username, password,
                     normal_username, normal_password, admin_username, admin_password,
                     enable_password, auth_model,
                     snmp_community, snmp_port, management_port, device_category, power_watts,
+                    credential_governance_mode, takeover_exempt_reason, takeover_exempt_at, is_managed,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
                 body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
                 max(1, min(60, body.u_height)), body.planned_start_u,
                 body.management_ip, body.business_ip, body.device_role,
                 body.vlan, body.uplink_switch, body.uplink_port,
-                body.status, body.lifecycle_status,
+                body.status, initial_lifecycle, asset_origin,
                 body.purchase_date, body.warranty_expiry, body.department, body.notes,
                 body.platform, body.connection_method, body.username, _safe_encrypt(body.password),
                 getattr(body, 'normal_username', '') or '',
@@ -1126,11 +1232,20 @@ def import_assets(items: list[AssetCreate]):
                 body.snmp_community, body.snmp_port,
                 getattr(body, 'management_port', 22) or 22,
                 body.device_category, body.power_watts,
+                'legacy_exempt' if legacy_production else 'managed',
+                (body.takeover_exempt_reason or '').strip() if legacy_production else '',
+                now if legacy_production else None,
+                0 if legacy_production else 1,
                 now, now
             ))
             # Plan-A: auto-create linked device for managed assets
             if body.asset_type in ('network_device', 'server'):
-                _create_linked_device(conn, asset_id, body)
+                device_id = _create_linked_device(conn, asset_id, body)
+                if legacy_production:
+                    conn.execute(
+                        "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', is_managed = 0 WHERE id = ?",
+                        (device_id,),
+                    )
             
             try:
                 _sync_rack_device_from_asset(conn, asset_id, body)
@@ -1341,11 +1456,11 @@ def _run_batch_takeover(tasks: list[dict]):
             bg_conn = get_db_connection()
             try:
                 bg_conn.execute(
-                    "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
+                    "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', lifecycle_status = 'production', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
                     (dev_id,)
                 )
                 bg_conn.execute(
-                    "UPDATE physical_assets SET is_managed = 1, takeover_error = '' WHERE id = ?",
+                    "UPDATE physical_assets SET lifecycle_status = 'production', is_managed = 1, takeover_error = '' WHERE id = ?",
                     (a_id,)
                 )
                 bg_conn.commit()

@@ -36,3 +36,13 @@
 | `desktop_settings.ini` | 托盘偏好设置（语言、主题、开机自启等） |
 
 > 重新打包 exe：在仓库根目录执行 `pyinstaller NetOps.spec`（`NetOps.spec` 已指向 `desktop/launcher.py`），产物在 `dist/NetOps.exe`，复制到根目录覆盖即可。
+# 数据库恢复出厂
+
+桌面端“清理数据”会对当前 `DATABASE_URL` 指向的数据库执行恢复出厂操作。执行前会显示真实数据库地址和库名，并要求再次输入完整数据库名确认。
+
+- PostgreSQL 模式下必须先通过 `pg_dump` 创建备份，备份失败时不会执行清理。
+- 备份默认保存在 `data/backups/database-reset/`，可使用同版本或兼容版本的 `pg_restore` 恢复到独立数据库。
+- 系统拒绝清理 `postgres`、`template0`、`template1` 等系统数据库。
+- 操作只重建当前数据库的 `public` schema，不删除附件、PAM 录像、日志、`.env` 或其他磁盘文件。
+- 重建完成后会校验关键表、迁移记录和默认管理员，并重新启动后端服务。
+- 默认管理员恢复为 `admin / admin`，首次登录后必须立即修改密码。

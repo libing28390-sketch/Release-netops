@@ -12,7 +12,7 @@ Pattern not detected: '\[agg\-sw1\]' in output.
 
 ### 根因分析
 
-1. **凭据优先级错误**：Playbook 引擎 `engine.py:L117` 硬编码凭据优先级为 `normal_username > username > admin_username`，导致使用低权限用户 `user` 连接设备
+1. **凭据边界需要保留**：Playbook 引擎 `engine.py:L117` 当前优先使用 `normal_username > username > admin_username`，这符合“自动化查询默认普通账号、备份/变更显式提权”的最小权限策略，不应为本问题全局改成管理员优先
 2. **低权限用户分页限制**：H3C Comware V7 低权限用户无法执行 `screen-length disable`（返回 `Permission denied.`），导致分页未禁用
 3. **输出挂起超时**：`display ip routing-table` 输出在 `---- More ----` 处暂停，Netmiko 等待设备提示符 `<agg-sw1>` 但无法匹配到，最终超时
 
@@ -27,26 +27,26 @@ Pattern not detected: '\[agg\-sw1\]' in output.
 
 | 文件 | 修改内容 |
 |------|---------|
-| `backend/drivers/ssh_compat.py` | 新增 `safe_send_command` 包装器 |
-| `backend/services/operational_data_service.py` | 替换 `send_command` 为 `safe_send_command` |
-| `backend/services/inspection_service.py` | 替换 `send_command` 为 `safe_send_command` |
-| `backend/services/ip_locator_service.py` | 替换 `send_command` 为 `safe_send_command` |
-| `backend/api/playbooks/engine.py` | 修复凭据优先级为 `auto` 模式 |
+| `backend/drivers/ssh_compat.py` | 新增分页提示识别与 `drain_paged_output` |
+| `backend/engine/drivers/netmiko_driver.py` | V3 Netmiko 命令执行后自动 drain 分页输出 |
+| `backend/drivers/netmiko_driver.py` | 旧 Netmiko 驱动命令执行后自动 drain 分页输出 |
+| `backend/tests/test_ssh_compat_paging.py` | 覆盖 H3C/通用 More 提示识别与翻页读取 |
 
 ## 实施步骤
 
-1. 在 `ssh_compat.py` 新增 `safe_send_command`：对 Comware 设备自动构造灵活的 `expect_string`，失败时回退到 `send_command_timing`
-2. 在三个服务文件中替换所有 `client.send_command` 为 `safe_send_command`
-3. 修复 `engine.py` 凭据解析优先级，改为 `username > admin_username > normal_username`
-4. 验证凭据解析逻辑正确性
+1. 在 `ssh_compat.py` 新增 `contains_paging_prompt` 与 `drain_paged_output`，识别 `---- More ----`、`--More--` 等分页提示
+2. 在两套 Netmiko 驱动命令执行路径中接入 `drain_paged_output`，遇到分页提示时发送空格继续读取
+3. 保持 Playbook 默认普通账号策略不变；管理员账号仍用于备份、显式特权借用和配置变更类任务
+4. 增加单元测试验证分页提示识别与连续翻页逻辑
 
 ## 验证计划
 
-- 脚本验证凭据解析：旧逻辑选 `user`，新逻辑选 `admin` ✅
+- 单元测试验证 H3C/通用分页提示识别与 drain 逻辑
+- 单元测试验证两页分页输出会连续发送空格直到提示符返回
 - 重启后端后在 UI 重试 H3C 路由查询
 
 ## 风险与回滚
 
-- 凭据优先级变更可能影响其他设备（低风险：`auto` 优先级与 `automation.py` 一致）
-- `safe_send_command` 兜底逻辑使用 `send_command_timing`，对长输出命令可能存在时序风险（已设置 30s read_timeout）
-- 回滚：还原 5 个文件的修改即可
+- 不变更凭据优先级，避免自动化查询默认提权
+- `drain_paged_output` 最多读取 200 页，避免异常设备无限分页
+- 回滚：还原 `backend/drivers/ssh_compat.py`、两套 Netmiko 驱动和新增测试即可

@@ -125,6 +125,8 @@ class NetmikoDriver(BaseDriver):
                         output = self.conn.send_command_timing(content, read_timeout=30)
                     else:
                         raise e
+                from drivers.ssh_compat import drain_paged_output
+                output = drain_paged_output(self.conn, output, read_timeout=30)
                 return {
                     "success": True, "stdout": output, "device": self.ip,
                     "duration": time.perf_counter() - start_time

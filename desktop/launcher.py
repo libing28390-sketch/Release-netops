@@ -16,6 +16,7 @@ import ctypes
 import socket
 import urllib.request
 import urllib.error
+from urllib.parse import unquote, urlparse
 import ssl
 import zipfile
 import winreg
@@ -866,10 +867,58 @@ def load_existing_config():
     return config
 
 
+def load_database_config_from_env():
+    config = {
+        "host": "127.0.0.1",
+        "port": "5432",
+        "user": "postgres",
+        "password": "netops",
+        "db_name": "netops",
+    }
+    env_path = os.path.join(PROJECT_ROOT, ".env")
+    if not os.path.exists(env_path):
+        return config
+
+    values = {}
+    try:
+        with open(env_path, "r", encoding="utf-8-sig") as env_file:
+            for raw_line in env_file:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip().strip('"').strip("'")
+    except OSError:
+        return config
+
+    database_url = values.get("DATABASE_URL", "").strip()
+    if database_url:
+        try:
+            parsed = urlparse(database_url)
+            if parsed.scheme.lower() in {"postgresql", "postgres"}:
+                config.update(
+                    host=parsed.hostname or config["host"],
+                    port=str(parsed.port or 5432),
+                    user=unquote(parsed.username or config["user"]),
+                    password=unquote(parsed.password or ""),
+                    db_name=unquote(parsed.path.lstrip("/")) or config["db_name"],
+                )
+                return config
+        except (TypeError, ValueError):
+            pass
+
+    config["host"] = values.get("POSTGRES_HOST", config["host"])
+    config["port"] = values.get("POSTGRES_PORT", config["port"])
+    config["user"] = values.get("POSTGRES_USER", config["user"])
+    config["password"] = values.get("POSTGRES_PASSWORD", config["password"])
+    config["db_name"] = values.get("POSTGRES_DB", config["db_name"])
+    return config
+
+
 class LauncherUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.initial_config = load_existing_config()
+        self.initial_config = load_database_config_from_env()
         self.setWindowTitle("NetOps 部署与启动管理器")
         self.setFixedSize(700, 520)
         

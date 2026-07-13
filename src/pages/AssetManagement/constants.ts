@@ -24,7 +24,7 @@ export const EMPTY_FORM = {
   asset_type: 'server', asset_tag: '', serial_number: '', vendor: '', model: '',
   hostname: '', datacenter: '', rack: '', rack_unit: '', u_height: '1', planned_start_u: '', management_ip: '',
   business_ip: '', device_role: '', vlan: '', uplink_switch: '', uplink_port: '',
-  status: 'active', lifecycle_status: 'staging', purchase_date: '', warranty_expiry: '', department: '', notes: '',
+  status: 'active', lifecycle_status: 'staging', asset_origin: 'new', takeover_exempt_reason: '', purchase_date: '', warranty_expiry: '', department: '', notes: '',
   platform: '', connection_method: 'ssh', 
   username: '', password: '',
   normal_username: '', normal_password: '',
@@ -83,7 +83,9 @@ export const COL_MAP: Record<string, string> = {
   '上联交换机': 'uplink_switch', 'Uplink Switch': 'uplink_switch', 'uplink_switch': 'uplink_switch',
   '上联端口': 'uplink_port', 'Uplink Port': 'uplink_port', 'uplink_port': 'uplink_port',
   '平台': 'platform', 'Platform': 'platform', 'platform': 'platform',
-  '管理端口': 'management_port', 'Mgmt Port': 'management_port', 'management_port': 'management_port',
+  '管理端口': 'management_port', 'SSH端口': 'management_port', 'SSH 端口': 'management_port',
+  'SSH管理端口': 'management_port', '端口 (SSH/Mgmt)': 'management_port', '端口(SSH/Mgmt)': 'management_port',
+  'Mgmt Port': 'management_port', 'SSH Port': 'management_port', 'management_port': 'management_port', 'ssh_port': 'management_port',
   '设备分类': 'device_category', 'Device Category': 'device_category', 'device_category': 'device_category',
   '连接方式': 'connection_method', 'Connection': 'connection_method', 'connection_method': 'connection_method',
   'SNMP社区名': 'snmp_community', 'SNMP Community': 'snmp_community', 'snmp_community': 'snmp_community',
@@ -99,4 +101,46 @@ export const COL_MAP: Record<string, string> = {
   '普通密码': 'normal_password', 'Normal Password': 'normal_password', 'normal_password': 'normal_password',
   '特权密码': 'admin_password', 'Admin Password': 'admin_password', 'admin_password': 'admin_password',
   'Enable密码': 'enable_password', 'Enable Secret': 'enable_password', 'enable_password': 'enable_password',
+  '设备来源': 'asset_origin', 'Asset Origin': 'asset_origin', 'asset_origin': 'asset_origin',
+  '录入来源': 'asset_origin', '初始设备来源': 'asset_origin',
+  '设备来源（必填：new=新设备，legacy=存量设备）': 'asset_origin',
+  '录入来源（必填：新设备或存量设备）': 'asset_origin',
+  'Asset Origin (Required: new or legacy)': 'asset_origin',
+  '免上收投产原因': 'takeover_exempt_reason', 'Takeover Exemption Reason': 'takeover_exempt_reason', 'takeover_exempt_reason': 'takeover_exempt_reason',
+};
+
+export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
+  asset_origin: {
+    '新设备': 'new', '新设备录入': 'new', new: 'new',
+    '存量设备': 'legacy', '存量设备补录': 'legacy', legacy: 'legacy',
+  },
+  lifecycle_status: {
+    '待投产': 'staging', staging: 'staging',
+    '已投产': 'production', production: 'production',
+    '维护中': 'maintenance', maintenance: 'maintenance',
+    '已退役': 'decommissioned', decommissioned: 'decommissioned',
+  },
+  status: {
+    '在用': 'active', active: 'active',
+    '闲置': 'inactive', inactive: 'inactive',
+    '库存中': 'in_storage', in_storage: 'in_storage',
+    '维护中': 'maintenance', maintenance: 'maintenance',
+    '已退役': 'decommissioned', decommissioned: 'decommissioned',
+  },
+  connection_method: {
+    SSH: 'ssh', ssh: 'ssh', NETCONF: 'netconf', netconf: 'netconf',
+  },
+  platform: {
+    'Cisco IOS': 'cisco_ios', 'Cisco NX-OS': 'cisco_nxos', 'Cisco IOS-XE': 'cisco_xe',
+    '华为 VRPv5': 'huawei_vrp', '华为 VRPv8': 'huawei_vrpv8', 'H3C Comware': 'hp_comware',
+    'Juniper JunOS': 'juniper_junos', 'Arista EOS': 'arista_eos', '锐捷 RGOS': 'ruijie_os',
+    FortiOS: 'fortinet', 'Linux（通用）': 'linux', Ubuntu: 'ubuntu', CentOS: 'centos',
+    Debian: 'debian', '红帽 RHEL': 'redhat', 'Windows Server': 'windows', 'VMware ESXi': 'esxi',
+  },
+  device_category: {
+    '机架式服务器': 'rack_server', '刀片服务器': 'blade_server', '塔式服务器': 'tower_server',
+    '高密度服务器': 'high_density', 'GPU服务器': 'gpu_server', '存储服务器': 'storage_server',
+    '虚拟化宿主机': 'virtual_host', '交换机': 'switch', '路由器': 'router',
+    '防火墙': 'firewall', '负载均衡': 'load_balancer', '无线AP': 'wireless_ap', '其他': 'other',
+  },
 };

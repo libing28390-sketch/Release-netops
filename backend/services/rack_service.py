@@ -124,7 +124,7 @@ def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
                 site_id: str = 'site-default', rack_code: str = '',
                 placement_strategy: str = 'bottom_first', rack_type_id: str = '',
                 width_mm: int = 600, depth_mm: int = 1000,
-                allow_front_rear_mount: bool = True, **kwargs) -> dict:
+                allow_front_rear_mount: bool = True, commit: bool = True, **kwargs) -> dict:
     rack_id = str(uuid.uuid4())
     if not rack_code:
         rack_code = f"RACK_{uuid.uuid4().hex[:12].upper()}"
@@ -173,7 +173,8 @@ def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
             placement_strategy, rack_type_id, width_mm, depth_mm, 1 if allow_front_rear_mount else 0, now, now
         )
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     logger.info(f"[RackService] Created rack '{name}' in {datacenter or '(no DC)'}")
     return get_rack(conn, rack_id)
 

@@ -1,3 +1,5 @@
+import re
+import time
 from typing import Any, Dict, List
 
 
@@ -35,6 +37,11 @@ SSH_AUTH_ERROR_CODE = "ssh_authentication_failed"
 SSH_TIMEOUT_ERROR_CODE = "ssh_transport_timeout"
 SSH_TRANSPORT_ERROR_CODE = "ssh_transport_unreachable"
 
+PAGING_PROMPT_RE = re.compile(
+    r"(?:----\s*More\s*----|--\s*More\s*--|--More--|<---\s*More\s*--->|Press\s+any\s+key\s+to\s+continue)",
+    re.IGNORECASE,
+)
+
 
 def build_netmiko_compatibility_kwargs() -> Dict[str, Any]:
     """
@@ -53,6 +60,49 @@ def build_netmiko_compatibility_kwargs() -> Dict[str, Any]:
         "disable_sha2_fix": True,
         "conn_timeout": 20,
     }
+
+
+def contains_paging_prompt(output: str) -> bool:
+    """Return whether CLI output is paused at a vendor paging prompt."""
+    return bool(PAGING_PROMPT_RE.search(output or ""))
+
+
+def drain_paged_output(conn: Any, output: str, *, read_timeout: int = 30, max_pages: int = 200) -> str:
+    """
+    Continue reading a Netmiko channel when output stops at a paging prompt.
+
+    Some devices reject pagination-disable commands for low-privilege accounts.
+    In that case long show/display output can stop at prompts such as
+    ``---- More ----``. Sending a space is the least invasive cross-vendor
+    response and keeps read-only automation on normal credentials.
+    """
+    pending = contains_paging_prompt(output)
+    if not pending:
+        return output
+
+    collected = PAGING_PROMPT_RE.sub("", output or "")
+    per_read_timeout = max(1, min(int(read_timeout or 30), 10))
+    for _ in range(max_pages):
+        if not pending:
+            break
+        try:
+            conn.write_channel(" ")
+            chunk = conn.read_channel_timing(read_timeout=per_read_timeout)
+        except AttributeError:
+            break
+        except Exception:
+            chunk = ""
+        if not chunk:
+            time.sleep(0.1)
+            try:
+                chunk = conn.read_channel_timing(read_timeout=1)
+            except Exception:
+                chunk = ""
+        if not chunk:
+            break
+        pending = contains_paging_prompt(chunk)
+        collected += PAGING_PROMPT_RE.sub("", chunk)
+    return collected
 
 
 def build_system_ssh_open_cmd() -> List[str]:

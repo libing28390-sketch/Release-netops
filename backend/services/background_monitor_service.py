@@ -871,6 +871,27 @@ def resolved_alert_severity(rule: dict | None, fallback: str) -> str:
     normalized_fallback = str(fallback or '').strip().lower()
     return normalized_fallback or 'major'
 
+
+async def _probe_device_reachability(ip_address: str, management_port: int = 22) -> tuple[bool, str]:
+    """Treat a device as reachable when either ICMP or its management TCP port responds."""
+    try:
+        delay = await asyncio.to_thread(ping, ip_address, timeout=2)
+        if delay is not None:
+            return True, 'icmp'
+    except Exception:
+        pass
+
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip_address, int(management_port or 22)),
+            timeout=2,
+        )
+        writer.close()
+        await writer.wait_closed()
+        return True, 'tcp'
+    except Exception:
+        return False, 'unreachable'
+
 async def process_device(device, cycle_tick: int):
     async with _get_semaphore():
         device = _as_dict(device)
@@ -899,8 +920,11 @@ async def process_device(device, cycle_tick: int):
         dev_label = device['hostname'] or ip
         try:
             # ping() is blocking; run it off the event loop to keep API endpoints responsive.
-            delay = await asyncio.to_thread(ping, ip, timeout=2)
-            new_status = 'online' if delay is not None else 'offline'
+            reachable, probe_method = await _probe_device_reachability(
+                ip,
+                device.get('management_port') or 22,
+            )
+            new_status = 'online' if reachable else 'offline'
 
             if device['status'] != new_status:
                 if new_status == 'offline':
@@ -918,7 +942,9 @@ async def process_device(device, cycle_tick: int):
                         f"{dev_label} ({ip}) 已恢复连接",
                         dev_id, ip_address=ip, status='resolved',
                     )
-                logger.info(f"[Status Monitor] Device {ip} status changed to {new_status}")
+                logger.info(
+                    f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
+                )
         except Exception:
             new_status = 'offline'
             if device.get('status') != 'offline':
@@ -1386,7 +1412,7 @@ async def process_device(device, cycle_tick: int):
 
 
 async def process_device_fast(device):
-    # Ping ONLY (A-Loop)
+    # Fast reachability probe (ICMP with management-port fallback)
     device = _as_dict(device)
     ip = device['ip_address']
     dev_id = device['id']
@@ -1405,10 +1431,11 @@ async def process_device_fast(device):
 
     dev_label = device['hostname'] or ip
     try:
-        import asyncio
-        from ping3 import ping
-        delay = await asyncio.to_thread(ping, ip, timeout=2)
-        new_status = 'online' if delay is not None else 'offline'
+        reachable, probe_method = await _probe_device_reachability(
+            ip,
+            device.get('management_port') or 22,
+        )
+        new_status = 'online' if reachable else 'offline'
 
         if device['status'] != new_status:
             if new_status == 'offline':
@@ -1426,7 +1453,9 @@ async def process_device_fast(device):
                     f"{dev_label} ({ip}) 已恢复连接",
                     dev_id, ip_address=ip, status='resolved',
                 )
-            logger.info(f"[Status Monitor] Device {ip} status changed to {new_status}")
+            logger.info(
+                f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
+            )
     except Exception:
         new_status = 'offline'
         if device.get('status') != 'offline':
