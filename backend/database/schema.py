@@ -3893,6 +3893,9 @@ def _init_db_logic(conn):
     # Data migration: Phase 5 Route & Address Intelligence Migration
     # ──────────────────────────────────────────────────────────────────
     try:
+        # Get set of all valid device IDs to prevent ForeignKeyViolations
+        cursor.execute("SELECT id FROM devices")
+        valid_device_ids = {r['id'] if hasattr(r, '__getitem__') else r[0] for r in cursor.fetchall()}
         # 1. Migrate route_cache to route_table
         cursor.execute("SELECT COUNT(*) AS c FROM route_table")
         rt_cnt = cursor.fetchone()
@@ -3907,6 +3910,9 @@ def _init_db_logic(conn):
                     'metric': row[7], 'last_update': row[8]
                 }
                 r_id = rc.get('id') or str(uuid.uuid4())
+                dev_id = rc.get('device_id')
+                if dev_id not in valid_device_ids:
+                    continue
                 dest = rc.get('prefix') or ''
                 mask_val = rc.get('mask') or ''
                 if mask_val and '/' not in dest:
@@ -3937,14 +3943,14 @@ def _init_db_logic(conn):
                         '''INSERT INTO route_table (
                             id, device_id, destination, next_hop, outgoing_interface, protocol, metric, preference, last_updated, active
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1)''',
-                        (r_id, rc.get('device_id'), dest, rc.get('next_hop'), rc.get('interface'), rc.get('protocol'), rc.get('metric'), pref_val, rc.get('last_update'))
+                        (r_id, dev_id, dest, rc.get('next_hop'), rc.get('interface'), rc.get('protocol'), rc.get('metric'), pref_val, rc.get('last_update'))
                     )
                 else:
                     cursor.execute(
                         '''INSERT INTO route_table (
                             id, device_id, destination, next_hop, outgoing_interface, protocol, metric, preference, last_updated, active
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)''',
-                        (r_id, rc.get('device_id'), dest, rc.get('next_hop'), rc.get('interface'), rc.get('protocol'), rc.get('metric'), pref_val, rc.get('last_update'))
+                        (r_id, dev_id, dest, rc.get('next_hop'), rc.get('interface'), rc.get('protocol'), rc.get('metric'), pref_val, rc.get('last_update'))
                     )
             logger.info(f"[migration] Migrated {len(rc_rows)} routes from route_cache to route_table.")
 
@@ -3974,27 +3980,32 @@ def _init_db_logic(conn):
                         if d_row:
                             dev_id = d_row['id'] if hasattr(d_row, '__getitem__') else d_row[0]
                 
+                if dev_id and dev_id not in valid_device_ids:
+                    dev_id = None
+
                 if not dev_id:
                     cursor.execute("SELECT id FROM devices LIMIT 1")
                     d_row = cursor.fetchone()
                     if d_row:
                         dev_id = d_row['id'] if hasattr(d_row, '__getitem__') else d_row[0]
                 
-                if dev_id:
-                    if _USE_PG:
-                        cursor.execute(
-                            '''INSERT INTO arp_table (
-                                id, device_id, ip_address, mac_address, interface_name, last_updated
-                            ) VALUES (%s, %s, %s, %s, %s, %s)''',
-                            (str(uuid.uuid4()), dev_id, ac.get('target_ip'), ac.get('mac'), source.get('interface') or '', ac.get('cached_at'))
-                        )
-                    else:
-                        cursor.execute(
-                            '''INSERT INTO arp_table (
-                                id, device_id, ip_address, mac_address, interface_name, last_updated
-                            ) VALUES (?, ?, ?, ?, ?, ?)''',
-                            (str(uuid.uuid4()), dev_id, ac.get('target_ip'), ac.get('mac'), source.get('interface') or '', ac.get('cached_at'))
-                        )
+                if not dev_id or dev_id not in valid_device_ids:
+                    continue
+                
+                if _USE_PG:
+                    cursor.execute(
+                        '''INSERT INTO arp_table (
+                            id, device_id, ip_address, mac_address, interface_name, last_updated
+                        ) VALUES (%s, %s, %s, %s, %s, %s)''',
+                        (str(uuid.uuid4()), dev_id, ac.get('target_ip'), ac.get('mac'), source.get('interface') or '', ac.get('cached_at'))
+                    )
+                else:
+                    cursor.execute(
+                        '''INSERT INTO arp_table (
+                            id, device_id, ip_address, mac_address, interface_name, last_updated
+                        ) VALUES (?, ?, ?, ?, ?, ?)''',
+                        (str(uuid.uuid4()), dev_id, ac.get('target_ip'), ac.get('mac'), source.get('interface') or '', ac.get('cached_at'))
+                    )
             logger.info(f"[migration] Migrated {len(arp_rows)} ARP entries from arp_cache to arp_table.")
 
         # 3. Migrate topology_observations to neighbor_table
@@ -4046,6 +4057,9 @@ def _init_db_logic(conn):
     # Data migration: Phase 6 Supporting Engines Migration & Triggers
     # ──────────────────────────────────────────────────────────────────
     try:
+        # Get set of all valid device IDs to prevent ForeignKeyViolations
+        cursor.execute("SELECT id FROM devices")
+        valid_device_ids = {r['id'] if hasattr(r, '__getitem__') else r[0] for r in cursor.fetchall()}
         # 1. Migrate config_snapshots -> config_backups
         cursor.execute("SELECT COUNT(*) AS c FROM config_backups")
         cb_cnt = cursor.fetchone()
@@ -4058,17 +4072,20 @@ def _init_db_logic(conn):
                     'id': row[0], 'device_id': row[1], 'timestamp': row[4], 'file_path': row[8], 'tag': row[9]
                 }
                 c_id = snap.get('id') or str(uuid.uuid4())
+                dev_id = snap.get('device_id')
+                if dev_id not in valid_device_ids:
+                    continue
                 if _USE_PG:
                     cursor.execute(
                         '''INSERT INTO config_backups (id, device_id, config_type, backup_time, file_path, config_hash)
                            VALUES (%s, %s, 'running', %s, %s, %s)''',
-                        (c_id, snap.get('device_id'), snap.get('timestamp'), snap.get('file_path'), snap.get('tag'))
+                        (c_id, dev_id, snap.get('timestamp'), snap.get('file_path'), snap.get('tag'))
                     )
                 else:
                     cursor.execute(
                         '''INSERT INTO config_backups (id, device_id, config_type, backup_time, file_path, config_hash)
                            VALUES (?, ?, 'running', ?, ?, ?)''',
-                        (c_id, snap.get('device_id'), snap.get('timestamp'), snap.get('file_path'), snap.get('tag'))
+                        (c_id, dev_id, snap.get('timestamp'), snap.get('file_path'), snap.get('tag'))
                     )
             logger.info(f"[migration] Migrated {len(snap_rows)} backups from config_snapshots to config_backups.")
 
@@ -4085,17 +4102,20 @@ def _init_db_logic(conn):
                     'title': row[4], 'created_at': row[8], 'resolved_at': row[9], 'workflow_status': row[10]
                 }
                 a_id = al.get('id') or str(uuid.uuid4())
+                dev_id = al.get('device_id')
+                if dev_id not in valid_device_ids:
+                    continue
                 if _USE_PG:
                     cursor.execute(
                         '''INSERT INTO alarms (id, device_id, severity, source, alarm_type, alarm_time, clear_time, status)
                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''',
-                        (a_id, al.get('device_id'), al.get('severity'), al.get('source'), al.get('title'), al.get('created_at'), al.get('resolved_at'), al.get('workflow_status'))
+                        (a_id, dev_id, al.get('severity'), al.get('source'), al.get('title'), al.get('created_at'), al.get('resolved_at'), al.get('workflow_status'))
                     )
                 else:
                     cursor.execute(
                         '''INSERT INTO alarms (id, device_id, severity, source, alarm_type, alarm_time, clear_time, status)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                        (a_id, al.get('device_id'), al.get('severity'), al.get('source'), al.get('title'), al.get('created_at'), al.get('resolved_at'), al.get('workflow_status'))
+                        (a_id, dev_id, al.get('severity'), al.get('source'), al.get('title'), al.get('created_at'), al.get('resolved_at'), al.get('workflow_status'))
                     )
             logger.info(f"[migration] Migrated {len(alert_rows)} alarms from alert_events to alarms.")
 
