@@ -23,6 +23,7 @@ interface QuickQueryResultOverlayProps {
   quickQuerySearch: string;
   setQuickQuerySearch: (val: string) => void;
   filteredQuickQueryRecords: Array<Record<string, any>>;
+  onOpenDebugger?: (platform: string, command: string, output: string) => void;
 }
 
 export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = ({
@@ -44,6 +45,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
   quickQuerySearch,
   setQuickQuerySearch,
   filteredQuickQueryRecords,
+  onOpenDebugger,
 }) => {
   if (!quickQueryRunning && !quickQueryOutput) return null;
 
@@ -267,6 +269,33 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                   />
                 )}
               </div>
+              {quickQueryStructured?.categories?.[0]?.parse_status === 'unmatched' && (
+                <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-4 py-3 text-xs text-indigo-300">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">🧩</span>
+                    <span>
+                      {isZh
+                        ? '该命令当前无匹配的结构化解析模板，前端仅展示原始回显。'
+                        : 'No parsing template matched this command. Raw output is shown.'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (onOpenDebugger) {
+                        const dev = quickQueryStructured.device || {};
+                        onOpenDebugger(
+                          dev.platform || 'cisco_ios',
+                          quickQueryCommands.join('\n'),
+                          quickQueryOutput
+                        );
+                      }
+                    }}
+                    className="shrink-0 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 px-3 py-1.5 font-semibold text-white transition-all"
+                  >
+                    {isZh ? '在线调试与创建解析模板' : 'Debug & Create Template'}
+                  </button>
+                </div>
+              )}
               <pre className="text-[13px] font-mono text-[#e6edf3] leading-[1.75] whitespace-pre-wrap break-all select-text">{quickQueryOutput}</pre>
             </div>
           )}

@@ -11,6 +11,7 @@ import { ParameterConfigStep } from './components/ParameterConfigStep';
 import { ExecutionResultsStep } from './components/ExecutionResultsStep';
 import { QuickQueryOverlay } from './components/QuickQueryOverlay';
 import { QuickQueryResultOverlay } from './components/QuickQueryResultOverlay';
+import { TextFSMDebugger } from './components/TextFSMDebugger';
 import { getDeviceCategory, getVendor, classifyVarGroup, normalizeAutomationPlatform } from './helpers';
 import { VAR_GROUP_ORDER } from './constants';
 
@@ -104,6 +105,11 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   const [treeFilterRole, setTreeFilterRole] = useState<string | null>(null);
   const [showSelectedDrawer, setShowSelectedDrawer] = useState(false);
   const [quickQuerySearch, setQuickQuerySearch] = useState('');
+
+  const [debuggerOpen, setDebuggerOpen] = useState(false);
+  const [debuggerPlatform, setDebuggerPlatform] = useState('cisco_ios');
+  const [debuggerCommand, setDebuggerCommand] = useState('');
+  const [debuggerSampleOutput, setDebuggerSampleOutput] = useState('');
 
   const [ticketValidation, setTicketValidation] = useState<{
     loading: boolean;
@@ -831,6 +837,12 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
           quickQuerySearch={quickQuerySearch}
           setQuickQuerySearch={setQuickQuerySearch}
           filteredQuickQueryRecords={filteredQuickQueryRecords}
+          onOpenDebugger={(platform, command, output) => {
+            setDebuggerPlatform(platform);
+            setDebuggerCommand(command);
+            setDebuggerSampleOutput(output);
+            setDebuggerOpen(true);
+          }}
         />
 
         {/* Execution Confirmation Modal */}
@@ -955,6 +967,18 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
             </>
           )}
         </AnimatePresence>
+
+        <TextFSMDebugger
+          isOpen={debuggerOpen}
+          onClose={() => setDebuggerOpen(false)}
+          platform={debuggerPlatform}
+          command={debuggerCommand}
+          sampleOutput={debuggerSampleOutput}
+          onSaveSuccess={() => {
+            // Re-run the quick query with the same parameters
+            onRunQuickQuery(quickQueryLabel, quickQueryCommands.join('\n'));
+          }}
+        />
       </div>
     </div>
   );

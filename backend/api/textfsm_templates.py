@@ -212,3 +212,29 @@ def api_test_template(
             'data': None,
             'message': str(e),
         }
+
+
+@router.post('/textfsm/auto-generate')
+def api_auto_generate_template(
+    body: dict = Body(...),
+    _user=require_role('Operator'),
+):
+    """
+    输入样本输出文本，自动分析表头生成 TextFSM 模板框架。
+    """
+    sample = body.get('sample_output') or ''
+    if not sample:
+        raise HTTPException(status_code=400, detail='样本输出内容不能为空')
+    
+    from services.textfsm_builder_service import auto_generate_template
+    try:
+        content = auto_generate_template(sample)
+        return {
+            'success': True,
+            'data': {
+                'content': content
+            },
+            'message': '模板生成成功'
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
