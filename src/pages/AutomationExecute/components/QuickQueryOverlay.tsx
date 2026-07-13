@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Terminal, X, Zap } from 'lucide-react';
 import type { Device } from '../../../types';
@@ -22,6 +22,18 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
   onRunQuickQuery,
   hasTargets,
 }) => {
+  const [customCommand, setCustomCommand] = useState('');
+
+  const handleRunCustom = () => {
+    if (!customCommand.trim()) return;
+    onRunQuickQuery(
+      isZh ? '自定义命令查询' : 'Custom Command Query',
+      customCommand.trim(),
+      'custom_command',
+      'normal'
+    );
+  };
+
   return (
     <AnimatePresence>
       {hasTargets && (
@@ -73,6 +85,42 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
                     <span className="text-[10px] font-mono text-slate-400">{dev.ip_address}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Custom Command Input Section */}
+            <div className="flex-shrink-0 px-8 py-5 bg-slate-50 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="flex-1">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  {isZh ? '✏️ 自定义查看命令查询 (仅支持只读查看指令，如 show/display 等)' : '✏️ Custom Check Command (e.g. show/display)'}
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={customCommand}
+                    onChange={(e) => setCustomCommand(e.target.value)}
+                    placeholder={isZh ? '例如: display current-configuration 或 show version' : 'e.g. show version or display ospf peer'}
+                    className="w-full pl-4 pr-16 py-3 rounded-xl border border-slate-200 bg-white text-slate-800 text-sm font-semibold shadow-inner focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 transition-all font-mono"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleRunCustom();
+                      }
+                    }}
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 font-mono select-none">
+                    ↵
+                  </div>
+                </div>
+              </div>
+              <div className="flex-shrink-0 sm:self-end">
+                <button
+                  disabled={quickQueryRunning || !customCommand.trim()}
+                  onClick={handleRunCustom}
+                  className="w-full sm:w-auto px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-bold text-sm shadow-md shadow-cyan-500/10 hover:shadow-cyan-500/20 active:scale-[0.98] transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+                >
+                  <Zap size={15} />
+                  {isZh ? '执行查询' : 'Run Query'}
+                </button>
               </div>
             </div>
 

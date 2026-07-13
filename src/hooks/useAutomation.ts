@@ -1033,14 +1033,27 @@ export const useAutomation = ({
         const results = await Promise.all(
           targets.map(async (device) => {
             try {
-              const resp = await fetch(`/api/devices/${device.id}/operational-data`, {
+              const isCustom = operationalCategory === 'custom_command';
+              const url = isCustom 
+                ? `/api/devices/${device.id}/parsed-command`
+                : `/api/devices/${device.id}/operational-data`;
+              
+              const body = isCustom
+                ? {
+                    command: commands,
+                    name: label,
+                    auth_role: authRole,
+                  }
+                : {
+                    categories: [operationalCategory],
+                    name: label,
+                    auth_role: authRole,
+                  };
+
+              const resp = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
-                body: JSON.stringify({
-                  categories: [operationalCategory],
-                  name: label,
-                  auth_role: authRole,
-                }),
+                body: JSON.stringify(body),
               });
               if (!resp.ok) {
                 const errData = await resp.json().catch(() => ({}));
@@ -1057,6 +1070,7 @@ export const useAutomation = ({
         let combinedRecords: any[] = [];
         let combinedOutput = '';
         let backendCmds: string[] = [];
+        let backendParseStatus = 'unmatched';
 
         results.forEach((res) => {
           if (!res.ok) {
@@ -1065,6 +1079,9 @@ export const useAutomation = ({
           }
           const firstCat = Array.isArray(res.data?.categories) ? res.data.categories[0] : null;
           if (firstCat) {
+            if (firstCat.parse_status) {
+              backendParseStatus = firstCat.parse_status;
+            }
             if (Array.isArray(firstCat.commands) && firstCat.commands.length > 0) {
               backendCmds = [...backendCmds, ...firstCat.commands];
             }
@@ -1088,13 +1105,17 @@ export const useAutomation = ({
 
         const hasStructuredRecords = combinedRecords.length > 0;
         const mockStructured = {
-          device: { hostname: targets.length === 1 ? targets[0].hostname : (language === 'zh' ? '多选聚合' : 'Aggregate'), platform: 'mixed' },
+          device: { 
+            hostname: targets.length === 1 ? targets[0].hostname : (language === 'zh' ? '多选聚合' : 'Aggregate'), 
+            platform: targets.length === 1 ? targets[0].platform : 'mixed' 
+          },
           categories: [
             {
               name: operationalCategory,
               parser: 'ntc-templates',
               count: combinedRecords.length,
               records: combinedRecords,
+              parse_status: backendParseStatus,
             },
           ],
         };
