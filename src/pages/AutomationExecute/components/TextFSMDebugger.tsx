@@ -164,7 +164,7 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-sm transition-all duration-300">
+    <div className="fixed inset-0 z-[90] flex items-center justify-end bg-black/60 backdrop-blur-sm transition-all duration-300">
       <div className="flex h-full w-[1000px] flex-col border-l border-white/10 bg-[#071324] text-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
