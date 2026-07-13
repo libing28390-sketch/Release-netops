@@ -269,7 +269,8 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                   />
                 )}
               </div>
-              {quickQueryStructured?.categories?.[0]?.parse_status === 'unmatched' && (
+              {(quickQueryStructured?.categories?.[0]?.parse_status === 'unmatched' ||
+                quickQueryStructured?.categories?.[0]?.parse_status === 'failed') && (
                 <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-4 py-3 text-xs text-indigo-300">
                   <div className="flex items-center gap-2">
                     <span className="text-sm">🧩</span>
