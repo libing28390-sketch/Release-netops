@@ -787,7 +787,7 @@ def load_database_config_from_env():
         "host": "127.0.0.1",
         "port": "5432",
         "user": "postgres",
-        "password": "netops",
+        "password": "postgres",
         "db_name": "netops",
     }
     env_path = os.path.join(PROJECT_ROOT, ".env")
