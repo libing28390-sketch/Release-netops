@@ -59,7 +59,18 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
       const data = await res.json();
       if (data.success && data.data?.content) {
         setTemplateContent(data.data.content);
-        setStatusMsg({ type: 'success', text: '已根据样本自动分析生成 TextFSM 骨架！' });
+        const generatedRecords = data.data.records || [];
+        setRecords(generatedRecords);
+        const generatedFields = data.data.columns || [];
+        setFields(generatedFields);
+        setSelectedFields(generatedFields);
+
+        const matchRatePct = Math.round((data.data.match_rate || 0) * 100);
+        const warningSuffix = data.data.warnings?.length > 0 ? ` (警告: ${data.data.warnings[0]})` : '';
+        setStatusMsg({ 
+          type: 'success', 
+          text: `智能分析模板生成成功！匹配率: ${matchRatePct}% (成功匹配 ${data.data.matched_rows || 0}/${data.data.candidate_rows || 0} 行)${warningSuffix}` 
+        });
       } else {
         setStatusMsg({ type: 'error', text: data.detail || data.message || '自动分析失败' });
       }

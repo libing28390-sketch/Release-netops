@@ -228,11 +228,12 @@ def api_auto_generate_template(
     
     from services.textfsm_builder_service import auto_generate_template
     try:
-        content = auto_generate_template(sample)
+        res = auto_generate_template(sample)
         return {
             'success': True,
             'data': {
-                'content': content
+                'content': res['template'],
+                **res
             },
             'message': '模板生成成功'
         }
