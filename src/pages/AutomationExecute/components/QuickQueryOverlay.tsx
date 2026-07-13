@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Terminal, X, Zap } from 'lucide-react';
 import type { Device } from '../../../types';
@@ -23,6 +23,13 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
   hasTargets,
 }) => {
   const [customCommand, setCustomCommand] = useState('');
+
+  // Clear previous command when the overlay is triggered/re-opened
+  useEffect(() => {
+    if (hasTargets) {
+      setCustomCommand('');
+    }
+  }, [hasTargets]);
 
   const handleRunCustom = () => {
     if (!customCommand.trim()) return;
