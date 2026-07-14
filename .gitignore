@@ -42,15 +42,7 @@ backend/tests/_out/
 # Root license
 license.json
 
-backend/tests/test_automation_credentials_and_platforms.py
-backend/tests/test_connection_profile.py
-backend/tests/test_custom_textfsm_flow.py
-backend/tests/test_device_operational_ssh_errors.py
-backend/tests/test_enterprise_cmdb_ipam_phase0_phase6.py
-backend/tests/test_enterprise_cmdb_ipam_phase7_phase8.py
-backend/tests/test_phase1_phase2_cmdb_ipam.py
-backend/tests/test_playbook_platform_aliases.py
-backend/tests/test_rack_types.py
+backend/tests/*.py
 
 tools/license_issuer/issued/registry.json
 
