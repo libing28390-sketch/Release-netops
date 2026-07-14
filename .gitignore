@@ -41,10 +41,7 @@ backend/tests/_out/
 
 # Root license
 license.json
-backend/tests/test_*.py
-!backend/tests/test_ssh_compat_paging.py
-!backend/tests/test_database_reset.py
-!backend/tests/test_asset_production_takeover.py
+
 tools/license_issuer/issued/registry.json
 
 # Video Presentation & TTS Generation
