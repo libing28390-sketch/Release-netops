@@ -7,7 +7,11 @@ from datetime import datetime, timezone
 from database import get_db_connection
 from services.vault_service import resolve_device_credentials
 from .manager import ws_manager
-from .scenarios import _render_phase_commands
+from .scenarios import (
+    _render_phase_commands,
+    resolve_platform_phases,
+    resolve_platform_value,
+)
 from .builtin_scenarios import PLATFORM_SAVE_COMMANDS, PLATFORM_SHOW_RUNNING
 
 logger = logging.getLogger("api.playbooks.engine")
@@ -155,6 +159,31 @@ async def _run_playbook(
 
         device_result = {"status": "success", "phases": {}}
 
+        try:
+            # The request-level platform is only a UI/approval hint. The
+            # executable command source is the platform stored on this asset.
+            # This is what prevents a Huawei/H3C device from receiving the
+            # Cisco phase that happened to be selected in the browser.
+            device_phases, resolved_platform = resolve_platform_phases(
+                phases,
+                device.get('platform'),
+                device.get('vendor'),
+            )
+            device_result["platform"] = resolved_platform
+        except KeyError as exc:
+            overall_ok = False
+            device_result["status"] = "error"
+            device_result["error"] = str(exc)
+            await ws_manager.emit(execution_id, {
+                "type": "device_error",
+                "device_id": device_id,
+                "hostname": hostname,
+                "error": str(exc),
+            })
+            await _save_device_result_to_db(execution_id, device_id, device, device_result, started_at_iso)
+            results[device_id] = device_result
+            return
+
         async with semaphore:
             async with _get_device_lock(device_id):   # P2: 设备粒度互斥锁
                 await ws_manager.emit(execution_id, {
@@ -166,7 +195,7 @@ async def _run_playbook(
                 })
 
                 # ──── PHASE 1: Pre-Check ────
-                pre_cmds = _render_phase_commands(phases.get('pre_check', []), variables)
+                pre_cmds = _render_phase_commands(device_phases.get('pre_check', []), variables)
                 if pre_cmds:
                     await ws_manager.emit(execution_id, {
                         "type": "phase_start", "device_id": device_id,
@@ -183,7 +212,11 @@ async def _run_playbook(
 
                 # ──── P1: 变更前快照 ────
                 if not dry_run:
-                    snap_cmd = PLATFORM_SHOW_RUNNING.get(platform)
+                    snap_cmd = resolve_platform_value(
+                        PLATFORM_SHOW_RUNNING,
+                        device.get('platform'),
+                        device.get('vendor'),
+                    )
                     if snap_cmd:
                         snap_output = await _exec_commands(service, device, [snap_cmd], is_config=False)
                         if snap_output.get('success'):
@@ -196,7 +229,7 @@ async def _run_playbook(
                         })
 
                 # ──── PHASE 2: Execute ────
-                exec_cmds = _render_phase_commands(phases.get('execute', []), variables)
+                exec_cmds = _render_phase_commands(device_phases.get('execute', []), variables)
                 if exec_cmds:
                     if dry_run:
                         await ws_manager.emit(execution_id, {
@@ -242,14 +275,14 @@ async def _run_playbook(
                         if not exec_output.get("success", True):
                             overall_ok = False
                             device_result["status"] = "failed"
-                            await _do_rollback(execution_id, service, device, phases, variables)
+                            await _do_rollback(execution_id, service, device, device_phases, variables)
                             device_result["phases"]["rollback"] = {"triggered": True, "reason": "execute_failed"}
                             await _save_device_result_to_db(execution_id, device_id, device, device_result, started_at_iso)
                             results[device_id] = device_result
                             return
 
                 # ──── PHASE 3: Post-Check ────
-                post_cmds = _render_phase_commands(phases.get('post_check', []), variables)
+                post_cmds = _render_phase_commands(device_phases.get('post_check', []), variables)
                 if post_cmds and not dry_run:
                     await ws_manager.emit(execution_id, {
                         "type": "phase_start", "device_id": device_id,
@@ -271,7 +304,7 @@ async def _run_playbook(
                             "hostname": hostname,
                             "message": "Post-check failed, triggering automatic rollback",
                         })
-                        await _do_rollback(execution_id, service, device, phases, variables)
+                        await _do_rollback(execution_id, service, device, device_phases, variables)
                         device_result["phases"]["rollback"] = {"triggered": True, "reason": "post_check_failed"}
                         await _save_device_result_to_db(execution_id, device_id, device, device_result, started_at_iso)
                         results[device_id] = device_result
@@ -279,7 +312,11 @@ async def _run_playbook(
 
                 # ──── P0: Save Phase（写入持久化存储）────
                 if not dry_run and exec_cmds:
-                    save_cmd = PLATFORM_SAVE_COMMANDS.get(platform)
+                    save_cmd = resolve_platform_value(
+                        PLATFORM_SAVE_COMMANDS,
+                        device.get('platform'),
+                        device.get('vendor'),
+                    )
                     if save_cmd:
                         await ws_manager.emit(execution_id, {
                             "type": "phase_start", "device_id": device_id,
@@ -343,7 +380,14 @@ async def _run_playbook(
                 if dev:
                     svc_type = 'mock' if dev.get('ip_address') in ['127.0.0.1', '0.0.0.0', 'localhost'] else 'netmiko'
                     svc = AutomationService(driver_type=svc_type)
-                    await _do_rollback(execution_id, svc, dev, phases, variables)
+                    try:
+                        dev_phases, _ = resolve_platform_phases(
+                            phases, dev.get('platform'), dev.get('vendor')
+                        )
+                    except KeyError as exc:
+                        logger.warning("[Rollback] No platform phases for %s: %s", did, exc)
+                        continue
+                    await _do_rollback(execution_id, svc, dev, dev_phases, variables)
 
         task = asyncio.create_task(_auto_rollback())
         _pending_rollbacks[execution_id] = task

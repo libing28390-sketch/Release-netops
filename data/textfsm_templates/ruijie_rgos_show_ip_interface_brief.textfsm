@@ -1,0 +1,9 @@
+Value INTERFACE (\S+(?:\s+\d+)?)
+Value IP_ADDRESS_PRI (\S+)
+Value IP_ADDRESS_SEC ((?:no\s+address|\S+))
+Value STATUS (\S+)
+Value PROTOCOL (\S+)
+
+Start
+  ^Interface\s+IP-Address\(Pri\)\s+IP-Address\(Sec\)\s+Status\s+Protocol
+  ^${INTERFACE}\s+${IP_ADDRESS_PRI}\s+${IP_ADDRESS_SEC}\s+${STATUS}\s+${PROTOCOL}\s*$$ -> Record

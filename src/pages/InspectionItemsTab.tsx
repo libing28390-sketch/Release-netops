@@ -51,7 +51,7 @@ const VENDORS = [
   'Fortinet',
   'Checkpoint', 'checkpoint_gaia',
   'Hillstone', 'hillstone_stoneos',
-  'Ruijie', 'ruijie_os',
+  'Ruijie', 'ruijie_os', 'ruijie_rgos', 'ZTE', 'zte_zxros', 'Maipu', 'maipu',
   // ── 其他 ──
   'Linux', 'Windows', 'VMware', 'Dell', 'HP', 'F5',
 ];

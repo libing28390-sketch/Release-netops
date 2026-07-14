@@ -21,6 +21,23 @@ HEADER_KEYWORDS = {
     "uptime",
 }
 
+_STANDARD_FIELDS_MAPPING = {
+    'INTF': 'INTERFACE',
+    'PORT': 'INTERFACE',
+    'LOCAL_INTERFACE': 'INTERFACE',
+    'IFNAME': 'INTERFACE',
+    'IP': 'IP_ADDRESS',
+    'IPADDR': 'IP_ADDRESS',
+    'IP_ADDR': 'IP_ADDRESS',
+    'ADDRESS': 'IP_ADDRESS',
+    'MAC': 'MAC_ADDRESS',
+    'MACADDR': 'MAC_ADDRESS',
+    'HARDWARE_ADDRESS': 'MAC_ADDRESS',
+    'STATE': 'STATUS',
+    'LINK_STATUS': 'STATUS',
+    'OPER_STATUS': 'STATUS',
+}
+
 def normalize_column_name(name: str) -> str:
     """
     Convert a CLI column heading into a valid TextFSM variable name.
@@ -30,6 +47,9 @@ def normalize_column_name(name: str) -> str:
     name = re.sub(r"[^A-Za-z0-9_]", "", name)
     name = re.sub(r"_+", "_", name)
     name = name.strip("_").upper()
+
+    if name in _STANDARD_FIELDS_MAPPING:
+        name = _STANDARD_FIELDS_MAPPING[name]
 
     if not name:
         return "DATA"
@@ -218,6 +238,150 @@ def auto_generate_template(sample_output: str) -> Dict[str, Any]:
 
     header_index = find_header_index(lines)
 
+    # 尝试进行 Key-Value 格式检测
+    kv_pairs = None
+    if header_index is None:
+        kv_pairs = []
+        # 捕获组 (?P<sep>...) 用来精确还原分隔符
+        kv_pattern = re.compile(
+            r'^\s*(?P<key>[A-Za-z0-9_\-\.\s]+?)\s*(?P<sep>:|Is:|Is\s*:|=)\s*(?P<value>.+?)\s*$'
+        )
+        for line in lines:
+            line_str = line.strip()
+            if line_str.startswith('#') or line_str.startswith('---'):
+                continue
+            if re.match(r'^[\s\-=_+|]{5,}$', line_str):
+                continue
+            # 优先提取并标准化时间戳为 RECORD_TIME 列
+            time_pat = re.compile(r'(\d{4}[-/]\d{2}[-/]\d{2}(?:\s+\d{2}:\d{2}:\d{2})?(?:\s*[+-]\d{2}:?\d{2})?)')
+            time_match = time_pat.search(line_str)
+            if time_match:
+                extracted_time = time_match.group(1)
+                idx = line_str.find(extracted_time)
+                key = line_str[:idx].strip().strip(':').strip('=').strip()
+                if not key:
+                    key = "RECORD_TIME"
+                else:
+                    if any(keyword in key.lower() for keyword in ('time', 'statistics at', 'date', 'at')):
+                        key = "RECORD_TIME"
+                
+                if not any(item[0] == key for item in kv_pairs):
+                    kv_pairs.append((key, "", extracted_time, line_str))
+                continue
+            m = kv_pattern.match(line_str)
+            if m:
+                key = m.group('key').strip()
+                sep = m.group('sep').strip()
+                val = m.group('value').strip()
+                # 键名必须包含字母，且词数合理（排除日志或长文本句）
+                if re.search(r'[A-Za-z]', key) and len(key.split()) <= 6:
+                    kv_pairs.append((key, sep, val, line_str))
+                    
+        if len(kv_pairs) < 2:
+            kv_pairs = None
+
+    def escape_textfsm_regex(text: str) -> str:
+        escaped = re.sub(r'([.\^$*+?{}|()\[\]\\])', r'\\\1', text)
+        escaped = re.sub(r'\s+', r'\\s+', escaped)
+        return escaped
+
+    if kv_pairs:
+        # Key-Value 模板构建逻辑
+        columns = []
+        column_map = {}
+        for key, sep, val, original_line in kv_pairs:
+            col_name = normalize_column_name(key)
+            for suffix in ('_IS', '_ARE', '_WAS', '_VALUE', '_RATE', '_PERCENT'):
+                if col_name.endswith(suffix):
+                    col_name = col_name[:-len(suffix)]
+            if not col_name:
+                col_name = "DATA"
+                
+            base_col = col_name
+            idx = 1
+            while col_name in column_map:
+                idx += 1
+                col_name = f"{base_col}_{idx}"
+                
+            if col_name == "RECORD_TIME":
+                val_regex = r"(\d{4}[-/]\d{2}[-/]\d{2}(?:\s+\d{2}:\d{2}:\d{2})?(?:\s*[+-]\d{2}:?\d{2})?)"
+                left_part = original_line.split(val)[0]
+                val_match_str = escape_textfsm_regex(left_part) + val_regex
+            else:
+                val_clean = val.strip()
+                num_match = re.search(r'(\d+(?:\.\d+)?)', val_clean)
+                if num_match:
+                    extracted_num = num_match.group(1)
+                    left_part, right_part = val_clean.split(extracted_num, 1)
+                    val_regex = r"(\d+(?:\.\d+)?)"
+                    val_match_str = escape_textfsm_regex(left_part) + val_regex + escape_textfsm_regex(right_part)
+                else:
+                    val_regex = r"(.+?)"
+                    val_match_str = val_regex
+                
+            columns.append(col_name)
+            column_map[col_name] = {
+                'key': key,
+                'sep': sep,
+                'val': val,
+                'val_regex': val_regex,
+                'val_match_str': val_match_str,
+                'original_line': original_line
+            }
+
+        template_lines = [
+            "# Auto-generated TextFSM template skeleton (Key-Value Format)",
+            "# Review the generated regexes before production use.",
+        ]
+        for col in columns:
+            template_lines.append(f"Value {col} {column_map[col]['val_regex']}")
+            
+        template_lines.extend(["", "Start"])
+        
+        for idx, col in enumerate(columns):
+            info = column_map[col]
+            if col == "RECORD_TIME":
+                val_pattern = info['val_match_str'].replace(info['val_regex'], f"${{{col}}}")
+                rule_line = f"  ^\\s*{val_pattern}\\s*$$"
+            else:
+                escaped_key = escape_textfsm_regex(info['key'])
+                escaped_sep = escape_textfsm_regex(info['sep'])
+                val_pattern = info['val_match_str'].replace(info['val_regex'], f"${{{col}}}")
+                rule_line = f"  ^\\s*{escaped_key}\\s*{escaped_sep}\\s*{val_pattern}\\s*$$"
+            
+            if idx == len(columns) - 1:
+                rule_line += " -> Record"
+            template_lines.append(rule_line)
+            
+        template_lines.append("")
+        template = "\n".join(template_lines)
+        
+        records = []
+        matched_rows = 0
+        match_rate = 0.0
+        try:
+            import textfsm
+            import io
+            fsm = textfsm.TextFSM(io.StringIO(template))
+            records = fsm.ParseTextToDicts(sample_output)
+            matched_rows = len(records)
+            match_rate = 1.0 if matched_rows > 0 else 0.0
+        except Exception as e:
+            warnings.append(f"Self-validation failed: {e}")
+            
+        return {
+            "template": template,
+            "header_line": None,
+            "header_index": None,
+            "columns": columns,
+            "warnings": warnings,
+            "records": records,
+            "candidate_rows": 1,
+            "matched_rows": matched_rows,
+            "match_rate": match_rate
+        }
+
+    # 兜底表格形式生成
     if header_index is None:
         warnings.append(
             "No reliable table header was detected. "

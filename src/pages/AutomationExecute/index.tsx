@@ -12,7 +12,7 @@ import { ExecutionResultsStep } from './components/ExecutionResultsStep';
 import { QuickQueryOverlay } from './components/QuickQueryOverlay';
 import { QuickQueryResultOverlay } from './components/QuickQueryResultOverlay';
 import { TextFSMDebugger } from './components/TextFSMDebugger';
-import { getDeviceCategory, getVendor, classifyVarGroup, normalizeAutomationPlatform } from './helpers';
+import { getDeviceCategory, getVendor, classifyVarGroup, isAutomationPlatformSupported, normalizeAutomationPlatform } from './helpers';
 import { VAR_GROUP_ORDER } from './constants';
 
 export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
@@ -281,7 +281,9 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
 
       if (selectedDevices.length > 0) {
         if (s.supported_platforms && s.supported_platforms.length > 0) {
-          const hasMatch = s.supported_platforms.some((sp) => selectedPlatforms.has(sp));
+          const hasMatch = Array.from(selectedPlatforms).some((selectedPlatform) =>
+            isAutomationPlatformSupported(selectedPlatform, s.supported_platforms)
+          );
           if (!hasMatch) return false;
         }
 
@@ -341,14 +343,14 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   const targetDevices = batchMode ? devices.filter((d) => batchDeviceIds.includes(d.id)) : selectedDevice ? [selectedDevice] : [];
   const singleDevice = targetDevices[0] || null;
   const hasTargets = targetDevices.length > 0;
-  const platform = (singleDevice?.platform || '').toLowerCase();
-  const isCisco = platform.includes('cisco_ios') || platform === 'cisco';
-  const isNxos = platform.includes('nxos');
-  const isHuawei = platform.includes('huawei_vrp') || platform.includes('huawei') || platform.includes('ce_');
-  const isH3c = platform.includes('h3c_comware') || platform.includes('h3c');
-  const isJuniper = platform.includes('juniper') || platform.includes('junos');
-  const isArista = platform.includes('arista') || platform.includes('eos');
-  const isRuijie = platform.includes('ruijie') || platform.includes('rgos');
+  const platform = normalizeAutomationPlatform(singleDevice?.platform);
+  const isCisco = platform === 'cisco_ios' || platform === 'cisco_xe' || platform === 'cisco';
+  const isNxos = platform === 'cisco_nxos';
+  const isHuawei = platform === 'huawei_vrp' || platform === 'huawei_vrpv8';
+  const isH3c = platform === 'h3c_comware' || platform === 'hp_comware' || platform === 'h3c_comware9';
+  const isJuniper = platform === 'juniper_junos';
+  const isArista = platform === 'arista_eos';
+  const isRuijie = platform === 'ruijie_rgos';
   const deviceRole = (singleDevice?.role || '').toLowerCase();
 
   const filteredQuickQueryRecords = useMemo(() => {
@@ -452,9 +454,8 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'Transceiver',
         group: 'net',
         scope: 'network',
-        cmds: isHuawei
-          ? 'display transceiver verbose'
-          : isH3c
+        operationalCategory: isHuawei || isH3c ? 'transceiver' : undefined,
+        cmds: isHuawei || isH3c
           ? 'display transceiver interface'
           : isJuniper
           ? 'show interfaces diagnostics transceiver'
@@ -510,9 +511,21 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'NTP Status',
         group: 'route',
         scope: 'network',
+        operationalCategory: isHuawei || isH3c ? 'ntp' : undefined,
         cmds: isHuawei || isH3c
           ? 'display ntp-service status'
           : 'show ntp status',
+      },
+
+      {
+        icon: '🔄',
+        label: 'BFD会话',
+        labelEn: 'BFD Sessions',
+        group: 'route',
+        scope: 'network',
+        operationalCategory: isHuawei || isH3c ? 'bfd' : undefined,
+        excludeRoles: ['access'],
+        cmds: isHuawei || isH3c ? 'display bfd session all' : 'show bfd neighbors',
       },
 
       { icon: '📈', label: '负载统计', labelEn: 'Load Avg', group: 'sys', scope: 'server', cmds: 'uptime && top -bn1 | head -n 5' },
@@ -551,7 +564,10 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'Environment',
         group: 'sys',
         scope: 'all',
-        cmds: isHuawei || isH3c
+        operationalCategory: isHuawei || isH3c ? 'environment' : undefined,
+        cmds: isHuawei
+          ? 'display temperature all'
+          : isH3c
           ? 'display environment'
           : isJuniper
           ? 'show chassis environment'
@@ -599,6 +615,47 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
       },
     ];
 
+    if (isHuawei || isH3c) {
+      all.push(
+        {
+          icon: '🌀',
+          label: '风扇状态',
+          labelEn: 'Fan Status',
+          group: 'sys',
+          scope: 'all',
+          operationalCategory: 'fan',
+          cmds: 'display fan',
+        },
+        {
+          icon: '🔋',
+          label: '电源状态',
+          labelEn: 'Power Status',
+          group: 'sys',
+          scope: 'all',
+          operationalCategory: 'power',
+          cmds: 'display power',
+        },
+        {
+          icon: '🧱',
+          label: isHuawei ? 'Stack状态' : 'IRF状态',
+          labelEn: isHuawei ? 'Stack Status' : 'IRF Status',
+          group: 'sys',
+          scope: 'all',
+          operationalCategory: 'stack',
+          cmds: isHuawei ? 'display stack' : 'display irf',
+        },
+        {
+          icon: '🔗',
+          label: 'Eth-Trunk/链路聚合',
+          labelEn: 'Link Aggregation',
+          group: 'net',
+          scope: 'network',
+          operationalCategory: 'eth_trunk',
+          cmds: isHuawei ? 'display eth-trunk' : 'display link-aggregation verbose',
+        },
+      );
+    }
+
     if (Array.isArray(savedQueries)) {
       savedQueries.forEach((s) => {
         all.push({
@@ -617,7 +674,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
       if (deviceCategory !== 'all' && p.scope !== 'all' && p.scope !== deviceCategory) return false;
       return true;
     });
-  }, [isCisco, isHuawei, isJuniper, deviceRole, savedQueries, batchMode, batchDeviceIds, devices, selectedDevice]);
+  }, [isCisco, isHuawei, isH3c, isNxos, isJuniper, isRuijie, deviceRole, savedQueries, batchMode, batchDeviceIds, devices, selectedDevice]);
 
   const handleNewTask = () => {
     onResetExecutionState();
@@ -837,6 +894,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
           quickQuerySearch={quickQuerySearch}
           setQuickQuerySearch={setQuickQuerySearch}
           filteredQuickQueryRecords={filteredQuickQueryRecords}
+          onQuickQueryViewChange={onQuickQueryViewChange}
           onOpenDebugger={(platform, command, output) => {
             setDebuggerPlatform(platform);
             setDebuggerCommand(command);

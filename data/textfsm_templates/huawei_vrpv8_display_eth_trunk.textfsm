@@ -1,0 +1,29 @@
+Value Filldown ETH_TRUNK (\S+)
+Value Filldown OPERATE_STATUS (\S+)
+Value Filldown NUMBER_OF_UP_PORT_IN_TRUNK (\d+)
+Value Required INTERFACE (\S+\s+\S+)
+Value Required STATUS (\S+)
+Value PORT_TYPE (\S+)
+Value PORT_PRIORITY (\d+)
+Value PORT_NUMBER (\d+)
+Value PORT_KEY (\d+)
+Value PORT_STATE (\d+)
+Value WEIGHT (\d+)
+
+Start
+  ^${ETH_TRUNK}'s\s+state\s+information\s+is:
+  ^\(h\):\s+high\s+priority
+  ^\(r\):\s+reference\s+port
+  ^Local:
+  ^LAG\s+ID:\s+\d+\s+WorkingMode:\s+\S+
+  ^Preempt\s+Delay\s+Time:\s+\d+\s+Hash\s+arithmetic:
+  ^System\s+Priority:\s+\d+\s+System\s+ID:
+  ^Least\s+Active-linknumber:
+  ^Operate\s+status:\s+${OPERATE_STATUS}\s+Number\s+Of\s+Up\s+Ports\s+In\s+Trunk:\s+${NUMBER_OF_UP_PORT_IN_TRUNK}
+  ^Timeout\s+Period:
+  ^PortKeyMode:
+  ^-+
+  ^ActorPortName\s+Status\s+PortType\s+PortPri\s+PortNo\s+PortKey\s+PortState\s+Weight
+  ^${INTERFACE}\s+${STATUS}\s+${PORT_TYPE}\s+${PORT_PRIORITY}\s+${PORT_NUMBER}\s+${PORT_KEY}\s+${PORT_STATE}\s+${WEIGHT}\s* -> Record
+  ^\s*$$
+  ^. -> Error

@@ -1,0 +1,25 @@
+Value CHASSIS (\d+)
+Value FAN_TRAY (\d+)
+Value SOFTWARE_VERSION (\S+)
+Value HARDWARE_VERSION (\S+)
+Value CPLD_VERSION (\S+)
+Value FAN_NUMBER (\d+)
+Value TEMPERATURE (\d+)
+Value HIGH_TEMPERATURE_ALARM_THRESHOLD (\d+)
+Value LOW_SPEED_ALARM_THRESHOLD (\d+)
+
+Start
+  ^Fan-tray verbose state on chassis ${CHASSIS}: -> Chassis
+
+Chassis
+  ^Fan-tray ${FAN_TRAY}: -> Tray
+
+Tray
+  ^Software version:\s+${SOFTWARE_VERSION}
+  ^Hardware version:\s+${HARDWARE_VERSION}
+  ^CPLD version:\s+${CPLD_VERSION}
+  ^Fan number:\s+${FAN_NUMBER}
+  ^Temperature:\s+${TEMPERATURE}\s+°C
+  ^High temperature alarm threshold:\s+${HIGH_TEMPERATURE_ALARM_THRESHOLD}\s+°C
+  ^Low speed alarm threshold:\s+${LOW_SPEED_ALARM_THRESHOLD}\s+rpm -> Record Start
+  ^-+

@@ -1,0 +1,8 @@
+Value SLOT (\d+)
+Value BOARD_TYPE (\S+)
+Value STATUS (\S+)
+Value MAX_PORTS (\d+)
+
+Start
+  ^\s*${SLOT}\s+${BOARD_TYPE}\s+${STATUS}\s+${MAX_PORTS} -> Record
+  ^\s*${SLOT}\s+\d+\s+${BOARD_TYPE}\s+${STATUS} -> Record

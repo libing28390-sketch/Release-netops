@@ -1,0 +1,6 @@
+<HUAWEI> display temperature all
+-------------------------------------------------------------------------------
+ Slot  Card  Sensor Status    Current(C) Lower(C) Lower     Upper(C) Upper
+                                      Resume(C)          Resume(C)
+-------------------------------------------------------------------------------
+ 0     NA    NA    Normal     55        0        4         65       61

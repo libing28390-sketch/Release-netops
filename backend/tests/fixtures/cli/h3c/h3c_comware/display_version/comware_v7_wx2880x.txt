@@ -1,0 +1,11 @@
+<H3C> display version
+H3C Comware Software, Version 7.1.064, ESS 5610
+Copyright (c) 2004-2022 New H3C Technologies Co., Ltd. All rights reserved.
+H3C WX2880X uptime is 4 weeks, 0 days, 0 hours, 0 minutes, 46 seconds
+Last reboot reason : User soft reboot
+Boot image: flash:/boot.bin
+Boot image version: 7.1.064, ESS 5610
+System image: flash:/system.bin
+System image version: 7.1.064, ESS 5610
+Hardware Version is Ver.A
+

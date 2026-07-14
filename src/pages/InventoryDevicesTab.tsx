@@ -267,13 +267,19 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               outline-none text-black/55 dark:text-white/55 focus:border-[#00bceb]/40">
             <option value="all">{t('allPlatforms')}</option>
             <option value="cisco_ios">Cisco IOS</option>
+            <option value="cisco_xe">Cisco IOS-XE</option>
             <option value="cisco_nxos">Cisco NX-OS</option>
             <option value="juniper_junos">Juniper Junos</option>
             <option value="arista_eos">Arista EOS</option>
             <option value="fortinet_fortios">Fortinet FortiOS</option>
             <option value="huawei_vrp">Huawei VRP</option>
-            <option value="h3c_comware">H3C Comware</option>
+            <option value="huawei_vrpv8">Huawei VRPv8</option>
+            <option value="hp_comware">H3C Comware V5</option>
+            <option value="h3c_comware">H3C Comware V7</option>
+            <option value="h3c_comware9">H3C Comware V9</option>
             <option value="ruijie_rgos">Ruijie RGOS</option>
+            <option value="zte_zxros">ZTE ZXROS</option>
+            <option value="maipu">Maipu Network OS</option>
           </select>
           <select value={inventoryRoleFilter} onChange={e => setInventoryRoleFilter(e.target.value)}
             title={language === 'zh' ? '按角色筛选' : 'Filter by role'}

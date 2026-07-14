@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import type { Job, ScheduledTask, Script, ConfigTemplate, SessionUser, Device } from '../types';
-import { normalizeAutomationPlatform } from '../pages/AutomationExecute/helpers';
+import { isAutomationPlatformSupported, normalizeAutomationPlatform } from '../pages/AutomationExecute/helpers';
 
 interface UseAutomationProps {
   currentUser: SessionUser;
@@ -318,7 +318,10 @@ export const useAutomation = ({
     return !!(
       quickPlaybookScenario &&
       quickDetectedPlatform &&
-      (quickPlaybookScenario.supported_platforms || []).includes(quickDetectedPlatform)
+      isAutomationPlatformSupported(
+        quickDetectedPlatform,
+        quickPlaybookScenario.supported_platforms || [],
+      )
     );
   }, [quickPlaybookScenario, quickDetectedPlatform]);
 

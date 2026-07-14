@@ -12,14 +12,15 @@ export const normalizeAutomationPlatform = (platform?: string | null): string =>
     nxos: 'cisco_nxos',
     nexus: 'cisco_nxos',
     huawei: 'huawei_vrp',
-    huawei_vrpv8: 'huawei_vrp',
+    huawei_vrpv8: 'huawei_vrpv8',
     vrp: 'huawei_vrp',
     ce: 'huawei_vrp',
     ce_vrp: 'huawei_vrp',
     ne: 'huawei_vrp',
     h3c: 'h3c_comware',
     comware: 'h3c_comware',
-    hp_comware: 'h3c_comware',
+    hp_comware: 'hp_comware',
+    h3c_comware9: 'h3c_comware9',
     juniper: 'juniper_junos',
     junos: 'juniper_junos',
     arista: 'arista_eos',
@@ -28,6 +29,24 @@ export const normalizeAutomationPlatform = (platform?: string | null): string =>
     rgos: 'ruijie_rgos',
   };
   return aliases[p] || p;
+};
+
+const platformFallbacks: Record<string, string[]> = {
+  cisco_xe: ['cisco_ios'],
+  huawei_vrpv8: ['huawei_vrp'],
+  hp_comware: ['h3c_comware'],
+  h3c_comware9: ['h3c_comware'],
+};
+
+/** A scenario may define a family phase while assets keep a precise parser key. */
+export const isAutomationPlatformSupported = (
+  platform: string | null | undefined,
+  supportedPlatforms: string[] | null | undefined,
+): boolean => {
+  if (!supportedPlatforms || supportedPlatforms.length === 0) return true;
+  const normalized = normalizeAutomationPlatform(platform);
+  const candidates = [normalized, ...(platformFallbacks[normalized] || [])];
+  return supportedPlatforms.some((item) => candidates.includes(normalizeAutomationPlatform(item)));
 };
 
 export const getVendor = (d: Device | string) => {

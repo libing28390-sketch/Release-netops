@@ -6,8 +6,15 @@ Value SHARED_KB (\d+)
 Value BUFFERS_KB (\d+)
 Value CACHED_KB (\d+)
 Value USER_FREE_KB (\d+)
+Value TOTAL_BYTES (\d+)
+Value USED_BYTES (\d+)
+Value USED_RATE (\d+)
 
 Start
+  # System Total Memory(bytes): 431869088
+  ^System\s+Total\s+Memory\(bytes\):\s+${TOTAL_BYTES}
+  ^Total\s+Used\s+Memory\(bytes\):\s+${USED_BYTES}
+  ^Used\s+Rate:\s+${USED_RATE}% -> Record
   # Slot 0:
   ^Slot\s+${SLOT}:
   # Total(kB): 1048576

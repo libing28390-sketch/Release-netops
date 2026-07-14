@@ -79,6 +79,14 @@ const operationalCategoryLabelMap: Record<string, { zh: string; en: string }> = 
   routing_table: { zh: '路由表', en: 'Routing Table' },
   bgp: { zh: 'BGP', en: 'BGP' },
   ospf: { zh: 'OSPF', en: 'OSPF' },
+  bfd: { zh: 'BFD', en: 'BFD' },
+  ntp: { zh: 'NTP', en: 'NTP' },
+  environment: { zh: '温度环境', en: 'Environment' },
+  fan: { zh: '风扇', en: 'Fans' },
+  power: { zh: '电源', en: 'Power' },
+  stack: { zh: '堆叠/IRF', en: 'Stack/IRF' },
+  transceiver: { zh: '光模块', en: 'Transceiver' },
+  eth_trunk: { zh: '链路聚合', en: 'Link Aggregation' },
 };
 
 const getHealthToneClass = (status?: string) => {

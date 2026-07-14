@@ -1,0 +1,14 @@
+Value SLOT (\d+)
+Value SENSOR (\S+)
+Value SENSOR_ID (\d+)
+Value TEMPERATURE (\S+)
+Value LOWER (\S+)
+Value WARNING (\S+)
+Value ALARM (\S+)
+Value SHUTDOWN (\S+)
+
+Start
+  ^\s*${SLOT}\s+${SENSOR}\s+${SENSOR_ID}\s+${TEMPERATURE}\s+${LOWER}\s+${WARNING}\s+${ALARM}\s+${SHUTDOWN}\s*$$ -> Record
+  ^\s*Slot\s+Sensor\s+Temperature
+  ^\s*System\s+temperature\s+information
+  ^\s*-+

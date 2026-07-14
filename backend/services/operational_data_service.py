@@ -20,6 +20,13 @@ SUPPORTED_CATEGORIES = (
     'ospf',
     'bfd',
     'bgp_routes',
+    'ntp',
+    'environment',
+    'fan',
+    'power',
+    'stack',
+    'transceiver',
+    'eth_trunk',
 )
 
 
@@ -29,6 +36,7 @@ PLATFORM_DEVICE_TYPE_MAP = {
     'ios': 'cisco_ios',
     'iosxe': 'cisco_ios',
     'cisco_iosxe': 'cisco_ios',
+    'cisco_xe': 'cisco_ios',
     'cisco_nxos': 'cisco_nxos',
     'nxos': 'cisco_nxos',
     'nexus': 'cisco_nxos',
@@ -40,6 +48,7 @@ PLATFORM_DEVICE_TYPE_MAP = {
     'eos': 'arista_eos',
     'huawei_vrp': 'huawei',
     'huawei_vrpv8': 'huawei',
+    'h3c_comware9': 'hp_comware',
     'huawei': 'huawei',
     'vrp': 'huawei',
     'ce': 'huawei',
@@ -51,8 +60,14 @@ PLATFORM_DEVICE_TYPE_MAP = {
     'comware': 'hp_comware',
     'hp_comware': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
+    'ruijie_os': 'ruijie_os',
     'ruijie': 'ruijie_os',
     'rgos': 'ruijie_os',
+    'zte_zxros': 'zte_zxros',
+    'zte': 'zte_zxros',
+    'zxros': 'zte_zxros',
+    'maipu': 'maipu',
+    'maipu_network': 'maipu',
     'linux': 'linux',
     'ubuntu': 'linux',
     'centos': 'linux',
@@ -65,6 +80,7 @@ NTC_PLATFORM_MAP = {
     'ios': 'cisco_ios',
     'iosxe': 'cisco_ios',
     'cisco_iosxe': 'cisco_ios',
+    'cisco_xe': 'cisco_ios',
     'cisco_nxos': 'cisco_nxos',
     'nxos': 'cisco_nxos',
     'nexus': 'cisco_nxos',
@@ -76,6 +92,7 @@ NTC_PLATFORM_MAP = {
     'eos': 'arista_eos',
     'huawei_vrp': 'huawei_vrp',
     'huawei_vrpv8': 'huawei_vrp',
+    'h3c_comware9': 'h3c_comware9',
     'huawei': 'huawei_vrp',
     'vrp': 'huawei_vrp',
     'ce': 'huawei_vrp',
@@ -87,9 +104,15 @@ NTC_PLATFORM_MAP = {
     'comware': 'hp_comware',
     'hp_comware': 'hp_comware',
     # ntc-templates 当前没有 ruijie_os 平台索引，临时回退 to Cisco 语法族做有限复用。
-    'ruijie_rgos': 'cisco_ios',
-    'ruijie': 'cisco_ios',
-    'rgos': 'cisco_ios',
+    'ruijie_rgos': 'ruijie_rgos',
+    'ruijie_os': 'ruijie_rgos',
+    'ruijie': 'ruijie_rgos',
+    'rgos': 'ruijie_rgos',
+    'zte_zxros': 'zte_zxros',
+    'zte': 'zte_zxros',
+    'zxros': 'zte_zxros',
+    'maipu': 'maipu',
+    'maipu_network': 'maipu',
 }
 
 # Alias map: maps non-standard platform values stored in DB to canonical keys
@@ -98,6 +121,7 @@ _PLATFORM_ALIAS: dict[str, str] = {
     'ios': 'cisco_ios',
     'iosxe': 'cisco_ios',
     'cisco_iosxe': 'cisco_ios',
+    'cisco_xe': 'cisco_ios',
     'nxos': 'cisco_nxos',
     'nexus': 'cisco_nxos',
     'juniper': 'juniper_junos',
@@ -106,9 +130,7 @@ _PLATFORM_ALIAS: dict[str, str] = {
     'eos': 'arista_eos',
     'h3c': 'h3c_comware',
     'comware': 'h3c_comware',
-    'hp_comware': 'h3c_comware',
     'huawei': 'huawei_vrp',
-    'huawei_vrpv8': 'huawei_vrp',
     'vrp': 'huawei_vrp',
     'ce': 'huawei_vrp',
     'ce_vrp': 'huawei_vrp',
@@ -116,6 +138,10 @@ _PLATFORM_ALIAS: dict[str, str] = {
     '\u534e\u4e3avrp': 'huawei_vrp',
     'ruijie': 'ruijie_rgos',
     'rgos': 'ruijie_rgos',
+    'ruijie_os': 'ruijie_rgos',
+    'zte': 'zte_zxros',
+    'zxros': 'zte_zxros',
+    'maipu_network': 'maipu',
 }
 
 
@@ -187,6 +213,31 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'ospf': ['display ospf peer'],
         'bfd': ['display bfd session all'],
         'bgp_routes': ['display bgp routing-table'],
+        'ntp': ['display ntp-service status'],
+        'environment': ['display temperature all'],
+        'fan': ['display fan'],
+        'power': ['display power'],
+        'stack': ['display stack'],
+        'transceiver': ['display transceiver interface'],
+        'eth_trunk': ['display eth-trunk'],
+    },
+    'huawei_vrpv8': {
+        'interfaces': ['display interface brief'],
+        'neighbors': ['display lldp neighbor verbose'],
+        'arp': ['display arp all'],
+        'mac_table': ['display mac-address'],
+        'routing_table': ['display ip routing-table'],
+        'bgp': ['display bgp peer'],
+        'ospf': ['display ospf peer brief'],
+        'bfd': ['display bfd session all'],
+        'bgp_routes': ['display bgp routing-table'],
+        'ntp': ['display ntp status'],
+        'environment': ['display temperature all'],
+        'fan': ['display fan'],
+        'power': ['display power'],
+        'stack': ['display stack'],
+        'transceiver': ['display transceiver interface'],
+        'eth_trunk': ['display eth-trunk'],
     },
     'h3c_comware': {
         'interfaces': ['display interface brief'],
@@ -198,6 +249,45 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'ospf': ['display ospf peer'],
         'bfd': ['display bfd session all'],
         'bgp_routes': ['display bgp routing-table'],
+        'ntp': ['display ntp-service status'],
+        'environment': ['display environment'],
+        'fan': ['display fan'],
+        'power': ['display power'],
+        'stack': ['display irf'],
+        'transceiver': ['display transceiver interface'],
+        'eth_trunk': ['display link-aggregation verbose'],
+    },
+    # Comware5 remains a separate catalog because its output grammar and
+    # template family differ from Comware7/9.
+    'hp_comware': {
+        'interfaces': ['display interface brief'],
+        'neighbors': ['display lldp neighbor-information list'],
+        'arp': ['display arp'],
+        'mac_table': ['display mac-address'],
+        'routing_table': ['display ip routing-table'],
+        'bgp': ['display bgp peer'],
+        'ospf': ['display ospf peer'],
+        'ntp': ['display ntp-service status'],
+        'fan': ['display fan'],
+        'eth_trunk': ['display link-aggregation verbose'],
+    },
+    'h3c_comware9': {
+        'interfaces': ['display interface brief'],
+        'neighbors': ['display lldp neighbor-information list'],
+        'arp': ['display arp'],
+        'mac_table': ['display mac-address'],
+        'routing_table': ['display ip routing-table'],
+        'bgp': ['display bgp peer'],
+        'ospf': ['display ospf peer'],
+        'bfd': ['display bfd session all'],
+        'bgp_routes': ['display bgp routing-table'],
+        'ntp': ['display ntp-service status'],
+        'environment': ['display environment'],
+        'fan': ['display fan'],
+        'power': ['display power'],
+        'stack': ['display irf'],
+        'transceiver': ['display transceiver interface'],
+        'eth_trunk': ['display link-aggregation verbose'],
     },
     'ruijie_rgos': {
         'interfaces': ['show ip interface brief'],
@@ -210,6 +300,10 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bfd': ['show bfd neighbors', 'show bfd neighbors details'],
         'bgp_routes': ['show ip bgp'],
     },
+    # Keep registered domestic platforms isolated until an official output
+    # fixture proves the command grammar for the exact platform family.
+    'zte_zxros': {},
+    'maipu': {},
 }
 
 
@@ -233,7 +327,9 @@ def _resolve_categories(categories: list[str] | None, role: str = '') -> list[st
 
 
 def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[str]]:
-    catalog = COMMAND_CATALOG.get(platform) or COMMAND_CATALOG['cisco_ios']
+    # Never send Cisco commands to a recognized non-Cisco platform when a
+    # catalog entry is missing; surface an empty category instead.
+    catalog = COMMAND_CATALOG.get(_normalize_platform(platform), {})
     return {category: catalog.get(category, []) for category in categories}
 
 
@@ -286,8 +382,8 @@ def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'auto
         'port': int(device_info.get('port') or device_info.get('management_port') or 22),
         'timeout': 20,
         'session_timeout': 60,
-        'fast_cli': device_type not in {'huawei', 'hp_comware', 'huawei_vrp'},
-        'global_delay_factor': 1.5 if device_type in {'huawei', 'hp_comware', 'huawei_vrp'} else 0.5,
+        'fast_cli': device_type not in {'huawei', 'hp_comware', 'huawei_vrp', 'ruijie_os', 'zte_zxros', 'maipu'},
+        'global_delay_factor': 1.5 if device_type in {'huawei', 'hp_comware', 'huawei_vrp', 'ruijie_os', 'zte_zxros', 'maipu'} else 0.5,
         'blocking_timeout': 30,
     }
     params.update(build_netmiko_compatibility_kwargs())
@@ -321,12 +417,18 @@ def _normalize_command_for_template_match(command: str) -> str:
 
 
 def _parse_with_ntc(platform: str, command: str, output: str) -> list[dict[str, Any]]:
-    parsed = parse_output(
-        platform=_resolve_ntc_platform(platform),
-        command=_normalize_command_for_template_match(command),
-        data=output,
-    )
-    return _normalize_records(parsed)
+    from core.textfsm import smart_parse_cli
+    res = smart_parse_cli(output=output, command=command, platform=platform)
+    if res.get('success') and res.get('data'):
+        return res['data']
+    # IOS-XE keeps its asset/platform identity, while TextFSM uses the
+    # Cisco IOS grammar family unless a dedicated IOS-XE template exists.
+    ntc_platform = _resolve_ntc_platform(platform)
+    if ntc_platform != platform:
+        res = smart_parse_cli(output=output, command=command, platform=ntc_platform)
+        if res.get('success') and res.get('data'):
+            return res['data']
+    return []
 
 
 def _parse_bfd_raw(output: str) -> list[dict[str, Any]]:

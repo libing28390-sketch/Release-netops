@@ -13,6 +13,14 @@ interface QuickQueryOverlayProps {
   hasTargets: boolean;
 }
 
+interface CommandSuggestion {
+  platform: string;
+  command: string;
+  filename: string;
+  source: 'builtin' | 'custom' | string;
+  score: number;
+}
+
 export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
   isZh,
   targetDevices,
@@ -23,6 +31,8 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
   hasTargets,
 }) => {
   const [customCommand, setCustomCommand] = useState('');
+  const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
   // Clear previous command when the overlay is triggered/re-opened
   useEffect(() => {
@@ -30,6 +40,48 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
       setCustomCommand('');
     }
   }, [hasTargets]);
+
+  useEffect(() => {
+    const query = customCommand.trim();
+    if (!hasTargets || query.length < 2) {
+      setSuggestions([]);
+      setSuggestionsLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      const platforms = Array.from(new Set(targetDevices.map((device) => device.platform).filter(Boolean)));
+      if (platforms.length === 0) return;
+      setSuggestionsLoading(true);
+      try {
+        const token = localStorage.getItem('netops_token');
+        const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+        const responses = await Promise.all(platforms.map((platform) =>
+          fetch(`/api/textfsm/command-suggestions?platform=${encodeURIComponent(platform)}&query=${encodeURIComponent(query)}&limit=8`, {
+            headers,
+            signal: controller.signal,
+          }).then((response) => response.ok ? response.json() : null)
+        ));
+        const unique = new Map<string, CommandSuggestion>();
+        responses.flatMap((response) => Array.isArray(response?.data) ? response.data : [])
+          .forEach((item: CommandSuggestion) => {
+            const key = `${item.platform}:${item.command}`;
+            if (!unique.has(key)) unique.set(key, item);
+          });
+        setSuggestions(Array.from(unique.values()).slice(0, 12));
+      } catch (error: any) {
+        if (error?.name !== 'AbortError') setSuggestions([]);
+      } finally {
+        if (!controller.signal.aborted) setSuggestionsLoading(false);
+      }
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [customCommand, hasTargets, targetDevices]);
 
   const handleRunCustom = () => {
     if (!customCommand.trim()) return;
@@ -117,6 +169,42 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
                   <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 font-mono select-none">
                     ↵
                   </div>
+                  {(suggestionsLoading || suggestions.length > 0) && (
+                    <div className="absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-xl border border-cyan-100 bg-white shadow-xl shadow-slate-900/10">
+                      {suggestionsLoading && suggestions.length === 0 ? (
+                        <div className="px-4 py-3 text-xs font-medium text-slate-400">
+                          {isZh ? '正在匹配已有 TextFSM 模板…' : 'Searching existing TextFSM templates…'}
+                        </div>
+                      ) : suggestions.length > 0 ? (
+                        <div className="max-h-64 overflow-auto py-1">
+                          {suggestions.map((suggestion) => (
+                            <button
+                              key={`${suggestion.platform}:${suggestion.filename}`}
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => {
+                                setCustomCommand(suggestion.command);
+                                setSuggestions([]);
+                              }}
+                              className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-cyan-50"
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate font-mono text-xs font-bold text-slate-700">{suggestion.command}</span>
+                                <span className="mt-0.5 block truncate text-[10px] text-slate-400">{suggestion.filename}</span>
+                              </span>
+                              <span className={`flex-shrink-0 rounded-md px-1.5 py-1 text-[9px] font-bold uppercase ${suggestion.source === 'custom' ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
+                                {suggestion.source === 'custom' ? (isZh ? '自定义' : 'Custom') : (isZh ? '内置' : 'Built-in')}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="px-4 py-3 text-xs font-medium text-slate-400">
+                          {isZh ? '当前设备平台未找到匹配模板' : 'No matching template for the target platform'}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex-shrink-0 sm:self-end">

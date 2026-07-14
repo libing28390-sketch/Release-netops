@@ -15,11 +15,13 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from core.rbac import require_role
 from core.textfsm import (
     list_templates,
+    list_template_suggestions,
     get_template_content,
     save_custom_template,
     delete_custom_template,
     get_supported_platforms,
     parse_with_template_content,
+    smart_parse_cli,
 )
 
 router = APIRouter()
@@ -67,11 +69,28 @@ def api_list_platforms(_user=require_role('Viewer')):
     }
 
 
+@router.get('/textfsm/command-suggestions')
+def api_command_suggestions(
+    platform: str = Query('', description='资产平台'),
+    query: str = Query('', min_length=0, description='命令模糊查询'),
+    limit: int = Query(8, ge=1, le=20),
+    _user=require_role('Viewer'),
+):
+    """Return real template commands matching an abbreviated CLI query."""
+    return {
+        'success': True,
+        'data': list_template_suggestions(platform, query, limit),
+        'message': '',
+    }
+
+
 @router.get('/textfsm/templates/{filename}')
 def api_get_template(filename: str, _user=require_role('Viewer')):
     """获取单个模板的内容。"""
     try:
         content, source = get_template_content(filename)
+        from core.textfsm import TEMPLATE_DEFAULT_SAMPLES
+        default_sample = TEMPLATE_DEFAULT_SAMPLES.get(filename, '')
         return {
             'success': True,
             'data': {
@@ -79,6 +98,7 @@ def api_get_template(filename: str, _user=require_role('Viewer')):
                 'content': content,
                 'source': source,
                 'editable': source == 'custom',
+                'default_sample': default_sample,
             },
             'message': '',
         }
@@ -239,3 +259,37 @@ def api_auto_generate_template(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/textfsm/smart-parse')
+def api_smart_parse_cli(
+    body: dict = Body(...),
+    _user=require_role('Operator'),
+):
+    """
+    智能结构化 CLI 解析接口，支持输入回显样本、命令、平台以及设备软硬件版本信息进行多层解析。
+    """
+    output = body.get('output') or ''
+    command = body.get('command') or ''
+    platform = body.get('platform') or None
+    version = body.get('version') or None
+    model = body.get('model') or None
+    
+    if not output:
+        raise HTTPException(status_code=400, detail='设备输出内容不能为空')
+    if not command:
+        raise HTTPException(status_code=400, detail='查询命令不能为空')
+        
+    try:
+        res = smart_parse_cli(
+            output=output,
+            command=command,
+            platform=platform,
+            version=version,
+            model=model
+        )
+        return res
+    except Exception as e:
+        logger.error("Failed to run smart_parse_cli via API: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+

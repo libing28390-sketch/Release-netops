@@ -1,0 +1,3 @@
+<HUAWEI> display lldp neighbor brief
+Local Intf   Neighbor Dev             Neighbor Intf             Exptime(s)
+GE 1/0/1      Huawei                   GE 1/0/1                   103

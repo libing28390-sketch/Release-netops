@@ -1,0 +1,7 @@
+<Sysname> display bgp peer ipv4
+BGP local router ID: 192.168.100.1
+ Local AS number: 100
+ Total number of peers: 1                 Peers in established state: 1
+  * - Dynamically created peer
+  Peer                    AS  MsgRcvd  MsgSent OutQ PrefRcv Up/Down  State
+  10.2.1.2                200 13       16      0    0       00:10:34 Established

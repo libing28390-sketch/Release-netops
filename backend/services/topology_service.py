@@ -23,6 +23,7 @@ configure_ntc_templates()
 
 PLATFORM_MAP = {
     'cisco_ios': 'cisco_ios',
+    'cisco_xe': 'cisco_ios',
     'cisco_nxos': 'cisco_nxos',
     'juniper_junos': 'juniper_junos',
     'arista_eos': 'arista_eos',
@@ -32,6 +33,7 @@ PLATFORM_MAP = {
     'huawei': 'huawei_vrp',
     '\u534e\u4e3avrp': 'huawei_vrp',
     'h3c_comware': 'hp_comware',
+    'h3c_comware9': 'hp_comware',
     'comware': 'hp_comware',
     'hp_comware': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
@@ -45,6 +47,7 @@ SCRAPLI_DRIVERS = {
     'huawei_vrp': AsyncHuaweiVRPDriver,
     'huawei_vrpv8': AsyncHuaweiVRPDriver,
     'h3c_comware': AsyncHPComwareDriver,
+    'h3c_comware9': AsyncHPComwareDriver,
 }
 
 SCRAPLI_LEGACY_SSH_SKIP_PLATFORMS = frozenset({
@@ -64,6 +67,7 @@ DISCOVERY_COMMANDS = {
     'arista_eos': [('lldp', 'show lldp neighbors detail')],
     'huawei_vrp': [('lldp', 'display lldp neighbor verbose')],
     'h3c_comware': [('lldp', 'display lldp neighbor-information verbose')],
+    'h3c_comware9': [('lldp', 'display lldp neighbor-information verbose')],
     'ruijie_rgos': [('lldp', 'show lldp neighbors detail')],
 }
 

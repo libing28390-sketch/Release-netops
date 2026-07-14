@@ -48,13 +48,13 @@ _CORR_RULES_TTL = 60.0        # 缓存有效期（秒）
 
 # 识别为"网络设备"的 platform（走 NetmikoDriver CLI 采集）
 _NETWORK_PLATFORMS = {
-    'cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd',
+    'cisco_ios', 'cisco_xe', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd',
     'huawei_vrp', 'huawei_vrpv8', 'huawei',
-    'h3c_comware', 'hp_comware',
+    'h3c_comware', 'h3c_comware9', 'hp_comware',
     'juniper_junos', 'juniper',
     'arista_eos',
     'paloalto_panos', 'fortinet', 'checkpoint_gaia',
-    'hillstone_stoneos', 'ruijie_os', 'zte_zxros',
+    'hillstone_stoneos', 'ruijie_os', 'ruijie_rgos', 'zte_zxros', 'maipu',
 }
 
 # 识别为"服务器/Linux 主机"的 platform（走 Shell 脚本采集）
@@ -170,6 +170,7 @@ def _netmiko_platform_type(platform: str) -> str:
     """将平台名映射到 Netmiko device_type。"""
     mapping = {
         'cisco_ios': 'cisco_ios',
+        'cisco_xe': 'cisco_ios',
         'cisco_nxos': 'cisco_nxos',
         'cisco_xr': 'cisco_xr',
         'cisco_asa': 'cisco_asa',
@@ -178,6 +179,7 @@ def _netmiko_platform_type(platform: str) -> str:
         'huawei_vrpv8': 'huawei_vrpv8',
         'huawei': 'huawei',
         'h3c_comware': 'hp_comware',
+        'h3c_comware9': 'hp_comware',
         'hp_comware': 'hp_comware',
         'juniper_junos': 'juniper_junos',
         'juniper': 'juniper_junos',
@@ -187,7 +189,9 @@ def _netmiko_platform_type(platform: str) -> str:
         'checkpoint_gaia': 'checkpoint_gaia',
         'hillstone_stoneos': 'hillstone_stoneos',
         'ruijie_os': 'ruijie_os',
+        'ruijie_rgos': 'ruijie_os',
         'zte_zxros': 'zte_zxros',
+        'maipu': 'maipu',
     }
     return mapping.get(platform, 'cisco_ios')
 
@@ -204,7 +208,7 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str], use_admin_cred
     from services.vault_service import resolve_device_credentials
 
     platform = (device.get('platform') or 'cisco_ios').lower()
-    is_slow = platform in {'huawei_vrp', 'huawei_vrpv8', 'h3c_comware', 'hp_comware'}
+    is_slow = platform in {'huawei_vrp', 'huawei_vrpv8', 'h3c_comware', 'h3c_comware9', 'hp_comware'}
 
     # 统一使用 Vault 凭据解析服务
     creds = resolve_device_credentials(device)

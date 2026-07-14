@@ -30,7 +30,7 @@ _CLI_ERROR_PATTERNS = re.compile(
 )
 
 # 慢速平台（Huawei/H3C）不适合 fast_cli，需要保守的时序参数
-_SLOW_PLATFORMS = {'huawei_vrp', 'h3c_comware'}
+_SLOW_PLATFORMS = {'huawei_vrp', 'h3c_comware', 'h3c_comware9', 'hp_comware', 'ruijie_rgos', 'zte_zxros', 'maipu'}
 
 # ── IP 地址前缀长度 → 点分十进制子网掩码 自动归一化 ─────────────────────────
 # 华为 VRP / H3C Comware 支持 `ip address X.X.X.X 24` 写法；
@@ -162,11 +162,13 @@ class NetmikoDriver(BaseDriver):
             'ios': 'cisco_ios',
             'iosxe': 'cisco_ios',
             'cisco_iosxe': 'cisco_ios',
+            'cisco_xe': 'cisco_ios',
             'nxos': 'cisco_nxos',
             'nexus': 'cisco_nxos',
             'h3c': 'h3c_comware',
             'comware': 'h3c_comware',
             'hp_comware': 'h3c_comware',
+            'h3c_comware9': 'h3c_comware',
             'huawei': 'huawei_vrp',
             'huawei_vrpv8': 'huawei_vrp',
             'vrp': 'huawei_vrp',
@@ -178,7 +180,11 @@ class NetmikoDriver(BaseDriver):
             'arista': 'arista_eos',
             'eos': 'arista_eos',
             'ruijie': 'ruijie_rgos',
+            'ruijie_os': 'ruijie_rgos',
             'rgos': 'ruijie_rgos',
+            'zte': 'zte_zxros',
+            'zxros': 'zte_zxros',
+            'maipu_network': 'maipu',
             '\u534e\u4e3avrp': 'huawei_vrp',
         }
         p = aliases.get(p, p)
@@ -190,6 +196,8 @@ class NetmikoDriver(BaseDriver):
             'juniper_junos':'juniper_junos',
             'arista_eos':   'arista_eos',
             'ruijie_rgos':  'ruijie_os',
+            'zte_zxros': 'zte_zxros',
+            'maipu': 'maipu',
             'linux':        'linux',
             'ubuntu':       'linux',
             'centos':       'linux',
@@ -206,6 +214,8 @@ class NetmikoDriver(BaseDriver):
         if self.device_info.get('asset_type') == 'server' and p in ('', 'cisco_ios', 'unknown', None):
             return 'linux'
             
+        # A recognized domestic platform may not have a Netmiko handler yet,
+        # but it must remain visible as itself instead of becoming Cisco.
         return mapping.get(p, 'cisco_ios')
 
     def connect(self):

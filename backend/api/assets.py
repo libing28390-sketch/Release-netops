@@ -46,6 +46,12 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
         return 'arista_eos'
     if 'juniper' in v:
         return 'juniper_junos'
+    if 'ruijie' in v or 'rgos' in v:
+        return 'ruijie_rgos'
+    if 'zte' in v or 'zhongxing' in v:
+        return 'zte_zxros'
+    if 'maipu' in v:
+        return 'maipu'
     if any(x in v for x in ['ubuntu', 'debian', 'centos', 'redhat', 'linux']):
         return 'linux'
     
@@ -57,11 +63,19 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
 _VENDOR_PLATFORM_RULES: tuple[tuple[str, set[str], str], ...] = (
     ('cisco', {'cisco', 'ios', 'iosxe', 'cisco_ios', 'cisco_iosxe', 'cisco_xe', 'cisco_nxos', 'nxos', 'nexus'}, 'cisco_ios'),
     ('huawei', {'huawei', 'huawei_vrp', 'huawei_vrpv8', 'vrp', 'ce', 'ce_vrp', 'ne'}, 'huawei_vrp'),
-    ('h3c', {'h3c', 'h3c_comware', 'hp_comware', 'comware'}, 'hp_comware'),
-    ('comware', {'h3c', 'h3c_comware', 'hp_comware', 'comware'}, 'hp_comware'),
+    ('h3c', {
+        'h3c', 'h3c_comware', 'h3c_comware9', 'hp_comware',
+        'comware', 'comware5', 'comware7', 'comware9',
+    }, 'hp_comware'),
+    ('comware', {
+        'h3c', 'h3c_comware', 'h3c_comware9', 'hp_comware',
+        'comware', 'comware5', 'comware7', 'comware9',
+    }, 'hp_comware'),
     ('arista', {'arista', 'arista_eos', 'eos'}, 'arista_eos'),
     ('juniper', {'juniper', 'juniper_junos', 'junos'}, 'juniper_junos'),
-    ('ruijie', {'ruijie', 'ruijie_os', 'ruijie_rgos', 'rgos'}, 'ruijie_os'),
+    ('ruijie', {'ruijie', 'ruijie_os', 'ruijie_rgos', 'rgos'}, 'ruijie_rgos'),
+    ('zte', {'zte', 'zte_zxros', 'zxros'}, 'zte_zxros'),
+    ('maipu', {'maipu', 'maipu_network'}, 'maipu'),
 )
 
 _SERVER_PLATFORMS = {

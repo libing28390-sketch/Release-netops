@@ -24,6 +24,7 @@ interface QuickQueryResultOverlayProps {
   setQuickQuerySearch: (val: string) => void;
   filteredQuickQueryRecords: Array<Record<string, any>>;
   onOpenDebugger?: (platform: string, command: string, output: string) => void;
+  onQuickQueryViewChange?: (view: 'terminal' | 'table') => void;
 }
 
 export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = ({
@@ -46,6 +47,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
   setQuickQuerySearch,
   filteredQuickQueryRecords,
   onOpenDebugger,
+  onQuickQueryViewChange,
 }) => {
   if (!quickQueryRunning && !quickQueryOutput) return null;
 
@@ -91,6 +93,31 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {/* View Toggle */}
+            {!quickQueryRunning && quickQueryTable.records.length > 0 && (
+              <div className="flex items-center rounded-lg bg-black/45 p-0.5 border border-white/5 mr-1">
+                <button
+                  onClick={() => onQuickQueryViewChange?.('table')}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition-all ${
+                    quickQueryView === 'table'
+                      ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/10'
+                      : 'text-white/40 hover:text-white/70'
+                  }`}
+                >
+                  {isZh ? '表格' : 'Table'}
+                </button>
+                <button
+                  onClick={() => onQuickQueryViewChange?.('terminal')}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition-all ${
+                    quickQueryView === 'terminal'
+                      ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/10'
+                      : 'text-white/40 hover:text-white/70'
+                  }`}
+                >
+                  {isZh ? '终端' : 'Terminal'}
+                </button>
+              </div>
+            )}
             <button onClick={() => onQuickQueryMaximizedChange(!quickQueryMaximized)} className="text-white/30 hover:text-white transition-colors">
               {quickQueryMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
@@ -193,7 +220,11 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                     </span>
                   )}
                   <OutputActions
-                    text={quickQueryOutput}
+                    text={
+                      quickQueryView === 'table'
+                        ? JSON.stringify(filteredQuickQueryRecords, null, 2)
+                        : quickQueryOutput
+                    }
                     csvRows={filteredQuickQueryRecords as Array<Record<string, unknown>>}
                     filename={`${(quickQueryLabel || 'query').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40) || 'query'}`}
                     theme="dark"

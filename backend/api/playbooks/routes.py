@@ -14,7 +14,12 @@ from services.audit_service import log_audit_event
 from core.crypto import decrypt_credential
 
 from .builtin_scenarios import PLATFORMS
-from .scenarios import _all_scenarios, _render_phase_commands
+from .scenarios import (
+    _all_scenarios,
+    _normalize_playbook_platform,
+    _render_phase_commands,
+    resolve_platform_phases,
+)
 from .manager import ws_manager
 from .engine import (
     _device_locks,
@@ -25,34 +30,6 @@ from .engine import (
 
 router = APIRouter()
 logger = logging.getLogger("api.playbooks.routes")
-
-
-def _normalize_playbook_platform(platform: str | None) -> str:
-    p = str(platform or '').lower().strip()
-    aliases = {
-        'cisco': 'cisco_ios',
-        'ios': 'cisco_ios',
-        'iosxe': 'cisco_ios',
-        'cisco_iosxe': 'cisco_ios',
-        'nxos': 'cisco_nxos',
-        'nexus': 'cisco_nxos',
-        'huawei': 'huawei_vrp',
-        'huawei_vrpv8': 'huawei_vrp',
-        'vrp': 'huawei_vrp',
-        'ce': 'huawei_vrp',
-        'ce_vrp': 'huawei_vrp',
-        'ne': 'huawei_vrp',
-        'h3c': 'h3c_comware',
-        'comware': 'h3c_comware',
-        'hp_comware': 'h3c_comware',
-        'juniper': 'juniper_junos',
-        'junos': 'juniper_junos',
-        'arista': 'arista_eos',
-        'eos': 'arista_eos',
-        'ruijie': 'ruijie_rgos',
-        'rgos': 'ruijie_rgos',
-    }
-    return aliases.get(p, p or 'cisco_ios')
 
 
 @router.get("/playbooks/platforms")
@@ -519,12 +496,15 @@ async def preview_playbook(payload: dict = Body(...)):
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
 
-    phases = scenario.get('platform_phases', {}).get(platform)
-    if not phases:
+    try:
+        phases, resolved_platform = resolve_platform_phases(
+            scenario.get('platform_phases', {}), platform
+        )
+    except KeyError:
         raise HTTPException(status_code=400, detail=f"Platform '{platform}' not supported for this scenario")
 
     return {
-        "platform": platform,
+        "platform": resolved_platform,
         "requested_platform": requested_platform,
         "pre_check": _render_phase_commands(phases.get('pre_check', []), variables),
         "execute": _render_phase_commands(phases.get('execute', []), variables),
@@ -671,11 +651,18 @@ async def execute_playbook(request: Request, payload: dict = Body(...)):
 
     execution_id = str(uuid.uuid4())
     if scenario:
-        phases_def = scenario.get('platform_phases', {}).get(platform)
-        if not phases_def:
+        phases_catalog = scenario.get('platform_phases', {})
+        try:
+            # Validate the requested platform for the preview/change-ticket
+            # contract. Actual execution resolves this catalog again per
+            # device, using the platform stored in the asset row.
+            phases_def, _ = resolve_platform_phases(phases_catalog, platform)
+        except KeyError:
             raise HTTPException(status_code=400, detail=f"Platform '{platform}' not supported for this scenario")
+        phases_for_execution = phases_catalog
     else:
         phases_def = custom_phases
+        phases_for_execution = custom_phases
     scenario_name = scenario['name'] if scenario else payload.get('name', 'Custom Playbook')
     scenario_risk = str((scenario or {}).get('risk') or 'low').lower()
     now_utc = datetime.now(timezone.utc)
@@ -700,7 +687,7 @@ async def execute_playbook(request: Request, payload: dict = Body(...)):
             (execution_id, scenario_id or 'custom', scenario_name, platform,
              json.dumps(device_ids), json.dumps(variables),
              'pending', int(dry_run), author, concurrency,
-             json.dumps(phases_def),
+             json.dumps(phases_for_execution),
              datetime.now().isoformat(), datetime.now().isoformat())
         )
         conn.commit()
@@ -708,7 +695,7 @@ async def execute_playbook(request: Request, payload: dict = Body(...)):
         conn.close()
 
     # Fire-and-forget the execution coroutine
-    asyncio.create_task(_run_playbook(execution_id, device_ids, phases_def, variables, dry_run, concurrency, platform, commit_confirmed_ttl))
+    asyncio.create_task(_run_playbook(execution_id, device_ids, phases_for_execution, variables, dry_run, concurrency, platform, commit_confirmed_ttl))
 
     log_audit_event(
         event_type='PLAYBOOK_EXECUTION',

@@ -1,0 +1,10 @@
+Value Required LOCAL_INTERFACE ((?:GE|XGE|Eth-Trunk)\s+\S+)
+Value Required NEIGHBOR_NAME (\S+)
+Value Required NEIGHBOR_INTERFACE ((?:GE|XGE|Eth-Trunk)\s+\S+)
+Value EXPIRED_TIME (\d+)
+
+Start
+  ^Local\s+Intf\s+Neighbor\s+Dev\s+Neighbor\s+Intf\s+Exptime\(s\)\s*$$
+  ^${LOCAL_INTERFACE}\s+${NEIGHBOR_NAME}\s+${NEIGHBOR_INTERFACE}\s+${EXPIRED_TIME}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Error

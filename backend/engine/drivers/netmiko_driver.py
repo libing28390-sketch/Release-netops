@@ -27,11 +27,13 @@ class NetmikoDriver(BaseDriver):
             'ios': 'cisco_ios',
             'iosxe': 'cisco_ios',
             'cisco_iosxe': 'cisco_ios',
+            'cisco_xe': 'cisco_ios',
             'nxos': 'cisco_nxos',
             'nexus': 'cisco_nxos',
             'h3c': 'h3c_comware',
             'comware': 'h3c_comware',
             'hp_comware': 'h3c_comware',
+            'h3c_comware9': 'h3c_comware',
             'huawei': 'huawei_vrp',
             'huawei_vrpv8': 'huawei_vrp',
             'vrp': 'huawei_vrp',
@@ -44,7 +46,11 @@ class NetmikoDriver(BaseDriver):
             'arista': 'arista_eos',
             'eos': 'arista_eos',
             'ruijie': 'ruijie_rgos',
+            'ruijie_os': 'ruijie_rgos',
             'rgos': 'ruijie_rgos',
+            'zte': 'zte_zxros',
+            'zxros': 'zte_zxros',
+            'maipu_network': 'maipu',
         }
         p = aliases.get(p, p)
         mapping = {
@@ -54,6 +60,8 @@ class NetmikoDriver(BaseDriver):
             'juniper_junos': 'juniper_junos',
             'arista_eos': 'arista_eos',
             'ruijie_rgos': 'ruijie_os',
+            'zte_zxros': 'zte_zxros',
+            'maipu': 'maipu',
         }
         return mapping.get(p) or p or 'cisco_ios'
 

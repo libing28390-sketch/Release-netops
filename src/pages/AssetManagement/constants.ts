@@ -40,13 +40,18 @@ export const EMPTY_FORM = {
 export const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
   Cisco:      [{ value: 'cisco_ios', label: 'Cisco IOS' }, { value: 'cisco_nxos', label: 'Cisco NX-OS' }, { value: 'cisco_xe', label: 'Cisco IOS-XE' }],
   Huawei:     [{ value: 'huawei_vrp', label: 'Huawei VRPv5' }, { value: 'huawei_vrpv8', label: 'Huawei VRPv8' }],
-  H3C:        [{ value: 'hp_comware', label: 'H3C Comware' }],
+  H3C:        [
+    { value: 'hp_comware', label: 'H3C Comware V5' },
+    { value: 'h3c_comware', label: 'H3C Comware V7' },
+    { value: 'h3c_comware9', label: 'H3C Comware V9' },
+  ],
   Arista:     [{ value: 'arista_eos', label: 'Arista EOS' }],
   Juniper:    [{ value: 'juniper_junos', label: 'Juniper JunOS' }],
-  Ruijie:     [{ value: 'ruijie_os', label: 'Ruijie RGOS' }],
+  Ruijie:     [{ value: 'ruijie_rgos', label: 'Ruijie RGOS' }],
   Fortinet:   [{ value: 'fortinet', label: 'FortiOS' }],
   'Palo Alto':[{ value: 'paloalto_panos', label: 'PAN-OS' }],
   ZTE:        [{ value: 'zte_zxros', label: 'ZTE ZXROS' }],
+  Maipu:      [{ value: 'maipu', label: 'Maipu Network OS' }],
 };
 
 export const SERVER_PLATFORMS = [
@@ -131,8 +136,11 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
     SSH: 'ssh', ssh: 'ssh', NETCONF: 'netconf', netconf: 'netconf',
   },
   platform: {
+    'Ruijie RGOS': 'ruijie_rgos', 'ZTE ZXROS': 'zte_zxros', 'Maipu Network OS': 'maipu',
     'Cisco IOS': 'cisco_ios', 'Cisco NX-OS': 'cisco_nxos', 'Cisco IOS-XE': 'cisco_xe',
-    '华为 VRPv5': 'huawei_vrp', '华为 VRPv8': 'huawei_vrpv8', 'H3C Comware': 'hp_comware',
+    '华为 VRPv5': 'huawei_vrp', '华为 VRPv8': 'huawei_vrpv8',
+    'H3C Comware': 'hp_comware', 'H3C Comware V5': 'hp_comware',
+    'H3C Comware V7': 'h3c_comware', 'H3C Comware V9': 'h3c_comware9',
     'Juniper JunOS': 'juniper_junos', 'Arista EOS': 'arista_eos', '锐捷 RGOS': 'ruijie_os',
     FortiOS: 'fortinet', 'Linux（通用）': 'linux', Ubuntu: 'ubuntu', CentOS: 'centos',
     Debian: 'debian', '红帽 RHEL': 'redhat', 'Windows Server': 'windows', 'VMware ESXi': 'esxi',

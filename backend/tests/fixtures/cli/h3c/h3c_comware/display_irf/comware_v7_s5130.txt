@@ -1,0 +1,7 @@
+<Sysname> display irf
+MemberID   Role      Priority    CPU-Mac            Description
+  1        Loading   1           00e0-fcbe-3102     F1Num001
+*+2        Master    1           00e0-fcb1-ade2     F1Num002
+--------------------------------------------------------
+* indicates the device is the master.
++ indicates the device through which the user logs in.

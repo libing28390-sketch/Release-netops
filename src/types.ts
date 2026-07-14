@@ -637,12 +637,20 @@ export interface DeviceHealthTrendResponse {
 
 export const PLATFORM_LABELS: Record<string, string> = {
   cisco_ios: 'Cisco IOS',
+  cisco_xe: 'Cisco IOS-XE',
   cisco_nxos: 'Cisco NX-OS',
   cisco_iosxr: 'Cisco IOS-XR',
   huawei_vrp: 'Huawei VRP',
-  h3c_comware: 'H3C Comware',
+  huawei_vrpv8: 'Huawei VRP8',
+  hp_comware: 'H3C Comware V5',
+  h3c_comware: 'H3C Comware V7',
+  h3c_comware9: 'H3C Comware V9',
   arista_eos: 'Arista EOS',
   juniper_junos: 'Juniper Junos',
+  ruijie_rgos: 'Ruijie RGOS',
+  ruijie_os: 'Ruijie RGOS (legacy)',
+  zte_zxros: 'ZTE ZXROS',
+  maipu: 'Maipu Network OS',
 };
 
 export const getPlatformLabel = (platform: string) => PLATFORM_LABELS[platform] || platform;
@@ -656,6 +664,8 @@ export const getVendorFromPlatform = (platform: string) => {
   if (p.includes('h3c') || p.includes('comware') || p.includes('vsr')) return 'H3C';
   if (p.includes('arista')) return 'Arista';
   if (p.includes('ruijie') || p.includes('rgos')) return 'Ruijie';
+  if (p.includes('zte') || p.includes('zxros')) return 'ZTE';
+  if (p.includes('maipu')) return 'Maipu';
   return 'Other';
 };
 

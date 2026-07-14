@@ -1,0 +1,13 @@
+<HUAWEI> display ntp status
+ clock status: synchronized
+ clock stratum: 2
+ reference clock ID: LOCAL(0)
+ nominal frequency: 100.0000 Hz
+ actual frequency: 100.0000 Hz
+ clock precision: 2^17
+ clock offset: 0.0000 ms
+ root delay: 0.00 ms
+ root dispersion: 11.42 ms
+ peer dispersion: 10.00 ms
+ reference time: 10:59:23.348 UTC Sep 17 2013(D5E2B48B.592EF911)
+ synchronization state: clock synchronized

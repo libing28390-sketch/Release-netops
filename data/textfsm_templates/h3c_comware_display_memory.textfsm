@@ -1,0 +1,18 @@
+Value MEMORY_CLASS (Mem)
+Value TOTAL_KB (\d+)
+Value USED_KB (\d+)
+Value FREE_KB (\d+)
+Value SHARED_KB (\d+|--)
+Value BUFFERS_KB (\d+|--)
+Value CACHED_KB (\d+|--)
+Value FREE_RATIO (\d+(?:\.\d+)?%)
+
+Start
+  ^Memory\s+statistics\s+are\s+measured\s+in\s+KB:\s*$$
+  ^\s*Total\s+Used\s+Free\s+Shared\s+Buffers\s+Cached\s+FreeRatio\s*$$
+  ^${MEMORY_CLASS}:\s+${TOTAL_KB}\s+${USED_KB}\s+${FREE_KB}\s+${SHARED_KB}\s+${BUFFERS_KB}\s+${CACHED_KB}\s+${FREE_RATIO}\s*$$ -> Record
+  ^-/\+\s+Buffers/Cache:.*$$
+  ^Swap:.*$$
+  ^LowMem:.*$$
+  ^\s*$$
+

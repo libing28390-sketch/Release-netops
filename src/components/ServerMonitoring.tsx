@@ -111,7 +111,7 @@ const NETWORK_PLATFORM_CODES = new Set([
   'cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd',
   'huawei_vrp', 'huawei_vrpv8', 'huawei', 'h3c_comware', 'hp_comware',
   'juniper_junos', 'juniper', 'arista_eos', 'paloalto_panos', 'fortinet',
-  'checkpoint_gaia', 'hillstone_stoneos', 'ruijie_os', 'zte_zxros',
+  'checkpoint_gaia', 'hillstone_stoneos', 'ruijie_os', 'ruijie_rgos', 'zte_zxros', 'maipu',
 ]);
 
 /** Clean OS label for a server device (avoids showing 'cisco_ios' on a Linux host). */

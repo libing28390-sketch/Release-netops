@@ -31,14 +31,20 @@ interface TestResult {
 const SAMPLE_PLATFORMS = [
   { value: '', label: '全部平台', labelEn: 'All Platforms' },
   { value: 'cisco_ios', label: 'Cisco IOS' },
+  { value: 'cisco_xe', label: 'Cisco IOS-XE', labelEn: 'Cisco IOS-XE' },
   { value: 'cisco_nxos', label: 'Cisco NX-OS' },
   { value: 'cisco_xr', label: 'Cisco IOS-XR' },
   { value: 'cisco_asa', label: 'Cisco ASA' },
   { value: 'huawei_vrp', label: '华为 VRPv5' },
   { value: 'huawei_vrpv8', label: '华为 VRPv8' },
-  { value: 'hp_comware', label: 'H3C Comware' },
+  { value: 'hp_comware', label: 'H3C Comware V5', labelEn: 'H3C Comware V5' },
+  { value: 'h3c_comware', label: 'H3C Comware V7', labelEn: 'H3C Comware V7' },
+  { value: 'h3c_comware9', label: 'H3C Comware V9', labelEn: 'H3C Comware V9' },
   { value: 'juniper_junos', label: 'Juniper JunOS' },
   { value: 'arista_eos', label: 'Arista EOS' },
+  { value: 'ruijie_rgos', label: 'Ruijie RGOS' },
+  { value: 'zte_zxros', label: 'ZTE ZXROS' },
+  { value: 'maipu', label: 'Maipu Network OS' },
   { value: 'paloalto_panos', label: 'Palo Alto' },
   { value: 'fortinet', label: 'Fortinet' },
   { value: 'hillstone_stoneos', label: '山石 StoneOS' },
@@ -70,6 +76,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
   const [saving, setSaving] = useState(false);
 
   const [sampleOutput, setSampleOutput] = useState('');
+  const [defaultSample, setDefaultSample] = useState('');
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [testError, setTestError] = useState('');
   const [testing, setTesting] = useState(false);
@@ -128,6 +135,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
     setEditorContent(DEFAULT_TEMPLATE_CONTENT);
     setEditorReadonly(false);
     setSampleOutput('');
+    setDefaultSample('');
     setTestResult(null);
     setTestError('');
     setEditorOpen(true);
@@ -144,6 +152,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       setEditorContent(json?.data?.content || '');
       setEditorReadonly(tpl.source === 'builtin');
       setSampleOutput('');
+      setDefaultSample(json?.data?.default_sample || '');
       setTestResult(null);
       setTestError('');
       setEditorOpen(true);
@@ -466,9 +475,28 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
 
                 {/* Right: Test */}
                 <div className="flex flex-col gap-3 min-h-0">
+                  {defaultSample && (
+                    <div className="rounded-xl border border-cyan-500/15 bg-[#f0f9ff]/70 p-3.5 shadow-sm">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-700">
+                          {isZh ? '系统内置参考回显样本' : 'Builtin Reference Example Output'}
+                        </span>
+                        <button
+                          onClick={() => setSampleOutput(defaultSample)}
+                          className="rounded bg-cyan-600 px-2 py-0.5 text-[9px] font-bold text-white hover:bg-cyan-700 transition-all"
+                        >
+                          {isZh ? '一键填充到测试框' : 'Use Reference'}
+                        </button>
+                      </div>
+                      <pre className="font-mono text-[10px] text-slate-600 bg-white/70 p-2.5 rounded-lg border border-cyan-200 overflow-x-auto max-h-[85px] leading-relaxed">
+                        {defaultSample}
+                      </pre>
+                    </div>
+                  )}
+
                   <div className="flex-1 flex flex-col min-h-0">
                     <label className="text-[11px] font-semibold text-black/50 uppercase tracking-wider mb-1">
-                      {isZh ? '样本输出' : 'Sample Output'}
+                      {isZh ? '样本输出 (我实际输入的测试样本)' : 'Sample Output (My actual test output)'}
                     </label>
                     <textarea
                       value={sampleOutput}

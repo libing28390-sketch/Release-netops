@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/HK/Switches/H3C_S12500/H3C_S12500_Series_Switches/Technical_Documents/Quick_Starts/FAQ/H3C_S12500_FAQ-R1825P01-6W100/201310/800507_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware5",
+  "model_family": "S12500",
+  "command": "display fan verbose",
+  "source_note": "Official Comware V5 FAQ sample output for the display fan verbose command."
+}
