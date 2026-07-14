@@ -36,7 +36,7 @@ jobs:
           # ── 测试 / 调试脚本与自动化单元测试用例（商用脱敏，不暴露给客户） ──
           rm -rf scratch/
           rm -rf backend/scratch/
-          rm -rf backend/tests/
+          find backend/tests -mindepth 1 -maxdepth 1 -not -name "fixtures" -exec rm -rf {} +
           rm -f pytest.ini
           rm -f backend/_check_audit.py
           rm -f backend/check_executions.py
@@ -175,7 +175,7 @@ jobs:
           # ── 测试 / 调试脚本与自动化单元测试用例（商用脱敏，不暴露给客户） ──
           rm -rf scratch/
           rm -rf backend/scratch/
-          rm -rf backend/tests/
+          find backend/tests -mindepth 1 -maxdepth 1 -not -name "fixtures" -exec rm -rf {} +
           rm -f pytest.ini
           rm -f backend/_check_audit.py
           rm -f backend/check_executions.py
