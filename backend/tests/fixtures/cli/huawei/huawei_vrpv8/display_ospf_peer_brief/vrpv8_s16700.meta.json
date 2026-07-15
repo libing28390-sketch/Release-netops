@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100459053/e1fd2273/example-for-configuring-ospf-multi-area-adjacency",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "CloudEngine S16700",
+  "command": "display ospf peer brief",
+  "source_note": "Official OSPF multi-area adjacency example, brief neighbor output."
+}

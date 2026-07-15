@@ -1,0 +1,12 @@
+Value Required MAC_ADDRESS ([0-9A-Fa-f]{4}(?:-[0-9A-Fa-f]{4}){2})
+Value Required VLAN_VSI (\S+)
+Value Required LEARNED_FROM (\S+(?:\s+\S+)*)
+Value Required TYPE (\S+)
+
+Start
+  ^MAC\s+Address\s+VLAN/VSI(?:/BD)?\s+Learned-From\s+Type\s*$$
+  ^-+
+  ^${MAC_ADDRESS}\s+${VLAN_VSI}\s+${LEARNED_FROM}\s+${TYPE}\s*$$ -> Record
+  ^Total(?:\s+items)?(?:\s+displayed)?\s*[:=]\s*\d+\s*$$
+  ^\s*$$
+  ^. -> Error

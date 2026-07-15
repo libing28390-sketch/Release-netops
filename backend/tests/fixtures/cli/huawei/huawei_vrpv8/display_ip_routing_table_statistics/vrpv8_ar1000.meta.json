@@ -1,0 +1,13 @@
+{
+  "vendor": "Huawei",
+  "platform": "huawei_vrpv8",
+  "software_family": "VRP8",
+  "model": "NetEngine AR1000",
+  "command": "display ip routing-table statistics",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100271769/88f1fc79/ip-routing-basic-configuration-commands",
+  "source_title": "IP Routing Basic Configuration Commands - Huawei",
+  "source_section": "display ip routing-table statistics example",
+  "expected_record_count": 8,
+  "expected_fields": ["SUMMARY_PREFIXES", "PROTO", "ROUTE_COUNT", "ACTIVE_COUNT", "ADDED_COUNT", "DELETED_COUNT", "FREED_COUNT"]
+}

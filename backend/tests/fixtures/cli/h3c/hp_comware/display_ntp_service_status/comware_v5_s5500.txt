@@ -1,0 +1,13 @@
+<Sysname> display ntp-service status
+Service status:enabled
+Clock status: unsynchronized
+Clock stratum: 16
+Reference clock ID: none
+Nominal frequency: 100.0000 Hz
+Actual frequency: 100.0000 Hz
+Clock precision: 2^18
+Clock offset: 0.0000 ms
+Root delay: 0.00 ms
+Root dispersion: 0.00 ms
+Peer dispersion: 0.00 ms
+Reference time: 00:00:00.000 UTC Jan 1 1900(00000000.00000000)

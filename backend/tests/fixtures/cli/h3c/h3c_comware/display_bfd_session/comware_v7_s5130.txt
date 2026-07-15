@@ -1,0 +1,12 @@
+<Sysname> display bfd session
+Total sessions: 4        Up sessions: 4        Init mode: Active
+
+IPv4 session working in control packet mode:
+
+LD/RD            SourceAddr      DestAddr        State  Holdtime    Interface
+513/513          1.1.1.1         1.1.1.2         Up     2297ms      Vlan100
+
+IPv4 static session working in control packet mode:
+
+LD/RD            SourceAddr      DestAddr        State  Holdtime    Interface
+1600/1600        1.1.1.1         1.1.1.2         Up     2290ms      Vlan100
