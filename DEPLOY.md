@@ -374,8 +374,9 @@ pip install -r backend/requirements.txt
 sudo systemctl restart netops
 
 # Docker
-git pull
-docker compose up -d --build
+bash scripts/deploy-docker.sh update
+# 强制重新构建镜像时使用：
+# bash scripts/deploy-docker.sh update --force
 
 # Windows (GUI)
 # 1. Right-click the system tray icon and click "Exit" to stop the running service.
@@ -691,8 +692,9 @@ pip install -r backend/requirements.txt
 sudo systemctl restart netops
 
 # Docker 部署
-git pull
-docker compose up -d --build
+bash scripts/deploy-docker.sh update
+# 如需强制重新构建镜像：
+# bash scripts/deploy-docker.sh update --force
 
 # Windows 本地部署 (GUI)
 # 1. 右键系统托盘图标，点击“退出 (Exit)”以完全关闭运行中的服务。

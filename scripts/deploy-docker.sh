@@ -20,13 +20,14 @@ usage() {
     cat <<'EOF'
 Usage:
   bash scripts/deploy-docker.sh install [deployment-directory]
-  bash scripts/deploy-docker.sh update [deployment-directory]
+  bash scripts/deploy-docker.sh update [deployment-directory] [--force]
   bash scripts/deploy-docker.sh reset-data [deployment-directory] [--yes]
 
 Commands:
   install    Clone/sync the public release, initialize .env, build, and start.
   update     Preserve .env, Docker volumes, and nginx/ssl; sync the public
-             release history, rebuild changed images, and restart the stack.
+             release history, show source changes, and rebuild only when the
+             release content changed. Use --force to rebuild unconditionally.
   reset-data Stop the stack and delete this Compose project's volumes, local
              build images, and generated TLS files. It does not affect other
              Docker projects. Use --yes or NETOPS_CONFIRM=YES for automation.
@@ -37,6 +38,8 @@ Environment:
   NETOPS_DIR              Default deployment directory (default: current dir).
 EOF
 }
+
+RELEASE_CHANGED=0
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
@@ -121,8 +124,30 @@ set_release_remote() {
 
 sync_release() {
     set_release_remote
+    local current_commit remote_commit current_tree remote_tree
+    current_commit="$(git rev-parse HEAD)"
     git fetch --prune origin "$RELEASE_BRANCH"
-    git reset --hard "origin/${RELEASE_BRANCH}"
+    remote_commit="$(git rev-parse "origin/${RELEASE_BRANCH}")"
+    current_tree="$(git rev-parse "${current_commit}^{tree}")"
+    remote_tree="$(git rev-parse "${remote_commit}^{tree}")"
+
+    if [[ "$current_tree" == "$remote_tree" ]]; then
+        RELEASE_CHANGED=0
+        if [[ "$current_commit" != "$remote_commit" ]]; then
+            log "Release commit changed but source content is unchanged"
+            log "  ${current_commit:0:7} -> ${remote_commit:0:7}"
+            git reset --hard "$remote_commit" >/dev/null
+        else
+            log "Release is already up to date at ${remote_commit:0:7}"
+        fi
+        return 0
+    fi
+
+    RELEASE_CHANGED=1
+    log "Release source changed: ${current_commit:0:7} -> ${remote_commit:0:7}"
+    git diff --stat "$current_commit" "$remote_commit" || true
+    git diff --name-status "$current_commit" "$remote_commit" | sed -n '1,80p' || true
+    git reset --hard "$remote_commit"
 }
 
 prepare_source() {
@@ -179,9 +204,11 @@ COMMAND="${1:-help}"
 shift || true
 DEPLOYMENT_DIR="${NETOPS_DIR:-$PWD}"
 YES_FLAG=""
+FORCE_UPDATE=""
 for argument in "$@"; do
     case "$argument" in
         --yes) YES_FLAG="--yes" ;;
+        --force) FORCE_UPDATE="--force" ;;
         -h|--help) usage; exit 0 ;;
         -*) die "Unknown option: $argument" ;;
         *) DEPLOYMENT_DIR="$argument" ;;
@@ -207,8 +234,15 @@ case "$COMMAND" in
         backup_env
         sync_release
         initialize_env
-        build_and_start
-        log "Docker update complete; .env, volumes, and nginx/ssl were preserved"
+        if [[ "${FORCE_UPDATE:-}" != "--force" && "$RELEASE_CHANGED" != "1" ]]; then
+            docker compose ps
+            log "No release content changes; skipped image pull, build, and container recreation"
+            log "Docker update check complete; .env, volumes, and nginx/ssl were preserved"
+        else
+            [[ "${FORCE_UPDATE:-}" == "--force" ]] && log "Force update requested; rebuilding the Docker stack"
+            build_and_start
+            log "Docker update complete; .env, volumes, and nginx/ssl were preserved"
+        fi
         ;;
     reset-data)
         require_docker

@@ -595,6 +595,7 @@ pip install -r backend/requirements.txt
 sudo systemctl restart netops
 
 # Docker 部署
-git pull
-docker compose up -d --build
+bash scripts/deploy-docker.sh update
+# 如需强制重新构建镜像：
+# bash scripts/deploy-docker.sh update --force
 ```

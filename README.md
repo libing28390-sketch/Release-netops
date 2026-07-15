@@ -341,11 +341,14 @@ The Docker project is named `nexora`. It creates `nexora-netops`, `nexora-nginx`
 
 ##### Updating an existing Docker deployment
 
-The public release repository is rebuilt with a sanitized Git history, so a normal `git pull` may fail after a release. The helper below explicitly switches `origin` to `https://github.com/libing28390-sketch/Release-netops.git` before synchronizing. It discards changes to tracked source files; `.env`, Docker volumes, and files under `nginx/ssl/` are preserved. A timestamped `.env` backup is created automatically.
+The public release repository is rebuilt with a sanitized Git history, so a normal `git pull` may fail after a release. The helper below explicitly switches `origin` to `https://github.com/libing28390-sketch/Release-netops.git` before synchronizing. It discards changes to tracked source files; `.env`, Docker volumes, and files under `nginx/ssl/` are preserved. A timestamped `.env` backup is created automatically. The script compares the source tree before rebuilding, so an unchanged release skips image pulls, builds, and container recreation. Add `--force` when a full rebuild is required.
 
 ```bash
 cd /path/to/nexora-automation
 bash scripts/deploy-docker.sh update
+
+# Optional: force a full image rebuild and container recreation
+bash scripts/deploy-docker.sh update --force
 ```
 
 Do not run `docker compose down -v` during an upgrade: `-v` deletes the PostgreSQL, application-data, and backup volumes.
@@ -682,8 +685,11 @@ cd /path/to/nexora-automation
 # 可选：备份本地环境配置
 cp .env .env.backup
 
-# 将已跟踪源码同步为公有仓库最新版本
+# 将已跟踪源码同步为公有仓库最新版本；无源码变化时会跳过构建和重建容器
 bash scripts/deploy-docker.sh update
+
+# 如需强制重新构建镜像并重建容器
+bash scripts/deploy-docker.sh update --force
 
 # 检查升级后的容器和日志
 docker compose ps
