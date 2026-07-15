@@ -12,9 +12,9 @@ Start
   ^\s*Transceiver\s+Type\s*:\s*${TRANSCEIVER_TYPE}
   ^\s*Connector\s+Type\s*:\s*${CONNECTOR_TYPE}
   ^\s*Wavelength\(nm\)\s*:\s*${WAVELENGTH}
-  ^\s*Transfer\s+Distance(?:\(m\))?\s*:\s*${TRANSFER_DISTANCE}
+  ^\s*Transfer\s+Distance(?:\(m\)|\(km\))?\s*:\s*${TRANSFER_DISTANCE}
   ^\s*Digital\s+Diagnostic\s+Monitoring\s*:\s*${DIGITAL_DIAGNOSTIC_MONITORING}
-  ^\s*Vendor\s+Name\s*:\s*${VENDOR_NAME}
-  ^\s*Ordering\s+Name\s*:\s*${ORDERING_NAME} -> Record
+  ^\s*Vendor\s+Name\s*:\s*${VENDOR_NAME} -> Record
+  ^\s*Ordering\s+Name\s*:\s*${ORDERING_NAME}
   ^\s*$$
   ^.*

@@ -53,8 +53,8 @@
 | Phase 4 | 已完成 | 统一 Job/step/target/artifact/event、限流、重试和取消语义已落地 |
 | Phase 5 | 已完成 | resource/scope/action 权限与统一 before/after 审计已落地 |
 | Phase 6 | 已完成 | CMDB/IPAM client、类型、领域 hooks 和四类企业工作流入口已落地 |
-| Phase 7 | 未开始 | request_id、指标、健康检查、多实例与无状态化 |
-| Phase 8 | 未开始 | 标准容量压测与企业验收基准 |
+| Phase 7 | 已完成 | request_id、指标、健康检查、调度锁、多实例基础与网络访问预算 |
+| Phase 8 | 已完成 | 全量回归、网络并发/连接池测试与企业验收基准 |
 
 Phase 0–6 的统一交付记录见：
 

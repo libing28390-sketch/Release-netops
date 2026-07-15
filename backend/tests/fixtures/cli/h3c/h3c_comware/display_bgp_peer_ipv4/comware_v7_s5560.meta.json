@@ -4,6 +4,6 @@
   "vendor": "H3C",
   "platform": "Comware7",
   "model_family": "S5560X-EI",
-  "command": "display bgp peer ipv4",
+  "command": "display bgp peer ipv4 unicast",
   "source_note": "Official BGP command reference, IPv4 peer summary output."
 }

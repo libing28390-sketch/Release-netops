@@ -102,3 +102,9 @@
 - 访问 `/api/health`，核实返回的 `scheduler` 与 `metrics` 数据。
 - 模拟触发一个失败请求，验证前端弹窗错误信息中是否带有所生成的 Request ID。
 - 在日志输出中，验证每一行日志的前缀中是否均包含类似 `[req:xxx, user:admin]` 的结构化上下文。
+
+## Completion Status (2026-07-15)
+
+本计划已完成。除原 Phase 7/8 可观测性、健康检查、请求追踪和调度锁外，本次收口还完成了网络访问预算、B-Loop 分层采集节奏、SSH 连接池空闲回收、健康状态暴露及多厂商回归修复。全量测试结果为 502 passed、25 个参数化子测试通过；仅保留 1 条 Starlette/httpx 弃用警告。
+
+详细执行记录见 `docs/walkthrough/walkthrough_20260715_网络采集并发与全量验收.md`。

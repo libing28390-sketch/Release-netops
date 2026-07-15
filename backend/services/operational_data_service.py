@@ -8,6 +8,7 @@ from netmiko import ConnectHandler
 from ntc_templates.parse import parse_output
 
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
+from services.network_access_limiter import limited_connect_handler
 
 
 SUPPORTED_CATEGORIES = (
@@ -289,7 +290,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'mac_table': ['display mac-address'],
         'vlan': ['display vlan brief'],
         'routing_table': ['display ip routing-table'],
-        'bgp': ['display bgp peer ipv4'],
+        'bgp': ['display bgp peer ipv4 unicast'],
         'ospf': ['display ospf peer'],
         'bfd': ['display bfd session'],
         'bgp_routes': ['display bgp routing-table ipv4'],
@@ -314,7 +315,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'mac_table': ['display mac-address'],
         'vlan': ['display vlan brief'],
         'routing_table': ['display ip routing-table'],
-        'bgp': ['display bgp peer'],
+        'bgp': ['display bgp peer ipv4 unicast'],
         'ospf': ['display ospf peer'],
         'bgp_routes': ['display bgp routing-table'],
         'ntp': ['display ntp-service status'],
@@ -336,7 +337,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'mac_table': ['display mac-address'],
         'vlan': ['display vlan brief'],
         'routing_table': ['display ip routing-table'],
-        'bgp': ['display bgp peer ipv4'],
+        'bgp': ['display bgp peer ipv4 unicast'],
         'ospf': ['display ospf peer'],
         'bfd': ['display bfd session'],
         'bgp_routes': ['display bgp routing-table ipv4'],
@@ -898,7 +899,7 @@ def collect_operational_data(device_info: dict[str, Any], categories: list[str] 
 
     payload: dict[str, Any] = _build_base_payload(device_info, platform)
 
-    with ConnectHandler(**conn_params) as client:
+    with limited_connect_handler(device_info, ConnectHandler, **conn_params) as client:
         if conn_params.get('secret'):
             try:
                 client.enable()
@@ -982,7 +983,7 @@ def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_
         'parse_status': 'unmatched',
     }
 
-    with ConnectHandler(**conn_params) as client:
+    with limited_connect_handler(device_info, ConnectHandler, **conn_params) as client:
         if conn_params.get('secret'):
             try:
                 client.enable()

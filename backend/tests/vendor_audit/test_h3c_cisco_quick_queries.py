@@ -76,21 +76,21 @@ def test_every_official_h3c_and_cisco_fixture_has_a_working_parser(metadata_path
 
 def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
     assert _resolve_commands("hp_comware", ["bgp", "bgp_routes"]) == {
-        "bgp": ["display bgp peer"],
+        "bgp": ["display bgp peer ipv4 unicast"],
         "bgp_routes": ["display bgp routing-table"],
     }
     assert _resolve_commands("hp_comware", ["interface_description"]) == {
         "interface_description": ["display interface brief description"],
     }
     assert _resolve_commands("h3c_comware", ["bgp", "bgp_routes"]) == {
-        "bgp": ["display bgp peer ipv4"],
+        "bgp": ["display bgp peer ipv4 unicast"],
         "bgp_routes": ["display bgp routing-table ipv4"],
     }
     assert _resolve_commands("h3c_comware", ["interface_description"]) == {
         "interface_description": ["display interface brief description"],
     }
     assert _resolve_commands("h3c_comware9", ["bgp", "bgp_routes"]) == {
-        "bgp": ["display bgp peer ipv4"],
+        "bgp": ["display bgp peer ipv4 unicast"],
         "bgp_routes": ["display bgp routing-table ipv4"],
     }
     assert _resolve_commands("h3c_comware9", ["interface_description"]) == {
@@ -396,6 +396,130 @@ def test_comware9_link_aggregation_keeps_parent_context_on_every_member():
     assert {item["AGGREGATION_MODE"] for item in result["data"]} == {"Dynamic"}
 
 
+@pytest.mark.parametrize("platform", ["hp_comware", "h3c_comware"])
+def test_comware7_real_world_transceiver_blocks_are_not_collapsed(platform):
+    output = """Ten-GigabitEthernet1/0/50 transceiver information:
+  Transceiver Type              : SFP-GE-LX-SM1310
+  Connector Type                : LC
+  Wavelength(nm)                : 1310
+  Transfer Distance(km)         : 10(9um)
+  Digital Diagnostic Monitoring : YES
+  Vendor Name                   : H3C
+Ten-GigabitEthernet1/0/51 transceiver information:
+  Transceiver Type              : SFP-GE-LX-SM1310
+  Connector Type                : LC
+  Wavelength(nm)                : 1310
+  Transfer Distance(km)         : 10(9um)
+  Digital Diagnostic Monitoring : YES
+  Vendor Name                   : H3C
+Ten-GigabitEthernet1/0/52 transceiver information:
+  Transceiver Type              : SFP-GE-LX-SM1310
+  Connector Type                : LC
+  Wavelength(nm)                : 1310
+  Transfer Distance(km)         : 10(9um)
+  Digital Diagnostic Monitoring : YES
+  Vendor Name                   : H3C
+"""
+    result = smart_parse_cli(output, "display transceiver interface", platform=platform)
+
+    assert result["success"] is True
+    assert result["matched_rows"] == 3
+    assert {item["INTERFACE"] for item in result["data"]} == {
+        "Ten-GigabitEthernet1/0/50",
+        "Ten-GigabitEthernet1/0/51",
+        "Ten-GigabitEthernet1/0/52",
+    }
+    assert {item["TRANSFER_DISTANCE"] for item in result["data"]} == {"10(9um)"}
+
+
+@pytest.mark.parametrize("platform", ["hp_comware", "h3c_comware"])
+def test_comware7_real_world_version_is_one_complete_record(platform):
+    output = """H3C Comware Software, Version 7.1.070, Alpha 7170
+Copyright (c) 2004-2022 New H3C Technologies Co., Ltd. All rights reserved.
+H3C S6850 uptime is 0 weeks, 0 days, 1 hour, 35 minutes
+Last reboot reason: User reboot
+Boot image: flash:/s6850-cmw710-boot-t7064p15.bin
+Boot image version: 7.1.070, Alpha 7170
+  Compiled Nov 21 2022 11:00:00
+Boot image: flash:/s6850-cmw710-system-t7064p15.bin
+Boot image version: 7.1.070, Alpha 7170
+  Compiled Nov 21 2022 11:00:00
+
+Slot 1:
+S6850 with 2 Processors
+"""
+    result = smart_parse_cli(output, "display version", platform=platform)
+
+    assert result["success"] is True
+    assert result["matched_rows"] == 1
+    record = result["data"][0]
+    assert record["SOFTWARE_VERSION"] == "7.1.070"
+    assert record["RELEASE"] == "Alpha 7170"
+    assert record["DEVICE"] == "S6850"
+    assert record["UPTIME"] == "0 weeks, 0 days, 1 hour, 35 minutes"
+    assert record["LAST_REBOOT_REASON"] == "User reboot"
+
+
+@pytest.mark.parametrize("platform", ["hp_comware", "h3c_comware"])
+def test_comware7_real_world_environment_table_is_structured(platform):
+    output = """System temperature information (degree centigrade):
+-------------------------------------
+Slot  Sensor    Temperature LowerLimit WarningLimit AlarmLimit
+ 0/1  Inflow  1   30           -5          66          76
+ 0/1  Outflow 1   33           -5          66          76
+ 0/1  Outflow 2   37           -5          66          76
+ 0/1  Hotspot 1   39           -5          66          76
+ 0/1  Hotspot 2   42           -5          66          76
+ 0/1  Hotspot 3   44           -5          66          76
+"""
+    result = smart_parse_cli(output, "display environment", platform=platform)
+
+    assert result["success"] is True
+    assert result["matched_rows"] == 6
+    assert [item["TEMPERATURE"] for item in result["data"]] == ["30", "33", "37", "39", "42", "44"]
+
+
+@pytest.mark.parametrize("platform", ["hp_comware", "h3c_comware"])
+def test_comware7_real_world_power_table_is_structured(platform):
+    output = """Device Info on Slot 1:
+Device ID.  Status
+ 1          Normal
+ 2          Normal
+"""
+    result = smart_parse_cli(output, "display power", platform=platform)
+
+    assert result["success"] is True
+    assert result["matched_rows"] == 2
+    assert [item["POWER_ID"] for item in result["data"]] == ["1", "2"]
+    assert {item["STATUS"] for item in result["data"]} == {"Normal"}
+
+
+@pytest.mark.parametrize("platform", ["hp_comware", "h3c_comware"])
+def test_comware7_real_world_ntp_status_is_structured(platform):
+    output = """--- H3C-SW1 ---
+[display ntp-service status]
+ Clock status: unsynchronized
+ Clock stratum: 16
+ Reference clock ID: none
+ Clock jitter: 0.000000 s
+ Stability: 0.000 pps
+ Clock precision: 2^-18
+ Root delay: 0.00000 ms
+ Root dispersion: 0.50354 ms
+ Reference time: 00000000.00000000  Thu, Feb  7 2036  6:28:16.000
+ System poll interval: 8 s
+"""
+    result = smart_parse_cli(output, "display ntp-service status", platform=platform)
+
+    assert result["success"] is True
+    assert result["matched_rows"] == 1
+    record = result["data"][0]
+    assert record["CLOCK_STATUS"] == "unsynchronized"
+    assert record["CLOCK_STRATUM"] == "16"
+    assert record["REFERENCE_CLOCK_ID"] == "none"
+    assert record["POLL_INTERVAL"] == "8"
+
+
 @pytest.mark.parametrize(
     ("platform", "category_fixtures", "expected_commands"),
     [
@@ -453,7 +577,7 @@ def test_comware9_link_aggregation_keeps_parent_context_on_every_member():
             {
                 "arp": ["display arp all"],
                 "bfd": ["display bfd session"],
-                "bgp": ["display bgp peer ipv4"],
+                "bgp": ["display bgp peer ipv4 unicast"],
                 "bgp_routes": ["display bgp routing-table ipv4"],
                 "environment": ["display environment"],
                 "fan": ["display fan"],
@@ -497,7 +621,7 @@ def test_comware9_link_aggregation_keeps_parent_context_on_every_member():
                 ),
             },
             {
-                "bgp": ["display bgp peer ipv4"],
+                "bgp": ["display bgp peer ipv4 unicast"],
                 "bgp_routes": ["display bgp routing-table ipv4"],
                 "eth_trunk": ["display link-aggregation verbose"],
                 "interfaces": ["display interface brief"],

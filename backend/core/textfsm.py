@@ -205,6 +205,10 @@ _HUAWEI_H3C_COMMAND_MAPPING = [
     (re.compile(r'^dis(?:play)?\s+cpu(?:-usage)?\b', re.I), 'display cpu-usage'),
     (re.compile(r'^dis(?:play)?\s+mem(?:ory)?(?:-usage)?\b', re.I), 'display memory-usage'),
     (re.compile(r'^dis(?:play)?\s+memory\b', re.I), 'display memory'),  # For HP Comware
+    # Comware 7/9 accepts abbreviated ``dis bgp peer ipv4 un`` and the full
+    # ``display bgp peer ipv4 unicast`` form. Both use the existing IPv4 peer
+    # TextFSM family after the command has been sent to the device.
+    (re.compile(r'^dis(?:play)?\s+bgp\s+peer\s+ipv4(?:\s+un(?:icast)?)?\b', re.I), 'display bgp peer ipv4'),
     (re.compile(r'^dis(?:play)?\s+ip\s+routing-table\s+stat(?:istics)?\b', re.I), 'display ip routing-table statistics'),
     (re.compile(r'^dis(?:play)?\s+port\s+vlan\b', re.I), 'display port vlan'),
     (re.compile(r'^dis(?:play)?\s+int(?:erface)?\s+br(?:ief)?\b', re.I), 'display interface brief'),

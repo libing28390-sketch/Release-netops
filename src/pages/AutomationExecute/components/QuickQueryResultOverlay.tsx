@@ -13,7 +13,6 @@ interface QuickQueryResultOverlayProps {
   targetDevices: Device[];
   onQuickQueryMaximizedChange: (val: boolean) => void;
   onResetQuickQuery: () => void;
-  handleClearSelection: () => void;
   quickQueryCommands: string[];
   copyTextWithFallback: (text: string) => Promise<boolean>;
   showToast: (message: string, tone: 'success' | 'error' | 'warning' | 'info') => void;
@@ -36,7 +35,6 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
   targetDevices,
   onQuickQueryMaximizedChange,
   onResetQuickQuery,
-  handleClearSelection,
   quickQueryCommands,
   copyTextWithFallback,
   showToast,
@@ -57,7 +55,6 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
         className="fixed inset-0 z-[70] bg-[#020817]/72 backdrop-blur-sm"
         onClick={() => {
           onResetQuickQuery();
-          handleClearSelection();
         }}
       />
       <div
@@ -124,7 +121,6 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
             <button
               onClick={() => {
                 onResetQuickQuery();
-                handleClearSelection();
               }}
               className="text-white/30 hover:text-white transition-colors"
             >

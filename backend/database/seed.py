@@ -121,7 +121,7 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
     _snmp_item('net_h3c_intf_down', 'H3C Comware Interface Down', 'H3C Comware 接口 Down 数', 'Network', 'h3c_comware_intf_down',
               '统计 down 的接口数量 (SNMP)', 'h3c_comware', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
     _item('net_h3c_bgp_down', 'H3C Comware BGP Peer Down', 'H3C Comware BGP 邻居 Down 数', 'Network', 'h3c_comware_bgp_down',
-          '统计非 Established 的 BGP 邻居', 'display bgp peer ipv4', 'h3c_comware',
+          '统计非 Established 的 BGP 邻居', 'display bgp peer ipv4 unicast', 'h3c_comware',
           1, 2, 'count', 'hp_comware_display_bgp_peer_ipv4', 'STATE',
           parse_filter='{"field":"STATE","op":"!=","value":"Established"}')
     _item('net_h3c_route_total', 'H3C Comware Route Total', 'H3C Comware 路由总数', 'Network', 'h3c_comware_route_total',
@@ -383,7 +383,7 @@ echo "tcp_retrans_pct:${tcp_retrans_pct:-0}"
     # 华为 VRPv8
     ('insp_huawei_vrpv8_full', '华为 VRPv8 综合巡检', 'display version\ndisplay cpu-usage\ndisplay memory-usage\ndisplay environment\ndisplay interface brief\ndisplay bgp peer\ndisplay ospf peer brief\ndisplay ip routing-table statistics', '华为 VRPv8（CE系列/新NE）综合巡检脚本', 'huawei_vrpv8', 'inspection'),
     # H3C Comware
-    ('insp_h3c_comware_full', 'H3C Comware 综合巡检', 'display version\ndisplay cpu-usage\ndisplay memory\ndisplay environment\ndisplay fan\ndisplay power\ndisplay interface brief\ndisplay bgp peer ipv4\ndisplay ospf peer\ndisplay ip routing-table statistics', 'H3C Comware V7/V9 综合巡检脚本', 'h3c_comware', 'inspection'),
+    ('insp_h3c_comware_full', 'H3C Comware 综合巡检', 'display version\ndisplay cpu-usage\ndisplay memory\ndisplay environment\ndisplay fan\ndisplay power\ndisplay interface brief\ndisplay bgp peer ipv4 unicast\ndisplay ospf peer\ndisplay ip routing-table statistics', 'H3C Comware V7/V9 综合巡检脚本', 'h3c_comware', 'inspection'),
     # Juniper JunOS
     ('insp_juniper_junos_full', 'Juniper JunOS 综合巡检', 'show version\nshow chassis routing-engine\nshow chassis environment\nshow interfaces terse\nshow bgp summary\nshow ospf neighbor\nshow route summary', 'Juniper JunOS 综合巡检脚本（MX/EX/QFX/SRX 通用）', 'juniper_junos', 'inspection'),
     # Arista EOS

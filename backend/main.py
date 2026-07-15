@@ -183,9 +183,17 @@ async def lifespan(app: FastAPI):
     )
     
     from services.inspection_service import run_scheduled_inspections
+    try:
+        inspection_trigger = CronTrigger.from_crontab(settings.INSPECTION_MASTER_CRON)
+    except Exception:
+        logger.warning(
+            "Invalid INSPECTION_MASTER_CRON=%r; falling back to twice-daily 02:30/14:30",
+            settings.INSPECTION_MASTER_CRON,
+        )
+        inspection_trigger = CronTrigger(minute=30, hour='2,14')
     scheduler.add_job(
         synchronized_scheduler_job('inspection_scheduler', expire_seconds=1700)(run_scheduled_inspections),
-        CronTrigger(minute='0,30'), id='inspection_scheduler', replace_existing=True
+        inspection_trigger, id='inspection_scheduler', replace_existing=True
     )
     
     from services.password_rotation_service import run_rotation_sweep

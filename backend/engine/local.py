@@ -16,16 +16,17 @@ class LocalExecutionProvider(ExecutionProvider):
         driver = DriverFactory.get_driver(driver_type, device_info)
         
         results = []
-        if is_config:
-            output = driver.send_config_set(commands)
-            results.append(CommandResult(command="config_set", output=output, success=True))
-        else:
-            for cmd in commands:
-                try:
-                    output = driver.send_command(cmd)
-                    results.append(CommandResult(command=cmd, output=output, success=True))
-                except Exception as e:
-                    results.append(CommandResult(command=cmd, output=str(e), success=False))
+        with driver:
+            if is_config:
+                output = driver.send_config_set(commands)
+                results.append(CommandResult(command="config_set", output=output, success=True))
+            else:
+                for cmd in commands:
+                    try:
+                        output = driver.send_command(cmd)
+                        results.append(CommandResult(command=cmd, output=output, success=True))
+                    except Exception as e:
+                        results.append(CommandResult(command=cmd, output=str(e), success=False))
                     
         return results
 

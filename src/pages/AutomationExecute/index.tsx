@@ -500,9 +500,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         cmds: isHuawei
           ? 'display bgp peer'
           : isH3c
-          ? platform === 'hp_comware'
-            ? 'display bgp peer'
-            : 'display bgp peer ipv4'
+          ? 'display bgp peer ipv4 unicast'
           : isNxos
           ? 'show ip bgp summary'
           : 'show ip bgp summary',
@@ -767,7 +765,6 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         }
         if (quickQueryRunning || quickQueryOutput) {
           onResetQuickQuery();
-          handleClearSelection();
           return;
         }
         if (hasTargets) {
@@ -927,7 +924,6 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
           targetDevices={targetDevices}
           onQuickQueryMaximizedChange={onQuickQueryMaximizedChange}
           onResetQuickQuery={onResetQuickQuery}
-          handleClearSelection={handleClearSelection}
           quickQueryCommands={quickQueryCommands}
           copyTextWithFallback={copyTextWithFallback}
           showToast={showToast}

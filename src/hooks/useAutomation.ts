@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx';
 import type { Job, ScheduledTask, Script, ConfigTemplate, SessionUser, Device } from '../types';
 import { isAutomationPlatformSupported, normalizeAutomationPlatform } from '../pages/AutomationExecute/helpers';
 
+const QUICK_QUERY_TIMEOUT_MS = 45_000;
+
 interface UseAutomationProps {
   currentUser: SessionUser;
   language: string;
@@ -152,6 +154,11 @@ export const useAutomation = ({
   const [currentDiff, setCurrentDiff] = useState({ before: '', after: '' });
 
   const wsRef = useRef<WebSocket | null>(null);
+  // Quick-query requests can involve slow or unreachable devices. Keep a
+  // cancellation handle so closing the result window immediately releases the
+  // UI instead of waiting for the fetch promise to settle.
+  const quickQueryAbortRef = useRef<AbortController | null>(null);
+  const quickQueryRunIdRef = useRef(0);
 
   const extractVars = useCallback((text: string): string[] => {
     if (!text) return [];
@@ -203,6 +210,10 @@ export const useAutomation = ({
   }, []);
 
   const handleResetQuickQuery = useCallback(() => {
+    quickQueryRunIdRef.current += 1;
+    quickQueryAbortRef.current?.abort();
+    quickQueryAbortRef.current = null;
+    setQuickQueryRunning(false);
     setQuickQueryOutput('');
     setQuickQueryLabel('');
     setQuickQueryStructured(null);
@@ -653,6 +664,7 @@ export const useAutomation = ({
       setQuickPlaybookPreview(null);
       setQuickRiskConfirmed(false);
       setQuickExecutionResult(null);
+      handleResetQuickQuery();
       setWsMessages([]);
       setDeviceStatusMap({});
       setWsCompleteMsg(null);
@@ -672,7 +684,7 @@ export const useAutomation = ({
     if (page === 'scenarios') {
       setScenarioSearch('');
     }
-  }, [setAutomationSearch, setBatchMode, setBatchDeviceIds, setSelectedDevice, setQuickPlaybookScenario, setQuickPlaybookVars, setQuickPlaybookPlatform, setQuickPlaybookDryRun, setQuickPlaybookConcurrency, setQuickPlaybookPreview, setQuickRiskConfirmed, setQuickExecutionResult, setWsMessages, setDeviceStatusMap, setWsCompleteMsg, setSelectedScenario, setPlaybookVars, setPlaybookDeviceIds, setPlaybookDryRun, setPlaybookConcurrency, setPlaybookPreview, setScenarioSearch]);
+  }, [setAutomationSearch, setBatchMode, setBatchDeviceIds, setSelectedDevice, setQuickPlaybookScenario, setQuickPlaybookVars, setQuickPlaybookPlatform, setQuickPlaybookDryRun, setQuickPlaybookConcurrency, setQuickPlaybookPreview, setQuickRiskConfirmed, setQuickExecutionResult, handleResetQuickQuery, setWsMessages, setDeviceStatusMap, setWsCompleteMsg, setSelectedScenario, setPlaybookVars, setPlaybookDeviceIds, setPlaybookDryRun, setPlaybookConcurrency, setPlaybookPreview, setScenarioSearch]);
 
   const executePlaybook = useCallback(async (dryRunOverride?: boolean) => {
     if (!selectedScenario) {
@@ -818,6 +830,11 @@ export const useAutomation = ({
     setQuickQueryView('terminal');
     setQuickQueryCommands(commandList);
     setQuickQueryRunning(true);
+    quickQueryAbortRef.current?.abort();
+    const requestId = ++quickQueryRunIdRef.current;
+    const controller = new AbortController();
+    quickQueryAbortRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), QUICK_QUERY_TIMEOUT_MS);
     try {
       const resp = await fetch(`/api/devices/${device.id}/parsed-command`, {
         method: 'POST',
@@ -826,7 +843,9 @@ export const useAutomation = ({
           ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}),
         },
         body: JSON.stringify({ command, name: label, auth_role: 'normal' }),
+        signal: controller.signal,
       });
+      if (requestId !== quickQueryRunIdRef.current || controller.signal.aborted) return false;
       const data = await resp.json();
       if (!resp.ok) {
         showToast(data.detail || data.error || (language === 'zh' ? '执行失败' : 'Execution failed'), 'error');
@@ -840,10 +859,23 @@ export const useAutomation = ({
       setQuickQueryView(hasStructuredRecords ? 'table' : 'terminal');
       return true;
     } catch (error: any) {
+      if (requestId !== quickQueryRunIdRef.current) return false;
+      if (controller.signal.aborted) {
+        showToast(
+          language === 'zh' ? '查询超时，已停止等待设备响应' : 'Query timed out while waiting for the device',
+          'error',
+        );
+        setQuickQueryOutput(language === 'zh' ? '查询超时，设备未在规定时间内返回响应。' : 'Query timed out before the device responded.');
+        return false;
+      }
       showToast(error?.message || String(error), 'error');
       return false;
     } finally {
-      setQuickQueryRunning(false);
+      window.clearTimeout(timeoutId);
+      if (requestId === quickQueryRunIdRef.current) {
+        quickQueryAbortRef.current = null;
+        setQuickQueryRunning(false);
+      }
     }
   }, [selectedDevice, batchMode, batchDeviceIds, devices, showToast, language]);
 
@@ -1030,6 +1062,11 @@ export const useAutomation = ({
     setQuickQueryView('terminal');
     setQuickQueryCommands(fallbackCommands);
     setQuickQueryRunning(true);
+    quickQueryAbortRef.current?.abort();
+    const requestId = ++quickQueryRunIdRef.current;
+    const controller = new AbortController();
+    quickQueryAbortRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), QUICK_QUERY_TIMEOUT_MS);
 
     try {
       const categoryKey = operationalCategory || 'custom_command';
@@ -1053,11 +1090,12 @@ export const useAutomation = ({
                   auth_role: authRole,
                 };
 
-            const resp = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
-              body: JSON.stringify(body),
-            });
+              const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
+                body: JSON.stringify(body),
+                signal: controller.signal,
+              });
             if (!resp.ok) {
               const errData = await resp.json().catch(() => ({}));
               return { device, ok: false, error: errData.detail || errData.error || resp.statusText };
@@ -1069,6 +1107,19 @@ export const useAutomation = ({
           }
         })
       );
+
+      // The user may have closed the overlay or started another query while
+      // the previous requests were still settling. Do not let stale results
+      // reopen the overlay or overwrite the newer query state.
+      if (requestId !== quickQueryRunIdRef.current) return;
+      if (controller.signal.aborted) {
+        setQuickQueryOutput(language === 'zh' ? '查询超时，设备未在规定时间内返回响应。' : 'Query timed out before the device responded.');
+        showToast(
+          language === 'zh' ? '查询超时，已停止等待设备响应' : 'Query timed out while waiting for the device',
+          'error',
+        );
+        return;
+      }
 
       let combinedRecords: any[] = [];
       let combinedOutput = '';
@@ -1127,9 +1178,22 @@ export const useAutomation = ({
       setQuickQueryOutput(combinedOutput);
       setQuickQueryView(hasStructuredRecords ? 'table' : 'terminal');
     } catch (e: any) {
+      if (requestId !== quickQueryRunIdRef.current) return;
+      if (controller.signal.aborted) {
+        setQuickQueryOutput(language === 'zh' ? '查询超时，设备未在规定时间内返回响应。' : 'Query timed out before the device responded.');
+        showToast(
+          language === 'zh' ? '查询超时，已停止等待设备响应' : 'Query timed out while waiting for the device',
+          'error',
+        );
+        return;
+      }
       setQuickQueryOutput(`Error: ${e.message || e}`);
     } finally {
-      setQuickQueryRunning(false);
+      window.clearTimeout(timeoutId);
+      if (requestId === quickQueryRunIdRef.current) {
+        quickQueryAbortRef.current = null;
+        setQuickQueryRunning(false);
+      }
     }
   }, [selectedDevice, batchMode, batchDeviceIds, devices, currentUser, language, showToast, formatQuickQueryRawOutput]);
 

@@ -4,6 +4,6 @@
   "vendor": "H3C",
   "platform": "Comware9",
   "model_family": "CR16000",
-  "command": "display bgp peer ipv4",
+  "command": "display bgp peer ipv4 unicast",
   "source_note": "Official Comware V9 basic BGP command reference peer summary."
 }

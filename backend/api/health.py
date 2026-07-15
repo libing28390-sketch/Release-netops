@@ -640,6 +640,8 @@ async def health_check():
     # Collect memory metrics
     from core.metrics import metrics_registry
     metrics = metrics_registry.get_metrics()
+    from engine.pool import ConnectionPool
+    from services.network_access_limiter import get_network_access_limiter
     
     # Enrich metrics with DB pool, queue length, and scheduler details
     db_pool = _get_db_pool_status()
@@ -651,6 +653,8 @@ async def health_check():
         "worker_queue_length": db_metrics["worker_queue_length"],
         "jobs_by_status": db_metrics["jobs_by_status"],
         "reconciliation_findings_open": db_metrics["reconciliation_findings_open"],
+        "network_access": get_network_access_limiter().snapshot(),
+        "ssh_pool": ConnectionPool().snapshot(),
     })
 
     return {
@@ -680,12 +684,16 @@ async def health_metrics():
     metrics = metrics_registry.get_metrics()
     db_pool = _get_db_pool_status()
     db_metrics = _get_db_metrics()
+    from engine.pool import ConnectionPool
+    from services.network_access_limiter import get_network_access_limiter
     metrics.update({
         "db_connections_active": db_pool["active"],
         "db_connections_max": db_pool["max"],
         "worker_queue_length": db_metrics["worker_queue_length"],
         "jobs_by_status": db_metrics["jobs_by_status"],
         "reconciliation_findings_open": db_metrics["reconciliation_findings_open"],
+        "network_access": get_network_access_limiter().snapshot(),
+        "ssh_pool": ConnectionPool().snapshot(),
     })
     return metrics
 

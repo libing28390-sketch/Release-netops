@@ -34,6 +34,7 @@ SNMP 采集服务 — 多厂商 CPU / 内存 / 温度 / 风扇 / 电源 / 接口
 """
 
 import asyncio
+from services.network_access_limiter import get_network_access_limiter
 import logging
 import sys
 import time as _time
@@ -83,25 +84,6 @@ _install_snmp_error_filter()
 # ═══════════════════════════════════════════════════════════════
 # SNMP 并发控制 — 限制全局同时进行的 SNMP 操作数
 # ═══════════════════════════════════════════════════════════════
-_SNMP_CONCURRENCY = 30
-_snmp_semaphore: asyncio.Semaphore | None = None
-_snmp_semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
-
-
-def _get_snmp_semaphore() -> asyncio.Semaphore:
-    """Lazy-init semaphore bound to the current event loop."""
-    global _snmp_semaphore, _snmp_semaphore_loop
-    try:
-        current_loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.Semaphore(_SNMP_CONCURRENCY)
-        
-    if _snmp_semaphore is None or _snmp_semaphore_loop != current_loop:
-        _snmp_semaphore = asyncio.Semaphore(_SNMP_CONCURRENCY)
-        _snmp_semaphore_loop = current_loop
-    return _snmp_semaphore
-
-
 # ═══════════════════════════════════════════════════════════════
 # SNMP 采集结果短期缓存 — 避免同一设备短时间内重复采集
 # ═══════════════════════════════════════════════════════════════
@@ -301,8 +283,7 @@ def _val_to_str(val) -> str:
 
 async def _snmp_get(ip: str, community: str, oid: str, port: int = 161, timeout: float = 3) -> Optional[str]:
     """GET a single OID value via puresnmp (SNMPv2c)."""
-    sem = _get_snmp_semaphore()
-    async with sem:
+    async with get_network_access_limiter().async_snmp():
       try:
         from puresnmp import Client, V2C, PyWrapper
         client = PyWrapper(Client(ip, V2C(community), port=port))
@@ -321,7 +302,6 @@ async def _snmp_walk(ip: str, community: str, oid: str, port: int = 161, timeout
     """Walk an OID subtree via puresnmp, return list of (oid_suffix, value)."""
     results: list[tuple[str, str]] = []
     base_oid = oid.rstrip('.')
-    sem = _get_snmp_semaphore()
 
     async def _collect():
         from puresnmp import Client, V2C, PyWrapper
@@ -336,7 +316,7 @@ async def _snmp_walk(ip: str, community: str, oid: str, port: int = 161, timeout
             if len(results) >= max_rows:
                 return
 
-    async with sem:
+    async with get_network_access_limiter().async_snmp():
       try:
         await asyncio.wait_for(_collect(), timeout=timeout)
       except asyncio.TimeoutError:
@@ -350,7 +330,6 @@ async def _snmp_bulk_walk(ip: str, community: str, oid: str, port: int = 161, ti
     """Bulk Walk an OID subtree via puresnmp, using GETBULK for high performance."""
     results: list[tuple[str, str]] = []
     base_oid = oid.rstrip('.')
-    sem = _get_snmp_semaphore()
 
     async def _collect():
         from puresnmp import Client, V2C, PyWrapper
@@ -364,7 +343,7 @@ async def _snmp_bulk_walk(ip: str, community: str, oid: str, port: int = 161, ti
                 return
             results.append((suffix, v))
 
-    async with sem:
+    async with get_network_access_limiter().async_snmp():
       try:
         await asyncio.wait_for(_collect(), timeout=timeout)
       except asyncio.TimeoutError:

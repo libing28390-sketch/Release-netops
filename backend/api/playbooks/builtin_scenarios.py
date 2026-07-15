@@ -322,7 +322,7 @@ BUILTIN_SCENARIOS = [
             },
             "h3c_comware": {
                 "pre_check": [
-                    "display bgp peer ipv4",
+                    "display bgp peer ipv4 unicast",
                     "display ip routing-table statistics",
                 ],
                 "execute": [
@@ -2506,4 +2506,3 @@ BUILTIN_SCENARIOS = [
         },
     },
 ]
-

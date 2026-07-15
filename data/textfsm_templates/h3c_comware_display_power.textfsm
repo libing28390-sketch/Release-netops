@@ -8,7 +8,14 @@ Value POWER_W (\S+)
 Value AIRFLOW (\S+)
 
 Start
+  ^\s*Device\s+Info\s+on\s+Slot\s+${SLOT}:\s*$$ -> DeviceTable
   ^\s*Slot\s+${SLOT}: -> Power
+
+DeviceTable
+  ^\s*Device\s+ID\.\s+Status\s*$$
+  ^\s*${POWER_ID}\s+${STATUS}\s*$$ -> Record DeviceTable
+  ^\s*$$
+  ^.*
 
 Power
   ^\s*Input\s+Power:

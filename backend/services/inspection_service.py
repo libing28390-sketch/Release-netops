@@ -30,6 +30,8 @@ from services.device_health_service import (
     _build_open_alert_stats,
 )
 from services.snmp_service import collect_device_metrics, collect_interface_data
+from services.network_access_limiter import limited_connect_handler
+from core.config import settings
 from core.textfsm import parse_with_textfsm
 from core.analysis import analyze_device_inspection, summarize_run_analysis, correlate_risk_patterns
 from core.exception_classifier import make_finding
@@ -38,7 +40,7 @@ from core.exception_classifier import make_finding
 logger = logging.getLogger(__name__)
 
 _BEIJING_TZ = timezone(timedelta(hours=8))
-_MAX_CONCURRENT = 20          # 同时巡检的设备数（提升至 20）
+_MAX_CONCURRENT = max(1, int(getattr(settings, 'NETWORK_INSPECTION_CONCURRENCY', 10)))
 _SSH_CONNECT_TIMEOUT = 15     # SSH 建立超时
 _SSH_COMMAND_TIMEOUT = 30     # 单条命令超时
 
@@ -239,7 +241,7 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str], use_admin_cred
 
     results: dict[str, str] = {}
     try:
-        with ConnectHandler(**params) as conn:
+        with limited_connect_handler(device, ConnectHandler, **params) as conn:
             # ── Cisco 系列：智能 enable 提权 ─────────────────────────────
             # 三种场景自适应：
             # 1. 账号已经是 privilege 15 → 提示符 '#' → 跳过 enable()

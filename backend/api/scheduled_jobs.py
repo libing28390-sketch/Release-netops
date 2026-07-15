@@ -151,6 +151,42 @@ _SYSTEM_JOB_CATALOG = {
         'action_type': 'endpoint_poll',
         'deep_link': '/ip-locator',
     },
+    'route_cache_sweep': {
+        'name_zh': 'Route Cache Sweep',
+        'name_en': 'Route Cache Sweep',
+        'description_zh': '周期性从三层设备采集路由表并更新路由缓存。',
+        'description_en': 'Periodically collect routing tables from eligible L3 devices.',
+        'category': 'collection',
+        'action_type': 'route_sweep',
+        'deep_link': '/ip-locator',
+    },
+    'routing_neighbors_sync': {
+        'name_zh': 'Routing Neighbor Sync',
+        'name_en': 'Routing Neighbor Sync',
+        'description_zh': '周期性采集 BGP/OSPF/BFD 邻居状态。',
+        'description_en': 'Periodically collect BGP/OSPF/BFD neighbor state.',
+        'category': 'collection',
+        'action_type': 'routing_neighbors',
+        'deep_link': '/monitoring',
+    },
+    'bgp_routes_sync': {
+        'name_zh': 'BGP Route Sync',
+        'name_en': 'BGP Route Sync',
+        'description_zh': '周期性采集默认 VRF 和 CMDB VRF 的 BGP 路由。',
+        'description_en': 'Periodically collect default and CMDB VRF BGP routes.',
+        'category': 'collection',
+        'action_type': 'bgp_routes',
+        'deep_link': '/monitoring',
+    },
+    'device_telemetry_sampler': {
+        'name_zh': 'Linux Telemetry Sampler',
+        'name_en': 'Linux Telemetry Sampler',
+        'description_zh': '周期性通过 SSH 采集在线 Linux/服务器遥测数据。',
+        'description_en': 'Periodically collect telemetry from online Linux/server assets over SSH.',
+        'category': 'collection',
+        'action_type': 'device_telemetry',
+        'deep_link': '/monitoring',
+    },
 }
 
 
@@ -221,6 +257,7 @@ def list_system_scheduled_jobs(_user=require_role("Viewer")):
         })
     # Stable order: daily_backup / inspection first, then the rest alphabetically
     _priority = ['daily_backup', 'inspection_scheduler', 'topology_interface_sync', 'poll_endpoints', 'arp_cache_sweep',
+                 'route_cache_sweep', 'routing_neighbors_sync', 'bgp_routes_sync', 'device_telemetry_sampler',
                  'device_health_sampler', 'host_resource_sampler',
                  'password_rotation_sweep']
     def _sort_key(item: dict):

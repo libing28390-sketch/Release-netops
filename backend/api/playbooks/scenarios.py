@@ -24,6 +24,9 @@ _PLAYBOOK_PLATFORM_ALIASES: dict[str, str] = {
     'nxos': 'cisco_nxos',
     'nexus': 'cisco_nxos',
     'huawei': 'huawei_vrp',
+    # Playbook scenarios use the Huawei VRP family key.  Device discovery and
+    # driver selection still retain the more precise huawei_vrpv8 platform.
+    'huawei_vrpv8': 'huawei_vrp',
     'vrp': 'huawei_vrp',
     'vrp5': 'huawei_vrp',
     'vrpv5': 'huawei_vrp',

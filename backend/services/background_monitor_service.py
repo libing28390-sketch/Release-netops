@@ -17,6 +17,7 @@ import re as _re
 import time as _time
 from services.snmp_service import collect_device_metrics, collect_device_info, collect_interface_data
 from services.operational_data_service import collect_operational_data
+from services.network_access_limiter import get_network_access_limiter
 from api.topology import discover_lldp_neighbors
 from core.crypto import decrypt_credential
 
@@ -947,10 +948,11 @@ async def _process_device_raw(device, cycle_tick: int):
         dev_label = device['hostname'] or ip
         try:
             # ping() is blocking; run it off the event loop to keep API endpoints responsive.
-            reachable, probe_method = await _probe_device_reachability(
-                ip,
-                _device_management_port(device),
-            )
+            async with get_network_access_limiter().async_probe():
+                reachable, probe_method = await _probe_device_reachability(
+                    ip,
+                    _device_management_port(device),
+                )
             new_status = 'online' if reachable else 'offline'
 
             if device['status'] != new_status:
@@ -1458,10 +1460,11 @@ async def process_device_fast(device):
 
     dev_label = device['hostname'] or ip
     try:
-        reachable, probe_method = await _probe_device_reachability(
-            ip,
-            _device_management_port(device),
-        )
+        async with get_network_access_limiter().async_probe():
+            reachable, probe_method = await _probe_device_reachability(
+                ip,
+                _device_management_port(device),
+            )
         new_status = 'online' if reachable else 'offline'
 
         if device['status'] != new_status:
@@ -1494,11 +1497,15 @@ async def process_device_fast(device):
             )
         mark_offline_and_clear_cache()
 
-async def process_device_slow(device):
-    # SNMP Metrics ONLY (B-Loop)
+async def process_device_slow(device, cycle_tick: int = 0):
+    """Run a low-frequency pass using the device role poll profile.
+
+    The initial cycle (0) collects metadata and protocol state immediately.
+    Subsequent cycles keep SNMP/interface telemetry frequent while applying
+    the configured role-based intervals for metadata and CLI protocols.
+    """
     device = _as_dict(device)
     if str(device.get('status')).lower() != 'online':
         return
-        
-    # Execute the heavy collection (using cycle 0 to force collection for info/protocol/intf)
-    await process_device(device, 0)
+
+    await process_device(device, cycle_tick)
