@@ -13,9 +13,6 @@
 node_modules
 dist-ssr
 
-# Old license folder (Security)
-backend/license
-
 # Local environment files
 .venv
 .vscode
@@ -38,4 +35,3 @@ test_dragon.mp3
 
 # Keys
 *.pem
-!backend/license_auth/keys/public.pem

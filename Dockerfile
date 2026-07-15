@@ -7,8 +7,7 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: Python Runtime ──────────────────────────────────────────
-# Pin to 3.10-slim to match the compiled .so files (cpython-310).
-# If you change this version, re-run the release workflow to recompile .so files.
+# Pin the runtime to Python 3.10 for the supported backend environment.
 FROM python:3.10-slim
 LABEL maintainer="NetOps Team"
 LABEL python.version="3.10"
@@ -42,15 +41,14 @@ RUN pip install --no-cache-dir --upgrade pip -i https://mirrors.aliyun.com/pypi/
 # Copy backend source
 COPY backend/ /app/backend/
 
-# Verify the license_auth modules can be imported successfully
-RUN python -c "import sys; sys.path.insert(0, '/app/backend'); from license_auth.verifier import get_license_verifier, bootstrap_license_protection; print('[OK] license_auth modules loaded successfully')" || \
-    (echo '[FAIL] license_auth modules import failed.' && exit 1)
-
 # Copy environment template
 COPY .env.example /app/.env.example
 
-# Copy built frontend from Stage 1
-COPY --from=frontend-build /app/dist /app/dist
+# Keep an immutable copy in the image, then seed the shared frontend volume.
+# The runtime command refreshes /app/dist on every container start so upgrades
+# cannot keep serving stale assets from an existing named volume.
+COPY --from=frontend-build /app/dist /app/frontend-dist
+RUN mkdir -p /app/dist && cp -a /app/frontend-dist/. /app/dist/
 
 # Create runtime directories
 RUN mkdir -p /app/data /app/backup /app/data/logs
@@ -59,7 +57,6 @@ RUN mkdir -p /app/data /app/backup /app/data/logs
 ENV NODE_ENV=production
 ENV PYTHONPATH=/app/backend
 ENV ENVIRONMENT=production
-ENV LICENSE_PUBLIC_KEY_PATH=/app/backend/license_auth/keys/public.pem
 # CREDENTIAL_ENCRYPTION_KEY must be set via .env or docker-compose environment
 # Do NOT hardcode secrets here
 
@@ -77,4 +74,4 @@ USER netops
 # Persistent data volumes
 VOLUME ["/app/data", "/app/backup"]
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8003", "--workers", "2"]
+CMD ["sh", "-c", "rm -rf /app/dist/* && cp -a /app/frontend-dist/. /app/dist/ && exec uvicorn backend.main:app --host 0.0.0.0 --port 8003 --workers 2"]

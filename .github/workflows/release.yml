@@ -5,98 +5,114 @@ on:
     branches:
       - main
     tags:
-      - 'v*'  # 当推送形如 v1.0.0 的标签时触发
-  workflow_dispatch: # 允许在网页上点击按钮手动触发
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   release-ubuntu:
     name: Release Ubuntu / Linux (main branch)
     runs-on: ubuntu-latest
     steps:
-      - name: 1. 拉取开发库代码
+      - name: Checkout source repository
         uses: actions/checkout@v4
 
-      - name: 2. 彻底清理敏感文件、开发源码与 Windows 专属文件
+      - name: Validate core Docker inputs and build frontend
+        shell: bash
         run: |
-          # ── 开发者专用工具 ──
+          set -euo pipefail
+          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py nginx/nginx.conf src)
+          for path in "${required[@]}"; do
+            test -e "$path" || { echo "[FAIL] Missing release input: $path"; exit 1; }
+          done
+          npm ci --ignore-scripts
+          npm run build
+          python -m compileall -q backend
+
+      - name: Remove private and development-only files
+        shell: bash
+        run: |
+          set -euo pipefail
           rm -rf tools/
 
-          # ── 编译脚本及 Windows 客户端工具（客户不需要）──
-          rm -rf scripts/
+          # Keep only the operational scripts referenced by public deployment docs.
+          if [ -d scripts ]; then
+            find scripts -mindepth 1 -maxdepth 1 \
+              ! -name 'preflight-check.sh' \
+              ! -name 'install-daily-backup.sh' \
+              ! -name 'netops.logrotate' \
+              ! -name 'generate_ssl_cert.py' \
+              -exec rm -rf {} +
+          fi
 
-          # ── 开发者内部文档 / 笔记 ──
-          rm -f bug_fix_memory.md
-          rm -f PAM_Audit_Restoration_Report.md
-          rm -rf docs/
-          rm -rf brain/
-          rm -rf skills/
-          rm -rf .github/skills/
-          rm -rf .agents/
+          rm -f bug_fix_memory.md PAM_Audit_Restoration_Report.md
+          if [ -d docs ]; then
+            find docs -mindepth 1 -maxdepth 1 ! -name deploy -exec rm -rf {} +
+          fi
+          rm -rf brain/ skills/ .github/skills/ .agents/
 
-          # ── 测试 / 调试脚本与自动化单元测试用例（商用脱敏，不暴露给客户） ──
-          rm -rf scratch/
-          rm -rf backend/scratch/
-          find backend/tests -mindepth 1 -maxdepth 1 -not -name "fixtures" -exec rm -rf {} +
-          rm -f pytest.ini
-          rm -f backend/_check_audit.py
-          rm -f backend/check_executions.py
-          rm -f backend/check_results.py
-          rm -f backend/debug_device.py
-          rm -f backend/find_target.py
+          rm -rf scratch/ backend/scratch/
+          if [ -d backend/tests ]; then
+            find backend/tests -mindepth 1 -maxdepth 1 ! -name fixtures -exec rm -rf {} +
+          fi
+          rm -f pytest.ini backend/_check_audit.py backend/check_executions.py
+          rm -f backend/check_results.py backend/debug_device.py backend/find_target.py
           rm -f _purge_bogus_backups.py
-          # 任何在仓库根目录残留 of _xxx.py 临时排障脚本一律剔除
           find . -maxdepth 2 -type f -name '_*.py' -not -path './.git/*' -delete || true
 
-          # ── 临时部署补丁 / 排障脚本（开发期使用，正式发布不需要） ──
-          rm -f patch-vmware.sh
-          rm -f patch-*.sh
-          rm -f hotfix-*.sh
+          rm -f patch-vmware.sh patch-*.sh hotfix-*.sh
+          rm -f task.md task_progress.md task-*.md task_*.md
+          rm -f implementation_plan.md walkthrough.md refactor.cjs refactor2.cjs
 
-          # ── 历史任务进度 / 开发期 todo（绝对不能发给客户） ──
-          rm -f task.md task_progress.md
-          rm -f task-*.md task_*.md
-          rm -f implementation_plan.md walkthrough.md
-          rm -f refactor.cjs refactor2.cjs
+          # Runtime data and backups must never enter the public repository.
+          rm -f netops.db backend/netops.db backend/netsops.db data/netops.db.bak
+          rm -rf data/backups/ data/pam_recordings/ data/logs/
+          rm -rf data/change_order_attachments/ backup/
 
-          # ── 本地数据库文件（客户应使用自己的 PostgreSQL）──
-          rm -f netops.db backend/netops.db backend/netsops.db
-
-          # ── AI 助手 / IDE 残留文件 ──
           rm -rf .codex/ .cursor/ .playwright-mcp/ .vscode/
           rm -f .clinerules .cursorrules .geminirules mcp-config.json
           rm -f -- "--version"
 
-          # ── Windows 专属文件清理（只发给 Ubuntu/Linux 用户） ──
           rm -rf desktop/
           rm -f NetOps.exe NetOps.spec start.bat netops_logo.png
-
-          # ── GitHub Actions 配置（发布仓库不需要 CI）──
           rm -rf .github/
-          
-      - name: 3. 将处理后的安全代码推送到对外发布仓库 main 分支
+
+          # TLS keys and certificates are deployment inputs, never release content.
+          mkdir -p nginx/ssl
+          rm -rf nginx/ssl/*
+          touch nginx/ssl/.gitkeep
+
+      - name: Commit sanitized Ubuntu release tree
+        shell: bash
         run: |
-          # 配置自动化机器人的 Git 身份
+          set -euo pipefail
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          
-          # 抹除之前在开发库里的所有 Commit 历史记录（防止客户从历史里翻到源码）
           rm -rf .git
           git init
           git add .
-          git commit -m "🚀 Release build: Production ready stable Ubuntu release"
-          
-          # 推送到客户专门用的发布库 Release-netops 的 main 分支
+
+          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py nginx/nginx.conf src)
+          for path in "${required[@]}"; do
+            test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required release path missing: $path"; exit 1; }
+          done
+          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.key; do
+            test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
+          done
+
+          git commit -m "Release build: Production ready stable Ubuntu release"
           git branch -M main
           git remote add origin https://${{ secrets.RELEASE_REPO_TOKEN }}@github.com/libing28390-sketch/Release-netops.git
           git push -u origin main --force
-          
-          # 针对生成的提交创建 Tag 并强制推送 (仅在推送版本标签时执行)
+
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            git tag ${{ github.ref_name }}
-            git push origin ${{ github.ref_name }} --force
+            git tag "${{ github.ref_name }}"
+            git push origin "${{ github.ref_name }}" --force
           fi
 
-      - name: 4. 从开发库获取自动生成的 Release 日志
+      - name: Generate release notes
         id: get_notes
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/github-script@v7
@@ -111,11 +127,11 @@ jobs:
               });
               core.setOutput('body', response.data.body);
             } catch (err) {
-              core.warning('无法生成 Release 日志: ' + err.message);
-              core.setOutput('body', '🚀 Release build: Production ready stable Ubuntu release');
+              core.warning('Unable to generate release notes: ' + err.message);
+              core.setOutput('body', 'Release build: Production ready stable Ubuntu release');
             }
 
-      - name: 5. 在对外发布仓库创建 Release 并挂载日志
+      - name: Create public GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
@@ -132,107 +148,93 @@ jobs:
     needs: release-ubuntu
     runs-on: windows-latest
     steps:
-      - name: 1. 拉取开发库代码
+      - name: Checkout source repository
         uses: actions/checkout@v4
 
-      - name: 1.5. 安装 Python 3.11 环境
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: 1.6. 安装 PyInstaller 及打包依赖
+      - name: Install Windows packaging dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller PySide6 pillow pystray certifi
-        shell: bash
 
-      - name: 1.7. 执行 PyInstaller 编译 NetOps.exe
+      - name: Build NetOps.exe
+        shell: bash
         run: |
           pyinstaller NetOps.spec
-          # 将生成的 NetOps.exe 复制到根目录覆盖旧的
           cp dist/NetOps.exe ./NetOps.exe
-          # 清除打包临时目录以保证后续提交的干净度
           rm -rf build/ dist/
+
+      - name: Remove private and Linux-only files
         shell: bash
-
-      - name: 2. 彻底清理敏感文件、开发源码与 Linux/Docker 专属文件
         run: |
-          # ── 开发者专用工具 ──
-          rm -rf tools/
-
-          # ── 编译脚本及 Windows 客户端工具（客户不需要）──
-          rm -rf scripts/
-
-          # ── 开发者内部文档 / 笔记 ──
-          rm -f bug_fix_memory.md
-          rm -f PAM_Audit_Restoration_Report.md
-          rm -rf docs/
-          rm -rf brain/
-          rm -rf skills/
-          rm -rf .github/skills/
-          rm -rf .agents/
-
-          # ── 测试 / 调试脚本与自动化单元测试用例（商用脱敏，不暴露给客户） ──
-          rm -rf scratch/
-          rm -rf backend/scratch/
-          find backend/tests -mindepth 1 -maxdepth 1 -not -name "fixtures" -exec rm -rf {} +
-          rm -f pytest.ini
-          rm -f backend/_check_audit.py
-          rm -f backend/check_executions.py
-          rm -f backend/check_results.py
-          rm -f backend/debug_device.py
-          rm -f backend/find_target.py
+          set -euo pipefail
+          rm -rf tools/ scripts/
+          rm -f bug_fix_memory.md PAM_Audit_Restoration_Report.md
+          if [ -d docs ]; then
+            find docs -mindepth 1 -maxdepth 1 ! -name deploy -exec rm -rf {} +
+          fi
+          rm -rf brain/ skills/ .github/skills/ .agents/
+          rm -rf scratch/ backend/scratch/
+          if [ -d backend/tests ]; then
+            find backend/tests -mindepth 1 -maxdepth 1 ! -name fixtures -exec rm -rf {} +
+          fi
+          rm -f pytest.ini backend/_check_audit.py backend/check_executions.py
+          rm -f backend/check_results.py backend/debug_device.py backend/find_target.py
           rm -f _purge_bogus_backups.py
-          # 任何在仓库根目录残留 of _xxx.py 临时排障脚本一律剔除
           find . -maxdepth 2 -type f -name '_*.py' -not -path './.git/*' -delete || true
-
-          # ── 临时部署补丁 / 排障脚本（开发期使用，正式发布不需要） ──
-          rm -f patch-vmware.sh
-          rm -f patch-*.sh
-          rm -f hotfix-*.sh
-
-          # ── 历史任务进度 / 开发期 todo（绝对不能发给客户） ──
-          rm -f task.md task_progress.md
-          rm -f task-*.md task_*.md
-          rm -f implementation_plan.md walkthrough.md
-          rm -f refactor.cjs refactor2.cjs
-
-          # ── 本地数据库文件（客户应使用自己的 PostgreSQL）──
-          rm -f netops.db backend/netops.db backend/netsops.db
-
-          # ── AI 助手 / IDE 残留文件 ──
+          rm -f patch-vmware.sh patch-*.sh hotfix-*.sh
+          rm -f task.md task_progress.md task-*.md task_*.md
+          rm -f implementation_plan.md walkthrough.md refactor.cjs refactor2.cjs
+          rm -f netops.db backend/netops.db backend/netsops.db data/netops.db.bak
+          rm -rf data/backups/ data/pam_recordings/ data/logs/
+          rm -rf data/change_order_attachments/ backup/
           rm -rf .codex/ .cursor/ .playwright-mcp/ .vscode/
           rm -f .clinerules .cursorrules .geminirules mcp-config.json
           rm -f -- "--version"
-
-          # ── Linux/Docker 专属文件清理（只发给 Windows 用户） ──
           rm -f deploy-ubuntu.sh deploy-ubuntu.gitee.sh Dockerfile docker-compose.yml .dockerignore
-          rm -rf nginx/
+          rm -rf nginx/ .github/
 
-          # ── GitHub Actions 配置（发布仓库不需要 CI）──
-          rm -rf .github/
+      - name: Commit sanitized Windows release tree
         shell: bash
-          
-      - name: 3. 将处理后的安全代码推送到对外发布仓库 windows 分支
         run: |
-          # 配置自动化机器人的 Git 身份
+          set -euo pipefail
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          
-          # 抹除之前在开发库里的所有 Commit 历史记录（防止客户从历史里翻到源码）
           rm -rf .git
           git init
           git add .
-          git commit -m "🚀 Release build: Production ready stable Windows release"
-          
-          # 推送到客户专门用的发布库 Release-netops 的 windows 分支
+
+          required=(.env.example package.json package-lock.json backend/requirements.txt backend/main.py desktop/launcher.py NetOps.exe start.bat src)
+          for path in "${required[@]}"; do
+            test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required Windows release path missing: $path"; exit 1; }
+          done
+          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.key; do
+            test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
+          done
+
+          git commit -m "Release build: Production ready stable Windows release"
           git branch -M windows
           git remote add origin https://${{ secrets.RELEASE_REPO_TOKEN }}@github.com/libing28390-sketch/Release-netops.git
           git push -u origin windows --force
-          
-          # 针对 Windows 分支的提交创建独特的 Tag 并强制推送 (仅在推送版本标签时执行)
+
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             git tag "${{ github.ref_name }}-windows"
             git push origin "${{ github.ref_name }}-windows" --force
           fi
-        shell: bash
+
+      - name: Publish Windows executable release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.RELEASE_REPO_TOKEN }}
+          repository: libing28390-sketch/Release-netops
+          tag_name: ${{ github.ref_name }}-windows
+          name: Windows Release ${{ github.ref_name }}
+          files: NetOps.exe
+          draft: false
+          prerelease: false

@@ -376,20 +376,6 @@ info "安装 Python 依赖..."
 "$VENV_DIR/bin/pip" install -r backend/requirements.txt -q
 ok "Python 依赖安装完成"
 
-# 验证 license_auth 模块可以正常加载
-info "验证 license_auth 模块..."
-if "$VENV_DIR/bin/python" -c "
-import sys
-sys.path.insert(0, 'backend')
-from license_auth.verifier import LicenseVerifier
-from license_auth.crypto import verify_signature
-from license_auth.middleware import LicenseMiddleware
-" 2>/dev/null; then
-    ok "license_auth 模块验证通过"
-else
-    fail "license_auth 模块加载失败，请检查依赖环境与 Python 版本。"
-fi
-
 # ============================================================
 # 5. Node.js 依赖 & 前端构建
 # ============================================================

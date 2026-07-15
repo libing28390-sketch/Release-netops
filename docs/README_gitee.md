@@ -323,7 +323,6 @@ netops-automation/
 │   ├── core/                 # Config, logging, RBAC
 │   ├── drivers/              # Device drivers (Netmiko / Scrapli)
 │   ├── engine/               # Automation execution engine
-│   ├── license_auth/         # License validation (compiled .so)
 │   ├── models/               # Database models
 │   ├── schemas/              # Pydantic schemas
 │   ├── services/             # Business services (SNMP, alerts, etc.)
@@ -549,7 +548,6 @@ netops-automation/
 │   ├── core/                 # 配置、日志、RBAC
 │   ├── drivers/              # 设备驱动（Netmiko / Scrapli）
 │   ├── engine/               # 自动化执行引擎
-│   ├── license_auth/         # License 验证（编译后 .so）
 │   ├── models/               # 数据模型
 │   ├── schemas/              # Pydantic 模型
 │   ├── services/             # 业务服务（SNMP、告警等）

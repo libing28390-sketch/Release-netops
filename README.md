@@ -338,6 +338,32 @@ docker compose up -d --build
 ```
 Access the application at `http://localhost`.
 
+##### Updating an existing Docker deployment
+
+The public release repository is rebuilt with a sanitized Git history, so a normal `git pull` may fail after a release. Use the following commands from the existing deployment directory. The reset discards changes to tracked source files; `.env`, Docker volumes, and files under `nginx/ssl/` are preserved.
+
+```bash
+cd /path/to/netops-automation
+
+# Optional safety copy of the local environment configuration
+cp .env .env.backup
+
+# Replace the tracked source tree with the latest public release
+git fetch --prune origin
+git reset --hard origin/main
+
+# Refresh base images, rebuild the application, and recreate changed containers
+docker compose pull db nginx
+docker compose build --pull netops
+docker compose up -d --remove-orphans
+
+# Verify the upgraded stack
+docker compose ps
+docker compose logs --tail=100 netops nginx
+```
+
+Do not run `docker compose down -v` during an upgrade: `-v` deletes the PostgreSQL, application-data, and backup volumes.
+
 **Common Docker commands:**
 
 ```bash
@@ -410,7 +436,6 @@ netops-automation/
 │   ├── core/                 # Config, logging, RBAC
 │   ├── drivers/              # Device drivers (Netmiko / Scrapli)
 │   ├── engine/               # Automation execution engine
-│   ├── license_auth/         # License validation (compiled .so)
 │   ├── models/               # Database models
 │   ├── schemas/              # Pydantic schemas
 │   ├── services/             # Business services (SNMP, alerts, etc.)
@@ -653,6 +678,32 @@ docker compose up -d --build
 ```
 启动后，可通过浏览器访问 `http://localhost`。
 
+##### 更新已有 Docker 部署
+
+公开发布仓库每次发布都会使用经过脱敏的新 Git 历史，因此普通的 `git pull` 在发布后可能失败。请在现有部署目录中执行以下命令。`git reset --hard` 会覆盖已跟踪源码的本地修改，但不会删除 `.env`、Docker 数据卷以及 `nginx/ssl/` 下的证书文件。
+
+```bash
+cd /path/to/netops-automation
+
+# 可选：备份本地环境配置
+cp .env .env.backup
+
+# 将已跟踪源码同步为公有仓库最新版本
+git fetch --prune origin
+git reset --hard origin/main
+
+# 更新基础镜像、重新构建应用并重建有变化的容器
+docker compose pull db nginx
+docker compose build --pull netops
+docker compose up -d --remove-orphans
+
+# 检查升级后的容器和日志
+docker compose ps
+docker compose logs --tail=100 netops nginx
+```
+
+升级时不要执行 `docker compose down -v`：`-v` 会删除 PostgreSQL、应用数据和备份数据卷。
+
 **常用 Docker 命令：**
 
 ```bash
@@ -725,7 +776,6 @@ netops-automation/
 │   ├── core/                 # 配置、日志、RBAC
 │   ├── drivers/              # 设备驱动（Netmiko / Scrapli）
 │   ├── engine/               # 自动化执行引擎
-│   ├── license_auth/         # License 验证（编译后 .so）
 │   ├── models/               # 数据模型
 │   ├── schemas/              # Pydantic 模型
 │   ├── services/             # 业务服务（SNMP、告警等）
@@ -769,8 +819,14 @@ pip install -r backend/requirements.txt
 sudo systemctl restart netops
 
 # Docker 部署
-git pull
-docker compose up -d --build
+cd /path/to/netops-automation
+cp .env .env.backup
+git fetch --prune origin
+git reset --hard origin/main
+docker compose pull db nginx
+docker compose build --pull netops
+docker compose up -d --remove-orphans
+docker compose ps
 
 # Windows 本地部署 (GUI)
 # 1. 右键系统托盘图标，点击“退出 (Exit)”以完全关闭运行中的服务。
