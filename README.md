@@ -225,7 +225,7 @@ The platform is organised into **11 modules** that mirror the navigation layout:
 Before exposing the service to real users, walk through this list. The bundled `scripts/preflight-check.sh` script automates most of these checks and fails the deployment pipeline if anything is wrong.
 
 ```bash
-cd /opt/netops-automation
+cd /opt/nexora-automation
 bash scripts/preflight-check.sh
 ```
 
@@ -254,8 +254,8 @@ You can deploy and run NetOps on Windows using the graphical manager:
 
 1. Clone the **Windows-specific release branch** (`windows`) of the repository:
    ```powershell
-   git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation
-   cd netops-automation
+   git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+   cd nexora-automation
    ```
 2. Double-click `start.bat` in the root folder.
 3. The graphical setup wizard (`NetOps.exe`) will launch. It automatically detects, downloads, and silently installs all required runtimes (Python, Node.js, PostgreSQL/SQLite, and Python packages) and boots up the platform.
@@ -322,8 +322,8 @@ Requires Docker and Docker Compose. Includes PostgreSQL, backend, and Nginx in o
 
 ##### Step 1: Clone repository and prepare environment file
 ```bash
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+cd nexora-automation
 
 # The script creates .env, generates missing secrets, builds the images,
 # and starts PostgreSQL, NetOps, and Nginx.
@@ -337,12 +337,14 @@ Before exposing the service publicly, review `.env` and configure:
 
 Access the application at `https://localhost`. The browser will warn about trust when Docker generated the fallback self-signed certificate.
 
+The Docker project is named `nexora`. It creates `nexora-netops`, `nexora-nginx`, and `nexora-db` containers, `nexora-netops` / `nexora-nginx` build images, and `nexora-data`, `nexora-backup`, `nexora-pgdata`, and `nexora-dist` volumes. The Compose service key `netops` and PostgreSQL database name `netops` remain unchanged for application compatibility.
+
 ##### Updating an existing Docker deployment
 
 The public release repository is rebuilt with a sanitized Git history, so a normal `git pull` may fail after a release. The helper below explicitly switches `origin` to `https://github.com/libing28390-sketch/Release-netops.git` before synchronizing. It discards changes to tracked source files; `.env`, Docker volumes, and files under `nginx/ssl/` are preserved. A timestamped `.env` backup is created automatically.
 
 ```bash
-cd /path/to/netops-automation
+cd /path/to/nexora-automation
 bash scripts/deploy-docker.sh update
 ```
 
@@ -373,11 +375,11 @@ docker compose restart netops    # Restart backend
 
 > [!NOTE]
 > For Windows native deployment, it is highly recommended to clone the Windows-specific branch to get Windows-specific tray control tools (e.g. `NetOps.exe`):
-> `git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation`
+> `git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation`
 
 ```bash
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+cd nexora-automation
 
 # Python environment
 python3 -m venv .venv
@@ -421,7 +423,7 @@ Copy `.env.example` to `.env` and configure:
 ### Project Structure
 
 ```text
-netops-automation/
+nexora-automation/
 ├── backend/
 │   ├── api/                  # REST API routes
 │   ├── core/                 # Config, logging, RBAC
@@ -554,7 +556,7 @@ netops-automation/
 正式商用前请按以下清单逐项确认。仓库自带 `scripts/preflight-check.sh` 脚本可自动检测大部分项，并在发现问题时返回非 0 退出码（适合接入 CI / 发布流水线）：
 
 ```bash
-cd /opt/netops-automation
+cd /opt/nexora-automation
 bash scripts/preflight-check.sh
 ```
 
@@ -585,8 +587,8 @@ bash scripts/preflight-check.sh
 
 1. 克隆发布库的 **Windows 专属发布分支** (`windows`)：
    ```powershell
-   git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation
-   cd netops-automation
+   git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+   cd nexora-automation
    ```
 2. 双击运行根目录下的 `start.bat`。
 3. 系统会自动调起图形部署向导（`NetOps.exe`），自动检测并静默下载、安装全部所需环境（Python、Node.js、PostgreSQL/SQLite 数据库及各端依赖包），并自动完成前端编译与平台启动。
@@ -651,8 +653,8 @@ chmod +x deploy-ubuntu.sh
 
 ##### 第一步：克隆项目并准备环境文件
 ```bash
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+cd nexora-automation
 
 # 拷贝环境配置模版
 cp .env.example .env
@@ -675,7 +677,7 @@ bash scripts/deploy-docker.sh install
 公开发布仓库每次发布都会使用经过脱敏的新 Git 历史，因此普通的 `git pull` 在发布后可能失败。请在现有部署目录中执行以下命令。`git reset --hard` 会覆盖已跟踪源码的本地修改，但不会删除 `.env`、Docker 数据卷以及 `nginx/ssl/` 下的证书文件。
 
 ```bash
-cd /path/to/netops-automation
+cd /path/to/nexora-automation
 
 # 可选：备份本地环境配置
 cp .env .env.backup
@@ -708,11 +710,11 @@ docker compose restart netops    # 重启后端
 
 > [!NOTE]
 > 对于 Windows 本地部署，强烈建议克隆 Windows 专属分支以获取桌面托盘管理程序（如 `NetOps.exe`）：
-> `git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation`
+> `git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation`
 
 ```bash
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+cd nexora-automation
 
 # Python 环境
 python3 -m venv .venv
@@ -756,7 +758,7 @@ cp .env.example .env
 ### 目录结构
 
 ```text
-netops-automation/
+nexora-automation/
 ├── backend/
 │   ├── api/                  # REST API 路由
 │   ├── core/                 # 配置、日志、RBAC
@@ -798,14 +800,14 @@ netops-automation/
 
 ```bash
 # Ubuntu systemd 部署
-cd /opt/netops-automation
+cd /opt/nexora-automation
 git pull
 npm install && npm run build
 pip install -r backend/requirements.txt
 sudo systemctl restart netops
 
 # Docker 部署
-cd /path/to/netops-automation
+cd /path/to/nexora-automation
 bash scripts/deploy-docker.sh update
 
 # Windows 本地部署 (GUI)

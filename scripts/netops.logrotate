@@ -5,9 +5,9 @@
 #
 # Applies to the container/bare-metal mode where uvicorn writes to a
 # nohup log file. systemd installs go through journald and don't need
-# this. Update the path if PROJECT_DIR is not /opt/netops-automation.
+# this. Update the path if PROJECT_DIR is not /opt/nexora-automation.
 
-/opt/netops-automation/data/netops.log {
+/opt/nexora-automation/data/netops.log {
     daily
     rotate 14
     compress

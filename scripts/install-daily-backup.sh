@@ -3,14 +3,14 @@
 #  Install a daily PostgreSQL backup cron job for NetOps.
 #
 #  Run as root (or via sudo) on the production server. Reads the
-#  DATABASE_URL from /opt/netops-automation/.env automatically.
+#  DATABASE_URL from /opt/nexora-automation/.env automatically.
 #
 #  Backups land in /var/backups/netops/, kept for 30 days.
 # ============================================================
 
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-/opt/netops-automation}"
+PROJECT_DIR="${PROJECT_DIR:-/opt/nexora-automation}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/netops}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
 

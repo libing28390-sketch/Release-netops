@@ -17,8 +17,8 @@
 
 1. 克隆仓库并准备环境文件：
    ```bash
-   git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-   cd netops-automation
+   git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+   cd nexora-automation
    # 编辑 .env，至少替换 SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY、POSTGRES_PASSWORD、DATABASE_URL
    ```
 2. 构建并启动（前端会在容器内自动编译）：

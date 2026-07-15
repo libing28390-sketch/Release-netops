@@ -14,11 +14,11 @@
 
 1. 克隆 **`windows` 分支**（含桌面托盘工具和一键启动器）：
    ```powershell
-   git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation
+   git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
    ```
    国内网络用 Gitee：
    ```powershell
-   git clone -b windows https://gitee.com/leerbon/netops.git netops-automation
+   git clone -b windows https://gitee.com/leerbon/netops.git nexora-automation
    ```
 2. 进入目录，双击根目录下的 **`NetOps.exe`**。
 3. 首次运行弹出图形向导：选择数据库（默认 PostgreSQL，没装会自动静默安装 PG17）→ 自动创建虚拟环境、装前后端依赖、编译前端 → 完成后自动起托盘并打开浏览器。

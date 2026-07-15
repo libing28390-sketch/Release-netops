@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Backup root directory - relative to cwd (d:\netops-automation)
+# Backup root directory - relative to cwd (d:\nexora-automation)
 BACKUP_ROOT = os.path.join(os.getcwd(), 'backup')
 
 

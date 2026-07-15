@@ -226,8 +226,8 @@ Requires Docker and Docker Compose. Includes PostgreSQL, backend, and Nginx in o
 
 ##### Step 1: Clone repository and prepare environment file
 ```bash
-git clone https://gitee.com/leerbon/netops.git netops-automation
-cd netops-automation
+git clone https://gitee.com/leerbon/netops.git nexora-automation
+cd nexora-automation
 
 # Copy environment template
 cp .env.example .env
@@ -272,8 +272,8 @@ docker compose restart netops    # Restart backend
 **Prerequisites:** Node.js 18+, Python 3.10+, PostgreSQL 17
 
 ```bash
-git clone https://gitee.com/leerbon/netops.git netops-automation
-cd netops-automation
+git clone https://gitee.com/leerbon/netops.git nexora-automation
+cd nexora-automation
 
 # Python environment
 python3 -m venv .venv
@@ -317,7 +317,7 @@ Copy `.env.example` to `.env` and configure:
 ### Project Structure
 
 ```text
-netops-automation/
+nexora-automation/
 ├── backend/
 │   ├── api/                  # REST API routes
 │   ├── core/                 # Config, logging, RBAC
@@ -451,8 +451,8 @@ chmod +x deploy-ubuntu.sh
 
 ##### 第一步：克隆项目并准备环境文件
 ```bash
-git clone https://gitee.com/leerbon/netops.git netops-automation
-cd netops-automation
+git clone https://gitee.com/leerbon/netops.git nexora-automation
+cd nexora-automation
 
 # 拷贝环境配置模版
 cp .env.example .env
@@ -497,8 +497,8 @@ docker compose restart netops    # 重启后端
 **前置条件**：Node.js 18+、Python 3.10+、PostgreSQL 17
 
 ```bash
-git clone https://gitee.com/leerbon/netops.git netops-automation
-cd netops-automation
+git clone https://gitee.com/leerbon/netops.git nexora-automation
+cd nexora-automation
 
 # Python 环境
 python3 -m venv .venv
@@ -542,7 +542,7 @@ cp .env.example .env
 ### 目录结构
 
 ```text
-netops-automation/
+nexora-automation/
 ├── backend/
 │   ├── api/                  # REST API 路由
 │   ├── core/                 # 配置、日志、RBAC
@@ -588,7 +588,7 @@ netops-automation/
 
 ```bash
 # Ubuntu systemd 部署
-cd /opt/netops-automation
+cd /opt/nexora-automation
 git pull
 npm install && npm run build
 pip install -r backend/requirements.txt

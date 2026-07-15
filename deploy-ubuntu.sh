@@ -41,7 +41,7 @@ fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
 NODE_MAJOR=22
 PYTHON_MIN="3.10"
 GIT_REPO="${GIT_REPO:-https://github.com/libing28390-sketch/Release-netops.git}"
-PROJECT_NAME="netops-automation"
+PROJECT_NAME="nexora-automation"
 SERVICE_NAME="netops"
 BACKEND_PORT=8003
 NGINX_PORT=80

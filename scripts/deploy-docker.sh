@@ -169,6 +169,8 @@ reset_data() {
         [[ "$answer" == "y" || "$answer" == "Y" ]] || { log "Cancelled"; exit 0; }
     fi
     docker compose down -v --remove-orphans --rmi local
+    # Explicit image tags are not always covered by --rmi local.
+    docker image rm -f nexora-netops nexora-nginx >/dev/null 2>&1 || true
     rm -f nginx/ssl/netops.crt nginx/ssl/netops.key
     log "NetOps Docker data reset complete"
 }

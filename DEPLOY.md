@@ -193,8 +193,8 @@ newgrp docker   # or re-login
 
 ##### Step 1: Clone repository and prepare environment file
 ```bash
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+cd nexora-automation
 
 # Copy environment template
 cp .env.example .env
@@ -264,7 +264,7 @@ docker compose restart netops    # Restart backend only
 *Fix (Warning: this will delete all database data):*
 ```bash
 docker compose down
-docker volume rm netops-automation_netops-pgdata
+docker volume rm nexora-pgdata
 docker compose up -d
 ```
 
@@ -319,8 +319,8 @@ For custom environments or development.
 
 ```bash
 # 1. Clone
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+cd nexora-automation
 
 # 2. Python environment
 python3 -m venv .venv
@@ -354,10 +354,10 @@ sudo setcap cap_net_raw+ep $(readlink -f .venv/bin/python)
 2. Place at `data/license.json`, or upload via **Settings → License** in the UI
 3. The platform validates on startup — check logs for `[License] [OK]`
 
-For Docker: mount the file or copy it into the `netops-data` volume:
+For Docker: mount the file or copy it into the `nexora-data` volume:
 
 ```bash
-docker cp license.json netops-automation:/app/data/license.json
+docker cp license.json nexora-netops:/app/data/license.json
 docker compose restart netops
 ```
 
@@ -367,7 +367,7 @@ docker compose restart netops
 
 ```bash
 # Ubuntu systemd
-cd /opt/netops-automation
+cd /opt/nexora-automation
 git pull
 npm install && npm run build
 pip install -r backend/requirements.txt
@@ -509,8 +509,8 @@ newgrp docker   # 或重新登录
 
 ##### 第一步：克隆项目并准备环境文件
 ```bash
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+cd nexora-automation
 
 # 拷贝环境配置模版
 cp .env.example .env
@@ -580,8 +580,8 @@ docker compose restart netops    # 仅重启后端
 *解决办法（注意：这会清空所有数据库数据！）：*
 ```bash
 docker compose down
-# 如果你 clone 的文件夹叫 netops-automation，前缀就是它
-docker volume rm netops-automation_netops-pgdata
+# 如果你 clone 的文件夹叫 nexora-automation，前缀就是它
+docker volume rm nexora-pgdata
 docker compose up -d
 ```
 
@@ -636,8 +636,8 @@ Docker 部署配置中已默认启用 HTTPS。默认情况下，系统要求在 
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+cd nexora-automation
 
 # 2. Python 环境
 python3 -m venv .venv
@@ -674,7 +674,7 @@ sudo setcap cap_net_raw+ep $(readlink -f .venv/bin/python)
 Docker 部署时，将文件复制到容器数据卷：
 
 ```bash
-docker cp license.json netops-automation:/app/data/license.json
+docker cp license.json nexora-netops:/app/data/license.json
 docker compose restart netops
 ```
 
@@ -684,7 +684,7 @@ docker compose restart netops
 
 ```bash
 # Ubuntu systemd 部署
-cd /opt/netops-automation
+cd /opt/nexora-automation
 git pull
 npm install && npm run build
 pip install -r backend/requirements.txt
@@ -710,8 +710,8 @@ You can run the application directly on Windows as a zero-configuration local se
 #### 0. Get the Windows Release Code
 Before starting, clone the **Windows-specific release branch** (`windows`) to avoid downloading unnecessary Linux/Docker dependencies:
 ```powershell
-git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
+git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+cd nexora-automation
 ```
 
 #### 1. Setup Environment & Dependencies
@@ -753,8 +753,8 @@ cd netops-automation
 #### 0. 获取 Windows 专属发布代码
 开始之前，请克隆 **Windows 专属发布分支** (`windows`)，以避免下载冗余的 Linux/Docker 依赖：
 ```powershell
-git clone -b windows https://github.com/libing28390-sketch/Release-netops.git netops-automation
-cd netops-automation
+git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+cd nexora-automation
 ```
 
 #### 1. 初始化依赖环境
