@@ -106,8 +106,6 @@ class TelemetryOrchestrator:
         """A-Loop: 高频任务 (15s) - Ping 探活及接口状态 (ifOperStatus) 检测"""
         from services.background_monitor_service import process_device_fast, _db_quick
         import asyncio
-        import os
-        from database import DB_PATH
         import sys
 
         logger.info("[Orchestrator] Starting A-Loop (High-Frequency)")
@@ -116,16 +114,19 @@ class TelemetryOrchestrator:
         
         while True:
             try:
-                if os.path.exists(DB_PATH):
-                    devices = _db_quick(
-                        "SELECT * FROM devices WHERE ip_address IS NOT NULL AND ip_address != ''",
-                        fetchall=True,
-                    )
-                    async def bounded_fast(d):
-                        async with sem:
-                            await process_device_fast(d)
-                    
-                    await asyncio.gather(*(bounded_fast(d) for d in devices))
+                # Always query through the configured database adapter.  The
+                # Docker deployment uses PostgreSQL, so the SQLite DB_PATH file
+                # is intentionally absent and cannot be used as a readiness
+                # check for the monitoring loop.
+                devices = _db_quick(
+                    "SELECT * FROM devices WHERE ip_address IS NOT NULL AND ip_address != ''",
+                    fetchall=True,
+                )
+                async def bounded_fast(d):
+                    async with sem:
+                        await process_device_fast(d)
+
+                await asyncio.gather(*(bounded_fast(d) for d in devices))
             except Exception as e:
                 logger.error(f"[Orchestrator A-Loop] Error: {e}")
             await asyncio.sleep(15)
@@ -134,8 +135,6 @@ class TelemetryOrchestrator:
         """B-Loop: 中低频任务 (60s+) - CPU/内存/硬件环境/接口全量性能数据"""
         from services.background_monitor_service import process_device_slow, _run_telemetry_maintenance, sync_lldp_neighbor_alerts, _db_quick
         import asyncio
-        import os
-        from database import DB_PATH
         import sys
 
         logger.info("[Orchestrator] Starting B-Loop (Low-Frequency)")
@@ -145,20 +144,22 @@ class TelemetryOrchestrator:
 
         while True:
             try:
-                if os.path.exists(DB_PATH):
-                    devices = _db_quick("SELECT * FROM devices WHERE status = 'online'", fetchall=True)
-                    async def bounded_slow(d):
-                        async with sem:
-                            await process_device_slow(d)
-                            
-                    await asyncio.gather(*(bounded_slow(d) for d in devices))
-                    
-                    maintenance_counter += 1
-                    if maintenance_counter >= 12: # Run ~every 12 mins
-                        maintenance_counter = 0
-                        _run_telemetry_maintenance()
-                        
-                    sync_lldp_neighbor_alerts()
+                # As in the A-Loop, the database adapter is authoritative for
+                # both SQLite and PostgreSQL. Do not gate PostgreSQL polling on
+                # the presence of the local SQLite file.
+                devices = _db_quick("SELECT * FROM devices WHERE status = 'online'", fetchall=True)
+                async def bounded_slow(d):
+                    async with sem:
+                        await process_device_slow(d)
+
+                await asyncio.gather(*(bounded_slow(d) for d in devices))
+
+                maintenance_counter += 1
+                if maintenance_counter >= 12: # Run ~every 12 mins
+                    maintenance_counter = 0
+                    _run_telemetry_maintenance()
+
+                sync_lldp_neighbor_alerts()
             except Exception as e:
                 logger.error(f"[Orchestrator B-Loop] Error: {e}")
             await asyncio.sleep(60)

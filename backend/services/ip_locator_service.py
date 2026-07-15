@@ -62,7 +62,7 @@ def _calc_ssh_workers(device_count: int) -> int:
     return min(MAX_SSH_WORKERS_MAX, max(MAX_SSH_WORKERS_MIN, device_count // 3))
 
 # ARP 缓存：按 target_ip 懒加载，不做全网全量预采集
-# 二级缓存架构：L1 = 进程内 dict（热数据快速命中）, L2 = SQLite（持久化跨重启）
+# 二级缓存架构：L1 = 进程内 dict（热数据快速命中）, L2 = 配置数据库（持久化跨重启）
 # 采集间隔 5 分钟，TTL 10 分钟，保证在下次采集到来前始终有有效缓存
 ARP_SWEEP_INTERVAL_SECONDS = 300   # 后台全量采集间隔：5 分钟
 ARP_CACHE_TTL_SECONDS = 600        # 缓存有效期：10 分钟（2 倍采集间隔，保证覆盖）
@@ -148,7 +148,7 @@ def _beijing_now_iso() -> str:
     return datetime.now(_BEIJING_TZ).replace(microsecond=0).isoformat()
 
 
-# ── ARP 持久化缓存（SQLite L2 + 内存 L1） ──────────────────────────
+# ── ARP 持久化缓存（数据库 L2 + 内存 L1） ──────────────────────────
 
 import json as _json
 
@@ -164,7 +164,7 @@ except Exception:
 
 
 def _get_cached_arp(target_ip: str) -> dict[str, Any] | None:
-    """L1 内存 → L2 SQLite 二级查找。"""
+    """L1 内存 → L2 配置数据库二级查找。"""
     now_ts = time.time()
 
     # L1: 内存热缓存
@@ -174,7 +174,7 @@ def _get_cached_arp(target_ip: str) -> dict[str, Any] | None:
         if mem:
             return dict(mem)
 
-    # L2: SQLite 持久缓存
+    # L2: 配置数据库持久缓存
     try:
         conn = get_db_connection()
         try:
@@ -206,7 +206,7 @@ def _get_cached_arp(target_ip: str) -> dict[str, Any] | None:
 
 
 def _set_cached_arp(target_ip: str, mac: str, arp_source: dict[str, Any] | None):
-    """同时写入 L1 内存 + L2 SQLite。"""
+    """同时写入 L1 内存 + L2 配置数据库。"""
     now_ts = time.time()
     cached_at = _beijing_now_iso()
     expires_at = now_ts + ARP_CACHE_TTL_SECONDS
@@ -1146,7 +1146,7 @@ def run_arp_sweep():
     cached_at = _beijing_now_iso()
     expires_at = now_ts + ARP_CACHE_TTL_SECONDS
 
-    # L2: 批量 upsert SQLite
+    # L2: 批量 upsert 配置数据库
     try:
         conn = get_db_connection()
         try:
@@ -1240,7 +1240,7 @@ async def run_arp_sweep_async():
 # ── 全量 ARP 表查询 ────────────────────────────────────────────────
 
 def get_arp_table() -> dict[str, Any]:
-    """查询 SQLite 中所有有效 ARP 缓存条目，供前端展示。"""
+    """查询配置数据库中所有有效 ARP 缓存条目，供前端展示。"""
     now_ts = time.time()
     try:
         conn = get_db_connection()
@@ -1371,7 +1371,7 @@ def lookup_neighbor_device(conn, neighbor_host: str, next_hop_ip: str) -> dict |
 
 
 def _get_cached_endpoint(ip: str) -> dict[str, Any] | None:
-    """从 SQLite network_endpoints 事实表中查询终端。"""
+    """从配置数据库 network_endpoints 事实表中查询终端。"""
     try:
         conn = get_db_connection()
         try:

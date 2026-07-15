@@ -9,7 +9,7 @@ import datetime as dt
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Query
-from database import get_db_connection, fetch_interface_data
+from database import _USE_PG, get_db_connection, fetch_interface_data
 from services.forecast_engine import ForecastEngine, calculate_capacity_score
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,13 @@ def _get_table_columns(conn, table: str) -> set[str]:
         if rows:
             return {r['column_name'] for r in rows}
     except Exception:
-        pass
+        if _USE_PG:
+            logger.warning("Failed to inspect PostgreSQL columns for table %s", table, exc_info=True)
+            return set()
+    if _USE_PG:
+        # PRAGMA is SQLite-only. A missing PostgreSQL table should be treated
+        # as an empty capability set instead of falling through to SQLite SQL.
+        return set()
     cols = conn.execute(f'PRAGMA table_info({table})').fetchall()
     return {c['name'] for c in cols} if cols else set()
 

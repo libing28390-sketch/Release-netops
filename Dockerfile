@@ -74,4 +74,7 @@ USER netops
 # Persistent data volumes
 VOLUME ["/app/data", "/app/backup"]
 
-CMD ["sh", "-c", "rm -rf /app/dist/* && cp -a /app/frontend-dist/. /app/dist/ && exec uvicorn backend.main:app --host 0.0.0.0 --port 8003 --workers 2"]
+# Keep one worker by default because the lifespan-owned telemetry loops must
+# run once per deployment, not once per Uvicorn worker process. Set WORKERS to
+# override this deliberately for API-only scaling scenarios.
+CMD ["sh", "-c", "rm -rf /app/dist/* && cp -a /app/frontend-dist/. /app/dist/ && exec uvicorn backend.main:app --host 0.0.0.0 --port 8003 --workers ${WORKERS:-1}"]

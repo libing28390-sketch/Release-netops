@@ -1,7 +1,7 @@
 """
 configs.py - Config Snapshot API
 Stores config files in: backup/YYYY/MM/Vendor/Hostname/YYYYMMDD_HHMMSS_trigger.cfg
-Stores metadata in SQLite table config_snapshots.
+Stores metadata in the configured database table config_snapshots.
 """
 
 import os

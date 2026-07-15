@@ -30,6 +30,9 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-netops}
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-change-me-to-a-random-secret}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # Keep one worker by default because the lifespan-owned telemetry loops
+      # must run once per deployment, not once per Uvicorn worker process.
+      - WORKERS=${WORKERS:-1}
     volumes:
       - nexora-data:/app/data
       - nexora-backup:/app/backup

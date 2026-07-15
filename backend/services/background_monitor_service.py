@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from urllib import request as urlrequest
 from urllib import error as urlerror
 from ping3 import ping
-from database import DB_PATH, get_db_connection, _USE_PG
+from database import get_db_connection
 from core.config import settings
 from services import notification_service
 from services import alert_maintenance_service
@@ -892,6 +892,18 @@ async def _probe_device_reachability(ip_address: str, management_port: int = 22)
     except Exception:
         return False, 'unreachable'
 
+
+def _device_management_port(device: dict) -> int:
+    """Resolve the status-probe port using the device connection method."""
+    raw_port = device.get('management_port') or device.get('port')
+    if raw_port in (None, ''):
+        return 23 if str(device.get('connection_method') or '').lower() == 'telnet' else 22
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError):
+        return 22
+    return port if 1 <= port <= 65535 else 22
+
 async def process_device(device, cycle_tick: int):
     start_time = _time.perf_counter()
     success = False
@@ -937,7 +949,7 @@ async def _process_device_raw(device, cycle_tick: int):
             # ping() is blocking; run it off the event loop to keep API endpoints responsive.
             reachable, probe_method = await _probe_device_reachability(
                 ip,
-                device.get('management_port') or 22,
+                _device_management_port(device),
             )
             new_status = 'online' if reachable else 'offline'
 
@@ -1448,7 +1460,7 @@ async def process_device_fast(device):
     try:
         reachable, probe_method = await _probe_device_reachability(
             ip,
-            device.get('management_port') or 22,
+            _device_management_port(device),
         )
         new_status = 'online' if reachable else 'offline'
 
