@@ -18,6 +18,7 @@ import platform
 import shutil
 import zipfile
 import json
+import tempfile
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
@@ -28,6 +29,14 @@ if SOURCE_PROJECT_ROOT not in sys.path:
 
 from desktop.ui.feedback import ask_confirmation, show_message, show_toast
 from desktop.release_notes import CLIENT_BUILD, CLIENT_VERSION, build_release_notes
+from desktop.update_service import (
+    UpdateError,
+    WindowsRelease,
+    create_windows_updater,
+    download_windows_release,
+    find_latest_windows_release,
+    is_newer_version,
+)
 from desktop.ui.theme import build_codex_stylesheet
 from desktop.ui.tokens import theme_tokens
 
@@ -113,7 +122,7 @@ try:
         QPlainTextEdit, QFileDialog, QGridLayout, QScrollArea, QListView,
         QStyledItemDelegate, QDialog, QSizePolicy
     )
-    from PySide6.QtCore import Qt, Signal, Slot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, Property, QRectF
+    from PySide6.QtCore import Qt, Signal, Slot, QThread, QTimer, QSettings, QPropertyAnimation, QEasingCurve, Property, QRectF
     from PySide6.QtGui import QIcon, QColor, QAction, QPainter, QBrush, QPen, QPixmap
 except ImportError as e:
     error_msg = f"Failed to import PySide6: {e}\n\nPlease run 'NetOps.exe' to verify and repair the installation environment."
@@ -128,6 +137,59 @@ except ImportError as e:
     except Exception:
         pass
     sys.exit(1)
+
+
+class UpdateCheckWorker(QThread):
+    """Run the GitHub release check without blocking the Qt event loop."""
+
+    release_found = Signal(object)
+    no_release = Signal()
+    failed = Signal(str)
+
+    def __init__(self, current_version: str, parent=None):
+        super().__init__(parent)
+        self.current_version = current_version
+
+    def run(self):
+        try:
+            release = find_latest_windows_release()
+            if release is None:
+                self.no_release.emit()
+                return
+            if release and not is_newer_version(release.version, self.current_version):
+                release = None
+            self.release_found.emit(release)
+        except UpdateError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
+class UpdateDownloadWorker(QThread):
+    """Download a selected Windows release asset in the background."""
+
+    progress_changed = Signal(int)
+    downloaded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, release: WindowsRelease, destination: str, parent=None):
+        super().__init__(parent)
+        self.release = release
+        self.destination = destination
+
+    def run(self):
+        try:
+            path = download_windows_release(
+                self.release,
+                self.destination,
+                progress=self.progress_changed.emit,
+            )
+            self.downloaded.emit(str(path))
+        except UpdateError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
 
 APP_URL = "http://127.0.0.1:5010"
 backend_process = None
@@ -349,6 +411,15 @@ TRANSLATIONS = {
         "about_build": "构建编号: 20260622.1082",
         "about_site": "官方网站: ",
         "about_support": "技术支持: ",
+        "about_check_updates": "检查更新",
+        "about_checking_updates": "正在检查更新...",
+        "about_up_to_date": "当前已是最新版本",
+        "about_no_windows_release": "暂未找到可用的 Windows Release，请稍后再试。",
+        "about_update_available": "发现新版本 v%s，是否立即下载并更新？",
+        "about_update_downloading": "正在下载 v%s：%s%%",
+        "about_update_ready": "更新已下载，程序将关闭并自动重启完成更新。",
+        "about_update_failed": "更新失败: %s",
+        "about_update_not_supported": "在线更新仅支持 Windows 版 NetOps.exe。",
         
         "tray_show": "显示控制面板 (Open Panel)",
         "tray_web": "打开网页系统 (Open Web)",
@@ -489,6 +560,15 @@ TRANSLATIONS = {
         "about_build": "Build Number: 20260622.1082",
         "about_site": "Official Website: ",
         "about_support": "Technical Support: ",
+        "about_check_updates": "Check for Updates",
+        "about_checking_updates": "Checking for updates...",
+        "about_up_to_date": "You are using the latest version",
+        "about_no_windows_release": "No Windows release is available yet. Please try again later.",
+        "about_update_available": "Version v%s is available. Download and install it now?",
+        "about_update_downloading": "Downloading v%s: %s%%",
+        "about_update_ready": "The update is ready. The app will close and restart to finish.",
+        "about_update_failed": "Update failed: %s",
+        "about_update_not_supported": "Online updates are available only for the Windows NetOps.exe build.",
         
         "tray_show": "Open Panel",
         "tray_web": "Open Web GUI",
@@ -1023,6 +1103,9 @@ class NetOpsAgentUI(QMainWindow):
         self.last_sync_time = "-"
         self._sidebar_collapsed = False
         self.recent_events = []
+        self.update_check_worker = None
+        self.update_download_worker = None
+        self.pending_windows_release = None
         
         # Load persistent configurations
         self.load_settings()
@@ -1090,6 +1173,139 @@ class NetOpsAgentUI(QMainWindow):
         self.settings.setValue("last_seen_release_notes_version", CLIENT_VERSION)
         self.settings.sync()
         return True
+
+    def check_for_updates(self):
+        """Check the public Windows release without freezing the About page."""
+
+        if self.update_check_worker and self.update_check_worker.isRunning():
+            return
+
+        target_exe = os.path.join(PROJECT_ROOT, "NetOps.exe")
+        if sys.platform != "win32" or not os.path.exists(target_exe):
+            tr = TRANSLATIONS[self.lang]
+            show_message(
+                self,
+                tr["about_check_updates"],
+                tr["about_update_not_supported"],
+                dark=self.dark_mode,
+            )
+            return
+
+        tr = TRANSLATIONS[self.lang]
+        self.btn_check_update.setEnabled(False)
+        self.lbl_update_status.setText(tr["about_checking_updates"])
+        worker = UpdateCheckWorker(CLIENT_VERSION, self)
+        worker.release_found.connect(self._on_update_release_found)
+        worker.no_release.connect(self._on_no_windows_release)
+        worker.failed.connect(self._on_update_check_failed)
+        self.update_check_worker = worker
+        worker.start()
+
+    def _on_update_release_found(self, release):
+        tr = TRANSLATIONS[self.lang]
+        self.btn_check_update.setEnabled(True)
+        if release is None:
+            self.lbl_update_status.setText(tr["about_up_to_date"])
+            show_toast(self, tr["about_up_to_date"], dark=self.dark_mode, level="success")
+            return
+
+        self.pending_windows_release = release
+        notes = (release.notes or "").strip()
+        if len(notes) > 1600:
+            notes = notes[:1600].rstrip() + "..."
+        message = tr["about_update_available"] % release.version
+        if notes:
+            message += f"\n\n{notes}"
+        if ask_confirmation(
+            self,
+            tr["about_check_updates"],
+            message,
+            dark=self.dark_mode,
+            confirm_text="立即更新" if self.lang == "zh" else "Update now",
+            cancel_text="稍后" if self.lang == "zh" else "Later",
+        ):
+            self._download_pending_update()
+        else:
+            self.pending_windows_release = None
+
+    def _on_no_windows_release(self):
+        tr = TRANSLATIONS[self.lang]
+        self.btn_check_update.setEnabled(True)
+        self.lbl_update_status.setText(tr["about_no_windows_release"])
+        show_toast(self, tr["about_no_windows_release"], dark=self.dark_mode, level="warning")
+
+    def _on_update_check_failed(self, message):
+        tr = TRANSLATIONS[self.lang]
+        self.btn_check_update.setEnabled(True)
+        self.lbl_update_status.setText(tr["about_update_failed"] % message)
+        show_toast(
+            self,
+            tr["about_update_failed"] % message,
+            dark=self.dark_mode,
+            level="error",
+            duration=5000,
+        )
+
+    def _download_pending_update(self):
+        release = self.pending_windows_release
+        if release is None:
+            return
+        fd, destination = tempfile.mkstemp(prefix="NetOps-update-", suffix=".exe")
+        os.close(fd)
+        tr = TRANSLATIONS[self.lang]
+        self.btn_check_update.setEnabled(False)
+        self.lbl_update_status.setText(tr["about_update_downloading"] % (release.version, 0))
+        worker = UpdateDownloadWorker(release, destination, self)
+        worker.progress_changed.connect(
+            lambda value: self.lbl_update_status.setText(
+                tr["about_update_downloading"] % (release.version, value)
+            )
+        )
+        worker.downloaded.connect(self._on_update_downloaded)
+        worker.failed.connect(self._on_update_download_failed)
+        self.update_download_worker = worker
+        worker.start()
+
+    def _on_update_download_failed(self, message):
+        tr = TRANSLATIONS[self.lang]
+        self.btn_check_update.setEnabled(True)
+        self.lbl_update_status.setText(tr["about_update_failed"] % message)
+        show_toast(
+            self,
+            tr["about_update_failed"] % message,
+            dark=self.dark_mode,
+            level="error",
+            duration=5000,
+        )
+
+    def _on_update_downloaded(self, downloaded_path):
+        tr = TRANSLATIONS[self.lang]
+        target_exe = os.path.join(PROJECT_ROOT, "NetOps.exe")
+        release = self.pending_windows_release
+        try:
+            if not release or not os.path.exists(target_exe):
+                raise UpdateError("The current Windows executable could not be located")
+            updater = create_windows_updater(target_exe, downloaded_path, os.getpid())
+            show_message(
+                self,
+                tr["about_check_updates"],
+                tr["about_update_ready"],
+                dark=self.dark_mode,
+            )
+            self.stop_backend_server()
+            self.poller_running = False
+            if hasattr(self, "tray_icon"):
+                self.tray_icon.hide()
+            subprocess.Popen(
+                ["cmd.exe", "/d", "/c", str(updater)],
+                cwd=PROJECT_ROOT,
+                creationflags=0x08000000,
+                close_fds=True,
+            )
+            self.pending_windows_release = None
+            QApplication.quit()
+        except Exception as exc:
+            self._on_update_download_failed(str(exc))
 
     def launch_reconfig_wizard(self, force_reconfig=True):
         # Stop backend server first to release port 5010 and files
@@ -2624,6 +2840,17 @@ class NetOpsAgentUI(QMainWindow):
         details_grid.addWidget(self.lbl_about_wechat_val, 4, 1)
         
         left_layout.addLayout(details_grid)
+
+        self.btn_check_update = QPushButton(self)
+        self.btn_check_update.setObjectName("btn_secondary")
+        self.btn_check_update.setCursor(Qt.PointingHandCursor)
+        self.btn_check_update.clicked.connect(self.check_for_updates)
+        left_layout.addWidget(self.btn_check_update, 0, Qt.AlignLeft)
+
+        self.lbl_update_status = QLabel(self)
+        self.lbl_update_status.setObjectName("about_caption")
+        self.lbl_update_status.setWordWrap(True)
+        left_layout.addWidget(self.lbl_update_status)
         
         self.lbl_about_copyright = QLabel(self)
         self.lbl_about_copyright.setObjectName("about_caption")
@@ -2822,6 +3049,9 @@ class NetOpsAgentUI(QMainWindow):
         self.lbl_about_site_name.setText("官方网站:" if self.lang == "zh" else "Official Website:")
         self.lbl_about_support_name.setText("技术支持:" if self.lang == "zh" else "Technical Support:")
         self.lbl_about_wechat_name.setText("微信公众号:" if self.lang == "zh" else "WeChat Account:")
+        self.btn_check_update.setText(tr["about_check_updates"])
+        if not self.update_check_worker or not self.update_check_worker.isRunning():
+            self.lbl_update_status.setText("")
         self.lbl_qr_desc.setText("扫码关注微信公众号" if self.lang == "zh" else "Scan to Follow WeChat")
         self.lbl_about_copyright.setText("版权所有 © 2026 NetOps 社区。保留所有权利。" if self.lang == "zh" else "Copyright © 2026 NetOps Community. All rights reserved.")
         

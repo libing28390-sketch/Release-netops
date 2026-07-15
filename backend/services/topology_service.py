@@ -13,6 +13,7 @@ from scrapli_community.hp.comware.async_driver import AsyncHPComwareDriver
 from scrapli_community.huawei.vrp.async_driver import AsyncHuaweiVRPDriver
 
 from core.crypto import decrypt_credential
+from core.interface_utils import normalize_interface_name
 from core.textfsm import configure_ntc_templates
 from database import get_db_connection
 from services.vault_service import resolve_device_credentials
@@ -71,37 +72,6 @@ DISCOVERY_COMMANDS = {
     'ruijie_rgos': [('lldp', 'show lldp neighbors detail')],
 }
 
-INTERFACE_ALIASES = [
-    ('tengigabitethernet', 'te'),
-    ('tengigeethernet', 'te'),
-    ('twentyfivegige', 'tw'),
-    ('twentyfivegigabitethernet', 'tw'),
-    ('fortygigabitethernet', 'fo'),
-    ('fortyge', 'fo'),
-    ('hundredgigabitethernet', 'hu'),
-    ('hundredge', 'hu'),
-    ('gigabitethernet', 'gi'),
-    ('gige', 'gi'),
-    ('fastethernet', 'fa'),
-    ('xgigabitethernet', 'xge'),            # Huawei 10GE
-    ('25gige', 'tw'),                       # Huawei 25GE
-    ('40gige', 'fo'),                       # Huawei 40GE
-    ('100gige', 'hu'),                      # Huawei 100GE
-    ('ethernet', 'eth'),
-    ('eth-trunk', 'eth-trunk'),             # Huawei LAG
-    ('bridge-aggregation', 'bagg'),         # H3C LAG
-    ('port-channel', 'po'),
-    ('portchannel', 'po'),
-    ('bundle-ether', 'be'),
-    ('loopback', 'lo'),
-    ('management', 'mgmt'),
-    ('mgmteth', 'mgmt'),
-    ('meth', 'mgmt'),                       # Huawei management
-    ('vlanif', 'vlanif'),                   # Huawei VLAN interface
-    ('vlan', 'vl'),
-]
-
-
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -114,19 +84,6 @@ def normalize_hostname(value: str | None) -> str:
     if raw.count('.') >= 1 and not _is_ip_address(raw):
         raw = raw.split('.')[0]
     raw = re.sub(r'\s+', '', raw)
-    return raw
-
-
-def normalize_interface_name(value: str | None) -> str:
-    if not value:
-        return ''
-    raw = str(value).strip().lower().replace(' ', '')
-    raw = raw.replace('\u200b', '')
-    for source, target in INTERFACE_ALIASES:
-        if raw.startswith(source):
-            raw = raw.replace(source, target, 1)
-            break
-    raw = raw.replace('ethernet', 'eth') if raw.startswith('ethernet') else raw
     return raw
 
 

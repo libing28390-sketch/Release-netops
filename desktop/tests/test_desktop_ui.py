@@ -151,6 +151,12 @@ def test_release_notes_support_english():
     assert confirm_text == "Got it"
 
 
+def test_about_page_exposes_update_check(window):
+    assert window.btn_check_update.text() == "检查更新"
+    window.combo_lang_settings.setCurrentIndex(1)
+    assert window.btn_check_update.text() == "Check for Updates"
+
+
 def test_language_theme_and_navigation(window, app):
     window.combo_lang_settings.setCurrentIndex(1)
     assert window.lang == "en"

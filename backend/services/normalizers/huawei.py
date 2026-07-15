@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 from domain.models import Device, Interface, Neighbor
 from services.normalizers.base import BaseNormalizer
 from core.textfsm import parse_with_textfsm
-from services.topology_service import normalize_interface_name
+from core.interface_utils import normalize_interface_name
 
 class HuaweiNormalizer(BaseNormalizer):
     def parse_device_info(self, device_id: str, raw_version: str) -> Device:

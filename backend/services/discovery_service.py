@@ -43,35 +43,42 @@ COMMAND_PROFILES = {
     'hp_comware': {
         'version': 'display version', 'interfaces': 'display interface',
         'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor-information verbose',
-        'normalizer': None,
+        'normalizer': 'h3c_comware',
     },
     'h3c_comware': {
         'version': 'display version', 'interfaces': 'display interface',
         'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor-information verbose',
-        'normalizer': None,
+        'normalizer': 'h3c_comware',
+    },
+    'h3c_comware9': {
+        'version': 'display version', 'interfaces': 'display interface',
+        'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor-information verbose',
+        'normalizer': 'h3c_comware',
     },
     'juniper_junos': {
         'version': 'show version', 'interfaces': 'show interfaces detail',
         'brief': 'show interfaces terse', 'neighbors': 'show lldp neighbors detail',
-        'normalizer': None,
+        'normalizer': 'juniper_junos',
     },
     'arista_eos': {
         'version': 'show version', 'interfaces': 'show interfaces',
         'brief': 'show ip interface brief', 'neighbors': 'show lldp neighbors detail',
-        'normalizer': None,
+        'normalizer': 'arista_eos',
     },
     'ruijie_rgos': {
         'version': 'show version', 'interfaces': 'show interfaces',
         'brief': 'show ip interface brief', 'neighbors': 'show lldp neighbors detail',
-        'normalizer': None,
+        'normalizer': 'ruijie_rgos',
     },
 }
 
 PLATFORM_ALIASES = {
     'huawei': 'huawei_vrp', 'vrp': 'huawei_vrp', 'huawei_v8': 'huawei_vrpv8',
-    'h3c': 'hp_comware', 'comware': 'hp_comware',
+    'h3c': 'h3c_comware', 'comware': 'h3c_comware', 'comware9': 'h3c_comware9',
     'cisco': 'cisco_ios', 'ios': 'cisco_ios',
-    'juniper': 'juniper_junos', 'arista': 'arista_eos', 'ruijie': 'ruijie_rgos',
+    'juniper': 'juniper_junos', 'junos': 'juniper_junos',
+    'arista': 'arista_eos', 'eos': 'arista_eos',
+    'ruijie': 'ruijie_rgos', 'ruijie_os': 'ruijie_rgos', 'rgos': 'ruijie_rgos',
 }
 
 

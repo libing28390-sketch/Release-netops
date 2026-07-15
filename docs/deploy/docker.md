@@ -19,12 +19,11 @@
    ```bash
    git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
    cd netops-automation
-   cp .env.example .env
    # 编辑 .env，至少替换 SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY、POSTGRES_PASSWORD、DATABASE_URL
    ```
 2. 构建并启动（前端会在容器内自动编译）：
    ```bash
-   docker compose up -d --build
+   bash scripts/deploy-docker.sh install
    ```
 3. 访问 `http://localhost`。
 

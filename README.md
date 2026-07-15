@@ -261,6 +261,8 @@ You can deploy and run NetOps on Windows using the graphical manager:
 3. The graphical setup wizard (`NetOps.exe`) will launch. It automatically detects, downloads, and silently installs all required runtimes (Python, Node.js, PostgreSQL/SQLite, and Python packages) and boots up the platform.
 4. Once completed, your browser will open to `http://127.0.0.1:5010`. You can monitor and control the application using the network topology system tray icon in the taskbar.
 
+After installation, open the desktop manager's **About** page and click **Check for Updates**. The client checks the public Windows Releases, downloads a newer `NetOps.exe` in the background, then closes, replaces the executable, and restarts automatically. This requires a published Windows Release containing the `NetOps.exe` asset.
+
 ---
 
 #### Option 2 — Ubuntu One-Click (Recommended for Linux)
@@ -323,47 +325,35 @@ Requires Docker and Docker Compose. Includes PostgreSQL, backend, and Nginx in o
 git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation
 cd netops-automation
 
-# Copy environment template
-cp .env.example .env
+# The script creates .env, generates missing secrets, builds the images,
+# and starts PostgreSQL, NetOps, and Nginx.
+bash scripts/deploy-docker.sh install
 ```
 
-Open `.env` and configure:
+Before exposing the service publicly, review `.env` and configure:
 - Custom PostgreSQL passwords/usernames.
 - Security keys (`SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`).
 - Set `TLS_COMMON_NAME` to the deployment domain or server IP. If no certificate is supplied, Docker generates a self-signed fallback certificate on startup; replace it with a trusted certificate for production.
 
-##### Step 2: Start the containers
-```bash
-# Start all containers (frontend will automatically build inside the container)
-docker compose up -d --build
-```
 Access the application at `https://localhost`. The browser will warn about trust when Docker generated the fallback self-signed certificate.
 
 ##### Updating an existing Docker deployment
 
-The public release repository is rebuilt with a sanitized Git history, so a normal `git pull` may fail after a release. Use the following commands from the existing deployment directory. The reset discards changes to tracked source files; `.env`, Docker volumes, and files under `nginx/ssl/` are preserved.
+The public release repository is rebuilt with a sanitized Git history, so a normal `git pull` may fail after a release. The helper below explicitly switches `origin` to `https://github.com/libing28390-sketch/Release-netops.git` before synchronizing. It discards changes to tracked source files; `.env`, Docker volumes, and files under `nginx/ssl/` are preserved. A timestamped `.env` backup is created automatically.
 
 ```bash
 cd /path/to/netops-automation
-
-# Optional safety copy of the local environment configuration
-cp .env .env.backup
-
-# Replace the tracked source tree with the latest public release
-git fetch --prune origin
-git reset --hard origin/main
-
-# Refresh base images, rebuild the application, and recreate changed containers
-docker compose pull db
-docker compose build --pull netops nginx
-docker compose up -d --remove-orphans
-
-# Verify the upgraded stack
-docker compose ps
-docker compose logs --tail=100 netops nginx
+bash scripts/deploy-docker.sh update
 ```
 
 Do not run `docker compose down -v` during an upgrade: `-v` deletes the PostgreSQL, application-data, and backup volumes.
+
+To intentionally reset this Compose project's containers, volumes, local build images, and generated TLS files, then install from the latest public release again:
+
+```bash
+bash scripts/deploy-docker.sh reset-data --yes
+bash scripts/deploy-docker.sh install
+```
 
 **Common Docker commands:**
 
@@ -675,8 +665,8 @@ cp .env.example .env
 
 ##### 第二步：启动所有容器
 ```bash
-# 启动所有容器（前端会在 Docker 容器内自动构建，宿主机无需安装 Node.js/npm）
-docker compose up -d --build
+# 脚本会自动初始化 .env、构建镜像并启动所有容器
+bash scripts/deploy-docker.sh install
 ```
 启动后，可通过浏览器访问 `https://localhost`。使用 Docker 自动生成的自签名证书时，浏览器会显示信任警告。
 
@@ -691,13 +681,7 @@ cd /path/to/netops-automation
 cp .env .env.backup
 
 # 将已跟踪源码同步为公有仓库最新版本
-git fetch --prune origin
-git reset --hard origin/main
-
-# 更新基础镜像、重新构建应用并重建有变化的容器
-docker compose pull db
-docker compose build --pull netops nginx
-docker compose up -d --remove-orphans
+bash scripts/deploy-docker.sh update
 
 # 检查升级后的容器和日志
 docker compose ps
@@ -822,13 +806,7 @@ sudo systemctl restart netops
 
 # Docker 部署
 cd /path/to/netops-automation
-cp .env .env.backup
-git fetch --prune origin
-git reset --hard origin/main
-docker compose pull db
-docker compose build --pull netops nginx
-docker compose up -d --remove-orphans
-docker compose ps
+bash scripts/deploy-docker.sh update
 
 # Windows 本地部署 (GUI)
 # 1. 右键系统托盘图标，点击“退出 (Exit)”以完全关闭运行中的服务。

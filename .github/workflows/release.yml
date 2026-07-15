@@ -23,7 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh src)
+          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh src)
           for path in "${required[@]}"; do
             test -e "$path" || { echo "[FAIL] Missing release input: $path"; exit 1; }
           done
@@ -40,6 +40,7 @@ jobs:
           # Keep only the operational scripts referenced by public deployment docs.
           if [ -d scripts ]; then
             find scripts -mindepth 1 -maxdepth 1 \
+              ! -name 'deploy-docker.sh' \
               ! -name 'preflight-check.sh' \
               ! -name 'install-daily-backup.sh' \
               ! -name 'netops.logrotate' \
@@ -95,7 +96,7 @@ jobs:
           git init
           git add .
 
-          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh src)
+          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh src)
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required release path missing: $path"; exit 1; }
           done
@@ -211,7 +212,7 @@ jobs:
           git init
           git add .
 
-          required=(.env.example package.json package-lock.json backend/requirements.txt backend/main.py desktop/launcher.py NetOps.exe start.bat src)
+          required=(.env.example package.json package-lock.json backend/requirements.txt backend/main.py desktop/launcher.py desktop/desktop_tray.py desktop/update_service.py NetOps.exe start.bat src)
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required Windows release path missing: $path"; exit 1; }
           done
