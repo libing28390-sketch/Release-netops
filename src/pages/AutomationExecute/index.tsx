@@ -481,7 +481,9 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         group: 'route',
         scope: 'network',
         operationalCategory: 'routing_table',
-        cmds: isHuawei || isH3c
+        cmds: isHuawei
+          ? 'display ip routing-table verbose'
+          : isH3c
           ? 'display ip routing-table'
           : isJuniper
           ? 'show route'
