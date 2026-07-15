@@ -1,0 +1,18 @@
+Value Filldown OSPF_PROCESS (\d+)
+Value Filldown LOCAL_ROUTER_ID (\d+\.\d+\.\d+\.\d+)
+Value Filldown AREA_ID (\d+\.\d+\.\d+\.\d+)
+Value Required NEIGHBOR_ID (\d+\.\d+\.\d+\.\d+)
+Value Required ADDRESS (\d+\.\d+\.\d+\.\d+)
+Value Required PRIORITY (\d+)
+Value Required DEAD_TIME (\d+)
+Value Required INTERFACE (\S+)
+Value Required STATE (\S+)
+
+Start
+  ^\s*Neighbor\s+Brief\s+Information
+  ^OSPF\s+Process\s+${OSPF_PROCESS}\s+with\s+Router\s+ID\s+${LOCAL_ROUTER_ID}
+  ^\s*Area:\s+${AREA_ID}
+  ^\s*Router\s+ID\s+Address\s+Pri\s+Dead-Time\s+Interface\s+State
+  ^\s*${NEIGHBOR_ID}\s+${ADDRESS}\s+${PRIORITY}\s+${DEAD_TIME}\s+${INTERFACE}\s+${STATE}\s* -> Record
+  ^\s*$$
+  ^. -> Error
