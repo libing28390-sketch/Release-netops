@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 _PROJECT_ROOT = _BACKEND_DIR.parent
 _CUSTOM_TEMPLATES_DIR = _PROJECT_ROOT / "data" / "textfsm_templates"
+# Docker packages the release-owned templates outside the persistent data
+# volume.  This keeps public-repository updates visible without overwriting
+# templates edited or created by users in data/textfsm_templates.
+_PACKAGED_TEMPLATES_DIR = _PROJECT_ROOT / "release-textfsm-templates"
 
 # ── 默认命令采集样本映射 ───────────────────────────────────────────
 TEMPLATE_DEFAULT_SAMPLES = {
@@ -71,6 +75,11 @@ def _get_builtin_templates_dir() -> Path | None:
         return d if d.is_dir() else None
     except ImportError:
         return None
+
+
+def _get_packaged_templates_dir() -> Path | None:
+    """Return release-owned templates bundled into the application image."""
+    return _PACKAGED_TEMPLATES_DIR if _PACKAGED_TEMPLATES_DIR.is_dir() else None
 
 
 def configure_ntc_templates() -> str | None:
@@ -128,6 +137,7 @@ def _find_template(platform: str, command: str) -> Path | None:
     按优先级查找模板文件：自定义目录 > 内置目录。
     返回找到的 Path，未找到返回 None。
     """
+    packaged = _get_packaged_templates_dir()
     builtin = _get_builtin_templates_dir()
     for filename in _template_filename_variants(platform, command):
 
@@ -136,7 +146,13 @@ def _find_template(platform: str, command: str) -> Path | None:
         if custom_path.exists():
             return custom_path
 
-    # 2. 内置目录
+    # 2. 发布镜像中的模板目录
+        if packaged:
+            packaged_path = packaged / filename
+            if packaged_path.exists():
+                return packaged_path
+
+    # 3. 内置目录
         if builtin:
             builtin_path = builtin / filename
             if builtin_path.exists():
@@ -412,12 +428,18 @@ def smart_parse_cli(
     # 5. 优先级模板选择与查找（收集候选文件列表）
     candidates = []
     if platform:
+        packaged_dir = _get_packaged_templates_dir()
         builtin_dir = _get_builtin_templates_dir()
         for filename in _template_filename_variants(platform, normalized_command):
             custom_path = _CUSTOM_TEMPLATES_DIR / filename
             if custom_path.exists():
                 candidates.append((custom_path, platform, 'custom'))
                 break
+            if packaged_dir:
+                packaged_path = packaged_dir / filename
+                if packaged_path.exists():
+                    candidates.append((packaged_path, platform, 'builtin'))
+                    break
             if builtin_dir:
                 builtin_path = builtin_dir / filename
                 if builtin_path.exists():
@@ -426,12 +448,18 @@ def smart_parse_cli(
 
     if platform in _COMPATIBLE_PLATFORMS:
         for compat_p in _COMPATIBLE_PLATFORMS[platform]:
+            packaged_dir = _get_packaged_templates_dir()
             builtin_dir = _get_builtin_templates_dir()
             for filename in _template_filename_variants(compat_p, normalized_command):
                 custom_path = _CUSTOM_TEMPLATES_DIR / filename
                 if custom_path.exists():
                     candidates.append((custom_path, compat_p, 'custom'))
                     break
+                if packaged_dir:
+                    packaged_path = packaged_dir / filename
+                    if packaged_path.exists():
+                        candidates.append((packaged_path, compat_p, 'builtin'))
+                        break
                 if builtin_dir:
                     builtin_path = builtin_dir / filename
                     if builtin_path.exists():
@@ -618,7 +646,15 @@ def list_templates(platform_filter: str = '', search: str = '') -> list[dict[str
             if info:
                 templates[f.name] = {**info, 'source': 'builtin', 'filename': f.name}
 
-    # 2. 自定义模板覆盖（或新增）
+    # 2. 加载发布镜像中的模板；它们属于只读的发布默认值
+    packaged = _get_packaged_templates_dir()
+    if packaged:
+        for f in sorted(packaged.glob('*.textfsm')):
+            info = _parse_template_filename(f.name)
+            if info:
+                templates[f.name] = {**info, 'source': 'builtin', 'filename': f.name}
+
+    # 3. 自定义模板覆盖（或新增）
     _CUSTOM_TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
     for f in sorted(_CUSTOM_TEMPLATES_DIR.glob('*.textfsm')):
         info = _parse_template_filename(f.name)
@@ -868,6 +904,12 @@ def get_template_content(filename: str) -> tuple[str, str]:
     custom_path = _CUSTOM_TEMPLATES_DIR / filename
     if custom_path.exists():
         return custom_path.read_text(encoding='utf-8'), 'custom'
+
+    packaged = _get_packaged_templates_dir()
+    if packaged:
+        packaged_path = packaged / filename
+        if packaged_path.exists():
+            return packaged_path.read_text(encoding='utf-8'), 'builtin'
 
     builtin = _get_builtin_templates_dir()
     if builtin:

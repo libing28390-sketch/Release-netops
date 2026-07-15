@@ -40,6 +40,52 @@ else:
 
 LOG_FILE = os.path.join(PROJECT_ROOT, "launcher_setup.log")
 
+
+def sync_bundled_textfsm_templates():
+    """Materialize release templates bundled by PyInstaller.
+
+    NetOps.exe launches the backend from the project directory rather than
+    inside the PyInstaller process. One-file resources live under _MEIPASS
+    temporarily, so copy only release-owned templates before launching the
+    backend. User templates remain in data/textfsm_templates and are untouched.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+
+    bundle_dir = os.path.join(
+        getattr(sys, "_MEIPASS", ""),
+        "release-textfsm-templates",
+    )
+    if not os.path.isdir(bundle_dir):
+        log_message("Bundled TextFSM templates were not found; keeping existing release templates.")
+        return
+
+    target_dir = os.path.join(PROJECT_ROOT, "release-textfsm-templates")
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+        bundled_files = {
+            name
+            for name in os.listdir(bundle_dir)
+            if name.endswith(".textfsm")
+            and os.path.isfile(os.path.join(bundle_dir, name))
+        }
+
+        # Remove stale release-owned files from an older EXE, then refresh the
+        # current set. This directory is separate from user data.
+        for name in os.listdir(target_dir):
+            path = os.path.join(target_dir, name)
+            if name.endswith(".textfsm") and name not in bundled_files:
+                os.remove(path)
+
+        for name in bundled_files:
+            shutil.copy2(
+                os.path.join(bundle_dir, name),
+                os.path.join(target_dir, name),
+            )
+        log_message(f"Synchronized {len(bundled_files)} bundled TextFSM templates.")
+    except Exception as exc:
+        log_message(f"Failed to synchronize bundled TextFSM templates: {exc}")
+
 # ── Supported runtime version ranges ────────────────────────────────
 # The project is validated against these ranges (see README). The goal is to
 # REUSE an already-installed, compatible runtime instead of forcing a single
@@ -1170,6 +1216,7 @@ class LauncherUI(QMainWindow):
 
 def main():
     log_message("=== NetOps Setup GUI Session Started ===")
+    sync_bundled_textfsm_templates()
     smoke_test = "--smoke-test" in sys.argv
     
     # 1. Check if another instance of desktop tray is already running (to directly bring it up)

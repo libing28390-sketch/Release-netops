@@ -44,6 +44,11 @@ COPY backend/ /app/backend/
 # Copy environment template
 COPY .env.example /app/.env.example
 
+# Keep release-owned TextFSM templates outside the persistent /app/data volume.
+# The parser checks this directory after user templates, so every rebuilt image
+# receives the latest public-repository templates without overwriting user edits.
+COPY data/textfsm_templates/ /app/release-textfsm-templates/
+
 # Keep an immutable copy in the image, then seed the shared frontend volume.
 # The runtime command refreshes /app/dist on every container start so upgrades
 # cannot keep serving stale assets from an existing named volume.

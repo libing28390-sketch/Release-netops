@@ -5,7 +5,10 @@ a = Analysis(
     ['desktop/launcher.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    # Release-owned TextFSM templates are embedded in the one-file launcher.
+    # The launcher materializes them beside the runtime so the external backend
+    # process can load them after the PyInstaller bootstrap exits.
+    datas=[('data/textfsm_templates', 'release-textfsm-templates')],
     hiddenimports=['certifi'],
     hookspath=[],
     hooksconfig={},
