@@ -145,8 +145,8 @@ sync_release() {
 
     RELEASE_CHANGED=1
     log "Release source changed: ${current_commit:0:7} -> ${remote_commit:0:7}"
-    git diff --stat "$current_commit" "$remote_commit" || true
-    git diff --name-status "$current_commit" "$remote_commit" | sed -n '1,80p' || true
+    git --no-pager diff --stat "$current_commit" "$remote_commit" || true
+    git --no-pager diff --name-status "$current_commit" "$remote_commit" | sed -n '1,80p' || true
     git reset --hard "$remote_commit"
 }
 
