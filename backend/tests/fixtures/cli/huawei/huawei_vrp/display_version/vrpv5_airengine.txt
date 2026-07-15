@@ -1,0 +1,5 @@
+<HUAWEI> display version
+HUAWEI Versatile Routing Platform Software
+VRP (R) software, Version 5.170 (AirEngine8760-X1-PRO  V200R024C10)
+Copyright (C) 2011-2020 HUAWEI TECH CO., LTD
+HUAWEI AirEngine8760-X1-PRO Router uptime is 0 week, 0 day, 6 hours, 44 minutes

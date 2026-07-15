@@ -1,0 +1,10 @@
+Value FAN_ID (\d+)
+Value STATUS (\S+)
+Value SPEED (\d+)
+
+Start
+  ^Fan\s+${FAN_ID}\s+State:\s+${STATUS} -> Record
+  ^\s*${FAN_ID}\s+${STATUS}\s+${SPEED} -> Record
+  # Table headers and separators
+  ^Fan\s+No\.
+  ^-+
