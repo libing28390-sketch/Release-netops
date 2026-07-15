@@ -348,6 +348,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   const isNxos = platform === 'cisco_nxos';
   const isHuawei = platform === 'huawei_vrp' || platform === 'huawei_vrpv8';
   const isH3c = platform === 'h3c_comware' || platform === 'hp_comware' || platform === 'h3c_comware9';
+  const isComware5 = platform === 'hp_comware';
   const isJuniper = platform === 'juniper_junos';
   const isArista = platform === 'arista_eos';
   const isRuijie = platform === 'ruijie_rgos';
@@ -399,7 +400,9 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         cmds: isHuawei
           ? 'display arp all'
           : isH3c
-          ? 'display arp'
+          ? isComware5
+            ? 'display arp'
+            : 'display arp all'
           : isNxos
           ? 'show ip arp'
           : isJuniper
@@ -426,9 +429,12 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'VLAN',
         group: 'net',
         scope: 'network',
+        operationalCategory: 'vlan',
         excludeRoles: ['router'],
-        cmds: isHuawei || isH3c
+        cmds: isHuawei
           ? 'display vlan'
+          : isH3c
+          ? 'display vlan brief'
           : isJuniper
           ? 'show vlans'
           : 'show vlan brief',
@@ -446,6 +452,8 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
           ? 'display lldp neighbor-information list'
           : isJuniper
           ? 'show lldp neighbors'
+          : isCisco || isNxos
+          ? 'show lldp neighbors detail\nshow cdp neighbors detail'
           : 'show lldp neighbors detail',
       },
       {
@@ -454,14 +462,16 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'Transceiver',
         group: 'net',
         scope: 'network',
-        operationalCategory: isHuawei || isH3c ? 'transceiver' : undefined,
+        operationalCategory: isHuawei || isH3c || isCisco || isNxos ? 'transceiver' : undefined,
         cmds: isHuawei || isH3c
           ? 'display transceiver interface'
           : isJuniper
           ? 'show interfaces diagnostics transceiver'
           : isRuijie
           ? 'show interface transceiver'
-          : 'show interfaces transceiver',
+          : isCisco
+          ? 'show interfaces transceiver'
+          : 'show interface transceiver',
       },
 
       {
@@ -485,10 +495,14 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         scope: 'network',
         operationalCategory: 'bgp',
         excludeRoles: ['access'],
-        cmds: isHuawei || isH3c
+        cmds: isHuawei
           ? 'display bgp peer'
+          : isH3c
+          ? platform === 'hp_comware'
+            ? 'display bgp peer'
+            : 'display bgp peer ipv4'
           : isNxos
-          ? 'show bgp ipv4 unicast summary'
+          ? 'show ip bgp summary'
           : 'show ip bgp summary',
       },
       {
@@ -511,9 +525,11 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'NTP Status',
         group: 'route',
         scope: 'network',
-        operationalCategory: isHuawei || isH3c ? 'ntp' : undefined,
+        operationalCategory: isHuawei || isH3c || isCisco || isNxos ? 'ntp' : undefined,
         cmds: isHuawei || isH3c
           ? 'display ntp-service status'
+          : isNxos
+          ? 'show ntp peer-status'
           : 'show ntp status',
       },
 
@@ -523,9 +539,15 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'BFD Sessions',
         group: 'route',
         scope: 'network',
-        operationalCategory: isHuawei || isH3c ? 'bfd' : undefined,
+        operationalCategory: isHuawei || isH3c || isCisco || isNxos ? 'bfd' : undefined,
         excludeRoles: ['access'],
-        cmds: isHuawei || isH3c ? 'display bfd session all' : 'show bfd neighbors',
+        cmds: isHuawei
+          ? 'display bfd session all'
+          : isH3c
+          ? 'display bfd session'
+          : isCisco
+          ? 'show bfd neighbors details'
+          : 'show bfd neighbors',
       },
 
       { icon: '📈', label: '负载统计', labelEn: 'Load Avg', group: 'sys', scope: 'server', cmds: 'uptime && top -bn1 | head -n 5' },
@@ -554,6 +576,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'Version',
         group: 'sys',
         scope: 'all',
+        operationalCategory: deviceCategory === 'server' ? undefined : 'version',
         cmds: isHuawei || isH3c
           ? 'display version'
           : 'show version',
@@ -564,13 +587,15 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'Environment',
         group: 'sys',
         scope: 'all',
-        operationalCategory: isHuawei || isH3c ? 'environment' : undefined,
+        operationalCategory: isHuawei || isH3c || isCisco || isNxos ? 'environment' : undefined,
         cmds: isHuawei
           ? 'display temperature all'
           : isH3c
           ? 'display environment'
           : isJuniper
           ? 'show chassis environment'
+          : isCisco
+          ? 'show environment temperature'
           : 'show environment',
       },
       {
@@ -579,12 +604,17 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'Logs',
         group: 'sys',
         scope: 'all',
+        operationalCategory: deviceCategory === 'server' ? undefined : 'logs',
         cmds: isHuawei
           ? 'display logbuffer last 30'
           : isH3c
           ? 'display logbuffer'
           : isJuniper
           ? 'show log messages | last 30'
+          : isNxos
+          ? 'show logging last 30'
+          : isCisco
+          ? 'show logging'
           : 'show logging | tail 30',
       },
       {
@@ -593,10 +623,17 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'Intf Config',
         group: 'sys',
         scope: 'network',
+        operationalCategory: 'interface_description',
         cmds: isHuawei || isH3c
-          ? 'display interface description'
+          ? isH3c
+            ? 'display interface brief description'
+            : 'display interface description'
           : isJuniper
           ? 'show interfaces descriptions'
+          : isNxos
+          ? 'show interface description'
+          : isCisco
+          ? 'show interfaces description'
           : 'show interfaces description\nshow interfaces status',
       },
       {
@@ -605,12 +642,15 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         labelEn: 'Uptime',
         group: 'sys',
         scope: 'all',
+        operationalCategory: deviceCategory === 'server' ? undefined : 'uptime',
         cmds: isHuawei
           ? 'display version | include uptime'
           : isH3c
           ? 'display version'
           : isJuniper
           ? 'show system uptime'
+          : isCisco || isNxos
+          ? 'show version'
           : 'show version | include uptime',
       },
     ];
@@ -670,11 +710,12 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
     }
 
     return all.filter((p) => {
+      if (isComware5 && p.operationalCategory === 'bfd') return false;
       if (p.excludeRoles && p.excludeRoles.includes(deviceRole)) return false;
       if (deviceCategory !== 'all' && p.scope !== 'all' && p.scope !== deviceCategory) return false;
       return true;
     });
-  }, [isCisco, isHuawei, isH3c, isNxos, isJuniper, isRuijie, deviceRole, savedQueries, batchMode, batchDeviceIds, devices, selectedDevice]);
+  }, [isCisco, isHuawei, isH3c, isComware5, isNxos, isJuniper, isRuijie, deviceRole, savedQueries, batchMode, batchDeviceIds, devices, selectedDevice]);
 
   const handleNewTask = () => {
     onResetExecutionState();

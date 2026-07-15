@@ -1,0 +1,599 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+import services.operational_data_service as operational_service
+from core.textfsm import smart_parse_cli
+from services.operational_data_service import NTC_PLATFORM_MAP, _resolve_commands
+
+
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "cli"
+
+
+def fixture_platform(path: Path) -> str:
+    for platform in (
+        "hp_comware",
+        "h3c_comware9",
+        "h3c_comware",
+        "cisco_nxos",
+        "cisco_ios",
+    ):
+        if platform in path.parts:
+            return platform
+    raise AssertionError(f"No supported vendor platform in fixture path: {path}")
+
+
+def load_official_fixture(*parts: str, name: str) -> tuple[str, dict]:
+    directory = FIXTURES.joinpath(*parts)
+    output = (directory / f"{name}.txt").read_text(encoding="utf-8")
+    metadata = json.loads((directory / f"{name}.meta.json").read_text(encoding="utf-8"))
+    assert metadata["source_type"] == "official_vendor_documentation"
+    assert metadata["source_url"].startswith(
+        ("https://www.h3c.com/", "https://wwwsg.h3c.com/", "https://www.cisco.com/")
+    )
+    return output, metadata
+
+
+ALL_H3C_CISCO_METADATA = sorted(
+    [
+        *FIXTURES.joinpath("h3c").rglob("*.meta.json"),
+        *FIXTURES.joinpath("cisco").rglob("*.meta.json"),
+    ],
+    key=lambda path: path.as_posix(),
+)
+
+
+@pytest.mark.parametrize(
+    "metadata_path",
+    ALL_H3C_CISCO_METADATA,
+    ids=lambda path: path.relative_to(FIXTURES).as_posix().removesuffix(".meta.json"),
+)
+def test_every_official_h3c_and_cisco_fixture_has_a_working_parser(metadata_path: Path):
+    output_path = metadata_path.with_name(
+        f"{metadata_path.name.removesuffix('.meta.json')}.txt"
+    )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    output = output_path.read_text(encoding="utf-8")
+
+    assert metadata["source_type"] == "official_vendor_documentation"
+    assert metadata["source_url"].startswith(
+        ("https://www.h3c.com/", "https://wwwsg.h3c.com/", "https://www.cisco.com/")
+    )
+
+    result = smart_parse_cli(
+        output,
+        metadata["command"],
+        platform=fixture_platform(metadata_path),
+    )
+
+    assert result["success"] is True
+    assert result["matched_rows"] > 0
+    assert result["data"]
+
+
+def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
+    assert _resolve_commands("hp_comware", ["bgp", "bgp_routes"]) == {
+        "bgp": ["display bgp peer"],
+        "bgp_routes": ["display bgp routing-table"],
+    }
+    assert _resolve_commands("hp_comware", ["interface_description"]) == {
+        "interface_description": ["display interface brief description"],
+    }
+    assert _resolve_commands("h3c_comware", ["bgp", "bgp_routes"]) == {
+        "bgp": ["display bgp peer ipv4"],
+        "bgp_routes": ["display bgp routing-table ipv4"],
+    }
+    assert _resolve_commands("h3c_comware", ["interface_description"]) == {
+        "interface_description": ["display interface brief description"],
+    }
+    assert _resolve_commands("h3c_comware9", ["bgp", "bgp_routes"]) == {
+        "bgp": ["display bgp peer ipv4"],
+        "bgp_routes": ["display bgp routing-table ipv4"],
+    }
+    assert _resolve_commands("h3c_comware9", ["interface_description"]) == {
+        "interface_description": ["display interface brief description"],
+    }
+
+    ios_expected = {
+        "bgp": ["show ip bgp summary"],
+        "bgp_routes": ["show ip bgp"],
+        "bfd": ["show bfd neighbors details"],
+        "ntp": ["show ntp status"],
+        "environment": ["show environment temperature"],
+        "transceiver": ["show interfaces transceiver"],
+    }
+    assert _resolve_commands("cisco_ios", list(ios_expected)) == ios_expected
+    assert _resolve_commands("cisco_xe", list(ios_expected)) == ios_expected
+    assert _resolve_commands(
+        "cisco_nxos",
+        ["bgp", "bgp_routes", "bfd", "ntp", "environment", "transceiver", "logs"],
+    ) == {
+        "bgp": ["show ip bgp summary"],
+        "bgp_routes": ["show ip bgp"],
+        "bfd": ["show bfd neighbors"],
+        "ntp": ["show ntp peer-status"],
+        "environment": ["show environment"],
+        "transceiver": ["show interface transceiver"],
+        "logs": ["show logging last 30"],
+    }
+
+    assert NTC_PLATFORM_MAP["cisco_xe"] == "cisco_ios"
+    assert NTC_PLATFORM_MAP["h3c_comware9"] == "hp_comware"
+
+
+@pytest.mark.parametrize(
+    ("platform", "parts", "name", "expected_template", "expected_rows"),
+    [
+        (
+            "hp_comware",
+            ("h3c", "hp_comware", "display_bgp_routing_table"),
+            "comware_v5_s7500e",
+            "hp_comware_display_bgp_routing_table.textfsm",
+            1,
+        ),
+        (
+            "hp_comware",
+            ("h3c", "hp_comware", "display_logbuffer"),
+            "comware_v5_s7500e",
+            "hp_comware_display_logbuffer.textfsm",
+            2,
+        ),
+        (
+            "hp_comware",
+            ("h3c", "hp_comware", "display_environment"),
+            "comware_v5_s5500",
+            "hp_comware_display_environment.textfsm",
+            1,
+        ),
+        (
+            "hp_comware",
+            ("h3c", "hp_comware", "display_power"),
+            "comware_v5_s3610",
+            "hp_comware_display_power.textfsm",
+            2,
+        ),
+        (
+            "hp_comware",
+            ("h3c", "hp_comware", "display_irf"),
+            "comware_v5_s9500e",
+            "hp_comware_display_irf.textfsm",
+            2,
+        ),
+        (
+            "hp_comware",
+            ("h3c", "hp_comware", "display_transceiver_interface"),
+            "comware_v5_s3610",
+            "hp_comware_display_transceiver_interface.textfsm",
+            1,
+        ),
+        (
+            "hp_comware",
+            ("h3c", "hp_comware", "display_fan"),
+            "comware_v5_s3610",
+            "hp_comware_display_fan.textfsm",
+            1,
+        ),
+        (
+            "h3c_comware",
+            ("h3c", "h3c_comware", "display_bgp_peer_ipv4"),
+            "comware_v7_s5560",
+            "h3c_comware_display_bgp_peer_ipv4.textfsm",
+            1,
+        ),
+        (
+            "h3c_comware",
+            ("h3c", "h3c_comware", "display_bgp_routing_table_ipv4"),
+            "comware_v7_router_b",
+            "h3c_comware_display_bgp_routing_table_ipv4.textfsm",
+            1,
+        ),
+        (
+            "h3c_comware",
+            ("h3c", "h3c_comware", "display_logbuffer"),
+            "comware_v7_s5130",
+            "h3c_comware_display_logbuffer.textfsm",
+            1,
+        ),
+        (
+            "h3c_comware",
+            ("h3c", "h3c_comware", "display_interface_brief"),
+            "comware_v7",
+            "h3c_comware_display_interface_brief.textfsm",
+            3,
+        ),
+        (
+            "h3c_comware",
+            ("h3c", "h3c_comware", "display_lldp_neighbor_information_list"),
+            "comware_v7_s5130",
+            "h3c_comware_display_lldp_neighbor_information_list.textfsm",
+            3,
+        ),
+        (
+            "h3c_comware",
+            ("h3c", "h3c_comware", "display_vlan_brief"),
+            "comware_v7_msr",
+            "h3c_comware_display_vlan_brief.textfsm",
+            1,
+        ),
+        (
+            "h3c_comware9",
+            ("h3c", "h3c_comware9", "display_bgp_peer_ipv4"),
+            "comware_v9_cr16000",
+            "h3c_comware9_display_bgp_peer_ipv4.textfsm",
+            1,
+        ),
+        (
+            "h3c_comware9",
+            ("h3c", "h3c_comware9", "display_bgp_routing_table_ipv4"),
+            "comware_v9_cr16000",
+            "h3c_comware9_display_bgp_routing_table_ipv4.textfsm",
+            2,
+        ),
+        (
+            "h3c_comware9",
+            ("h3c", "h3c_comware9", "display_interface_brief"),
+            "comware_v9_cr16000",
+            "h3c_comware9_display_interface_brief.textfsm",
+            5,
+        ),
+        (
+            "h3c_comware9",
+            ("h3c", "h3c_comware9", "display_link_aggregation_verbose"),
+            "comware_v9_msr5680",
+            "h3c_comware9_display_link_aggregation_verbose.textfsm",
+            3,
+        ),
+        (
+            "h3c_comware9",
+            ("h3c", "h3c_comware9", "display_vlan_brief"),
+            "comware_v9_cr16000",
+            "h3c_comware9_display_vlan_brief.textfsm",
+            3,
+        ),
+        (
+            "cisco_ios",
+            ("cisco", "cisco_ios", "show_ntp_status"),
+            "iosxe_17",
+            "cisco_ios_show_ntp_status.textfsm",
+            1,
+        ),
+        (
+            "cisco_ios",
+            ("cisco", "cisco_ios", "show_environment_temperature"),
+            "iosxe_c9300",
+            "cisco_ios_show_environment_temperature.textfsm",
+            1,
+        ),
+        (
+            "cisco_ios",
+            ("cisco", "cisco_ios", "show_interfaces_transceiver"),
+            "ios_asr",
+            "cisco_ios_show_interfaces_transceiver.textfsm",
+            3,
+        ),
+        (
+            "cisco_nxos",
+            ("cisco", "cisco_nxos", "show_ntp_peer_status"),
+            "nexus7000",
+            "cisco_nxos_show_ntp_peer_status.textfsm",
+            3,
+        ),
+        (
+            "cisco_nxos",
+            ("cisco", "cisco_nxos", "show_interface_transceiver"),
+            "nexus3000",
+            "cisco_nxos_show_interface_transceiver.textfsm",
+            1,
+        ),
+        (
+            "cisco_nxos",
+            ("cisco", "cisco_nxos", "show_logging_last_30"),
+            "nexus3000",
+            "cisco_nxos_show_logging_last_30.textfsm",
+            3,
+        ),
+    ],
+)
+def test_official_h3c_and_cisco_outputs_parse_by_platform(
+    platform: str,
+    parts: tuple[str, ...],
+    name: str,
+    expected_template: str,
+    expected_rows: int,
+):
+    output, metadata = load_official_fixture(*parts, name=name)
+    result = smart_parse_cli(output, metadata["command"], platform=platform)
+
+    assert result["success"] is True
+    assert result["template"] == expected_template
+    assert result["matched_rows"] == expected_rows
+    assert len(result["data"]) == expected_rows
+
+
+def test_comware9_does_not_collapse_to_comware7_before_dedicated_templates():
+    output, metadata = load_official_fixture(
+        "h3c", "h3c_comware9", "display_bgp_peer_ipv4", name="comware_v9_cr16000"
+    )
+    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware9")
+
+    assert result["template_source"] == "custom"
+    assert result["data"][0]["PEER"] == "10.2.1.2"
+    assert result["data"][0]["STATUS"] == "Established"
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected_template"),
+    [
+        ("hp_comware", "hp_comware_display_interface_brief.textfsm"),
+        ("h3c_comware", "h3c_comware_display_interface_brief.textfsm"),
+        ("h3c_comware9", "h3c_comware9_display_interface_brief.textfsm"),
+    ],
+)
+def test_h3c_interface_description_command_reuses_verified_brief_grammar(
+    platform: str,
+    expected_template: str,
+):
+    output, _metadata = load_official_fixture(
+        "h3c", "h3c_comware", "display_interface_brief", name="comware_v7"
+    )
+    # Netmiko strips the command echo.  The official fixture's first line records
+    # the source command and is intentionally removed for this catalog alias test.
+    output_without_echo = "\n".join(output.splitlines()[1:])
+    result = smart_parse_cli(
+        output_without_echo,
+        "display interface brief description",
+        platform=platform,
+    )
+
+    assert result["success"] is True
+    assert result["template"] == expected_template
+    assert result["matched_rows"] == 3
+
+
+def test_comware9_interface_parser_does_not_turn_headers_into_records():
+    output, metadata = load_official_fixture(
+        "h3c", "h3c_comware9", "display_interface_brief", name="comware_v9_cr16000"
+    )
+    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware9")
+
+    assert {item["INTERFACE"] for item in result["data"]} == {
+        "InLoop0",
+        "MGE0/0/0",
+        "NULL0",
+        "REG0",
+        "GE1/0/1",
+    }
+
+
+def test_comware_vlan_parser_keeps_the_complete_vlan_name():
+    output, metadata = load_official_fixture(
+        "h3c", "h3c_comware9", "display_vlan_brief", name="comware_v9_cr16000"
+    )
+    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware9")
+
+    assert [item["VLAN_NAME"] for item in result["data"]] == [
+        "VLAN 0001",
+        "VLAN 0002",
+        "VLAN 0003",
+    ]
+
+
+def test_comware9_link_aggregation_keeps_parent_context_on_every_member():
+    output, metadata = load_official_fixture(
+        "h3c",
+        "h3c_comware9",
+        "display_link_aggregation_verbose",
+        name="comware_v9_msr5680",
+    )
+    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware9")
+
+    assert {item["AGGREGATE_INTERFACE"] for item in result["data"]} == {
+        "Route-Aggregation1"
+    }
+    assert {item["AGGREGATION_MODE"] for item in result["data"]} == {"Dynamic"}
+
+
+@pytest.mark.parametrize(
+    ("platform", "category_fixtures", "expected_commands"),
+    [
+        (
+            "hp_comware",
+            {
+                "bgp_routes": ("h3c", "hp_comware", "display_bgp_routing_table", "comware_v5_s7500e"),
+                "ntp": ("h3c", "hp_comware", "display_ntp_service_status", "comware_v5_s5500"),
+                "environment": ("h3c", "hp_comware", "display_environment", "comware_v5_s5500"),
+                "fan": ("h3c", "hp_comware", "display_fan", "comware_v5_s3610"),
+                "power": ("h3c", "hp_comware", "display_power", "comware_v5_s3610"),
+                "stack": ("h3c", "hp_comware", "display_irf", "comware_v5_s9500e"),
+                "version": ("h3c", "hp_comware", "display_version", "comware_v5_wx3010e"),
+                "logs": ("h3c", "hp_comware", "display_logbuffer", "comware_v5_s7500e"),
+            },
+            {
+                "bgp_routes": ["display bgp routing-table"],
+                "ntp": ["display ntp-service status"],
+                "environment": ["display environment"],
+                "fan": ["display fan"],
+                "power": ["display power"],
+                "stack": ["display irf"],
+                "version": ["display version"],
+                "logs": ["display logbuffer"],
+            },
+        ),
+        (
+            "h3c_comware",
+            {
+                "arp": ("h3c", "h3c_comware", "display_arp_all", "comware_v7_s5130"),
+                "bfd": ("h3c", "h3c_comware", "display_bfd_session", "comware_v7_s5130"),
+                "bgp": ("h3c", "h3c_comware", "display_bgp_peer_ipv4", "comware_v7_s5560"),
+                "bgp_routes": (
+                    "h3c",
+                    "h3c_comware",
+                    "display_bgp_routing_table_ipv4",
+                    "comware_v7_router_b",
+                ),
+                "environment": ("h3c", "h3c_comware", "display_environment", "comware_v7_s5130"),
+                "fan": ("h3c", "h3c_comware", "display_fan", "comware_v7_s5130"),
+                "interfaces": ("h3c", "h3c_comware", "display_interface_brief", "comware_v7"),
+                "neighbors": (
+                    "h3c",
+                    "h3c_comware",
+                    "display_lldp_neighbor_information_list",
+                    "comware_v7_s5130",
+                ),
+                "logs": ("h3c", "h3c_comware", "display_logbuffer", "comware_v7_s5130"),
+                "ospf": ("h3c", "h3c_comware", "display_ospf_peer", "comware_v7_s5130"),
+                "power": ("h3c", "h3c_comware", "display_power", "comware_v7_s5130"),
+                "stack": ("h3c", "h3c_comware", "display_irf", "comware_v7_s5130"),
+                "version": ("h3c", "h3c_comware", "display_version", "comware_v7_wx2880x"),
+                "vlan": ("h3c", "h3c_comware", "display_vlan_brief", "comware_v7_msr"),
+            },
+            {
+                "arp": ["display arp all"],
+                "bfd": ["display bfd session"],
+                "bgp": ["display bgp peer ipv4"],
+                "bgp_routes": ["display bgp routing-table ipv4"],
+                "environment": ["display environment"],
+                "fan": ["display fan"],
+                "interfaces": ["display interface brief"],
+                "neighbors": ["display lldp neighbor-information list"],
+                "logs": ["display logbuffer"],
+                "ospf": ["display ospf peer"],
+                "power": ["display power"],
+                "stack": ["display irf"],
+                "version": ["display version"],
+                "vlan": ["display vlan brief"],
+            },
+        ),
+        (
+            "h3c_comware9",
+            {
+                "bgp": ("h3c", "h3c_comware9", "display_bgp_peer_ipv4", "comware_v9_cr16000"),
+                "bgp_routes": (
+                    "h3c",
+                    "h3c_comware9",
+                    "display_bgp_routing_table_ipv4",
+                    "comware_v9_cr16000",
+                ),
+                "eth_trunk": (
+                    "h3c",
+                    "h3c_comware9",
+                    "display_link_aggregation_verbose",
+                    "comware_v9_msr5680",
+                ),
+                "interfaces": (
+                    "h3c",
+                    "h3c_comware9",
+                    "display_interface_brief",
+                    "comware_v9_cr16000",
+                ),
+                "vlan": (
+                    "h3c",
+                    "h3c_comware9",
+                    "display_vlan_brief",
+                    "comware_v9_cr16000",
+                ),
+            },
+            {
+                "bgp": ["display bgp peer ipv4"],
+                "bgp_routes": ["display bgp routing-table ipv4"],
+                "eth_trunk": ["display link-aggregation verbose"],
+                "interfaces": ["display interface brief"],
+                "vlan": ["display vlan brief"],
+            },
+        ),
+        (
+            "cisco_xe",
+            {
+                "ntp": ("cisco", "cisco_ios", "show_ntp_status", "iosxe_17"),
+                "environment": (
+                    "cisco",
+                    "cisco_ios",
+                    "show_environment_temperature",
+                    "iosxe_c9300",
+                ),
+                "transceiver": (
+                    "cisco",
+                    "cisco_ios",
+                    "show_interfaces_transceiver",
+                    "ios_asr",
+                ),
+            },
+            {
+                "ntp": ["show ntp status"],
+                "environment": ["show environment temperature"],
+                "transceiver": ["show interfaces transceiver"],
+            },
+        ),
+        (
+            "cisco_nxos",
+            {
+                "ntp": ("cisco", "cisco_nxos", "show_ntp_peer_status", "nexus7000"),
+                "transceiver": (
+                    "cisco",
+                    "cisco_nxos",
+                    "show_interface_transceiver",
+                    "nexus3000",
+                ),
+                "logs": (
+                    "cisco",
+                    "cisco_nxos",
+                    "show_logging_last_30",
+                    "nexus3000",
+                ),
+            },
+            {
+                "ntp": ["show ntp peer-status"],
+                "transceiver": ["show interface transceiver"],
+                "logs": ["show logging last 30"],
+            },
+        ),
+    ],
+)
+def test_quick_collection_uses_platform_command_and_parses_official_output(
+    monkeypatch,
+    platform: str,
+    category_fixtures: dict[str, tuple[str, str, str, str]],
+    expected_commands: dict[str, list[str]],
+):
+    outputs: dict[str, str] = {}
+    for category, fixture in category_fixtures.items():
+        output, metadata = load_official_fixture(*fixture[:3], name=fixture[3])
+        assert expected_commands[category] == [metadata["command"]]
+        outputs[metadata["command"]] = output
+
+    class FakeConnection:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def send_command(self, command, **_kwargs):
+            return outputs[command]
+
+    monkeypatch.setattr(operational_service, "_build_connection_params", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(operational_service, "ConnectHandler", FakeConnection)
+
+    result = operational_service.collect_operational_data(
+        {
+            "id": f"{platform}-test",
+            "hostname": "official-fixture",
+            "ip_address": "192.0.2.10",
+            "vendor": "H3C" if "comware" in platform else "Cisco",
+            "platform": platform,
+            "role": "distribution",
+        },
+        categories=list(category_fixtures),
+    )
+
+    categories = {item["key"]: item for item in result["categories"]}
+    for category, commands in expected_commands.items():
+        assert categories[category]["commands"] == commands
+        assert categories[category]["parse_status"] == "matched"
+        assert categories[category]["count"] > 0

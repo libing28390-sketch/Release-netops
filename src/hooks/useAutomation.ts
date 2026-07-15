@@ -1032,120 +1032,31 @@ export const useAutomation = ({
     setQuickQueryRunning(true);
 
     try {
-      if (operationalCategory) {
-        const results = await Promise.all(
-          targets.map(async (device) => {
-            try {
-              const isCustom = operationalCategory === 'custom_command';
-              const url = isCustom 
-                ? `/api/devices/${device.id}/parsed-command`
-                : `/api/devices/${device.id}/operational-data`;
-              
-              const body = isCustom
-                ? {
-                    command: commands,
-                    name: label,
-                    auth_role: authRole,
-                  }
-                : {
-                    categories: [operationalCategory],
-                    name: label,
-                    auth_role: authRole,
-                  };
-
-              const resp = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
-                body: JSON.stringify(body),
-              });
-              if (!resp.ok) {
-                const errData = await resp.json().catch(() => ({}));
-                return { device, ok: false, error: errData.detail || errData.error || resp.statusText };
-              }
-              const data = await resp.json();
-              return { device, ok: true, data };
-            } catch (err: any) {
-              return { device, ok: false, error: err.message || String(err) };
-            }
-          })
-        );
-
-        let combinedRecords: any[] = [];
-        let combinedOutput = '';
-        let backendCmds: string[] = [];
-        let backendParseStatus = 'unmatched';
-
-        results.forEach((res) => {
-          if (!res.ok) {
-            combinedOutput += `--- ${res.device.hostname} ---\nError: ${res.error}\n\n`;
-            return;
-          }
-          const firstCat = Array.isArray(res.data?.categories) ? res.data.categories[0] : null;
-          if (firstCat) {
-            if (firstCat.parse_status) {
-              backendParseStatus = firstCat.parse_status;
-            }
-            if (Array.isArray(firstCat.commands) && firstCat.commands.length > 0) {
-              backendCmds = [...backendCmds, ...firstCat.commands];
-            }
-            if (Array.isArray(firstCat.records)) {
-              const recordsWithHost = firstCat.records.map((rec: any) => ({
-                'Hostname': res.device.hostname,
-                'IP Address': res.device.ip_address,
-                ...rec,
-              }));
-              combinedRecords = [...combinedRecords, ...recordsWithHost];
-            }
-          }
-          if (res.data) {
-            combinedOutput += `--- ${res.device.hostname} ---\n${formatQuickQueryRawOutput(res.data)}\n\n`;
-          }
-        });
-
-        if (backendCmds.length > 0) {
-          setQuickQueryCommands([...new Set(backendCmds)]);
-        }
-
-        const hasStructuredRecords = combinedRecords.length > 0;
-        const mockStructured = {
-          device: { 
-            hostname: targets.length === 1 ? targets[0].hostname : (language === 'zh' ? '多选聚合' : 'Aggregate'), 
-            platform: targets.length === 1 ? targets[0].platform : 'mixed' 
-          },
-          categories: [
-            {
-              name: operationalCategory,
-              parser: 'ntc-templates',
-              count: combinedRecords.length,
-              records: combinedRecords,
-              parse_status: backendParseStatus,
-            },
-          ],
-        };
-
-        setQuickQueryStructured(mockStructured);
-        setQuickQueryOutput(combinedOutput);
-        setQuickQueryView(hasStructuredRecords ? 'table' : 'terminal');
-        return;
-      }
-
+      const categoryKey = operationalCategory || 'custom_command';
       const results = await Promise.all(
         targets.map(async (device) => {
           try {
-            const resp = await fetch('/api/execute', {
+            const isCustom = categoryKey === 'custom_command';
+            const url = isCustom
+              ? `/api/devices/${device.id}/parsed-command`
+              : `/api/devices/${device.id}/operational-data`;
+
+            const body = isCustom
+              ? {
+                  command: commands,
+                  name: label,
+                  auth_role: authRole,
+                }
+              : {
+                  categories: [categoryKey],
+                  name: label,
+                  auth_role: authRole,
+                };
+
+            const resp = await fetch(url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('netops_token') ? { 'Authorization': `Bearer ${localStorage.getItem('netops_token')}` } : {}) },
-              body: JSON.stringify({
-                device_id: device.id,
-                command: commands,
-                isConfig: false,
-                save_history: true,
-                task_name: label || (language === 'zh' ? '自定义命令' : 'Custom Command'),
-                author: currentUser.username || 'admin',
-                actor_id: currentUser.id,
-                actor_role: currentUser.role || 'Administrator',
-                auth_role: authRole,
-              }),
+              body: JSON.stringify(body),
             });
             if (!resp.ok) {
               const errData = await resp.json().catch(() => ({}));
@@ -1159,17 +1070,62 @@ export const useAutomation = ({
         })
       );
 
+      let combinedRecords: any[] = [];
       let combinedOutput = '';
+      let backendCmds: string[] = [];
+      let backendParseStatus = 'unmatched';
+
       results.forEach((res) => {
         if (!res.ok) {
           combinedOutput += `--- ${res.device.hostname} ---\nError: ${res.error}\n\n`;
-        } else {
-          combinedOutput += `--- ${res.device.hostname} ---\n${res.data.output || 'No output'}\n\n`;
+          return;
+        }
+        const firstCat = Array.isArray(res.data?.categories) ? res.data.categories[0] : null;
+        if (firstCat) {
+          if (firstCat.parse_status) {
+            backendParseStatus = firstCat.parse_status;
+          }
+          if (Array.isArray(firstCat.commands) && firstCat.commands.length > 0) {
+            backendCmds = [...backendCmds, ...firstCat.commands];
+          }
+          if (Array.isArray(firstCat.records)) {
+            const recordsWithHost = firstCat.records.map((rec: any) => ({
+              'Hostname': res.device.hostname,
+              'IP Address': res.device.ip_address,
+              ...rec,
+            }));
+            combinedRecords = [...combinedRecords, ...recordsWithHost];
+          }
+        }
+        if (res.data) {
+          combinedOutput += `--- ${res.device.hostname} ---\n${formatQuickQueryRawOutput(res.data)}\n\n`;
         }
       });
 
-      setQuickQueryStructured(null);
-      setQuickQueryOutput(combinedOutput || 'No output');
+      if (backendCmds.length > 0) {
+        setQuickQueryCommands([...new Set(backendCmds)]);
+      }
+
+      const hasStructuredRecords = combinedRecords.length > 0;
+      const mockStructured = {
+        device: {
+          hostname: targets.length === 1 ? targets[0].hostname : (language === 'zh' ? '多选聚合' : 'Aggregate'),
+          platform: targets.length === 1 ? targets[0].platform : 'mixed'
+        },
+        categories: [
+          {
+            name: categoryKey,
+            parser: 'ntc-templates',
+            count: combinedRecords.length,
+            records: combinedRecords,
+            parse_status: backendParseStatus,
+          },
+        ],
+      };
+
+      setQuickQueryStructured(mockStructured);
+      setQuickQueryOutput(combinedOutput);
+      setQuickQueryView(hasStructuredRecords ? 'table' : 'terminal');
     } catch (e: any) {
       setQuickQueryOutput(`Error: ${e.message || e}`);
     } finally {

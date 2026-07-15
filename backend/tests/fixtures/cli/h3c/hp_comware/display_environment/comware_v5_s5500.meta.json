@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_200706/205752_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware5",
+  "model_family": "S5500-SI",
+  "command": "display environment",
+  "source_note": "Official S5500 Release 1205 device management command example."
+}

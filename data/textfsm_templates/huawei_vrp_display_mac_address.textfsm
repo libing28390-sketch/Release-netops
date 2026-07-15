@@ -1,0 +1,11 @@
+Value Required MAC_ADDRESS ([0-9A-Fa-f]{4}(?:-[0-9A-Fa-f]{4}){2})
+Value Required VLAN_VSI (\S+)
+Value PEVLAN (\S+)
+Value CEVLAN (\S+)
+Value Required LEARNED_FROM (\S+(?:\s+\S+)*)
+Value Required TYPE (\S+)
+Value LSP_LSR_ID (\S+)
+
+Start
+  ^${MAC_ADDRESS}\s+${VLAN_VSI}\s+${PEVLAN}\s+${CEVLAN}\s+${LEARNED_FROM}\s+${TYPE}\s+${LSP_LSR_ID}\s*$$ -> Record
+  ^${MAC_ADDRESS}\s+${VLAN_VSI}\s+${LEARNED_FROM}\s+${TYPE}\s*$$ -> Record

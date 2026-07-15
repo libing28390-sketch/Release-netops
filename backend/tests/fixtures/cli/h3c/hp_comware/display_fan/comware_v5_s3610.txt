@@ -1,0 +1,2 @@
+<Sysname> display fan
+ Fan  1 State: Normal

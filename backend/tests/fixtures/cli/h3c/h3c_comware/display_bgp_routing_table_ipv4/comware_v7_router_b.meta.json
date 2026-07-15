@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_202410/2284129_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware7",
+  "model_family": "MSR/S-series",
+  "command": "display bgp routing-table ipv4",
+  "source_note": "Official Comware V7 basic BGP configuration example."
+}

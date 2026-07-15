@@ -63,7 +63,7 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
     _snmp_item('net_cisco_nxos_intf_down', 'Cisco NX-OS Interface Down', 'Cisco NX-OS 接口 Down 数', 'Network', 'cisco_nxos_intf_down',
               '统计 down 的接口数量 (SNMP)', 'cisco_nxos', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
     _item('net_cisco_nxos_bgp_down', 'Cisco NX-OS BGP Peer Down', 'Cisco NX-OS BGP 邻居 Down 数', 'Network', 'cisco_nxos_bgp_down',
-          '统计非 Established 的 BGP 邻居', 'show bgp ipv4 unicast summary', 'cisco_nxos',
+          '统计非 Established 的 BGP 邻居', 'show ip bgp summary', 'cisco_nxos',
           1, 2, 'count', 'cisco_nxos_show_ip_bgp_summary', 'STATE_PFXRCD',
           parse_filter='{"field":"STATE_PFXRCD","op":"not_numeric"}')
 

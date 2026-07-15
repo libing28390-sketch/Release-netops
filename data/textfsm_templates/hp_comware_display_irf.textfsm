@@ -1,0 +1,11 @@
+Value Required MEMBER_ID (\d+)
+Value SLOT (\d+)
+Value Required ROLE (\S+)
+Value PRIORITY (\d+)
+Value CPU_MAC ([0-9A-Fa-f-]+)
+Value DESCRIPTION (\S+)
+
+Start
+  ^\s*[*+]*${MEMBER_ID}\s+${SLOT}\s+${ROLE}\s+${PRIORITY}\s+${CPU_MAC}\s+${DESCRIPTION}\s*$$ -> Record
+  ^\s*$$
+  ^.*

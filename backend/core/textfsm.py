@@ -231,7 +231,9 @@ _COMPATIBLE_PLATFORMS = {
     'huawei_usg': ['huawei_vrp'],
     'h3c_comware': ['hp_comware'],
     'hp_comware': ['h3c_comware'],
-    'h3c_comware9': ['h3c_comware'],
+    # Prefer dedicated Comware 9 templates, then Comware 7 custom templates,
+    # and finally the hp_comware NTC family for stable legacy grammars.
+    'h3c_comware9': ['h3c_comware', 'hp_comware'],
 }
 
 _STANDARD_FIELDS_MAPPING = {
@@ -316,9 +318,14 @@ def smart_parse_cli(
         # 例如 ``<HUAWEI> display version`` 或 ``<Sysname> display memory``。
         # 先剥离提示符前缀，再由下面的命令回显规则丢弃整行，避免把提示符
         # 喂给内置 NTC 模板触发 State Error。
-        if platform and ('huawei' in platform.lower() or 'comware' in platform.lower() or 'hp_comware' in platform.lower()):
+        if platform and (
+            'huawei' in platform.lower()
+            or 'comware' in platform.lower()
+            or 'hp_comware' in platform.lower()
+            or 'cisco' in platform.lower()
+        ):
             prompt_prefix = re.match(
-                r'^(?:<[^>\r\n]+>|\[[^\]\r\n]+\]|[^\s#]+#)\s+',
+                r'^(?:<[^>\r\n]+>|\[[^\]\r\n]+\]|[A-Za-z0-9][^\s#>]*[>#])\s+',
                 trimmed,
             )
             if prompt_prefix:
@@ -720,6 +727,14 @@ _TEMPLATE_COMMAND_CANONICAL: dict[str, dict[str, str]] = {
         'display mac address': 'display mac-address',
         'display lldp neighbor information list': 'display lldp neighbor-information list',
     },
+    'cisco_ios': {
+        # The NTC filename uses the singular spelling, while IOS/IOS-XE exposes
+        # the verified operational command with the plural ``interfaces`` form.
+        'show interface transceiver': 'show interfaces transceiver',
+    },
+    'cisco_nxos': {
+        'show ntp peer status': 'show ntp peer-status',
+    },
 }
 
 
@@ -749,7 +764,12 @@ def _template_platform_candidates(platform: str) -> list[str]:
     }
     normalized = aliases.get(raw, raw)
     candidates = [normalized] if normalized else []
-    candidates.extend(_COMPATIBLE_PLATFORMS.get(normalized, []))
+    # Comware 9 may use hp_comware only as a last-resort parser fallback.
+    # Do not expose Comware 5 commands as selectable Comware 9 suggestions.
+    if normalized == 'h3c_comware9':
+        candidates.append('h3c_comware')
+    else:
+        candidates.extend(_COMPATIBLE_PLATFORMS.get(normalized, []))
     return list(dict.fromkeys(candidates))
 
 
@@ -810,7 +830,17 @@ def list_template_suggestions(platform: str, query: str, limit: int = 8) -> list
     for entry in ranked:
         command_key = str(entry[2].get('command') or '').lower()
         previous = best_by_command.get(command_key)
-        if previous is None or (entry[1], entry[0]) < (previous[1], previous[0]):
+        entry_preference = (
+            entry[1],
+            -entry[0],
+            0 if entry[2].get('source') == 'custom' else 1,
+        )
+        previous_preference = (
+            previous[1],
+            -previous[0],
+            0 if previous[2].get('source') == 'custom' else 1,
+        ) if previous is not None else None
+        if previous is None or entry_preference < previous_preference:
             best_by_command[command_key] = entry
 
     ranked = sorted(

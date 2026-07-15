@@ -1,0 +1,10 @@
+Value Required STATUS (\S+)
+Value Required TEMPERATURE (\d+)
+Value WARNING_THRESHOLD (\d+)
+
+Start
+  ^\s*Temperature\s+State\s*:\s*${STATUS}\s*$$
+  ^\s*Temperature\s+Value\s*:\s*${TEMPERATURE}\s+Degree\s+Celsius\s*$$
+  ^\s*Warning\s+Threshold\s*:\s*${WARNING_THRESHOLD}\s+Degree\s+Celsius\s*$$ -> Record
+  ^\s*$$
+  ^.*

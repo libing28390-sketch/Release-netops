@@ -1,0 +1,9 @@
+<Sysname> display transceiver interface gigabitethernet 1/1/3
+GigabitEthernet1/1/3 transceiver information:
+  Transceiver Type              : 1000_BASE_SX_SFP
+  Connector Type                : LC
+  Wavelength(nm)                : 850
+  Transfer Distance(m)          : 550(50um),270(62.5um)
+  Digital Diagnostic Monitoring : YES
+  Vendor Name                   : H3C
+  Ordering Name                 : SFP-GE-SX-MM850

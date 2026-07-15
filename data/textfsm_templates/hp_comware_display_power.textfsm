@@ -1,0 +1,14 @@
+Value Required POWER_ID (\d+)
+Value Required STATUS (\S+)
+Value TYPE (\S+)
+
+Start
+  ^\s*Power\s+${POWER_ID}\s*$$ -> Power
+  ^\s*$$
+  ^.*
+
+Power
+  ^\s*State\s*:\s*${STATUS}\s*$$
+  ^\s*Type\s*:\s*${TYPE}\s*$$ -> Record Start
+  ^\s*$$
+  ^.*

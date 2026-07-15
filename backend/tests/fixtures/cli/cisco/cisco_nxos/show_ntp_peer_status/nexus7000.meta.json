@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/support/docs/switches/nexus-7000-series-switches/113585-nex7000-ntp-config.html",
+  "vendor": "Cisco",
+  "platform": "NX-OS",
+  "model_family": "Nexus 7000",
+  "command": "show ntp peer-status",
+  "source_note": "Official Cisco Nexus 7000 NTP configuration example."
+}

@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_200905/633420_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware5",
+  "model_family": "S3610/S5510 Release 5309",
+  "command": "display transceiver interface gigabitethernet 1/1/3",
+  "source_note": "Official Comware V5 device management transceiver example."
+}

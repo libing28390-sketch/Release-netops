@@ -1,0 +1,12 @@
+<Sysname> display logbuffer
+Logging buffer configuration and contents:enabled
+Allowed max buffer size : 1024
+Actual buffer size : 512
+Channel number : 4 , Channel name : logbuffer
+Dropped messages : 0
+Overwritten messages : 718
+Current messages : 512
+%Apr 26 13:00:00:319 2000 H3C IC/6/SYS_RESTART:
+System restarted --
+H3C Comware Software
+%Apr 26 13:00:17:661 2000 H3C HTTPD/4/Log:Start HTTP server.
