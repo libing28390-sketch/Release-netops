@@ -54,6 +54,7 @@ jobs:
           rm -rf brain/ skills/ .github/skills/ .agents/
 
           rm -rf scratch/ backend/scratch/
+          rm -rf backend/scripts/
           if [ -d backend/tests ]; then
             find backend/tests -mindepth 1 -maxdepth 1 ! -name fixtures -exec rm -rf {} +
           fi
@@ -98,7 +99,7 @@ jobs:
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required release path missing: $path"; exit 1; }
           done
-          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key; do
+          for path in backend/scripts data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key; do
             test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
           done
 
@@ -180,6 +181,7 @@ jobs:
           fi
           rm -rf brain/ skills/ .github/skills/ .agents/
           rm -rf scratch/ backend/scratch/
+          rm -rf backend/scripts/
           if [ -d backend/tests ]; then
             find backend/tests -mindepth 1 -maxdepth 1 ! -name fixtures -exec rm -rf {} +
           fi
@@ -213,7 +215,7 @@ jobs:
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required Windows release path missing: $path"; exit 1; }
           done
-          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key; do
+          for path in backend/scripts data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key; do
             test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
           done
 
