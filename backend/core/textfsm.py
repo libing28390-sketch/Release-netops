@@ -640,6 +640,60 @@ def list_templates(platform_filter: str = '', search: str = '') -> list[dict[str
     return result
 
 
+# Custom template filenames use underscores because they are safe filenames,
+# but several Huawei/H3C commands contain hyphens.  Replacing every underscore
+# with a space therefore loses the real CLI spelling (for example
+# ``display ip routing-table statistics``).  Keep this small canonical map at
+# the template-index boundary so suggestions and template listings expose the
+# command that should actually be sent to the device.
+_TEMPLATE_COMMAND_CANONICAL: dict[str, dict[str, str]] = {
+    'huawei_vrp': {
+        'display cpu usage': 'display cpu-usage',
+        'display memory usage': 'display memory-usage',
+        'display ip routing table statistics': 'display ip routing-table statistics',
+        'display ntp service status': 'display ntp-service status',
+        'display eth trunk': 'display eth-trunk',
+        'display mac address': 'display mac-address',
+    },
+    'huawei_vrpv8': {
+        'display cpu usage': 'display cpu-usage',
+        'display memory usage': 'display memory-usage',
+        'display ip routing table statistics': 'display ip routing-table statistics',
+        'display ntp service status': 'display ntp-service status',
+        'display eth trunk': 'display eth-trunk',
+        'display mac address': 'display mac-address',
+    },
+    'h3c_comware': {
+        'display ip routing table statistics': 'display ip routing-table statistics',
+        'display ntp service status': 'display ntp-service status',
+        'display link aggregation verbose': 'display link-aggregation verbose',
+        'display mac address': 'display mac-address',
+        'display lldp neighbor information list': 'display lldp neighbor-information list',
+    },
+    'hp_comware': {
+        'display ip routing table statistics': 'display ip routing-table statistics',
+        'display ntp service status': 'display ntp-service status',
+        'display link aggregation verbose': 'display link-aggregation verbose',
+        'display mac address': 'display mac-address',
+        'display lldp neighbor information list': 'display lldp neighbor-information list',
+    },
+    'h3c_comware9': {
+        'display ip routing table statistics': 'display ip routing-table statistics',
+        'display ntp service status': 'display ntp-service status',
+        'display link aggregation verbose': 'display link-aggregation verbose',
+        'display mac address': 'display mac-address',
+        'display lldp neighbor information list': 'display lldp neighbor-information list',
+    },
+}
+
+
+def _canonical_template_command(platform: str, command: str) -> str:
+    """Return the real CLI spelling represented by a template filename."""
+    raw = re.sub(r'\s+', ' ', str(command or '').strip().lower())
+    comparison_key = raw.replace('-', ' ')
+    return _TEMPLATE_COMMAND_CANONICAL.get(str(platform or '').lower(), {}).get(comparison_key, command)
+
+
 def _template_platform_candidates(platform: str) -> list[str]:
     """Return the exact template platform and safe parser-compatible fallbacks."""
     raw = str(platform or '').strip().lower()
@@ -783,12 +837,21 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
         if stem.startswith(platform + '_'):
             command_part = stem[len(platform) + 1:]
             command = command_part.replace('_', ' ')
-            return {'platform': platform, 'command': command, 'stem': stem}
+            return {
+                'platform': platform,
+                'command': _canonical_template_command(platform, command),
+                'stem': stem,
+            }
 
     # 未知平台：取第一段作为 platform
     parts = stem.split('_', 1)
     if len(parts) == 2:
-        return {'platform': parts[0], 'command': parts[1].replace('_', ' '), 'stem': stem}
+        platform, command = parts[0], parts[1].replace('_', ' ')
+        return {
+            'platform': platform,
+            'command': _canonical_template_command(platform, command),
+            'stem': stem,
+        }
 
     return {'platform': stem, 'command': '', 'stem': stem}
 
