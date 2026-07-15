@@ -330,13 +330,14 @@ cp .env.example .env
 Open `.env` and configure:
 - Custom PostgreSQL passwords/usernames.
 - Security keys (`SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`).
+- Set `TLS_COMMON_NAME` to the deployment domain or server IP. If no certificate is supplied, Docker generates a self-signed fallback certificate on startup; replace it with a trusted certificate for production.
 
 ##### Step 2: Start the containers
 ```bash
 # Start all containers (frontend will automatically build inside the container)
 docker compose up -d --build
 ```
-Access the application at `http://localhost`.
+Access the application at `https://localhost`. The browser will warn about trust when Docker generated the fallback self-signed certificate.
 
 ##### Updating an existing Docker deployment
 
@@ -353,8 +354,8 @@ git fetch --prune origin
 git reset --hard origin/main
 
 # Refresh base images, rebuild the application, and recreate changed containers
-docker compose pull db nginx
-docker compose build --pull netops
+docker compose pull db
+docker compose build --pull netops nginx
 docker compose up -d --remove-orphans
 
 # Verify the upgraded stack
@@ -670,13 +671,14 @@ cp .env.example .env
 打开 `.env` 文件，配置如下参数：
 - 数据库连接信息 (`POSTGRES_USER`, `POSTGRES_PASSWORD` 等)
 - 安全密钥 (`SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`)
+- 将 `TLS_COMMON_NAME` 设置为部署域名或服务器 IP。如果没有提供证书，Docker 会在启动时自动生成自签名备用证书；生产环境请替换为可信证书。
 
 ##### 第二步：启动所有容器
 ```bash
 # 启动所有容器（前端会在 Docker 容器内自动构建，宿主机无需安装 Node.js/npm）
 docker compose up -d --build
 ```
-启动后，可通过浏览器访问 `http://localhost`。
+启动后，可通过浏览器访问 `https://localhost`。使用 Docker 自动生成的自签名证书时，浏览器会显示信任警告。
 
 ##### 更新已有 Docker 部署
 
@@ -693,8 +695,8 @@ git fetch --prune origin
 git reset --hard origin/main
 
 # 更新基础镜像、重新构建应用并重建有变化的容器
-docker compose pull db nginx
-docker compose build --pull netops
+docker compose pull db
+docker compose build --pull netops nginx
 docker compose up -d --remove-orphans
 
 # 检查升级后的容器和日志
@@ -823,8 +825,8 @@ cd /path/to/netops-automation
 cp .env .env.backup
 git fetch --prune origin
 git reset --hard origin/main
-docker compose pull db nginx
-docker compose build --pull netops
+docker compose pull db
+docker compose build --pull netops nginx
 docker compose up -d --remove-orphans
 docker compose ps
 

@@ -23,7 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py nginx/nginx.conf src)
+          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh src)
           for path in "${required[@]}"; do
             test -e "$path" || { echo "[FAIL] Missing release input: $path"; exit 1; }
           done
@@ -81,7 +81,7 @@ jobs:
 
           # TLS keys and certificates are deployment inputs, never release content.
           mkdir -p nginx/ssl
-          rm -rf nginx/ssl/*
+          find nginx/ssl -mindepth 1 -delete
           touch nginx/ssl/.gitkeep
 
       - name: Commit sanitized Ubuntu release tree
@@ -94,11 +94,11 @@ jobs:
           git init
           git add .
 
-          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py nginx/nginx.conf src)
+          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh src)
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required release path missing: $path"; exit 1; }
           done
-          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.key; do
+          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key; do
             test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
           done
 
@@ -213,7 +213,7 @@ jobs:
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required Windows release path missing: $path"; exit 1; }
           done
-          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.key; do
+          for path in data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key; do
             test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
           done
 
