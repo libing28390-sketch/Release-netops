@@ -1,0 +1,13 @@
+{
+  "vendor": "H3C",
+  "platform": "hp_comware",
+  "software_family": "Comware5",
+  "model": "WX3010E",
+  "command": "display version",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_201905/1177632_294551_0.htm",
+  "source_title": "01-Text - H3C Comware 5",
+  "source_section": "display version",
+  "expected_record_count": 1,
+  "expected_fields": ["SOFTWARE_VERSION", "RELEASE", "DEVICE", "UPTIME"]
+}

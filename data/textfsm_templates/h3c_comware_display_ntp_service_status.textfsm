@@ -1,0 +1,28 @@
+Value SERVICE_STATUS (\S+)
+Value Required CLOCK_STATUS (\S+)
+Value Required CLOCK_STRATUM (\d+)
+Value Required REFERENCE_CLOCK_ID (\S+)
+Value NOMINAL_FREQUENCY (\S+\s+\S+)
+Value ACTUAL_FREQUENCY (\S+\s+\S+)
+Value CLOCK_PRECISION (\S+)
+Value CLOCK_OFFSET (\S+\s+\S+)
+Value ROOT_DELAY (\S+\s+\S+)
+Value ROOT_DISPERSION (\S+\s+\S+)
+Value PEER_DISPERSION (\S+\s+\S+)
+Value REFERENCE_TIME (.*)
+
+Start
+  ^Service\s+status:\s*${SERVICE_STATUS}
+  ^Clock\s+status:\s*${CLOCK_STATUS}
+  ^Clock\s+stratum:\s*${CLOCK_STRATUM}
+  ^Reference\s+clock\s+ID:\s*${REFERENCE_CLOCK_ID}
+  ^Nominal\s+frequency:\s*${NOMINAL_FREQUENCY}
+  ^Actual\s+frequency:\s*${ACTUAL_FREQUENCY}
+  ^Clock\s+precision:\s*${CLOCK_PRECISION}
+  ^Clock\s+offset:\s*${CLOCK_OFFSET}
+  ^Root\s+delay:\s*${ROOT_DELAY}
+  ^Root\s+dispersion:\s*${ROOT_DISPERSION}
+  ^Peer\s+dispersion:\s*${PEER_DISPERSION}
+  ^Reference\s+time:\s*${REFERENCE_TIME} -> Record
+  ^\s*$$
+  ^. -> Error

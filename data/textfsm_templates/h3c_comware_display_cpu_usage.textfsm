@@ -1,0 +1,20 @@
+Value CHASSIS (\d+)
+Value SLOT (\d+)
+Value CPU_ID (\d+)
+Value CPU_5_SEC (\d+(?:\.\d+)?|--)
+Value CPU_1_MIN (\d+(?:\.\d+)?|--)
+Value CPU_5_MIN (\d+(?:\.\d+)?|--)
+
+Start
+  ^(?:Chassis\s+${CHASSIS}\s+)?Slot\s+${SLOT}\s+CPU\s+${CPU_ID}\s+CPU\s+usage:\s*$$
+  ^CPU\s+usage:\s*$$
+  ^Unit\s+CPU\s+usage:\s*$$
+  ^\s*${CPU_5_SEC}%?\s+in\s+last\s+5\s+seconds\s*$$
+  ^\s*${CPU_1_MIN}%?\s+in\s+last\s+1\s+minute\s*$$
+  ^\s*${CPU_5_MIN}%?\s+in\s+last\s+5\s+minutes\s*$$ -> Record
+  ^\s*CPU\s+Last\s+5\s+sec\s+Last\s+1\s+min\s+Last\s+5\s+min\s*$$
+  ^\s*${CPU_ID}\s+${CPU_5_SEC}%\s+${CPU_1_MIN}%\s+${CPU_5_MIN}%\s*$$ -> Record
+  ^\s*Slot\s+CPU\s+Last\s+5\s+sec\s+Last\s+1\s+min\s+Last\s+5\s+min\s*$$
+  ^\s*${SLOT}\s+${CPU_ID}\s+${CPU_5_SEC}%\s+${CPU_1_MIN}%\s+${CPU_5_MIN}%\s*$$ -> Record
+  ^\s*$$
+
