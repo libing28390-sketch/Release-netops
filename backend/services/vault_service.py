@@ -148,8 +148,8 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
     Unified credential resolver.
     - If credential_source='vault' and Vault is available, fetch from Vault.
     - Otherwise, decrypt from local DB fields (supporting credentials table).
-    Returns dict: {username, password, enable_password, priv_username,
-                    normal_username, normal_password, admin_username, admin_password}
+    Returns the SSH account fields plus ``snmp_community``. Callers must never
+    log or return the resolved dictionary.
 
     Enable-secret fallback policy:
       If `enable_password` is not explicitly set, fall back to the admin password
@@ -197,7 +197,14 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
             'normal_password': decrypt_credential(device.get('normal_password')) or '',
             'admin_username': device.get('admin_username') or '',
             'admin_password': decrypt_credential(device.get('admin_password')) or '',
+            'snmp_community': decrypt_credential(
+                db_creds.get('snmp_community') or device.get('snmp_community')
+            ) or '',
         }
+
+    # Older Vault records may not contain SNMP fields. Keep the key stable so
+    # collectors can distinguish "not configured" from an unreachable agent.
+    resolved['snmp_community'] = resolved.get('snmp_community') or ''
 
     # ── Enable-secret fallback ─────────────────────────────────────────
     # If no explicit enable_password is configured, use admin_password
@@ -212,3 +219,27 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
         )
 
     return resolved
+
+
+def resolve_collector_credentials(device: dict) -> dict[str, object]:
+    """Return the stable credential contract consumed by network collectors.
+
+    SNMPv2c is the currently supported wire driver. Keeping the version and
+    configured flag explicit prevents callers from treating an empty community
+    as the legacy public default and leaves a safe extension point for SNMPv3.
+    """
+    resolved = resolve_device_credentials(device)
+    return {
+        'ssh': {
+            'username': resolved.get('username') or '',
+            'password': resolved.get('password') or '',
+            'enable_password': resolved.get('enable_password') or '',
+            'port': int(device.get('management_port') or device.get('port') or 22),
+        },
+        'snmp': {
+            'version': '2c',
+            'community': resolved.get('snmp_community') or '',
+            'port': int(device.get('snmp_port') or 161),
+            'configured': bool(resolved.get('snmp_community')),
+        },
+    }

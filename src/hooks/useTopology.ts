@@ -48,6 +48,51 @@ export type TopologyDecoratedLink = {
   is_unmanaged?: boolean;
 };
 
+export type TopologySiteSummary = {
+  site_id: string;
+  site_code: string;
+  site_name: string;
+  device_count: number;
+  online_devices: number;
+  offline_devices: number;
+  link_count: number;
+  cross_site_links: number;
+  stale_links: number;
+  orphan_devices: number;
+  last_discovery_at?: string | null;
+  last_discovery_status?: string | null;
+};
+
+export type TopologyDiscoveryProgress = {
+  id: string;
+  status: string;
+  total_devices: number;
+  processed_devices: number;
+  success_devices: number;
+  failed_devices: number;
+  running_devices: number;
+  pending_devices: number;
+  progress_percent: number;
+  started_at?: string;
+  completed_at?: string | null;
+};
+
+export type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
+export type TopologyProtocolFilter = 'all' | 'lldp' | 'cdp';
+
+const topologyAuthHeaders = (): Record<string, string> => {
+  const token = localStorage.getItem('netops_token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+const createTopologyIdempotencyKey = (): string => {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+    return cryptoApi.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+};
+
 const STALE_THRESHOLD_MS = 30 * 60 * 1000;
 
 interface UseTopologyArgs {
@@ -64,12 +109,55 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
   const [topologyStatusFilter, setTopologyStatusFilter] = useState<'all' | 'online' | 'offline' | 'pending'>('all');
   const [topologyRoleFilter, setTopologyRoleFilter] = useState('all');
   const [topologySiteFilter, setTopologySiteFilter] = useState('all');
+  const [topologyLinkStatusFilter, setTopologyLinkStatusFilter] = useState<TopologyLinkStatusFilter>('all');
+  const [topologyProtocolFilter, setTopologyProtocolFilter] = useState<TopologyProtocolFilter>('all');
   const [selectedTopologyDeviceId, setSelectedTopologyDeviceId] = useState<string | null>(null);
   const [selectedTopologyLinkKey, setSelectedTopologyLinkKey] = useState<string | null>(null);
   const [topologyDiscoveryRunning, setTopologyDiscoveryRunning] = useState(false);
+  const [topologyDiscoveryRunId, setTopologyDiscoveryRunId] = useState<string | null>(null);
+  const [topologyDiscoveryProgress, setTopologyDiscoveryProgress] = useState<TopologyDiscoveryProgress | null>(null);
+  const [topologyDiscoveryDevices, setTopologyDiscoveryDevices] = useState<any[]>([]);
+  const [topologySites, setTopologySites] = useState<TopologySiteSummary[]>([]);
+  const [topologyDataError, setTopologyDataError] = useState('');
   const [hideStaleLinks, setHideStaleLinks] = useState(false);
   const [hideOrphanDevices, setHideOrphanDevices] = useState(false);
   const topologyRef = React.useRef<HTMLDivElement>(null);
+
+  const refreshTopologyData = useCallback(async () => {
+    const params = new URLSearchParams({ limit: '10000' });
+    if (topologySiteFilter !== 'all') params.set('site_id', topologySiteFilter);
+    const [linksResponse, sitesResponse] = await Promise.all([
+      fetch(`/api/topology/links?${params.toString()}`, { headers: topologyAuthHeaders() }),
+      fetch('/api/topology/sites', { headers: topologyAuthHeaders() }),
+    ]);
+    if (!linksResponse.ok) throw new Error(`topology_links_${linksResponse.status}`);
+    const linksPayload = await linksResponse.json();
+    setTopologyLinks(Array.isArray(linksPayload?.links) ? linksPayload.links : []);
+    setTopologyUnmanagedNodes(Array.isArray(linksPayload?.unmanaged_nodes) ? linksPayload.unmanaged_nodes : []);
+    setTopologyUnmanagedLinks(Array.isArray(linksPayload?.unmanaged_links) ? linksPayload.unmanaged_links : []);
+    if (sitesResponse.ok) {
+      const sitesPayload = await sitesResponse.json();
+      setTopologySites(Array.isArray(sitesPayload?.items) ? sitesPayload.items : []);
+    }
+    setTopologyDataError('');
+  }, [topologySiteFilter]);
+
+  React.useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        await refreshTopologyData();
+      } catch (error) {
+        if (active) setTopologyDataError(error instanceof Error ? error.message : 'topology_fetch_failed');
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [refreshTopologyData]);
 
   const evaluateTopologyInterfaceSnapshot = useCallback(
     (device: Device | null | undefined, port?: string): TopologyInterfaceSnapshot | null => {
@@ -246,9 +334,16 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
 
   // -- Apply hideStaleLinks toggle filter --
   const topologyVisibleLinks = useMemo<TopologyDecoratedLink[]>(() => {
-    if (!hideStaleLinks) return topologyAllDecoratedLinks;
-    return topologyAllDecoratedLinks.filter((link) => link.operational_state !== 'stale');
-  }, [topologyAllDecoratedLinks, hideStaleLinks]);
+    return topologyAllDecoratedLinks.filter((link) => {
+      if (hideStaleLinks && link.operational_state === 'stale') return false;
+      if (topologyLinkStatusFilter !== 'all' && link.operational_state !== topologyLinkStatusFilter) return false;
+      if (topologyProtocolFilter !== 'all') {
+        const source = String(link.discovery_source || '').toLowerCase();
+        if (!source.split('+').includes(topologyProtocolFilter)) return false;
+      }
+      return true;
+    });
+  }, [hideStaleLinks, topologyAllDecoratedLinks, topologyLinkStatusFilter, topologyProtocolFilter]);
 
   // -- Connected device IDs (computed from visible links after stale filter) --
   const topologyConnectedDeviceIds = useMemo(() => {
@@ -281,7 +376,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
   const topologyStats = useMemo(() => ({
     nodeCount: topologyFilteredDevices.length,
     linkCount: topologyVisibleLinks.length,
-    siteCount: new Set(topologyFilteredDevices.map((device) => String(device.site || '').trim()).filter(Boolean)).size,
+    siteCount: new Set(topologyFilteredDevices.map((device) => String(device.site_id || device.site || '').trim()).filter(Boolean)).size,
     atRiskCount: topologyFilteredDevices.filter((device) => device.status !== 'online' || device.health_status === 'critical' || (device.open_alert_count || 0) > 0).length,
     orphanCount: topologyFilteredDevices.filter((device) => !topologyConnectedDeviceIds.has(device.id)).length,
   }), [topologyConnectedDeviceIds, topologyFilteredDevices, topologyVisibleLinks.length]);
@@ -354,8 +449,9 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     try {
       await new Promise((resolve) => setTimeout(resolve, 500));
       const dataUrl = await htmlToImage.toPng(topologyRef.current, {
-        backgroundColor: '#ffffff',
-        pixelRatio: 2,
+        backgroundColor: '#0b1424',
+        cacheBust: true,
+        pixelRatio: Math.max(3, Math.round(window.devicePixelRatio * 2)),
         style: {
           transform: 'scale(1)',
           transformOrigin: 'top left',
@@ -375,47 +471,103 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
 
   const handleTriggerDiscovery = useCallback(async () => {
     setTopologyDiscoveryRunning(true);
+    setTopologyDiscoveryDevices([]);
     try {
-      const response = await fetch('/api/topology/discover', { method: 'POST' });
-      if (response.ok) {
-        showToast(
-          language === 'zh' ? '已启动一次手动拓扑刷新，稍后自动更新链路状态' : 'Manual topology refresh started. Link state will update shortly.',
-          'success',
-        );
-        window.setTimeout(async () => {
-          try {
-            const linksResponse = await fetch('/api/topology/links');
-            if (linksResponse.ok) {
-              const linksPayload = await linksResponse.json();
-              if (linksPayload && typeof linksPayload === 'object' && !Array.isArray(linksPayload)) {
-                setTopologyLinks(Array.isArray(linksPayload.links) ? linksPayload.links : []);
-                setTopologyUnmanagedNodes(Array.isArray(linksPayload.unmanaged_nodes) ? linksPayload.unmanaged_nodes : []);
-                setTopologyUnmanagedLinks(Array.isArray(linksPayload.unmanaged_links) ? linksPayload.unmanaged_links : []);
-              } else {
-                setTopologyLinks(Array.isArray(linksPayload) ? linksPayload : []);
-                setTopologyUnmanagedNodes([]);
-                setTopologyUnmanagedLinks([]);
-              }
-            }
-          } catch {
-            // ignore delayed refresh errors
-          }
-        }, 2500);
-      } else {
-        showToast(language === 'zh' ? '拓扑发现启动失败' : 'Failed to start topology discovery', 'error');
+      const body = topologySiteFilter === 'all'
+        ? { scope: 'full', site_id: '', device_ids: [] }
+        : { scope: 'site', site_id: topologySiteFilter, device_ids: [] };
+      const response = await fetch('/api/topology/discover', {
+        method: 'POST',
+        headers: {
+          ...topologyAuthHeaders(),
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `topology-discovery-${createTopologyIdempotencyKey()}`,
+        },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.run_id) {
+        throw new Error(payload?.detail || 'topology_discovery_start_failed');
       }
-    } catch {
-      showToast(language === 'zh' ? '连接失败，无法触发拓扑发现' : 'Connection error', 'error');
-    } finally {
+      setTopologyDiscoveryRunId(String(payload.run_id));
+      setTopologyDiscoveryProgress({
+        id: String(payload.run_id),
+        status: 'pending',
+        total_devices: Number(payload.device_count || 0),
+        processed_devices: 0,
+        success_devices: 0,
+        failed_devices: 0,
+        running_devices: 0,
+        pending_devices: Number(payload.device_count || 0),
+        progress_percent: 0,
+      });
+      showToast(language === 'zh' ? '拓扑发现任务已启动，可实时查看进度。' : 'Topology discovery started; live progress is available.', 'success');
+    } catch (error) {
       setTopologyDiscoveryRunning(false);
+      showToast(
+        language === 'zh'
+          ? `拓扑发现启动失败：${error instanceof Error ? error.message : '连接错误'}`
+          : `Failed to start topology discovery: ${error instanceof Error ? error.message : 'connection error'}`,
+        'error',
+      );
     }
-  }, [language, showToast]);
+  }, [language, showToast, topologySiteFilter]);
+
+  React.useEffect(() => {
+    if (!topologyDiscoveryRunId) return;
+    let active = true;
+    let timer: number | null = null;
+    const terminalStates = new Set(['completed', 'partial', 'failed', 'cancelled']);
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/topology/discovery-runs/${topologyDiscoveryRunId}`, {
+          headers: topologyAuthHeaders(),
+        });
+        if (!response.ok) throw new Error(`discovery_progress_${response.status}`);
+        const payload = await response.json();
+        if (!active) return;
+        const run = payload?.run as TopologyDiscoveryProgress;
+        setTopologyDiscoveryProgress(run);
+        setTopologyDiscoveryDevices(Array.isArray(payload?.devices) ? payload.devices : []);
+        if (run && terminalStates.has(run.status)) {
+          setTopologyDiscoveryRunning(false);
+          setTopologyDiscoveryRunId(null);
+          await refreshTopologyData();
+          showToast(
+            language === 'zh'
+              ? `拓扑发现${run.status === 'completed' ? '完成' : '结束'}：成功 ${run.success_devices || 0}，失败 ${run.failed_devices || 0}`
+              : `Topology discovery ${run.status}: ${run.success_devices || 0} succeeded, ${run.failed_devices || 0} failed`,
+            run.status === 'failed' ? 'error' : 'success',
+          );
+          return;
+        }
+      } catch (error) {
+        if (active) setTopologyDataError(error instanceof Error ? error.message : 'discovery_progress_failed');
+      }
+      if (active) timer = window.setTimeout(poll, 1500);
+    };
+
+    void poll();
+    return () => {
+      active = false;
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [language, refreshTopologyData, showToast, topologyDiscoveryRunId]);
+
+  const handleCancelDiscovery = useCallback(async () => {
+    const runId = topologyDiscoveryRunId || topologyDiscoveryProgress?.id;
+    if (!runId || !topologyDiscoveryRunning) return;
+    const response = await fetch(`/api/topology/discovery-runs/${runId}/cancel`, {
+      method: 'POST',
+      headers: topologyAuthHeaders(),
+    });
+    if (!response.ok) {
+      showToast(language === 'zh' ? '取消拓扑发现失败' : 'Failed to cancel topology discovery', 'error');
+    }
+  }, [language, showToast, topologyDiscoveryProgress?.id, topologyDiscoveryRunId, topologyDiscoveryRunning]);
 
   return {
-    // raw data setters (consumed by App.fetchSharedData)
-    setTopologyLinks,
-    setTopologyUnmanagedNodes,
-    setTopologyUnmanagedLinks,
     // filters & selection
     topologySearch,
     setTopologySearch,
@@ -425,11 +577,19 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     setTopologyRoleFilter,
     topologySiteFilter,
     setTopologySiteFilter,
+    topologyLinkStatusFilter,
+    setTopologyLinkStatusFilter,
+    topologyProtocolFilter,
+    setTopologyProtocolFilter,
     selectedTopologyDeviceId,
     setSelectedTopologyDeviceId,
     selectedTopologyLinkKey,
     setSelectedTopologyLinkKey,
     topologyDiscoveryRunning,
+    topologyDiscoveryProgress,
+    topologyDiscoveryDevices,
+    topologySites,
+    topologyDataError,
     topologyRef,
     // canvas toggles
     hideStaleLinks,
@@ -454,5 +614,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     // actions
     handleExportMap,
     handleTriggerDiscovery,
+    handleCancelDiscovery,
+    refreshTopologyData,
   };
 };

@@ -4,12 +4,24 @@ import heapq
 import json
 import threading
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
+from api.users import validate_session_token
 from database import get_db_connection, fetch_interface_data
 from services.device_health_service import annotate_devices_with_health, build_health_overview
+from services.collection_status_service import collection_status_summary, list_collection_status
+from services.collection_diagnostics_service import diagnose_device_collection
 
 router = APIRouter()
+
+
+def _require_monitoring_session(request: Request) -> dict:
+    auth = request.headers.get('Authorization', '')
+    token = auth.replace('Bearer ', '') if auth.startswith('Bearer ') else ''
+    session = validate_session_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail='Not authenticated')
+    return session
 
 _SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
 
@@ -19,6 +31,38 @@ _overview_cache: dict[str, object] = {
     'expires_at': None,
     'payload': None,
 }
+
+
+@router.get('/monitoring/collection-status')
+def monitoring_collection_status(
+    device_id: Optional[str] = Query(default=None),
+    site_id: Optional[str] = Query(default=None),
+    collector: Optional[str] = Query(default=None),
+):
+    """Return secret-free collector health for monitoring and topology UIs."""
+    items = list_collection_status(device_id=device_id, site_id=site_id, collector=collector)
+    return {
+        'items': items,
+        'summary': collection_status_summary(site_id=site_id),
+    }
+
+
+@router.get('/monitoring/device/{device_id}/collection-status')
+def monitoring_device_collection_status(device_id: str):
+    items = list_collection_status(device_id=device_id)
+    return {
+        'device_id': device_id,
+        'items': items,
+    }
+
+
+@router.post('/monitoring/device/{device_id}/diagnostics')
+async def monitoring_device_diagnostics(device_id: str, request: Request):
+    _require_monitoring_session(request)
+    result = await diagnose_device_collection(device_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail='Device not found')
+    return result
 
 
 def _parse_json(value, default):
@@ -86,6 +130,45 @@ def _fill_missing_time_buckets(rows: list[dict], start_dt: datetime, end_dt: dat
             filled.append(point)
         cursor += timedelta(seconds=step_seconds)
     return filled
+
+
+def _downsample_network_series(rows: list[dict], bucket_seconds: int) -> list[dict]:
+    """Database-agnostic time bucketing for PostgreSQL and SQLite."""
+    if bucket_seconds <= 60:
+        return rows
+    buckets: dict[int, list[dict]] = {}
+    for row in rows:
+        raw_ts = row.get('ts_minute')
+        if not raw_ts:
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(raw_ts).replace('Z', '+00:00'))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        bucket = (int(parsed.timestamp()) // bucket_seconds) * bucket_seconds
+        buckets.setdefault(bucket, []).append(row)
+
+    average_keys = ('total_in_bps', 'total_out_bps')
+    max_keys = ('peak_bw_in_pct', 'peak_bw_out_pct')
+    sum_keys = ('total_in_pkts', 'total_out_pkts', 'total_errors', 'total_drops')
+    result: list[dict] = []
+    for bucket, points in sorted(buckets.items()):
+        item: dict[str, object] = {
+            'ts_minute': datetime.fromtimestamp(bucket, tz=timezone.utc).replace(microsecond=0).isoformat()
+        }
+        for key in average_keys:
+            values = [float(point[key]) for point in points if point.get(key) is not None]
+            item[key] = sum(values) / len(values) if values else None
+        for key in max_keys:
+            values = [float(point[key]) for point in points if point.get(key) is not None]
+            item[key] = max(values) if values else None
+        for key in sum_keys:
+            values = [int(point[key]) for point in points if point.get(key) is not None]
+            item[key] = sum(values) if values else None
+        result.append(item)
+    return result
 
 
 @router.get('/monitoring/search-devices')
@@ -552,38 +635,25 @@ def monitoring_device_trend(
                 params.append(interface_name.strip())
             rows = conn.execute(
                 f'''
-                WITH per_minute AS (
-                    SELECT ts_minute,
-                           SUM(COALESCE(avg_in_bps, 0)) AS total_in_bps,
-                           SUM(COALESCE(avg_out_bps, 0)) AS total_out_bps,
-                           MAX(COALESCE(max_bw_in_pct, 0)) AS peak_bw_in_pct,
-                           MAX(COALESCE(max_bw_out_pct, 0)) AS peak_bw_out_pct,
-                           SUM(COALESCE(in_pkts_sum, 0)) AS total_in_pkts,
-                           SUM(COALESCE(out_pkts_sum, 0)) AS total_out_pkts,
-                           SUM(COALESCE(err_delta_sum, 0)) AS total_errors,
-                           SUM(COALESCE(discard_delta_sum, 0)) AS total_drops
-                    FROM interface_telemetry_1m
-                    WHERE device_id = ? AND ts_minute >= ? AND ts_minute <= ? {intf_where}
-                    GROUP BY ts_minute
-                )
-                SELECT
-                    substr(ts_minute, 1, 14) || printf('%02d', (CAST(substr(ts_minute, 15, 2) AS INTEGER) / 5) * 5) || ':00+00:00' AS ts_minute,
-                    AVG(total_in_bps) AS total_in_bps,
-                    AVG(total_out_bps) AS total_out_bps,
-                    MAX(peak_bw_in_pct) AS peak_bw_in_pct,
-                    MAX(peak_bw_out_pct) AS peak_bw_out_pct,
-                    SUM(total_in_pkts) AS total_in_pkts,
-                    SUM(total_out_pkts) AS total_out_pkts,
-                    SUM(total_errors) AS total_errors,
-                    SUM(total_drops) AS total_drops
-                FROM per_minute
+                SELECT ts_minute,
+                       SUM(COALESCE(avg_in_bps, 0)) AS total_in_bps,
+                       SUM(COALESCE(avg_out_bps, 0)) AS total_out_bps,
+                       MAX(COALESCE(max_bw_in_pct, 0)) AS peak_bw_in_pct,
+                       MAX(COALESCE(max_bw_out_pct, 0)) AS peak_bw_out_pct,
+                       SUM(COALESCE(in_pkts_sum, 0)) AS total_in_pkts,
+                       SUM(COALESCE(out_pkts_sum, 0)) AS total_out_pkts,
+                       SUM(COALESCE(err_delta_sum, 0)) AS total_errors,
+                       SUM(COALESCE(discard_delta_sum, 0)) AS total_drops
+                FROM interface_telemetry_1m
+                WHERE device_id = ? AND ts_minute >= ? AND ts_minute <= ? {intf_where}
                 GROUP BY ts_minute
                 ORDER BY ts_minute ASC
                 ''',
                 tuple(params),
             ).fetchall()
 
-            series_rows = _fill_missing_time_buckets([dict(r) for r in rows], start_dt, end_dt, 300)
+            series_rows = _downsample_network_series([dict(r) for r in rows], 300)
+            series_rows = _fill_missing_time_buckets(series_rows, start_dt, end_dt, 300)
 
             return {
                 'device': {'id': device['id'], 'hostname': device['hostname'], 'status': device['status']},

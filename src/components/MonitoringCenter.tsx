@@ -42,24 +42,35 @@ const StatusCard: React.FC<{
 }> = ({ label, value, sub, tone = 'default', pulse, onClick, icon }) => {
   const toneMap: Record<string, string> = {
     default: 'border-[var(--card-border)]',
-    green: 'border-emerald-400/40 bg-emerald-500/[0.04]',
-    red: 'border-red-400/50 bg-red-500/[0.06]',
-    amber: 'border-amber-400/40 bg-amber-500/[0.04]',
-    blue: 'border-sky-400/40 bg-sky-500/[0.04]',
+    green: 'border-emerald-400/40',
+    red: 'border-red-400/50',
+    amber: 'border-amber-400/40',
+    blue: 'border-sky-400/40',
   };
   const valueTone: Record<string, string> = {
     default: 'text-[var(--app-text)]', green: 'text-emerald-600',
     red: 'text-red-600', amber: 'text-amber-600', blue: 'text-sky-600',
   };
+  const accentTone: Record<string, string> = {
+    default: '#94a3b8', green: '#10b981', red: '#ef4444', amber: '#f59e0b', blue: '#0ea5e9',
+  };
+  const fillTone: Record<string, string> = {
+    default: 'color-mix(in srgb, var(--card-bg) 94%, #94a3b8 6%)',
+    green: 'color-mix(in srgb, var(--card-bg) 92%, #10b981 8%)',
+    red: 'color-mix(in srgb, var(--card-bg) 91%, #ef4444 9%)',
+    amber: 'color-mix(in srgb, var(--card-bg) 92%, #f59e0b 8%)',
+    blue: 'color-mix(in srgb, var(--card-bg) 92%, #0ea5e9 8%)',
+  };
   return (
     <button type="button" onClick={onClick} disabled={!onClick}
-      className={`relative rounded-2xl border p-4 text-left transition-all ${toneMap[tone]} ${onClick ? 'cursor-pointer hover:scale-[1.02] hover:shadow-md active:scale-[0.99]' : 'cursor-default'} bg-[var(--card-bg)]`}>
+      style={{ borderLeftColor: accentTone[tone], backgroundColor: fillTone[tone] }}
+      className={`ops-surface relative overflow-hidden rounded-2xl border-l-4 border-y border-r p-5 text-left transition-all ${toneMap[tone]} ${onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0' : 'cursor-default'}`}>
       {pulse && <span className="absolute top-3 right-3 flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-60" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" /></span>}
       <div className="flex items-center gap-2">
         {icon && <span className="text-[var(--muted-text)]">{icon}</span>}
         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted-text)]">{label}</p>
       </div>
-      <p className={`mt-2 text-3xl font-extrabold tracking-tight ${valueTone[tone]}`}>{value}</p>
+      <p className={`mt-2 text-[2.35rem] leading-none font-extrabold tracking-tight ${valueTone[tone]}`}>{value}</p>
       {sub && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{sub}</p>}
     </button>
   );
@@ -836,11 +847,12 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
         }
       />
 
-      <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
+      <div className="ops-page-scroll flex-1 overflow-auto px-6 py-5">
+      <div className="monitoring-cockpit-frame space-y-5 pb-3">
 
       {/* CRITICAL BANNER */}
       {(criticalCount > 0 || criticalAlertCount > 0) && (
-        <button type="button" onClick={() => navigate('/alerts')} className="w-full flex items-center gap-3 rounded-xl border border-red-300 bg-gradient-to-r from-red-600 to-red-500 px-5 py-3 text-white shadow-lg shadow-red-500/20 transition-all hover:shadow-red-500/30 hover:scale-[1.005] active:scale-[0.998]">
+        <button type="button" onClick={() => navigate('/alerts')} className="ops-incident-ribbon w-full flex items-center gap-3 rounded-2xl border border-l-4 border-l-rose-400 px-5 py-3.5 text-white transition-all hover:-translate-y-0.5 hover:shadow-[0_16px_32px_rgba(166,27,50,0.28)] active:translate-y-0">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/20">
             <AlertTriangle size={18} className="animate-pulse" />
           </span>
@@ -900,16 +912,22 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_0.85fr] gap-4">
 
         {/* LEFT: Fleet Health Distribution */}
-        <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-4">
+        <div className="ops-surface rounded-2xl p-5 space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-600">{language === 'zh' ? '\u5168\u7f51\u5065\u5eb7' : 'Fleet Health'}</p>
               <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '\u5065\u5eb7\u5206\u5e03\u603b\u89c8' : 'Health Distribution'}</h3>
               <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '\u57fa\u4e8e\u8bbe\u5907\u72b6\u6001\u3001\u544a\u8b66\u548c\u5065\u5eb7\u8bc4\u5206\u7efc\u5408\u8ba1\u7b97\u3002' : 'Computed from device status, alerts, and health scores.'}</p>
             </div>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-              {language === 'zh' ? `\u5171 ${healthTotal} \u53f0` : `${healthTotal} total`}
-            </span>
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 flex-col items-center justify-center rounded-2xl border border-sky-200 bg-sky-50 text-sky-700">
+                <span className="text-lg font-extrabold leading-none">{healthPct}%</span>
+                <span className="mt-1 text-[8px] font-bold uppercase tracking-wider">{language === 'zh' ? '\u5065\u5eb7' : 'health'}</span>
+              </div>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-text)]">
+                {language === 'zh' ? `${healthTotal} \u53f0\u8bbe\u5907` : `${healthTotal} devices`}
+              </span>
+            </div>
           </div>
 
           {healthTotal > 0 && (
@@ -958,7 +976,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
         </div>
 
         {/* RIGHT: TOP IMPACTED DEVICES */}
-        <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-3">
+        <div className="ops-surface rounded-2xl p-5 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red-600">{language === 'zh' ? '\u5f71\u54cd\u6700\u5927' : 'Most Impacted'}</p>
@@ -1008,7 +1026,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-4">
 
         {/* LEFT: Performance Trends */}
-        <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-4">
+        <div className="ops-surface rounded-2xl p-5 space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-600">{language === 'zh' ? '\u6027\u80fd\u8d8b\u52bf' : 'Performance Trends'}</p>
@@ -1151,7 +1169,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
         </div>
 
         {/* RIGHT: Real-time Event Stream */}
-        <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-3">
+        <div className="ops-surface rounded-2xl p-5 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red-600">{language === 'zh' ? '\u4e8b\u4ef6\u6d41' : 'Event Feed'}</p>
@@ -1199,6 +1217,8 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
         </div>
       </div>
 
+
+      </div>
 
       </div>
     </div>

@@ -8,6 +8,8 @@ import TopologyInspectorPanel from '../components/TopologyInspectorPanel';
 import PageHero from '../components/PageHero';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
+type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
+type TopologyProtocolFilter = 'all' | 'lldp' | 'cdp';
 
 interface TopologyStats {
   nodeCount: number;
@@ -55,13 +57,27 @@ interface TopologyDecoratedLinkLike {
 interface TopologyPageProps {
   language: string;
   topologyDiscoveryRunning: boolean;
+  topologyDiscoveryProgress: {
+    id: string;
+    status: string;
+    total_devices: number;
+    processed_devices: number;
+    success_devices: number;
+    failed_devices: number;
+    progress_percent: number;
+  } | null;
+  topologyDiscoveryDevices: any[];
+  topologySites: any[];
+  topologyDataError: string;
   topologyStats: TopologyStats;
   topologyLinkStats: TopologyLinkStats;
   topologySearch: string;
   topologySiteFilter: string;
   topologyRoleFilter: string;
   topologyStatusFilter: TopologyStatusFilter;
-  topologySiteOptions: string[];
+  topologyLinkStatusFilter: TopologyLinkStatusFilter;
+  topologyProtocolFilter: TopologyProtocolFilter;
+  topologySiteOptions: Array<{ id: string; name: string }>;
   topologyRoleOptions: string[];
   topologyVisibleDevices: Device[];
   topologyVisibleLinks: TopologyDecoratedLinkLike[];
@@ -75,11 +91,14 @@ interface TopologyPageProps {
   topologyOrphanDevices: Device[];
   topologyCanvasRef: React.RefObject<HTMLDivElement | null>;
   onTriggerDiscovery: () => void;
+  onCancelDiscovery: () => void;
   onExportMap: () => void;
   onTopologySearchChange: (value: string) => void;
   onTopologySiteFilterChange: (value: string) => void;
   onTopologyRoleFilterChange: (value: string) => void;
   onTopologyStatusFilterChange: (value: TopologyStatusFilter) => void;
+  onTopologyLinkStatusFilterChange: (value: TopologyLinkStatusFilter) => void;
+  onTopologyProtocolFilterChange: (value: TopologyProtocolFilter) => void;
   onSelectTopologyDevice: (deviceId: string) => void;
   onSelectTopologyLink: (linkKey: string | null) => void;
   onOpenDeviceDetail: (device: Device) => void;
@@ -99,12 +118,18 @@ interface TopologyPageProps {
 const TopologyPage: React.FC<TopologyPageProps> = ({
   language,
   topologyDiscoveryRunning,
+  topologyDiscoveryProgress,
+  topologyDiscoveryDevices,
+  topologySites,
+  topologyDataError,
   topologyStats,
   topologyLinkStats,
   topologySearch,
   topologySiteFilter,
   topologyRoleFilter,
   topologyStatusFilter,
+  topologyLinkStatusFilter,
+  topologyProtocolFilter,
   topologySiteOptions,
   topologyRoleOptions,
   topologyVisibleDevices,
@@ -119,11 +144,14 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   topologyOrphanDevices,
   topologyCanvasRef,
   onTriggerDiscovery,
+  onCancelDiscovery,
   onExportMap,
   onTopologySearchChange,
   onTopologySiteFilterChange,
   onTopologyRoleFilterChange,
   onTopologyStatusFilterChange,
+  onTopologyLinkStatusFilterChange,
+  onTopologyProtocolFilterChange,
   onSelectTopologyDevice,
   onSelectTopologyLink,
   onOpenDeviceDetail,
@@ -140,7 +168,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   getTopologyOperationalTone,
 }) => {
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="topology-page-shell h-full flex flex-col overflow-hidden">
       <PageHero
         icon={Network}
         title={language === 'zh' ? '网络拓扑' : 'Network Topology'}
@@ -155,6 +183,11 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                 ? (language === 'zh' ? '发现中...' : 'Discovering...')
                 : (language === 'zh' ? '刷新发现' : 'Refresh Discovery')}
             </button>
+            {topologyDiscoveryRunning && (
+              <button onClick={onCancelDiscovery} className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 transition hover:bg-rose-100">
+                {language === 'zh' ? '取消任务' : 'Cancel Run'}
+              </button>
+            )}
             <button onClick={onExportMap} className={darkActionBtnClass}>
               <Download size={16} />
               {language === 'zh' ? '导出拓扑图' : 'Export Map'}
@@ -163,9 +196,76 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         }
       />
 
-      <div className="flex-1 overflow-auto px-6 py-5 space-y-6">
+      <div className="ops-page-scroll flex-1 overflow-auto px-6 py-5 space-y-5">
 
-      <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm">
+      {topologyDataError && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+          {language === 'zh' ? '拓扑数据刷新异常：' : 'Topology data refresh warning: '}{topologyDataError}
+        </div>
+      )}
+
+      {topologySites.length > 0 && (
+        <div className="ops-surface rounded-2xl p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800">{language === 'zh' ? '站点视图' : 'Site View'}</h3>
+              <p className="mt-0.5 text-[11px] text-slate-500">{language === 'zh' ? '先按站点缩小故障域，再进入站点拓扑。' : 'Start with a site fault domain, then inspect its topology.'}</p>
+            </div>
+            <button onClick={() => onTopologySiteFilterChange('all')} className="text-xs font-semibold text-sky-600 hover:text-sky-800">
+              {language === 'zh' ? '查看全部' : 'All Sites'}
+            </button>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {topologySites.map((site: any) => {
+              const active = topologySiteFilter === site.site_id;
+              const healthy = site.device_count > 0 && site.offline_devices === 0 && site.stale_links === 0;
+              return (
+                <button
+                  key={site.site_id || site.site_code}
+                  onClick={() => onTopologySiteFilterChange(site.site_id || 'all')}
+                  className={`rounded-xl border p-3 text-left transition ${active ? 'border-sky-400 bg-sky-50' : 'border-slate-200 bg-slate-50/60 hover:border-sky-300'}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-sm font-bold text-slate-800">{site.site_name}</span>
+                    <span className={`h-2 w-2 rounded-full ${healthy ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
+                    <span><b className="block text-sm text-slate-800">{site.device_count}</b>{language === 'zh' ? '设备' : 'Devices'}</span>
+                    <span><b className="block text-sm text-slate-800">{site.link_count}</b>{language === 'zh' ? '链路' : 'Links'}</span>
+                    <span><b className="block text-sm text-rose-600">{site.orphan_devices}</b>{language === 'zh' ? '孤立' : 'Orphans'}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {topologyDiscoveryProgress && (
+        <div className="ops-surface rounded-2xl border-l-4 border-l-sky-500 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-sky-900">{language === 'zh' ? '拓扑发现任务' : 'Topology Discovery Run'}</h3>
+              <p className="mt-0.5 text-[11px] text-sky-700">{topologyDiscoveryProgress.status} · {topologyDiscoveryProgress.processed_devices}/{topologyDiscoveryProgress.total_devices}</p>
+            </div>
+            <span className="text-lg font-extrabold tabular-nums text-sky-800">{topologyDiscoveryProgress.progress_percent}%</span>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-sky-100">
+            <div className="h-full rounded-full bg-sky-500 transition-all" style={{ width: `${Math.min(100, Math.max(0, topologyDiscoveryProgress.progress_percent))}%` }} />
+          </div>
+          {topologyDiscoveryDevices.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {topologyDiscoveryDevices.slice(0, 8).map((item: any) => (
+                <span key={item.device_id} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${item.status === 'success' ? 'bg-emerald-100 text-emerald-700' : item.status === 'failed' ? 'bg-rose-100 text-rose-700' : 'bg-white text-sky-700'}`}>
+                  {item.hostname || item.device_id}: {item.status}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="ops-toolbar rounded-2xl p-4">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           {[
             { label: language === 'zh' ? '节点' : 'Nodes', value: topologyStats.nodeCount, color: 'text-[#007ea0]' },
@@ -196,9 +296,9 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         </div>
       </div>
 
-      <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,0.8fr))]">
-          <label className="flex items-center gap-2 rounded-xl border border-black/10 px-3 py-2">
+      <div className="ops-toolbar rounded-2xl p-4">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_repeat(5,minmax(0,0.8fr))]">
+          <label className="ops-control flex items-center gap-2 rounded-xl px-3 py-2">
             <Search size={15} className="text-black/35" />
             <input
               value={topologySearch}
@@ -211,16 +311,16 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             value={topologySiteFilter}
             onChange={(event) => onTopologySiteFilterChange(event.target.value)}
             title={language === 'zh' ? '按站点筛选拓扑' : 'Filter topology by site'}
-            className="rounded-xl border border-black/10 px-3 py-2 text-sm outline-none"
+            className="ops-control rounded-xl px-3 py-2 text-sm outline-none"
           >
             <option value="all">{language === 'zh' ? '全部站点' : 'All Sites'}</option>
-            {topologySiteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+            {topologySiteOptions.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
           </select>
           <select
             value={topologyRoleFilter}
             onChange={(event) => onTopologyRoleFilterChange(event.target.value)}
             title={language === 'zh' ? '按角色筛选拓扑' : 'Filter topology by role'}
-            className="rounded-xl border border-black/10 px-3 py-2 text-sm outline-none"
+            className="ops-control rounded-xl px-3 py-2 text-sm outline-none"
           >
             <option value="all">{language === 'zh' ? '全部角色' : 'All Roles'}</option>
             {topologyRoleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
@@ -229,12 +329,35 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             value={topologyStatusFilter}
             onChange={(event) => onTopologyStatusFilterChange(event.target.value as TopologyStatusFilter)}
             title={language === 'zh' ? '按状态筛选拓扑' : 'Filter topology by status'}
-            className="rounded-xl border border-black/10 px-3 py-2 text-sm outline-none"
+            className="ops-control rounded-xl px-3 py-2 text-sm outline-none"
           >
             <option value="all">{language === 'zh' ? '全部状态' : 'All Status'}</option>
             <option value="online">{language === 'zh' ? '在线' : 'Online'}</option>
             <option value="offline">{language === 'zh' ? '离线' : 'Offline'}</option>
             <option value="pending">{language === 'zh' ? '待确认' : 'Pending'}</option>
+          </select>
+          <select
+            value={topologyLinkStatusFilter}
+            onChange={(event) => onTopologyLinkStatusFilterChange(event.target.value as TopologyLinkStatusFilter)}
+            title={language === 'zh' ? '按链路状态筛选拓扑' : 'Filter topology by link state'}
+            className="ops-control rounded-xl px-3 py-2 text-sm outline-none"
+          >
+            <option value="all">{language === 'zh' ? '全部链路状态' : 'All Link States'}</option>
+            <option value="up">{language === 'zh' ? '链路正常' : 'Link Up'}</option>
+            <option value="degraded">{language === 'zh' ? '链路退化' : 'Link Degraded'}</option>
+            <option value="down">{language === 'zh' ? '链路中断' : 'Link Down'}</option>
+            <option value="stale">{language === 'zh' ? '链路陈旧' : 'Link Stale'}</option>
+            <option value="unknown">{language === 'zh' ? '链路未知' : 'Link Unknown'}</option>
+          </select>
+          <select
+            value={topologyProtocolFilter}
+            onChange={(event) => onTopologyProtocolFilterChange(event.target.value as TopologyProtocolFilter)}
+            title={language === 'zh' ? '按邻居协议筛选拓扑' : 'Filter topology by neighbor protocol'}
+            className="ops-control rounded-xl px-3 py-2 text-sm outline-none"
+          >
+            <option value="all">{language === 'zh' ? '全部协议' : 'All Protocols'}</option>
+            <option value="lldp">LLDP</option>
+            <option value="cdp">CDP</option>
           </select>
         </div>
         <div className="flex items-center gap-3 mt-2">
@@ -261,8 +384,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,2.2fr)_minmax(320px,0.95fr)]">
-        <div className="relative flex min-h-[620px] flex-col overflow-hidden rounded-2xl border border-black/5 bg-white shadow-sm" ref={topologyCanvasRef}>
+      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,2.35fr)_minmax(320px,0.85fr)]">
+        <div className="ops-surface relative flex min-h-[620px] flex-col overflow-hidden rounded-2xl" ref={topologyCanvasRef}>
           <div className="absolute inset-0 bg-[radial-gradient(#000_1px,transparent_1px)] bg-[length:20px_20px] opacity-[0.03]" />
           <div className="relative flex items-center justify-between border-b border-black/5 px-5 py-4">
             <div>

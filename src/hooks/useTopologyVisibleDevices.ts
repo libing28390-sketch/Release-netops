@@ -19,12 +19,14 @@ export const useTopologyVisibleDevices = ({
   topologyUnmanagedNodes,
 }: UseTopologyVisibleDevicesParams) => {
   const topologySiteOptions = useMemo(() => {
-    const siteValues: string[] = devices
-      .map((device) => String(device.site || '').trim())
-      .filter((value): value is string => Boolean(value));
-    const uniqueSites: string[] = [...new Set<string>(siteValues)];
-    uniqueSites.sort((left: string, right: string) => left.localeCompare(right));
-    return uniqueSites;
+    const sites = new Map<string, string>();
+    devices.forEach((device) => {
+      const id = String(device.site_id || device.site || '').trim();
+      if (id) sites.set(id, String(device.site || id));
+    });
+    return Array.from(sites.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((left, right) => left.name.localeCompare(right.name));
   }, [devices]);
 
   const topologyRoleOptions = useMemo(() => {
@@ -42,7 +44,7 @@ export const useTopologyVisibleDevices = ({
       const matchesQuery = !query || [device.hostname, device.ip_address, device.site, device.role].some((value) => String(value || '').toLowerCase().includes(query));
       const matchesStatus = topologyStatusFilter === 'all' || device.status === topologyStatusFilter;
       const matchesRole = topologyRoleFilter === 'all' || String(device.role || '') === topologyRoleFilter;
-      const matchesSite = topologySiteFilter === 'all' || String(device.site || '') === topologySiteFilter;
+      const matchesSite = topologySiteFilter === 'all' || String(device.site_id || device.site || '') === topologySiteFilter;
       return matchesQuery && matchesStatus && matchesRole && matchesSite;
     });
 
@@ -67,7 +69,8 @@ export const useTopologyVisibleDevices = ({
         model: '',
         version: '',
         role: '',
-        site: '',
+        site: n.site || 'Unassigned',
+        site_id: n.site_id || '',
         uptime: '',
         connection_method: 'ssh' as const,
         config_history: [],

@@ -22,6 +22,7 @@ export interface Device {
   version: string;
   role: string;
   site: string;
+  site_id?: string;
   uptime: string;
   connection_method: 'ssh' | 'netconf';
   current_config?: string;
@@ -50,6 +51,7 @@ export interface Device {
   fan_status?: 'ok' | 'fail';
   psu_status?: 'redundant' | 'single' | 'fail';
   snmp_community?: string;
+  snmp_configured?: boolean;
   snmp_port?: number;
   management_port?: number;
   sys_name?: string;

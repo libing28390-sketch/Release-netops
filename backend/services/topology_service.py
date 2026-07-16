@@ -1,10 +1,14 @@
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
+import os
 import re
+import threading
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from netmiko import ConnectHandler
@@ -16,12 +20,18 @@ from core.crypto import decrypt_credential
 from core.interface_utils import normalize_interface_name
 from core.textfsm import configure_ntc_templates
 from database import get_db_connection
-from services.vault_service import resolve_device_credentials
+from services.vault_service import resolve_collector_credentials
 from services.network_access_limiter import get_network_access_limiter, limited_connect_handler
+from services.collection_status_service import record_collection_result
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 
 logger = logging.getLogger(__name__)
 configure_ntc_templates()
+_topology_rebuild_lock = threading.Lock()
+TOPOLOGY_LINK_TTL_SECONDS = max(60, int(os.environ.get('TOPOLOGY_LINK_TTL_SECONDS', '1800')))
+DISCOVERY_LEASE_SECONDS = max(30, int(os.environ.get('TOPOLOGY_DISCOVERY_LEASE_SECONDS', '90')))
+DISCOVERY_DEFAULT_TIMEOUT_SECONDS = max(30, int(os.environ.get('TOPOLOGY_DISCOVERY_TIMEOUT_SECONDS', '300')))
+DISCOVERY_DEFAULT_MAX_ATTEMPTS = max(1, int(os.environ.get('TOPOLOGY_DISCOVERY_MAX_ATTEMPTS', '2')))
 
 PLATFORM_MAP = {
     'cisco_ios': 'cisco_ios',
@@ -73,8 +83,66 @@ DISCOVERY_COMMANDS = {
     'ruijie_rgos': [('lldp', 'show lldp neighbors detail')],
 }
 
+
+def normalize_topology_platform(platform: str | None) -> str:
+    """Return the canonical discovery catalog key or raise a stable error."""
+    raw = str(platform or '').strip().lower()
+    aliases = {
+        'cisco_xe': 'cisco_ios',
+        'huawei_vrpv8': 'huawei_vrp',
+        'huawei': 'huawei_vrp',
+        'hp_comware': 'h3c_comware',
+        'comware': 'h3c_comware',
+        'ruijie_os': 'ruijie_rgos',
+    }
+    normalized = aliases.get(raw, raw)
+    if normalized not in DISCOVERY_COMMANDS:
+        raise RuntimeError(f'topology_platform_unsupported:{raw or "missing"}')
+    return normalized
+
+
+def topology_error_code(exc: Exception) -> str:
+    message = str(exc or '').lower()
+    if 'cancel' in message:
+        return 'discovery_cancelled'
+    if 'device_not_found' in message:
+        return 'device_not_found'
+    if 'device_is_offline' in message:
+        return 'device_offline'
+    if 'credentials_incomplete' in message:
+        return 'credentials_incomplete'
+    if 'platform_unsupported' in message:
+        return 'platform_unsupported'
+    if 'authentication' in message or 'auth fail' in message:
+        return 'ssh_authentication_failed'
+    if 'closed/unreachable' in message or 'timed out' in message or 'timeout' in message:
+        return 'ssh_unreachable'
+    if 'parse' in message or 'template' in message:
+        return 'neighbor_parse_failed'
+    return 'topology_discovery_failed'
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+    except (TypeError, ValueError):
+        return None
+
+
+def _link_operational_state(link: dict[str, Any], now: datetime | None = None) -> tuple[str, str]:
+    """Apply one server-side TTL policy so APIs and site cards agree with the UI."""
+    status = str(link.get('status') or 'unknown').lower()
+    last_seen = _parse_iso(link.get('last_seen'))
+    age_seconds = None if last_seen is None else max(0, int(((now or datetime.now(timezone.utc)) - last_seen).total_seconds()))
+    if status == 'stale' or last_seen is None or (age_seconds is not None and age_seconds > TOPOLOGY_LINK_TTL_SECONDS):
+        return 'stale', 'missing_or_expired_discovery_evidence'
+    return status if status in {'up', 'down', 'degraded', 'unknown'} else 'unknown', ''
 
 
 def normalize_hostname(value: str | None) -> str:
@@ -235,65 +303,94 @@ def _get_device(device_id: str) -> dict[str, Any] | None:
         if not row:
             return None
         device = dict(row)
-        creds = resolve_device_credentials(device)
-        device['username'] = creds['username'] or device.get('username', '')
-        device['password'] = creds['password']
-        device['enable_password'] = creds['enable_password']
+        collector_credentials = resolve_collector_credentials(device)
+        ssh_credentials = collector_credentials['ssh']
+        device['username'] = ssh_credentials['username'] or device.get('username', '')
+        device['password'] = ssh_credentials['password']
+        device['enable_password'] = ssh_credentials['enable_password']
+        device['platform'] = normalize_topology_platform(device.get('platform'))
         return device
     finally:
         conn.close()
 
 
-def _match_target_device(conn, neighbor_name: str, neighbor_ip: str, chassis_id: str = '') -> dict[str, Any] | None:
-    # Phase 1: Exact IP match (highest confidence)
-    if neighbor_ip:
-        row = conn.execute(
-            'SELECT id, hostname, ip_address FROM devices WHERE LOWER(ip_address) = LOWER(?)',
-            (neighbor_ip,),
-        ).fetchone()
-        if row:
-            return dict(row)
-
+def _match_target_device_with_evidence(
+    conn,
+    neighbor_name: str,
+    neighbor_ip: str,
+    chassis_id: str = '',
+) -> dict[str, Any]:
+    """Score all candidates and refuse ambiguous prefix matches."""
     normalized_name = normalize_hostname(neighbor_name)
-    normalized_chassis = str(chassis_id or '').strip().lower()
+    normalized_ip = str(neighbor_ip or '').strip().lower()
+    normalized_chassis = re.sub(r'[^0-9a-z]', '', str(chassis_id or '').lower())
+    rows = conn.execute(
+        'SELECT id, hostname, ip_address, sys_name, sn, model, site_id FROM devices'
+    ).fetchall()
+    candidates_by_id: dict[str, dict[str, Any]] = {}
 
-    if not normalized_name and not normalized_chassis:
-        return None
+    def add_candidate(device: dict[str, Any], score: float, method: str) -> None:
+        current = candidates_by_id.get(str(device['id']))
+        if current is None or score > float(current['score']):
+            candidates_by_id[str(device['id'])] = {
+                'device': device,
+                'device_id': device['id'],
+                'hostname': device.get('hostname') or '',
+                'score': score,
+                'method': method,
+            }
 
-    rows = conn.execute('SELECT id, hostname, ip_address, sys_name, sn, model FROM devices').fetchall()
-
-    # Phase 2: Exact hostname / sys_name / serial / chassis-id match
     for row in rows:
         device = dict(row)
-        candidates = {
-            normalize_hostname(device.get('hostname')),
-            normalize_hostname(device.get('sys_name')),
-            normalize_hostname(device.get('ip_address')),
+        device_ip = str(device.get('ip_address') or '').strip().lower()
+        hostname = normalize_hostname(device.get('hostname'))
+        sys_name = normalize_hostname(device.get('sys_name'))
+        serial = re.sub(r'[^0-9a-z]', '', str(device.get('sn') or '').lower())
+
+        if normalized_ip and device_ip and normalized_ip == device_ip:
+            add_candidate(device, 1.0, 'management_ip')
+        if normalized_chassis and serial and normalized_chassis == serial:
+            add_candidate(device, 0.98, 'chassis_serial')
+        if normalized_name and normalized_name in {hostname, sys_name}:
+            add_candidate(device, 0.94, 'system_name')
+        if len(normalized_name) >= 4:
+            names = [value for value in (hostname, sys_name) if value]
+            if any(value.startswith(normalized_name) or normalized_name.startswith(value) for value in names):
+                add_candidate(device, 0.72, 'name_prefix')
+
+    ordered = sorted(candidates_by_id.values(), key=lambda item: (-float(item['score']), str(item['hostname'])))
+    public_candidates = [
+        {
+            'device_id': item['device_id'],
+            'hostname': item['hostname'],
+            'score': item['score'],
+            'method': item['method'],
         }
-        # Also check serial number as chassis-id (Cisco often advertises this)
-        sn = str(device.get('sn') or '').strip().lower()
-        if sn:
-            candidates.add(sn)
-        candidates.discard('')
-        if normalized_name and normalized_name in candidates:
-            return device
-        # Match by chassis_id against serial number (common for Cisco/Arista)
-        if normalized_chassis and sn and normalized_chassis == sn:
-            return device
+        for item in ordered[:5]
+    ]
+    if not ordered:
+        return {'device': None, 'status': 'unmatched', 'method': '', 'confidence': 0.0, 'candidates': []}
 
-    # Phase 3: Prefix match — neighbor "core-sw" matches device "core-sw-01.example.com"
-    # This handles LLDP system-name truncation and FQDN variations
-    if len(normalized_name) >= 3:
-        for row in rows:
-            device = dict(row)
-            device_hostname = normalize_hostname(device.get('hostname'))
-            device_sysname = normalize_hostname(device.get('sys_name'))
-            if device_hostname and (device_hostname.startswith(normalized_name) or normalized_name.startswith(device_hostname)):
-                return device
-            if device_sysname and (device_sysname.startswith(normalized_name) or normalized_name.startswith(device_sysname)):
-                return device
+    best = ordered[0]
+    if len(ordered) > 1 and float(best['score']) - float(ordered[1]['score']) < 0.05:
+        return {
+            'device': None,
+            'status': 'ambiguous',
+            'method': best['method'],
+            'confidence': float(best['score']),
+            'candidates': public_candidates,
+        }
+    return {
+        'device': best['device'],
+        'status': 'matched',
+        'method': best['method'],
+        'confidence': float(best['score']),
+        'candidates': public_candidates,
+    }
 
-    return None
+
+def _match_target_device(conn, neighbor_name: str, neighbor_ip: str, chassis_id: str = '') -> dict[str, Any] | None:
+    return _match_target_device_with_evidence(conn, neighbor_name, neighbor_ip, chassis_id)['device']
 
 
 def _build_link_key(source_device_id: str, source_port: str, target_device_id: str, target_port: str) -> str:
@@ -304,7 +401,7 @@ def _build_link_key(source_device_id: str, source_port: str, target_device_id: s
 
 
 async def _collect_neighbors_with_scrapli(device: dict[str, Any], commands: list[tuple[str, str]]) -> tuple[list[dict[str, Any]], str]:
-    platform = device.get('platform', 'cisco_ios')
+    platform = normalize_topology_platform(device.get('platform'))
     driver_class = SCRAPLI_DRIVERS.get(platform)
     if not driver_class or platform in SCRAPLI_LEGACY_SSH_SKIP_PLATFORMS:
         raise RuntimeError('scrapli_unavailable')
@@ -356,7 +453,10 @@ async def _collect_neighbors_with_scrapli(device: dict[str, Any], commands: list
 
 
 async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list[tuple[str, str]]) -> tuple[list[dict[str, Any]], str]:
-    device_type = PLATFORM_MAP.get(device.get('platform', 'cisco_ios'), 'cisco_ios')
+    platform = normalize_topology_platform(device.get('platform'))
+    device_type = PLATFORM_MAP.get(platform)
+    if not device_type:
+        raise RuntimeError(f'topology_platform_unsupported:{platform}')
     netmiko_device = {
         'device_type': device_type,
         'host': device.get('ip_address'),
@@ -409,7 +509,8 @@ async def _collect_device_observations(device: dict[str, Any]) -> tuple[list[dic
         logger.warning('Skip topology discovery for %s: SSH port %s is closed/unreachable', device.get('hostname'), port)
         raise RuntimeError(f"SSH port {port} is closed/unreachable")
 
-    commands = DISCOVERY_COMMANDS.get(device.get('platform', 'cisco_ios'), [('lldp', 'show lldp neighbors')])
+    platform = normalize_topology_platform(device.get('platform'))
+    commands = DISCOVERY_COMMANDS[platform]
     last_error: Exception | None = None
 
     try:
@@ -429,27 +530,51 @@ async def _collect_device_observations(device: dict[str, Any]) -> tuple[list[dic
     raise RuntimeError(str(last_error) if last_error else 'topology_discovery_failed')
 
 
-def _replace_device_observations(device: dict[str, Any], observations: list[dict[str, Any]], run_id: str | None):
+def _replace_device_observations(
+    device: dict[str, Any],
+    observations: list[dict[str, Any]],
+    run_id: str | None,
+) -> dict[str, int]:
     now = _utc_now_iso()
+    matched = 0
+    ambiguous = 0
+    unmatched = 0
     conn = get_db_connection()
     try:
         conn.execute('DELETE FROM topology_observations WHERE source_device_id = ?', (device['id'],))
-
+        source_site_id = str(device.get('site_id') or '')
         for observation in observations:
-            target_device = _match_target_device(
+            evidence = _match_target_device_with_evidence(
                 conn,
                 observation['neighbor_name_raw'],
                 observation['neighbor_ip_address'],
                 observation.get('neighbor_chassis_id', ''),
             )
+            target_device = evidence.get('device')
+            if target_device and target_device.get('id') == device.get('id'):
+                target_device = None
+                evidence = {**evidence, 'device': None, 'status': 'unmatched', 'method': 'self_reference'}
+
+            match_status = str(evidence.get('status') or 'unmatched')
+            if match_status == 'matched':
+                matched += 1
+            elif match_status == 'ambiguous':
+                ambiguous += 1
+            else:
+                unmatched += 1
+
+            protocol_confidence = float(observation.get('confidence') or 0.0)
+            identity_confidence = float(evidence.get('confidence') or 0.0)
+            final_confidence = min(protocol_confidence, identity_confidence) if target_device else protocol_confidence
             conn.execute(
                 '''
                 INSERT INTO topology_observations (
                     id, source_device_id, source_hostname, source_port_raw, source_port_normalized,
                     neighbor_name_raw, neighbor_name_normalized, neighbor_ip_address,
                     target_device_id, target_hostname, target_port_raw, target_port_normalized,
-                    protocol, confidence, status, discovery_run_id, raw_payload_json, collected_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    protocol, confidence, status, discovery_run_id, raw_payload_json, collected_at, updated_at,
+                    source_site_id, match_method, match_status, match_candidates_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     str(uuid.uuid4()),
@@ -465,21 +590,30 @@ def _replace_device_observations(device: dict[str, Any], observations: list[dict
                     observation['target_port_raw'],
                     observation['target_port_normalized'],
                     observation['protocol'],
-                    observation['confidence'],
+                    final_confidence,
                     'active',
                     run_id,
                     observation['raw_payload_json'],
                     now,
                     now,
+                    source_site_id,
+                    evidence.get('method') or '',
+                    match_status,
+                    _safe_json(evidence.get('candidates') or []),
                 ),
             )
-
         conn.commit()
+        return {'matched': matched, 'ambiguous': ambiguous, 'unmatched': unmatched}
     finally:
         conn.close()
 
 
 def rebuild_links_from_observations() -> int:
+    with _topology_rebuild_lock:
+        return _rebuild_links_from_observations_unlocked()
+
+
+def _rebuild_links_from_observations_unlocked() -> int:
     conn = get_db_connection()
     try:
         existing_rows = conn.execute('SELECT * FROM topology_links').fetchall()
@@ -489,6 +623,7 @@ def rebuild_links_from_observations() -> int:
             SELECT * FROM topology_observations
             WHERE target_device_id IS NOT NULL
               AND COALESCE(source_port_normalized, '') <> ''
+              AND COALESCE(match_status, 'matched') = 'matched'
             '''
         ).fetchall()
 
@@ -511,6 +646,9 @@ def rebuild_links_from_observations() -> int:
             intf_name = row['interface_name']
             norm = normalize_interface_name(intf_name).lower()
             interface_map[(dev_id, norm)] = row['id']
+
+        device_site_rows = conn.execute('SELECT id, site_id FROM devices').fetchall()
+        device_sites = {str(row['id']): str(row['site_id'] or '') for row in device_site_rows}
 
         now = _utc_now_iso()
         conn.execute('DELETE FROM topology_links')
@@ -553,7 +691,7 @@ def rebuild_links_from_observations() -> int:
             if src_dev and src_port_norm and not src_intf_id:
                 src_intf_id = str(uuid.uuid4())
                 conn.execute(
-                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
+                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'unknown', 'unknown')",
                     (src_intf_id, src_dev, ordered[0]['port_raw'] or src_port)
                 )
                 interface_map[(src_dev, src_port_norm)] = src_intf_id
@@ -566,7 +704,7 @@ def rebuild_links_from_observations() -> int:
             if tgt_dev and tgt_port_norm and not tgt_intf_id:
                 tgt_intf_id = str(uuid.uuid4())
                 conn.execute(
-                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'up', 'up')",
+                    "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'unknown', 'unknown')",
                     (tgt_intf_id, tgt_dev, ordered[1]['port_raw'] or tgt_port)
                 )
                 interface_map[(tgt_dev, tgt_port_norm)] = tgt_intf_id
@@ -577,8 +715,8 @@ def rebuild_links_from_observations() -> int:
                     id, link_key, source_device_id, source_interface_id, source_hostname, source_port, source_port_normalized,
                     target_device_id, target_interface_id, target_hostname, target_port, target_port_normalized,
                     discovery_source, confidence, status, is_inferred, evidence_count,
-                    metadata_json, created_at, updated_at, last_seen
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    metadata_json, created_at, updated_at, last_seen, source_site_id, target_site_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     str(uuid.uuid4()),
@@ -595,13 +733,19 @@ def rebuild_links_from_observations() -> int:
                     ordered[1]['port_normalized'],
                     '+'.join(protocols),
                     confidence,
-                    'up',
+                    'unknown',
                     0,
                     len(observations),
-                    _safe_json({'protocols': protocols, 'reverse_seen': reverse_seen}),
+                    _safe_json({
+                        'protocols': protocols,
+                        'reverse_seen': reverse_seen,
+                        'match_methods': sorted({obs.get('match_method') or '' for obs in observations if obs.get('match_method')}),
+                    }),
                     existing.get('created_at') or now,
                     now,
                     max(obs.get('updated_at') or now for obs in observations),
+                    device_sites.get(str(ordered[0]['device_id']), ''),
+                    device_sites.get(str(ordered[1]['device_id']), ''),
                 ),
             )
 
@@ -630,8 +774,8 @@ def rebuild_links_from_observations() -> int:
                     id, link_key, source_device_id, source_interface_id, source_hostname, source_port, source_port_normalized,
                     target_device_id, target_interface_id, target_hostname, target_port, target_port_normalized,
                     discovery_source, confidence, status, is_inferred, evidence_count,
-                    metadata_json, created_at, updated_at, last_seen
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    metadata_json, created_at, updated_at, last_seen, source_site_id, target_site_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     str(existing.get('id') or uuid.uuid4()),
@@ -655,6 +799,8 @@ def rebuild_links_from_observations() -> int:
                     existing.get('created_at') or now,
                     now,
                     existing.get('last_seen') or existing.get('updated_at') or now,
+                    existing.get('source_site_id') or device_sites.get(str(existing.get('source_device_id') or ''), ''),
+                    existing.get('target_site_id') or device_sites.get(str(existing.get('target_device_id') or ''), ''),
                 ),
             )
 
@@ -664,18 +810,45 @@ def rebuild_links_from_observations() -> int:
         conn.close()
 
 
-def create_discovery_run(device_ids: list[str], requested_by: str = 'system', scope: str = 'full') -> str:
+def create_discovery_run(
+    device_ids: list[str],
+    requested_by: str = 'system',
+    scope: str = 'full',
+    *,
+    site_id: str = '',
+    scope_payload: dict[str, Any] | None = None,
+    idempotency_key: str = '',
+    max_attempts: int = DISCOVERY_DEFAULT_MAX_ATTEMPTS,
+    timeout_seconds: int = DISCOVERY_DEFAULT_TIMEOUT_SECONDS,
+) -> str:
     run_id = str(uuid.uuid4())
     now = _utc_now_iso()
+    normalized_key = str(idempotency_key or '').strip()[:160]
+    if normalized_key:
+        normalized_key = hashlib.sha256(normalized_key.encode('utf-8')).hexdigest()
     conn = get_db_connection()
     try:
+        if normalized_key:
+            existing = conn.execute(
+                'SELECT id FROM topology_discovery_runs WHERE idempotency_key = ?',
+                (normalized_key,),
+            ).fetchone()
+            if existing:
+                return str(existing['id'])
         conn.execute(
             '''
             INSERT INTO topology_discovery_runs (
-                id, scope, status, requested_by, protocol_scope, started_at, total_devices, summary_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                id, scope, status, requested_by, protocol_scope, started_at, total_devices,
+                summary_json, site_id, scope_json, cancel_requested, idempotency_key,
+                max_attempts, timeout_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
-            (run_id, scope, 'pending', requested_by, 'lldp_cdp', now, len(device_ids), '{}'),
+            (
+                run_id, scope, 'pending', requested_by, 'lldp_cdp', now, len(device_ids),
+                '{}', site_id, _safe_json(scope_payload or {'device_ids': device_ids}), 0,
+                normalized_key, max(1, min(int(max_attempts or DISCOVERY_DEFAULT_MAX_ATTEMPTS), 5)),
+                max(30, min(int(timeout_seconds or DISCOVERY_DEFAULT_TIMEOUT_SECONDS), 3600)),
+            ),
         )
 
         for device_id in device_ids:
@@ -683,14 +856,27 @@ def create_discovery_run(device_ids: list[str], requested_by: str = 'system', sc
             conn.execute(
                 '''
                 INSERT INTO topology_discovery_run_devices (
-                    id, run_id, device_id, hostname, status
-                ) VALUES (?, ?, ?, ?, ?)
+                    id, run_id, device_id, hostname, status, attempt_count
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 ''',
-                (str(uuid.uuid4()), run_id, device_id, device['hostname'] if device else '', 'pending'),
+                (str(uuid.uuid4()), run_id, device_id, device['hostname'] if device else '', 'pending', 0),
             )
 
         conn.commit()
         return run_id
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        if normalized_key:
+            existing = conn.execute(
+                'SELECT id FROM topology_discovery_runs WHERE idempotency_key = ?',
+                (normalized_key,),
+            ).fetchone()
+            if existing:
+                return str(existing['id'])
+        raise
     finally:
         conn.close()
 
@@ -724,32 +910,70 @@ def _update_run(run_id: str, **fields: Any):
         conn.close()
 
 
-async def discover_device_neighbors(device_id: str, run_id: str | None = None) -> dict[str, Any]:
-    device = _get_device(device_id)
-    if not device:
-        raise RuntimeError('device_not_found')
-    if device.get('status') == 'offline':
-        raise RuntimeError('device_is_offline')
-    if not device.get('ip_address') or not device.get('username') or not device.get('password'):
-        raise RuntimeError('device_credentials_incomplete')
+async def discover_device_neighbors(
+    device_id: str,
+    run_id: str | None = None,
+    *,
+    rebuild_links: bool = True,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        device = _get_device(device_id)
+        if not device:
+            raise RuntimeError('device_not_found')
+        if device.get('status') == 'offline':
+            raise RuntimeError('device_is_offline')
+        if not device.get('ip_address') or not device.get('username') or not device.get('password'):
+            raise RuntimeError('device_credentials_incomplete')
 
-    observations, method = await _collect_device_observations(device)
-    _replace_device_observations(device, observations, run_id)
-    link_count = rebuild_links_from_observations()
-    matched_count = sum(1 for item in observations if item.get('neighbor_name_normalized'))
-    return {
-        'device_id': device_id,
-        'hostname': device.get('hostname') or '',
-        'discovery_method': method,
-        'observations_count': len(observations),
-        'matched_links_count': link_count,
-        'protocols': sorted({item.get('protocol') or 'lldp' for item in observations}),
-    }
+        observations, method = await _collect_device_observations(device)
+        match_summary = _replace_device_observations(device, observations, run_id)
+        total_links = rebuild_links_from_observations() if rebuild_links else None
+        record_collection_result(
+            device_id,
+            'topology_lldp_cdp',
+            status='success',
+            transport='ssh',
+            source='lldp_cdp_cli',
+            duration_ms=(time.perf_counter() - started) * 1000,
+            coverage_total=len(observations),
+            coverage_supported=match_summary['matched'],
+            metadata={
+                'method': method,
+                'ambiguous': match_summary['ambiguous'],
+                'unmatched': match_summary['unmatched'],
+                'run_id': run_id,
+            },
+        )
+        return {
+            'device_id': device_id,
+            'hostname': device.get('hostname') or '',
+            'discovery_method': method,
+            'observations_count': len(observations),
+            'matched_links_count': match_summary['matched'],
+            'ambiguous_count': match_summary['ambiguous'],
+            'unmatched_count': match_summary['unmatched'],
+            'total_links': total_links,
+            'protocols': sorted({item.get('protocol') or 'lldp' for item in observations}),
+        }
+    except Exception as exc:
+        record_collection_result(
+            device_id,
+            'topology_lldp_cdp',
+            status='failed',
+            transport='ssh',
+            source='lldp_cdp_cli',
+            duration_ms=(time.perf_counter() - started) * 1000,
+            error_code=topology_error_code(exc),
+            error_message=str(exc)[:500],
+            metadata={'run_id': run_id},
+        )
+        raise
 
 
 async def discover_lldp_neighbors(device_id: str):
     try:
-        return await discover_device_neighbors(device_id, None)
+        return await discover_device_neighbors(device_id, None, rebuild_links=False)
     except RuntimeError as exc:
         # 凭据不完整 / 设备不存在等属于预期情况（如新增设备未配凭据），
         # 周期任务中静默跳过即可，避免 "Task exception was never retrieved" 日志。
@@ -757,103 +981,287 @@ async def discover_lldp_neighbors(device_id: str):
         return None
 
 
-async def execute_discovery_run(run_id: str, device_ids: list[str]):
-    started_at = _utc_now_iso()
-    _update_run(run_id, status='running', started_at=started_at)
-
-    success_devices = 0
-    failed_devices = 0
-    total_observations = 0
-
-    for device_id in device_ids:
-        _update_run_device(run_id, device_id, status='running', started_at=_utc_now_iso())
-        try:
-            result = await discover_device_neighbors(device_id, run_id)
-            success_devices += 1
-            total_observations += int(result['observations_count'])
-            _update_run_device(
-                run_id,
-                device_id,
-                status='success',
-                discovery_method=result['discovery_method'],
-                completed_at=_utc_now_iso(),
-                observations_count=result['observations_count'],
-                matched_links_count=result['matched_links_count'],
-            )
-        except Exception as exc:  # noqa: BLE001
-            failed_devices += 1
-            logger.warning('Topology discovery failed for device %s in run %s: %s', device_id, run_id, exc)
-            logger.debug('Detailed traceback for topology discovery failure:', exc_info=True)
-            _update_run_device(
-                run_id,
-                device_id,
-                status='failed',
-                completed_at=_utc_now_iso(),
-                error_message=str(exc),
-            )
-
+def _is_run_cancel_requested(run_id: str) -> bool:
     conn = get_db_connection()
     try:
-        total_links = conn.execute('SELECT COUNT(*) AS c FROM topology_links').fetchone()['c']
+        row = conn.execute(
+            'SELECT cancel_requested FROM topology_discovery_runs WHERE id = ?',
+            (run_id,),
+        ).fetchone()
+        return bool(row and int(row['cancel_requested'] or 0))
     finally:
         conn.close()
 
-    _update_run(
-        run_id,
-        status='completed' if failed_devices == 0 else ('partial' if success_devices > 0 else 'failed'),
-        completed_at=_utc_now_iso(),
-        success_devices=success_devices,
-        failed_devices=failed_devices,
-        total_observations=total_observations,
-        total_links=total_links,
-        summary_json=_safe_json({
+
+def _claim_discovery_run(run_id: str, worker_id: str) -> bool:
+    """Claim a pending or expired run atomically for cross-process workers."""
+    now = datetime.now(timezone.utc)
+    now_iso = now.replace(microsecond=0).isoformat()
+    expires_iso = (now + timedelta(seconds=DISCOVERY_LEASE_SECONDS)).replace(microsecond=0).isoformat()
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            '''
+            UPDATE topology_discovery_runs
+            SET status = 'running', lease_owner = ?, lease_expires_at = ?, heartbeat_at = ?,
+                attempt_count = COALESCE(attempt_count, 0) + 1,
+                started_at = COALESCE(started_at, ?)
+            WHERE id = ?
+              AND COALESCE(attempt_count, 0) < COALESCE(max_attempts, ?)
+              AND (
+                status = 'pending'
+                OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < ?))
+              )
+            ''',
+            (worker_id, expires_iso, now_iso, now_iso, run_id, DISCOVERY_DEFAULT_MAX_ATTEMPTS, now_iso),
+        )
+        conn.commit()
+        return int(getattr(cursor, 'rowcount', 0) or 0) > 0
+    finally:
+        conn.close()
+
+
+def _renew_discovery_lease(run_id: str, worker_id: str) -> bool:
+    now = datetime.now(timezone.utc)
+    now_iso = now.replace(microsecond=0).isoformat()
+    expires_iso = (now + timedelta(seconds=DISCOVERY_LEASE_SECONDS)).replace(microsecond=0).isoformat()
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            '''
+            UPDATE topology_discovery_runs
+            SET lease_expires_at = ?, heartbeat_at = ?
+            WHERE id = ? AND status = 'running' AND lease_owner = ?
+            ''',
+            (expires_iso, now_iso, run_id, worker_id),
+        )
+        conn.commit()
+        return int(getattr(cursor, 'rowcount', 0) or 0) > 0
+    finally:
+        conn.close()
+
+
+def _get_discovery_run_settings(run_id: str) -> tuple[int, int]:
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT timeout_seconds, max_attempts FROM topology_discovery_runs WHERE id = ?',
+            (run_id,),
+        ).fetchone()
+        if not row:
+            return DISCOVERY_DEFAULT_TIMEOUT_SECONDS, DISCOVERY_DEFAULT_MAX_ATTEMPTS
+        return (
+            max(30, int(row['timeout_seconds'] or DISCOVERY_DEFAULT_TIMEOUT_SECONDS)),
+            max(1, min(int(row['max_attempts'] or DISCOVERY_DEFAULT_MAX_ATTEMPTS), 5)),
+        )
+    finally:
+        conn.close()
+
+
+def request_cancel_discovery_run(run_id: str) -> bool:
+    conn = get_db_connection()
+    try:
+        row = conn.execute('SELECT status FROM topology_discovery_runs WHERE id = ?', (run_id,)).fetchone()
+        if not row:
+            return False
+        if str(row['status']) in {'completed', 'partial', 'failed', 'cancelled'}:
+            return True
+        conn.execute(
+            'UPDATE topology_discovery_runs SET cancel_requested = 1 WHERE id = ?',
+            (run_id,),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+async def execute_discovery_run(run_id: str, device_ids: list[str]):
+    worker_id = f'{os.getpid()}:{uuid.uuid4()}'
+    if not _claim_discovery_run(run_id, worker_id):
+        logger.info('Discovery run %s was already claimed or exhausted', run_id)
+        return
+
+    timeout_seconds, max_attempts = _get_discovery_run_settings(run_id)
+    success_devices = 0
+    failed_devices = 0
+    total_observations = 0
+    cancelled = False
+    try:
+        for index, device_id in enumerate(device_ids):
+            if not _renew_discovery_lease(run_id, worker_id):
+                _update_run(run_id, status='failed', last_error_code='discovery_lease_lost')
+                return
+            if _is_run_cancel_requested(run_id):
+                cancelled = True
+                for pending_device_id in device_ids[index:]:
+                    _update_run_device(
+                        run_id,
+                        pending_device_id,
+                        status='cancelled',
+                        completed_at=_utc_now_iso(),
+                        error_code='discovery_cancelled',
+                        error_message='Discovery cancelled before this device was processed',
+                    )
+                break
+
+            for attempt in range(1, max_attempts + 1):
+                _update_run_device(
+                    run_id,
+                    device_id,
+                    status='running',
+                    started_at=_utc_now_iso(),
+                    last_attempt_at=_utc_now_iso(),
+                    attempt_count=attempt,
+                )
+                try:
+                    result = await asyncio.wait_for(
+                        discover_device_neighbors(device_id, run_id, rebuild_links=False),
+                        timeout=timeout_seconds,
+                    )
+                    success_devices += 1
+                    total_observations += int(result['observations_count'])
+                    _update_run_device(
+                        run_id,
+                        device_id,
+                        status='success',
+                        discovery_method=result['discovery_method'],
+                        completed_at=_utc_now_iso(),
+                        observations_count=result['observations_count'],
+                        matched_links_count=result['matched_links_count'],
+                        error_code='',
+                        error_message='',
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    error_code = topology_error_code(exc)
+                    logger.warning(
+                        'Topology discovery failed for device %s in run %s (attempt %s/%s): %s',
+                        device_id, run_id, attempt, max_attempts, exc,
+                    )
+                    if attempt >= max_attempts:
+                        failed_devices += 1
+                        _update_run_device(
+                            run_id,
+                            device_id,
+                            status='failed',
+                            completed_at=_utc_now_iso(),
+                            error_code=error_code,
+                            error_message=str(exc)[:500],
+                        )
+
+            _update_run(
+                run_id,
+                success_devices=success_devices,
+                failed_devices=failed_devices,
+                total_observations=total_observations,
+            )
+
+        total_links = rebuild_links_from_observations()
+        final_status = (
+            'cancelled'
+            if cancelled
+            else ('completed' if failed_devices == 0 else ('partial' if success_devices > 0 else 'failed'))
+        )
+        summary = {
             'total_devices': len(device_ids),
+            'processed_devices': success_devices + failed_devices,
             'success_devices': success_devices,
             'failed_devices': failed_devices,
             'total_observations': total_observations,
             'total_links': total_links,
-        }),
-    )
+            'cancelled': cancelled,
+            'max_attempts': max_attempts,
+            'timeout_seconds': timeout_seconds,
+        }
+        _update_run(
+            run_id,
+            status=final_status,
+            completed_at=_utc_now_iso(),
+            success_devices=success_devices,
+            failed_devices=failed_devices,
+            total_observations=total_observations,
+            total_links=total_links,
+            summary_json=_safe_json(summary),
+            last_error_code='',
+            lease_owner='',
+            lease_expires_at=None,
+            heartbeat_at=_utc_now_iso(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('Discovery run %s crashed', run_id)
+        _update_run(
+            run_id,
+            status='failed',
+            completed_at=_utc_now_iso(),
+            last_error_code=topology_error_code(exc),
+            lease_owner='',
+            lease_expires_at=None,
+            heartbeat_at=_utc_now_iso(),
+        )
 
 
-def get_current_links(limit: int | None = 5000) -> list[dict[str, Any]]:
-    """Return managed topology links.
+def get_current_links(
+    limit: int | None = 5000,
+    *,
+    site_id: str | None = None,
+    include_stale: bool = True,
+) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if site_id:
+        clauses.append('(COALESCE(l.source_site_id, sd.site_id, \'\') = ? OR COALESCE(l.target_site_id, td.site_id, \'\') = ?)')
+        params.extend([site_id, site_id])
+    if not include_stale:
+        clauses.append("COALESCE(l.status, 'unknown') <> 'stale'")
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(seconds=TOPOLOGY_LINK_TTL_SECONDS)).replace(microsecond=0).isoformat()
+    if not include_stale:
+        clauses.append("COALESCE(l.last_seen, '') >= ?")
+        params.append(cutoff_iso)
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+    limit_sql = ''
+    if limit and limit > 0:
+        limit_sql = 'LIMIT ?'
+        params.append(int(limit))
 
-    A `limit` is enforced (default 5000) so a fully meshed datacenter doesn't
-    ship hundreds of thousands of rows on every poll. The Topology page
-    renders client-side anyway; if you need more than 5000 links you should
-    be using filters or paging APIs at the canvas level.
-    """
     conn = get_db_connection()
     try:
-        if limit and limit > 0:
-            rows = conn.execute(
-                '''
-                SELECT l.*, s.hostname as source_hostname_resolved, t.hostname as target_hostname_resolved
-                FROM topology_links l
-                JOIN devices s ON l.source_device_id = s.id
-                JOIN devices t ON l.target_device_id = t.id
-                ORDER BY l.source_hostname, l.source_port_normalized, l.target_hostname, l.target_port_normalized
-                LIMIT ?
-                ''',
-                (int(limit),),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                '''
-                SELECT l.*, s.hostname as source_hostname_resolved, t.hostname as target_hostname_resolved
-                FROM topology_links l
-                JOIN devices s ON l.source_device_id = s.id
-                JOIN devices t ON l.target_device_id = t.id
-                ORDER BY l.source_hostname, l.source_port_normalized, l.target_hostname, l.target_port_normalized
-                '''
-            ).fetchall()
-        return [dict(row) for row in rows]
+        rows = conn.execute(
+            f'''
+            SELECT l.*,
+                   sd.hostname AS source_hostname_resolved,
+                   td.hostname AS target_hostname_resolved,
+                   COALESCE(l.source_site_id, sd.site_id, '') AS source_site_id_resolved,
+                   COALESCE(l.target_site_id, td.site_id, '') AS target_site_id_resolved,
+                   COALESCE(ss.site_name, sd.site, '') AS source_site_name,
+                   COALESCE(ts.site_name, td.site, '') AS target_site_name
+            FROM topology_links l
+            JOIN devices sd ON l.source_device_id = sd.id
+            JOIN devices td ON l.target_device_id = td.id
+            LEFT JOIN sites ss ON ss.id = COALESCE(l.source_site_id, sd.site_id)
+            LEFT JOIN sites ts ON ts.id = COALESCE(l.target_site_id, td.site_id)
+            {where_sql}
+            ORDER BY source_site_name, l.source_hostname, l.source_port_normalized,
+                     target_site_name, l.target_hostname, l.target_port_normalized
+            {limit_sql}
+            ''',
+            tuple(params),
+        ).fetchall()
+        now = datetime.now(timezone.utc)
+        result = []
+        for row in rows:
+            item = dict(row)
+            effective_state, stale_reason = _link_operational_state(item, now)
+            item['operational_state'] = effective_state
+            item['stale_reason'] = stale_reason
+            item['ttl_seconds'] = TOPOLOGY_LINK_TTL_SECONDS
+            result.append(item)
+        return result
     finally:
         conn.close()
 
 
-def get_unmanaged_neighbors() -> dict[str, Any]:
+def get_unmanaged_neighbors(site_id: str | None = None) -> dict[str, Any]:
     """Aggregate topology observations where the neighbor was not matched to any managed device.
 
     Returns a dict with:
@@ -864,15 +1272,21 @@ def get_unmanaged_neighbors() -> dict[str, Any]:
     try:
         rows = conn.execute(
             '''
-            SELECT source_device_id, source_hostname, source_port_raw, source_port_normalized,
-                   neighbor_name_raw, neighbor_name_normalized, neighbor_ip_address,
-                   target_port_raw, target_port_normalized, protocol, confidence,
-                   collected_at
-            FROM topology_observations
-            WHERE target_device_id IS NULL
-              AND COALESCE(neighbor_name_raw, '') <> ''
-            ORDER BY source_hostname, neighbor_name_raw
-            '''
+            SELECT o.source_device_id, o.source_hostname, o.source_port_raw, o.source_port_normalized,
+                   o.neighbor_name_raw, o.neighbor_name_normalized, o.neighbor_ip_address,
+                   o.target_port_raw, o.target_port_normalized, o.protocol, o.confidence,
+                   o.collected_at, o.match_status, o.match_candidates_json,
+                   COALESCE(o.source_site_id, d.site_id, '') AS source_site_id,
+                   COALESCE(s.site_name, d.site, '') AS source_site_name
+            FROM topology_observations o
+            JOIN devices d ON d.id = o.source_device_id
+            LEFT JOIN sites s ON s.id = COALESCE(o.source_site_id, d.site_id)
+            WHERE o.target_device_id IS NULL
+              AND COALESCE(o.neighbor_name_raw, '') <> ''
+              AND (? IS NULL OR COALESCE(o.source_site_id, d.site_id, '') = ?)
+            ORDER BY source_site_name, o.source_hostname, o.neighbor_name_raw
+            ''',
+            (site_id, site_id),
         ).fetchall()
 
         # Group by unique unmanaged neighbor identity (normalized name + ip)
@@ -883,7 +1297,9 @@ def get_unmanaged_neighbors() -> dict[str, Any]:
             norm_name = obs.get('neighbor_name_normalized') or ''
             ip = obs.get('neighbor_ip_address') or ''
             # Prefer IP-based key for uniqueness, fall back to normalized name
-            neighbor_key = f'unmanaged::{ip}' if ip else f'unmanaged::{norm_name}'
+            source_site_id = obs.get('source_site_id') or 'unassigned'
+            identity = ip or norm_name
+            neighbor_key = f'unmanaged::{source_site_id}::{identity}'
             neighbor_groups.setdefault(neighbor_key, []).append(obs)
 
         unmanaged_nodes: list[dict[str, Any]] = []
@@ -904,7 +1320,8 @@ def get_unmanaged_neighbors() -> dict[str, Any]:
                 'platform': '',
                 'status': 'unmanaged',
                 'role': '',
-                'site': '',
+                'site': first.get('source_site_name') or 'Unassigned',
+                'site_id': first.get('source_site_id') or '',
                 'is_unmanaged': True,
                 'observation_count': len(observations),
                 'protocols': protocols,
@@ -932,11 +1349,15 @@ def get_unmanaged_neighbors() -> dict[str, Any]:
                     'target_port_normalized': tgt_port,
                     'discovery_source': obs.get('protocol') or 'lldp',
                     'confidence': float(obs.get('confidence') or 0.0),
-                    'status': 'up',
+                    'status': 'unknown',
                     'is_inferred': 0,
                     'is_unmanaged': True,
                     'evidence_count': 1,
                     'last_seen': obs.get('collected_at') or '',
+                    'source_site_id': obs.get('source_site_id') or '',
+                    'target_site_id': obs.get('source_site_id') or '',
+                    'match_status': obs.get('match_status') or 'unmatched',
+                    'match_candidates_json': obs.get('match_candidates_json') or '[]',
                 })
 
         return {
@@ -945,6 +1366,118 @@ def get_unmanaged_neighbors() -> dict[str, Any]:
         }
     finally:
         conn.close()
+
+
+def get_topology_site_summaries() -> list[dict[str, Any]]:
+    """Return canonical site cards used by the first-level topology view."""
+    conn = get_db_connection()
+    try:
+        site_rows = conn.execute(
+            "SELECT id, site_code, site_name, status FROM sites ORDER BY site_name"
+        ).fetchall()
+        device_rows = conn.execute(
+            "SELECT id, site_id, status FROM devices ORDER BY id"
+        ).fetchall()
+        link_rows = conn.execute(
+            "SELECT link_key, source_site_id, target_site_id, status, last_seen FROM topology_links"
+        ).fetchall()
+        orphan_rows = conn.execute(
+            """
+            SELECT COALESCE(source_site_id, '') AS site_id, COUNT(DISTINCT source_device_id) AS count
+            FROM topology_observations
+            WHERE target_device_id IS NULL
+              AND COALESCE(match_status, 'unmatched') IN ('unmatched', 'ambiguous')
+            GROUP BY COALESCE(source_site_id, '')
+            """
+        ).fetchall()
+        run_rows = conn.execute(
+            """
+            SELECT site_id, status, started_at, completed_at
+            FROM topology_discovery_runs
+            ORDER BY started_at DESC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    summaries: dict[str, dict[str, Any]] = {
+        str(row['id']): {
+            'site_id': str(row['id']),
+            'site_code': row['site_code'] or '',
+            'site_name': row['site_name'] or row['site_code'] or row['id'],
+            'site_status': row['status'] or 'active',
+            'device_count': 0,
+            'online_devices': 0,
+            'offline_devices': 0,
+            'link_count': 0,
+            'cross_site_links': 0,
+            'stale_links': 0,
+            'orphan_devices': 0,
+            'last_discovery_at': None,
+            'last_discovery_status': None,
+        }
+        for row in site_rows
+    }
+
+    def ensure_site(site_id: str) -> dict[str, Any]:
+        key = site_id or 'unassigned'
+        if key not in summaries:
+            summaries[key] = {
+                'site_id': '' if key == 'unassigned' else key,
+                'site_code': 'UNASSIGNED' if key == 'unassigned' else key,
+                'site_name': 'Unassigned' if key == 'unassigned' else key,
+                'site_status': 'active',
+                'device_count': 0,
+                'online_devices': 0,
+                'offline_devices': 0,
+                'link_count': 0,
+                'cross_site_links': 0,
+                'stale_links': 0,
+                'orphan_devices': 0,
+                'last_discovery_at': None,
+                'last_discovery_status': None,
+            }
+        return summaries[key]
+
+    for row in device_rows:
+        summary = ensure_site(str(row['site_id'] or ''))
+        summary['device_count'] += 1
+        if str(row['status'] or '').lower() == 'online':
+            summary['online_devices'] += 1
+        elif str(row['status'] or '').lower() == 'offline':
+            summary['offline_devices'] += 1
+
+    now = datetime.now(timezone.utc)
+    for row in link_rows:
+        source_site = str(row['source_site_id'] or '')
+        target_site = str(row['target_site_id'] or '')
+        site_ids = {source_site, target_site}
+        effective_state, _ = _link_operational_state(dict(row), now)
+        for site_id in site_ids:
+            summary = ensure_site(site_id)
+            summary['link_count'] += 1
+            if effective_state == 'stale':
+                summary['stale_links'] += 1
+            if source_site != target_site:
+                summary['cross_site_links'] += 1
+
+    for row in orphan_rows:
+        ensure_site(str(row['site_id'] or ''))['orphan_devices'] = int(row['count'] or 0)
+
+    seen_run_sites: set[str] = set()
+    for row in run_rows:
+        site_id = str(row['site_id'] or '')
+        if not site_id:
+            continue
+        key = site_id or 'unassigned'
+        if key in seen_run_sites:
+            continue
+        seen_run_sites.add(key)
+        summary = ensure_site(site_id)
+        summary['last_discovery_at'] = row['completed_at'] or row['started_at']
+        summary['last_discovery_status'] = row['status']
+
+    return sorted(summaries.values(), key=lambda item: str(item['site_name']).lower())
 
 
 def list_discovery_runs(limit: int = 20) -> list[dict[str, Any]]:
@@ -958,28 +1491,142 @@ def list_discovery_runs(limit: int = 20) -> list[dict[str, Any]]:
             ''',
             (limit,),
         ).fetchall()
-        return [dict(row) for row in rows]
+        results = []
+        for row in rows:
+            item = dict(row)
+            total = max(0, int(item.get('total_devices') or 0))
+            processed = int(item.get('success_devices') or 0) + int(item.get('failed_devices') or 0)
+            item['processed_devices'] = processed
+            item['progress_percent'] = round(processed / total * 100) if total else 100
+            try:
+                item['summary'] = json.loads(item.get('summary_json') or '{}')
+            except (TypeError, ValueError):
+                item['summary'] = {}
+            results.append(item)
+        return results
     finally:
         conn.close()
 
 
-def get_discovery_run(run_id: str) -> dict[str, Any] | None:
+def get_discovery_run(
+    run_id: str,
+    *,
+    device_limit: int = 100,
+    device_offset: int = 0,
+) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
         run_row = conn.execute('SELECT * FROM topology_discovery_runs WHERE id = ?', (run_id,)).fetchone()
         if not run_row:
             return None
+        safe_limit = max(1, min(int(device_limit or 100), 500))
+        safe_offset = max(0, int(device_offset or 0))
+        device_total_row = conn.execute(
+            'SELECT COUNT(*) AS total FROM topology_discovery_run_devices WHERE run_id = ?',
+            (run_id,),
+        ).fetchone()
+        status_rows = conn.execute(
+            'SELECT status, COUNT(*) AS count FROM topology_discovery_run_devices WHERE run_id = ? GROUP BY status',
+            (run_id,),
+        ).fetchall()
         device_rows = conn.execute(
             '''
             SELECT * FROM topology_discovery_run_devices
             WHERE run_id = ?
             ORDER BY hostname, device_id
+            LIMIT ? OFFSET ?
             ''',
-            (run_id,),
+            (run_id, safe_limit, safe_offset),
         ).fetchall()
+        run = dict(run_row)
+        devices = [dict(row) for row in device_rows]
+        total_device_count = int((device_total_row['total'] if device_total_row else 0) or 0)
+        processed = int(run.get('success_devices') or 0) + int(run.get('failed_devices') or 0)
+        total = max(0, int(run.get('total_devices') or total_device_count))
+        status_counts = {str(item['status'] or ''): int(item['count'] or 0) for item in status_rows}
+        run['processed_devices'] = processed
+        run['running_devices'] = status_counts.get('running', 0)
+        run['pending_devices'] = status_counts.get('pending', 0)
+        run['progress_percent'] = round(processed / total * 100) if total else 100
+        try:
+            run['summary'] = json.loads(run.get('summary_json') or '{}')
+        except (TypeError, ValueError):
+            run['summary'] = {}
         return {
-            'run': dict(run_row),
-            'devices': [dict(row) for row in device_rows],
+            'run': run,
+            'devices': devices,
+            'device_pagination': {
+                'limit': safe_limit,
+                'offset': safe_offset,
+                'total': total_device_count,
+                'has_more': safe_offset + len(devices) < total_device_count,
+            },
+        }
+    finally:
+        conn.close()
+
+
+def get_discovery_evidence(
+    run_id: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    match_status: str | None = None,
+    include_raw: bool = False,
+) -> dict[str, Any] | None:
+    """Return bounded LLDP/CDP evidence without loading a whole run into memory."""
+    safe_limit = max(1, min(int(limit or 100), 500))
+    safe_offset = max(0, int(offset or 0))
+    clauses = ['o.discovery_run_id = ?']
+    params: list[Any] = [run_id]
+    if match_status in {'matched', 'ambiguous', 'unmatched'}:
+        clauses.append('COALESCE(o.match_status, \'unmatched\') = ?')
+        params.append(match_status)
+    where_sql = ' AND '.join(clauses)
+    conn = get_db_connection()
+    try:
+        run_exists = conn.execute('SELECT id FROM topology_discovery_runs WHERE id = ?', (run_id,)).fetchone()
+        if not run_exists:
+            return None
+        total_row = conn.execute(
+            f'SELECT COUNT(*) AS total FROM topology_observations o WHERE {where_sql}',
+            tuple(params),
+        ).fetchone()
+        rows = conn.execute(
+            f'''
+            SELECT o.id, o.source_device_id, o.source_hostname, o.source_port_raw,
+                   o.neighbor_name_raw, o.neighbor_ip_address, o.target_device_id,
+                   o.target_hostname, o.target_port_raw, o.protocol, o.confidence,
+                   o.collected_at, o.source_site_id, o.match_method, o.match_status,
+                   o.match_candidates_json, o.raw_payload_json
+            FROM topology_observations o
+            WHERE {where_sql}
+            ORDER BY o.collected_at DESC, o.id
+            LIMIT ? OFFSET ?
+            ''',
+            tuple(params + [safe_limit, safe_offset]),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item['match_candidates'] = json.loads(item.pop('match_candidates_json') or '[]')
+            except (TypeError, ValueError):
+                item['match_candidates'] = []
+            raw_payload = item.pop('raw_payload_json', '{}')
+            if include_raw:
+                item['raw_payload'] = str(raw_payload or '{}')[:50000]
+            items.append(item)
+        total = int((total_row['total'] if total_row else 0) or 0)
+        return {
+            'run_id': run_id,
+            'items': items,
+            'pagination': {
+                'limit': safe_limit,
+                'offset': safe_offset,
+                'total': total,
+                'has_more': safe_offset + len(items) < total,
+            },
         }
     finally:
         conn.close()

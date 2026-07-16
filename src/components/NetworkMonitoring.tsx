@@ -27,6 +27,25 @@ interface AlertItem {
   message: string;
 }
 
+interface CollectionStatusItem {
+  collector: string;
+  status: string;
+  effective_status: string;
+  last_attempt_at?: string | null;
+  last_success_at?: string | null;
+  consecutive_failures: number;
+  coverage_total: number;
+  coverage_supported: number;
+  error_code?: string;
+  error_message?: string;
+  age_seconds?: number | null;
+}
+
+interface CollectionDiagnosticResult {
+  status: string;
+  checks: Record<string, { status: string; code?: string; port?: number; error?: string }>;
+}
+
 const isServerDevice = (d: any): boolean => {
   if (!d) return false;
   const serverKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'server'];
@@ -81,8 +100,8 @@ const RadialGauge: React.FC<{
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className="text-2xl font-extrabold tabular-nums" style={{ color }}>
-          {value != null && Number.isFinite(value) && value > 0 ? Math.round(value) : '--'}
-          {value != null && Number.isFinite(value) && value > 0 && <span className="text-sm font-bold">{unit}</span>}
+          {value != null && Number.isFinite(value) ? Math.round(value) : '--'}
+          {value != null && Number.isFinite(value) && <span className="text-sm font-bold">{unit}</span>}
         </span>
         <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-text)]">{label}</span>
       </div>
@@ -121,6 +140,10 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   const [realtimeData, setRealtimeData] = useState<any>(null);
   const [trendSeries, setTrendSeries] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [collectionStatus, setCollectionStatus] = useState<CollectionStatusItem[]>([]);
+  const [diagnosticResult, setDiagnosticResult] = useState<CollectionDiagnosticResult | null>(null);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [dataError, setDataError] = useState('');
   const [alertTotal, setAlertTotal] = useState(0);
   const [alertsPage, setAlertsPage] = useState(1);
   const [alertsSeverity, setAlertsSeverity] = useState('all');
@@ -140,22 +163,26 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollCycleRef = useRef(0);
 
   const networkDevices = useMemo(() => (devices || []).filter((d) => !isServerDevice(d)), [devices]);
 
   const uniqueSites = useMemo(() => {
-    const sites = new Set<string>();
+    const sites = new Map<string, string>();
     networkDevices.forEach((d) => {
-      if (d.site) sites.add(d.site);
+      const key = String(d.site_id || d.site || '').trim();
+      if (key) sites.set(key, d.site || key);
     });
-    return Array.from(sites).sort();
+    return Array.from(sites.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((left, right) => left.name.localeCompare(right.name));
   }, [networkDevices]);
 
   const filteredDevices = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = networkDevices;
     if (siteFilter !== 'all') {
-      list = list.filter((d) => d.site === siteFilter);
+      list = list.filter((d) => String(d.site_id || d.site || '') === siteFilter);
     }
     if (statusFilter === 'online') {
       list = list.filter((d) => String(d.status || '').toLowerCase() === 'online');
@@ -200,7 +227,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   }, []);
 
   const fetchTrend = useCallback(async (deviceId: string, hours: number, interfaceName?: string, signal?: AbortSignal) => {
-    const resolution = hours <= 24 ? '1m' : 'auto';
+    const resolution = hours <= 24 ? '1m' : '5m';
     const params = new URLSearchParams({
       range_hours: String(hours),
       resolution,
@@ -233,30 +260,60 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
     return resp.json();
   }, []);
 
+  const fetchCollectionStatus = useCallback(async (deviceId: string, signal?: AbortSignal) => {
+    const resp = await fetch(`/api/monitoring/device/${deviceId}/collection-status`, {
+      headers: authHeaders(),
+      signal,
+    });
+    if (!resp.ok) throw new Error('collection status fetch failed');
+    const payload = await resp.json();
+    return Array.isArray(payload?.items) ? payload.items : [];
+  }, []);
+
+  const runCollectionDiagnostics = useCallback(async () => {
+    if (!selectedId || diagnosticsLoading) return;
+    setDiagnosticsLoading(true);
+    try {
+      const response = await fetch(`/api/monitoring/device/${selectedId}/diagnostics`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.detail || 'collection_diagnostics_failed');
+      setDiagnosticResult(payload);
+      setCollectionStatus(await fetchCollectionStatus(selectedId));
+      showToast(zh ? '采集链路诊断完成。' : 'Collection path diagnostics completed.', payload.status === 'success' ? 'success' : 'error');
+    } catch (error) {
+      showToast(zh ? `诊断失败：${error instanceof Error ? error.message : '连接错误'}` : `Diagnostics failed: ${error instanceof Error ? error.message : 'connection error'}`, 'error');
+    } finally {
+      setDiagnosticsLoading(false);
+    }
+  }, [diagnosticsLoading, fetchCollectionStatus, selectedId, showToast, zh]);
+
   // Load telemetry data when selected device changes or range changes
-  const loadDeviceData = useCallback(async (deviceId: string, hours: number, iface: string, page: number, sev: string, ph: string, showSpinner = true, signal?: AbortSignal) => {
+  const loadDeviceData = useCallback(async (deviceId: string, hours: number, iface: string, page: number, sev: string, ph: string, showSpinner = true, signal?: AbortSignal, includeTrend = true) => {
     if (showSpinner) setLoading(true);
     try {
-      const [rt, tr, al] = await Promise.all([
+      const [rt, tr, al, cs] = await Promise.all([
         fetchRealtime(deviceId, signal),
-        fetchTrend(deviceId, hours, iface, signal),
+        includeTrend ? fetchTrend(deviceId, hours, iface, signal) : Promise.resolve(null),
         fetchAlerts(deviceId, page, sev, ph, signal),
+        fetchCollectionStatus(deviceId, signal),
       ]);
       setRealtimeData(rt);
-      setTrendSeries(tr);
+      if (Array.isArray(tr)) setTrendSeries(tr);
       setAlerts(Array.isArray(al?.items) ? al.items : []);
       setAlertTotal(typeof al?.total === 'number' ? al.total : 0);
+      setCollectionStatus(cs);
+      setDataError('');
     } catch (e) {
       if (!(e instanceof DOMException && e.name === 'AbortError')) {
-        setRealtimeData(null);
-        setTrendSeries([]);
-        setAlerts([]);
-        setAlertTotal(0);
+        setDataError(e instanceof Error ? e.message : 'monitoring data fetch failed');
       }
     } finally {
       if (showSpinner) setLoading(false);
     }
-  }, [fetchRealtime, fetchTrend, fetchAlerts]);
+  }, [fetchRealtime, fetchTrend, fetchAlerts, fetchCollectionStatus]);
 
   useEffect(() => {
     if (!isAuthenticated || !selectedId) {
@@ -264,6 +321,9 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
       setTrendSeries([]);
       setAlerts([]);
       setAlertTotal(0);
+      setCollectionStatus([]);
+      setDiagnosticResult(null);
+      setDataError('');
       return;
     }
     let cancelled = false;
@@ -290,6 +350,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   useEffect(() => {
     setTrendInterface('');
     setAlertsPage(1);
+    setDiagnosticResult(null);
   }, [selectedId]);
 
   // Auto-refresh polling (every 30 seconds for realtime and alerts, 60 seconds for trend)
@@ -302,6 +363,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
     pollRef.current = setInterval(async () => {
       try {
+        pollCycleRef.current += 1;
         await loadDeviceData(
           selectedId,
           rangeHours,
@@ -309,7 +371,9 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
           alertsPage,
           alertsSeverity,
           alertsPhase,
-          false
+          false,
+          undefined,
+          pollCycleRef.current % 2 === 0
         );
       } catch {
         /* ignore */
@@ -417,7 +481,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   // Empty state check
   if (networkDevices.length === 0) {
     return (
-      <div className="flex flex-col h-full overflow-hidden">
+      <div className="network-monitoring-page flex flex-col h-full overflow-hidden">
         <PageHero
           icon={Router}
           title={zh ? '网络监控' : 'Network Monitoring'}
@@ -439,9 +503,24 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   }
 
   const latestTrendPoint = trendData.length > 0 ? trendData[trendData.length - 1] : null;
+  const snapshotDevice = realtimeData?.device || selectedDevice;
+  const lastSampleAt = realtimeData?.updated_at || realtimeData?.timestamp;
+  const collectionLabel = (collector: string) => ({
+    reachability: zh ? '可达性' : 'Reachability',
+    snmp_metrics: zh ? 'SNMP 整机' : 'SNMP Metrics',
+    snmp_interfaces: zh ? 'SNMP 接口' : 'SNMP Interfaces',
+    snmp_inventory: zh ? 'SNMP 资产信息' : 'SNMP Inventory',
+    topology_lldp_cdp: zh ? 'LLDP/CDP 拓扑' : 'LLDP/CDP Topology',
+  }[collector] || collector);
+  const collectionTone = (status: string) => {
+    if (status === 'success') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10';
+    if (status === 'stale') return 'border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-500/10';
+    if (status === 'skipped') return 'border-slate-200 bg-slate-50 text-slate-600 dark:bg-white/[0.04]';
+    return 'border-rose-200 bg-rose-50 text-rose-700 dark:bg-rose-500/10';
+  };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="network-monitoring-page flex flex-col h-full overflow-hidden">
       <PageHero
         icon={Router}
         title={zh ? '网络监控' : 'Network Monitoring'}
@@ -486,9 +565,9 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
         }
       />
 
-      <div className="flex-1 overflow-hidden flex">
+      <div className="ops-page-scroll flex-1 overflow-hidden flex">
         {/* ── Left: Switch list ── */}
-        <div className="w-[260px] shrink-0 border-r border-[var(--card-border)] flex flex-col overflow-hidden">
+        <div className="w-[276px] shrink-0 border-r border-[var(--ops-line)] bg-[color:var(--ops-bg)]/60 flex flex-col overflow-hidden">
           <div className="p-3 border-b border-[var(--card-border)] space-y-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-text)]" size={14} />
@@ -497,18 +576,18 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={zh ? '搜索设备名 / IP' : 'Search switch / IP'}
-                className="w-full pl-9 pr-3 py-2 bg-black/[0.02] border border-[var(--card-border)] rounded-xl text-sm outline-none focus:border-sky-400 text-[var(--app-text)]"
+              className="ops-control w-full pl-9 pr-3 py-2 rounded-xl text-sm outline-none text-[var(--app-text)]"
               />
             </div>
 
             <select
               value={siteFilter}
               onChange={(e) => setSiteFilter(e.target.value)}
-              className="w-full bg-black/[0.02] border border-[var(--card-border)] rounded-xl px-2 py-1.5 text-xs outline-none text-[var(--app-text)] focus:border-sky-400 dark:bg-white/[0.02]"
+              className="ops-control w-full rounded-xl px-2 py-1.5 text-xs outline-none"
             >
               <option value="all" className="bg-[var(--card-bg)]">{zh ? '全部区域' : 'All Sites'}</option>
               {uniqueSites.map((site) => (
-                <option key={site} value={site} className="bg-[var(--card-bg)]">{site}</option>
+                <option key={site.id} value={site.id} className="bg-[var(--card-bg)]">{site.name}</option>
               ))}
             </select>
 
@@ -562,7 +641,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
         </div>
 
         {/* ── Right: Telemetry details ── */}
-        <div className="flex-1 overflow-auto p-5 space-y-5">
+        <div className="flex-1 overflow-auto p-6 space-y-5">
           {!selectedDevice ? (
             <div className="flex h-full items-center justify-center text-sm text-[var(--muted-text)]">
               {zh ? '从左侧选择一台网络设备' : 'Select a network device from the left'}
@@ -570,7 +649,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
           ) : (
             <>
               {/* Header card */}
-              <div className="flex items-center justify-between rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] px-5 py-3.5">
+              <div className="ops-surface flex items-center justify-between rounded-2xl px-5 py-3.5">
                 <div className="flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600">
                     <Router size={18} />
@@ -584,12 +663,77 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-[var(--muted-text)]">
                   <Clock size={13} />
-                  {realtimeData?.timestamp ? (zh ? `最近采样 ${fmtTime(realtimeData.timestamp)}` : `Last sample ${fmtTime(realtimeData.timestamp)}`) : (zh ? '等待数据' : 'Awaiting data')}
+                  {lastSampleAt ? (zh ? `最近采样 ${fmtTime(lastSampleAt)}` : `Last sample ${fmtTime(lastSampleAt)}`) : (zh ? '等待数据' : 'Awaiting data')}
                 </div>
               </div>
 
+              {dataError && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:bg-amber-500/10">
+                  {zh ? '本次刷新失败，当前保留上一次有效数据：' : 'Refresh failed; the last valid snapshot is retained: '}{dataError}
+                </div>
+              )}
+
+              <div className="ops-surface rounded-2xl p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--muted-text)]">
+                      {zh ? '采集健康与数据新鲜度' : 'Collection Health & Freshness'}
+                    </h3>
+                    <span className="text-[10px] text-[var(--muted-text)]">
+                      {zh ? '快照 30 秒 / 趋势 60 秒刷新' : 'Snapshot 30s / trend 60s refresh'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={runCollectionDiagnostics}
+                    disabled={diagnosticsLoading}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[10px] font-bold text-sky-700 transition hover:bg-sky-100 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <Activity size={12} className={diagnosticsLoading ? 'animate-pulse' : ''} />
+                    {diagnosticsLoading ? (zh ? '诊断中…' : 'Diagnosing…') : (zh ? '诊断采集链路' : 'Diagnose Collection')}
+                  </button>
+                </div>
+                {collectionStatus.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-[var(--card-border)] px-4 py-5 text-center text-xs text-[var(--muted-text)]">
+                    {zh ? '尚无采集状态；等待下一轮后台采集或执行 SNMP 测试。' : 'No collector state yet. Wait for the next poll or run an SNMP test.'}
+                  </div>
+                ) : (
+                  <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                    {collectionStatus.map((item) => (
+                      <div key={item.collector} className={`rounded-xl border px-3 py-2.5 ${collectionTone(item.effective_status)}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-[11px] font-bold">{collectionLabel(item.collector)}</span>
+                          <span className="text-[9px] font-extrabold uppercase">{item.effective_status}</span>
+                        </div>
+                        <p className="mt-1 truncate text-[10px] opacity-75">
+                          {item.last_success_at
+                            ? `${zh ? '成功于' : 'Success'} ${fmtFullTime(item.last_success_at)}`
+                            : (item.error_code || (zh ? '尚未成功' : 'No successful sample'))}
+                        </p>
+                        {(item.coverage_total > 0 || item.consecutive_failures > 0) && (
+                          <p className="mt-1 text-[9px] opacity-70">
+                            {item.coverage_total > 0 ? `${zh ? '覆盖' : 'Coverage'} ${item.coverage_supported}/${item.coverage_total}` : ''}
+                            {item.consecutive_failures > 0 ? ` · ${zh ? '连续失败' : 'Failures'} ${item.consecutive_failures}` : ''}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {diagnosticResult && (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    {Object.entries(diagnosticResult.checks).map(([key, check]) => (
+                      <div key={key} className={`rounded-lg border px-3 py-2 text-[10px] ${check.status === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : check.status === 'not_configured' || check.status === 'skipped' ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+                        <div className="flex items-center justify-between gap-2 font-bold"><span>{key.toUpperCase()}</span><span>{check.status}</span></div>
+                        <p className="mt-1 opacity-75">{check.code || check.error || ''}{check.port ? ` · ${check.port}` : ''}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Hardware Performance Snapshot (Gracefully handles null/0 OID values for EVE-IOU) */}
-              <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5">
+              <div className="ops-surface rounded-2xl p-5">
                 <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--muted-text)] mb-4">
                   {zh ? '最新整机状态快照 (SNMP)' : 'Latest Hardware Status Snapshot (SNMP)'}
                 </h3>
@@ -598,7 +742,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                     <Cpu size={20} className="text-sky-500 mb-2" />
                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">CPU</span>
                     <p className="text-xl font-extrabold text-[var(--app-text)] mt-1 font-mono">
-                      {selectedDevice?.cpu_usage && selectedDevice.cpu_usage > 0 ? `${selectedDevice.cpu_usage}%` : '--'}
+                      {snapshotDevice?.cpu_usage != null && Number.isFinite(Number(snapshotDevice.cpu_usage)) ? `${snapshotDevice.cpu_usage}%` : '--'}
                     </p>
                   </div>
 
@@ -606,7 +750,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                     <MemoryStick size={20} className="text-violet-500 mb-2" />
                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">Memory</span>
                     <p className="text-xl font-extrabold text-[var(--app-text)] mt-1 font-mono">
-                      {selectedDevice?.memory_usage && selectedDevice.memory_usage > 0 ? `${selectedDevice.memory_usage}%` : '--'}
+                      {snapshotDevice?.memory_usage != null && Number.isFinite(Number(snapshotDevice.memory_usage)) ? `${snapshotDevice.memory_usage}%` : '--'}
                     </p>
                   </div>
 
@@ -614,30 +758,30 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                     <Thermometer size={20} className="text-amber-500 mb-2" />
                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">Temperature</span>
                     <p className="text-xl font-extrabold text-[var(--app-text)] mt-1 font-mono">
-                      {selectedDevice?.temp && selectedDevice.temp > 0 ? `${selectedDevice.temp}°C` : '--'}
+                      {snapshotDevice?.temp != null && Number.isFinite(Number(snapshotDevice.temp)) ? `${snapshotDevice.temp}°C` : '--'}
                     </p>
                   </div>
 
                   <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[var(--card-border)] bg-black/[0.015] dark:bg-white/[0.015]">
                     <Wind size={20} className="text-emerald-500 mb-2" />
                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">Fan Status</span>
-                    <p className={`text-sm font-extrabold mt-2 ${String(selectedDevice?.fan_status || '').toLowerCase() === 'fail' ? 'text-red-500' : 'text-emerald-500'}`}>
-                      {getFanStatusLabel(selectedDevice?.fan_status)}
+                    <p className={`text-sm font-extrabold mt-2 ${String(snapshotDevice?.fan_status || '').toLowerCase() === 'fail' ? 'text-red-500' : 'text-emerald-500'}`}>
+                      {getFanStatusLabel(snapshotDevice?.fan_status)}
                     </p>
                   </div>
 
                   <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[var(--card-border)] bg-black/[0.015] dark:bg-white/[0.015]">
                     <Zap size={20} className="text-orange-500 mb-2" />
                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">Power (PSU)</span>
-                    <p className={`text-sm font-extrabold mt-2 ${String(selectedDevice?.psu_status || '').toLowerCase() === 'fail' ? 'text-red-500' : 'text-emerald-500'}`}>
-                      {getPsuStatusLabel(selectedDevice?.psu_status)}
+                    <p className={`text-sm font-extrabold mt-2 ${String(snapshotDevice?.psu_status || '').toLowerCase() === 'fail' ? 'text-red-500' : 'text-emerald-500'}`}>
+                      {getPsuStatusLabel(snapshotDevice?.psu_status)}
                     </p>
                   </div>
                 </div>
               </div>
 
               {/* Interface Table */}
-              <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5">
+              <div className="ops-surface rounded-2xl p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--muted-text)]">
                     {zh ? '接口流量与丢包统计 (SNMP)' : 'Interfaces & Realtime Telemetry (SNMP)'}
@@ -696,7 +840,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
               </div>
 
               {/* Trend Chart */}
-              <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 space-y-4">
+              <div className="ops-surface rounded-2xl p-5 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-extrabold uppercase tracking-wider text-[var(--muted-text)]">{zh ? '性能趋势分析' : 'Performance Trends'}</h3>
@@ -734,7 +878,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                   })}
                 </div>
 
-                <div className="h-[250px] rounded-xl border border-[var(--card-border)] bg-black/[0.01] p-2">
+                <div className="h-[250px] min-h-[250px] min-w-0 rounded-xl border border-[var(--card-border)] bg-black/[0.01] p-2">
                   {loading && trendData.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center gap-2 text-sm text-[var(--muted-text)]">
                       <RefreshCw size={20} className="animate-spin text-sky-500" />
@@ -746,7 +890,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                       <p className="text-sm font-medium text-[var(--muted-text)]">{zh ? '暂无流量趋势数据' : 'No trend data yet'}</p>
                     </div>
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={240} minHeight={220}>
                       <AreaChart data={trendData} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
                         <XAxis
@@ -824,7 +968,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
               </div>
 
               {/* Alert History Timeline */}
-              <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] overflow-hidden">
+              <div className="ops-surface rounded-2xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-[var(--card-border)] flex items-center justify-between gap-4 bg-black/[0.01] dark:bg-white/[0.01]">
                   <div>
                     <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--app-text)]">{zh ? '设备告警时间线' : 'Device Alert Timeline'}</h3>

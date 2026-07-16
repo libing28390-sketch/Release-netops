@@ -5,6 +5,17 @@ import DateTimePicker from '../../../components/DateTimePicker';
 import { Asset } from '../types';
 import { VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, STATUSES, LIFECYCLE_STATUSES } from '../constants';
 
+const TOPOLOGY_ROLE_OPTIONS = [
+  { value: 'core', label: { zh: '核心层', en: 'Core' } },
+  { value: 'distribution', label: { zh: '汇聚层', en: 'Distribution' } },
+  { value: 'access', label: { zh: '接入层', en: 'Access' } },
+  { value: 'edge', label: { zh: '边缘层', en: 'Edge' } },
+  { value: 'switch', label: { zh: '通用交换机', en: 'Switch' } },
+  { value: 'router', label: { zh: '路由器', en: 'Router' } },
+  { value: 'firewall', label: { zh: '防火墙', en: 'Firewall' } },
+  { value: 'other', label: { zh: '其他', en: 'Other' } },
+] as const;
+
 interface AssetModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -328,6 +339,22 @@ export const AssetModal: React.FC<AssetModalProps> = ({
             </div>
 
             {/* ─── 连接配置 & PAM ─── */}
+            {form.asset_type === 'network_device' && <div className="rounded-xl border border-cyan-100 bg-cyan-50/40 px-3 py-2.5">
+              <label className="block text-[10px] font-semibold text-cyan-900/70">{zh ? '拓扑角色' : 'Topology Role'}</label>
+              <select
+                value={form.device_role || ''}
+                onChange={e => setForm(f => ({ ...f, device_role: e.target.value }))}
+                className="mt-1 w-full rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-xs text-black/65 outline-none focus:border-cyan-400"
+                title="Topology Role"
+              >
+                <option value="">{zh ? '请选择拓扑角色...' : 'Select topology role...'}</option>
+                {TOPOLOGY_ROLE_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>{option.label[zh ? 'zh' : 'en']}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-[9px] text-cyan-900/50">{zh ? '用于拓扑图分层，不等同于接口的 access/trunk 模式。' : 'Controls topology layers; different from interface access/trunk mode.'}</p>
+            </div>}
+
             {(form.asset_type === 'network_device' || form.asset_type === 'server') && (
               <div className="col-span-2 space-y-4">
                 <div className="flex items-center gap-1.5 mt-4 mb-1">

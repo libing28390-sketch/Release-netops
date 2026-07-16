@@ -347,12 +347,18 @@ const AppMainContent: React.FC = () => {
   // Topology context destructuring
   const {
     topologyDiscoveryRunning,
+    topologyDiscoveryProgress,
+    topologyDiscoveryDevices,
+    topologySites,
+    topologyDataError,
     topologyStats,
     topologyLinkStats,
     topologySearch,
     topologySiteFilter,
     topologyRoleFilter,
     topologyStatusFilter,
+    topologyLinkStatusFilter,
+    topologyProtocolFilter,
     topologySiteOptions,
     topologyRoleOptions,
     topologyVisibleDevices,
@@ -371,11 +377,14 @@ const AppMainContent: React.FC = () => {
     hideOrphanDevices,
     setHideOrphanDevices,
     handleTriggerDiscovery,
+    handleCancelDiscovery,
     handleExportMap,
     setTopologySearch,
     setTopologySiteFilter,
     setTopologyRoleFilter,
     setTopologyStatusFilter,
+    setTopologyLinkStatusFilter,
+    setTopologyProtocolFilter,
     setSelectedTopologyDeviceId,
     setSelectedTopologyLinkKey,
     formatTopologyPort,
@@ -618,12 +627,18 @@ const AppMainContent: React.FC = () => {
           <TopologyPage
             language={language}
             topologyDiscoveryRunning={topologyDiscoveryRunning}
+            topologyDiscoveryProgress={topologyDiscoveryProgress}
+            topologyDiscoveryDevices={topologyDiscoveryDevices}
+            topologySites={topologySites}
+            topologyDataError={topologyDataError}
             topologyStats={topologyStats}
             topologyLinkStats={topologyLinkStats}
             topologySearch={topologySearch}
             topologySiteFilter={topologySiteFilter}
             topologyRoleFilter={topologyRoleFilter}
             topologyStatusFilter={topologyStatusFilter}
+            topologyLinkStatusFilter={topologyLinkStatusFilter}
+            topologyProtocolFilter={topologyProtocolFilter}
             topologySiteOptions={topologySiteOptions}
             topologyRoleOptions={topologyRoleOptions}
             topologyVisibleDevices={topologyVisibleDevices}
@@ -642,11 +657,14 @@ const AppMainContent: React.FC = () => {
             hideOrphanDevices={hideOrphanDevices}
             onHideOrphanDevicesChange={setHideOrphanDevices}
             onTriggerDiscovery={handleTriggerDiscovery}
+            onCancelDiscovery={handleCancelDiscovery}
             onExportMap={handleExportMap}
             onTopologySearchChange={setTopologySearch}
             onTopologySiteFilterChange={setTopologySiteFilter}
             onTopologyRoleFilterChange={setTopologyRoleFilter}
             onTopologyStatusFilterChange={setTopologyStatusFilter}
+            onTopologyLinkStatusFilterChange={setTopologyLinkStatusFilter}
+            onTopologyProtocolFilterChange={setTopologyProtocolFilter}
             onSelectTopologyDevice={setSelectedTopologyDeviceId}
             onSelectTopologyLink={setSelectedTopologyLinkKey}
             onOpenDeviceDetail={handleShowDetails}

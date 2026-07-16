@@ -23,7 +23,21 @@ interface TopologyContextValue {
   topologySiteFilter: string;
   topologyRoleFilter: string;
   topologyStatusFilter: 'all' | 'online' | 'offline' | 'pending';
-  topologySiteOptions: string[];
+  topologyLinkStatusFilter: 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
+  topologyProtocolFilter: 'all' | 'lldp' | 'cdp';
+  topologySiteOptions: Array<{ id: string; name: string }>;
+  topologyDiscoveryProgress: {
+    id: string;
+    status: string;
+    total_devices: number;
+    processed_devices: number;
+    success_devices: number;
+    failed_devices: number;
+    progress_percent: number;
+  } | null;
+  topologyDiscoveryDevices: any[];
+  topologySites: any[];
+  topologyDataError: string;
   topologyRoleOptions: string[];
   topologyVisibleDevices: Device[];
   topologyVisibleLinks: any[];
@@ -41,11 +55,14 @@ interface TopologyContextValue {
   hideOrphanDevices: boolean;
   setHideOrphanDevices: (value: boolean) => void;
   handleTriggerDiscovery: () => Promise<void>;
+  handleCancelDiscovery: () => Promise<void>;
   handleExportMap: () => Promise<void>;
   setTopologySearch: (search: string) => void;
   setTopologySiteFilter: (site: string) => void;
   setTopologyRoleFilter: (role: string) => void;
   setTopologyStatusFilter: (status: "pending" | "offline" | "online" | "all") => void;
+  setTopologyLinkStatusFilter: (status: "all" | "up" | "degraded" | "down" | "stale" | "unknown") => void;
+  setTopologyProtocolFilter: (protocol: "all" | "lldp" | "cdp") => void;
   formatTopologyPort: (value?: string) => string;
   formatTopologyInterfaceTelemetry: (snapshot: any) => string;
   formatTopologyLastSeen: (value?: string) => string;

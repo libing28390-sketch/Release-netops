@@ -18,7 +18,8 @@ import time as _time
 from services.snmp_service import collect_device_metrics, collect_device_info, collect_interface_data
 from services.operational_data_service import collect_operational_data
 from services.network_access_limiter import get_network_access_limiter
-from api.topology import discover_lldp_neighbors
+from services.collection_status_service import record_collection_result
+from services.vault_service import resolve_collector_credentials
 from core.crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
@@ -994,10 +995,15 @@ async def _process_device_raw(device, cycle_tick: int):
         cpu_history = json.loads(device['cpu_history'] or '[]')
         mem_history = json.loads(device['memory_history'] or '[]')
 
-        snmp_community = device['snmp_community'] or 'public'
-        snmp_port = device['snmp_port'] or 161
+        collection_started = _time.perf_counter()
+        collector_credentials = resolve_collector_credentials(device)
+        snmp_credentials = collector_credentials['snmp']
+        snmp_community = snmp_credentials.get('community') or ''
+        snmp_port = snmp_credentials.get('port') or 161
         platform = device['platform'] or 'cisco_ios'
         snmp_available = False
+        snmp_error_code = ''
+        snmp_error_message = ''
 
         # Try real SNMP collection (no DB lock held during await)
         cpu_usage = None
@@ -1005,27 +1011,35 @@ async def _process_device_raw(device, cycle_tick: int):
         temp = None
         fan = None
         psu = None
-        try:
-            metrics = await collect_device_metrics(ip, platform, snmp_community, snmp_port)
-            cpu_usage = metrics.get('cpu_usage')
-            memory_usage = metrics.get('memory_usage')
-            temp = metrics.get('temp')
-            fan = metrics.get('fan_status')
-            psu = metrics.get('psu_status')
-            snmp_available = any(value is not None for value in (cpu_usage, memory_usage, temp, fan, psu))
-        except Exception as snmp_err:
-            logger.debug(f"[SNMP] {ip} metrics failed: {snmp_err}")
+        if snmp_community:
+            try:
+                metrics = await collect_device_metrics(ip, platform, snmp_community, snmp_port)
+                cpu_usage = metrics.get('cpu_usage')
+                memory_usage = metrics.get('memory_usage')
+                temp = metrics.get('temp')
+                fan = metrics.get('fan_status')
+                psu = metrics.get('psu_status')
+                snmp_available = any(value is not None for value in (cpu_usage, memory_usage, temp, fan, psu))
+            except Exception as snmp_err:
+                snmp_error_code = 'snmp_metrics_failed'
+                snmp_error_message = type(snmp_err).__name__
+                logger.debug(f"[SNMP] {ip} metrics failed: {snmp_err}")
+        else:
+            snmp_error_code = 'snmp_not_configured'
+            snmp_error_message = 'SNMP credentials are not configured'
 
         # Fallback: if standard metrics failed (e.g. Linux servers lacking specific OIDs),
         # verify true reachability via standard sysUpTime before marking unreachable.
-        if not snmp_available:
+        if snmp_community and not snmp_available:
             try:
                 from services.snmp_service import _snmp_get, SYS_UPTIME
                 test_val = await _snmp_get(ip, snmp_community, SYS_UPTIME, snmp_port, timeout=1.5)
                 if test_val is not None:
                     snmp_available = True
             except Exception:
-                pass
+                if not snmp_error_code:
+                    snmp_error_code = 'snmp_no_response'
+                    snmp_error_message = 'No response from standard SNMP system OID'
 
         # Only append to history if we got data
         if cpu_usage is not None:
@@ -1125,10 +1139,10 @@ async def _process_device_raw(device, cycle_tick: int):
             )
 
         # 3. Device info collection (every ~10 minutes)
-        if collect_info:
+        if collect_info and snmp_community:
             try:
                 dev_info = await collect_device_info(ip, snmp_community, snmp_port)
-                if dev_info:
+                if any(value is not None for value in dev_info.values()):
                     snmp_available = True
                 updates = {}
                 if dev_info.get('sys_name'):
@@ -1160,13 +1174,33 @@ async def _process_device_raw(device, cycle_tick: int):
             await _collect_protocol_neighbor_alerts(device, ip)
 
         # 4. Interface data collection
-        if collect_intf:
+        if collect_intf and snmp_community:
             try:
                 now_ts = _time.monotonic()
                 now_iso = _utc_now_iso()
                 intf_data = await collect_interface_data(ip, snmp_community, snmp_port)
+                if not intf_data:
+                    record_collection_result(
+                        dev_id,
+                        'snmp_interfaces',
+                        status='failed',
+                        transport='udp',
+                        source='snmp',
+                        error_code='snmp_interface_table_empty',
+                        error_message='SNMP interface table is empty',
+                    )
                 if intf_data:
                     snmp_available = True
+                    record_collection_result(
+                        dev_id,
+                        'snmp_interfaces',
+                        status='success',
+                        transport='udp',
+                        source='snmp',
+                        coverage_total=len(intf_data),
+                        coverage_supported=len(intf_data),
+                        metadata={'counter_mode': 'ifHC-preferred'},
+                    )
                     topology_ports = load_topology_ports(dev_id)
                     # Calculate real-time throughput and bandwidth utilization from previous snapshot.
                     prev = prev_intf_octets.get(dev_id, {})
@@ -1401,13 +1435,57 @@ async def _process_device_raw(device, cycle_tick: int):
                     finally:
                         conn.close()
             except Exception as intf_err:
+                record_collection_result(
+                    dev_id,
+                    'snmp_interfaces',
+                    status='failed',
+                    transport='udp',
+                    source='snmp',
+                    error_code='snmp_interface_collection_failed',
+                    error_message=type(intf_err).__name__,
+                )
                 logger.debug(f"[SNMP] {ip} interface collection failed: {intf_err}")
+        elif collect_intf:
+            record_collection_result(
+                dev_id,
+                'snmp_interfaces',
+                status='not_configured',
+                transport='udp',
+                source='snmp',
+                error_code='snmp_not_configured',
+                error_message='SNMP credentials are not configured',
+            )
 
         is_server_asset = (str(device.get('asset_type') or '').strip().lower() == 'server') or \
                           (str(device.get('platform') or '').strip().lower() in ('linux', 'ubuntu', 'debian', 'centos', 'rhel', 'server')) or \
                           ('server' in str(device.get('device_category') or '').lower())
         if is_server_asset:
             snmp_available = True  # Linux 服务器采用 SSH 巡检，免除传统 SNMP 可达性告警监控
+
+        metric_values = (cpu_usage, memory_usage, temp, fan, psu)
+        if is_server_asset:
+            record_collection_result(
+                dev_id,
+                'snmp_metrics',
+                status='skipped',
+                transport='ssh',
+                source='server_inspection',
+                duration_ms=(_time.perf_counter() - collection_started) * 1000,
+                metadata={'reason': 'server_asset'},
+            )
+        else:
+            record_collection_result(
+                dev_id,
+                'snmp_metrics',
+                status='success' if snmp_available else ('not_configured' if not snmp_community else 'failed'),
+                transport='udp',
+                source='snmp',
+                duration_ms=(_time.perf_counter() - collection_started) * 1000,
+                coverage_total=len(metric_values),
+                coverage_supported=sum(value is not None for value in metric_values),
+                error_code='' if snmp_available else (snmp_error_code or 'snmp_no_response'),
+                error_message='' if snmp_available else (snmp_error_message or 'SNMP collection returned no data'),
+            )
 
         snmp_rule = resolve_alert_rule('snmp_unreachable', device_row=device, ip_address=ip)
         snmp_key = f"snmp_unreachable:{dev_id}"
@@ -1427,12 +1505,17 @@ async def _process_device_raw(device, cycle_tick: int):
         else:
             snmp_failure_streak[dev_id] = snmp_failure_streak.get(dev_id, 0) + 1
             snmp_active = snmp_failure_streak[dev_id] >= 2
+            failure_detail = (
+                f"{dev_label} SNMP 凭据未配置"
+                if not snmp_community
+                else f"{dev_label} 设备在线，但连续 {snmp_failure_streak[dev_id]} 次 SNMP 采集失败"
+            )
             set_alert_state(
                 snmp_key,
                 snmp_active,
                 (snmp_rule or {}).get('severity', 'major'),
                 'SNMP Unreachable',
-                f"{dev_label} 设备在线，但连续 {snmp_failure_streak[dev_id]} 次 SNMP 采集失败",
+                failure_detail,
                 dev_id,
                 ip_address=ip,
                 status='active' if snmp_active else 'resolved',
@@ -1456,6 +1539,14 @@ async def process_device_fast(device):
 
     if not ip or ip == '0.0.0.0':
         mark_offline_and_clear_cache()
+        record_collection_result(
+            dev_id,
+            'reachability',
+            status='not_configured',
+            source='icmp_tcp',
+            error_code='management_ip_missing',
+            error_message='Management IP address is not configured',
+        )
         return
 
     dev_label = device['hostname'] or ip
@@ -1466,6 +1557,15 @@ async def process_device_fast(device):
                 _device_management_port(device),
             )
         new_status = 'online' if reachable else 'offline'
+        record_collection_result(
+            dev_id,
+            'reachability',
+            status='success' if reachable else 'failed',
+            transport=probe_method,
+            source='icmp_tcp',
+            error_code='' if reachable else 'device_unreachable',
+            error_message='' if reachable else 'ICMP and management-port probes failed',
+        )
 
         if device['status'] != new_status:
             if new_status == 'offline':
@@ -1486,7 +1586,15 @@ async def process_device_fast(device):
             logger.info(
                 f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
             )
-    except Exception:
+    except Exception as exc:
+        record_collection_result(
+            dev_id,
+            'reachability',
+            status='failed',
+            source='icmp_tcp',
+            error_code='probe_failed',
+            error_message=type(exc).__name__,
+        )
         new_status = 'offline'
         if device.get('status') != 'offline':
             _set_protocol_alerts_for_device_offline(device, ip)

@@ -195,7 +195,26 @@ def _sanitize_device_item(item: dict) -> dict:
         sanitized['password'] = ''
     if 'enable_password' in sanitized:
         sanitized['enable_password'] = ''
+    if 'snmp_community' in sanitized:
+        sanitized['snmp_community'] = ''
     return sanitized
+
+
+def _resolve_device_site_id(conn, site_id: str | None, site_name: str | None) -> str:
+    requested_id = str(site_id or '').strip()
+    if requested_id:
+        row = conn.execute('SELECT id FROM sites WHERE id = ?', (requested_id,)).fetchone()
+        if row:
+            return str(row['id'])
+    requested_name = str(site_name or '').strip()
+    if requested_name:
+        row = conn.execute(
+            'SELECT id FROM sites WHERE LOWER(site_name) = LOWER(?) OR LOWER(site_code) = LOWER(?) LIMIT 1',
+            (requested_name, requested_name),
+        ).fetchone()
+        if row:
+            return str(row['id'])
+    return 'site-default'
 
 
 def _build_ssh_failure_response(hostname: str | None, ip_address: str, error_text: str, probe_output: list[str], probe_stages: list[dict], status_code: int = 400, port: int = 22) -> JSONResponse:
@@ -525,7 +544,7 @@ def read_devices(
             select_clause = (
                 'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.sn, d.model, d.version, '
                 'd.role, d.site, d.uptime, d.connection_method, d.cpu_usage, d.memory_usage, d.temp, '
-                'd.fan_status, d.psu_status, d.sys_name, d.sys_location, d.sys_contact, d.asset_id, d.vendor, '
+                'd.site_id, d.fan_status, d.psu_status, d.sys_name, d.sys_location, d.sys_contact, d.asset_id, d.vendor, '
                 'd.device_category, d.management_port'
                 + asset_cols
             )
@@ -589,6 +608,7 @@ def create_device(device: dict = Body(...)):
             'normal_password': device.get('normal_password', ''),
             'admin_username': device.get('admin_username', ''),
             'admin_password': device.get('admin_password', ''),
+            'snmp_community': device.get('snmp_community', ''),
         })
     else:
         credential_id = f"cred-{uuid.uuid4().hex[:12]}"
@@ -635,7 +655,7 @@ def create_device(device: dict = Body(...)):
             device.get('site', ''),
             device.get('uptime', '0d 0h'),
             device.get('connection_method', 'ssh'),
-            device.get('snmp_community', 'public'),
+            '', # SNMP community is stored only in the credential backend
             device.get('snmp_port', 161),
             device.get('lifecycle_status', 'staging'),
             '', # Store empty enable_password in devices table
@@ -651,6 +671,10 @@ def create_device(device: dict = Body(...)):
             int(device.get('power_watts') or 0),
             credential_id
         ))
+        conn.execute(
+            'UPDATE devices SET site_id = ? WHERE id = ?',
+            (_resolve_device_site_id(conn, device.get('site_id'), device.get('site')), device_id),
+        )
         # Plan-A: auto-create linked physical_assets record
         _create_linked_asset_for_device(conn, device_id, device)
         conn.commit()
@@ -727,7 +751,7 @@ def delete_device(device_id: str):
 def update_device(device_id: str, device: dict = Body(...)):
     conn = get_db_connection()
     try:
-        existing_row = conn.execute('SELECT credential_id, lifecycle_status, credential_source FROM devices WHERE id = ?', (device_id,)).fetchone()
+        existing_row = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
         if not existing_row:
             raise HTTPException(status_code=404, detail='Device not found')
 
@@ -744,15 +768,17 @@ def update_device(device_id: str, device: dict = Body(...)):
 
         if cred_source == 'vault' and vault_available() and vault_path:
             # Push credentials to Vault; store empty in DB
+            existing_credentials = resolve_device_credentials(dict(existing_row))
             vault_write(vault_path, {
-                'username': device.get('username', ''),
-                'password': submitted_password or '',
-                'enable_password': submitted_enable or '',
-                'priv_username': device.get('priv_username', ''),
-                'normal_username': device.get('normal_username', ''),
-                'normal_password': submitted_normal or '',
-                'admin_username': device.get('admin_username', ''),
-                'admin_password': submitted_admin or '',
+                'username': device.get('username') or existing_credentials.get('username', ''),
+                'password': submitted_password or existing_credentials.get('password', ''),
+                'enable_password': submitted_enable or existing_credentials.get('enable_password', ''),
+                'priv_username': device.get('priv_username') or existing_credentials.get('priv_username', ''),
+                'normal_username': device.get('normal_username') or existing_credentials.get('normal_username', ''),
+                'normal_password': submitted_normal or existing_credentials.get('normal_password', ''),
+                'admin_username': device.get('admin_username') or existing_credentials.get('admin_username', ''),
+                'admin_password': submitted_admin or existing_credentials.get('admin_password', ''),
+                'snmp_community': submitted_snmp or existing_credentials.get('snmp_community', ''),
             })
         else:
             username = device.get('username') or device.get('normal_username') or device.get('admin_username') or ''
@@ -809,7 +835,7 @@ def update_device(device_id: str, device: dict = Body(...)):
             '', # Empty password column
             device.get('current_config', ''),
             json.dumps(device.get('config_history', [])) if device.get('config_history') else '[]',
-            device.get('snmp_community', 'public'),
+            '', # SNMP community is stored only in the credential backend
             device.get('snmp_port', 161),
             new_lifecycle,
             '', # Empty enable_password column
@@ -826,6 +852,10 @@ def update_device(device_id: str, device: dict = Body(...)):
             credential_id,
             device_id
         ))
+        conn.execute(
+            'UPDATE devices SET site_id = ? WHERE id = ?',
+            (_resolve_device_site_id(conn, device.get('site_id'), device.get('site')), device_id),
+        )
         conn.commit()
 
         # Track lifecycle transition in audit details
@@ -1417,17 +1447,35 @@ async def snmp_test(device_id: str):
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
-    ip = device['ip_address']
-    community = device['snmp_community'] or 'public'
-    port = device['snmp_port'] or 161
+    device_data = dict(device)
+    credentials = resolve_device_credentials(device_data)
+    ip = device_data['ip_address']
+    community = credentials.get('snmp_community') or ''
+    port = device_data['snmp_port'] or 161
 
     if not ip:
         return {"success": False, "error": "No IP address configured"}
+    if not community:
+        from services.collection_status_service import record_collection_result
+        record_collection_result(
+            device_id,
+            'snmp_metrics',
+            status='not_configured',
+            transport='udp',
+            source='snmp',
+            error_code='snmp_not_configured',
+            error_message='SNMP credentials are not configured',
+        )
+        return {
+            "success": False,
+            "error": "SNMP credentials are not configured",
+            "error_code": "snmp_not_configured",
+        }
 
     import asyncio as _aio
     from services.snmp_service import _snmp_get, _snmp_walk, collect_device_info, collect_interface_data, collect_device_metrics
 
-    results = {"success": False, "ip": ip, "community": community, "port": port,
+    results = {"success": False, "ip": ip, "port": port,
                "sys_name": None, "sys_descr": None, "response_ms": None, "error": None,
                "synced": False}
 
@@ -1462,6 +1510,20 @@ async def snmp_test(device_id: str):
         elapsed = round((time.monotonic() - start) * 1000)
         results['response_ms'] = elapsed
         results['error'] = str(e)
+
+    from services.collection_status_service import record_collection_result
+    record_collection_result(
+        device_id,
+        'snmp_metrics',
+        status='success' if results['success'] else 'failed',
+        transport='udp',
+        source='snmp',
+        duration_ms=results.get('response_ms'),
+        coverage_total=2,
+        coverage_supported=int(bool(results.get('sys_name'))) + int(bool(results.get('sys_descr'))),
+        error_code='' if results['success'] else 'snmp_no_response',
+        error_message='' if results['success'] else str(results.get('error') or 'No SNMP response'),
+    )
 
     # ── 测试成功后在后台异步同步数据（不阻塞响应） ──────────────────────
     if results['success']:
@@ -1534,6 +1596,17 @@ async def snmp_test(device_id: str):
                     conn2.commit()
                 finally:
                     conn2.close()
+                record_collection_result(
+                    device_id,
+                    'snmp_interfaces',
+                    status='success' if intf_data else 'failed',
+                    transport='udp',
+                    source='snmp',
+                    coverage_total=len(intf_data or []),
+                    coverage_supported=len(intf_data or []),
+                    error_code='' if intf_data else 'snmp_interface_table_empty',
+                    error_message='' if intf_data else 'SNMP interface table is empty',
+                )
             except Exception:
                 pass  # 后台同步失败不影响测试结果
 

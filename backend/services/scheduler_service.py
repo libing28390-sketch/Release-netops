@@ -919,10 +919,14 @@ def sync_topology_and_interfaces_job():
             db_conn.close()
 
     # Collect topology neighbors
-    from services.topology_service import discover_lldp_neighbors
+    from services.topology_service import discover_lldp_neighbors, rebuild_links_from_observations
     async def run_discovery():
         tasks = [discover_lldp_neighbors(dev['id']) for dev in devices]
         await asyncio.gather(*tasks, return_exceptions=True)
+        # Every device replaces only its observations. Rebuild the canonical
+        # graph exactly once after the batch to avoid concurrent delete/insert
+        # races and transient partial topologies.
+        await asyncio.to_thread(rebuild_links_from_observations)
         
     try:
         loop = asyncio.get_running_loop()

@@ -770,6 +770,8 @@ def _init_db_logic(conn):
         created_at TEXT,
         updated_at TEXT,
         last_seen TEXT,
+        source_site_id TEXT DEFAULT '',
+        target_site_id TEXT DEFAULT '',
         FOREIGN KEY (source_device_id) REFERENCES devices (id),
         FOREIGN KEY (source_interface_id) REFERENCES interfaces (id),
         FOREIGN KEY (target_device_id) REFERENCES devices (id),
@@ -802,6 +804,8 @@ def _init_db_logic(conn):
         ('created_at', "TEXT"),
         ('updated_at', "TEXT"),
         ('last_seen', "TEXT")
+        ,('source_site_id', "TEXT DEFAULT ''")
+        ,('target_site_id', "TEXT DEFAULT ''")
     ]:
         ensure_column('topology_links', col, dtype)
 
@@ -1300,7 +1304,18 @@ def _init_db_logic(conn):
         failed_devices INTEGER DEFAULT 0,
         total_observations INTEGER DEFAULT 0,
         total_links INTEGER DEFAULT 0,
-        summary_json TEXT DEFAULT '{}'
+        summary_json TEXT DEFAULT '{}',
+        site_id TEXT DEFAULT '',
+        scope_json TEXT DEFAULT '{}',
+        cancel_requested INTEGER DEFAULT 0,
+        idempotency_key TEXT DEFAULT '',
+        lease_owner TEXT DEFAULT '',
+        lease_expires_at TEXT,
+        heartbeat_at TEXT,
+        attempt_count INTEGER DEFAULT 0,
+        max_attempts INTEGER DEFAULT 2,
+        timeout_seconds INTEGER DEFAULT 300,
+        last_error_code TEXT DEFAULT ''
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_runs_started_at ON topology_discovery_runs(started_at)')
@@ -1319,12 +1334,34 @@ def _init_db_logic(conn):
         observations_count INTEGER DEFAULT 0,
         matched_links_count INTEGER DEFAULT 0,
         error_message TEXT DEFAULT '',
+        error_code TEXT DEFAULT '',
+        attempt_count INTEGER DEFAULT 0,
+        last_attempt_at TEXT,
         FOREIGN KEY (run_id) REFERENCES topology_discovery_runs(id),
         FOREIGN KEY (device_id) REFERENCES devices(id)
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_run_devices_run_id ON topology_discovery_run_devices(run_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_run_devices_device_id ON topology_discovery_run_devices(device_id)')
+    for col, dtype in [
+        ('idempotency_key', "TEXT DEFAULT ''"),
+        ('lease_owner', "TEXT DEFAULT ''"),
+        ('lease_expires_at', "TEXT"),
+        ('heartbeat_at', "TEXT"),
+        ('attempt_count', "INTEGER DEFAULT 0"),
+        ('max_attempts', "INTEGER DEFAULT 2"),
+        ('timeout_seconds', "INTEGER DEFAULT 300"),
+        ('last_error_code', "TEXT DEFAULT ''"),
+    ]:
+        ensure_column('topology_discovery_runs', col, dtype)
+    for col, dtype in [
+        ('attempt_count', "INTEGER DEFAULT 0"),
+        ('last_attempt_at', "TEXT"),
+    ]:
+        ensure_column('topology_discovery_run_devices', col, dtype)
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_topology_runs_idempotency ON topology_discovery_runs(idempotency_key) WHERE idempotency_key <> \'\'')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_runs_lease ON topology_discovery_runs(status, lease_expires_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_run_devices_status ON topology_discovery_run_devices(run_id, status)')
 
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS topology_layouts (
@@ -1357,6 +1394,10 @@ def _init_db_logic(conn):
         raw_payload_json TEXT DEFAULT '{}',
         collected_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
+        source_site_id TEXT DEFAULT '',
+        match_method TEXT DEFAULT '',
+        match_status TEXT DEFAULT 'unmatched',
+        match_candidates_json TEXT DEFAULT '[]',
         FOREIGN KEY (source_device_id) REFERENCES devices(id),
         FOREIGN KEY (target_device_id) REFERENCES devices(id),
         FOREIGN KEY (discovery_run_id) REFERENCES topology_discovery_runs(id)
@@ -1365,6 +1406,31 @@ def _init_db_logic(conn):
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_topology_obs_unique ON topology_observations(source_device_id, source_port_normalized, neighbor_name_normalized, target_device_id, target_port_normalized, protocol)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_obs_target ON topology_observations(target_device_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_obs_collected_at ON topology_observations(collected_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_observations_run_collected ON topology_observations(discovery_run_id, collected_at)')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS device_collection_status (
+        device_id TEXT NOT NULL,
+        collector TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'unknown',
+        transport TEXT DEFAULT '',
+        source TEXT DEFAULT '',
+        last_attempt_at TEXT,
+        last_success_at TEXT,
+        duration_ms REAL,
+        consecutive_failures INTEGER DEFAULT 0,
+        coverage_total INTEGER DEFAULT 0,
+        coverage_supported INTEGER DEFAULT 0,
+        error_code TEXT DEFAULT '',
+        error_message TEXT DEFAULT '',
+        metadata_json TEXT DEFAULT '{}',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (device_id, collector),
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_collection_status_collector_status ON device_collection_status(collector, status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_collection_status_last_success ON device_collection_status(last_success_at)')
 
     # Create playbook_executions table
     cursor.execute('''

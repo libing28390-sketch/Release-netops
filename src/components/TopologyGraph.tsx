@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import switchIcon from '../assets/topology-icons/switch.svg';
-import routerIcon from '../assets/topology-icons/router.svg';
-import firewallIcon from '../assets/topology-icons/firewall.svg';
+
+const topologyIconAssets = import.meta.glob('../assets/topology/devices/**/*.svg', {
+  eager: true,
+  import: 'default',
+  query: '?url',
+}) as Record<string, string>;
 
 interface Device {
   id: string;
@@ -13,6 +16,7 @@ interface Device {
   platform?: string;
   model?: string;
   site?: string;
+  site_id?: string;
   health_status?: string;
   open_alert_count?: number;
   critical_open_alerts?: number;
@@ -65,7 +69,7 @@ const getRoleBucket = (role?: string) => {
   return 'other';
 };
 
-type DeviceGlyphKind = 'switch' | 'firewall' | 'router' | 'generic';
+type DeviceGlyphKind = 'switch' | 'firewall' | 'router' | 'server' | 'wireless' | 'generic';
 
 const getDeviceGlyphKind = (device: Device): DeviceGlyphKind => {
   const fingerprint = [device.role, device.hostname, device.platform, device.model]
@@ -75,34 +79,67 @@ const getDeviceGlyphKind = (device: Device): DeviceGlyphKind => {
   if (/(firewall| fortigate|forti|palo|pan-|checkpoint|srx|asa|ftd|fw\b)/.test(fingerprint)) return 'firewall';
   if (/(router|gateway|wan|edge router|isr|asr|mx\b)/.test(fingerprint)) return 'router';
   if (/(switch|core|distribution|access|leaf|spine|nexus|catalyst)/.test(fingerprint)) return 'switch';
+  if (/(server|compute|hypervisor|vmware|esxi|linux|windows server|unix)/.test(fingerprint)) return 'server';
+  if (/(wireless|wi-fi|wifi|access point|\bap\b|wlc|aironet|aruba|unifi)/.test(fingerprint)) return 'wireless';
   return 'generic';
 };
 
-const getDeviceIconHref = (kind: DeviceGlyphKind) => {
-  switch (kind) {
-    case 'switch':
-      return switchIcon;
-    case 'router':
-      return routerIcon;
-    case 'firewall':
-      return firewallIcon;
-    default:
-      return null;
-  }
+const iconCategoryByKind: Record<Exclude<DeviceGlyphKind, 'generic'>, string> = {
+  switch: 'switches',
+  router: 'routers',
+  firewall: 'firewalls',
+  server: 'servers',
+  wireless: 'wireless',
 };
 
-const hasDeviceIconAsset = (device: Device) => Boolean(getDeviceIconHref(getDeviceGlyphKind(device)));
+const preferredIconNames: Record<Exclude<DeviceGlyphKind, 'generic'>, string[]> = {
+  switch: ['cisco-switch-l3-master.svg', 'cisco-switch-l3-480x480.svg', 'cisco-switch-l3-240x240.svg', 'cisco-switch-l3-144x144.svg'],
+  router: ['router.svg'],
+  firewall: ['firewall.svg'],
+  server: ['server.svg', 'server-linux.svg', 'server-windows.svg'],
+  wireless: ['wireless.svg', 'access-point.svg', 'wifi-ap.svg'],
+};
+
+const getDeviceIconUrl = (kind: DeviceGlyphKind) => {
+  if (kind === 'generic') return undefined;
+  const category = iconCategoryByKind[kind];
+  const candidates = Object.entries(topologyIconAssets)
+    .filter(([path]) => path.includes(`/devices/${category}/`));
+  for (const preferredName of preferredIconNames[kind]) {
+    const match = candidates.find(([path]) => path.endsWith(`/${preferredName}`));
+    if (match) return match[1];
+  }
+  return candidates[0]?.[1];
+};
+
+const hasDeviceIconAsset = (device: Device) => Boolean(getDeviceIconUrl(getDeviceGlyphKind(device)));
+
+const deviceIconSize: Record<Exclude<DeviceGlyphKind, 'generic'>, { width: number; height: number }> = {
+  switch: { width: 48, height: 48 },
+  router: { width: 48, height: 48 },
+  firewall: { width: 42, height: 52 },
+  server: { width: 48, height: 48 },
+  wireless: { width: 48, height: 48 },
+};
 
 const appendDeviceGlyph = (selection: d3.Selection<SVGGElement, any, any, any>, device: Device) => {
   const glyphKind = getDeviceGlyphKind(device);
-  const iconHref = getDeviceIconHref(glyphKind);
+  selection
+    .attr('shape-rendering', 'geometricPrecision')
+    .attr('pointer-events', 'none');
+  if (glyphKind === 'generic') return;
 
-  if (!iconHref) return;
-
-  const dimensions = glyphKind === 'firewall'
-    ? { width: 38, height: 46, x: -19, y: -23 }
-    : { width: 40, height: 40, x: -20, y: -20 };
-  selection.append('image').attr('href', iconHref).attr('x', dimensions.x).attr('y', dimensions.y).attr('width', dimensions.width).attr('height', dimensions.height).attr('preserveAspectRatio', 'xMidYMid meet').attr('pointer-events', 'none');
+  const iconUrl = getDeviceIconUrl(glyphKind);
+  if (!iconUrl) return;
+  const size = deviceIconSize[glyphKind];
+  selection.append('image')
+    .attr('href', iconUrl)
+    .attr('x', -size.width / 2)
+    .attr('y', -size.height / 2)
+    .attr('width', size.width)
+    .attr('height', size.height)
+    .attr('preserveAspectRatio', 'xMidYMid meet')
+    .attr('pointer-events', 'none');
 };
 
 const shouldRenderDeviceGlyph = (device: Device) => hasDeviceIconAsset(device);
@@ -131,15 +168,15 @@ const getNodeTone = (device: Device) => {
 const getLinkTone = (link: Link) => {
   switch (link.operational_state) {
     case 'up':
-      return { stroke: '#10b981', muted: 'rgba(16,185,129,0.24)', labelFill: 'rgba(236,253,245,0.96)', labelStroke: 'rgba(16,185,129,0.32)' };
+      return { stroke: '#34d399', muted: 'rgba(52,211,153,0.28)', labelFill: 'rgba(15,35,48,0.94)', labelStroke: 'rgba(52,211,153,0.50)' };
     case 'degraded':
-      return { stroke: '#f59e0b', muted: 'rgba(245,158,11,0.24)', labelFill: 'rgba(255,251,235,0.96)', labelStroke: 'rgba(245,158,11,0.34)' };
+      return { stroke: '#fbbf24', muted: 'rgba(251,191,36,0.28)', labelFill: 'rgba(43,32,13,0.94)', labelStroke: 'rgba(251,191,36,0.50)' };
     case 'down':
-      return { stroke: '#ef4444', muted: 'rgba(239,68,68,0.24)', labelFill: 'rgba(254,242,242,0.96)', labelStroke: 'rgba(239,68,68,0.34)' };
+      return { stroke: '#fb7185', muted: 'rgba(251,113,133,0.28)', labelFill: 'rgba(49,20,31,0.94)', labelStroke: 'rgba(251,113,133,0.50)' };
     case 'stale':
-      return { stroke: '#0ea5e9', muted: 'rgba(14,165,233,0.24)', labelFill: 'rgba(240,249,255,0.96)', labelStroke: 'rgba(14,165,233,0.34)' };
+      return { stroke: '#38bdf8', muted: 'rgba(56,189,248,0.28)', labelFill: 'rgba(12,34,51,0.94)', labelStroke: 'rgba(56,189,248,0.50)' };
     default:
-      return { stroke: '#64748b', muted: 'rgba(100,116,139,0.22)', labelFill: 'rgba(255,255,255,0.94)', labelStroke: 'rgba(148,163,184,0.35)' };
+      return { stroke: '#94a3b8', muted: 'rgba(148,163,184,0.22)', labelFill: 'rgba(20,32,49,0.94)', labelStroke: 'rgba(148,163,184,0.40)' };
   }
 };
 
@@ -147,7 +184,7 @@ const buildSiteAnchors = (devices: Device[], width: number) => {
   const siteMap = new Map<string, { key: string; label: string; count: number }>();
 
   devices.forEach((device) => {
-    const key = getSiteKey(device.site);
+    const key = getSiteKey(device.site_id || device.site);
     const current = siteMap.get(key);
     if (current) {
       current.count += 1;
@@ -155,7 +192,7 @@ const buildSiteAnchors = (devices: Device[], width: number) => {
     }
     siteMap.set(key, {
       key,
-      label: key,
+      label: String(device.site || '').trim() || 'Unassigned',
       count: 1,
     });
   });
@@ -209,7 +246,7 @@ const buildSeedPositions = (devices: Device[], width: number, height: number) =>
     const groupedBySite = new Map<string, Device[]>();
 
     bucket.forEach((device) => {
-      const siteKey = getSiteKey(device.site);
+      const siteKey = getSiteKey(device.site_id || device.site);
       if (!groupedBySite.has(siteKey)) groupedBySite.set(siteKey, []);
       groupedBySite.get(siteKey)?.push(device);
     });
@@ -240,12 +277,77 @@ const buildSeedPositions = (devices: Device[], width: number, height: number) =>
   return { positions, siteAnchors };
 };
 
+type LayoutNode = Device & { x: number; y: number };
+
+const buildGraphLinks = (nodes: LayoutNode[], links: Link[]) => {
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+  const seen = new Set<string>();
+
+  return links
+    .map((link) => ({
+      ...link,
+      source: nodeMap.get(link.source_device_id),
+      target: nodeMap.get(link.target_device_id),
+    }))
+    .filter((link) => link.source && link.target)
+    .filter((link) => {
+      const pair = [String(link.source_device_id || ''), String(link.target_device_id || '')].sort().join('::');
+      const portKey = [String(link.source_port || ''), String(link.target_port || '')].sort().join('::');
+      const key = `${pair}::${portKey}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const calculateAutoLayoutPositions = (devices: Device[], links: Link[], width: number, height: number) => {
+  const { positions: seededPositions } = buildSeedPositions(devices, width, height);
+  const nodes: LayoutNode[] = devices.map((device) => ({
+    ...device,
+    x: seededPositions[device.id]?.x ?? width / 2,
+    y: seededPositions[device.id]?.y ?? height / 2,
+  }));
+  const graphLinks = buildGraphLinks(nodes, links);
+
+  if (nodes.length > 1) {
+    const simulation = d3.forceSimulation(nodes as any)
+      .force('link', d3.forceLink(graphLinks as any).id((node: any) => node.id)
+        .distance((link: any) => link.inferred ? 140 : 112)
+        .strength((link: any) => link.inferred ? 0.22 : 0.84))
+      .force('charge', d3.forceManyBody().strength((node: any) => node.is_unmanaged ? -300 : -680))
+      .force('collide', d3.forceCollide().radius((node: any) => node.is_unmanaged ? 42 : 56))
+      .force('x', d3.forceX((node: any) => seededPositions[node.id]?.x ?? width / 2).strength(0.5))
+      .force('y', d3.forceY((node: any) => seededPositions[node.id]?.y ?? height / 2).strength(0.76))
+      .stop();
+
+    const settleTicks = Math.max(140, Math.min(320, nodes.length * 22));
+    for (let index = 0; index < settleTicks; index += 1) simulation.tick();
+    simulation.stop();
+  }
+
+  return Object.fromEntries(nodes.map((node) => [node.id, {
+    x: clampPosition(node.x || width / 2, 48, Math.max(48, width - 48)),
+    y: clampPosition(node.y || height / 2, 56, Math.max(56, height - 56)),
+  }]));
+};
+
 const clampPosition = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v1';
 
 type PersistedTopologyLayout = {
   positions?: Record<string, { x: number; y: number }>;
   transform?: { x: number; y: number; k: number };
+  roleBuckets?: Record<string, string>;
+};
+
+const getRoleBucketSnapshot = (devices: Device[]) => Object.fromEntries(
+  devices.map((device) => [device.id, getRoleBucket(device.role)]),
+);
+
+const layoutMatchesRoles = (layout: PersistedTopologyLayout, devices: Device[]) => {
+  if (!layout.roleBuckets) return false;
+  const current = getRoleBucketSnapshot(devices);
+  return devices.every((device) => layout.roleBuckets?.[device.id] === current[device.id]);
 };
 
 type MinimapSnapshot = {
@@ -282,10 +384,10 @@ const createDefaultTransform = (width: number, height: number) => d3.zoomIdentit
   .scale(0.9);
 
 const layerMeta = (height: number) => ([
-  { key: 'core', label: 'Core', y: height * 0.2, tone: 'rgba(219, 234, 254, 0.82)', stroke: 'rgba(59, 130, 246, 0.30)', accent: '#2563eb' },
-  { key: 'distribution', label: 'Distribution', y: height * 0.42, tone: 'rgba(220, 252, 231, 0.76)', stroke: 'rgba(16, 185, 129, 0.28)', accent: '#059669' },
-  { key: 'access', label: 'Access', y: height * 0.68, tone: 'rgba(255, 237, 213, 0.78)', stroke: 'rgba(249, 115, 22, 0.28)', accent: '#ea580c' },
-  { key: 'other', label: 'Other', y: height * 0.84, tone: 'rgba(241, 245, 249, 0.92)', stroke: 'rgba(100, 116, 139, 0.24)', accent: '#64748b' },
+  { key: 'core', label: 'Core', y: height * 0.2, tone: 'rgba(37, 99, 235, 0.12)', stroke: 'rgba(96, 165, 250, 0.26)', accent: '#60a5fa' },
+  { key: 'distribution', label: 'Distribution', y: height * 0.42, tone: 'rgba(16, 185, 129, 0.10)', stroke: 'rgba(52, 211, 153, 0.24)', accent: '#34d399' },
+  { key: 'access', label: 'Access', y: height * 0.68, tone: 'rgba(249, 115, 22, 0.10)', stroke: 'rgba(251, 146, 60, 0.24)', accent: '#fb923c' },
+  { key: 'other', label: 'Other', y: height * 0.84, tone: 'rgba(100, 116, 139, 0.10)', stroke: 'rgba(148, 163, 184, 0.20)', accent: '#94a3b8' },
 ]);
 
 const getOrthogonalRoute = (source: { x: number; y: number }, target: { x: number; y: number }, offset = 0) => {
@@ -395,6 +497,7 @@ const buildMinimapSnapshot = (
 };
 
 const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeClick, selectedNodeId, selectedLinkKey, onLinkClick }) => {
+  const GRID_SIZE = 16;
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const persistedPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
@@ -403,11 +506,148 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   const zoomTransformRef = useRef<d3.ZoomTransform | null>(null);
   const persistTimerRef = useRef<number | null>(null);
   const suppressPersistRef = useRef(false);
+  const dragStateRef = useRef<{ id: string | null; moved: boolean }>({ id: null, moved: false });
+  const suppressNextNodeClickRef = useRef(false);
+  const spacePressedRef = useRef(false);
+  const shiftPressedRef = useRef(false);
+  const boxSelectModeRef = useRef(false);
+  const gridSnapRef = useRef(true);
+  const dragBeforePositionsRef = useRef<Record<string, { x: number; y: number }> | null>(null);
+  const dragGroupRef = useRef<{
+    primaryId: string;
+    ids: string[];
+    initialPositions: Record<string, { x: number; y: number }>;
+  } | null>(null);
+  const layoutHistoryRef = useRef<Array<{ positions: Record<string, { x: number; y: number }>; transform?: { x: number; y: number; k: number } }>>([]);
+  const layoutHistoryIndexRef = useRef(-1);
   const hydrationCompleteRef = useRef(false);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [zoomPercent, setZoomPercent] = useState(90);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [minimapSnapshot, setMinimapSnapshot] = useState<MinimapSnapshot | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(selectedNodeId ? [selectedNodeId] : []);
+  const [gridSnapEnabled, setGridSnapEnabled] = useState(true);
+  const [spacePanActive, setSpacePanActive] = useState(false);
+  const [boxSelectMode, setBoxSelectMode] = useState(false);
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
+  const selectedNodeIdsKey = selectedNodeIds.join('|');
+
+  const clonePositions = (positions: Record<string, { x: number; y: number }>) => Object.fromEntries(
+    Object.entries(positions).map(([id, position]) => [id, { x: position.x, y: position.y }]),
+  );
+
+  const cloneTransform = (transform: d3.ZoomTransform | null | undefined) => transform
+    ? { x: transform.x, y: transform.y, k: transform.k }
+    : undefined;
+
+  const positionsEqual = (left: Record<string, { x: number; y: number }>, right: Record<string, { x: number; y: number }>) => {
+    const leftIds = Object.keys(left);
+    const rightIds = Object.keys(right);
+    if (leftIds.length !== rightIds.length) return false;
+    return leftIds.every((id) => left[id]?.x === right[id]?.x && left[id]?.y === right[id]?.y);
+  };
+
+  const refreshHistoryState = () => {
+    setHistoryState({
+      canUndo: layoutHistoryIndexRef.current > 0,
+      canRedo: layoutHistoryIndexRef.current >= 0 && layoutHistoryIndexRef.current < layoutHistoryRef.current.length - 1,
+    });
+  };
+
+  const recordLayoutHistory = (before: Record<string, { x: number; y: number }>, after: Record<string, { x: number; y: number }>) => {
+    if (positionsEqual(before, after)) return;
+    if (layoutHistoryIndexRef.current < 0) {
+      layoutHistoryRef.current = [{ positions: clonePositions(before), transform: cloneTransform(zoomTransformRef.current) }];
+      layoutHistoryIndexRef.current = 0;
+    }
+    layoutHistoryRef.current = layoutHistoryRef.current.slice(0, layoutHistoryIndexRef.current + 1);
+    layoutHistoryRef.current.push({ positions: clonePositions(after), transform: cloneTransform(zoomTransformRef.current) });
+    layoutHistoryIndexRef.current += 1;
+    refreshHistoryState();
+  };
+
+  const persistLayoutSnapshot = (snapshot: { positions: Record<string, { x: number; y: number }>; transform?: { x: number; y: number; k: number } }) => {
+    persistedPositionsRef.current = clonePositions(snapshot.positions);
+    zoomTransformRef.current = snapshot.transform
+      ? d3.zoomIdentity.translate(snapshot.transform.x, snapshot.transform.y).scale(snapshot.transform.k)
+      : null;
+    writePersistedLayout({
+      positions: persistedPositionsRef.current,
+      transform: snapshot.transform,
+      roleBuckets: getRoleBucketSnapshot(devices),
+    });
+    syncLayoutToBackend({
+      positions: persistedPositionsRef.current,
+      transform: snapshot.transform,
+      roleBuckets: getRoleBucketSnapshot(devices),
+    });
+    setLayoutVersion((value) => value + 1);
+    refreshHistoryState();
+  };
+
+  useEffect(() => {
+    setSelectedNodeIds(selectedNodeId ? [selectedNodeId] : []);
+  }, [selectedNodeId]);
+
+  useEffect(() => {
+    gridSnapRef.current = gridSnapEnabled;
+  }, [gridSnapEnabled]);
+
+  useEffect(() => {
+    boxSelectModeRef.current = boxSelectMode;
+  }, [boxSelectMode]);
+
+  useEffect(() => {
+    const isTextEditingTarget = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      return Boolean(element?.closest?.('input, textarea, select, [contenteditable="true"]'));
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isTextEditingTarget(event.target)) return;
+      if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+        shiftPressedRef.current = true;
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.code === 'KeyZ') {
+        event.preventDefault();
+        if (event.shiftKey) redoLayout();
+        else undoLayout();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.code === 'KeyY') {
+        event.preventDefault();
+        redoLayout();
+        return;
+      }
+      if (event.code !== 'Space') return;
+      event.preventDefault();
+      if (!spacePressedRef.current) {
+        spacePressedRef.current = true;
+        setSpacePanActive(true);
+      }
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+        shiftPressedRef.current = false;
+      }
+      if (event.code !== 'Space') return;
+      spacePressedRef.current = false;
+      setSpacePanActive(false);
+    };
+    const handleWindowBlur = () => {
+      spacePressedRef.current = false;
+      shiftPressedRef.current = false;
+      setSpacePanActive(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleWindowBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, []);
 
   const syncLayoutToBackend = (layout: PersistedTopologyLayout) => {
     if (typeof window === 'undefined') return;
@@ -431,6 +671,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const layout = {
       positions: persistedPositionsRef.current,
       transform: transform ? { x: transform.x, y: transform.y, k: transform.k } : undefined,
+      roleBuckets: getRoleBucketSnapshot(devices),
     };
     writePersistedLayout(layout);
     if (persistTimerRef.current) {
@@ -466,11 +707,43 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   };
 
   const resetLayout = () => {
+    const before = clonePositions(persistedPositionsRef.current);
+    recordLayoutHistory(before, {});
     persistedPositionsRef.current = {};
     zoomTransformRef.current = null;
     writePersistedLayout({});
     syncLayoutToBackend({});
     setLayoutVersion((value) => value + 1);
+  };
+
+  const applyAutoLayout = () => {
+    if (viewport.width === 0 || viewport.height === 0 || devices.length === 0) return;
+    const before = clonePositions(persistedPositionsRef.current);
+    const next = calculateAutoLayoutPositions(devices, links, viewport.width, viewport.height);
+    if (gridSnapRef.current) {
+      Object.values(next).forEach((position) => {
+        position.x = Math.round(position.x / GRID_SIZE) * GRID_SIZE;
+        position.y = Math.round(position.y / GRID_SIZE) * GRID_SIZE;
+      });
+    }
+    persistedPositionsRef.current = next;
+    recordLayoutHistory(before, next);
+    persistCurrentLayout();
+    setLayoutVersion((value) => value + 1);
+  };
+
+  const undoLayout = () => {
+    if (layoutHistoryIndexRef.current <= 0) return;
+    layoutHistoryIndexRef.current -= 1;
+    const snapshot = layoutHistoryRef.current[layoutHistoryIndexRef.current];
+    if (snapshot) persistLayoutSnapshot(snapshot);
+  };
+
+  const redoLayout = () => {
+    if (layoutHistoryIndexRef.current < 0 || layoutHistoryIndexRef.current >= layoutHistoryRef.current.length - 1) return;
+    layoutHistoryIndexRef.current += 1;
+    const snapshot = layoutHistoryRef.current[layoutHistoryIndexRef.current];
+    if (snapshot) persistLayoutSnapshot(snapshot);
   };
 
   const handleMinimapClick = (event: React.MouseEvent<SVGSVGElement>) => {
@@ -511,8 +784,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
   useEffect(() => {
     const persistedLayout = readPersistedLayout();
-    persistedPositionsRef.current = persistedLayout.positions || {};
-    if (persistedLayout.transform) {
+    const compatibleLocalLayout = layoutMatchesRoles(persistedLayout, devices);
+    persistedPositionsRef.current = compatibleLocalLayout ? (persistedLayout.positions || {}) : {};
+    if (compatibleLocalLayout && persistedLayout.transform) {
       zoomTransformRef.current = d3.zoomIdentity
         .translate(persistedLayout.transform.x, persistedLayout.transform.y)
         .scale(persistedLayout.transform.k);
@@ -535,8 +809,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .then((payload) => {
         const layout = payload?.layout;
         if (!layout || typeof layout !== 'object') return;
-        persistedPositionsRef.current = layout.positions || {};
-        if (layout.transform) {
+        const compatibleRemoteLayout = layoutMatchesRoles(layout, devices);
+        persistedPositionsRef.current = compatibleRemoteLayout ? (layout.positions || {}) : {};
+        if (compatibleRemoteLayout && layout.transform) {
           zoomTransformRef.current = d3.zoomIdentity
             .translate(Number(layout.transform.x || 0), Number(layout.transform.y || 0))
             .scale(Number(layout.transform.k || 1));
@@ -551,7 +826,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .finally(() => {
         hydrationCompleteRef.current = true;
       });
-  }, []);
+  }, [devices.length]);
 
   useEffect(() => () => {
     if (persistTimerRef.current) {
@@ -575,6 +850,20 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.35, 3.2])
+      .filter((event: any) => {
+        if (dragStateRef.current.id) return false;
+        if (spacePressedRef.current) return !event.ctrlKey && (!event.button || event.button === 0);
+        if (event.shiftKey || shiftPressedRef.current || boxSelectModeRef.current) return false;
+        const target = event.target as Element | null;
+        const isNodeGesture = Boolean(target?.closest?.('.topology-node'));
+        if (isNodeGesture && (event.type === 'mousedown' || event.type === 'pointerdown' || event.type === 'touchstart')) {
+          return false;
+        }
+        return !event.ctrlKey && (!event.button || event.button === 0);
+      })
+      .on('start', () => {
+        svg.style('cursor', 'grabbing');
+      })
       .on('zoom', (event) => {
         zoomTransformRef.current = event.transform;
         setZoomPercent(Math.round(event.transform.k * 100));
@@ -582,6 +871,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         syncMinimap(event.transform);
       })
       .on('end', () => {
+        svg.style('cursor', 'grab');
         if (suppressPersistRef.current) {
           suppressPersistRef.current = false;
           return;
@@ -589,6 +879,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         persistCurrentLayout();
       });
     zoomBehaviorRef.current = zoom;
+    svg
+      .style('cursor', 'grab')
+      .style('touch-action', 'none')
+      .style('user-select', 'none');
     svg.call(zoom as any);
 
     const activeDeviceIds = new Set(devices.map((device) => device.id));
@@ -605,54 +899,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       x: persistedPositionsRef.current[device.id]?.x ?? seededPositions[device.id]?.x ?? width / 2,
       y: persistedPositionsRef.current[device.id]?.y ?? seededPositions[device.id]?.y ?? height / 2,
     }));
-    const nodeMap = new Map(nodes.map((node) => [node.id, node]));
-
-    const rawLinks = links
-      .map((link) => ({
-        ...link,
-        source: nodeMap.get(link.source_device_id),
-        target: nodeMap.get(link.target_device_id),
-      }))
-      .filter((link) => link.source && link.target);
-
-    const seen = new Set<string>();
-    let d3Links = rawLinks.filter((link) => {
-      const left = String(link.source_device_id || '');
-      const right = String(link.target_device_id || '');
-      const pair = [left, right].sort().join('::');
-      const portKey = [String(link.source_port || ''), String(link.target_port || '')].sort().join('::');
-      const key = `${pair}::${portKey}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-    if (d3Links.length === 0 && nodes.length > 1) {
-      const hubDevices = nodes.filter((node) => getRoleBucket(node.role) === 'core');
-      const siteHubs = new Map<string, any>();
-      nodes.forEach((node) => {
-        const siteKey = String(node.site || '').trim().toLowerCase();
-        if (!siteKey || siteHubs.has(siteKey)) return;
-        siteHubs.set(siteKey, node);
-      });
-      const fallbackHub = hubDevices[0] || nodes[0];
-
-      d3Links = nodes
-        .filter((node) => node.id !== fallbackHub.id)
-        .map((node) => {
-          const siteKey = String(node.site || '').trim().toLowerCase();
-          const siteHub = siteKey ? siteHubs.get(siteKey) : null;
-          const source = siteHub && siteHub.id !== node.id ? siteHub : fallbackHub;
-          return {
-            source,
-            target: node,
-            source_device_id: source.id,
-            target_device_id: node.id,
-            inferred: true,
-          };
-        })
-        .filter((link) => link.source && link.target && link.source.id !== link.target.id);
-    }
+    const d3Links = buildGraphLinks(nodes, links);
 
     const shouldAutoArrange = Object.keys(persistedPositionsRef.current).length === 0;
     let layoutSimulation: d3.Simulation<any, undefined> | null = null;
@@ -700,19 +947,35 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       neighborMap.get(targetId)?.add(sourceId);
     });
 
+    const selectedNodeIdSet = new Set(selectedNodeIds);
     const selectedNeighbors = selectedNodeId ? (neighborMap.get(selectedNodeId) || new Set<string>()) : new Set<string>();
     const hasFocus = Boolean(selectedNodeId);
+    const isNodeSelected = (deviceId: string) => selectedNodeIdSet.has(deviceId);
 
     const layerGuide = g.append('g').attr('pointer-events', 'none');
     const siteGuide = g.append('g').attr('pointer-events', 'none');
 
-    siteAnchors.forEach((site) => {
+    siteAnchors.forEach((site, index) => {
+      const previous = siteAnchors[index - 1];
+      const next = siteAnchors[index + 1];
+      const left = previous ? (previous.x + site.x) / 2 + 4 : 8;
+      const right = next ? (site.x + next.x) / 2 - 4 : width - 8;
+      siteGuide.append('rect')
+        .attr('x', left)
+        .attr('y', 6)
+        .attr('width', Math.max(right - left, 1))
+        .attr('height', Math.max(height - 14, 1))
+        .attr('rx', 18)
+        .attr('fill', index % 2 === 0 ? 'rgba(56,189,248,0.025)' : 'rgba(129,140,248,0.025)')
+        .attr('stroke', 'rgba(148,163,184,0.16)')
+        .attr('stroke-dasharray', '4,6');
+
       siteGuide.append('line')
         .attr('x1', site.x)
         .attr('y1', 34)
         .attr('x2', site.x)
         .attr('y2', height - 28)
-        .attr('stroke', 'rgba(71,85,105,0.18)')
+        .attr('stroke', 'rgba(148,163,184,0.16)')
         .attr('stroke-dasharray', '2,8');
 
       const labelGroup = siteGuide.append('g').attr('transform', `translate(${site.x},18)`);
@@ -722,17 +985,17 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         .attr('width', 96)
         .attr('height', 20)
         .attr('rx', 10)
-        .attr('fill', 'rgba(255,255,255,0.96)')
-        .attr('stroke', 'rgba(148,163,184,0.30)');
+        .attr('fill', 'rgba(15,29,48,0.92)')
+        .attr('stroke', 'rgba(148,163,184,0.32)');
 
       labelGroup.append('text')
         .attr('text-anchor', 'middle')
         .attr('dominant-baseline', 'middle')
-        .attr('fill', '#334155')
+        .attr('fill', '#dbeafe')
         .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
         .attr('font-size', '10px')
         .attr('font-weight', 700)
-        .text(site.label.length > 12 ? `${site.label.slice(0, 12)}...` : site.label);
+        .text(`${site.label.length > 12 ? `${site.label.slice(0, 12)}...` : site.label} · ${site.count}`);
     });
 
     roleLayers.forEach((layer, index) => {
@@ -847,7 +1110,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .append('text')
       .attr('font-size', 9)
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
-      .attr('fill', '#334155')
+      .attr('fill', '#dbeafe')
       .attr('font-weight', 600)
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
@@ -865,7 +1128,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('fill', (item: any) => {
         const tone = getLinkTone(item as Link);
         const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
-        return isSelected ? 'rgba(224,242,254,0.98)' : tone.labelFill;
+        return isSelected ? 'rgba(14,44,67,0.98)' : tone.labelFill;
       })
       .attr('stroke', (item: any) => {
         const tone = getLinkTone(item as Link);
@@ -874,16 +1137,46 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       })
       .attr('stroke-width', 0.8);
 
+    const getWorldPointer = (event: any) => {
+      const sourceEvent = event.sourceEvent || event;
+      const graphNode = g.node();
+      return d3.pointer(sourceEvent, graphNode || svgRef.current);
+    };
+
+    const selectionBoxLayer = g.append('g').attr('pointer-events', 'none');
+    const selectionBoxRect = selectionBoxLayer.append('rect')
+      .attr('class', 'topology-selection-box')
+      .style('display', 'none');
+    let selectionBoxStart: { x: number; y: number; pointerId: number; additive: boolean } | null = null;
+
+    let dragOffset = { x: 0, y: 0 };
+
     const node = g.append('g')
       .selectAll('g')
       .data(nodes)
       .join("g")
+      .attr('class', 'topology-node')
+      .classed('topology-node-selected', (d: any) => isNodeSelected(d.id))
+      .style('cursor', 'grab')
       .call(d3.drag<any, any>()
+        .filter((event: any) => !event.ctrlKey && !event.shiftKey && !shiftPressedRef.current && !spacePressedRef.current && (!event.button || event.button === 0))
         .on('start', dragstarted)
         .on('drag', dragged)
         .on('end', dragended)
       )
       .on("click", (event, d) => {
+        if (suppressNextNodeClickRef.current) {
+          suppressNextNodeClickRef.current = false;
+          return;
+        }
+        const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+        if (additive) {
+          setSelectedNodeIds((current) => current.includes(d.id)
+            ? current.filter((id) => id !== d.id)
+            : [...current, d.id]);
+          return;
+        }
+        setSelectedNodeIds([d.id]);
         if (onNodeClick) onNodeClick(d as Device);
       });
 
@@ -893,20 +1186,20 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         if (d.is_unmanaged) return 'rgba(148,163,184,0.08)';
         if (shouldRenderDeviceGlyph(d as Device)) return 'transparent';
         const tone = getNodeTone(d);
-        return selectedNodeId === d.id ? tone.halo : 'rgba(148,163,184,0.08)';
+        return isNodeSelected(d.id) ? tone.halo : 'rgba(148,163,184,0.08)';
       })
       .attr('stroke', (d: any) => {
         if (d.is_unmanaged) return 'rgba(100,116,139,0.35)';
-        return shouldRenderDeviceGlyph(d as Device) ? 'none' : (selectedNodeId === d.id ? '#0f172a' : 'rgba(148,163,184,0.18)');
+        return shouldRenderDeviceGlyph(d as Device) ? 'none' : (isNodeSelected(d.id) ? '#0f172a' : 'rgba(148,163,184,0.18)');
       })
       .attr('stroke-width', (d: any) => {
         if (d.is_unmanaged) return 1.5;
-        return shouldRenderDeviceGlyph(d as Device) ? 0 : (selectedNodeId === d.id ? 2.5 : 1);
+        return shouldRenderDeviceGlyph(d as Device) ? 0 : (isNodeSelected(d.id) ? 2.5 : 1);
       })
       .attr('stroke-dasharray', (d: any) => (d.is_unmanaged ? '4,3' : 'none'))
       .attr('opacity', (d: any) => {
         if (!hasFocus) return 1;
-        return d.id === selectedNodeId || selectedNeighbors.has(d.id) ? 1 : 0.25;
+        return isNodeSelected(d.id) || selectedNeighbors.has(d.id) ? 1 : 0.25;
       });
 
     node.append('circle')
@@ -932,13 +1225,13 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       })
       .attr('stroke-width', (d: any) => {
         if (d.is_unmanaged) return 1.5;
-        return selectedNodeId === d.id ? 3 : 2;
+        return isNodeSelected(d.id) ? 3 : 2;
       })
       .attr('stroke-dasharray', (d: any) => (d.is_unmanaged ? '3,2' : 'none'))
       .style('cursor', 'pointer')
       .attr('opacity', (d: any) => {
         if (!hasFocus) return 1;
-        return d.id === selectedNodeId || selectedNeighbors.has(d.id) ? 1 : 0.35;
+        return isNodeSelected(d.id) || selectedNeighbors.has(d.id) ? 1 : 0.35;
       });
 
     node.append('circle')
@@ -960,7 +1253,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const nodeGlyph = node.append('g')
       .attr('opacity', (d: any) => {
         if (!hasFocus) return 1;
-        return d.id === selectedNodeId || selectedNeighbors.has(d.id) ? 1 : 0.35;
+        return isNodeSelected(d.id) || selectedNeighbors.has(d.id) ? 1 : 0.35;
       });
 
     nodeGlyph.each(function (d: any) {
@@ -984,7 +1277,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('transform', 'translate(0,38)')
       .attr('opacity', (d: any) => {
         if (!hasFocus) return 1;
-        return d.id === selectedNodeId || selectedNeighbors.has(d.id) ? 1 : 0.35;
+        return isNodeSelected(d.id) || selectedNeighbors.has(d.id) ? 1 : 0.35;
       });
 
     const nodeLabelBg = nodeLabelGroup.append('rect')
@@ -992,14 +1285,14 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('y', -2)
       .attr('rx', 12)
       .attr('ry', 12)
-      .attr('fill', 'rgba(255,255,255,0.9)')
-      .attr('stroke', 'rgba(148,163,184,0.24)')
+      .attr('fill', 'rgba(15,29,48,0.94)')
+      .attr('stroke', 'rgba(148,163,184,0.30)')
       .attr('stroke-width', 1);
 
     const nodeHostnameText = nodeLabelGroup.append('text')
       .attr('y', 10)
       .attr('text-anchor', 'middle')
-      .attr('fill', (d: any) => (d.is_unmanaged ? '#64748b' : '#0f172a'))
+      .attr('fill', (d: any) => (d.is_unmanaged ? '#94a3b8' : '#f8fafc'))
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
       .attr('font-size', '12px')
       .attr('font-weight', '700')
@@ -1008,7 +1301,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const nodeMetaText = nodeLabelGroup.append('text')
       .attr('y', 25)
       .attr('text-anchor', 'middle')
-      .attr('fill', '#64748b')
+      .attr('fill', '#94a3b8')
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
       .attr('font-size', '10px')
       .attr('font-weight', '600')
@@ -1016,6 +1309,78 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         if (d.is_unmanaged) return 'Unmanaged';
         return d.site || d.ip_address;
       });
+
+    const svgElement = svgRef.current;
+    type SelectionInputEvent = MouseEvent | PointerEvent;
+    const getSelectionEventId = (event: SelectionInputEvent) => 'pointerId' in event ? event.pointerId : 0;
+    const getSelectionBox = (event: SelectionInputEvent) => {
+      const [x, y] = d3.pointer(event, g.node() || svgElement);
+      if (!selectionBoxStart) return null;
+      return {
+        x: Math.min(selectionBoxStart.x, x),
+        y: Math.min(selectionBoxStart.y, y),
+        width: Math.abs(x - selectionBoxStart.x),
+        height: Math.abs(y - selectionBoxStart.y),
+      };
+    };
+    const handleSelectionPointerDown = (event: SelectionInputEvent) => {
+      if (event.button !== 0 || (!event.shiftKey && !shiftPressedRef.current && !boxSelectModeRef.current) || spacePressedRef.current) return;
+      const target = event.target as Element | null;
+      if (target?.closest?.('.topology-node')) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const [x, y] = d3.pointer(event, g.node() || svgElement);
+      selectionBoxStart = {
+        x,
+        y,
+        pointerId: getSelectionEventId(event),
+        additive: event.ctrlKey || event.metaKey,
+      };
+      selectionBoxRect
+        .style('display', null)
+        .attr('x', x)
+        .attr('y', y)
+        .attr('width', 0)
+        .attr('height', 0);
+      if ('pointerId' in event) svgElement?.setPointerCapture?.(event.pointerId);
+    };
+    const handleSelectionPointerMove = (event: SelectionInputEvent) => {
+      if (!selectionBoxStart || getSelectionEventId(event) !== selectionBoxStart.pointerId) return;
+      event.preventDefault();
+      const box = getSelectionBox(event);
+      if (!box) return;
+      selectionBoxRect
+        .attr('x', box.x)
+        .attr('y', box.y)
+        .attr('width', box.width)
+        .attr('height', box.height);
+    };
+    const handleSelectionPointerUp = (event: SelectionInputEvent) => {
+      if (!selectionBoxStart || getSelectionEventId(event) !== selectionBoxStart.pointerId) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const box = getSelectionBox(event);
+      if (box && (box.width > 6 || box.height > 6)) {
+        const pickedIds = nodes
+          .filter((item: any) => item.x >= box.x && item.x <= box.x + box.width && item.y >= box.y && item.y <= box.y + box.height)
+          .map((item: any) => item.id);
+        setSelectedNodeIds((current) => selectionBoxStart?.additive
+          ? Array.from(new Set([...current, ...pickedIds]))
+          : pickedIds);
+      }
+      selectionBoxRect.style('display', 'none');
+      if ('pointerId' in event) svgElement?.releasePointerCapture?.(event.pointerId);
+      selectionBoxStart = null;
+    };
+    svgElement?.addEventListener('pointerdown', handleSelectionPointerDown as EventListener, true);
+    svgElement?.addEventListener('pointermove', handleSelectionPointerMove as EventListener, true);
+    svgElement?.addEventListener('pointerup', handleSelectionPointerUp as EventListener, true);
+    svgElement?.addEventListener('pointercancel', handleSelectionPointerUp as EventListener, true);
+    svgElement?.addEventListener('mousedown', handleSelectionPointerDown as EventListener, true);
+    svgElement?.addEventListener('mousemove', handleSelectionPointerMove as EventListener, true);
+    svgElement?.addEventListener('mouseup', handleSelectionPointerUp as EventListener, true);
+    window.addEventListener('mousemove', handleSelectionPointerMove as EventListener, true);
+    window.addEventListener('mouseup', handleSelectionPointerUp as EventListener, true);
 
     const renderGraph = () => {
       nodes.forEach((node: any) => {
@@ -1086,54 +1451,195 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     svg.call(zoom.transform as any, initialTransform);
 
     function dragstarted(event: any) {
+      const [pointerX, pointerY] = getWorldPointer(event);
+      const dragIds = selectedNodeIdSet.has(event.subject.id) && selectedNodeIdSet.size > 1
+        ? Array.from(selectedNodeIdSet)
+        : [event.subject.id];
+      const initialPositions = Object.fromEntries(
+        nodes
+          .filter((item: any) => dragIds.includes(item.id))
+          .map((item: any) => [item.id, { x: item.x, y: item.y }]),
+      );
+      dragStateRef.current = { id: event.subject.id, moved: false };
+      dragBeforePositionsRef.current = clonePositions(persistedPositionsRef.current);
+      dragGroupRef.current = {
+        primaryId: event.subject.id,
+        ids: dragIds,
+        initialPositions,
+      };
+      dragOffset = {
+        x: event.subject.x - pointerX,
+        y: event.subject.y - pointerY,
+      };
+      event.sourceEvent?.stopPropagation?.();
+      event.sourceEvent?.preventDefault?.();
       event.subject.fx = event.subject.x;
       event.subject.fy = event.subject.y;
+      node.classed('topology-node-dragging', (item: any) => item.id === event.subject.id);
+      linkLayer.style('opacity', 0.38);
+      linkLabelGroup.style('opacity', 0.12);
+      svg.style('cursor', 'grabbing');
     }
 
     function dragged(event: any) {
-      event.subject.x = clampPosition(event.x, 48, width - 48);
-      event.subject.y = clampPosition(event.y, 56, height - 56);
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
-      persistedPositionsRef.current[event.subject.id] = { x: event.subject.x, y: event.subject.y };
+      const [pointerX, pointerY] = getWorldPointer(event);
+      const nextPrimaryX = pointerX + dragOffset.x;
+      const nextPrimaryY = pointerY + dragOffset.y;
+      const group = dragGroupRef.current;
+      const primaryStart = group?.initialPositions[group.primaryId] || { x: event.subject.x, y: event.subject.y };
+      const deltaX = nextPrimaryX - primaryStart.x;
+      const deltaY = nextPrimaryY - primaryStart.y;
+      const snapCoordinate = (value: number, min: number, max: number) => {
+        const snapped = gridSnapRef.current ? Math.round(value / GRID_SIZE) * GRID_SIZE : value;
+        return clampPosition(snapped, min, Math.max(min, max));
+      };
+      const movedDistance = Math.hypot(deltaX, deltaY);
+      if (movedDistance > 3) {
+        dragStateRef.current.moved = true;
+      }
+      const dragIds = group?.ids || [event.subject.id];
+      nodes.forEach((item: any) => {
+        if (!dragIds.includes(item.id)) return;
+        const initial = group?.initialPositions[item.id] || { x: item.x, y: item.y };
+        item.x = snapCoordinate(initial.x + deltaX, 48, width - 48);
+        item.y = snapCoordinate(initial.y + deltaY, 56, height - 56);
+        item.fx = item.x;
+        item.fy = item.y;
+        persistedPositionsRef.current[item.id] = { x: item.x, y: item.y };
+      });
       renderGraph();
     }
 
     function dragended(event: any) {
       event.subject.fx = null;
       event.subject.fy = null;
-      persistedPositionsRef.current[event.subject.id] = { x: event.subject.x, y: event.subject.y };
-      persistCurrentLayout();
+      dragGroupRef.current?.ids.forEach((id) => {
+        const item = nodes.find((nodeItem: any) => nodeItem.id === id);
+        if (!item) return;
+        (item as any).fx = null;
+        (item as any).fy = null;
+        persistedPositionsRef.current[id] = { x: item.x, y: item.y };
+      });
+      if (dragStateRef.current.moved) {
+        suppressNextNodeClickRef.current = true;
+        if (dragBeforePositionsRef.current) {
+          recordLayoutHistory(dragBeforePositionsRef.current, persistedPositionsRef.current);
+        }
+        persistCurrentLayout();
+      }
+      dragStateRef.current = { id: null, moved: false };
+      dragBeforePositionsRef.current = null;
+      dragGroupRef.current = null;
+      node.classed('topology-node-dragging', false);
+      linkLayer.style('opacity', null);
+      linkLabelGroup.style('opacity', null);
+      svg.style('cursor', 'grab');
     }
 
     return () => {
       if (layoutSimulation) layoutSimulation.stop();
+      svgElement?.removeEventListener('pointerdown', handleSelectionPointerDown, true);
+      svgElement?.removeEventListener('pointermove', handleSelectionPointerMove, true);
+      svgElement?.removeEventListener('pointerup', handleSelectionPointerUp, true);
+      svgElement?.removeEventListener('pointercancel', handleSelectionPointerUp, true);
+      svgElement?.removeEventListener('mousedown', handleSelectionPointerDown as EventListener, true);
+      svgElement?.removeEventListener('mousemove', handleSelectionPointerMove as EventListener, true);
+      svgElement?.removeEventListener('mouseup', handleSelectionPointerUp as EventListener, true);
+      window.removeEventListener('mousemove', handleSelectionPointerMove as EventListener, true);
+      window.removeEventListener('mouseup', handleSelectionPointerUp as EventListener, true);
     };
-  }, [devices, links, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, viewport.height, viewport.width, layoutVersion]);
+  }, [devices, links, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, selectedNodeIdsKey, viewport.height, viewport.width, layoutVersion]);
 
   return (
-    <div ref={containerRef} className="w-full h-full relative overflow-hidden rounded-[28px] bg-[linear-gradient(180deg,rgba(248,250,252,0.98)_0%,rgba(241,245,249,0.92)_100%)]">
+    <div ref={containerRef} className={`relative h-full w-full overflow-hidden rounded-[24px] bg-[radial-gradient(circle_at_20%_10%,rgba(14,165,233,0.12),transparent_34%),linear-gradient(145deg,#0b1424_0%,#111e32_52%,#0b1322_100%)] ${spacePanActive ? 'topology-space-pan' : ''}`}>
       {devices.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-500">
           No topology data available.
         </div>
       )}
-      <div className="absolute right-4 top-4 z-10 flex items-center gap-2 rounded-2xl border border-slate-200/90 bg-white/92 px-3 py-2 shadow-[0_12px_30px_rgba(15,23,42,0.08)] backdrop-blur-sm">
+      <div className={`pointer-events-none absolute left-4 top-4 z-10 rounded-xl border px-3 py-2 text-[10px] font-semibold tracking-wide backdrop-blur-sm ${spacePanActive ? 'border-cyan-300/50 bg-cyan-950/70 text-cyan-100' : 'border-white/10 bg-slate-950/55 text-slate-400'}`}>
+        空白区平移&nbsp;·&nbsp;节点拖动&nbsp;·&nbsp;框选模式或 Shift+空白框选&nbsp;·&nbsp;Space+拖动平移&nbsp;·&nbsp;滚轮缩放
+      </div>
+      <div className="absolute right-4 top-4 z-10 flex max-w-[calc(100%-2rem)] flex-wrap items-center justify-end gap-1.5 rounded-2xl border border-white/10 bg-slate-950/70 px-2.5 py-2 shadow-[0_18px_40px_rgba(0,0,0,0.25)] backdrop-blur-sm">
+        <button
+          type="button"
+          onClick={applyAutoLayout}
+          className="rounded-xl border border-cyan-300/30 bg-cyan-400/10 px-2.5 py-2 text-[10px] font-bold text-cyan-100 transition-all hover:border-cyan-200/60 hover:bg-cyan-400/20"
+          aria-label="自动布局"
+        >
+          自动布局
+        </button>
+        <button
+          type="button"
+          onClick={() => { setGridSnapEnabled((value) => !value); }}
+          className={`rounded-xl border px-2.5 py-2 text-[10px] font-bold transition-all ${gridSnapEnabled ? 'border-emerald-300/50 bg-emerald-400/15 text-emerald-100' : 'border-white/10 text-slate-400 hover:bg-white/10'}`}
+          aria-label="网格吸附"
+          aria-pressed={gridSnapEnabled}
+        >
+          网格吸附
+        </button>
+        <button
+          type="button"
+          onClick={() => { setBoxSelectMode((value) => !value); }}
+          className={`rounded-xl border px-2.5 py-2 text-[10px] font-bold transition-all ${boxSelectMode ? 'border-violet-300/60 bg-violet-400/20 text-violet-100' : 'border-white/10 text-slate-400 hover:bg-white/10'}`}
+          aria-label="框选模式"
+          aria-pressed={boxSelectMode}
+        >
+          框选
+        </button>
+        <button
+          type="button"
+          onClick={() => persistCurrentLayout()}
+          className="rounded-xl border border-white/10 px-2.5 py-2 text-[10px] font-bold text-slate-300 transition-all hover:border-cyan-300/50 hover:bg-white/10"
+          aria-label="保存布局"
+        >
+          保存
+        </button>
+        <button
+          type="button"
+          onClick={undoLayout}
+          disabled={!historyState.canUndo}
+          className="h-8 w-8 rounded-xl border border-white/10 text-sm font-bold text-slate-200 transition-all hover:border-cyan-300/50 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
+          aria-label="撤销布局"
+        >
+          ↶
+        </button>
+        <button
+          type="button"
+          onClick={redoLayout}
+          disabled={!historyState.canRedo}
+          className="h-8 w-8 rounded-xl border border-white/10 text-sm font-bold text-slate-200 transition-all hover:border-cyan-300/50 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
+          aria-label="恢复布局"
+        >
+          ↷
+        </button>
+        <span className="min-w-[54px] text-center text-[10px] font-semibold text-slate-500">
+          已选 {selectedNodeIds.length}
+        </span>
+        <button
+          type="button"
+          onClick={() => setSelectedNodeIds([])}
+          disabled={selectedNodeIds.length === 0}
+          className="rounded-xl border border-white/10 px-2.5 py-2 text-[10px] font-bold text-slate-300 transition-all hover:border-cyan-300/50 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
+          aria-label="清除选择"
+        >
+          清除
+        </button>
         <button
           type="button"
           onClick={() => zoomAroundViewportCenter(0.88)}
-          className="h-8 w-8 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 transition-all hover:border-slate-300 hover:bg-slate-50"
+          className="h-8 w-8 rounded-xl border border-white/10 text-sm font-bold text-slate-200 transition-all hover:border-cyan-300/50 hover:bg-white/10"
           aria-label="Zoom out"
         >
           -
         </button>
-        <span className="min-w-[52px] text-center text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+        <span className="min-w-[52px] text-center text-[11px] font-bold uppercase tracking-[0.14em] text-slate-300">
           {zoomPercent}%
         </span>
         <button
           type="button"
           onClick={() => zoomAroundViewportCenter(1.14)}
-          className="h-8 w-8 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 transition-all hover:border-slate-300 hover:bg-slate-50"
+          className="h-8 w-8 rounded-xl border border-white/10 text-sm font-bold text-slate-200 transition-all hover:border-cyan-300/50 hover:bg-white/10"
           aria-label="Zoom in"
         >
           +
@@ -1141,29 +1647,31 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         <button
           type="button"
           onClick={fitViewport}
-          className="rounded-xl border border-slate-200 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition-all hover:border-slate-300 hover:bg-slate-50"
+          className="rounded-xl border border-white/10 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-300 transition-all hover:border-cyan-300/50 hover:bg-white/10"
+          aria-label="Fit"
         >
           Fit
         </button>
         <button
           type="button"
           onClick={resetLayout}
-          className="rounded-xl border border-slate-200 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition-all hover:border-slate-300 hover:bg-slate-50"
+          className="rounded-xl border border-white/10 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-300 transition-all hover:border-cyan-300/50 hover:bg-white/10"
+          aria-label="Reset"
         >
           Reset
         </button>
       </div>
       {minimapSnapshot && (
-        <div className="absolute bottom-4 right-4 z-10 overflow-hidden rounded-[22px] border border-slate-200/90 bg-white/94 p-3 shadow-[0_18px_42px_rgba(15,23,42,0.12)] backdrop-blur-sm">
+        <div className="absolute bottom-4 right-4 z-10 overflow-hidden rounded-[22px] border border-white/10 bg-slate-950/80 p-3 shadow-[0_18px_42px_rgba(0,0,0,0.28)] backdrop-blur-sm">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Navigator</span>
-            <span className="text-[10px] font-semibold text-slate-400">Click to recenter</span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">Navigator</span>
+            <span className="text-[10px] font-semibold text-slate-500">Click to recenter</span>
           </div>
           <svg
             width={minimapSnapshot.panel.width}
             height={minimapSnapshot.panel.height}
             viewBox={`0 0 ${minimapSnapshot.panel.width} ${minimapSnapshot.panel.height}`}
-            className="cursor-pointer rounded-2xl bg-[linear-gradient(180deg,#f8fafc_0%,#eef2f7_100%)]"
+            className="cursor-pointer rounded-2xl bg-[linear-gradient(180deg,#16253a_0%,#0e192b_100%)]"
             onClick={handleMinimapClick}
           >
             <rect x="0" y="0" width={minimapSnapshot.panel.width} height={minimapSnapshot.panel.height} rx="18" fill="transparent" />
@@ -1202,7 +1710,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           </svg>
         </div>
       )}
-      <svg ref={svgRef} className="h-full w-full" />
+      <svg ref={svgRef} className="topology-graph-svg h-full w-full" />
     </div>
   );
 };

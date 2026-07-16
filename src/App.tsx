@@ -367,9 +367,6 @@ const App: React.FC = () => {
   // selectedJob moved to useAutomation
 
   const {
-    setTopologyLinks,
-    setTopologyUnmanagedNodes,
-    setTopologyUnmanagedLinks,
     topologySearch,
     setTopologySearch,
     topologyStatusFilter,
@@ -378,11 +375,19 @@ const App: React.FC = () => {
     setTopologyRoleFilter,
     topologySiteFilter,
     setTopologySiteFilter,
+    topologyLinkStatusFilter,
+    setTopologyLinkStatusFilter,
+    topologyProtocolFilter,
+    setTopologyProtocolFilter,
     selectedTopologyDeviceId,
     setSelectedTopologyDeviceId,
     selectedTopologyLinkKey,
     setSelectedTopologyLinkKey,
     topologyDiscoveryRunning,
+    topologyDiscoveryProgress,
+    topologyDiscoveryDevices,
+    topologySites,
+    topologyDataError,
     topologyRef,
     hideStaleLinks,
     setHideStaleLinks,
@@ -403,6 +408,7 @@ const App: React.FC = () => {
     formatTopologyInterfaceTelemetry,
     handleExportMap,
     handleTriggerDiscovery,
+    handleCancelDiscovery,
   } = useTopology({ devices, language, showToast });
 
   // Redirect bare paths and legacy paths to standardized hierarchical paths
@@ -791,12 +797,11 @@ const App: React.FC = () => {
    */
   const fetchSharedLookups = useCallback(async () => {
     try {
-      const [scriptsRes, usersRes, templatesRes, varsRes, linksRes] = await Promise.all([
+      const [scriptsRes, usersRes, templatesRes, varsRes] = await Promise.all([
         fetch('/api/scripts'),
         fetch('/api/users'),
         fetch('/api/templates'),
-        fetch('/api/vars'),
-        fetch('/api/topology/links')
+        fetch('/api/vars')
       ]);
 
       if (scriptsRes.ok) setScripts(await scriptsRes.json());
@@ -809,18 +814,6 @@ const App: React.FC = () => {
         }
       }
       if (varsRes.ok) setGlobalVars(await varsRes.json());
-      if (linksRes.ok) {
-        const linksPayload = await linksRes.json();
-        if (linksPayload && typeof linksPayload === 'object' && !Array.isArray(linksPayload)) {
-          setTopologyLinks(Array.isArray(linksPayload.links) ? linksPayload.links : []);
-          setTopologyUnmanagedNodes(Array.isArray(linksPayload.unmanaged_nodes) ? linksPayload.unmanaged_nodes : []);
-          setTopologyUnmanagedLinks(Array.isArray(linksPayload.unmanaged_links) ? linksPayload.unmanaged_links : []);
-        } else {
-          setTopologyLinks(Array.isArray(linksPayload) ? linksPayload : []);
-          setTopologyUnmanagedNodes([]);
-          setTopologyUnmanagedLinks([]);
-        }
-      }
     } catch (error) {
       console.error('Failed to fetch shared lookups:', error);
     }
@@ -1597,14 +1590,17 @@ const App: React.FC = () => {
 
   const topologyValue = {
     setSelectedTopologyDeviceId, setSelectedTopologyLinkKey, topologyDiscoveryRunning,
+    topologyDiscoveryProgress, topologyDiscoveryDevices, topologySites, topologyDataError,
     topologyStats, topologyLinkStats,
     topologySearch, topologySiteFilter, topologyRoleFilter, topologyStatusFilter,
+    topologyLinkStatusFilter, topologyProtocolFilter,
     topologySiteOptions, topologyRoleOptions, topologyVisibleDevices, topologyVisibleLinks,
     selectedTopologyDeviceId, selectedTopologyLinkKey, selectedTopologyDevice, selectedTopologyLink,
     topologyNeighborDevices, topologyDeviceLinks, topologyPriorityDevices, topologyOrphanDevices, topologyRef,
     hideStaleLinks, setHideStaleLinks, hideOrphanDevices, setHideOrphanDevices,
-    handleTriggerDiscovery, handleExportMap,
+    handleTriggerDiscovery, handleCancelDiscovery, handleExportMap,
     setTopologySearch, setTopologySiteFilter, setTopologyRoleFilter, setTopologyStatusFilter,
+    setTopologyLinkStatusFilter, setTopologyProtocolFilter,
     formatTopologyPort, formatTopologyInterfaceTelemetry, formatTopologyLastSeen, formatTopologyOperationalState, formatTopologyEvidenceLabel,
     getTopologyOperationalTone,
   };
