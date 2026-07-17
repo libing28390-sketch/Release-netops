@@ -22,7 +22,6 @@ class BaseDriver(ABC):
         self.password = device_info.get('password')
         self.port = resolve_ssh_port(device_info)
         self.platform = device_info.get('platform')
-        self._network_access_lease = None
 
     @abstractmethod
     def connect(self):
@@ -45,28 +44,8 @@ class BaseDriver(ABC):
         pass
 
     def __enter__(self):
-        from services.network_access_limiter import get_network_access_limiter
-        limiter = get_network_access_limiter()
-        lease = limiter.ssh(
-            self.device_info,
-            username=self.username,
-            port=self.port,
-            operation="driver-context",
-        )
-        lease.__enter__()
-        self._network_access_lease = lease
-        try:
-            self.connect()
-            return self
-        except Exception:
-            self._network_access_lease = None
-            lease.__exit__(None, None, None)
-            raise
+        self.connect()
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        try:
-            self.disconnect()
-        finally:
-            lease, self._network_access_lease = self._network_access_lease, None
-            if lease is not None:
-                lease.__exit__(exc_type, exc_val, exc_tb)
+        self.disconnect()

@@ -27,7 +27,7 @@
 可在 `.env` 或 `.env.local` 调整：
 
 - `NETWORK_SSH_GLOBAL_CONCURRENCY`：进程级 SSH/CLI 总并发。
-- `NETWORK_SSH_PER_DEVICE_CONCURRENCY`：单设备 SSH 并发，默认 1。
+- `NETWORK_SSH_PER_DEVICE_CONCURRENCY`：单设备 SSH 并发，默认 5。生产环境应根据设备 VTY/SSH 会话上限调整；如果设备只允许少量并发，可在 `.env` 中覆盖。
 - `NETWORK_SNMP_GLOBAL_CONCURRENCY`：SNMP 总并发。
 - `NETWORK_PROBE_GLOBAL_CONCURRENCY`：ICMP/TCP 探测总并发。
 - `NETWORK_POOL_IDLE_SECONDS`：连接池空闲回收时间，默认 300 秒。

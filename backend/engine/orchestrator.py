@@ -42,10 +42,7 @@ class ExecutionOrchestrator:
             driver = DriverRegistry.get_driver(asset_type, device)
             
             # 执行
-            from services.network_access_limiter import get_network_access_limiter
-            limiter = get_network_access_limiter()
-            with limiter.ssh(device, operation=f"automation:{mode}"):
-                res = driver.execute(ExecutionMode(mode.lower()), content, **kwargs)
+            res = driver.execute(ExecutionMode(mode.lower()), content, **kwargs)
             
             # 注入审计字段
             res["task_id"] = task_id
@@ -166,11 +163,6 @@ class TelemetryOrchestrator:
                 if maintenance_counter >= 12: # Run ~every 12 mins
                     maintenance_counter = 0
                     _run_telemetry_maintenance()
-                    # Reclaim idle SSH sessions independently of collector
-                    # success so a failed device cannot leak a login session.
-                    from engine.pool import ConnectionPool
-                    ConnectionPool().cleanup()
-
                 sync_lldp_neighbor_alerts()
             except Exception as e:
                 logger.error(f"[Orchestrator B-Loop] Error: {e}")

@@ -28,7 +28,6 @@ from netmiko import ConnectHandler
 from database import get_db_connection, _SERIAL_PK, init_db
 from core.crypto import decrypt_credential
 from services.vault_service import resolve_device_credentials
-from services.network_access_limiter import limited_connect_handler
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 from services.operational_data_service import (
     collect_operational_data,
@@ -368,7 +367,7 @@ def _send_command(device_info: dict, command: str) -> str:
         return ""
 
     conn_params = _build_ssh_params(device_info)
-    with limited_connect_handler(device_info, ConnectHandler, **conn_params) as client:
+    with ConnectHandler(**conn_params) as client:
         if conn_params.get('secret'):
             try:
                 client.enable()

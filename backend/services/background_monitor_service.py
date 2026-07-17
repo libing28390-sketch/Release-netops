@@ -17,7 +17,6 @@ import re as _re
 import time as _time
 from services.snmp_service import collect_device_metrics, collect_device_info, collect_interface_data
 from services.operational_data_service import collect_operational_data
-from services.network_access_limiter import get_network_access_limiter
 from services.collection_status_service import record_collection_result
 from services.vault_service import resolve_collector_credentials
 from services import tag_service
@@ -964,11 +963,10 @@ async def _process_device_raw(device, cycle_tick: int):
         dev_label = device['hostname'] or ip
         try:
             # ping() is blocking; run it off the event loop to keep API endpoints responsive.
-            async with get_network_access_limiter().async_probe():
-                reachable, probe_method = await _probe_device_reachability(
-                    ip,
-                    _device_management_port(device),
-                )
+            reachable, probe_method = await _probe_device_reachability(
+                ip,
+                _device_management_port(device),
+            )
             new_status = 'online' if reachable else 'offline'
 
             if device['status'] != new_status:
@@ -1568,11 +1566,10 @@ async def process_device_fast(device):
 
     dev_label = device['hostname'] or ip
     try:
-        async with get_network_access_limiter().async_probe():
-            reachable, probe_method = await _probe_device_reachability(
-                ip,
-                _device_management_port(device),
-            )
+        reachable, probe_method = await _probe_device_reachability(
+            ip,
+            _device_management_port(device),
+        )
         new_status = 'online' if reachable else 'offline'
         record_collection_result(
             dev_id,

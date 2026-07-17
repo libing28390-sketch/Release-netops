@@ -23,18 +23,6 @@ class Settings(BaseSettings):
     ALERT_CPU_THRESHOLD: float = 90.0
     ALERT_MEMORY_THRESHOLD: float = 90.0
     ALERT_NOTIFY_WEBHOOK_URL: str = ""
-    # Unified network access budgets.  SSH/CLI and SNMP are intentionally
-    # separate because SNMP is UDP polling rather than a login session.
-    NETWORK_SSH_GLOBAL_CONCURRENCY: int = 20
-    NETWORK_SSH_PER_DEVICE_CONCURRENCY: int = 1
-    NETWORK_SNMP_GLOBAL_CONCURRENCY: int = 30
-    NETWORK_PROBE_GLOBAL_CONCURRENCY: int = 50
-    NETWORK_ACCESS_ACQUIRE_TIMEOUT: float = 120.0
-    NETWORK_INSPECTION_CONCURRENCY: int = 10
-    # Idle SSH sessions are reused briefly to reduce login churn, then closed
-    # automatically so long-running collectors do not leak device sessions.
-    NETWORK_POOL_IDLE_SECONDS: int = 300
-    NETWORK_POOL_MAX_SIZE: int = 100
     INSPECTION_MASTER_CRON: str = "30 2,14 * * *"
     # 「前往平台处理」按钮跳转地址，留空则不显示按钮
     PLATFORM_URL: str = ""

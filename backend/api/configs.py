@@ -729,11 +729,11 @@ def update_schedule(body: ScheduleUpdate):
 _backup_runs: dict[str, dict] = {}
 
 # How many devices to back up in parallel. SSH connections are I/O-bound so
-# Keep the batch conservative; the shared SSH limiter remains the final guard.
+# 30 concurrent workers is a safe default that won't overwhelm most networks.
 # Increase via BACKUP_CONCURRENCY env var if your network can handle more.
 # Recommended range: 5–50. Higher values may trigger SSH rate-limiting on devices.
 import os as _os
-BACKUP_CONCURRENCY = int(_os.environ.get('BACKUP_CONCURRENCY', '10'))
+BACKUP_CONCURRENCY = int(_os.environ.get('BACKUP_CONCURRENCY', '30'))
 
 
 @router.post('/configs/run-now')
