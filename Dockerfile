@@ -69,7 +69,7 @@ EXPOSE 8003
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8003/api/health/live', timeout=4)" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8003/api/health')" || exit 1
 
 # Non-root user for security
 RUN useradd --create-home --shell /bin/bash --uid 1000 netops && \

@@ -21,6 +21,7 @@ from core.interface_utils import normalize_interface_name
 from core.textfsm import configure_ntc_templates
 from database import get_db_connection
 from services.vault_service import resolve_collector_credentials
+from services.network_access_limiter import get_network_access_limiter, limited_connect_handler
 from services.collection_status_service import record_collection_result
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 
@@ -418,30 +419,36 @@ async def _collect_neighbors_with_scrapli(device: dict[str, Any], commands: list
     }
 
     collected: list[dict[str, Any]] = []
-    async with driver_class(**scrapli_device) as client:
-        for protocol, command in commands:
-            response = await client.send_command(command)
-            is_comware = 'comware' in platform or 'hp_comware' in platform
-            parsed = None
-            if not is_comware:
-                try:
-                    parsed = response.textfsm_parse_output() or []
-                except Exception:
-                    parsed = None
-
-            if isinstance(parsed, list) and parsed:
-                for item in parsed:
-                    observation = _extract_observation_fields(item, protocol)
-                    if observation['neighbor_name_raw'] and observation['source_port_raw']:
-                        collected.append(observation)
-            elif response.result and response.result.strip():
-                # TextFSM template not found or Comware bypassed — use regex parser
-                logger.info('Scrapli TextFSM bypassed/missed for %s %r, using regex parser', platform, command)
-                regex_entries = _regex_parse_lldp_detail(response.result)
-                for item in regex_entries:
-                    observation = _extract_observation_fields(item, protocol)
-                    if observation['neighbor_name_raw'] and observation['source_port_raw']:
-                        collected.append(observation)
+    async with get_network_access_limiter().async_ssh(
+        device,
+        username=device.get('username'),
+        port=scrapli_device['port'],
+        operation='topology:scrapli',
+    ):
+        async with driver_class(**scrapli_device) as client:
+            for protocol, command in commands:
+                response = await client.send_command(command)
+                is_comware = 'comware' in platform or 'hp_comware' in platform
+                parsed = None
+                if not is_comware:
+                    try:
+                        parsed = response.textfsm_parse_output() or []
+                    except Exception:
+                        parsed = None
+            
+                if isinstance(parsed, list) and parsed:
+                    for item in parsed:
+                        observation = _extract_observation_fields(item, protocol)
+                        if observation['neighbor_name_raw'] and observation['source_port_raw']:
+                            collected.append(observation)
+                elif response.result and response.result.strip():
+                    # TextFSM template not found or Comware bypassed — use regex parser
+                    logger.info('Scrapli TextFSM bypassed/missed for %s %r, using regex parser', platform, command)
+                    regex_entries = _regex_parse_lldp_detail(response.result)
+                    for item in regex_entries:
+                        observation = _extract_observation_fields(item, protocol)
+                        if observation['neighbor_name_raw'] and observation['source_port_raw']:
+                            collected.append(observation)
     return collected, 'scrapli'
 
 
@@ -462,7 +469,7 @@ async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list
 
     def _run_commands() -> list[dict[str, Any]]:
         collected: list[dict[str, Any]] = []
-        with ConnectHandler(**netmiko_device) as client:
+        with limited_connect_handler(device, ConnectHandler, **netmiko_device) as client:
             for protocol, command in commands:
                 is_comware = 'comware' in device_type or 'hp_comware' in device_type or 'h3c' in str(device.get('platform', '')).lower()
                 parsed = None

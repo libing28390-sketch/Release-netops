@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx';
 import type { Job, ScheduledTask, Script, ConfigTemplate, SessionUser, Device } from '../types';
 import { isAutomationPlatformSupported, normalizeAutomationPlatform } from '../pages/AutomationExecute/helpers';
 
+const QUICK_QUERY_TIMEOUT_MS = 45_000;
+
 interface UseAutomationProps {
   currentUser: SessionUser;
   language: string;
@@ -832,6 +834,7 @@ export const useAutomation = ({
     const requestId = ++quickQueryRunIdRef.current;
     const controller = new AbortController();
     quickQueryAbortRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), QUICK_QUERY_TIMEOUT_MS);
     try {
       const resp = await fetch(`/api/devices/${device.id}/parsed-command`, {
         method: 'POST',
@@ -858,11 +861,17 @@ export const useAutomation = ({
     } catch (error: any) {
       if (requestId !== quickQueryRunIdRef.current) return false;
       if (controller.signal.aborted) {
+        showToast(
+          language === 'zh' ? '查询超时，已停止等待设备响应' : 'Query timed out while waiting for the device',
+          'error',
+        );
+        setQuickQueryOutput(language === 'zh' ? '查询超时，设备未在规定时间内返回响应。' : 'Query timed out before the device responded.');
         return false;
       }
       showToast(error?.message || String(error), 'error');
       return false;
     } finally {
+      window.clearTimeout(timeoutId);
       if (requestId === quickQueryRunIdRef.current) {
         quickQueryAbortRef.current = null;
         setQuickQueryRunning(false);
@@ -1057,6 +1066,7 @@ export const useAutomation = ({
     const requestId = ++quickQueryRunIdRef.current;
     const controller = new AbortController();
     quickQueryAbortRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), QUICK_QUERY_TIMEOUT_MS);
 
     try {
       const categoryKey = operationalCategory || 'custom_command';
@@ -1103,6 +1113,11 @@ export const useAutomation = ({
       // reopen the overlay or overwrite the newer query state.
       if (requestId !== quickQueryRunIdRef.current) return;
       if (controller.signal.aborted) {
+        setQuickQueryOutput(language === 'zh' ? '查询超时，设备未在规定时间内返回响应。' : 'Query timed out before the device responded.');
+        showToast(
+          language === 'zh' ? '查询超时，已停止等待设备响应' : 'Query timed out while waiting for the device',
+          'error',
+        );
         return;
       }
 
@@ -1165,10 +1180,16 @@ export const useAutomation = ({
     } catch (e: any) {
       if (requestId !== quickQueryRunIdRef.current) return;
       if (controller.signal.aborted) {
+        setQuickQueryOutput(language === 'zh' ? '查询超时，设备未在规定时间内返回响应。' : 'Query timed out before the device responded.');
+        showToast(
+          language === 'zh' ? '查询超时，已停止等待设备响应' : 'Query timed out while waiting for the device',
+          'error',
+        );
         return;
       }
       setQuickQueryOutput(`Error: ${e.message || e}`);
     } finally {
+      window.clearTimeout(timeoutId);
       if (requestId === quickQueryRunIdRef.current) {
         quickQueryAbortRef.current = null;
         setQuickQueryRunning(false);

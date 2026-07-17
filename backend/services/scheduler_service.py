@@ -10,6 +10,7 @@ from services.automation_service import AutomationService
 from services.notification_service import dispatch_to_all_users
 from core.crypto import decrypt_credential
 from services.vault_service import resolve_device_credentials
+from services.network_access_limiter import limited_connect_handler
 # Import inspection service to handle specialized inspection jobs
 from services.inspection_service import run_inspection
 
@@ -778,7 +779,7 @@ def sync_topology_and_interfaces_job():
             commands = ['show interfaces']
 
         try:
-            with ConnectHandler(**netmiko_device) as client:
+            with limited_connect_handler(device, ConnectHandler, **netmiko_device) as client:
                 if enable_pw:
                     try:
                         client.enable()
@@ -993,7 +994,7 @@ def poll_endpoints_job():
             
         cmd = 'display arp all' if 'huawei' in platform or 'h3c' in platform else 'show ip arp'
         try:
-            with ConnectHandler(**netmiko_device) as client:
+            with limited_connect_handler(device, ConnectHandler, **netmiko_device) as client:
                 if enable_pw:
                     try:
                         client.enable()
@@ -1038,7 +1039,7 @@ def poll_endpoints_job():
             
         cmd = 'display mac-address' if 'huawei' in platform or 'h3c' in platform else 'show mac address-table'
         try:
-            with ConnectHandler(**netmiko_device) as client:
+            with limited_connect_handler(device, ConnectHandler, **netmiko_device) as client:
                 if enable_pw:
                     try:
                         client.enable()
@@ -1410,7 +1411,7 @@ def sync_bgp_routes_job():
             vrf_cmd_template = VRF_BGP_CMD.get(platform, VRF_BGP_CMD['cisco_ios'])
             try:
                 conn_params = _build_connection_params(dev)
-                with ConnectHandler(**conn_params) as client:
+                with limited_connect_handler(dev, ConnectHandler, **conn_params) as client:
                     if conn_params.get('secret'):
                         try:
                             client.enable()

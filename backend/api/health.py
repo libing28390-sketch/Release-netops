@@ -594,7 +594,7 @@ def _get_db_metrics() -> dict:
         conn.close()
 
 @router.api_route("/health", methods=["GET", "HEAD"], tags=["health"])
-def health_check():
+async def health_check():
     logger.debug("Health check endpoint called")
     db_ok, db_status = _get_db_health()
 
@@ -640,6 +640,8 @@ def health_check():
     # Collect memory metrics
     from core.metrics import metrics_registry
     metrics = metrics_registry.get_metrics()
+    from engine.pool import ConnectionPool
+    from services.network_access_limiter import get_network_access_limiter
     
     # Enrich metrics with DB pool, queue length, and scheduler details
     db_pool = _get_db_pool_status()
@@ -651,6 +653,8 @@ def health_check():
         "worker_queue_length": db_metrics["worker_queue_length"],
         "jobs_by_status": db_metrics["jobs_by_status"],
         "reconciliation_findings_open": db_metrics["reconciliation_findings_open"],
+        "network_access": get_network_access_limiter().snapshot(),
+        "ssh_pool": ConnectionPool().snapshot(),
     })
 
     return {
@@ -674,46 +678,34 @@ def health_check():
         "metrics": metrics
     }
 
-
-@router.api_route("/health/live", methods=["GET", "HEAD"], tags=["health"])
-def health_live():
-    """Lightweight liveness/readiness probe for Docker and reverse proxies.
-
-    The full ``/health`` response intentionally includes resource, scheduler,
-    queue and device summaries.  It is not suitable as a 5-second container
-    probe while collectors are busy, so infrastructure checks use this small
-    database round-trip instead.
-    """
-    db_ok, db_status = _get_db_health()
-    if not db_ok:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=503, detail=db_status)
-    return {"status": "ok", "database": "connected"}
-
 @router.get("/health/metrics", tags=["health"])
-def health_metrics():
+async def health_metrics():
     from core.metrics import metrics_registry
     metrics = metrics_registry.get_metrics()
     db_pool = _get_db_pool_status()
     db_metrics = _get_db_metrics()
+    from engine.pool import ConnectionPool
+    from services.network_access_limiter import get_network_access_limiter
     metrics.update({
         "db_connections_active": db_pool["active"],
         "db_connections_max": db_pool["max"],
         "worker_queue_length": db_metrics["worker_queue_length"],
         "jobs_by_status": db_metrics["jobs_by_status"],
         "reconciliation_findings_open": db_metrics["reconciliation_findings_open"],
+        "network_access": get_network_access_limiter().snapshot(),
+        "ssh_pool": ConnectionPool().snapshot(),
     })
     return metrics
 
 
 @router.get("/health/resources", tags=["health"])
-def health_resources():
+async def health_resources():
     logger.debug("Health resources endpoint called")
     return record_host_resource_snapshot(sync_alerts=True)
 
 
 @router.get("/health/resources/history", tags=["health"])
-def health_resource_history(
+async def health_resource_history(
     range_hours: int = Query(default=24, ge=1, le=24 * 7),
 ):
     logger.debug("Health resource history endpoint called")
