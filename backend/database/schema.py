@@ -44,7 +44,10 @@ def init_db():
         os.makedirs(os.path.join(PROJECT_ROOT, 'data', 'pam_recordings'), exist_ok=True)
         os.makedirs(os.path.join(PROJECT_ROOT, 'data', 'change_order_attachments'), exist_ok=True)
 
-        _init_db_logic(conn)
+        # The normal service bootstrap must not replay destructive legacy
+        # imports. The private helper keeps its historical default for
+        # explicit recovery/test invocations.
+        _init_db_logic(conn, allow_legacy_import=False)
         conn.commit()
 
         # Apply versioned, tracked schema migrations on top of the baseline.
@@ -71,8 +74,33 @@ def init_db():
             pass
 
 
-def _init_db_logic(conn):
+def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     cursor = conn.cursor()
+
+    # ``schema_migrations`` is created after the baseline on a fresh install.
+    # Detect the table itself (rather than whether it already has rows): a
+    # partially initialized database must not be mistaken for a new install
+    # and resurrect records that an operator deliberately deleted.
+    try:
+        if _USE_PG:
+            cursor.execute(
+                "SELECT EXISTS ("
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'schema_migrations'"
+                ")"
+            )
+            legacy_bootstrap_new = not bool(cursor.fetchone()[0])
+        else:
+            cursor.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'schema_migrations'"
+            )
+            legacy_bootstrap_new = cursor.fetchone() is None
+    except Exception:
+        # The baseline has to remain usable even when the metadata table is
+        # unavailable; migration runner will create it later in this boot.
+        legacy_bootstrap_new = True
 
     def ensure_column(table_name: str, column_name: str, definition: str):
         cols = _table_columns(cursor, table_name)
@@ -193,15 +221,27 @@ def _init_db_logic(conn):
         country TEXT DEFAULT '',
         state_province TEXT DEFAULT '',
         city TEXT DEFAULT '',
+        district TEXT DEFAULT '',
+        contact_name TEXT DEFAULT '',
+        contact_phone TEXT DEFAULT '',
+        contact_email TEXT DEFAULT '',
         timezone TEXT DEFAULT 'Asia/Shanghai',
         address TEXT DEFAULT '',
         status TEXT DEFAULT 'active',
         tenant_id TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
     )
     ''')
 
     ensure_column('sites', 'state_province', "TEXT DEFAULT ''")
+    ensure_column('sites', 'district', "TEXT DEFAULT ''")
+    ensure_column('sites', 'contact_name', "TEXT DEFAULT ''")
+    ensure_column('sites', 'contact_phone', "TEXT DEFAULT ''")
+    ensure_column('sites', 'contact_email', "TEXT DEFAULT ''")
+    ensure_column('sites', 'created_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if _USE_PG else "TEXT DEFAULT ''")
+    ensure_column('sites', 'updated_at', "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if _USE_PG else "TEXT DEFAULT ''")
 
     # Create racks table if not exists
     if _USE_PG:
@@ -2527,6 +2567,10 @@ def _init_db_logic(conn):
         updated_at TEXT NOT NULL
     )
     ''')
+    # Legacy PostgreSQL installations may have physical_assets without the
+    # canonical site relation. Ensure the column before creating its index;
+    # this is a schema-shape guard only and deliberately performs no backfill.
+    ensure_column('physical_assets', 'site_id', "TEXT DEFAULT ''")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_tag ON physical_assets(asset_tag) WHERE asset_tag != ''")
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_asset_type ON physical_assets(asset_type)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_physical_assets_site_id ON physical_assets(site_id)')
@@ -2575,7 +2619,6 @@ def _init_db_logic(conn):
     ensure_column('physical_assets', 'u_height', 'INTEGER NOT NULL DEFAULT 1')
     ensure_column('physical_assets', 'planned_start_u', 'INTEGER')
     ensure_column('physical_assets', 'device_category', "TEXT DEFAULT ''")
-    ensure_column('physical_assets', 'site_id', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'power_watts', "INTEGER DEFAULT 0")
 
     ensure_column('devices', 'credential_id', 'TEXT')
@@ -3559,9 +3602,18 @@ def _init_db_logic(conn):
         # 3. Map default users
         cursor.execute("UPDATE users SET tenant_id = 'tenant-default', role_id = 'role-admin' WHERE username = 'admin' AND (tenant_id = '' OR tenant_id IS NULL)")
 
-        # 4. Create sites from existing devices
-        cursor.execute("SELECT DISTINCT site FROM devices WHERE site IS NOT NULL AND site != ''")
-        unique_sites = cursor.fetchall()
+        # 4. Legacy devices.site values are not authoritative CMDB records.
+        # Importing them on every boot made manually deleted sites reappear.
+        # Keep the recovery path available, but require an explicit opt-in.
+        legacy_cmdb_enabled = (
+            allow_legacy_import or legacy_bootstrap_new
+            or os.environ.get('NETOPS_MIGRATE_LEGACY_CMDB', '').strip().lower() in {'1', 'true', 'yes'}
+        )
+        if legacy_cmdb_enabled:
+            cursor.execute("SELECT DISTINCT site FROM devices WHERE site IS NOT NULL AND site != ''")
+            unique_sites = cursor.fetchall()
+        else:
+            unique_sites = []
         for site_row in unique_sites:
             s_name = site_row['site'] if hasattr(site_row, '__getitem__') else site_row[0]
             s_code = f"SITE_{s_name.upper().replace(' ', '_')}"
@@ -3580,16 +3632,27 @@ def _init_db_logic(conn):
             # update devices
             cursor.execute("UPDATE devices SET site_id = ? WHERE site = ?", (s_id, s_name))
 
-        # Ensure a default site
-        cursor.execute("SELECT 1 FROM sites WHERE id = 'site-default'")
-        if not cursor.fetchone():
-            if _USE_PG:
-                cursor.execute("INSERT INTO sites (id, site_code, site_name, country, city, timezone, address, status, tenant_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                               ('site-default', 'DEFAULT_SITE', 'Default Site', '', '', 'Asia/Shanghai', '', 'active', 'tenant-default'))
-            else:
-                cursor.execute("INSERT INTO sites (id, site_code, site_name, country, city, timezone, address, status, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                               ('site-default', 'DEFAULT_SITE', 'Default Site', '', '', 'Asia/Shanghai', '', 'active', 'tenant-default'))
-        cursor.execute("UPDATE devices SET site_id = 'site-default' WHERE site_id = '' OR site_id IS NULL")
+        # Seed the compatibility site only on first install (or explicit
+        # legacy recovery). A later restart must not resurrect a user-deleted
+        # default site.
+        default_site_enabled = (
+            allow_legacy_import or legacy_bootstrap_new
+            or os.environ.get('NETOPS_MIGRATE_LEGACY_CMDB', '').strip().lower() in {'1', 'true', 'yes'}
+        )
+        if default_site_enabled:
+            cursor.execute("SELECT 1 FROM sites WHERE id = 'site-default'")
+            if not cursor.fetchone():
+                if _USE_PG:
+                    cursor.execute("INSERT INTO sites (id, site_code, site_name, country, city, timezone, address, status, tenant_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                                   ('site-default', 'DEFAULT_SITE', 'Default Site', '', '', 'Asia/Shanghai', '', 'active', 'tenant-default'))
+                else:
+                    cursor.execute("INSERT INTO sites (id, site_code, site_name, country, city, timezone, address, status, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   ('site-default', 'DEFAULT_SITE', 'Default Site', '', '', 'Asia/Shanghai', '', 'active', 'tenant-default'))
+        cursor.execute(
+            "UPDATE devices SET site_id = 'site-default' "
+            "WHERE (site_id = '' OR site_id IS NULL) "
+            "AND EXISTS (SELECT 1 FROM sites WHERE id = 'site-default')"
+        )
 
         # 5. Seed device types from devices
         cursor.execute("SELECT DISTINCT vendor, model FROM devices WHERE model IS NOT NULL AND model != ''")
@@ -3615,9 +3678,20 @@ def _init_db_logic(conn):
 
         # 6. Migrate ip_inventory to ip_addresses and prefixes
         import ipaddress
-        # Read from ip_inventory
-        cursor.execute("SELECT ip, mask, device_id, interface, type, last_seen FROM ip_inventory")
-        inv_rows = cursor.fetchall()
+        # ``ip_inventory`` is a legacy collection table.  The old bootstrap
+        # imported it on every restart, which resurrected prefixes that an
+        # operator had deliberately deleted. Legacy import is now opt-in for
+        # an explicit one-time recovery run; normal startup reads only the
+        # canonical IPAM tables.
+        legacy_ipam_enabled = (
+            allow_legacy_import or legacy_bootstrap_new
+            or os.environ.get('NETOPS_MIGRATE_LEGACY_IPAM', '').strip().lower() in {'1', 'true', 'yes'}
+        )
+        if legacy_ipam_enabled:
+            cursor.execute("SELECT ip, mask, device_id, interface, type, last_seen FROM ip_inventory")
+            inv_rows = cursor.fetchall()
+        else:
+            inv_rows = []
 
         # Fetch current prefixes for in-memory CIDR parent resolution
         cursor.execute("SELECT id, prefix FROM prefixes")
@@ -3766,7 +3840,7 @@ def _init_db_logic(conn):
                             id, subnet_id, address, hostname, device_id, interface_name,
                             mac_address, device_type, status, description, last_seen, created_at, updated_at,
                             ip_address, address_inet, prefix_id, vrf_id, interface_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (addr_id, prefix_id, ip, '', d_id, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, ip, prefix_id, '', intf_id or ''))
 
         # Clean up empty, auto-generated host-route prefixes (/32, /128) no longer referenced

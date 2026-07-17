@@ -14,6 +14,7 @@ happen inside each mutating function.
 
 import uuid
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,10 @@ def _row_to_dict(row) -> dict:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:12]}"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _count_reference(conn, table: str, column: str, value: str) -> int:
@@ -448,7 +453,8 @@ def get_site(conn, site_id: str) -> dict:
 
 
 def create_site(conn, *, site_code: str | None = None, site_name: str, country: str = '',
-                state_province: str = '', city: str = '', timezone: str = 'Asia/Shanghai', address: str = '',
+                state_province: str = '', city: str = '', district: str = '', contact_name: str = '',
+                contact_phone: str = '', contact_email: str = '', timezone: str = 'Asia/Shanghai', address: str = '',
                 status: str = 'active', tenant_id: str = _DEFAULT_TENANT) -> dict:
     site_id = _new_id('site')
     # Site codes are internal stable identifiers, not business data users need
@@ -458,10 +464,15 @@ def create_site(conn, *, site_code: str | None = None, site_name: str, country: 
     dup = conn.execute("SELECT 1 FROM sites WHERE site_code = ?", (site_code,)).fetchone()
     if dup:
         raise ValueError(f"Site code already exists: {site_code}")
+    now = _utc_now()
     conn.execute(
-        """INSERT INTO sites (id, site_code, site_name, country, state_province, city, timezone, address, status, tenant_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (site_id, site_code, site_name, country, state_province, city, timezone, address, status, tenant_id or _DEFAULT_TENANT),
+        """INSERT INTO sites (id, site_code, site_name, country, state_province, city, district,
+           contact_name, contact_phone, contact_email, timezone, address, status, tenant_id,
+           created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (site_id, site_code, site_name, country, state_province, city, district,
+         contact_name, contact_phone, contact_email, timezone, address, status, tenant_id or _DEFAULT_TENANT,
+         now, now),
     )
     conn.commit()
     logger.info(f"[CmdbService] Created site '{site_code}'")
@@ -477,12 +488,15 @@ def update_site(conn, site_id: str, **fields) -> dict:
         if dup:
             raise ValueError(f"Site code already exists: {fields['site_code']}")
     updates, params = [], []
-    for key in ('site_code', 'site_name', 'country', 'state_province', 'city', 'timezone', 'address', 'status', 'tenant_id'):
+    for key in ('site_code', 'site_name', 'country', 'state_province', 'city', 'district',
+                'contact_name', 'contact_phone', 'contact_email', 'timezone', 'address', 'status', 'tenant_id'):
         if key in fields and fields[key] is not None:
             updates.append(f"{key} = ?")
             params.append(fields[key])
     if not updates:
         return get_site(conn, site_id)
+    updates.append('updated_at = ?')
+    params.append(_utc_now())
     params.append(site_id)
     conn.execute(f"UPDATE sites SET {', '.join(updates)} WHERE id = ?", params)
     conn.commit()

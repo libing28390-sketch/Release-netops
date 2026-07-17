@@ -46,12 +46,23 @@ interface Prefix {
   gateway_device_name: string | null;
   gateway_interface_id: string | null;
   traceable: number;
+  created_at?: string;
+  updated_at?: string;
   children?: Prefix[];
 }
 
 interface PrefixManagementTabProps {
   language: string;
   t: (key: string) => string;
+}
+
+function formatPrefixTimestamp(value: string | undefined, language: string): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '—';
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime())
+    ? raw
+    : date.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false });
 }
 
 const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }) => {
@@ -640,6 +651,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             ) : '-'}
           </td>
           <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.site_name || node.site_code || '-'}</td>
+          <td className="px-4 py-4 text-xs text-gray-500 whitespace-nowrap">{formatPrefixTimestamp(node.created_at, language)}</td>
           <td className="px-4 py-4">
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
               node.status === 'active' 
@@ -800,6 +812,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="px-4 py-4">{zh ? '所属VLAN' : 'VLAN'}</th>
                   <th className="px-4 py-4">{zh ? '关联网关' : 'Gateway'}</th>
                   <th className="px-4 py-4">{zh ? '物理站点' : 'Site'}</th>
+                  <th className="px-4 py-4">{zh ? '创建时间' : 'Created At'}</th>
                   <th className="px-4 py-4">{zh ? '网段状态' : 'Status'}</th>
                   <th className="px-4 py-4">{zh ? '利用率 (已分配/在线/可用)' : 'Utilization'}</th>
                   <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
@@ -810,7 +823,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   treeData.filter(matchFamily).map((node) => renderTreeNode(node, 0))
                 ) : (
                   <tr>
-                    <td colSpan={9} className="py-12 text-center text-xs text-gray-400 font-medium">
+                    <td colSpan={10} className="py-12 text-center text-xs text-gray-400 font-medium">
                       {zh ? '无层次树数据' : 'No subnet structure tree available'}
                     </td>
                   </tr>
@@ -836,6 +849,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="px-4 py-4">{zh ? '所属VLAN' : 'VLAN'}</th>
                   <th className="px-4 py-4">{zh ? '关联网关' : 'Gateway'}</th>
                   <th className="px-4 py-4">{zh ? '物理站点' : 'Site'}</th>
+                  <th className="px-4 py-4">{zh ? '创建时间' : 'Created At'}</th>
                   <th className="px-4 py-4">{zh ? '网段状态' : 'Status'}</th>
                   <th className="px-4 py-4">{zh ? '利用率 (已分配/在线/可用)' : 'Utilization'}</th>
                   <th className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</th>
@@ -900,6 +914,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                           ) : '-'}
                         </td>
                         <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.site_name || node.site_code || '-'}</td>
+                        <td className="px-4 py-4 text-xs text-gray-500 whitespace-nowrap">{formatPrefixTimestamp(node.created_at, language)}</td>
                         <td className="px-4 py-4">
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                             node.status === 'active' 
@@ -951,7 +966,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   })
                 ) : (
                   <tr>
-                    <td colSpan={11} className="py-12 text-center text-xs text-gray-400 font-medium">
+                    <td colSpan={12} className="py-12 text-center text-xs text-gray-400 font-medium">
                       {zh ? '无前缀网段数据' : 'No prefixes data registered'}
                     </td>
                   </tr>

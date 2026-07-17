@@ -215,7 +215,10 @@ def _resolve_device_site_id(conn, site_id: str | None, site_name: str | None) ->
         ).fetchone()
         if row:
             return str(row['id'])
-    return 'site-default'
+    # A deleted/default-free CMDB is valid. Do not return a dangling
+    # site-default identifier; leave the device unassigned until an operator
+    # selects a real site.
+    return ''
 
 
 def _build_ssh_failure_response(hostname: str | None, ip_address: str, error_text: str, probe_output: list[str], probe_stages: list[dict], status_code: int = 400, port: int = 22) -> JSONResponse:

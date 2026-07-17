@@ -395,7 +395,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                 placeholder={language === 'zh' ? '修改密码前请先验证当前密码' : 'Enter current password to change'}
                 className={`w-full rounded-xl px-3 pr-10 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
               />
-              <button type="button" title={showProfilePwd ? '隐藏' : '显示'} onClick={onToggleProfilePassword} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/35 hover:text-black/60'}`}>
+              <button type="button" tabIndex={-1} title={showProfilePwd ? '隐藏' : '显示'} onClick={onToggleProfilePassword} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/35 hover:text-black/60'}`}>
                 {showProfilePwd ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
@@ -414,7 +414,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                 placeholder={language === 'zh' ? '留空则保持原密码不变' : 'Leave empty to keep current password'}
                 className={`w-full rounded-xl px-3 pr-10 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
               />
-              <button type="button" title={showProfilePwd ? '隐藏密码' : '显示密码'} onClick={onToggleProfilePassword} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/35 hover:text-black/60'}`}>
+              <button type="button" tabIndex={-1} title={showProfilePwd ? '隐藏密码' : '显示密码'} onClick={onToggleProfilePassword} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/35 hover:text-black/60'}`}>
                 {showProfilePwd ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
@@ -452,7 +452,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   placeholder="6位数字密码 (留空保持不变)"
                   className={`w-full rounded-xl px-3 pr-10 py-2.5 text-lg font-black tracking-widest outline-none border transition-all ${isDark ? 'bg-black/20 border-orange-500/30 text-white placeholder-white/20 focus:border-orange-500/60' : 'bg-white border-orange-300 text-orange-900 placeholder-black/20 focus:border-orange-500/60'}`}
                 />
-                <button type="button" title={showFixedPin ? '隐藏' : '显示'} onClick={() => setShowFixedPin(!showFixedPin)} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-orange-500 hover:text-orange-700'}`}>
+                <button type="button" tabIndex={-1} title={showFixedPin ? '隐藏' : '显示'} onClick={() => setShowFixedPin(!showFixedPin)} className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/40 hover:text-white/70' : 'text-orange-500 hover:text-orange-700'}`}>
                   {showFixedPin ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>

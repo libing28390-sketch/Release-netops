@@ -286,7 +286,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ language, onComplete, onLangu
                             placeholder={zh ? '输入当前密码（默认 admin）' : 'Enter current password (default: admin)'}
                             className="w-full rounded-xl border border-black/10 bg-white py-3 pl-9 pr-10 text-sm outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10"
                           />
-                          <button type="button" onClick={() => setShowPwd(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
+                          <button type="button" tabIndex={-1} onClick={() => setShowPwd(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
                             {showPwd ? <EyeOff size={15} /> : <Eye size={15} />}
                           </button>
                         </div>

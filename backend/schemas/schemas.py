@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional, List
 from datetime import datetime
 import ipaddress as _ipaddress
@@ -680,6 +680,63 @@ class CredentialUpdate(BaseModel):
 
 _SITE_STATUSES = {'active', 'planned', 'staging', 'decommissioned', 'offline'}
 
+# Contact information is part of the operational site record.  Keep the
+# rules deliberately conservative: names are human names (not arbitrary
+# numbers), phone numbers support Chinese mobile/landline and E.164-style
+# international values, and email follows the usual mailbox@domain shape.
+_CONTACT_NAME_RE = _re.compile(r"^[\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z· .'-]{1,49}$")
+_CONTACT_PHONE_RE = _re.compile(r"^(?:1[3-9]\d{9}|0\d{2,3}-?\d{7,8}|\+?[1-9]\d{6,14})$")
+_CONTACT_PHONE_INTERNATIONAL_RE = _re.compile(r"^\+[1-9]\d{7,14}$")
+_CHINA_COUNTRY_VALUES = {'', '中国', 'China', 'CN'}
+_CONTACT_EMAIL_RE = _re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
+
+
+def _contact_name(value: Optional[str], *, required: bool) -> Optional[str]:
+    if value is None:
+        if required:
+            raise ValueError('contact_name is required')
+        return value
+    value = value.strip()
+    if not value:
+        if required:
+            raise ValueError('contact_name is required')
+        return ''
+    if len(value) > 50 or not _CONTACT_NAME_RE.fullmatch(value):
+        raise ValueError('contact_name must be 2-50 Chinese or English letters')
+    return value
+
+
+def _contact_phone(value: Optional[str], *, required: bool, international_required: bool = False) -> Optional[str]:
+    if value is None:
+        if required:
+            raise ValueError('contact_phone is required')
+        return value
+    value = value.strip()
+    if not value:
+        if required:
+            raise ValueError('contact_phone is required')
+        return ''
+    if len(value) > 32 or not _CONTACT_PHONE_RE.fullmatch(value):
+        raise ValueError('contact_phone must be an 11-digit mobile, valid landline, or international number')
+    if international_required and not _CONTACT_PHONE_INTERNATIONAL_RE.fullmatch(value):
+        raise ValueError('contact_phone must include an international country calling code, for example +8613800000000')
+    return value
+
+
+def _contact_email(value: Optional[str], *, required: bool) -> Optional[str]:
+    if value is None:
+        if required:
+            raise ValueError('contact_email is required')
+        return value
+    value = value.strip()
+    if not value:
+        if required:
+            raise ValueError('contact_email is required')
+        return ''
+    if len(value) > 254 or not _CONTACT_EMAIL_RE.fullmatch(value):
+        raise ValueError('contact_email must be a valid email address')
+    return value
+
 
 class TenantCreate(BaseModel):
     name: str
@@ -717,6 +774,10 @@ class SiteCreate(BaseModel):
     country: str = ''
     state_province: str = ''
     city: str = ''
+    district: str = ''
+    contact_name: str
+    contact_phone: str
+    contact_email: str
     timezone: str = 'Asia/Shanghai'
     address: str = ''
     status: str = 'active'
@@ -742,6 +803,27 @@ class SiteCreate(BaseModel):
             raise ValueError('site_code must be empty or 1-100 characters')
         return v
 
+    @field_validator('contact_name')
+    @classmethod
+    def validate_contact_name(cls, v: str) -> str:
+        return _contact_name(v, required=True) or ''
+
+    @field_validator('contact_phone')
+    @classmethod
+    def validate_contact_phone(cls, v: str) -> str:
+        return _contact_phone(v, required=True, international_required=True) or ''
+
+    @field_validator('contact_email')
+    @classmethod
+    def validate_contact_email(cls, v: str) -> str:
+        return _contact_email(v, required=True) or ''
+
+    @model_validator(mode='after')
+    def validate_phone_for_country(self):
+        if self.country in _CHINA_COUNTRY_VALUES and not _re.fullmatch(r'\+86[1-9]\d{10}', self.contact_phone):
+            raise ValueError('contact_phone must be +86 followed by an 11-digit Chinese mobile number')
+        return self
+
     @field_validator('status')
     @classmethod
     def validate_status(cls, v: str) -> str:
@@ -756,6 +838,10 @@ class SiteUpdate(BaseModel):
     country: Optional[str] = None
     state_province: Optional[str] = None
     city: Optional[str] = None
+    district: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_email: Optional[str] = None
     timezone: Optional[str] = None
     address: Optional[str] = None
     status: Optional[str] = None
@@ -769,6 +855,21 @@ class SiteUpdate(BaseModel):
         if v not in _SITE_STATUSES:
             raise ValueError(f'status must be one of {sorted(_SITE_STATUSES)}')
         return v
+
+    @field_validator('contact_name')
+    @classmethod
+    def validate_contact_name(cls, v: Optional[str]) -> Optional[str]:
+        return _contact_name(v, required=False)
+
+    @field_validator('contact_phone')
+    @classmethod
+    def validate_contact_phone(cls, v: Optional[str]) -> Optional[str]:
+        return _contact_phone(v, required=False)
+
+    @field_validator('contact_email')
+    @classmethod
+    def validate_contact_email(cls, v: Optional[str]) -> Optional[str]:
+        return _contact_email(v, required=False)
 
 
 class VrfCreate(BaseModel):

@@ -348,6 +348,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
                           className="w-full rounded-xl border border-white/[0.08] py-3 pl-11 pr-12 text-sm text-white placeholder-white/15 outline-none transition-all bg-white/[0.04] focus:bg-white/[0.07] focus:border-[#06b6d4]/50 focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)]"
                         />
                         <button
+                          tabIndex={-1}
                           type="button"
                           onClick={() => setShowPwd(!showPwd)}
                           aria-label={showPwd ? 'Hide password' : 'Show password'}
