@@ -20,6 +20,7 @@ from services.operational_data_service import collect_operational_data
 from services.network_access_limiter import get_network_access_limiter
 from services.collection_status_service import record_collection_result
 from services.vault_service import resolve_collector_credentials
+from services import tag_service
 from core.crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,19 @@ def _db_many(sql, rows):
     try:
         conn.executemany(sql, rows)
         conn.commit()
+    finally:
+        conn.close()
+
+
+def _sync_device_status_tag(device_id: str, status: str) -> None:
+    """Synchronize the fixed availability tag without duplicating steady-state writes."""
+    conn = get_db_connection()
+    try:
+        tag_service.sync_device_status_tag(conn, device_id, status)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.warning("Failed to synchronize availability tag for device %s", device_id, exc_info=True)
     finally:
         conn.close()
 
@@ -939,6 +953,7 @@ async def _process_device_raw(device, cycle_tick: int):
                 SET status = ?, cpu_usage = ?, memory_usage = ?
                 WHERE id = ?
             ''', ('offline', 0, 0, dev_id))
+            _sync_device_status_tag(dev_id, 'offline')
             prev_intf_octets.pop(dev_id, None)
 
         if not ip or ip == '0.0.0.0':
@@ -967,6 +982,7 @@ async def _process_device_raw(device, cycle_tick: int):
                     )
                 else:
                     _db_quick('UPDATE devices SET status = ? WHERE id = ?', (new_status, dev_id))
+                    _sync_device_status_tag(dev_id, new_status)
                     set_alert_state(
                         f"dev_offline:{dev_id}", False, 'info', 'Device Offline',
                         f"{dev_label} ({ip}) 已恢复连接",
@@ -1535,6 +1551,7 @@ async def process_device_fast(device):
             SET status = ?, cpu_usage = ?, memory_usage = ?
             WHERE id = ?
         """, ('offline', 0, 0, dev_id))
+        _sync_device_status_tag(dev_id, 'offline')
         prev_intf_octets.pop(dev_id, None)
 
     if not ip or ip == '0.0.0.0':
@@ -1578,6 +1595,7 @@ async def process_device_fast(device):
                 )
             else:
                 _db_quick('UPDATE devices SET status = ? WHERE id = ?', (new_status, dev_id))
+                _sync_device_status_tag(dev_id, new_status)
                 set_alert_state(
                     f"dev_offline:{dev_id}", False, 'info', 'Device Offline',
                     f"{dev_label} ({ip}) 已恢复连接",

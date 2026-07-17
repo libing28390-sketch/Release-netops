@@ -673,7 +673,7 @@ export const getVendorFromPlatform = (platform: string) => {
 
 // ─── Tag System Types ────────────────────────
 
-export type TagCategory = 'device_type' | 'vendor' | 'os' | 'role' | 'env' | 'function' | 'custom';
+export type TagCategory = 'device_type' | 'vendor' | 'os' | 'role' | 'env' | 'function' | 'status' | 'custom';
 
 export interface TagDefinition {
   id: string;
@@ -709,5 +709,6 @@ export const TAG_CATEGORY_LABELS: Record<TagCategory, { en: string; zh: string }
   role:        { en: 'Role',        zh: '角色' },
   env:         { en: 'Environment', zh: '环境' },
   function:    { en: 'Function',    zh: '功能' },
+  status:      { en: 'Availability', zh: '在线状态' },
   custom:      { en: 'Custom',      zh: '自定义' },
 };

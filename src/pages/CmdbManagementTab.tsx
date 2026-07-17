@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Edit2, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff } from 'lucide-react';
 import PageHero from '../components/PageHero';
@@ -59,7 +59,7 @@ interface FieldDef {
   label: string;
   labelEn: string;
   type?: 'text' | 'number' | 'password' | 'select';
-  options?: { value: string; label: string }[];
+  options?: { value: string; label: string; labelEn?: string }[];
   required?: boolean;
   placeholder?: string;
   /** Hidden from the table list view */
@@ -71,11 +71,11 @@ interface FieldDef {
 }
 
 const SITE_STATUS_OPTS = [
-  { value: 'active', label: 'active' },
-  { value: 'planned', label: 'planned' },
-  { value: 'staging', label: 'staging' },
-  { value: 'decommissioned', label: 'decommissioned' },
-  { value: 'offline', label: 'offline' },
+  { value: 'active', label: '在用', labelEn: 'Active' },
+  { value: 'planned', label: '规划中', labelEn: 'Planned' },
+  { value: 'staging', label: '建设中', labelEn: 'Staging' },
+  { value: 'decommissioned', label: '已退役', labelEn: 'Decommissioned' },
+  { value: 'offline', label: '离线', labelEn: 'Offline' },
 ];
 
 const CRED_TYPE_OPTS = [
@@ -91,6 +91,177 @@ const VLAN_STATUS_OPTS = [
   { value: 'reserved', label: 'reserved' },
   { value: 'deprecated', label: 'deprecated' },
 ];
+
+interface GeoCountry { name: string; isoCode: string }
+interface GeoState { name: string; isoCode: string; countryCode: string }
+interface GeoCity { name: string; stateCode: string; countryCode: string }
+interface GeoCatalog {
+  countries: GeoCountry[];
+  states: GeoState[];
+}
+
+async function fetchLocalGeoData<T>(file: string): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(`/data/geo/${file}`, { signal: controller.signal });
+    if (!response.ok) throw new Error(`Geo data request failed: ${response.status}`);
+    return await response.json() as T;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
+}
+
+const CHINA_STATE_LABELS: Record<string, string> = {
+  AH: '安徽', BJ: '北京', CQ: '重庆', FJ: '福建', GS: '甘肃', GD: '广东', GX: '广西', GZ: '贵州',
+  HI: '海南', HE: '河北', HL: '黑龙江', HA: '河南', HK: '香港', HB: '湖北', HN: '湖南', IM: '内蒙古',
+  JS: '江苏', JX: '江西', JL: '吉林', LN: '辽宁', MO: '澳门', NX: '宁夏', QH: '青海', SN: '陕西',
+  SD: '山东', SH: '上海', SX: '山西', SC: '四川', TW: '台湾', TJ: '天津', XJ: '新疆', XZ: '西藏',
+  YN: '云南', ZJ: '浙江',
+};
+
+function countryDisplayName(country: GeoCountry): string {
+  try {
+    return new Intl.DisplayNames(['zh-CN'], { type: 'region' }).of(country.isoCode) || country.name;
+  } catch {
+    return country.name;
+  }
+}
+
+function stateDisplayName(state: GeoState): string {
+  return state.countryCode === 'CN' ? (CHINA_STATE_LABELS[state.isoCode] || state.name) : state.name;
+}
+
+const CHINA_CITY_LABELS: Record<string, string> = {
+  Beijing: '北京', Shanghai: '上海', Tianjin: '天津', Chongqing: '重庆',
+  Guangzhou: '广州', Shenzhen: '深圳', Zhuhai: '珠海', Dongguan: '东莞', Foshan: '佛山',
+  Hangzhou: '杭州', Ningbo: '宁波', Wenzhou: '温州', Nanjing: '南京', Suzhou: '苏州',
+  Wuxi: '无锡', Xuzhou: '徐州', Wuhan: '武汉', Changsha: '长沙', Zhengzhou: '郑州',
+  Jinan: '济南', Qingdao: '青岛', Shenyang: '沈阳', Dalian: '大连', Harbin: '哈尔滨',
+  Changchun: '长春', XiAn: '西安', Xian: '西安', Chengdu: '成都', Kunming: '昆明',
+  Guiyang: '贵阳', Nanning: '南宁', Haikou: '海口', Fuzhou: '福州', Xiamen: '厦门',
+  Hefei: '合肥', Nanchang: '南昌', Taiyuan: '太原', Shijiazhuang: '石家庄',
+  Hohhot: '呼和浩特', Urumqi: '乌鲁木齐', Lanzhou: '兰州', Xining: '西宁',
+  Yinchuan: '银川', Lhasa: '拉萨', Hainan: '海南', HongKong: '香港', Macau: '澳门',
+  Taipei: '台北', Kaohsiung: '高雄', Taichung: '台中', Tainan: '台南',
+};
+
+function cityDisplayName(city: GeoCity): string {
+  if (city.countryCode !== 'CN') return city.name;
+  return CHINA_CITY_LABELS[city.name.replace(/[\s-]/g, '')] || city.name;
+}
+
+interface GeoSelectOption {
+  value: string;
+  label: string;
+  searchText?: string;
+}
+
+interface SearchableGeoSelectProps {
+  value: string;
+  options: GeoSelectOption[];
+  placeholder: string;
+  emptyText: string;
+  allowCustom?: boolean;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}
+
+const SearchableGeoSelect: React.FC<SearchableGeoSelectProps> = ({
+  value, options, placeholder, emptyText, disabled, onChange,
+  allowCustom = false,
+}) => {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const selected = options.find(option => option.value === value);
+  const displayValue = selected?.label || value;
+  const filteredOptions = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    if (!normalized) return options;
+    return options.filter(option => `${option.label} ${option.value} ${option.searchText || ''}`.toLocaleLowerCase().includes(normalized));
+  }, [options, query]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setQuery('');
+      }
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [open]);
+
+  const choose = (next: string) => {
+    onChange(next);
+    setOpen(false);
+    setQuery('');
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      <div className={`flex items-center rounded-xl border bg-white transition-all ${open ? 'border-[#06b6d4]/60 ring-2 ring-[#06b6d4]/10' : 'border-black/10'} ${disabled ? 'bg-slate-50' : ''}`}>
+        <Search size={14} className="ml-3 shrink-0 text-black/35" />
+        <input
+          value={open ? query : displayValue}
+          placeholder={open ? '输入名称或拼音搜索…' : placeholder}
+          disabled={disabled}
+          onFocus={() => { setOpen(true); setQuery(''); }}
+          onChange={event => { setOpen(true); setQuery(event.target.value); }}
+          onKeyDown={event => {
+            if (event.key === 'Escape') { setOpen(false); setQuery(''); }
+            if (event.key === 'Enter' && (filteredOptions[0] || (allowCustom && query.trim()))) {
+              choose(filteredOptions[0]?.value || query.trim());
+            }
+          }}
+          className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm text-[#164e63] outline-none disabled:cursor-not-allowed disabled:text-black/35"
+        />
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => { setOpen(previous => !previous); setQuery(''); }}
+          className="px-3 py-2 text-black/35 hover:text-[#0891b2] disabled:cursor-not-allowed"
+          aria-label="打开选项"
+        >
+          <span className="text-xs">⌄</span>
+        </button>
+      </div>
+      {open && !disabled && (
+        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-[120] max-h-60 overflow-y-auto rounded-xl border border-black/10 bg-white p-1.5 shadow-xl">
+          <button type="button" onClick={() => choose('')} className={`w-full rounded-lg px-3 py-2 text-left text-xs transition-colors ${!value ? 'bg-cyan-50 text-cyan-700' : 'text-black/50 hover:bg-slate-50'}`}>
+            {placeholder}
+          </button>
+          {filteredOptions.map(option => (
+            <button
+              type="button"
+              key={`${option.value}-${option.label}`}
+              onClick={() => choose(option.value)}
+              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors ${option.value === value ? 'bg-cyan-50 text-cyan-700' : 'text-[#164e63] hover:bg-slate-50'}`}
+            >
+              <span className="truncate">{option.label}</span>
+              {option.value === value && <Check size={14} className="shrink-0" />}
+            </button>
+          ))}
+          {allowCustom && query.trim() && !filteredOptions.some(option => option.value.toLocaleLowerCase() === query.trim().toLocaleLowerCase()) && (
+            <button type="button" onClick={() => choose(query.trim())} className="mt-1 w-full rounded-lg border-t border-black/5 px-3 py-2 text-left text-xs text-cyan-700 hover:bg-cyan-50">
+              使用“{query.trim()}”作为自定义值
+            </button>
+          )}
+          {!filteredOptions.length && <div className="px-3 py-3 text-xs text-black/40">{emptyText}</div>}
+        </div>
+      )}
+    </div>
+  );
+};
+
+function matchesGeoValue(value: string, ...candidates: string[]): boolean {
+  const normalized = value.trim().toLowerCase();
+  return Boolean(normalized) && candidates.some(candidate => candidate.trim().toLowerCase() === normalized);
+}
+
+const CHINA_LEGACY_COUNTRY_VALUES = new Set(['中国', 'China', 'CN', '台湾', 'Taiwan', 'TW', '香港', 'Hong Kong', 'HK', '澳门', 'Macau', 'MO']);
 
 const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const zh = language !== 'en';
@@ -111,6 +282,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const [visiblePasswordFields, setVisiblePasswordFields] = useState<Record<string, boolean>>({});
   const [form, setForm] = useState<Record<string, any>>({});
   const [confirmDelete, setConfirmDelete] = useState<any | null>(null);
+  const [siteReplacementId, setSiteReplacementId] = useState('');
+  const [siteDeleteError, setSiteDeleteError] = useState('');
+  const [geoCatalog, setGeoCatalog] = useState<GeoCatalog | null>(null);
+  const [geoCityCache, setGeoCityCache] = useState<Record<string, GeoCity[]>>({});
+  const [geoLoading, setGeoLoading] = useState(false);
+  const [geoCityLoading, setGeoCityLoading] = useState(false);
+  const [geoError, setGeoError] = useState('');
+  const [geoCityError, setGeoCityError] = useState('');
   const [search, setSearch] = useState('');
   const readOnlyTabs = useMemo(() => new Set<EntityKey>(['devices', 'interfaces']), []);
   const isReadOnlyTab = readOnlyTabs.has(tab);
@@ -130,9 +309,121 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   ];
 
   const siteOptions = useMemo(
-    () => [{ value: '', label: zh ? '（无）' : '(none)' }, ...sites.map(s => ({ value: s.id, label: `${s.site_code} · ${s.site_name}` }))],
+    () => [{ value: '', label: '（无）', labelEn: '(none)' }, ...sites.map(s => ({ value: s.id, label: `${s.site_code} · ${s.site_name}`, labelEn: `${s.site_code} · ${s.site_name}` }))],
     [sites, zh]
   );
+
+  useEffect(() => {
+    if (!modalOpen || tab !== 'sites' || geoCatalog) return;
+    let cancelled = false;
+    setGeoLoading(true);
+    setGeoError('');
+    Promise.all([
+      fetchLocalGeoData<GeoCountry[]>('countries.json'),
+      fetchLocalGeoData<GeoState[]>('states.json'),
+    ])
+      .then(([countries, states]) => {
+        if (cancelled) return;
+        setGeoCatalog({ countries, states });
+      })
+      .catch(() => {
+        if (!cancelled) setGeoError(zh ? '全球地理数据加载失败，请刷新页面重试。' : 'Failed to load geographic data. Refresh and retry.');
+      })
+      .finally(() => {
+        if (!cancelled) setGeoLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [geoCatalog, modalOpen, tab, zh]);
+
+  const selectedGeoCountry = useMemo(() => {
+    if (!geoCatalog || !form.country) return undefined;
+    if (CHINA_LEGACY_COUNTRY_VALUES.has(String(form.country).trim())) {
+      return geoCatalog.countries.find(country => country.isoCode === 'CN');
+    }
+    return geoCatalog.countries.find(country => matchesGeoValue(
+      String(form.country), country.name, country.isoCode, countryDisplayName(country)
+    ));
+  }, [form.country, geoCatalog]);
+
+  useEffect(() => {
+    const countryCode = selectedGeoCountry?.isoCode;
+    if (!modalOpen || tab !== 'sites' || !countryCode || countryCode in geoCityCache) return;
+    let cancelled = false;
+    setGeoCityLoading(true);
+    setGeoCityError('');
+    fetchLocalGeoData<GeoCity[]>(`cities/${countryCode}.json`)
+      .then(cities => {
+        if (!cancelled) setGeoCityCache(previous => ({ ...previous, [countryCode]: cities }));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          // A country may legitimately have no city catalog in the bundled
+          // source. Do not disable the whole site form for that one field.
+          setGeoCityCache(previous => ({ ...previous, [countryCode]: [] }));
+          setGeoCityError(zh ? '该国家暂无可用城市目录，可直接手动填写。' : 'No city catalog is available for this country; enter a city manually.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setGeoCityLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [geoCityCache, modalOpen, selectedGeoCountry, tab, zh]);
+
+  const geoStates = useMemo(
+    () => selectedGeoCountry ? geoCatalog?.states.filter(state => state.countryCode === selectedGeoCountry.isoCode) || [] : [],
+    [geoCatalog, selectedGeoCountry]
+  );
+
+  const selectedGeoState = useMemo(() => {
+    if (!form.state_province) return undefined;
+    return geoStates.find(state => matchesGeoValue(
+      String(form.state_province), state.name, state.isoCode, stateDisplayName(state)
+    ));
+  }, [form.state_province, geoStates]);
+
+  const geoCities = useMemo(
+    () => {
+      if (!selectedGeoCountry) return [];
+      const allCities = geoCityCache[selectedGeoCountry.isoCode] || [];
+      // Some countries do not expose a province/state layer. In that case
+      // the city picker should still be usable instead of staying empty.
+      if (!geoStates.length) return allCities;
+      if (!selectedGeoState) return [];
+      return allCities.filter(city => city.stateCode === selectedGeoState.isoCode);
+    },
+    [geoCityCache, geoStates, selectedGeoCountry, selectedGeoState]
+  );
+
+  const geoSelectOptions = useMemo(() => {
+    const addCurrentValue = (options: GeoSelectOption[], key: string) => {
+      const current = String(form[key] || '').trim();
+      if (current && !options.some(option => option.value === current)) {
+        const matching = key === 'country'
+          ? geoCatalog?.countries.find(country => matchesGeoValue(current, country.name, country.isoCode, countryDisplayName(country)))
+          : undefined;
+        options.unshift({
+          value: current,
+          label: matching ? countryDisplayName(matching) : `${current}（当前值）`,
+          searchText: matching?.name,
+        });
+      }
+      return options;
+    };
+    return {
+      country: addCurrentValue(
+        (geoCatalog?.countries || []).map(country => ({ value: countryDisplayName(country), label: countryDisplayName(country), searchText: country.name })),
+        'country'
+      ),
+      state_province: addCurrentValue(
+        geoStates.map(state => ({ value: stateDisplayName(state), label: stateDisplayName(state), searchText: state.name })),
+        'state_province'
+      ),
+      city: addCurrentValue(
+        geoCities.map(city => ({ value: city.name, label: cityDisplayName(city), searchText: city.name })),
+        'city'
+      ),
+    };
+  }, [form, geoCatalog, geoCities, geoStates]);
 
   const fieldDefs: Record<EntityKey, FieldDef[]> = useMemo(() => ({
     credentials: [
@@ -151,7 +442,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       { key: 'platform', label: '平台', labelEn: 'Platform', hideInForm: true },
       { key: 'role', label: '角色', labelEn: 'Role', hideInForm: true },
       { key: 'status', label: '状态', labelEn: 'Status', hideInForm: true },
-      { key: 'site', label: '站点', labelEn: 'Site', hideInForm: true },
+      { key: 'site_id', label: '站点', labelEn: 'Site', hideInForm: true },
       { key: 'asset_tag', label: '资产标签', labelEn: 'Asset Tag', hideInForm: true },
       { key: 'interface_count', label: '接口数', labelEn: 'Interfaces', hideInForm: true },
       { key: 'ip_count', label: 'IP数', labelEn: 'IPs', hideInForm: true },
@@ -171,13 +462,15 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       { key: 'link_count', label: '链路数', labelEn: 'Links', hideInForm: true },
     ],
     sites: [
-      { key: 'site_code', label: '站点编码', labelEn: 'Site Code', required: true },
+      { key: 'site_code', label: '站点编码', labelEn: 'Site Code', hideInForm: true, hideInTable: true },
       { key: 'site_name', label: '站点名称', labelEn: 'Site Name', required: true },
       { key: 'country', label: '国家', labelEn: 'Country' },
+      { key: 'state_province', label: '省份 / 州', labelEn: 'Province / State' },
       { key: 'city', label: '城市', labelEn: 'City' },
       { key: 'timezone', label: '时区', labelEn: 'Timezone', placeholder: 'Asia/Shanghai' },
-      { key: 'address', label: '地址', labelEn: 'Address', hideInTable: true },
+      { key: 'address', label: '详细地址', labelEn: 'Address' },
       { key: 'status', label: '状态', labelEn: 'Status', type: 'select', options: SITE_STATUS_OPTS },
+      { key: 'created_at', label: '创建时间', labelEn: 'Created At', hideInForm: true },
     ],
     vrfs: [
       { key: 'vrf_name', label: 'VRF 名称', labelEn: 'VRF Name', required: true },
@@ -250,6 +543,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     fieldDefs[tab].forEach(fd => {
       if (fd.hideInForm) return;
       if (fd.secretFlag) f[fd.key] = ''; // never prefill secrets
+      else if (tab === 'sites' && fd.key === 'country' && CHINA_LEGACY_COUNTRY_VALUES.has(String(row[fd.key] ?? '').trim())) f[fd.key] = '中国';
       else f[fd.key] = row[fd.key] ?? '';
     });
     setForm(f);
@@ -296,13 +590,30 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     if (!confirmDelete) return;
     setError('');
     try {
-      await apiSend(endpointFor(tab, idOf(confirmDelete)), 'DELETE');
+      let url = endpointFor(tab, idOf(confirmDelete));
+      if (tab === 'sites' && siteReplacementId) {
+        url += `?replacement_site_id=${encodeURIComponent(siteReplacementId)}`;
+      }
+      await apiSend(url, 'DELETE');
       setConfirmDelete(null);
+      setSiteReplacementId('');
+      setSiteDeleteError('');
       await load();
     } catch (e: any) {
-      setError(e.message || String(e));
-      setConfirmDelete(null);
+      const message = e.message || String(e);
+      if (tab === 'sites' && message.includes('still referenced')) {
+        setSiteDeleteError(message);
+      } else {
+        setError(message);
+        setConfirmDelete(null);
+      }
     }
+  };
+
+  const openDeleteConfirm = (row: any) => {
+    setConfirmDelete(row);
+    setSiteReplacementId('');
+    setSiteDeleteError('');
   };
 
   const tableColumns = fieldDefs[tab].filter(f => !f.hideInTable);
@@ -487,11 +798,19 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     if (fd.key === 'status') {
       const val = row[fd.key] || 'active';
       const badgeClass = tab === 'sites' || tab === 'devices' ? getSiteStatusStyle(val) : getVlanStatusStyle(val);
+      const siteStatusLabel = SITE_STATUS_OPTS.find(option => option.value === val);
       return (
         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${badgeClass}`}>
-          {val}
+          {zh && siteStatusLabel ? siteStatusLabel.label : (!zh && siteStatusLabel ? siteStatusLabel.labelEn : val)}
         </span>
       );
+    }
+    if (tab === 'sites' && fd.key === 'city') {
+      const val = String(row.city || '').trim();
+      if (!val) return <span className="text-black/30 dark:text-white/30">—</span>;
+      const isChina = CHINA_LEGACY_COUNTRY_VALUES.has(String(row.country || '').trim());
+      const display = isChina ? cityDisplayName({ name: val, stateCode: '', countryCode: 'CN' }) : val;
+      return <span>{display}</span>;
     }
     if (fd.key === 'oper_status' || fd.key === 'admin_status') {
       const val = row[fd.key] || 'unknown';
@@ -671,7 +990,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
                             <Edit2 size={13} />
                           </button>
                           <button
-                            onClick={() => setConfirmDelete(row)}
+                            onClick={() => openDeleteConfirm(row)}
                             className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-rose-400 shadow-sm hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600 transition-all"
                             title={zh ? '删除' : 'Delete'}
                           >
@@ -711,10 +1030,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
               </h2>
               <button onClick={() => setModalOpen(false)} className="rounded-xl border border-black/10 p-1.5 text-black/55 hover:bg-black/[0.03] transition-colors"><X size={16} /></button>
             </div>
-            
             <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
               {fieldDefs[tab].filter(fd => !fd.hideInForm).map(fd => {
                 const opts = fd.key === 'site_id' ? siteOptions : fd.options;
+                const isGeoField = tab === 'sites' && ['country', 'state_province', 'city'].includes(fd.key);
+                const geoOpts = isGeoField ? geoSelectOptions[fd.key as 'country' | 'state_province' | 'city'] : [];
+                const geoFieldDisabled = geoLoading || Boolean(geoError)
+                  || (fd.key === 'state_province' && !selectedGeoCountry)
+                  || (fd.key === 'city' && (!selectedGeoCountry || (geoStates.length > 0 && !selectedGeoState)));
                 return (
                   <div key={fd.key}>
                     <label className="block text-xs font-semibold mb-1 text-black/50">
@@ -725,13 +1048,38 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
                         </span>
                       )}
                     </label>
-                    {fd.type === 'select' && opts ? (
+                    {isGeoField ? (
+                      <SearchableGeoSelect
+                        value={form[fd.key] ?? ''}
+                        options={geoOpts}
+                        allowCustom={fd.key === 'city'}
+                        disabled={geoFieldDisabled}
+                        placeholder={
+                          geoLoading ? '正在加载国家和省州数据…'
+                            : geoCityLoading && fd.key === 'city' ? '正在加载城市数据…'
+                              : fd.key === 'state_province' && !selectedGeoCountry ? '请先选择国家'
+                                : fd.key === 'city' && geoStates.length > 0 && !selectedGeoState ? '请先选择省份 / 州'
+                                  : geoError ? '地理数据不可用' : `请选择${zh ? fd.label : fd.labelEn}`
+                        }
+                        emptyText={fd.key === 'city' && geoCityError ? geoCityError : fd.key === 'city' && selectedGeoState && !geoCities.length ? '该省份 / 州暂无城市数据，可直接手动填写' : '没有匹配的选项'}
+                        onChange={next => {
+                          if (fd.key === 'country') {
+                            setForm({ ...form, country: next, state_province: '', city: '' });
+                            setGeoError('');
+                          } else if (fd.key === 'state_province') {
+                            setForm({ ...form, state_province: next, city: '' });
+                          } else {
+                            setForm({ ...form, city: next });
+                          }
+                        }}
+                      />
+                    ) : fd.type === 'select' && opts ? (
                       <select
                         value={form[fd.key] ?? ''}
                         onChange={e => setForm({ ...form, [fd.key]: e.target.value })}
                         className="w-full px-3 py-2 rounded-xl text-sm border border-black/10 bg-white text-[#164e63] outline-none focus:border-[#06b6d4]/45 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
                       >
-                        {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        {opts.map(o => <option key={o.value} value={o.value}>{zh ? o.label : (o.labelEn || o.label)}</option>)}
                       </select>
                     ) : fd.type === 'password' ? (
                       <div className="relative">
@@ -766,6 +1114,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
                 );
               })}
             </div>
+            {tab === 'sites' && geoError && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{geoError}</div>
+            )}
             
             {error && (
               <div className="mt-4 px-3 py-2 rounded-xl text-xs flex items-center gap-1.5 border bg-rose-50/10 text-rose-500 border-rose-200/30">
@@ -810,6 +1161,29 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
               </p>
             </div>
             
+            {tab === 'sites' && (
+              <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50/70 p-3 text-left">
+                <div className="text-xs font-semibold text-amber-900">
+                  {zh ? '如站点仍被引用，请先选择迁移目标' : 'If this site is referenced, select a replacement site first'}
+                </div>
+                <select
+                  value={siteReplacementId}
+                  onChange={event => setSiteReplacementId(event.target.value)}
+                  className="mt-2 h-10 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-cyan-500"
+                >
+                  <option value="">{zh ? '不迁移，直接尝试删除' : 'No replacement; try direct deletion'}</option>
+                  {sites.filter(site => site.id !== idOf(confirmDelete)).map(site => (
+                    <option key={site.id} value={site.id}>
+                      {site.site_code} · {site.site_name}
+                    </option>
+                  ))}
+                </select>
+                {siteDeleteError && (
+                  <p className="mt-2 text-xs leading-5 text-rose-600">{siteDeleteError}</p>
+                )}
+              </div>
+            )}
+
             <div className="flex justify-center gap-2 mt-6">
               <button
                 onClick={() => setConfirmDelete(null)}

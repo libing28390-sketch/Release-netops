@@ -31,7 +31,7 @@ export async function createSiteFoundation(input: SiteFoundationInput) {
     : await createTenant(input.tenantName?.trim() || `${input.siteName} Tenant`);
   const site = await createSite({
     site_code: input.siteCode, site_name: input.siteName, tenant_id: tenant.id,
-    country: '', city: '', timezone: 'Asia/Shanghai', address: '', status: 'active',
+    country: '', state_province: input.stateProvince || '', city: '', timezone: 'Asia/Shanghai', address: '', status: 'active',
   });
   const vrf = await createVrf({ vrf_name: input.vrfName, tenant_id: tenant.id, rd: '', description: '' });
   const vlan = await createVlan({

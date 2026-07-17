@@ -48,6 +48,7 @@ const ScheduledJobsTab = lazy(() => import('../pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
 const CmdbManagementTab = lazy(() => import('../pages/CmdbManagementTab'));
+const CmdbAssetManagementTab = lazy(() => import('../pages/CmdbAssetManagementTab'));
 const TagManagementTab = lazy(() => import('../pages/TagManagementTab'));
 const ScriptManagementTab = lazy(() => import('../pages/ScriptManagementTab'));
 const ConfigScheduleTab = lazy(() => import('../pages/ConfigScheduleTab'));
@@ -616,6 +617,8 @@ const AppMainContent: React.FC = () => {
         <Suspense fallback={lazyPanelFallback}>
           {cmdbPage === 'racks' ? (
             <RackManagementTab language={language} t={t} />
+          ) : cmdbPage === 'assets' ? (
+            <CmdbAssetManagementTab language={language} currentUser={currentUser} />
           ) : (
             <CmdbManagementTab language={language} cmdbPage={cmdbPage} />
           )}
@@ -1169,13 +1172,13 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'assets' && isFeatureEnabled('assets') && (
         <Suspense fallback={lazyPanelFallback}>
-          <AssetManagementTab language={language} t={t} setActiveTab={setActiveTab} />
+          <AssetManagementTab language={language} t={t} setActiveTab={setActiveTab} currentUser={currentUser} />
         </Suspense>
       )}
 
       {activeTab === 'tags' && (
         <Suspense fallback={lazyPanelFallback}>
-          <TagManagementTab language={language} t={t} />
+          <TagManagementTab language={language} t={t} currentUser={currentUser} />
         </Suspense>
       )}
 

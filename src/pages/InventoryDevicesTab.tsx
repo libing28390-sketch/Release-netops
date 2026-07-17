@@ -397,6 +397,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
                       selectedTagIds={batchTagIds}
                       onChange={setBatchTagIds}
                       language={language}
+                      excludeStatusTags
                     />
                   </div>
                   <div className="px-3 py-2 border-t border-black/5 dark:border-white/8 flex justify-end gap-2">

@@ -1,3 +1,5 @@
+import type { SessionUser } from '../../types';
+
 export interface Asset {
   id: string;
   asset_type: string;
@@ -6,7 +8,7 @@ export interface Asset {
   vendor: string;
   model: string;
   hostname: string;
-  datacenter: string;
+  site_id: string;
   rack: string;
   rack_unit: string;
   u_height?: number;
@@ -18,6 +20,7 @@ export interface Asset {
   uplink_switch: string;
   uplink_port: string;
   status: string;
+  online_status?: 'online' | 'offline' | 'pending' | string;
   lifecycle_status: string;
   asset_origin?: 'new' | 'legacy';
   purchase_date: string;
@@ -31,6 +34,15 @@ export interface Asset {
   snmp_port: string;
   created_at: string;
   updated_at: string;
+  device_id?: string;
+  tags?: Array<{
+    id: string;
+    category: string;
+    value: string;
+    label: string;
+    label_zh: string;
+    color: string;
+  }>;
   admin_username?: string;
   normal_username?: string;
   management_port?: number;
@@ -45,7 +57,7 @@ export interface AssetSummary {
   by_type: Record<string, number>;
   by_status: Record<string, number>;
   by_vendor: Record<string, number>;
-  by_datacenter: Record<string, number>;
+  by_site: Record<string, number>;
   by_department: Record<string, number>;
   warranty_expiring_soon: number;
 }
@@ -54,7 +66,8 @@ export interface AssetManagementTabProps {
   language: string;
   t: (key: string) => string;
   setActiveTab?: (tab: string) => void;
+  currentUser?: Pick<SessionUser, 'role'>;
 }
 
-export type ViewMode = 'table' | 'group' | 'topology';
-export type GroupBy = 'datacenter' | 'department' | 'vendor';
+export type ViewMode = 'table' | 'group' | 'tree' | 'topology';
+export type GroupBy = 'site_id' | 'department' | 'vendor' | 'device_category' | 'status';

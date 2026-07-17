@@ -119,7 +119,7 @@ export const AssetImportValidationModal: React.FC<AssetImportValidationModalProp
               <table className="w-full text-xs text-left border-collapse">
                 <thead>
                   <tr className="bg-black/[0.03] border-b border-black/8 font-bold text-black/50">
-                    <th className="px-4 py-2.5">{zh ? '数据中心' : 'Datacenter'}</th>
+                    <th className="px-4 py-2.5">{zh ? '站点' : 'Site'}</th>
                     <th className="px-4 py-2.5">{zh ? '缺失机柜名称' : 'Missing Rack'}</th>
                     <th className="px-4 py-2.5 text-center">{zh ? '影响行数' : 'Rows Affected'}</th>
                     <th className="px-4 py-2.5 w-[280px]">{zh ? '处理策略' : 'Resolution Action'}</th>
@@ -130,7 +130,7 @@ export const AssetImportValidationModal: React.FC<AssetImportValidationModalProp
                     const key = `${mr.datacenter}|${mr.rack}`;
                     const current = resolutions[key] || { action: 'create' };
                     // Filter existing racks in the same DC
-                    const dcRacks = existingRacks.filter(r => r.datacenter === mr.datacenter);
+        const dcRacks = existingRacks.filter(r => r.site_id ? r.site_id === mr.datacenter : r.datacenter === mr.datacenter);
 
                     return (
                       <tr key={key} className="border-b border-black/5 hover:bg-black/[0.01]">

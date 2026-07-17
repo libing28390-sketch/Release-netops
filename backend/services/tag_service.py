@@ -16,6 +16,84 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+_STATUS_TAG_VALUES = ('online', 'offline')
+
+
+def _ensure_status_tag_ids(conn) -> dict[str, str]:
+    """Return the two system-managed availability tag IDs, creating missing definitions."""
+    now = datetime.now(timezone.utc).isoformat()
+    definitions = {
+        'online': ('Online', '在线', '#10b981', 1),
+        'offline': ('Offline', '离线', '#ef4444', 2),
+    }
+    for value, (label, label_zh, color, sort_order) in definitions.items():
+        conn.execute(
+            '''
+            INSERT INTO tag_definitions
+                (id, category, value, label, label_zh, color, icon, description, sort_order, built_in, created_at)
+            VALUES (?, 'status', ?, ?, ?, ?, '', 'System-managed availability tag', ?, 1, ?)
+            ON CONFLICT (category, value) DO NOTHING
+            ''',
+            (f'builtin-status-{value}', value, label, label_zh, color, sort_order, now),
+        )
+    rows = conn.execute(
+        "SELECT id, value FROM tag_definitions WHERE category = 'status' AND value IN ('online', 'offline')"
+    ).fetchall()
+    return {str(row['value']): str(row['id']) for row in rows}
+
+
+def _system_status_value(device_status: str | None) -> str:
+    """Map every non-online state (including pending) to the fixed offline tag."""
+    return 'online' if str(device_status or '').lower() == 'online' else 'offline'
+
+
+def sync_device_status_tag(conn, device_id: str, device_status: str | None, created_by: str = 'system') -> bool:
+    """Ensure a device has exactly one fixed availability tag.
+
+    The operation is idempotent: when the expected tag is already the only
+    availability tag, it performs no association writes. Callers own the
+    surrounding transaction and must commit it themselves.
+    """
+    tag_ids = _ensure_status_tag_ids(conn)
+    target_value = _system_status_value(device_status)
+    target_id = tag_ids.get(target_value)
+    if not target_id:
+        raise RuntimeError('System availability tag definitions are unavailable')
+
+    current_rows = conn.execute(
+        '''
+        SELECT dt.tag_id
+        FROM device_tags dt
+        JOIN tag_definitions td ON td.id = dt.tag_id
+        WHERE dt.device_id = ? AND td.category = 'status'
+        ''',
+        (device_id,),
+    ).fetchall()
+    current_ids = {str(row['tag_id']) for row in current_rows}
+    if current_ids == {target_id}:
+        return False
+
+    conn.execute(
+        '''DELETE FROM device_tags
+           WHERE device_id = ?
+             AND tag_id IN (SELECT id FROM tag_definitions WHERE category = 'status')''',
+        (device_id,),
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        'INSERT INTO device_tags (device_id, tag_id, created_at, created_by) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING',
+        (device_id, target_id, now, created_by),
+    )
+    return True
+
+
+def sync_all_device_status_tags(conn) -> int:
+    """Repair the fixed availability tag for every device and return changed rows."""
+    rows = conn.execute('SELECT id, status FROM devices').fetchall()
+    changed = sum(sync_device_status_tag(conn, str(row['id']), row['status']) for row in rows)
+    conn.commit()
+    return changed
+
 # ────────────────────────────────────────────────────────────────────
 # Predefined tag seed data — built_in=1, ON CONFLICT DO NOTHING
 # ────────────────────────────────────────────────────────────────────
@@ -46,6 +124,10 @@ BUILTIN_TAGS: list[dict] = [
     {"category": "device_type", "value": "ip-phone",            "label": "IP Phone",            "label_zh": "IP电话",       "icon": "📞", "color": "#10b981", "sort_order": 20},
 
     # ═══════════════════════════════════════════════════════════════
+    # status — 在线状态（系统状态标签）
+    {"category": "status", "value": "online",  "label": "Online",  "label_zh": "在线", "icon": "", "color": "#10b981", "sort_order": 1},
+    {"category": "status", "value": "offline", "label": "Offline", "label_zh": "离线", "icon": "", "color": "#ef4444", "sort_order": 2},
+
     # vendor — 厂商 (网络)
     # ═══════════════════════════════════════════════════════════════
     {"category": "vendor", "value": "cisco",       "label": "Cisco",                 "label_zh": "思科",     "icon": "🔵", "color": "#049FD9", "sort_order": 1},
@@ -309,6 +391,8 @@ def update_tag_definition(conn, tag_id: str, **kwargs) -> dict | None:
     existing = get_tag_definition(conn, tag_id)
     if not existing:
         return None
+    if existing['category'] == 'status':
+        raise ValueError('Availability status tags are system-managed and cannot be edited')
     allowed = ['label', 'label_zh', 'color', 'icon', 'description', 'sort_order']
     if not existing['built_in']:
         allowed += ['category', 'value']
@@ -359,20 +443,30 @@ def get_device_tags(conn, device_id: str) -> list[dict]:
 
 
 def set_device_tags(conn, device_id: str, tag_ids: list[str], created_by: str = '') -> list[dict]:
-    """Replace all tags on a device with the given list. Returns new tag list."""
+    """Replace user-managed tags while preserving the system availability tag."""
+    device = conn.execute('SELECT status FROM devices WHERE id = ?', (device_id,)).fetchone()
+    if not device:
+        raise ValueError('Device not found')
+
+    status_tag_ids = set(_ensure_status_tag_ids(conn).values())
+    requested_tag_ids = [tag_id for tag_id in dict.fromkeys(tag_ids) if tag_id not in status_tag_ids]
     now = datetime.now(timezone.utc).isoformat()
     conn.execute('DELETE FROM device_tags WHERE device_id = ?', (device_id,))
-    for tid in tag_ids:
+    for tid in requested_tag_ids:
         conn.execute(
             'INSERT INTO device_tags (device_id, tag_id, created_at, created_by) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING',
             (device_id, tid, now, created_by),
         )
+    sync_device_status_tag(conn, device_id, device['status'], created_by='system')
     conn.commit()
     return get_device_tags(conn, device_id)
 
 
 def add_device_tag(conn, device_id: str, tag_id: str, created_by: str = '') -> bool:
     """Add a single tag to a device. Returns True if tag was added, False if already existed."""
+    tag = get_tag_definition(conn, tag_id)
+    if tag and tag['category'] == 'status':
+        raise ValueError('Availability status tags are managed by the monitoring service')
     now = datetime.now(timezone.utc).isoformat()
     try:
         conn.execute(
@@ -387,6 +481,9 @@ def add_device_tag(conn, device_id: str, tag_id: str, created_by: str = '') -> b
 
 def remove_device_tag(conn, device_id: str, tag_id: str) -> bool:
     """Remove a single tag from a device."""
+    tag = get_tag_definition(conn, tag_id)
+    if tag and tag['category'] == 'status':
+        raise ValueError('Availability status tags are managed by the monitoring service')
     cursor = conn.execute(
         'DELETE FROM device_tags WHERE device_id = ? AND tag_id = ?',
         (device_id, tag_id),
@@ -397,6 +494,9 @@ def remove_device_tag(conn, device_id: str, tag_id: str) -> bool:
 
 def batch_set_device_tags(conn, device_ids: list[str], tag_ids: list[str], created_by: str = '') -> int:
     """Set the given tags on multiple devices (additive, does not remove existing)."""
+    status_tag_ids = set(_ensure_status_tag_ids(conn).values())
+    if any(tag_id in status_tag_ids for tag_id in tag_ids):
+        raise ValueError('Availability status tags are managed by the monitoring service')
     now = datetime.now(timezone.utc).isoformat()
     count = 0
     for did in device_ids:

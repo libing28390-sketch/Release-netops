@@ -11,6 +11,7 @@ import PageHero from '../components/PageHero';
 interface TagManagementTabProps {
   language: string;
   t: (key: string) => string;
+  currentUser?: { role?: string };
 }
 
 /* ─── Category icon/color mapping ─── */
@@ -21,10 +22,11 @@ const CATEGORY_META: Record<string, { icon: typeof Tags; color: string; bg: stri
   role:        { icon: Shield,   color: 'text-amber-600',   bg: 'bg-amber-50 border-amber-200' },
   env:         { icon: Globe,    color: 'text-cyan-600',    bg: 'bg-cyan-50 border-cyan-200' },
   function:    { icon: Settings2, color: 'text-rose-600',   bg: 'bg-rose-50 border-rose-200' },
+  status:      { icon: BarChart3, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' },
   custom:      { icon: Hash,     color: 'text-slate-600',   bg: 'bg-slate-50 border-slate-200' },
 };
 
-const CATEGORIES: TagCategory[] = ['device_type', 'vendor', 'os', 'role', 'env'];
+const CATEGORIES: TagCategory[] = ['device_type', 'vendor', 'os', 'role', 'env', 'function', 'status'];
 
 /* ─── Helper ─── */
 function getToken() {
@@ -37,8 +39,9 @@ function authHeaders() {
 }
 
 /* ─────────────────────────────────────────── */
-export default function TagManagementTab({ language }: TagManagementTabProps) {
+export default function TagManagementTab({ language, currentUser }: TagManagementTabProps) {
   const zh = language === 'zh';
+  const canManageTags = currentUser?.role === 'Administrator';
 
   /* ── State ── */
   const [tags, setTags] = useState<TagDefinition[]>([]);
@@ -241,13 +244,13 @@ export default function TagManagementTab({ language }: TagManagementTabProps) {
         subtitle={zh ? '管理设备分类标签，支持按类型、厂商、系统、角色、环境、功能等维度进行标签化分组。' : 'Manage device classification tags across type, vendor, OS, role, environment, and function dimensions.'}
         actions={
           <>
-            <button
+            {canManageTags && <button
               onClick={openCreateModal}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#06b6d4] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(6,182,212,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0891b2]"
             >
               <Plus size={14} />
               {zh ? '新建标签' : 'New Tag'}
-            </button>
+            </button>}
             <button
               onClick={() => { void fetchTags(); void fetchStats(); }}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white px-4 text-sm font-medium text-[#164e63] transition-all hover:border-[#06b6d4]/30 hover:bg-[#ecfeff]"
@@ -377,8 +380,8 @@ export default function TagManagementTab({ language }: TagManagementTabProps) {
                           <TagChip
                             tag={tag}
                             zh={zh}
-                            onEdit={() => openEditModal(tag)}
-                            onDelete={() => setDeleteTarget(tag)}
+                            onEdit={canManageTags && tag.category !== 'status' ? () => openEditModal(tag) : undefined}
+                            onDelete={canManageTags ? () => setDeleteTarget(tag) : undefined}
                           />
                         </div>
                       ))}
@@ -594,8 +597,8 @@ export default function TagManagementTab({ language }: TagManagementTabProps) {
 interface TagChipProps {
   tag: TagDefinition;
   zh: boolean;
-  onEdit: () => void;
-  onDelete: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }
 
 function TagChip({ tag, zh, onEdit, onDelete }: TagChipProps) {
@@ -622,13 +625,19 @@ function TagChip({ tag, zh, onEdit, onDelete }: TagChipProps) {
         </span>
       )}
 
+      {tag.category === 'status' && (
+        <span className="ml-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-emerald-600">
+          {zh ? '系统维护' : 'System'}
+        </span>
+      )}
+
       {/* hover action buttons */}
       <span className="ml-1 hidden items-center gap-0.5 group-hover:inline-flex">
-        <button onClick={onEdit} className="rounded-md p-1 text-black/30 transition-colors hover:bg-[#ecfeff] hover:text-[#0891b2]" title={zh ? '编辑' : 'Edit'}>
+        {onEdit && <button onClick={onEdit} className="rounded-md p-1 text-black/30 transition-colors hover:bg-[#ecfeff] hover:text-[#0891b2]" title={zh ? '编辑' : 'Edit'}>
           <Edit3 size={12} />
-        </button>
+        </button>}
         {tag.built_in !== 1 && (
-          <button onClick={onDelete} className="rounded-md p-1 text-black/30 transition-colors hover:bg-red-50 hover:text-red-500" title={zh ? '删除' : 'Delete'}>
+          onDelete && <button onClick={onDelete} className="rounded-md p-1 text-black/30 transition-colors hover:bg-red-50 hover:text-red-500" title={zh ? '删除' : 'Delete'}>
             <Trash2 size={12} />
           </button>
         )}

@@ -191,6 +191,7 @@ def _init_db_logic(conn):
         site_code TEXT NOT NULL UNIQUE,
         site_name TEXT NOT NULL,
         country TEXT DEFAULT '',
+        state_province TEXT DEFAULT '',
         city TEXT DEFAULT '',
         timezone TEXT DEFAULT 'Asia/Shanghai',
         address TEXT DEFAULT '',
@@ -199,6 +200,8 @@ def _init_db_logic(conn):
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
     )
     ''')
+
+    ensure_column('sites', 'state_province', "TEXT DEFAULT ''")
 
     # Create racks table if not exists
     if _USE_PG:
@@ -2506,7 +2509,7 @@ def _init_db_logic(conn):
         vendor TEXT DEFAULT '',
         model TEXT DEFAULT '',
         hostname TEXT DEFAULT '',
-        datacenter TEXT DEFAULT '',
+        site_id TEXT DEFAULT '',
         rack TEXT DEFAULT '',
         rack_unit TEXT DEFAULT '',
         management_ip TEXT DEFAULT '',
@@ -2526,6 +2529,7 @@ def _init_db_logic(conn):
     ''')
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_tag ON physical_assets(asset_tag) WHERE asset_tag != ''")
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_asset_type ON physical_assets(asset_type)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_physical_assets_site_id ON physical_assets(site_id)')
 
     ensure_column('physical_assets', 'vlan', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'uplink_switch', "TEXT DEFAULT ''")
@@ -2571,6 +2575,7 @@ def _init_db_logic(conn):
     ensure_column('physical_assets', 'u_height', 'INTEGER NOT NULL DEFAULT 1')
     ensure_column('physical_assets', 'planned_start_u', 'INTEGER')
     ensure_column('physical_assets', 'device_category', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'site_id', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'power_watts', "INTEGER DEFAULT 0")
 
     ensure_column('devices', 'credential_id', 'TEXT')
@@ -2758,7 +2763,7 @@ def _init_db_logic(conn):
 
     # Auto-link existing devices to matching assets
     unlinked = cursor.execute(
-        "SELECT id, hostname, ip_address, sn, model, role, site, vendor, status, lifecycle_status FROM devices WHERE (asset_id IS NULL OR asset_id = '')"
+        "SELECT id, hostname, ip_address, sn, model, role, site, site_id, vendor, status, lifecycle_status FROM devices WHERE (asset_id IS NULL OR asset_id = '')"
     ).fetchall()
     if unlinked:
         for dev in unlinked:
@@ -2774,14 +2779,14 @@ def _init_db_logic(conn):
                 cursor.execute('''
                     INSERT INTO physical_assets (
                         id, asset_type, asset_tag, serial_number, vendor, model, hostname,
-                        datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
+                        site_id, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                         vlan, uplink_switch, uplink_port,
                         status, purchase_date, warranty_expiry, department, notes, created_at, updated_at, lifecycle_status
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     asset_id, 'network_device', '', dev['sn'] or '', dev['vendor'] or '',
                     dev['model'] or '', dev['hostname'] or '',
-                    dev['site'] or '', '', '', 1, None,
+                    dev['site_id'] or dev['site'] or '', '', '', 1, None,
                     dev['ip_address'] or '', '', dev['role'] or '',
                     '', '', '',
                     dev['status'] or 'active', '', '', '', '', now_str, now_str,
@@ -3689,11 +3694,11 @@ def _init_db_logic(conn):
                         catch_name = "环回 / 孤立主机地址 (IPv6)" if ip_version == 6 else "环回 / 孤立主机地址"
                         catch_desc = "存放未匹配到任何子网的 Loopback 及孤立主机路由 (/32, /128)"
                         if _USE_PG:
-                            cursor.execute("INSERT INTO prefixes (id, prefix, name, description, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                                           (prefix_id, default_cidr, catch_name, catch_desc, 'loopback', None, None, 'site-default', 'tenant-default', 'active'))
+                            cursor.execute("INSERT INTO prefixes (id, prefix, prefix_cidr, name, description, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                                           (prefix_id, default_cidr, default_cidr, catch_name, catch_desc, 'loopback', None, None, 'site-default', 'tenant-default', 'active'))
                         else:
-                            cursor.execute("INSERT INTO prefixes (id, prefix, name, description, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                           (prefix_id, default_cidr, catch_name, catch_desc, 'loopback', None, None, 'site-default', 'tenant-default', 'active'))
+                            cursor.execute("INSERT INTO prefixes (id, prefix, prefix_cidr, name, description, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                           (prefix_id, default_cidr, default_cidr, catch_name, catch_desc, 'loopback', None, None, 'site-default', 'tenant-default', 'active'))
                         existing_prefixes.append({'id': prefix_id, 'prefix': default_cidr})
             else:
                 # Normal CIDR subnets (e.g. /24)
@@ -3710,11 +3715,11 @@ def _init_db_logic(conn):
                         (ip_version == 6 and prefix_len == 127)
                     ) else 'server'
                     if _USE_PG:
-                        cursor.execute("INSERT INTO prefixes (id, prefix, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                                       (prefix_id, prefix_str, auto_role, None, None, 'site-default', 'tenant-default', 'active'))
+                        cursor.execute("INSERT INTO prefixes (id, prefix, prefix_cidr, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                                       (prefix_id, prefix_str, prefix_str, auto_role, None, None, 'site-default', 'tenant-default', 'active'))
                     else:
-                        cursor.execute("INSERT INTO prefixes (id, prefix, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                       (prefix_id, prefix_str, auto_role, None, None, 'site-default', 'tenant-default', 'active'))
+                        cursor.execute("INSERT INTO prefixes (id, prefix, prefix_cidr, network_type, vrf_id, vlan_id, site_id, tenant_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                       (prefix_id, prefix_str, prefix_str, auto_role, None, None, 'site-default', 'tenant-default', 'active'))
                     existing_prefixes.append({'id': prefix_id, 'prefix': prefix_str})
 
             # Normalize the IP role (device_type) — detect loopbacks by interface name/type
@@ -3741,8 +3746,8 @@ def _init_db_logic(conn):
                 # Update if mask or prefix association has changed
                 if old_ip_addr != ip_addr_with_mask or old_prefix_id != prefix_id:
                     cursor.execute(
-                        "UPDATE ip_addresses SET ip_address = ?, prefix_id = ?, subnet_id = ?, interface_id = ?, device_id = ?, interface_name = ?, device_type = ?, last_seen = ?, updated_at = ? WHERE id = ?",
-                        (ip_addr_with_mask, prefix_id, prefix_id, intf_id or '', d_id, interface, ip_role, last_seen, datetime.now(timezone.utc).isoformat(), addr_id)
+                        "UPDATE ip_addresses SET ip_address = ?, address_inet = ?, prefix_id = ?, subnet_id = ?, interface_id = ?, device_id = ?, interface_name = ?, device_type = ?, last_seen = ?, updated_at = ? WHERE id = ?",
+                        (ip_addr_with_mask, ip, prefix_id, prefix_id, intf_id or '', d_id, interface, ip_role, last_seen, datetime.now(timezone.utc).isoformat(), addr_id)
                     )
             else:
                 addr_id = f"ip-{uuid.uuid4().hex[:12]}"
@@ -3752,17 +3757,17 @@ def _init_db_logic(conn):
                         INSERT INTO ip_addresses (
                             id, subnet_id, address, hostname, device_id, interface_name,
                             mac_address, device_type, status, description, last_seen, created_at, updated_at,
-                            ip_address, prefix_id, vrf_id, interface_id
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ''', (addr_id, prefix_id, ip, '', d_id, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, prefix_id, '', intf_id or ''))
+                            ip_address, address_inet, prefix_id, vrf_id, interface_id
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ''', (addr_id, prefix_id, ip, '', d_id, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, ip, prefix_id, '', intf_id or ''))
                 else:
                     cursor.execute('''
                         INSERT INTO ip_addresses (
                             id, subnet_id, address, hostname, device_id, interface_name,
                             mac_address, device_type, status, description, last_seen, created_at, updated_at,
-                            ip_address, prefix_id, vrf_id, interface_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (addr_id, prefix_id, ip, '', d_id, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, prefix_id, '', intf_id or ''))
+                            ip_address, address_inet, prefix_id, vrf_id, interface_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (addr_id, prefix_id, ip, '', d_id, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, ip, prefix_id, '', intf_id or ''))
 
         # Clean up empty, auto-generated host-route prefixes (/32, /128) no longer referenced
         cursor.execute('''

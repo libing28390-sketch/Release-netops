@@ -5,28 +5,135 @@ import 'xterm/css/xterm.css';
 import {
   Package, Plus, Trash2, Search, X, RefreshCw, Download, Pencil, Copy,
   Server, Router, AlertTriangle, Network, SlidersHorizontal,
-  Wifi, Building2, Upload, FileText, ChevronDown, ChevronUp,
-  Zap, AlertCircle, CheckCircle2, Tag, Info,
-  Flame, LayoutList, LayoutGrid, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker, Check
+  Wifi, Building2, Upload, FileText, ChevronDown, ChevronRight, ChevronUp,
+  Zap, AlertCircle, CheckCircle2, Info,
+  Flame, LayoutList, LayoutGrid, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker, Settings2, Check
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
 
 import Pagination from '../../components/Pagination';
 import PageHero from '../../components/PageHero';
+import TagFilterDropdown from '../../components/TagFilterDropdown';
 import { fetchAllPaginatedItems } from '../../utils/pagination';
 import { useSystem } from '../../hooks/useSystem';
+import type { TagDefinition } from '../../types';
 
 import { Asset, AssetSummary, AssetManagementTabProps, ViewMode, GroupBy } from './types';
 import { STATUSES, TYPES, LIFECYCLE_STATUSES, EMPTY_FORM, VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, COL_MAP, IMPORT_VALUE_MAP } from './constants';
 import { statusMeta, typeMeta, severityOf } from './helpers';
 
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
-import { BatchTagModal } from './components/BatchTagModal';
 import { AssetImportValidationModal, MissingRackInfo, RackResolution } from './components/AssetImportValidationModal';
 import { TerminalAccessModal } from './components/TerminalAccessModal';
 import { AssetDetailDrawer } from './components/AssetDetailDrawer';
 import { AssetModal } from './components/AssetModal';
+
+type AssetImportSkippedItem = {
+  asset_tag?: string;
+  hostname?: string;
+  reason?: string;
+  existing_hostname?: string;
+  duplicate_labels?: string[];
+  duplicate_values?: string[];
+};
+
+type AssetTreeRow = {
+  asset_type: string;
+  device_category: string;
+  site_id: string;
+  site_name: string;
+  device_role: string;
+  online_status: 'online' | 'offline' | 'pending' | string;
+  asset_count: number;
+};
+
+type AssetTreeNode = {
+  key: string;
+  label: string;
+  kind: 'root' | 'category' | 'site' | 'status';
+  count: number;
+  filters: { asset_type?: string; device_category?: string; site_id?: string; device_role?: string; status?: string };
+  children: AssetTreeNode[];
+};
+
+type AssetColumnKey =
+  | 'hostname'
+  | 'category_role'
+  | 'site'
+  | 'status'
+  | 'tags'
+  | 'vendor'
+  | 'model'
+  | 'serial_number'
+  | 'management_ip'
+  | 'lifecycle'
+  | 'created_at'
+  | 'updated_at';
+
+type AssetColumnDefinition = {
+  key: AssetColumnKey;
+  zh: string;
+  en: string;
+  width: string;
+};
+
+const ASSET_COLUMN_DEFS: AssetColumnDefinition[] = [
+  { key: 'hostname', zh: '设备', en: 'Asset', width: 'min-w-[150px]' },
+  { key: 'category_role', zh: '分类 / 角色', en: 'Category / role', width: 'min-w-[130px]' },
+  { key: 'site', zh: '站点', en: 'Site', width: 'w-24' },
+  { key: 'status', zh: '在线状态', en: 'Status', width: 'w-[90px]' },
+  { key: 'tags', zh: '标签', en: 'Tags', width: 'min-w-[120px]' },
+  { key: 'vendor', zh: '厂商', en: 'Vendor', width: 'w-24' },
+  { key: 'model', zh: '型号', en: 'Model', width: 'min-w-[110px]' },
+  { key: 'serial_number', zh: '序列号', en: 'Serial', width: 'min-w-[130px]' },
+  { key: 'management_ip', zh: '管理IP', en: 'Management IP', width: 'w-[120px]' },
+  { key: 'lifecycle', zh: '资产状态', en: 'Asset status', width: 'w-[90px]' },
+  { key: 'created_at', zh: '创建时间', en: 'Created', width: 'min-w-[145px]' },
+  { key: 'updated_at', zh: '更新时间', en: 'Updated', width: 'min-w-[145px]' },
+];
+
+const DEFAULT_ASSET_COLUMNS: Record<AssetColumnKey, boolean> = {
+  hostname: true,
+  category_role: true,
+  site: true,
+  status: true,
+  tags: true,
+  vendor: true,
+  model: true,
+  serial_number: true,
+  management_ip: true,
+  lifecycle: true,
+  created_at: true,
+  updated_at: true,
+};
+
+const FIXED_ASSET_COLUMNS = new Set<AssetColumnKey>([
+  'hostname', 'category_role', 'site', 'status', 'tags', 'created_at', 'updated_at',
+]);
+
+const NETWORK_TEMPLATE_ROLES = new Set([
+  'core', 'distribution', 'access', 'edge', 'switch', 'router', 'firewall',
+  'wireless_controller', 'wireless_ap', 'load_balancer', 'vpn_gateway', 'sdwan_edge', 'other_network',
+]);
+const NETWORK_TEMPLATE_CATEGORIES = new Set([
+  'switch', 'router', 'firewall', 'load_balancer', 'wireless_controller', 'wireless_ap', 'sdwan_edge', 'vpn_gateway', 'other_network',
+]);
+const SERVER_TEMPLATE_ROLES = new Set([
+  'application_server', 'database_server', 'web_server', 'file_server', 'middleware_server',
+  'virtual_host', 'storage', 'backup_server', 'other_server',
+]);
+const SERVER_TEMPLATE_CATEGORIES = new Set([
+  'rack_server', 'blade_server', 'tower_server', 'high_density', 'gpu_server', 'storage_server', 'virtual_host', 'other_server',
+]);
+
+const normalizeAssetColumns = (columns: Partial<Record<AssetColumnKey, boolean>>): Record<AssetColumnKey, boolean> => {
+  const normalized = { ...DEFAULT_ASSET_COLUMNS, ...columns };
+  FIXED_ASSET_COLUMNS.forEach(key => { normalized[key] = true; });
+  return normalized;
+};
+
+const ASSET_COLUMNS_STORAGE_KEY = 'assets-dashboard-columns-v2';
 
 const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setActiveTab }) => {
   const { systemInfo } = useSystem();
@@ -46,6 +153,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [statusFilter, setStatusFilter] = useState('all');
   const [vendorFilter, setVendorFilter] = useState('all');
   const [dcFilter, setDcFilter]         = useState('all');
+  const [deviceCategoryFilter, setDeviceCategoryFilter] = useState('');
+  const [tagFilter, setTagFilter]       = useState<string[]>([]);
   const [terminalSession, setTerminalSession] = useState<{ token: string; title: string } | null>(null);
   const [terminalLines, setTerminalLines] = useState<string>('');
   const [terminalInput, setTerminalInput] = useState('');
@@ -83,13 +192,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     setTerminals(prev => ({ ...prev, [id]: { term, fit: fitAddon } }));
   };
 
-  const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; text: string } | null>(null);
+  const [feedbackMsg, setFeedbackMsg] = useState<{
+    type: 'success' | 'error' | 'warning' | 'info';
+    text: string;
+    details?: string[];
+  } | null>(null);
   const [deptFilter, setDeptFilter]     = useState('all');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
 
   const [viewMode, setViewMode]         = useState<ViewMode>('table');
-  const [groupBy, setGroupBy]           = useState<GroupBy>('datacenter');
+  const [groupBy, setGroupBy]           = useState<GroupBy>('site_id');
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set());
   const [drawerAsset, setDrawerAsset]   = useState<Asset | null>(null);
 
@@ -99,8 +212,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [saving, setSaving]             = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Asset | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [showBatchTag, setShowBatchTag] = useState(false);
-  const [batchTagValue, setBatchTagValue] = useState('');
   const [showProductionConfirm, setShowProductionConfirm] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [showEnableSecret, setShowEnableSecret] = useState(false);
@@ -114,6 +225,41 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [missingRacks, setMissingRacks] = useState<MissingRackInfo[]>([]);
   const [pendingImportPayload, setPendingImportPayload] = useState<any[]>([]);
   const [validationModalSaving, setValidationModalSaving] = useState(false);
+  const [allTags, setAllTags] = useState<TagDefinition[]>([]);
+  const [assetTreeRows, setAssetTreeRows] = useState<AssetTreeRow[]>([]);
+  const [assetTreeLoading, setAssetTreeLoading] = useState(false);
+  const [expandedTreeNodes, setExpandedTreeNodes] = useState<Set<string>>(new Set());
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const columnsMenuRef = React.useRef<HTMLDivElement>(null);
+  const [visibleColumns, setVisibleColumns] = useState<Record<AssetColumnKey, boolean>>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(ASSET_COLUMNS_STORAGE_KEY) || '{}') as Partial<Record<AssetColumnKey, boolean>>;
+      return normalizeAssetColumns(stored);
+    } catch {
+      return normalizeAssetColumns({});
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(ASSET_COLUMNS_STORAGE_KEY, JSON.stringify(visibleColumns));
+  }, [visibleColumns]);
+
+  useEffect(() => {
+    if (!columnsOpen) return;
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (columnsMenuRef.current && !columnsMenuRef.current.contains(event.target as Node)) {
+        setColumnsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [columnsOpen]);
+
+  const activeAssetColumns = useMemo(
+    () => ASSET_COLUMN_DEFS.filter(column => visibleColumns[column.key]),
+    [visibleColumns],
+  );
+  const allAssetColumnsSelected = activeAssetColumns.length === ASSET_COLUMN_DEFS.length;
 
   const fetchAllRacks = useCallback(async () => {
     try {
@@ -134,6 +280,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     fetchAllRacks();
   }, [fetchAllRacks]);
 
+  useEffect(() => {
+    const token = localStorage.getItem('netops_token');
+    fetch('/api/tags/definitions', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(payload => setAllTags(Array.isArray(payload?.data) ? payload.data : []))
+      .catch(() => setAllTags([]));
+  }, []);
+
   useEffect(() => () => { if (rotationPollRef.current) clearInterval(rotationPollRef.current); }, []);
 
   const fetchSummary = useCallback(async () => {
@@ -148,17 +302,36 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       if (typeFilter !== 'all')   p.set('asset_type', typeFilter);
       if (statusFilter !== 'all') p.set('status', statusFilter);
       if (vendorFilter !== 'all') p.set('vendor', vendorFilter);
-      if (dcFilter !== 'all')     p.set('datacenter', dcFilter);
+      if (dcFilter !== 'all')     p.set('site_id', dcFilter);
       if (deptFilter !== 'all')   p.set('department', deptFilter);
+      if (deviceCategoryFilter)   p.set('device_category', deviceCategoryFilter);
+      if (tagFilter.length > 0)   p.set('tag_ids', tagFilter.join(','));
       const r = await fetch(`/api/assets?${p}`);
       if (r.ok) { const d = await r.json(); setAssets(d.items); setTotal(d.total); }
     } catch { /* noop */ }
     setLoading(false);
-  }, [page, pageSize, search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter]);
+  }, [page, pageSize, search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, tagFilter]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
-  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, pageSize]);
+  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, tagFilter, pageSize]);
+
+  const fetchAssetTree = useCallback(async () => {
+    setAssetTreeLoading(true);
+    try {
+      const response = await fetch('/api/assets/tree');
+      const payload = await response.json();
+      setAssetTreeRows(Array.isArray(payload?.data?.items) ? payload.data.items : Array.isArray(payload?.items) ? payload.items : []);
+    } catch {
+      setAssetTreeRows([]);
+    } finally {
+      setAssetTreeLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (viewMode === 'tree') void fetchAssetTree();
+  }, [viewMode, fetchAssetTree]);
 
   useEffect(() => {
     if (!drawerAsset) return;
@@ -170,12 +343,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   useEffect(() => {
     if (!feedbackMsg) return;
     if (rotatingAssetId) return;
-    const t = setTimeout(() => setFeedbackMsg(null), feedbackMsg.type === 'error' ? 8000 : 5000);
+    const t = setTimeout(() => setFeedbackMsg(null), feedbackMsg.type === 'error' || feedbackMsg.type === 'warning' ? 10000 : 5000);
     return () => clearTimeout(t);
   }, [feedbackMsg, rotatingAssetId]);
 
   const vendorList = useMemo(() => summary?.by_vendor ? Object.keys(summary.by_vendor).sort() : [], [summary]);
-  const dcList     = useMemo(() => summary?.by_datacenter ? Object.keys(summary.by_datacenter).sort() : [], [summary]);
+  const dcList     = useMemo(() => summary?.by_site ? Object.keys(summary.by_site).sort() : [], [summary]);
   const deptList   = useMemo(() => summary?.by_department ? Object.keys(summary.by_department).sort() : [], [summary]);
 
   const criticalCount  = (summary?.by_status?.['inactive'] ?? 0);
@@ -207,7 +380,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     setShowEnableSecret(!!(a as any).enable_password_set || !!(a as any).enable_password);
     setForm({
       asset_type: a.asset_type, asset_tag: a.asset_tag, serial_number: a.serial_number,
-      vendor: a.vendor, model: a.model, hostname: a.hostname, datacenter: a.datacenter,
+      vendor: a.vendor, model: a.model, hostname: a.hostname, site_id: a.site_id || '',
       rack: a.rack, rack_unit: a.rack_unit,
       u_height: String(a.u_height ?? 1),
       planned_start_u: a.planned_start_u != null && a.planned_start_u !== undefined ? String(a.planned_start_u) : '',
@@ -352,7 +525,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     const copyTag = a.asset_tag ? `${a.asset_tag}-${Date.now().toString(36).slice(-4)}` : '';
     setForm({
       asset_type: a.asset_type, asset_tag: copyTag, serial_number: '',
-      vendor: a.vendor, model: a.model, hostname: '', datacenter: a.datacenter,
+      vendor: a.vendor, model: a.model, hostname: '', site_id: a.site_id || '',
       rack: a.rack, rack_unit: '', u_height: String(a.u_height ?? 1), planned_start_u: a.planned_start_u != null ? String(a.planned_start_u) : '', management_ip: '',
       business_ip: '', device_role: a.device_role,
       vlan: a.vlan || '', uplink_switch: a.uplink_switch || '', uplink_port: a.uplink_port || '',
@@ -390,18 +563,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const toggle    = (id: string) => setSelectedIds(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleAll = () => setSelectedIds(p => p.size === displayAssets.length ? new Set() : new Set(displayAssets.map(a => a.id)));
   const clearSel  = () => setSelectedIds(new Set());
-
-  const batchTag = async () => {
-    if (!batchTagValue.trim()) return;
-    const promises = Array.from(selectedIds).map(id =>
-      fetch(`/api/assets/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: batchTagValue.trim() }) })
-    );
-    await Promise.allSettled(promises);
-    setShowBatchTag(false);
-    setBatchTagValue('');
-    clearSel();
-    fetchAssets();
-  };
 
   const handleBatchDelete = async () => {
     if (selectedIds.size === 0) return;
@@ -525,7 +686,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     if (typeFilter !== 'all') params.set('asset_type', typeFilter);
     if (statusFilter !== 'all') params.set('status', statusFilter);
     if (vendorFilter !== 'all') params.set('vendor', vendorFilter);
-    if (dcFilter !== 'all')     params.set('datacenter', dcFilter);
+    if (dcFilter !== 'all')     params.set('site_id', dcFilter);
     if (deptFilter !== 'all')   params.set('department', deptFilter);
 
     try {
@@ -549,7 +710,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         [zh ? 'VLAN' : 'VLAN']: a.vlan,
         [zh ? '上联交换机' : 'Uplink Switch']: a.uplink_switch,
         [zh ? '上联端口' : 'Uplink Port']: a.uplink_port,
-        [zh ? '数据中心' : 'Datacenter']: a.datacenter,
+        [zh ? '站点' : 'Site']: a.site_id,
         [zh ? '机柜' : 'Rack']: a.rack,
         [zh ? 'U位' : 'Rack Unit']: a.rack_unit,
         [zh ? 'U高度' : 'U Height']: a.u_height ?? 1,
@@ -576,6 +737,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   };
 
   const doImport = async (payload: any[]) => {
+    // Keep failures visible above the validation dialog and page content.
+    setShowValidationModal(false);
     try {
       const r = await fetch('/api/assets/import', {
         method: 'POST',
@@ -584,9 +747,36 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       });
       if (r.ok) {
         const res = await r.json();
+        const skippedItems = Array.isArray(res.skipped_items) ? res.skipped_items as AssetImportSkippedItem[] : [];
+        const skippedDetails = skippedItems.slice(0, 8).map((item) => {
+          const identity = [item.asset_tag, item.hostname].filter(Boolean).join(' / ') || 'Unknown row';
+          if (item.reason === 'duplicate_asset_tag') {
+            const existing = item.existing_hostname ? `（现有设备：${item.existing_hostname}）` : '';
+            return zh
+              ? `${identity}：资产编号已存在${existing}`
+              : `${identity}: asset tag already exists${item.existing_hostname ? ` (existing device: ${item.existing_hostname})` : ''}`;
+          }
+          if (item.reason === 'duplicate_identity') {
+            const fields = (item.duplicate_labels || []).map((label, index) =>
+              `${label}「${item.duplicate_values?.[index] || ''}」`,
+            ).join('、');
+            const existing = item.existing_hostname ? `（现有设备：${item.existing_hostname}）` : '';
+            return zh
+              ? `${identity}：${fields || '主机名/资产编号/序列号/管理IP'}已存在${existing}`
+              : `${identity}: ${fields || 'hostname/asset tag/serial number/management IP'} already exists${item.existing_hostname ? ` (existing device: ${item.existing_hostname})` : ''}`;
+          }
+          return zh ? `${identity}：导入规则跳过` : `${identity}: skipped by import rule`;
+        });
+        if (res.skipped > skippedDetails.length) {
+          skippedDetails.push(zh
+            ? `另有 ${res.skipped - skippedDetails.length} 条跳过记录未展开`
+            : `${res.skipped - skippedDetails.length} more skipped rows are not shown`);
+        }
+        const hasSkipped = Number(res.skipped || 0) > 0;
         setFeedbackMsg({
-          type: 'success',
-          text: zh ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条` : `Import done: ${res.created} created, ${res.skipped} skipped`,
+          type: hasSkipped ? 'warning' : 'success',
+          text: zh ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条${hasSkipped ? '（请查看跳过原因）' : ''}` : `Import done: ${res.created} created, ${res.skipped} skipped${hasSkipped ? ' (review skipped rows)' : ''}`,
+          details: skippedDetails.length > 0 ? skippedDetails : undefined,
         });
         fetchAssets();
         fetchSummary();
@@ -606,7 +796,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       let finalPayload = [...pendingImportPayload];
       const skipKeys = new Set<string>();
       const mapConfig: Record<string, string> = {};
-      const autoCreateList: { name: string; datacenter: string; total_u: number }[] = [];
+      const autoCreateList: { name: string; site_id: string; total_u: number }[] = [];
       const createdKeys = new Set<string>();
 
       Object.entries(resolutions).forEach(([key, res]) => {
@@ -617,7 +807,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           mapConfig[key] = res.targetRack;
         } else if (res.action === 'create') {
           if (!createdKeys.has(key)) {
-            autoCreateList.push({ name: rk, datacenter: dc, total_u: 42 });
+            autoCreateList.push({ name: rk, site_id: dc, total_u: 42 });
             createdKeys.add(key);
           }
         }
@@ -640,7 +830,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       }
 
       finalPayload = finalPayload.filter(row => {
-        const dc = row.datacenter || '';
+        const dc = row.site_id || row.datacenter || '';
         const rk = row.rack || '';
         const key = `${dc}|${rk}`;
         if (skipKeys.has(key)) {
@@ -663,6 +853,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       
       setShowValidationModal(false);
     } catch (err: any) {
+      setShowValidationModal(false);
       setFeedbackMsg({
         type: 'error',
         text: err.message || (zh ? '处理异常失败' : 'Failed to process import validation'),
@@ -719,11 +910,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         const wb = XLSX.read(data, { type: 'array' });
         const NET_SHEET = /网络设备|network.?device/i;
         const mapped: Record<string, string>[] = [];
+        const templateMismatchRows: string[] = [];
         for (const name of wb.SheetNames) {
           const ws = wb.Sheets[name];
           const raw = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
           const isNet = NET_SHEET.test(name);
-          for (const row of raw) {
+          for (const [rowIndex, row] of raw.entries()) {
             const obj: Record<string, string> = {};
             for (const [col, val] of Object.entries(row)) {
               const key = COL_MAP[col.trim()];
@@ -744,8 +936,27 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               }
             }
             if (!obj.asset_type) obj.asset_type = isNet ? 'network_device' : 'server';
-            if (obj.hostname || obj.asset_tag) mapped.push(obj);
+            if (obj.hostname || obj.asset_tag) {
+              const allowedRoles = isNet ? NETWORK_TEMPLATE_ROLES : SERVER_TEMPLATE_ROLES;
+              const allowedCategories = isNet ? NETWORK_TEMPLATE_CATEGORIES : SERVER_TEMPLATE_CATEGORIES;
+              if (obj.device_role && !allowedRoles.has(obj.device_role)) {
+                templateMismatchRows.push(`${name} 第${rowIndex + 2}行：角色“${obj.device_role}”不属于${isNet ? '网络设备' : '服务器'}模板`);
+                continue;
+              }
+              if (obj.device_category && !allowedCategories.has(obj.device_category)) {
+                templateMismatchRows.push(`${name} 第${rowIndex + 2}行：设备分类“${obj.device_category}”不属于${isNet ? '网络设备' : '服务器'}模板`);
+                continue;
+              }
+              mapped.push(obj);
+            }
           }
+        }
+        if (templateMismatchRows.length > 0) {
+          setFeedbackMsg({
+            type: 'error',
+            text: `${zh ? '模板角色/设备分类不匹配，请检查：' : 'Template role/category mismatch:'} ${templateMismatchRows.slice(0, 3).join('；')}`,
+          });
+          return;
         }
         if (!mapped.length) { setFeedbackMsg({ type: 'error', text: zh ? '未找到有效 data 行' : 'No valid rows found' }); return; }
         
@@ -753,8 +964,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         const missingMap: Record<string, { datacenter: string; rack: string; rowCount: number }> = {};
         mapped.forEach(row => {
           if (row.rack) {
-            const dcName = row.datacenter || '';
-            const exists = allRacks.some(r => r.name === row.rack && (r.datacenter || '') === dcName);
+            const dcName = row.site_id || row.datacenter || '';
+            const exists = allRacks.some(r => r.name === row.rack && [r.site_id, r.site_code, r.site_name, r.datacenter].filter(Boolean).includes(dcName));
             if (!exists) {
               const key = `${dcName}|${row.rack}`;
               if (!missingMap[key]) {
@@ -779,7 +990,27 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     e.target.value = '';
   };
 
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplate = async () => {
+    // The distributable template contains native Excel list validation rules.
+    // Keep the generated fallback below for development/older deployments.
+    try {
+      const templateResponse = await fetch('/templates/asset_import_template.xlsx', { cache: 'no-store' });
+      if (templateResponse.ok) {
+        const blob = await templateResponse.blob();
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = zh ? '资产导入模板.xlsx' : 'asset_import_template.xlsx';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+        return;
+      }
+    } catch {
+      // Fall through to the in-browser legacy generator.
+    }
+
     const wb = XLSX.utils.book_new();
 
     const guideRows = zh ? [
@@ -806,20 +1037,20 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     XLSX.utils.book_append_sheet(wb, wsGuide, zh ? '填写说明' : 'Instructions');
 
     const srvHeaders = zh
-      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '业务IP', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '数据中心', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
-      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Business IP', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Datacenter', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
+      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '业务IP', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
+      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Business IP', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
     const srvExample = zh
-      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'Linux（通用）', '10.0.1.10', '22', '192.168.1.10', 'SSH', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT部', '2024-01-15', '待投产', '', '2027-01-15', '服务器备注']
+      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '戴尔', 'PowerEdge R750', 'Linux（通用）', '10.0.1.10', '22', '192.168.1.10', 'SSH（安全外壳）', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT部', '2024-01-15', '待投产', '', '2027-01-15', '服务器备注']
       : ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '22', '192.168.1.10', 'ssh', 'active', 'web', 'server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT Dept', '2024-01-15', 'staging', '', '2027-01-15', 'Production srv'];
     const wsSrv = XLSX.utils.aoa_to_sheet([srvHeaders, srvExample]);
     wsSrv['!cols'] = srvHeaders.map(() => ({ wch: 16 }));
     XLSX.utils.book_append_sheet(wb, wsSrv, zh ? '服务器模板' : 'Server Template');
 
     const netHeaders = zh
-      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', '数据中心', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
-      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'Datacenter', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
+      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
+      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
     const netExample = zh
-      ? ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'Cisco IOS', '10.0.0.1', '22', 'SSH', '在用', '核心交换机', '交换机', '存量设备', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', '普通账号密码', '特权账号密码', '', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2026-06-01', '核心交换机']
+      ? ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '思科', 'C9300-48P', '思科 IOS', '10.0.0.1', '22', 'SSH（安全外壳）', '在用', '核心交换机', '交换机', '存量设备', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', '普通账号密码', '特权账号密码', '', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2026-06-01', '核心交换机']
       : ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '22', 'ssh', 'active', 'switch', 'switch', 'legacy', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', 'normal-password', 'admin-password', '', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2026-06-01', 'Core switch'];
     const wsNet = XLSX.utils.aoa_to_sheet([netHeaders, netExample]);
     wsNet['!cols'] = netHeaders.map(() => ({ wch: 16 }));
@@ -926,8 +1157,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const groupedAssets = useMemo<Record<string, Asset[]>>(() => {
     const g: Record<string, Asset[]> = {};
     const keyFn = (a: Asset) => {
-      if (groupBy === 'datacenter') return a.datacenter || (zh ? '未分配' : 'Unassigned');
+      if (groupBy === 'site_id') return a.site_id || (zh ? '未分配站点' : 'Unassigned site');
       if (groupBy === 'department') return a.department || (zh ? '未分配' : 'Unassigned');
+      if (groupBy === 'device_category') return a.device_category || typeMeta(a.asset_type).label[zh ? 'zh' : 'en'];
+      if (groupBy === 'status') return statusMeta(a.status).label[zh ? 'zh' : 'en'];
       return a.vendor || (zh ? '未知厂商' : 'Unknown');
     };
     displayAssets.forEach(a => { const k = keyFn(a); (g[k] ||= []).push(a); });
@@ -955,9 +1188,81 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     return labels[a.device_category || '']?.[zh ? 'zh' : 'en'] || a.device_category || '—';
   };
 
-  const hasFilters = typeFilter !== 'all' || statusFilter !== 'all' || vendorFilter !== 'all' || dcFilter !== 'all' || deptFilter !== 'all' || lifecycleFilter !== 'all';
-  const advancedFilterCount = [vendorFilter, dcFilter, deptFilter, lifecycleFilter].filter(f => f !== 'all').length;
-  const clearAllFilters = () => { setTypeFilter('all'); setStatusFilter('all'); setVendorFilter('all'); setDcFilter('all'); setDeptFilter('all'); setSeverityFilter('all'); setLifecycleFilter('all'); };
+  const assetTree = useMemo<AssetTreeNode[]>(() => {
+    const roots: AssetTreeNode[] = [];
+    const ensureNode = (nodes: AssetTreeNode[], key: string, label: string, kind: AssetTreeNode['kind'], filters: AssetTreeNode['filters'], count: number) => {
+      let node = nodes.find(item => item.key === key);
+      if (!node) {
+        node = { key, label, kind, filters, count: 0, children: [] };
+        nodes.push(node);
+      }
+      node.count += count;
+      return node;
+    };
+    for (const row of assetTreeRows) {
+      const typeNode = ensureNode(roots, `type:${row.asset_type}`, typeMeta(row.asset_type).label[zh ? 'zh' : 'en'], 'root', { asset_type: row.asset_type }, row.asset_count);
+      const categoryNode = ensureNode(typeNode.children, `${typeNode.key}:category:${row.device_category}`, categoryDisplay({ device_category: row.device_category } as Asset), 'category', { asset_type: row.asset_type, device_category: row.device_category }, row.asset_count);
+      const siteNode = ensureNode(categoryNode.children, `${categoryNode.key}:site:${row.site_id}`, row.site_id === 'unassigned' ? (zh ? '未分配站点' : 'Unassigned Site') : row.site_name, 'site', { asset_type: row.asset_type, device_category: row.device_category, site_id: row.site_id === 'unassigned' ? '' : row.site_id }, row.asset_count);
+      ensureNode(siteNode.children, `${siteNode.key}:role:${row.device_role}`, row.device_role === 'unassigned' ? (zh ? '未分配角色' : 'Unassigned role') : row.device_role, 'status', { asset_type: row.asset_type, device_category: row.device_category, site_id: row.site_id === 'unassigned' ? '' : row.site_id, device_role: row.device_role === 'unassigned' ? '' : row.device_role }, row.asset_count);
+    }
+    return roots;
+  }, [assetTreeRows, categoryDisplay, zh]);
+
+  const applyTreeFilter = (filters: AssetTreeNode['filters']) => {
+    setTypeFilter(filters.asset_type || 'all');
+    setDeviceCategoryFilter(filters.device_category || '');
+    setDcFilter(filters.site_id || 'all');
+    setStatusFilter(filters.status || 'all');
+    setPage(1);
+    setViewMode('table');
+  };
+
+  const renderTreeNode = (node: AssetTreeNode, depth = 0): React.ReactNode => {
+    const expanded = depth < 2 || expandedTreeNodes.has(node.key);
+    const statusColor = node.kind !== 'status' ? 'bg-cyan-500' : node.label === (zh ? '在线' : 'Online') ? 'bg-emerald-500' : node.label === (zh ? '离线' : 'Offline') ? 'bg-red-500' : 'bg-amber-400';
+    return (
+      <div key={node.key}>
+        <div className="flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-cyan-50/70">
+          <button type="button" onClick={() => setExpandedTreeNodes(prev => { const next = new Set(prev); next.has(node.key) ? next.delete(node.key) : next.add(node.key); return next; })} className="h-5 w-5 shrink-0 rounded text-black/30 hover:bg-white hover:text-cyan-600" aria-label={expanded ? 'Collapse' : 'Expand'}>
+            {node.children.length > 0 ? (expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span className="block w-3" />}
+          </button>
+          <button type="button" onClick={() => applyTreeFilter(node.filters)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${statusColor}`} />
+            <span className="truncate text-[11px] font-medium text-black/70">{node.label}</span>
+            <span className="ml-auto rounded-full bg-black/[0.04] px-1.5 text-[9px] tabular-nums text-black/40">{node.count}</span>
+          </button>
+        </div>
+        {expanded && node.children.length > 0 && <div className="ml-4 border-l border-cyan-100 pl-2">{node.children.map(child => renderTreeNode(child, depth + 1))}</div>}
+      </div>
+    );
+  };
+
+  const hasFilters = typeFilter !== 'all' || statusFilter !== 'all' || vendorFilter !== 'all' || dcFilter !== 'all' || deptFilter !== 'all' || lifecycleFilter !== 'all' || deviceCategoryFilter !== '' || tagFilter.length > 0;
+  const advancedFilterCount = [vendorFilter, dcFilter, deptFilter, lifecycleFilter].filter(f => f !== 'all').length + (tagFilter.length > 0 ? 1 : 0);
+  const clearAllFilters = () => { setTypeFilter('all'); setStatusFilter('all'); setVendorFilter('all'); setDcFilter('all'); setDeptFilter('all'); setSeverityFilter('all'); setLifecycleFilter('all'); setDeviceCategoryFilter(''); setTagFilter([]); };
+
+  const renderAssetCell = (column: AssetColumnKey, a: Asset): React.ReactNode => {
+    const onlineStatus = a.online_status || (a.status === 'active' ? 'online' : a.status === 'inactive' ? 'offline' : 'pending');
+    const onlineMeta = onlineStatus === 'online'
+      ? { label: zh ? '在线' : 'Online', text: 'text-emerald-600', dot: 'bg-emerald-500' }
+      : onlineStatus === 'offline'
+        ? { label: zh ? '离线' : 'Offline', text: 'text-red-500', dot: 'bg-red-500' }
+        : { label: zh ? '待确认' : 'Pending', text: 'text-amber-600', dot: 'bg-amber-400' };
+    switch (column) {
+      case 'hostname': return <><p className="font-semibold text-[11px] text-black/80 leading-tight truncate max-w-[180px]">{a.hostname || '—'}</p><p className="text-[9px] text-black/20 font-mono truncate">{a.asset_tag || a.management_ip || a.serial_number || ''}</p></>;
+      case 'category_role': return <><span className="inline-flex items-center gap-1 text-[10px] text-cyan-600">{a.asset_type === 'server' ? <Server size={9} /> : <Router size={9} />}{typeDisplay(a)}</span><span className="block text-[9px] text-black/35 truncate max-w-[120px]">{categoryDisplay(a)}{a.device_role ? ` / ${a.device_role}` : ''}</span></>;
+      case 'site': return <span className="text-[10px] text-black/45 truncate max-w-[100px] block">{a.site_id || '—'}{a.rack && <span className="text-black/25 block text-[9px]">{a.rack}{a.rack_unit ? `U${a.rack_unit}` : ''}</span>}</span>;
+      case 'status': return <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${onlineMeta.text}`}><span className={`h-1.5 w-1.5 rounded-full ${onlineMeta.dot}`} />{onlineMeta.label}</span>;
+      case 'tags': return a.tags?.length ? <div className="flex flex-wrap items-center gap-1 max-w-[180px]">{a.tags.slice(0, 3).map(tag => <span key={tag.id} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-medium whitespace-nowrap" style={{ color: tag.color || '#0891b2', backgroundColor: `${tag.color || '#0891b2'}12` }}><span className="h-1 w-1 rounded-full" style={{ backgroundColor: tag.color || '#0891b2' }} />{zh ? (tag.label_zh || tag.label) : tag.label}</span>)}{a.tags.length > 3 && <span className="text-[8px] text-black/25">+{a.tags.length - 3}</span>}</div> : <span className="text-black/15">—</span>;
+      case 'vendor': return <span className="text-[10px] text-black/55">{a.vendor || '—'}</span>;
+      case 'model': return <span className="text-[10px] text-black/45">{a.model || '—'}</span>;
+      case 'serial_number': return <span className="font-mono text-[10px] text-black/50">{a.serial_number || '—'}</span>;
+      case 'management_ip': return <span className="font-mono text-[10px] text-black/50">{a.management_ip || '—'}</span>;
+      case 'lifecycle': return rotatingAssetId === a.id ? <span className="inline-flex items-center gap-1 text-[10px] font-medium text-cyan-600"><Loader2 size={9} className="animate-spin" />{zh ? '上收中' : 'Rotating'}</span> : <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${a.lifecycle_status === 'production' ? 'text-emerald-600' : a.lifecycle_status === 'decommissioned' ? 'text-slate-400' : a.lifecycle_status === 'maintenance' ? 'text-amber-600' : 'text-blue-500'}`}><span className={`h-1.5 w-1.5 rounded-full ${a.lifecycle_status === 'production' ? 'bg-emerald-500' : a.lifecycle_status === 'decommissioned' ? 'bg-slate-400' : a.lifecycle_status === 'maintenance' ? 'bg-amber-500' : 'bg-blue-400'}`} />{LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}</span>;
+      case 'created_at': return <span className="text-[10px] text-black/45 tabular-nums">{a.created_at?.replace('T', ' ').slice(0, 19) || '—'}</span>;
+      case 'updated_at': return <span className="text-[10px] text-black/45 tabular-nums">{a.updated_at?.replace('T', ' ').slice(0, 19) || '—'}</span>;
+    }
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -973,11 +1278,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         <AnimatePresence>
           {feedbackMsg && (
             <motion.div
+              role="alert"
               initial={{ opacity: 0, y: -12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.25 }}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl border shadow-lg backdrop-blur-sm ${
+              className={`fixed right-6 top-20 z-[220] flex w-[min(560px,calc(100vw-2rem))] items-start gap-3 px-4 py-3 rounded-xl border shadow-2xl backdrop-blur-sm ${
                 feedbackMsg.type === 'success' ? 'bg-emerald-50/90 border-emerald-200 text-emerald-800' :
                 feedbackMsg.type === 'warning' ? 'bg-amber-50/90 border-amber-200 text-amber-800' :
                 feedbackMsg.type === 'info' ? 'bg-cyan-50/90 border-cyan-200 text-cyan-800' :
@@ -988,7 +1294,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                feedbackMsg.type === 'warning' ? <AlertTriangle size={18} className="text-amber-500 shrink-0" /> :
                feedbackMsg.type === 'info' ? (rotatingAssetId ? <Loader2 size={18} className="text-cyan-500 shrink-0 animate-spin" /> : <Info size={18} className="text-cyan-500 shrink-0" />) :
                <AlertCircle size={18} className="text-red-500 shrink-0" />}
-              <span className="text-sm font-medium flex-1">{feedbackMsg.text}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium">{feedbackMsg.text}</div>
+                {feedbackMsg.details?.length ? (
+                  <ul className="mt-1 space-y-0.5 text-[11px] font-normal leading-4 opacity-90">
+                    {feedbackMsg.details.map((detail, index) => <li key={`${detail}-${index}`}>{detail}</li>)}
+                  </ul>
+                ) : null}
+              </div>
               <button onClick={() => setFeedbackMsg(null)} className="p-0.5 rounded-md hover:bg-black/5 transition-colors">
                 <X size={14} />
               </button>
@@ -1034,12 +1347,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           })}
         </div>
 
-        <div className="bg-white rounded-xl border border-black/5 shadow-sm overflow-hidden">
+        <div className="relative z-20 bg-white rounded-xl border border-black/5 shadow-sm overflow-visible">
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-black/5 bg-black/[0.008]">
             <div className="flex items-center gap-0.5">
               {([
                 { mode: 'table' as ViewMode, Icon: LayoutList, label: zh ? '表格' : 'Table' },
-                { mode: 'group' as ViewMode, Icon: LayoutGrid, label: zh ? '分组' : 'Group' },
+                { mode: 'tree' as ViewMode, Icon: LayoutGrid, label: zh ? '分组树' : 'Group Tree' },
                 { mode: 'topology' as ViewMode, Icon: Network, label: zh ? '拓扑' : 'Topo' },
               ]).map(v => (
                 <button
@@ -1054,9 +1367,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                   value={groupBy} onChange={e => setGroupBy(e.target.value as GroupBy)} title={zh ? '分组依据' : 'Group by'}
                   className="ml-1 text-[10px] px-1.5 py-1 rounded border border-[#00bceb]/20 bg-[#00bceb]/5 text-[#0088b0] font-medium focus:outline-none cursor-pointer"
                 >
-                  <option value="datacenter">{zh ? '机房' : 'Data Center'}</option>
+                  <option value="site_id">{zh ? '站点' : 'Site'}</option>
                   <option value="department">{zh ? '业务/部门' : 'Service'}</option>
                   <option value="vendor">{zh ? '厂商' : 'Vendor'}</option>
+                  <option value="device_category">{zh ? '产品类型' : 'Product Type'}</option>
+                  <option value="status">{zh ? '在线状态' : 'Online Status'}</option>
                 </select>
               )}
             </div>
@@ -1066,7 +1381,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 {selectedIds.size > 0 && (
                   <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} className="flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-black/8">
                     <span className="text-[10px] font-bold text-[#00bceb] tabular-nums mr-1">{selectedIds.size}</span>
-                    <button onClick={() => setShowBatchTag(true)} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-black/35 text-[9px] font-medium hover:bg-blue-50 hover:text-blue-600 transition-colors"><Tag size={10} />{zh ? '标签' : 'Tag'}</button>
                     <button onClick={handleBatchTakeover} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-cyan-500 text-[9px] font-medium hover:bg-cyan-50 hover:text-cyan-600 transition-colors"><Shield size={10} />{zh ? '批量上收' : 'Takeover'}</button>
                     <button onClick={handleBatchDelete} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-black/35 text-[9px] font-medium hover:bg-red-50 hover:text-red-600 transition-colors"><Trash2 size={10} />{zh ? '删除' : 'Delete'}</button>
                     <button onClick={clearSel} className="p-0.5 ml-0.5 text-black/20 hover:text-black/45" title="Clear"><X size={10} /></button>
@@ -1074,6 +1388,54 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 )}
               </AnimatePresence>
 
+              <div ref={columnsMenuRef} className="relative">
+                <button
+                  onClick={() => setColumnsOpen(open => !open)}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-semibold transition-colors ${columnsOpen ? 'border-[#00bceb]/30 bg-[#00bceb]/5 text-[#0088b0]' : 'border-black/8 bg-white text-black/45 hover:border-[#00bceb]/25 hover:text-[#0088b0]'}`}
+                  title={zh ? '配置展示列' : 'Configure columns'}
+                >
+                  <Settings2 size={13} /><span className="hidden sm:inline">{zh ? '展示列' : 'Columns'}</span>
+                </button>
+                {columnsOpen && (
+                  <div className="absolute right-0 top-full z-40 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700">{zh ? '选择展示列' : 'Visible columns'}</span>
+                      <span className="text-[10px] text-slate-400">{activeAssetColumns.length}/{ASSET_COLUMN_DEFS.length}</span>
+                    </div>
+                    <button
+                      onClick={() => setVisibleColumns(normalizeAssetColumns(Object.fromEntries(ASSET_COLUMN_DEFS.map(column => [column.key, true]))))}
+                      disabled={allAssetColumnsSelected}
+                      className="mb-2 w-full rounded-lg bg-cyan-50 px-2 py-1.5 text-left text-[11px] font-semibold text-cyan-700 disabled:cursor-default disabled:opacity-50"
+                    >
+                      {zh ? '一键全选' : 'Select all'}
+                    </button>
+                    <div className="max-h-80 overflow-y-auto pr-1">
+                      {ASSET_COLUMN_DEFS.map(column => {
+                        const fixed = FIXED_ASSET_COLUMNS.has(column.key);
+                        return (
+                        <label key={column.key} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs ${fixed ? 'cursor-default text-slate-400' : 'cursor-pointer text-slate-600 hover:bg-slate-50'}`}>
+                          <input
+                            type="checkbox"
+                            checked={visibleColumns[column.key]}
+                            disabled={fixed}
+                            onChange={() => { if (!fixed) setVisibleColumns(current => normalizeAssetColumns({ ...current, [column.key]: !current[column.key] })); }}
+                            className="accent-[#00bceb] disabled:opacity-50"
+                          />
+                          <span className="flex-1">{zh ? column.zh : column.en}</span>
+                          {visibleColumns[column.key] && <Check size={13} className={fixed ? 'text-cyan-600/60' : 'text-cyan-600'} />}
+                        </label>
+                        );
+                      })}
+                    </div>
+                    <button
+                      onClick={() => setVisibleColumns(normalizeAssetColumns({}))}
+                      className="mt-2 w-full border-t border-slate-100 pt-2 text-left text-[11px] text-cyan-600"
+                    >
+                      {zh ? '恢复默认展示' : 'Reset to default'}
+                    </button>
+                  </div>
+                )}
+              </div>
               <button onClick={openAdd} className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#00bceb] text-white text-[11px] font-semibold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20" title={zh ? '新增资产' : 'Add Asset'}><Plus size={13} /><span className="hidden sm:inline">{zh ? '新增' : 'Add'}</span></button>
               <button onClick={() => { fetchAssets(); fetchSummary(); }} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '刷新' : 'Refresh'}><RefreshCw size={13} /></button>
               <button onClick={handleDownloadTemplate} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '下载模板' : 'Template'}><FileText size={13} /></button>
@@ -1096,7 +1458,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
               {([
                 { val: typeFilter,   set: setTypeFilter,   label: zh ? '类型' : 'Type',   opts: TYPES.map(t => ({ v: t.value, l: t.label[zh ? 'zh' : 'en'] })) },
-                { val: statusFilter, set: setStatusFilter, label: zh ? '状态' : 'Status', opts: STATUSES.map(s => ({ v: s.value, l: s.label[zh ? 'zh' : 'en'] })) },
+                { val: statusFilter, set: setStatusFilter, label: zh ? '状态' : 'Status', opts: [
+                  ...STATUSES.map(s => ({ v: s.value, l: s.label[zh ? 'zh' : 'en'] })),
+                  { v: 'online', l: zh ? '在线' : 'Online' },
+                  { v: 'offline', l: zh ? '离线' : 'Offline' },
+                  { v: 'pending', l: zh ? '待确认' : 'Pending' },
+                ] },
               ] as const).map(f => (
                 <select
                   key={f.label} value={f.val} onChange={e => f.set(e.target.value)} title={f.label}
@@ -1106,6 +1473,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                   {f.opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
                 </select>
               ))}
+
+              <TagFilterDropdown
+                allTags={allTags}
+                selectedTagIds={tagFilter}
+                onChange={setTagFilter}
+                language={language}
+              />
 
               <button
                 onClick={() => setShowAdvancedFilter(p => !p)}
@@ -1160,31 +1534,22 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                     <th className="w-7 px-1.5 py-1.5">
                       <input type="checkbox" checked={selectedIds.size === displayAssets.length && displayAssets.length > 0} onChange={toggleAll} className="h-3 w-3 rounded border-black/12 accent-[#00bceb] cursor-pointer" />
                     </th>
-                    {([
-                      { l: zh ? '主机名' : 'Hostname',        w: 'min-w-[150px]' },
-                      { l: zh ? '资产类型' : 'Asset Type',     w: 'w-20' },
-                      { l: zh ? '厂商/型号' : 'Vendor/Model', w: 'min-w-[110px]' },
-                      { l: zh ? '管理IP' : 'Mgmt IP',         w: 'w-[110px]' },
-                      { l: zh ? '状态'   : 'Status',          w: 'w-[80px]' },
-                      { l: zh ? '投产'   : 'Lifecycle',       w: 'w-[80px]' },
-                      { l: zh ? '设备子类' : 'Sub-category',   w: 'w-20' },
-                      { l: zh ? '机房'   : 'DC',              w: 'w-20' },
-                      { l: zh ? '部门'   : 'Dept',            w: 'w-20' },
-                      { l: zh ? '保修到期' : 'Warranty',       w: 'w-24' },
-                      { l: zh ? '操作'   : 'Actions',         w: 'w-16', align: 'text-center' },
-                    ]).map(c => (
-                      <th key={c.l} className={`text-left px-1.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-black/20 ${c.w} ${c.align || ''}`}>{c.l}</th>
+                    {activeAssetColumns.map(column => (
+                      <th key={column.key} className={`text-left px-1.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-black/20 ${column.width}`}>
+                        {zh ? column.zh : column.en}
+                      </th>
                     ))}
+                    <th className="w-20 px-1.5 py-1.5 text-center text-[9px] font-bold uppercase tracking-wider text-black/20">{zh ? '操作' : 'Actions'}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={12} className="text-center py-16 text-black/15">
+                    <tr><td colSpan={activeAssetColumns.length + 2} className="text-center py-16 text-black/15">
                       <RefreshCw size={16} className="mx-auto mb-1.5 animate-spin text-[#00bceb]/25" />
                       <p className="text-[10px]">{zh ? '加载中...' : 'Loading...'}</p>
                     </td></tr>
                   ) : displayAssets.length === 0 ? (
-                    <tr><td colSpan={12} className="py-16">
+                    <tr><td colSpan={activeAssetColumns.length + 2} className="py-16">
                       <div className="text-center max-w-lg mx-auto">
                         <div className="relative h-24 w-24 mx-auto mb-5">
                           <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#00bceb]/5 to-[#00bceb]/10 flex items-center justify-center">
@@ -1205,7 +1570,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                       </div>
                     </td></tr>
                   ) : displayAssets.map(a => {
-                    const sm  = statusMeta(a.status);
                     const sel = selectedIds.has(a.id);
                     const isDrawerTarget = drawerAsset?.id === a.id;
 
@@ -1217,59 +1581,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         <td className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
                           <input type="checkbox" checked={sel} onChange={() => toggle(a.id)} className="h-3 w-3 rounded border-black/12 accent-[#00bceb] cursor-pointer" />
                         </td>
-                        <td className="px-1.5 py-1">
-                          <p className="font-semibold text-[11px] text-black/80 leading-tight truncate max-w-[180px]">{a.hostname || '—'}</p>
-                          <p className="text-[9px] text-black/20 font-mono truncate">{a.asset_tag || a.serial_number || ''}</p>
-                        </td>
-                        <td className="px-1.5 py-1">
-                          <span className={`inline-flex items-center gap-1 text-[10px] ${a.asset_type === 'server' ? 'text-violet-500' : 'text-cyan-600'}`}>
-                            {a.asset_type === 'server' ? <Server size={9} /> : <Router size={9} />}
-                            {typeDisplay(a)}
-                          </span>
-                        </td>
-                        <td className="px-1.5 py-1 text-[10px]">
-                          <span className="text-black/55">{a.vendor}</span>
-                          {a.model && <span className="text-black/20 block text-[9px] truncate max-w-[100px]">{a.model}</span>}
-                        </td>
-                        <td className="px-1.5 py-1 font-mono text-[10px] text-black/50">{a.management_ip || '—'}</td>
-                        <td className="px-1.5 py-1">
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${sm.text}`}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${sm.dot} ${a.status === 'active' ? 'animate-pulse' : ''}`} />
-                            {sm.label[zh ? 'zh' : 'en']}
-                          </span>
-                        </td>
-                        <td className="px-1.5 py-1">
-                          {rotatingAssetId === a.id ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-cyan-600">
-                              <Loader2 size={9} className="animate-spin" />
-                              {zh ? '上收中' : 'Rotating'}
-                            </span>
-                          ) : (
-                            <div className="flex flex-col gap-0.5">
-                              <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${a.lifecycle_status === 'production' ? 'text-emerald-600' : a.lifecycle_status === 'decommissioned' ? 'text-slate-400' : a.lifecycle_status === 'maintenance' ? 'text-amber-600' : 'text-blue-500'}`}>
-                                <span className={`h-1.5 w-1.5 rounded-full ${a.lifecycle_status === 'production' ? 'bg-emerald-500' : a.lifecycle_status === 'decommissioned' ? 'bg-slate-400' : a.lifecycle_status === 'maintenance' ? 'bg-amber-500' : 'bg-blue-400'}`} />
-                                {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}
-                                {a.is_managed === 1 && <span title={zh ? '凭据受管' : 'Managed'}><Lock size={8} className="text-emerald-500/50" /></span>}
-                              </span>
-                              {a.takeover_error && (
-                                <div className="flex items-center gap-1 text-[8px] text-red-500 font-medium bg-red-50 px-1 rounded truncate max-w-[60px]" title={a.takeover_error}>
-                                  <AlertTriangle size={8} /><span>{a.takeover_error}</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-1.5 py-1 text-[9px] text-black/30">{categoryDisplay(a)}</td>
-                        <td className="px-1.5 py-1 text-[10px] text-black/30 truncate max-w-[80px]">
-                          {a.datacenter || '—'}
-                          {a.rack && <span className="text-black/15 block text-[9px]">{a.rack}{a.rack_unit ? `U${a.rack_unit}` : ''}</span>}
-                        </td>
-                        <td className="px-1.5 py-1 text-[10px] text-black/30 truncate max-w-[80px]">{a.department || '—'}</td>
-                        <td className="px-1.5 py-1 text-[10px] tabular-nums">
-                          {a.warranty_expiry ? (
-                            <span className={new Date(a.warranty_expiry) <= new Date(Date.now() + 90 * 86400000) ? 'text-red-500 font-semibold' : 'text-black/30'}>{a.warranty_expiry}</span>
-                          ) : <span className="text-black/12">—</span>}
-                        </td>
+                        {activeAssetColumns.map(column => (
+                          <td key={column.key} className="px-1.5 py-1">
+                            {renderAssetCell(column.key, a)}
+                          </td>
+                        ))}
                         <td className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-center gap-px">
                             <button onClick={() => openCopy(a)} className="p-1 rounded text-black/12 hover:text-emerald-500 hover:bg-emerald-50" title={zh ? '复制' : 'Copy'}><Copy size={12} /></button>
@@ -1285,7 +1601,31 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             </div>
           )}
 
-          {viewMode === 'group' && (
+          {viewMode === 'tree' && (
+            <div className="grid grid-cols-1 gap-3 p-3 lg:grid-cols-[300px_minmax(0,1fr)]">
+              <aside className="rounded-xl border border-cyan-100 bg-gradient-to-b from-cyan-50/70 to-white p-3">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-[#164e63]">{zh ? '资产分类树' : 'Asset Classification Tree'}</p>
+                    <p className="mt-0.5 text-[9px] text-black/35">{zh ? '类型 → 产品 → 站点 → 在线状态' : 'Type → Product → Site → Online status'}</p>
+                  </div>
+                  <button type="button" onClick={() => { setTypeFilter('all'); setDeviceCategoryFilter(''); setDcFilter('all'); setStatusFilter('all'); setViewMode('table'); }} className="text-[10px] font-semibold text-cyan-600 hover:underline">{zh ? '全部' : 'All'}</button>
+                </div>
+                {assetTreeLoading ? <div className="py-8 text-center text-[10px] text-black/30"><RefreshCw size={15} className="mx-auto mb-2 animate-spin" />{zh ? '加载分类…' : 'Loading tree…'}</div> : assetTree.length === 0 ? <div className="py-8 text-center text-[10px] text-black/30">{zh ? '暂无分类数据' : 'No classification data'}</div> : <div className="space-y-0.5">{assetTree.map(node => renderTreeNode(node))}</div>}
+              </aside>
+              <div className="rounded-xl border border-black/5 bg-white p-4">
+                <div className="flex h-full min-h-[260px] items-center justify-center text-center">
+                  <div>
+                    <LayoutGrid size={28} className="mx-auto mb-2 text-cyan-300" />
+                    <p className="text-sm font-semibold text-[#164e63]">{zh ? '选择左侧分类查看资产' : 'Select a category to view assets'}</p>
+                    <p className="mt-1 text-[11px] text-black/35">{zh ? '点击任意节点会自动切换到资产列表并应用筛选条件。' : 'Click any node to open the asset table with its filters applied.'}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {viewMode === 'group' && false && (
             <div className="divide-y divide-black/[0.03]">
               {loading ? (
                 <div className="text-center py-14 text-black/15"><RefreshCw size={16} className="mx-auto mb-1.5 animate-spin text-[#00bceb]/25" /></div>
@@ -1295,7 +1635,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 const isExp = expandedGroups.has(gk);
                 const onlineIn = items.filter(a => a.status === 'active').length;
                 const offlineIn = items.filter(a => a.status === 'inactive').length;
-                const GroupIcon = groupBy === 'datacenter' ? Building2 : groupBy === 'vendor' ? MonitorSpeaker : Zap;
+                const GroupIcon = groupBy === 'site_id' ? Building2 : groupBy === 'vendor' ? MonitorSpeaker : Zap;
                 return (
                   <div key={gk}>
                     <button
@@ -1482,17 +1822,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         onClose={() => setDeleteTarget(null)}
         deleteTarget={deleteTarget}
         handleDelete={handleDelete}
-        language={language}
-      />
-
-      {/* Batch Tag */}
-      <BatchTagModal
-        isOpen={showBatchTag}
-        onClose={() => setShowBatchTag(false)}
-        selectedCount={selectedIds.size}
-        batchTagValue={batchTagValue}
-        setBatchTagValue={setBatchTagValue}
-        batchTag={batchTag}
         language={language}
       />
 

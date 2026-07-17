@@ -58,45 +58,40 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const zh = language === 'zh';
 
   const [racks, setRacks] = React.useState<any[]>([]);
+  const [sites, setSites] = React.useState<any[]>([]);
   const [uValidationError, setUValidationError] = React.useState<string | null>(null);
   const [legacyExemptReason, setLegacyExemptReason] = React.useState('');
 
   React.useEffect(() => {
     if (isOpen) {
       const token = localStorage.getItem('netops_token');
-      fetch('/api/racks', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.success && Array.isArray(data.data)) {
-          setRacks(data.data);
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      Promise.all([
+        fetch('/api/racks', { headers }).then(res => res.json()),
+        fetch('/api/cmdb/sites', { headers }).then(res => res.json()),
+      ])
+      .then(([rackData, siteData]) => {
+        if (rackData && rackData.success && Array.isArray(rackData.data)) {
+          setRacks(rackData.data);
+        }
+        if (siteData && siteData.success && Array.isArray(siteData.data)) {
+          setSites(siteData.data);
         }
       })
-      .catch(err => console.error('Failed to load racks:', err));
+      .catch(err => console.error('Failed to load asset location data:', err));
     }
   }, [isOpen]);
 
-  const uniqueDatacenters = React.useMemo(() => {
-    const set = new Set<string>();
-    racks.forEach(r => {
-      if (r.datacenter) {
-        set.add(r.datacenter);
-      }
-    });
-    return Array.from(set).sort();
-  }, [racks]);
-
   const filteredRacks = React.useMemo(() => {
-    if (!form.datacenter) {
+    if (!form.site_id) {
       return Array.from(new Set(racks.map(r => r.name))).filter(Boolean).sort();
     }
     return racks
-      .filter(r => r.datacenter === form.datacenter)
+      .filter(r => r.site_id === form.site_id)
       .map(r => r.name)
       .filter(Boolean)
       .sort();
-  }, [racks, form.datacenter]);
+  }, [racks, form.site_id]);
 
   // Real-time U-position validation
   React.useEffect(() => {
@@ -529,15 +524,17 @@ export const AssetModal: React.FC<AssetModalProps> = ({
             <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
               <div>
                 <Field
-                  label={zh ? '数据中心' : 'DC'}
-                  value={form.datacenter}
-                  onChange={v => setForm(f => ({ ...f, datacenter: v }))}
+                  label={zh ? '站点' : 'Site'}
+                  value={form.site_id || ''}
+                  onChange={v => setForm(f => ({ ...f, site_id: v, rack: f.site_id === v ? f.rack : '' }))}
                   placeholder="BJ-DC1"
-                  list="dc-options"
+                  list="site-options"
                 />
-                <datalist id="dc-options">
-                  {uniqueDatacenters.map(dc => (
-                    <option key={dc} value={dc} />
+                <datalist id="site-options">
+                  {sites.map(site => (
+                    <option key={site.id} value={site.id}>
+                      {site.site_code} {site.site_name}
+                    </option>
                   ))}
                 </datalist>
               </div>
@@ -548,8 +545,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   onChange={v => {
                     setForm(f => {
                       const matched = racks.find(r => r.name === v);
-                      const newDc = !f.datacenter && matched?.datacenter ? matched.datacenter : f.datacenter;
-                      return { ...f, rack: v, datacenter: newDc };
+                      const newSiteId = !f.site_id && matched?.site_id ? matched.site_id : f.site_id;
+                      return { ...f, rack: v, site_id: newSiteId };
                     });
                   }}
                   placeholder="A-01"

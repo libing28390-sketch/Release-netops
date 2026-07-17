@@ -28,7 +28,7 @@ const EnterpriseWorkflowPanel: React.FC<Props> = ({ language }) => {
   const ipam = useIpamPrefixes();
   const reconciliation = useIpamReconciliation();
   const [siteForm, setSiteForm] = useState({
-    tenantId: '', tenantName: '', siteCode: '', siteName: '',
+    tenantId: '', tenantName: '', siteName: '',
     vrfName: 'default', vlanId: '100', vlanName: 'SERVER', prefix: '',
   });
   const [allocation, setAllocation] = useState({
@@ -50,11 +50,11 @@ const EnterpriseWorkflowPanel: React.FC<Props> = ({ language }) => {
   };
 
   const submitSite = () => execute(async () => {
-    if (!siteForm.siteCode || !siteForm.siteName || !siteForm.prefix) throw new Error(zh ? '请填写站点编码、名称和 Prefix' : 'Site code, name and prefix are required');
+    if (!siteForm.siteName || !siteForm.prefix) throw new Error(zh ? '请填写站点名称和 Prefix' : 'Site name and prefix are required');
     const result = await createSiteFoundation({
       tenantId: siteForm.tenantId || undefined,
       tenantName: siteForm.tenantId ? undefined : siteForm.tenantName,
-      siteCode: siteForm.siteCode, siteName: siteForm.siteName,
+      siteName: siteForm.siteName,
       vrfName: siteForm.vrfName, vlanId: Number(siteForm.vlanId),
       vlanName: siteForm.vlanName, prefix: siteForm.prefix,
     });
@@ -103,7 +103,7 @@ const EnterpriseWorkflowPanel: React.FC<Props> = ({ language }) => {
           {flow === 'site' && <div className="grid gap-3 md:grid-cols-4">
             <select className={inputClass} value={siteForm.tenantId} onChange={event => setSiteForm({ ...siteForm, tenantId: event.target.value })}><option value="">{zh ? '新建租户' : 'Create tenant'}</option>{cmdb.tenants.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
             {!siteForm.tenantId && <input className={inputClass} placeholder={zh ? '租户名称' : 'Tenant name'} value={siteForm.tenantName} onChange={event => setSiteForm({ ...siteForm, tenantName: event.target.value })} />}
-            <input className={inputClass} placeholder={zh ? '站点编码' : 'Site code'} value={siteForm.siteCode} onChange={event => setSiteForm({ ...siteForm, siteCode: event.target.value })} />
+            <div className="rounded-lg border border-cyan-500/15 bg-cyan-50/70 px-3 py-2 text-xs leading-5 text-cyan-800">{zh ? '站点编码由系统自动生成' : 'Site code is generated automatically'}</div>
             <input className={inputClass} placeholder={zh ? '站点名称' : 'Site name'} value={siteForm.siteName} onChange={event => setSiteForm({ ...siteForm, siteName: event.target.value })} />
             <input className={inputClass} placeholder="VRF" value={siteForm.vrfName} onChange={event => setSiteForm({ ...siteForm, vrfName: event.target.value })} />
             <input className={inputClass} type="number" min="1" max="4094" placeholder="VLAN ID" value={siteForm.vlanId} onChange={event => setSiteForm({ ...siteForm, vlanId: event.target.value })} />

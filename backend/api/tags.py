@@ -64,7 +64,7 @@ def get_definition(tag_id: str, current_user=require_role("Viewer")):
 
 
 @router.post("/definitions")
-def create_definition(req: TagDefinitionCreate, current_user=require_role("Operator")):
+def create_definition(req: TagDefinitionCreate, current_user=require_role("Administrator")):
     conn = get_db_connection()
     try:
         tag = tag_service.create_tag_definition(
@@ -102,7 +102,7 @@ def create_definition(req: TagDefinitionCreate, current_user=require_role("Opera
 
 
 @router.put("/definitions/{tag_id}")
-def update_definition(tag_id: str, req: TagDefinitionUpdate, current_user=require_role("Operator")):
+def update_definition(tag_id: str, req: TagDefinitionUpdate, current_user=require_role("Administrator")):
     conn = get_db_connection()
     try:
         updates = {k: v for k, v in req.model_dump().items() if v is not None}
@@ -182,7 +182,7 @@ def get_device_tags(device_id: str, current_user=require_role("Viewer")):
 
 
 @router.put("/devices/{device_id}")
-def set_device_tags(device_id: str, req: DeviceTagsUpdate, current_user=require_role("Operator")):
+def set_device_tags(device_id: str, req: DeviceTagsUpdate, current_user=require_role("Administrator")):
     conn = get_db_connection()
     try:
         tags = tag_service.set_device_tags(conn, device_id, req.tag_ids, current_user.get('username', ''))
@@ -200,12 +200,14 @@ def set_device_tags(device_id: str, req: DeviceTagsUpdate, current_user=require_
             details={"tag_ids": req.tag_ids},
         )
         return {"success": True, "data": tags}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     finally:
         conn.close()
 
 
 @router.post("/devices/{device_id}/{tag_id}")
-def add_device_tag(device_id: str, tag_id: str, current_user=require_role("Operator")):
+def add_device_tag(device_id: str, tag_id: str, current_user=require_role("Administrator")):
     conn = get_db_connection()
     try:
         added = tag_service.add_device_tag(conn, device_id, tag_id, current_user.get('username', ''))
@@ -225,12 +227,14 @@ def add_device_tag(device_id: str, tag_id: str, current_user=require_role("Opera
             details={"tag_id": tag_id},
         )
         return {"success": True, "message": "Tag added"}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     finally:
         conn.close()
 
 
 @router.delete("/devices/{device_id}/{tag_id}")
-def remove_device_tag(device_id: str, tag_id: str, current_user=require_role("Operator")):
+def remove_device_tag(device_id: str, tag_id: str, current_user=require_role("Administrator")):
     conn = get_db_connection()
     try:
         removed = tag_service.remove_device_tag(conn, device_id, tag_id)
@@ -250,12 +254,14 @@ def remove_device_tag(device_id: str, tag_id: str, current_user=require_role("Op
             details={"tag_id": tag_id},
         )
         return {"success": True, "message": "Tag removed"}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     finally:
         conn.close()
 
 
 @router.post("/devices/batch")
-def batch_add_tags(req: BatchDeviceTagsUpdate, current_user=require_role("Operator")):
+def batch_add_tags(req: BatchDeviceTagsUpdate, current_user=require_role("Administrator")):
     conn = get_db_connection()
     try:
         count = tag_service.batch_set_device_tags(conn, req.device_ids, req.tag_ids, current_user.get('username', ''))
@@ -273,6 +279,8 @@ def batch_add_tags(req: BatchDeviceTagsUpdate, current_user=require_role("Operat
             details={"device_count": len(req.device_ids), "tag_ids": req.tag_ids, "assigned": count},
         )
         return {"success": True, "data": {"assigned": count}, "message": f"Assigned {count} tag(s)"}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     finally:
         conn.close()
 

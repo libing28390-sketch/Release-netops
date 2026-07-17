@@ -57,11 +57,18 @@ interface Asset {
   rack_unit?: string;
 }
 
+interface SiteOption {
+  id: string;
+  site_code: string;
+  site_name: string;
+}
+
 export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const zh = language === 'zh';
 
   const [racks, setRacks] = useState<Rack[]>([]);
   const [rackTypes, setRackTypes] = useState<RackType[]>([]);
+  const [sites, setSites] = useState<SiteOption[]>([]);
   const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>([]);
   const [stats, setStats] = useState<RackStats | null>(null);
   const [selectedRackId, setSelectedRackId] = useState('');
@@ -97,7 +104,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const [rackForm, setRackForm] = useState({
     name: '',
-    datacenter: '',
+    site_id: '',
     room: '',
     row: '',
     rack_type_id: '',
@@ -151,10 +158,16 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     });
   }, [assets, installedAssetSet]);
 
-  const datacenters = useMemo(() => {
-    const dcs = new Set(racks.map(r => r.datacenter).filter(Boolean));
-    return Array.from(dcs).sort();
-  }, [racks]);
+  const siteById = useMemo(() => new Map(sites.map(site => [site.id, site])), [sites]);
+  const siteLabel = useCallback((rack?: Pick<Rack, 'site_id' | 'site_code' | 'site_name' | 'datacenter'>) => {
+    if (!rack) return '';
+    const site = rack.site_id ? siteById.get(rack.site_id) : undefined;
+    return site?.site_code || rack.site_code || site?.site_name || rack.site_name || rack.datacenter || rack.site_id || '';
+  }, [siteById]);
+  const siteOptions = useMemo(
+    () => sites.slice().sort((a, b) => (a.site_code || a.site_name).localeCompare(b.site_code || b.site_name)),
+    [sites],
+  );
 
   const rackTypeById = useMemo(() => {
     const map = new Map<string, RackType>();
@@ -169,7 +182,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const filteredRacks = useMemo(() => {
     let list = racks;
-    if (dcFilter) list = list.filter(r => r.datacenter === dcFilter);
+    if (dcFilter) list = list.filter(r => r.site_id === dcFilter);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       const rackIdsWithMatchingDevices = new Set<string>();
@@ -189,6 +202,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       }
       list = list.filter(r =>
         r.name.toLowerCase().includes(q) ||
+        siteLabel(r).toLowerCase().includes(q) ||
         r.datacenter.toLowerCase().includes(q) ||
         r.room.toLowerCase().includes(q) ||
         r.row.toLowerCase().includes(q) ||
@@ -197,7 +211,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       );
     }
     return list;
-  }, [racks, dcFilter, searchQuery, allLayouts]);
+  }, [racks, dcFilter, searchQuery, allLayouts, siteLabel]);
 
   /* -- Data Fetchers -- */
 
@@ -212,6 +226,14 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       setAllLayouts(layouts.filter((l): l is RackLayout => l !== null));
     } catch (e: any) { setError(e.message); }
   }, [selectedRackId]);
+
+  const loadSites = useCallback(async () => {
+    try {
+      setSites(await fetchJson<SiteOption[]>(`${API}/cmdb/sites`));
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }, []);
 
   const loadDeviceTypes = useCallback(async () => {
     try { setDeviceTypes(await fetchJson<DeviceType[]>(`${API}/device-types`)); } catch {}
@@ -273,7 +295,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { loadRacks(); loadDeviceTypes(); loadRackTypes(); loadStats(); }, []);
+  useEffect(() => { loadRacks(); loadDeviceTypes(); loadRackTypes(); loadStats(); loadSites(); }, []);
   useEffect(() => { if (selectedRackId) loadLayout(selectedRackId); }, [selectedRackId, loadLayout]);
 
   useEffect(() => {
@@ -369,7 +391,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const COL_MAP: Record<string, string> = {
     '机柜名称*': 'name',
-    '数据中心': 'datacenter',
+    '站点': 'site_id',
+    '数据中心': 'site_id',
     '机房': 'room',
     '列': 'row',
     '总U位': 'total_u',
@@ -389,7 +412,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     'Rack Type Name': 'rack_type_name',
     'rack_type': 'rack_type_name',
     'rack_type_name': 'rack_type_name',
-    'Datacenter': 'datacenter',
+    'Site': 'site_id',
+    'Datacenter': 'site_id',
     'Room': 'room',
     'Row': 'row',
     'Total U': 'total_u',
@@ -411,16 +435,16 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const handleDownloadTemplate = () => {
     const wb = XLSX.utils.book_new();
     const headers = zh
-      ? ['机柜名称*', '数据中心', '机房', '列', '总U位', '最大功率(W)', '散热区域', '备注']
-      : ['Name*', 'Datacenter', 'Room', 'Row', 'Total U', 'Max Power(W)', 'Cooling Zone', 'Notes'];
+      ? ['机柜名称*', '站点', '机房', '列', '总U位', '最大功率(W)', '散热区域', '备注']
+      : ['Name*', 'Site', 'Room', 'Row', 'Total U', 'Max Power(W)', 'Cooling Zone', 'Notes'];
     const example = zh
       ? ['A-01', '北京第一数据中心', '302机房', 'A列', 42, 6000, '冷通道A区', '测试机柜']
       : ['A-01', 'Beijing DC 1', 'Room 302', 'Row A', 42, 6000, 'Zone A', 'Test rack'];
     void headers;
     void example;
     const templateHeaders = zh
-      ? ['机柜名称*', '机柜类型', '数据中心', '机房', '列', '总U位', '宽度(mm)', '深度(mm)', '最大承重(kg)', '最大功率(W)', '允许正反面', '散热区域', '备注']
-      : ['Name*', 'Rack Type', 'Datacenter', 'Room', 'Row', 'Total U', 'Width(mm)', 'Depth(mm)', 'Max Weight(kg)', 'Max Power(W)', 'Allow Front/Rear', 'Cooling Zone', 'Notes'];
+      ? ['机柜名称*', '机柜类型', '站点', '机房', '列', '总U位', '宽度(mm)', '深度(mm)', '最大承重(kg)', '最大功率(W)', '允许正反面', '散热区域', '备注']
+      : ['Name*', 'Rack Type', 'Site', 'Room', 'Row', 'Total U', 'Width(mm)', 'Depth(mm)', 'Max Weight(kg)', 'Max Power(W)', 'Allow Front/Rear', 'Cooling Zone', 'Notes'];
     const templateExample = zh
       ? ['A-01', '48U Network Cabinet', '北京第一数据中心', '302机房', 'A列', 48, 600, 1000, 1200, 12000, '是', '冷通道A区', '核心网络机柜']
       : ['A-01', '48U Network Cabinet', 'Beijing DC 1', 'Room 302', 'Row A', 48, 600, 1000, 1200, 12000, 'yes', 'Zone A', 'Core network rack'];
@@ -442,7 +466,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
           [zh ? '最大承重(kg)' : 'Max Weight(kg)']: r.max_weight_kg || 0,
           [zh ? '允许正反面' : 'Allow Front/Rear']: r.allow_front_rear_mount === false || r.allow_front_rear_mount === 0 ? (zh ? '否' : 'no') : (zh ? '是' : 'yes'),
           [zh ? '机柜名称' : 'Name']: r.name,
-          [zh ? '数据中心' : 'Datacenter']: r.datacenter || '',
+          [zh ? '站点' : 'Site']: siteLabel(r),
           [zh ? '机房' : 'Room']: r.room || '',
           [zh ? '列' : 'Row']: r.row || '',
           [zh ? '总U位' : 'Total U']: r.total_u,
@@ -552,7 +576,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     setEditingRack(null);
     setRackForm({
       name: '',
-      datacenter: '',
+      site_id: siteOptions[0]?.id || '',
       room: '',
       row: '',
       rack_type_id: '',
@@ -572,7 +596,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     setEditingRack(rack);
     setRackForm({
       name: rack.name,
-      datacenter: rack.datacenter,
+      site_id: rack.site_id || '',
       room: rack.room,
       row: rack.row,
       rack_type_id: rack.rack_type_id || '',
@@ -1119,10 +1143,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
               <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder={zh ? '搜索机柜/设备...' : 'Search rack/device...'} className="flex-1 bg-transparent text-xs outline-none" style={{ color: 'var(--body-text)' }} />
               {searchQuery && <button onClick={() => setSearchQuery('')}><X size={12} style={{ color: 'var(--muted-text)' }} /></button>}
             </div>
-            {datacenters.length > 1 && (
+            {siteOptions.length > 1 && (
               <select value={dcFilter} onChange={e => setDcFilter(e.target.value)} className="w-full text-[11px] rounded-lg px-2 py-1.5 outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}>
-                <option value="">{zh ? '全部数据中心' : 'All DCs'}</option>
-                {datacenters.map(dc => <option key={dc} value={dc}>{dc}</option>)}
+                <option value="">{zh ? '全部站点' : 'All Sites'}</option>
+                {siteOptions.map(site => <option key={site.id} value={site.id}>{site.site_code} · {site.site_name}</option>)}
               </select>
             )}
           </div>
@@ -1149,7 +1173,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
-                    {rack.datacenter && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#06b6d415', color: '#06b6d4' }}>{rack.datacenter}</span>}
+                    {siteLabel(rack) && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#06b6d415', color: '#06b6d4' }}>{siteLabel(rack)}</span>}
                     {rack.rack_type_id && <span className="text-[10px] truncate max-w-[120px]" style={{ color: 'var(--muted-text)' }}>{getRackTypeName(rack.rack_type_id)}</span>}
                     <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.total_u}U</span>
                     {(rack.width_mm || rack.depth_mm) && <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.width_mm || '-'}×{rack.depth_mm || '-'}mm</span>}
@@ -1213,7 +1237,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   <h3 className="text-sm font-bold" style={{ color: 'var(--heading-text)' }}>
                     {selectedRack.name}
                     <span className="text-[11px] font-normal ml-2" style={{ color: 'var(--muted-text)' }}>
-                      {selectedRack.datacenter}{selectedRack.room ? ` / ${selectedRack.room}` : ''}
+                      {siteLabel(selectedRack)}{selectedRack.room ? ` / ${selectedRack.room}` : ''}
                     </span>
                   </h3>
                   <div className="flex items-center rounded-lg p-0.5" style={{ background: 'var(--app-hover-bg)' }}>
@@ -1635,8 +1659,11 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '数据中心' : 'Datacenter'}</label>
-                    <input value={rackForm.datacenter} onChange={e => setRackForm({ ...rackForm, datacenter: e.target.value })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} />
+                    <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '站点' : 'Site'} *</label>
+                    <select value={rackForm.site_id} onChange={e => setRackForm({ ...rackForm, site_id: e.target.value })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}>
+                      <option value="">{zh ? '请选择站点' : 'Select site'}</option>
+                      {siteOptions.map(site => <option key={site.id} value={site.id}>{site.site_code} · {site.site_name}</option>)}
+                    </select>
                   </div>
                   <div>
                     <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '机房' : 'Room'}</label>

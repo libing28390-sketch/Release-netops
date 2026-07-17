@@ -24,6 +24,48 @@ def _row_to_dict(row) -> dict:
     return dict(row)
 
 
+def _resolve_site(conn, site_id: str = '', legacy_label: str = '') -> tuple[str, str, str]:
+    """Resolve a rack location to the canonical sites row.
+
+    The old rack form stored free text in ``datacenter``.  Accepting that
+    value here keeps old imports usable, while every new write is normalized
+    to ``site_id`` and the site code is only mirrored into the legacy column.
+    """
+    requested_id = (site_id or '').strip()
+    requested_label = (legacy_label or '').strip()
+    if requested_id:
+        row = conn.execute(
+            """SELECT id, site_code, site_name FROM sites
+               WHERE id = ? OR site_code = ? OR site_name = ?
+               ORDER BY CASE WHEN id = ? THEN 0 WHEN site_code = ? THEN 1 ELSE 2 END
+               LIMIT 1""",
+            (requested_id, requested_id, requested_id, requested_id, requested_id),
+        ).fetchone()
+        if not row:
+            raise ValueError(f"Site not found: {requested_id}")
+        return row['id'], row['site_code'] or row['site_name'] or row['id'], row['site_name'] or row['site_code'] or row['id']
+
+    if requested_label:
+        row = conn.execute(
+            """SELECT id, site_code, site_name FROM sites
+               WHERE id = ? OR site_code = ? OR site_name = ?
+               ORDER BY CASE WHEN id = ? THEN 0 WHEN site_code = ? THEN 1 ELSE 2 END
+               LIMIT 1""",
+            (requested_label, requested_label, requested_label, requested_label, requested_label),
+        ).fetchone()
+        if row:
+            return row['id'], row['site_code'] or row['site_name'] or row['id'], row['site_name'] or row['site_code'] or row['id']
+        raise ValueError(f"Site not found: {requested_label}")
+
+    rows = conn.execute(
+        "SELECT id, site_code, site_name FROM sites WHERE status = 'active' ORDER BY site_code"
+    ).fetchall()
+    if len(rows) == 1:
+        row = rows[0]
+        return row['id'], row['site_code'] or row['site_name'] or row['id'], row['site_name'] or row['site_code'] or row['id']
+    raise ValueError("A site is required when creating a rack")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RackType CRUD
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -101,18 +143,26 @@ def delete_rack_type(conn, rack_type_id: str) -> None:
 # Rack CRUD
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def list_racks(conn, datacenter: str = '') -> list[dict]:
-    if datacenter:
+def list_racks(conn, site_id: str = '', datacenter: str = '') -> list[dict]:
+    query = """SELECT r.*, s.site_code, s.site_name
+               FROM racks r LEFT JOIN sites s ON s.id = r.site_id"""
+    if site_id:
+        rows = conn.execute(query + " WHERE r.site_id = ? ORDER BY r.name", (site_id,)).fetchall()
+    elif datacenter:
         rows = conn.execute(
-            "SELECT * FROM racks WHERE datacenter = ? ORDER BY name", (datacenter,)
+            query + " WHERE r.datacenter = ? OR s.site_code = ? OR s.site_name = ? ORDER BY r.name",
+            (datacenter, datacenter, datacenter),
         ).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM racks ORDER BY datacenter, name").fetchall()
+        rows = conn.execute(query + " ORDER BY s.site_code, r.name").fetchall()
     return [_row_to_dict(r) for r in rows]
 
 
 def get_rack(conn, rack_id: str) -> dict:
-    row = conn.execute("SELECT * FROM racks WHERE id = ?", (rack_id,)).fetchone()
+    row = conn.execute(
+        "SELECT r.*, s.site_code, s.site_name FROM racks r LEFT JOIN sites s ON s.id = r.site_id WHERE r.id = ?",
+        (rack_id,),
+    ).fetchone()
     if not row:
         raise ValueError(f"Rack not found: {rack_id}")
     return _row_to_dict(row)
@@ -128,6 +178,8 @@ def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
     rack_id = str(uuid.uuid4())
     if not rack_code:
         rack_code = f"RACK_{uuid.uuid4().hex[:12].upper()}"
+
+    site_id, site_code, _site_name = _resolve_site(conn, site_id, datacenter)
 
     if rack_type_id:
         rack_type = get_rack_type(conn, rack_type_id)
@@ -167,7 +219,7 @@ def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
            )
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            rack_id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name,
+            rack_id, site_id, rack_code, rack_name, name, site_code, room, row, room_name, row_name,
             total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
             current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
             placement_strategy, rack_type_id, width_mm, depth_mm, 1 if allow_front_rear_mount else 0, now, now
@@ -175,7 +227,7 @@ def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
     )
     if commit:
         conn.commit()
-    logger.info(f"[RackService] Created rack '{name}' in {datacenter or '(no DC)'}")
+    logger.info(f"[RackService] Created rack '{name}' at site {site_id}")
     return get_rack(conn, rack_id)
 
 
@@ -183,6 +235,15 @@ def update_rack(conn, rack_id: str, **fields) -> dict:
     existing = get_rack(conn, rack_id)
     updates = []
     params = []
+
+    if 'site_id' in fields and fields['site_id'] is not None:
+        resolved_id, site_code, _site_name = _resolve_site(conn, fields['site_id'])
+        fields['site_id'] = resolved_id
+        fields['datacenter'] = site_code
+    elif 'datacenter' in fields and fields['datacenter'] is not None:
+        resolved_id, site_code, _site_name = _resolve_site(conn, '', fields['datacenter'])
+        fields['site_id'] = resolved_id
+        fields['datacenter'] = site_code
     
     # We should support updating both sets of fields
     supported_keys = (

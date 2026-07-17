@@ -17,6 +17,7 @@ from pydantic import BaseModel, field_validator
 from database import get_db_connection
 from core.crypto import encrypt_credential, decrypt_credential
 from drivers.ssh_compat import get_ssh_error_code, build_ssh_error_guidance
+from services import tag_service
 
 import ping3
 import socket
@@ -25,6 +26,46 @@ from scrapli import Scrapli
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_ASSET_IDENTITY_FIELDS = ('hostname', 'asset_tag', 'serial_number', 'management_ip')
+_ASSET_IDENTITY_LABELS = {
+    'hostname': '主机名',
+    'asset_tag': '资产编号',
+    'serial_number': '序列号',
+    'management_ip': '管理IP',
+}
+
+
+def _find_asset_identity_duplicates(conn, values: dict, exclude_asset_id: str = '') -> list[dict]:
+    """Find non-empty identity fields already used by another physical asset."""
+    duplicates = []
+    for field in _ASSET_IDENTITY_FIELDS:
+        value = str(values.get(field) or '').strip()
+        if not value:
+            continue
+        query = (
+            f"SELECT id, hostname FROM physical_assets "
+            f"WHERE LOWER(TRIM(COALESCE({field}, ''))) = LOWER(TRIM(?))"
+        )
+        params: list[str] = [value]
+        if exclude_asset_id:
+            query += ' AND id != ?'
+            params.append(exclude_asset_id)
+        existing = conn.execute(query, params).fetchone()
+        if existing:
+            duplicates.append({
+                'field': field,
+                'label': _ASSET_IDENTITY_LABELS[field],
+                'value': value,
+                'existing_id': existing['id'],
+                'existing_hostname': existing['hostname'] or '',
+            })
+    return duplicates
+
+
+def _identity_duplicate_detail(duplicates: list[dict]) -> str:
+    parts = [f"{item['label']}「{item['value']}」" for item in duplicates]
+    return '资产唯一性校验失败：' + '、'.join(parts) + '已存在，请修改后再提交。'
 
 
 def _utc_now() -> str:
@@ -220,7 +261,7 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         platform, 'pending', 'unknown',
         uname, '', # password column empty
         body.serial_number, body.model, '', body.device_role,
-        body.datacenter, '0d 0h', method, body.vendor,
+        body.site_id, '0d 0h', method, body.vendor,
         community, port,
         normal_user, '', # normal_password column empty
         admin_user,  '', # admin_password column empty
@@ -232,6 +273,11 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         credential_id,
         mgmt_port
     ))
+    # The physical asset is the canonical source for CMDB location. Keep the
+    # normalized foreign-key-style field populated for device inventory and
+    # topology consumers; ``site`` remains only as a legacy display field.
+    conn.execute('UPDATE devices SET site_id = ? WHERE id = ?', (body.site_id, device_id))
+    tag_service.sync_device_status_tag(conn, device_id, 'pending')
     return device_id
 
 
@@ -298,7 +344,8 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
         'sn': body.serial_number,
         'model': body.model,
         'role': body.device_role,
-        'site': body.datacenter,
+        'site': body.site_id,
+        'site_id': body.site_id,
         'vendor': body.vendor,
         'platform': _normalize_asset_platform(
             getattr(body, 'vendor', None) or '',
@@ -424,6 +471,29 @@ def _delete_linked_device(conn, asset_id: str) -> None:
     device_id = row['id'] if isinstance(row, dict) else row[0]
     credential_id = row['credential_id'] if isinstance(row, dict) else row[1]
 
+    # IPAM prefixes are site-scoped resources, so deleting a device must not
+    # delete every prefix at the device's site. It must, however, remove
+    # device-owned address observations and detach prefix gateway references;
+    # otherwise IPAM keeps showing stale addresses after the device is gone.
+    interface_cursor = conn.execute(
+        'SELECT id FROM interfaces WHERE device_id = ?', (device_id,)
+    )
+    interface_rows = interface_cursor.fetchall() if hasattr(interface_cursor, 'fetchall') else []
+    interface_ids = [r['id'] if isinstance(r, dict) else r[0] for r in interface_rows]
+    conn.execute('DELETE FROM ip_addresses WHERE device_id = ?', (device_id,))
+    conn.execute('DELETE FROM ip_inventory WHERE device_id = ?', (device_id,))
+    conn.execute('UPDATE prefixes SET gateway_device_id = NULL WHERE gateway_device_id = ?', (device_id,))
+    if interface_ids:
+        placeholders = ','.join('?' for _ in interface_ids)
+        conn.execute(
+            f'DELETE FROM ip_addresses WHERE interface_id IN ({placeholders})',
+            interface_ids,
+        )
+        conn.execute(
+            f'UPDATE prefixes SET gateway_interface_id = NULL WHERE gateway_interface_id IN ({placeholders})',
+            interface_ids,
+        )
+
     # Delete from all tables that reference devices(id)
     conn.execute('DELETE FROM jobs WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM config_snapshots WHERE device_id = ?', (device_id,))
@@ -435,6 +505,9 @@ def _delete_linked_device(conn, asset_id: str) -> None:
     conn.execute('DELETE FROM config_drift_results WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM capacity_snapshots WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM inspection_results WHERE device_id = ?', (device_id,))
+    # Tags are a many-to-many association and the FK is intentionally kept
+    # explicit for compatibility with existing PostgreSQL installations.
+    conn.execute('DELETE FROM device_tags WHERE device_id = ?', (device_id,))
 
     conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
     if credential_id:
@@ -452,7 +525,7 @@ class AssetCreate(BaseModel):
     vendor: str = ''
     model: str = ''
     hostname: str = ''
-    datacenter: str = ''
+    site_id: str = ''
     rack: str = ''
     rack_unit: str = ''
     u_height: int = 1
@@ -550,7 +623,7 @@ class AssetUpdate(BaseModel):
     vendor: Optional[str] = None
     model: Optional[str] = None
     hostname: Optional[str] = None
-    datacenter: Optional[str] = None
+    site_id: Optional[str] = None
     rack: Optional[str] = None
     rack_unit: Optional[str] = None
     u_height: Optional[int] = None
@@ -632,10 +705,17 @@ def asset_summary():
         for row in conn.execute("SELECT vendor, COUNT(*) as cnt FROM physical_assets WHERE vendor != '' GROUP BY vendor ORDER BY cnt DESC LIMIT 10"):
             by_vendor[row['vendor']] = row['cnt']
 
-        # By datacenter
-        by_datacenter = {}
-        for row in conn.execute("SELECT datacenter, COUNT(*) as cnt FROM physical_assets WHERE datacenter != '' GROUP BY datacenter ORDER BY cnt DESC"):
-            by_datacenter[row['datacenter']] = row['cnt']
+        # By CMDB site
+        by_site = {}
+        for row in conn.execute(
+            """SELECT COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), 'unassigned') AS site_name,
+                      COUNT(*) AS cnt
+               FROM physical_assets pa
+               LEFT JOIN sites s ON s.id = pa.site_id
+               GROUP BY s.site_name, s.site_code
+               ORDER BY cnt DESC"""
+        ):
+            by_site[row['site_name']] = row['cnt']
 
         # By department
         by_department = {}
@@ -648,7 +728,7 @@ def asset_summary():
             'warranty_expiring_soon': warranty_soon,
             'by_status': by_status,
             'by_vendor': by_vendor,
-            'by_datacenter': by_datacenter,
+            'by_site': by_site,
             'by_department': by_department,
         }
     finally:
@@ -661,10 +741,13 @@ def asset_summary():
 def list_assets(
     asset_type: str = 'all',
     vendor: str = '',
-    datacenter: str = '',
+    site_id: str = '',
     department: str = '',
+    device_category: str = '',
     status: str = 'all',
     device_role: str = '',
+    tag_ids: str = '',
+    tag_match_all: bool = True,
     q: str = '',
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=1000),
@@ -680,18 +763,37 @@ def list_assets(
         if vendor:
             conditions.append('pa.vendor = ?')
             params.append(vendor)
-        if datacenter:
-            conditions.append('pa.datacenter = ?')
-            params.append(datacenter)
+        if site_id:
+            conditions.append('pa.site_id = ?')
+            params.append(site_id)
         if department:
             conditions.append('pa.department = ?')
             params.append(department)
+        if device_category:
+            conditions.append('pa.device_category = ?')
+            params.append(device_category)
         if status != 'all':
-            conditions.append('pa.status = ?')
+            if status in ('online', 'offline', 'pending'):
+                conditions.append(
+                    "COALESCE(NULLIF(d.status, ''), CASE WHEN pa.status = 'active' THEN 'online' WHEN pa.status IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline' ELSE 'pending' END) = ?"
+                )
+            else:
+                conditions.append('pa.status = ?')
             params.append(status)
         if device_role:
             conditions.append('pa.device_role = ?')
             params.append(device_role)
+        requested_tag_ids = [item.strip() for item in tag_ids.split(',') if item.strip()][:100]
+        if requested_tag_ids:
+            tag_exists = [
+                'EXISTS (SELECT 1 FROM device_tags dt_filter WHERE dt_filter.device_id = d.id AND dt_filter.tag_id = ?)'
+                for _ in requested_tag_ids
+            ]
+            if tag_match_all:
+                conditions.extend(tag_exists)
+            else:
+                conditions.append(f"({' OR '.join(tag_exists)})")
+            params.extend(requested_tag_ids)
         if q:
             conditions.append(
                 "(pa.asset_tag LIKE ? OR pa.serial_number LIKE ? OR pa.hostname LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ? OR pa.management_ip LIKE ? OR pa.business_ip LIKE ? OR pa.rack LIKE ?)"
@@ -700,11 +802,16 @@ def list_assets(
             params.extend([like] * 8)
 
         where = (' WHERE ' + ' AND '.join(conditions)) if conditions else ''
-        total = conn.execute(f'SELECT COUNT(*) FROM physical_assets pa{where}', params).fetchone()[0]
+        total = conn.execute(
+            f'SELECT COUNT(*) FROM physical_assets pa LEFT JOIN devices d ON d.asset_id = pa.id{where}',
+            params,
+        ).fetchone()[0]
 
         offset = (page - 1) * page_size
         rows = conn.execute(
             f'''SELECT pa.*,
+                d.id AS device_id,
+                COALESCE(NULLIF(d.status, ''), CASE WHEN pa.status = 'active' THEN 'online' WHEN pa.status IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline' ELSE 'pending' END) AS online_status,
                 COALESCE(NULLIF(pa.normal_username,''), d.normal_username, '') AS normal_username,
                 COALESCE(NULLIF(pa.admin_username,''),  d.admin_username,  '') AS admin_username,
                 COALESCE(NULLIF(pa.username,''),        d.username,        '') AS username
@@ -727,6 +834,29 @@ def list_assets(
                     item[sensitive] = ''
             items.append(item)
 
+        # Return tag definitions alongside assets so the asset inventory can
+        # filter and display the same tags managed under /assets/tags.
+        device_ids = [str(item.get('device_id') or '') for item in items if item.get('device_id')]
+        tag_map: dict[str, list[dict]] = {}
+        if device_ids:
+            placeholders = ','.join('?' for _ in device_ids)
+            tag_rows = conn.execute(
+                f'''SELECT dt.device_id, td.id, td.category, td.value, td.label,
+                           td.label_zh, td.color, td.icon, td.description,
+                           td.sort_order, td.built_in, td.created_at
+                    FROM device_tags dt
+                    JOIN tag_definitions td ON td.id = dt.tag_id
+                    WHERE dt.device_id IN ({placeholders})
+                    ORDER BY td.category, td.sort_order, td.value''',
+                device_ids,
+            ).fetchall()
+            for tag_row in tag_rows:
+                tag = dict(tag_row)
+                device_id = str(tag.pop('device_id'))
+                tag_map.setdefault(device_id, []).append(tag)
+        for item in items:
+            item['tags'] = tag_map.get(str(item.get('device_id') or ''), [])
+
         return {
             'items': items,
             'total': total,
@@ -734,6 +864,37 @@ def list_assets(
             'page_size': page_size,
             'total_pages': max(1, -(-total // page_size)),
         }
+    finally:
+        conn.close()
+
+
+@router.get('/assets/tree')
+def asset_tree():
+    """Return a compact, server-side asset classification tree source."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            '''SELECT
+                 COALESCE(NULLIF(pa.asset_type, ''), 'other') AS asset_type,
+                 COALESCE(NULLIF(pa.device_category, ''), 'other') AS device_category,
+                 COALESCE(NULLIF(pa.site_id, ''), 'unassigned') AS site_id,
+                 COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), 'Unassigned site') AS site_name,
+                 COALESCE(NULLIF(d.status, ''),
+                   CASE
+                     WHEN pa.status = 'active' THEN 'online'
+                     WHEN pa.status IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline'
+                     ELSE 'pending'
+                   END
+                 ) AS online_status,
+                 COUNT(*) AS asset_count
+               FROM physical_assets pa
+               LEFT JOIN sites s ON s.id = pa.site_id
+               LEFT JOIN devices d ON d.asset_id = pa.id
+               GROUP BY pa.site_id, s.site_name, s.site_code, pa.asset_type,
+                        pa.device_category, pa.device_role, pa.status, d.status
+               ORDER BY site_name, pa.asset_type, pa.device_category, pa.device_role, online_status'''
+        ).fetchall()
+        return {'items': [dict(row) for row in rows]}
     finally:
         conn.close()
 
@@ -787,16 +948,14 @@ def create_asset(body: AssetCreate):
             if not normal_username or not normal_password:
                 raise HTTPException(status_code=422, detail='存量设备直接投产必须配置普通账号用户名和密码。')
 
-        # Check unique asset_tag if provided
-        if body.asset_tag:
-            existing = conn.execute('SELECT id FROM physical_assets WHERE asset_tag = ?', (body.asset_tag,)).fetchone()
-            if existing:
-                raise HTTPException(status_code=409, detail='Asset tag already exists')
+        duplicates = _find_asset_identity_duplicates(conn, body.model_dump())
+        if duplicates:
+            raise HTTPException(status_code=409, detail=_identity_duplicate_detail(duplicates))
 
         conn.execute('''
             INSERT INTO physical_assets (
                 id, asset_type, asset_tag, serial_number, vendor, model, hostname,
-                datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
+                site_id, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
                 status, lifecycle_status, asset_origin, purchase_date, warranty_expiry, department, notes,
                 platform, connection_method, username, password,
@@ -807,7 +966,7 @@ def create_asset(body: AssetCreate):
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
-            body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
+            body.model, body.hostname, body.site_id, body.rack, body.rack_unit,
             max(1, min(60, body.u_height)), body.planned_start_u,
             body.management_ip, body.business_ip, body.device_role,
             body.vlan, body.uplink_switch, body.uplink_port,
@@ -879,11 +1038,13 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
         if normalized_platform != effective_platform or body.platform is not None or body.vendor is not None:
             body.platform = normalized_platform
 
-        # Check unique asset_tag if changed
-        if body.asset_tag is not None and body.asset_tag and body.asset_tag != row['asset_tag']:
-            dup = conn.execute('SELECT id FROM physical_assets WHERE asset_tag = ? AND id != ?', (body.asset_tag, asset_id)).fetchone()
-            if dup:
-                raise HTTPException(status_code=409, detail='Asset tag already exists')
+        identity_values = {
+            field: getattr(body, field) if getattr(body, field, None) is not None else row[field]
+            for field in _ASSET_IDENTITY_FIELDS
+        }
+        duplicates = _find_asset_identity_duplicates(conn, identity_values, exclude_asset_id=asset_id)
+        if duplicates:
+            raise HTTPException(status_code=409, detail=_identity_duplicate_detail(duplicates))
 
         # Detect lifecycle transition for auto password rotation
         old_lifecycle = row['lifecycle_status'] if 'lifecycle_status' in row.keys() else 'staging'
@@ -992,7 +1153,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
         params = []
         updatable = [
             'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
-            'datacenter', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
+            'site_id', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
             'vlan', 'uplink_switch', 'uplink_port',
             'status', 'lifecycle_status', 'asset_origin', 'purchase_date', 'warranty_expiry', 'department', 'notes',
             'platform', 'connection_method', 'username', 'password',
@@ -1137,6 +1298,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                                     "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', lifecycle_status = 'production', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
                                     (dev_id,)
                                 )
+                                tag_service.sync_device_status_tag(bg_conn, dev_id, 'online')
                                 bg_conn.execute(
                                     "UPDATE physical_assets SET lifecycle_status = 'production', is_managed = 1, takeover_error = '' WHERE id = ?",
                                     (a_id,)
@@ -1253,6 +1415,7 @@ def import_assets(items: list[AssetCreate]):
         now = _utc_now()
         created = 0
         skipped = 0
+        skipped_items = []
         for body in items:
             asset_id = f"asset-{uuid.uuid4().hex[:12]}"
             body.platform = _normalize_asset_platform(body.vendor, body.platform, body.asset_type)
@@ -1269,15 +1432,26 @@ def import_assets(items: list[AssetCreate]):
                     raise HTTPException(status_code=422, detail='存量设备直接投产必须填写至少 5 个字符的免上收原因')
                 if not normal_username or not normal_password:
                     raise HTTPException(status_code=422, detail='存量设备直接投产必须配置普通账号用户名和密码')
-            if body.asset_tag:
-                existing = conn.execute('SELECT id FROM physical_assets WHERE asset_tag = ?', (body.asset_tag,)).fetchone()
-                if existing:
-                    skipped += 1
-                    continue
+            duplicates = _find_asset_identity_duplicates(conn, body.model_dump())
+            if duplicates:
+                skipped += 1
+                skipped_items.append({
+                    'asset_tag': body.asset_tag,
+                    'hostname': body.hostname,
+                    'reason': 'duplicate_identity',
+                    'duplicate_fields': [item['field'] for item in duplicates],
+                    'duplicate_labels': [item['label'] for item in duplicates],
+                    'duplicate_values': [item['value'] for item in duplicates],
+                    'existing_hostname': next(
+                        (item['existing_hostname'] for item in duplicates if item['existing_hostname']),
+                        '',
+                    ),
+                })
+                continue
             conn.execute('''
                 INSERT INTO physical_assets (
                     id, asset_type, asset_tag, serial_number, vendor, model, hostname,
-                    datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
+                    site_id, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                     vlan, uplink_switch, uplink_port,
                     status, lifecycle_status, asset_origin, purchase_date, warranty_expiry, department, notes,
                     platform, connection_method, username, password,
@@ -1289,7 +1463,7 @@ def import_assets(items: list[AssetCreate]):
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
-                body.model, body.hostname, body.datacenter, body.rack, body.rack_unit,
+                body.model, body.hostname, body.site_id, body.rack, body.rack_unit,
                 max(1, min(60, body.u_height)), body.planned_start_u,
                 body.management_ip, body.business_ip, body.device_role,
                 body.vlan, body.uplink_switch, body.uplink_port,
@@ -1327,7 +1501,11 @@ def import_assets(items: list[AssetCreate]):
 
             created += 1
         conn.commit()
-        return {'created': created, 'skipped': skipped}
+        return {
+            'created': created,
+            'skipped': skipped,
+            'skipped_items': skipped_items,
+        }
     finally:
         conn.close()
 
@@ -1532,6 +1710,7 @@ def _run_batch_takeover(tasks: list[dict]):
                     "UPDATE devices SET rotation_status = 'completed', onboarding_status = 'active', lifecycle_status = 'production', status = 'online', is_managed = 1, takeover_error = '' WHERE id = ?",
                     (dev_id,)
                 )
+                tag_service.sync_device_status_tag(bg_conn, dev_id, 'online')
                 bg_conn.execute(
                     "UPDATE physical_assets SET lifecycle_status = 'production', is_managed = 1, takeover_error = '' WHERE id = ?",
                     (a_id,)

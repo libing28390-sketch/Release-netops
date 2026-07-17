@@ -11,6 +11,8 @@ export interface Rack {
   updated_at: string;
   
   site_id?: string;
+  site_code?: string;
+  site_name?: string;
   rack_code?: string;
   rack_name?: string;
   room_name?: string;

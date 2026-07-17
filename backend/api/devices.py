@@ -11,6 +11,7 @@ from database import get_db_connection
 from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health
 from services.operational_data_service import collect_operational_data, collect_custom_command_data
+from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
 from core.rbac import require_role
 from services.vault_service import resolve_device_credentials, write_credentials as vault_write, vault_available
@@ -149,14 +150,14 @@ def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str |
         conn.execute('''
             INSERT INTO physical_assets (
                 id, asset_type, asset_tag, serial_number, vendor, model, hostname,
-                datacenter, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
+                site_id, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
                 status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, 'network_device', '', device.get('sn', ''), vendor,
             device.get('model', ''), device.get('hostname', ''),
-            device.get('site', ''), '', '', 1, None,
+            device.get('site_id') or device.get('site', ''), '', '', 1, None,
             device.get('ip_address', ''), '', device.get('role', ''),
             '', '', '',
             'active', '', '', '', '', now, now,
@@ -499,7 +500,7 @@ def read_devices(
             where_clauses.append('('
                 'd.hostname LIKE ? OR d.ip_address LIKE ? OR d.sn LIKE ? OR '
                 'pa.asset_tag LIKE ? OR pa.management_ip LIKE ? OR pa.business_ip LIKE ? OR '
-                'pa.datacenter LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ?'
+                'pa.site_id LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ?'
                 ')')
             params.extend([q, q, q, q, q, q, q, q, q])
 
@@ -532,7 +533,7 @@ def read_devices(
 
         # Plan-A: LEFT JOIN physical_assets to surface asset metadata
         asset_cols = (
-            ', pa.asset_tag, pa.datacenter, pa.rack, pa.rack_unit, '
+            ', pa.asset_tag, pa.site_id AS asset_site_id, pa.rack, pa.rack_unit, '
             'pa.department, pa.warranty_expiry, pa.purchase_date, '
             'pa.business_ip, pa.vlan, pa.uplink_switch, pa.uplink_port'
         )
@@ -675,6 +676,7 @@ def create_device(device: dict = Body(...)):
             'UPDATE devices SET site_id = ? WHERE id = ?',
             (_resolve_device_site_id(conn, device.get('site_id'), device.get('site')), device_id),
         )
+        tag_service.sync_device_status_tag(conn, device_id, device.get('status', 'pending'))
         # Plan-A: auto-create linked physical_assets record
         _create_linked_asset_for_device(conn, device_id, device)
         conn.commit()
@@ -722,6 +724,9 @@ def delete_device(device_id: str):
             )
             conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (row['asset_id'],))
             conn.execute('DELETE FROM physical_assets WHERE id = ?', (row['asset_id'],))
+        # Remove many-to-many tag associations before deleting the device row.
+        # The FK is not cascade-enabled on older PostgreSQL installations.
+        conn.execute('DELETE FROM device_tags WHERE device_id = ?', (device_id,))
         conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
         if row and row['credential_id']:
             other = conn.execute('SELECT 1 FROM devices WHERE credential_id = ?', (row['credential_id'],)).fetchone()
@@ -1031,6 +1036,7 @@ def device_onboard(device_id: str, payload: dict = Body(...)):
                 "UPDATE devices SET onboarding_status = ?, onboarding_updated_at = ?, status = 'online' WHERE id = ?",
                 (target, now, device_id)
             )
+            tag_service.sync_device_status_tag(conn, device_id, 'online')
         elif action == 'reset':
             conn.execute(
                 'UPDATE devices SET onboarding_status = ?, onboarding_updated_at = ? WHERE id = ?',
@@ -1414,6 +1420,7 @@ def import_devices(payload: dict = Body(...)):
                 device.get('uptime', '0d 0h'),
                 device.get('connection_method', 'ssh')
             ))
+            tag_service.sync_device_status_tag(conn, device_id, device.get('status', 'pending'))
         conn.commit()
         log_audit_event(
             event_type='DEVICE_IMPORT',

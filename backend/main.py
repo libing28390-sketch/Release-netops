@@ -421,11 +421,20 @@ else:
 
 def seed_data():
     from database import _USE_PG
+    from services.tag_service import seed_builtin_tags, sync_all_device_status_tags
     if not _USE_PG and not os.path.exists(DB_PATH):
         return
     conn = get_db_connection()
     
     try:
+        # Keep the tag catalog available for both Device Inventory and
+        # Asset Management. The operation is idempotent and only inserts
+        # missing built-in definitions.
+        seed_builtin_tags(conn)
+        synced_status_tags = sync_all_device_status_tags(conn)
+        if synced_status_tags:
+            logger.info("Synchronized system availability tags for %s device(s)", synced_status_tags)
+
         # Check if devices table is empty
         # Mock device seeding removed per user request
         

@@ -10,10 +10,12 @@ interface TagFilterDropdownProps {
   language: string;
   /** compact style for toolbar inline use */
   compact?: boolean;
+  /** Hide system-managed availability tags when this picker is used for assignment. */
+  excludeStatusTags?: boolean;
 }
 
 const TagFilterDropdown: React.FC<TagFilterDropdownProps> = ({
-  allTags, selectedTagIds, onChange, language, compact = true,
+  allTags, selectedTagIds, onChange, language, compact = true, excludeStatusTags = false,
 }) => {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -38,6 +40,7 @@ const TagFilterDropdown: React.FC<TagFilterDropdownProps> = ({
   };
 
   const filtered = allTags.filter(t => {
+    if (excludeStatusTags && t.category === 'status') return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return String(t.label || '').toLowerCase().includes(q)

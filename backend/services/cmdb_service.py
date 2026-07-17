@@ -78,7 +78,10 @@ def list_cmdb_devices(conn) -> list[dict]:
             d.asset_id,
             pa.asset_tag,
             pa.serial_number,
-            pa.datacenter,
+            COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), '') AS site_id,
+            s.site_code,
+            s.site_name,
+            s.state_province,
             pa.rack,
             pa.rack_unit,
             pa.management_ip,
@@ -101,6 +104,7 @@ def list_cmdb_devices(conn) -> list[dict]:
             ) AS link_count
         FROM devices d
         LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+        LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
         ORDER BY COALESCE(d.hostname, ''), COALESCE(d.ip_address, '')
         """
     ).fetchall()
@@ -443,17 +447,21 @@ def get_site(conn, site_id: str) -> dict:
     return _row_to_dict(row)
 
 
-def create_site(conn, *, site_code: str, site_name: str, country: str = '',
-                city: str = '', timezone: str = 'Asia/Shanghai', address: str = '',
+def create_site(conn, *, site_code: str | None = None, site_name: str, country: str = '',
+                state_province: str = '', city: str = '', timezone: str = 'Asia/Shanghai', address: str = '',
                 status: str = 'active', tenant_id: str = _DEFAULT_TENANT) -> dict:
+    site_id = _new_id('site')
+    # Site codes are internal stable identifiers, not business data users need
+    # to maintain.  Ignore any legacy request value and always generate the
+    # code from the newly created immutable site ID.
+    site_code = f"SITE-{site_id.split('-', 1)[1].upper()}"
     dup = conn.execute("SELECT 1 FROM sites WHERE site_code = ?", (site_code,)).fetchone()
     if dup:
         raise ValueError(f"Site code already exists: {site_code}")
-    site_id = _new_id('site')
     conn.execute(
-        """INSERT INTO sites (id, site_code, site_name, country, city, timezone, address, status, tenant_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (site_id, site_code, site_name, country, city, timezone, address, status, tenant_id or _DEFAULT_TENANT),
+        """INSERT INTO sites (id, site_code, site_name, country, state_province, city, timezone, address, status, tenant_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (site_id, site_code, site_name, country, state_province, city, timezone, address, status, tenant_id or _DEFAULT_TENANT),
     )
     conn.commit()
     logger.info(f"[CmdbService] Created site '{site_code}'")
@@ -469,7 +477,7 @@ def update_site(conn, site_id: str, **fields) -> dict:
         if dup:
             raise ValueError(f"Site code already exists: {fields['site_code']}")
     updates, params = [], []
-    for key in ('site_code', 'site_name', 'country', 'city', 'timezone', 'address', 'status', 'tenant_id'):
+    for key in ('site_code', 'site_name', 'country', 'state_province', 'city', 'timezone', 'address', 'status', 'tenant_id'):
         if key in fields and fields[key] is not None:
             updates.append(f"{key} = ?")
             params.append(fields[key])
@@ -481,18 +489,113 @@ def update_site(conn, site_id: str, **fields) -> dict:
     return get_site(conn, site_id)
 
 
-def delete_site(conn, site_id: str) -> None:
-    get_site(conn, site_id)
+def delete_site(conn, site_id: str, replacement_site_id: str = '') -> dict:
+    """Delete a site, optionally moving all site-owned records first.
+
+    A site is a shared CMDB parent.  Deleting it without an explicit target
+    would either violate foreign keys or leave assets/racks without a valid
+    location, so callers must opt into a replacement site when references
+    exist.  The updates and delete are committed as one transaction.
+    """
     site = get_site(conn, site_id)
-    _raise_if_referenced(conn, "site", [
-        ('devices', 'site_id', site_id),
-        ('racks', 'site_id', site_id),
-        ('vlans', 'site_id', site_id),
-        ('prefixes', 'site_id', site_id),
-    ])
-    conn.execute("DELETE FROM sites WHERE id = ?", (site_id,))
-    conn.commit()
+    replacement_site_id = (replacement_site_id or '').strip()
+    if replacement_site_id:
+        if replacement_site_id == site_id:
+            raise ValueError("Replacement site must be different from the site being deleted")
+        replacement = get_site(conn, replacement_site_id)
+    else:
+        replacement = None
+
+    refs = [
+        ('devices', 'site_id'),
+        ('racks', 'site_id'),
+        ('vlans', 'site_id'),
+        ('prefixes', 'site_id'),
+        ('physical_assets', 'site_id'),
+        ('topology_discovery_runs', 'site_id'),
+        ('topology_links', 'source_site_id'),
+        ('topology_links', 'target_site_id'),
+        ('topology_observations', 'source_site_id'),
+    ]
+    blockers = []
+    counts: dict[str, int] = {}
+    for table, column in refs:
+        try:
+            count = _count_reference(conn, table, column, site_id)
+        except Exception:
+            count = 0
+        if count:
+            key = f'{table}.{column}'
+            counts[key] = count
+            blockers.append(f'{key}={site_id} ({count})')
+
+    # Racks created by older versions may still have a free-text datacenter
+    # label even when site_id was left at a legacy/default value. Treat those
+    # rows as references too, and move them with the rest of the site-owned
+    # records so deletion cannot leave an orphaned rack location.
+    legacy_rack_labels = [site_id, site.get('site_code') or '', site.get('site_name') or '']
+    legacy_rack_labels = [label for label in legacy_rack_labels if label]
+    legacy_rack_count = 0
+    if legacy_rack_labels:
+        placeholders = ','.join('?' for _ in legacy_rack_labels)
+        try:
+            legacy_rack_count = conn.execute(
+                f"""SELECT COUNT(*) AS cnt FROM racks
+                    WHERE COALESCE(site_id, '') <> ?
+                      AND COALESCE(datacenter, '') IN ({placeholders})""",
+                [site_id, *legacy_rack_labels],
+            ).fetchone()['cnt']
+        except Exception:
+            # Minimal/legacy installations may not have the old column.
+            legacy_rack_count = 0
+    if legacy_rack_count:
+        counts['racks.datacenter'] = legacy_rack_count
+        blockers.append(f'racks.datacenter={site.get("site_code") or site_id} ({legacy_rack_count})')
+
+    if blockers and not replacement_site_id:
+        raise ValueError(
+            f"Cannot delete site {site.get('site_code') or site_id}: still referenced by "
+            + '; '.join(blockers)
+            + '. Select a replacement site and retry.'
+        )
+
+    try:
+        if replacement_site_id:
+            for table, column in refs:
+                if counts.get(f'{table}.{column}', 0):
+                    conn.execute(
+                        f'UPDATE {table} SET {column} = ? WHERE {column} = ?',
+                        (replacement_site_id, site_id),
+                    )
+            if legacy_rack_count:
+                replacement = replacement or get_site(conn, replacement_site_id)
+                replacement_label = replacement.get('site_code') or replacement.get('site_name') or replacement_site_id
+                placeholders = ','.join('?' for _ in legacy_rack_labels)
+                try:
+                    conn.execute(
+                        f"""UPDATE racks SET site_id = ?, datacenter = ?
+                            WHERE COALESCE(site_id, '') <> ?
+                              AND COALESCE(datacenter, '') IN ({placeholders})""",
+                        [replacement_site_id, replacement_label, site_id, *legacy_rack_labels],
+                    )
+                except Exception:
+                    # The count query succeeded only on schemas that expose
+                    # the legacy field, but keep deletion safe if the schema
+                    # changes between inspection and update.
+                    raise
+        conn.execute("DELETE FROM sites WHERE id = ?", (site_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
     logger.info(f"[CmdbService] Deleted site {site_id} ({site.get('site_code')})")
+    return {
+        'deleted_site_id': site_id,
+        'replacement_site_id': replacement_site_id or None,
+        'migrated_references': counts if replacement_site_id else {},
+        'replacement_site_code': replacement.get('site_code') if replacement else None,
+    }
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

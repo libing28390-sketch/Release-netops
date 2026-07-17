@@ -24,11 +24,12 @@ router = APIRouter()
 # ─── Racks ──────────────────────────────────────────────
 
 @router.get("/racks")
-def api_list_racks(datacenter: str = Query('', description="Filter by datacenter"),
+def api_list_racks(site_id: str = Query('', description="Filter by site"),
+                   datacenter: str = Query('', include_in_schema=False),
                    _user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        racks = rack_service.list_racks(conn, datacenter=datacenter)
+        racks = rack_service.list_racks(conn, site_id=site_id, datacenter=datacenter)
         return {"success": True, "data": racks, "message": ""}
     finally:
         conn.close()

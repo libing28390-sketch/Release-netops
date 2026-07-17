@@ -24,6 +24,170 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _asset_online_status_sql() -> str:
+    return """COALESCE(NULLIF(d.status, ''), CASE
+        WHEN pa.status = 'active' THEN 'online'
+        WHEN pa.status IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline'
+        ELSE 'pending'
+    END)"""
+
+
+def _attach_asset_tags(conn, items: list[dict]) -> None:
+    """Attach non-sensitive tag metadata to the CMDB asset table rows."""
+    device_ids = [str(item.get("device_id") or "") for item in items if item.get("device_id")]
+    tag_map: dict[str, list[dict]] = {}
+    if device_ids:
+        placeholders = ",".join("?" for _ in device_ids)
+        rows = conn.execute(
+            f"""SELECT dt.device_id, td.id, td.category, td.value, td.label,
+                       td.label_zh, td.color, td.icon, td.description,
+                       td.sort_order, td.built_in, td.created_at
+                FROM device_tags dt
+                JOIN tag_definitions td ON td.id = dt.tag_id
+                WHERE dt.device_id IN ({placeholders})
+                ORDER BY td.category, td.sort_order, td.value""",
+            device_ids,
+        ).fetchall()
+        for row in rows:
+            tag = dict(row)
+            device_id = str(tag.pop("device_id"))
+            tag_map.setdefault(device_id, []).append(tag)
+    for item in items:
+        item["tags"] = tag_map.get(str(item.get("device_id") or ""), [])
+
+
+@router.get("/cmdb/assets/tree")
+def api_cmdb_asset_tree(_user=require_role("Viewer")):
+    """Return the canonical CMDB asset tree source.
+
+    The hierarchy is site → asset type → product category → physical asset
+    role.  It intentionally never reads ``devices.role`` or the legacy
+    retired free-text datacenter field.
+    """
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            f"""SELECT
+                    COALESCE(NULLIF(pa.site_id, ''), 'unassigned') AS site_id,
+                    COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), 'Unassigned site') AS site_name,
+                    COALESCE(NULLIF(s.site_code, ''), '') AS site_code,
+                    COALESCE(NULLIF(pa.asset_type, ''), 'other') AS asset_type,
+                    COALESCE(NULLIF(pa.device_category, ''), 'other') AS device_category,
+                    COALESCE(NULLIF(pa.device_role, ''), 'unassigned') AS device_role,
+                    {_asset_online_status_sql()} AS online_status,
+                    COUNT(*) AS asset_count
+                FROM physical_assets pa
+                LEFT JOIN sites s ON s.id = pa.site_id
+                LEFT JOIN devices d ON d.asset_id = pa.id
+                GROUP BY pa.site_id, s.site_name, s.site_code,
+                         pa.asset_type, pa.device_category, pa.device_role,
+                         pa.status, d.status
+                ORDER BY site_name, asset_type, device_category, device_role, online_status"""
+        ).fetchall()
+        return {"success": True, "data": {"items": [dict(row) for row in rows]}, "message": ""}
+    finally:
+        conn.close()
+
+
+@router.get("/cmdb/assets")
+def api_cmdb_assets(
+    site_id: str = "",
+    asset_type: str = "all",
+    device_category: str = "",
+    device_role: str = "",
+    status: str = "all",
+    tag_ids: str = "",
+    tag_match_all: bool = True,
+    q: str = "",
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=1000),
+    _user=require_role("Viewer"),
+):
+    """List CMDB assets for the selected tree branch."""
+    conn = get_db_connection()
+    try:
+        conditions: list[str] = []
+        params: list[object] = []
+        if site_id:
+            conditions.append("pa.site_id = ?")
+            params.append(site_id)
+        if asset_type != "all":
+            conditions.append("pa.asset_type = ?")
+            params.append(asset_type)
+        if device_category:
+            conditions.append("pa.device_category = ?")
+            params.append(device_category)
+        if device_role:
+            conditions.append("pa.device_role = ?")
+            params.append(device_role)
+        if status != "all":
+            conditions.append(f"{_asset_online_status_sql()} = ?")
+            params.append(status)
+        requested_tag_ids = [value.strip() for value in tag_ids.split(",") if value.strip()][:100]
+        if requested_tag_ids:
+            tag_exists = [
+                "EXISTS (SELECT 1 FROM device_tags dt_filter "
+                "WHERE dt_filter.device_id = d.id AND dt_filter.tag_id = ?)"
+                for _ in requested_tag_ids
+            ]
+            conditions.append(
+                f"({' AND '.join(tag_exists) if tag_match_all else ' OR '.join(tag_exists)})"
+            )
+            params.extend(requested_tag_ids)
+        if q:
+            like = f"%{q}%"
+            conditions.append(
+                "(pa.hostname LIKE ? OR pa.asset_tag LIKE ? OR pa.serial_number LIKE ? "
+                "OR pa.vendor LIKE ? OR pa.model LIKE ? OR pa.management_ip LIKE ?)"
+            )
+            params.extend([like] * 6)
+
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM physical_assets pa "
+            f"LEFT JOIN devices d ON d.asset_id = pa.id{where}",
+            params,
+        ).fetchone()[0]
+        offset = (page - 1) * page_size
+        rows = conn.execute(
+            f"""SELECT pa.*, d.id AS device_id,
+                       s.site_code, s.site_name,
+                       {_asset_online_status_sql()} AS online_status,
+                       COALESCE(NULLIF(pa.normal_username, ''), d.normal_username, '') AS normal_username,
+                       COALESCE(NULLIF(pa.admin_username, ''), d.admin_username, '') AS admin_username,
+                       COALESCE(NULLIF(pa.username, ''), d.username, '') AS username
+                FROM physical_assets pa
+                LEFT JOIN sites s ON s.id = pa.site_id
+                LEFT JOIN devices d ON d.asset_id = pa.id
+                {where}
+                ORDER BY pa.updated_at DESC, pa.created_at DESC
+                LIMIT ? OFFSET ?""",
+            params + [page_size, offset],
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            for sensitive in ("password", "normal_password", "admin_password", "enable_password"):
+                if sensitive in item:
+                    item[f"{sensitive}_set"] = bool(item.get(sensitive))
+                    item[sensitive] = ""
+            items.append(item)
+        _attach_asset_tags(conn, items)
+        return {
+            "success": True,
+            "data": {
+                "items": items,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": max(1, -(-total // page_size)),
+            },
+            "message": "",
+        }
+    finally:
+        conn.close()
+
+
 def _audit(user, event_type, severity, summary, target_type, target_id=None, target_name=None):
     try:
         log_audit_event(
@@ -164,7 +328,7 @@ def api_create_site(body: SiteCreate, user=require_role("Operator")):
     conn = get_db_connection()
     try:
         s = cmdb_service.create_site(conn, **body.model_dump())
-        _audit(user, "site.create", "info", f"Created site '{body.site_code}'", "site", s.get("id"), body.site_code)
+        _audit(user, "site.create", "info", f"Created site '{s.get('site_code')}'", "site", s.get("id"), s.get("site_code"))
         return {"success": True, "data": s, "message": "Site created"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -186,12 +350,16 @@ def api_update_site(site_id: str, body: SiteUpdate, user=require_role("Operator"
 
 
 @router.delete("/cmdb/sites/{site_id}")
-def api_delete_site(site_id: str, user=require_role("Administrator")):
+def api_delete_site(
+    site_id: str,
+    replacement_site_id: str = Query('', description="Move references to this site before deletion"),
+    user=require_role("Administrator"),
+):
     conn = get_db_connection()
     try:
-        cmdb_service.delete_site(conn, site_id)
+        result = cmdb_service.delete_site(conn, site_id, replacement_site_id=replacement_site_id)
         _audit(user, "site.delete", "warning", f"Deleted site {site_id}", "site", site_id)
-        return {"success": True, "data": None, "message": "Site deleted"}
+        return {"success": True, "data": result, "message": "Site deleted"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     finally:
