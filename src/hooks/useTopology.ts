@@ -485,12 +485,46 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       return;
     }
     showToast('Preparing topology map for export...', 'info');
+    let exportHost: HTMLDivElement | null = null;
     try {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      const dataUrl = await htmlToImage.toPng(topologySvg as unknown as HTMLElement, {
+      const viewBox = topologySvg.viewBox.baseVal;
+      const width = Math.max(1, Math.round(viewBox.width || topologySvg.clientWidth || 1));
+      const height = Math.max(1, Math.round(viewBox.height || topologySvg.clientHeight || 1));
+      const svgClone = topologySvg.cloneNode(true) as SVGSVGElement;
+      svgClone.setAttribute('width', String(width));
+      svgClone.setAttribute('height', String(height));
+      svgClone.style.width = `${width}px`;
+      svgClone.style.height = `${height}px`;
+
+      // Export from the original graph coordinate space. The live SVG's root
+      // group contains the current pan/zoom transform and must not leak into
+      // the downloaded image.
+      const graphRoot = Array.from(svgClone.children)
+        .find((child) => child.tagName.toLowerCase() === 'g') as SVGGElement | undefined;
+      graphRoot?.removeAttribute('transform');
+
+      exportHost = document.createElement('div');
+      Object.assign(exportHost.style, {
+        position: 'fixed',
+        left: '-100000px',
+        top: '0',
+        width: `${width}px`,
+        height: `${height}px`,
+        overflow: 'hidden',
+        backgroundColor: '#ffffff',
+      });
+      exportHost.appendChild(svgClone);
+      document.body.appendChild(exportHost);
+
+      const dataUrl = await htmlToImage.toPng(exportHost, {
         backgroundColor: '#ffffff',
         cacheBust: true,
-        pixelRatio: Math.max(3, Math.round(window.devicePixelRatio * 2)),
+        width,
+        height,
+        canvasWidth: width,
+        canvasHeight: height,
+        pixelRatio: 1,
         style: {
           backgroundColor: '#ffffff',
           transform: 'scale(1)',
@@ -506,6 +540,8 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     } catch (error) {
       console.error('Export error:', error);
       showToast('Failed to export map. Please try again.', 'error');
+    } finally {
+      exportHost?.remove();
     }
   }, [showToast]);
 
