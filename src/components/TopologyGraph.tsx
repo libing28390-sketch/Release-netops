@@ -263,7 +263,76 @@ const buildGraphLinks = (nodes: LayoutNode[], links: Link[]) => {
     });
 };
 
+/**
+ * Return a deterministic order for a real point-to-point chain.  Force layouts
+ * are useful for branches and meshes, but they make a simple switch chain look
+ * random on every refresh.  Only use this path when the managed graph is one
+ * connected path (two endpoints, no node degree above two).
+ */
+const getLinearChainOrder = (devices: Device[], links: Link[]) => {
+  if (devices.length < 2) return null;
+
+  const nodeById = new Map(devices.map((device) => [device.id, device]));
+  const graphNodes: LayoutNode[] = devices.map((device) => ({ ...device, x: 0, y: 0 }));
+  const graphLinks = buildGraphLinks(graphNodes, links)
+    .filter((link: any) => link.source_device_id !== link.target_device_id);
+  if (graphLinks.length !== devices.length - 1) return null;
+
+  const adjacency = new Map<string, Set<string>>();
+  devices.forEach((device) => adjacency.set(device.id, new Set<string>()));
+  graphLinks.forEach((link: any) => {
+    adjacency.get(link.source_device_id)?.add(link.target_device_id);
+    adjacency.get(link.target_device_id)?.add(link.source_device_id);
+  });
+  if (Array.from(adjacency.values()).some((neighbors) => neighbors.size > 2)) return null;
+
+  const sortIds = (left: string, right: string) => {
+    const leftDevice = nodeById.get(left);
+    const rightDevice = nodeById.get(right);
+    return String(leftDevice?.hostname || left).localeCompare(String(rightDevice?.hostname || right));
+  };
+  const endpoints = Array.from(adjacency.entries())
+    .filter(([, neighbors]) => neighbors.size === 1)
+    .map(([id]) => id)
+    .sort(sortIds);
+  if (endpoints.length !== 2) return null;
+
+  const order: string[] = [];
+  const visited = new Set<string>();
+  let previous: string | null = null;
+  let current: string | null = endpoints[0];
+  while (current && !visited.has(current)) {
+    order.push(current);
+    visited.add(current);
+    const next = Array.from(adjacency.get(current) || [])
+      .filter((candidate) => candidate !== previous && !visited.has(candidate))
+      .sort(sortIds)[0];
+    previous = current;
+    current = next || null;
+  }
+  return order.length === devices.length ? order : null;
+};
+
+const buildLinearPositions = (devices: Device[], links: Link[], width: number, height: number) => {
+  const order = getLinearChainOrder(devices, links);
+  if (!order) return null;
+
+  const spacing = order.length > 1
+    ? Math.max(72, Math.min(180, (width - 96) / (order.length - 1)))
+    : 0;
+  const totalWidth = spacing * Math.max(order.length - 1, 0);
+  const startX = Math.max(48, (width - totalWidth) / 2);
+  const y = clampPosition(height * 0.52, 56, Math.max(56, height - 56));
+  return Object.fromEntries(order.map((id, index) => [id, {
+    x: clampPosition(startX + index * spacing, 48, Math.max(48, width - 48)),
+    y,
+  }]));
+};
+
 const calculateAutoLayoutPositions = (devices: Device[], links: Link[], width: number, height: number) => {
+  const linearPositions = buildLinearPositions(devices, links, width, height);
+  if (linearPositions) return linearPositions;
+
   const { positions: seededPositions } = buildSeedPositions(devices, width, height);
   const nodes: LayoutNode[] = devices.map((device) => ({
     ...device,
@@ -850,42 +919,17 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     });
 
     const { positions: seededPositions, siteAnchors } = buildSeedPositions(devices, width, height);
+    const linearPositions = buildLinearPositions(devices, links, width, height);
+    const shouldAutoArrange = Boolean(linearPositions) || Object.keys(persistedPositionsRef.current).length === 0;
+    const autoPositions = shouldAutoArrange
+      ? (linearPositions || calculateAutoLayoutPositions(devices, links, width, height))
+      : null;
     const nodes = devices.map((device) => ({
       ...device,
-      x: persistedPositionsRef.current[device.id]?.x ?? seededPositions[device.id]?.x ?? width / 2,
-      y: persistedPositionsRef.current[device.id]?.y ?? seededPositions[device.id]?.y ?? height / 2,
+      x: autoPositions?.[device.id]?.x ?? persistedPositionsRef.current[device.id]?.x ?? seededPositions[device.id]?.x ?? width / 2,
+      y: autoPositions?.[device.id]?.y ?? persistedPositionsRef.current[device.id]?.y ?? seededPositions[device.id]?.y ?? height / 2,
     }));
     const d3Links = buildGraphLinks(nodes, links);
-
-    const shouldAutoArrange = Object.keys(persistedPositionsRef.current).length === 0;
-    let layoutSimulation: d3.Simulation<any, undefined> | null = null;
-
-    if (shouldAutoArrange) {
-      layoutSimulation = d3.forceSimulation(nodes as any)
-        .force('link', d3.forceLink(d3Links as any).id((d: any) => d.id)
-          .distance((link: any) => {
-            if (link.inferred) return 140;
-            if (link.is_unmanaged) return 100;
-            return 110;
-          })
-          .strength((link: any) => {
-            if (link.inferred) return 0.24;
-            if (link.is_unmanaged) return 0.5;
-            return 0.88;
-          }))
-        .force('charge', d3.forceManyBody().strength((node: any) => (node.is_unmanaged ? -280 : -620)))
-        .force('center', d3.forceCenter(width / 2, height / 2).strength(0.04))
-        .force('collide', d3.forceCollide().radius((node: any) => (node.is_unmanaged ? 36 : 50)))
-        .force('x', d3.forceX((node: any) => seededPositions[node.id]?.x ?? width / 2).strength(0.10))
-        .force('y', d3.forceY((node: any) => seededPositions[node.id]?.y ?? height / 2).strength(0.10))
-        .stop();
-
-      const settleTicks = Math.max(120, Math.min(260, nodes.length * 18));
-      for (let index = 0; index < settleTicks; index += 1) {
-        layoutSimulation.tick();
-      }
-      layoutSimulation.stop();
-    }
 
     nodes.forEach((node: any) => {
       node.x = clampPosition(node.x || width / 2, 48, width - 48);
@@ -910,9 +954,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     const siteGuide = g.append('g').attr('pointer-events', 'none');
 
-    siteAnchors.forEach((site, index) => {
-      const previous = siteAnchors[index - 1];
-      const next = siteAnchors[index + 1];
+    const siteGuides = linearPositions ? [] : siteAnchors;
+    siteGuides.forEach((site, index) => {
+      const previous = siteGuides[index - 1];
+      const next = siteGuides[index + 1];
       const left = previous ? (previous.x + site.x) / 2 + 4 : 8;
       const right = next ? (site.x + next.x) / 2 - 4 : width - 8;
       siteGuide.append('rect')
@@ -1425,7 +1470,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     }
 
     return () => {
-      if (layoutSimulation) layoutSimulation.stop();
       svgElement?.removeEventListener('pointerdown', handleSelectionPointerDown, true);
       svgElement?.removeEventListener('pointermove', handleSelectionPointerMove, true);
       svgElement?.removeEventListener('pointerup', handleSelectionPointerUp, true);

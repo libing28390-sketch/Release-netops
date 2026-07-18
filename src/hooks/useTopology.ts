@@ -118,8 +118,6 @@ interface UseTopologyArgs {
 
 export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) => {
   const [topologyLinks, setTopologyLinks] = useState<any[]>([]);
-  const [topologyUnmanagedNodes, setTopologyUnmanagedNodes] = useState<any[]>([]);
-  const [topologyUnmanagedLinks, setTopologyUnmanagedLinks] = useState<any[]>([]);
   const [topologySearch, setTopologySearch] = useState('');
   const [topologyStatusFilter, setTopologyStatusFilter] = useState<'all' | 'online' | 'offline' | 'pending'>('all');
   const [topologyRoleFilter, setTopologyRoleFilter] = useState('all');
@@ -148,8 +146,6 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     if (!linksResponse.ok) throw new Error(`topology_links_${linksResponse.status}`);
     const linksPayload = await linksResponse.json();
     setTopologyLinks(Array.isArray(linksPayload?.links) ? linksPayload.links : []);
-    setTopologyUnmanagedNodes(Array.isArray(linksPayload?.unmanaged_nodes) ? linksPayload.unmanaged_nodes : []);
-    setTopologyUnmanagedLinks(Array.isArray(linksPayload?.unmanaged_links) ? linksPayload.unmanaged_links : []);
     if (sitesResponse.ok) {
       const sitesPayload = await sitesResponse.json();
       setTopologySites(Array.isArray(sitesPayload?.items) ? sitesPayload.items : []);
@@ -332,7 +328,6 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     topologyStatusFilter,
     topologyRoleFilter,
     topologySiteFilter,
-    topologyUnmanagedNodes,
   });
 
   const topologyVisibleDeviceIds = useMemo(
@@ -350,21 +345,8 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       .filter((link) => topologyVisibleDeviceIds.has(link.source_device_id) && topologyVisibleDeviceIds.has(link.target_device_id))
       .map((link) => describeTopologyLink(link, deviceMap.get(link.source_device_id), deviceMap.get(link.target_device_id)));
 
-    const unmanagedDecoratedLinks: TopologyDecoratedLink[] = topologyUnmanagedLinks
-      .filter((link: any) => topologyVisibleDeviceIds.has(link.source_device_id) && topologyVisibleDeviceIds.has(link.target_device_id))
-      .map((link: any) => ({
-        ...link,
-        operational_state: 'unknown' as TopologyOperationalState,
-        operational_summary: '',
-        evidence_sources: [link.discovery_source || 'lldp'],
-        reverse_confirmed: false,
-        source_interface_snapshot: null,
-        target_interface_snapshot: null,
-        is_unmanaged: true,
-      }));
-
-    return [...managedDecoratedLinks, ...unmanagedDecoratedLinks];
-  }, [describeTopologyLink, topologyLinks, topologyUnmanagedLinks, topologyVisibleDeviceIds, topologyVisibleDevices]);
+    return managedDecoratedLinks;
+  }, [describeTopologyLink, topologyLinks, topologyVisibleDeviceIds, topologyVisibleDevices]);
 
   // -- Apply hideStaleLinks toggle filter --
   const topologyVisibleLinks = useMemo<TopologyDecoratedLink[]>(() => {

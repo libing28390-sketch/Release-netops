@@ -42,7 +42,6 @@ interface TopologyDecoratedLink {
 interface UseTopologyDerivedDataParams {
   devices: Device[];
   topologyLinks: any[];
-  topologyUnmanagedLinks: any[];
   topologyVisibleDevices: Device[];
   selectedTopologyDeviceId: string | null;
   selectedTopologyLinkKey: string | null;
@@ -54,7 +53,6 @@ interface UseTopologyDerivedDataParams {
 export const useTopologyDerivedData = ({
   devices,
   topologyLinks,
-  topologyUnmanagedLinks,
   topologyVisibleDevices,
   selectedTopologyDeviceId,
   selectedTopologyLinkKey,
@@ -196,21 +194,8 @@ export const useTopologyDerivedData = ({
       .filter((link) => topologyVisibleDeviceIds.has(link.source_device_id) && topologyVisibleDeviceIds.has(link.target_device_id))
       .map((link) => describeTopologyLink(link, deviceMap.get(link.source_device_id), deviceMap.get(link.target_device_id)));
 
-    const unmanagedDecoratedLinks = topologyUnmanagedLinks
-      .filter((link: any) => topologyVisibleDeviceIds.has(link.source_device_id) && topologyVisibleDeviceIds.has(link.target_device_id))
-      .map((link: any) => ({
-        ...link,
-        operational_state: 'unknown' as TopologyOperationalState,
-        operational_summary: '',
-        evidence_sources: [link.discovery_source || 'lldp'],
-        reverse_confirmed: false,
-        source_interface_snapshot: null,
-        target_interface_snapshot: null,
-        is_unmanaged: true,
-      }));
-
-    return [...managedDecoratedLinks, ...unmanagedDecoratedLinks];
-  }, [describeTopologyLink, topologyLinks, topologyUnmanagedLinks, topologyVisibleDeviceIds, topologyVisibleDevices]);
+    return managedDecoratedLinks;
+  }, [describeTopologyLink, topologyLinks, topologyVisibleDeviceIds, topologyVisibleDevices]);
 
   const topologyDeviceLinks = useMemo(() => {
     if (!selectedTopologyDeviceId) return [] as any[];

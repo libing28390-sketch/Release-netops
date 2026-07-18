@@ -7,7 +7,6 @@ interface UseTopologyVisibleDevicesParams {
   topologyStatusFilter: 'all' | 'online' | 'offline' | 'pending';
   topologyRoleFilter: string;
   topologySiteFilter: string;
-  topologyUnmanagedNodes: any[];
 }
 
 export const useTopologyVisibleDevices = ({
@@ -16,7 +15,6 @@ export const useTopologyVisibleDevices = ({
   topologyStatusFilter,
   topologyRoleFilter,
   topologySiteFilter,
-  topologyUnmanagedNodes,
 }: UseTopologyVisibleDevicesParams) => {
   const topologySiteOptions = useMemo(() => {
     const sites = new Map<string, string>();
@@ -48,37 +46,13 @@ export const useTopologyVisibleDevices = ({
       return matchesQuery && matchesStatus && matchesRole && matchesSite;
     });
 
-    const managedIds = new Set(managed.map((d) => d.id));
-    const unmanagedPseudo: Device[] = topologyUnmanagedNodes
-      .filter((n: any) => {
-        const connectedIds: string[] = n.connected_device_ids || [];
-        return connectedIds.some((id: string) => managedIds.has(id));
-      })
-      .filter((n: any) => {
-        if (!query) return true;
-        return [n.hostname, n.ip_address].some((v: string) => String(v || '').toLowerCase().includes(query));
-      })
-      .map((n: any) => ({
-        id: n.id,
-        hostname: n.hostname || 'Unknown',
-        ip_address: n.ip_address || '',
-        platform: '',
-        status: 'unmanaged' as unknown as Device['status'],
-        compliance: 'unknown' as const,
-        sn: '',
-        model: '',
-        version: '',
-        role: '',
-        site: n.site || 'Unassigned',
-        site_id: n.site_id || '',
-        uptime: '',
-        connection_method: 'ssh' as const,
-        config_history: [],
-        is_unmanaged: true,
-      } satisfies Device & { is_unmanaged: boolean } as Device));
-
-    return [...managed, ...unmanagedPseudo];
-  }, [devices, topologyRoleFilter, topologySearch, topologySiteFilter, topologyStatusFilter, topologyUnmanagedNodes]);
+    // Unmanaged LLDP/CDP peers are retained by the discovery API as evidence,
+    // but they are not CMDB assets and should not become pseudo-devices on the
+    // primary topology canvas. Rendering them as "?" nodes makes a confirmed
+    // device chain look disconnected and noisy. They remain available to the
+    // backend/inspection views for later onboarding.
+    return managed;
+  }, [devices, topologyRoleFilter, topologySearch, topologySiteFilter, topologyStatusFilter]);
 
   return {
     topologySiteOptions,

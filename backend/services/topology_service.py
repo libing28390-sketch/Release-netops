@@ -18,7 +18,7 @@ from scrapli_community.huawei.vrp.async_driver import AsyncHuaweiVRPDriver
 
 from core.crypto import decrypt_credential
 from core.interface_utils import normalize_interface_name
-from core.textfsm import configure_ntc_templates
+from core.textfsm import configure_ntc_templates, smart_parse_cli
 from database import get_db_connection
 from services.vault_service import resolve_collector_credentials
 from services.network_access_limiter import get_network_access_limiter, limited_connect_handler
@@ -85,9 +85,9 @@ DISCOVERY_COMMANDS = {
     ],
     'juniper_junos': [('lldp', 'show lldp neighbors detail')],
     'arista_eos': [('lldp', 'show lldp neighbors detail')],
-    'huawei_vrp': [('lldp', 'display lldp neighbor verbose')],
-    'h3c_comware': [('lldp', 'display lldp neighbor-information verbose')],
-    'h3c_comware9': [('lldp', 'display lldp neighbor-information verbose')],
+    'huawei_vrp': [('lldp', 'display lldp neighbor brief')],
+    'h3c_comware': [('lldp', 'display lldp neighbor-information list')],
+    'h3c_comware9': [('lldp', 'display lldp neighbor-information list')],
     'ruijie_rgos': [('lldp', 'show lldp neighbors detail')],
 }
 
@@ -257,8 +257,9 @@ def _regex_parse_lldp_detail(raw_text: str) -> list[dict[str, str]]:
 
 
 def _extract_first(raw: dict[str, Any], *keys: str) -> str:
+    casefolded = {str(key).lower(): value for key, value in raw.items()}
     for key in keys:
-        value = raw.get(key)
+        value = casefolded.get(str(key).lower())
         if value is None:
             continue
         text = str(value).strip()
@@ -397,6 +398,19 @@ def _deduplicate_observations(observations: list[dict[str, Any]]) -> list[dict[s
             str(item.get('neighbor_name_normalized') or ''),
         ),
     )
+
+
+def _parse_shared_lldp_output(platform: str, command: str, raw_text: str) -> list[dict[str, Any]]:
+    """Parse Huawei/Comware LLDP tables with Nexora's custom templates."""
+    if not raw_text or not str(raw_text).strip():
+        return []
+    try:
+        result = smart_parse_cli(str(raw_text), command, platform=platform)
+        if result.get('success') and isinstance(result.get('data'), list):
+            return result['data']
+    except Exception as exc:  # noqa: BLE001
+        logger.debug('Shared LLDP parser failed for %s %r: %s', platform, command, exc)
+    return []
 
 
 def _get_device(device_id: str) -> dict[str, Any] | None:
@@ -596,21 +610,24 @@ async def _collect_neighbors_with_scrapli(device: dict[str, Any], commands: list
                 response = await client.send_command(command)
                 is_comware = 'comware' in platform or 'hp_comware' in platform
                 parsed = None
-                if not is_comware:
+                raw_text = str(getattr(response, 'result', '') or getattr(response, 'text', '') or '')
+                if is_comware or 'huawei' in platform:
+                    parsed = _parse_shared_lldp_output(platform, command, raw_text)
+                else:
                     try:
                         parsed = response.textfsm_parse_output() or []
                     except Exception:
                         parsed = None
-            
+
                 if isinstance(parsed, list) and parsed:
                     for item in parsed:
                         observation = _extract_observation_fields(item, protocol)
                         if observation['neighbor_name_raw'] and observation['source_port_raw']:
                             collected.append(observation)
-                elif response.result and response.result.strip():
+                elif raw_text.strip():
                     # TextFSM template not found or Comware bypassed — use regex parser
                     logger.info('Scrapli TextFSM bypassed/missed for %s %r, using regex parser', platform, command)
-                    regex_entries = _regex_parse_lldp_detail(response.result)
+                    regex_entries = _regex_parse_lldp_detail(raw_text)
                     for item in regex_entries:
                         observation = _extract_observation_fields(item, protocol)
                         if observation['neighbor_name_raw'] and observation['source_port_raw']:
@@ -639,12 +656,16 @@ async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list
             for protocol, command in commands:
                 is_comware = 'comware' in device_type or 'hp_comware' in device_type or 'h3c' in str(device.get('platform', '')).lower()
                 parsed = None
-                if not is_comware:
+                raw_text = ''
+                if is_comware or 'huawei' in platform:
+                    raw_text = client.send_command(command)
+                    parsed = _parse_shared_lldp_output(platform, command, raw_text)
+                else:
                     try:
                         parsed = client.send_command(command, use_textfsm=True)
                     except Exception:
                         parsed = None
-                
+
                 if isinstance(parsed, list) and parsed:
                     # TextFSM parsed successfully
                     for item in parsed:
@@ -653,7 +674,7 @@ async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list
                             collected.append(observation)
                 else:
                     # TextFSM template bypassed/missed — try regex fallback for LLDP/CDP detail
-                    raw_text = parsed if isinstance(parsed, str) else client.send_command(command)
+                    raw_text = raw_text or (parsed if isinstance(parsed, str) else client.send_command(command))
                     logger.info('TextFSM template bypassed/missed for %s %r, using regex parser', device_type, command)
                     regex_entries = _regex_parse_lldp_detail(raw_text)
                     for item in regex_entries:

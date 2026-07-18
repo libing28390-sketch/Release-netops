@@ -239,7 +239,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
     },
     'huawei_vrp': {
         'interfaces': ['display interface brief'],
-        'neighbors': ['display lldp neighbor verbose'],
+        'neighbors': ['display lldp neighbor brief'],
         'arp': ['display arp all'],
         'mac_table': ['display mac-address'],
         'vlan': ['display vlan'],
@@ -262,7 +262,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
     },
     'huawei_vrpv8': {
         'interfaces': ['display interface brief'],
-        'neighbors': ['display lldp neighbor verbose'],
+        'neighbors': ['display lldp neighbor brief'],
         'arp': ['display arp all'],
         'mac_table': ['display mac-address'],
         'vlan': ['display vlan'],

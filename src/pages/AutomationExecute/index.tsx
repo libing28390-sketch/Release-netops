@@ -447,7 +447,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         scope: 'network',
         operationalCategory: 'neighbors',
         cmds: isHuawei
-          ? 'display lldp neighbor verbose'
+          ? 'display lldp neighbor brief'
           : isH3c
           ? 'display lldp neighbor-information list'
           : isJuniper
